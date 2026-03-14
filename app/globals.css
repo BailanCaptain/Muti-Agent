@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(180,83,42,0.16),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(37,99,235,0.12),transparent_22%),linear-gradient(145deg,#f7f2ea,#ead4b8)] text-sand-900;
+}
+
+* {
+  box-sizing: border-box;
+}

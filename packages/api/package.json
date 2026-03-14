@@ -1,0 +1,20 @@
+{
+  "name": "@multi-agent/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "dev": "tsc -p tsconfig.json && node dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@multi-agent/shared": "workspace:*",
+    "@fastify/cors": "^10.0.2",
+    "@fastify/websocket": "^11.0.2",
+    "fastify": "^5.2.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2"
+  }
+}
