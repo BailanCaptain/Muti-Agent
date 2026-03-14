@@ -74,7 +74,7 @@ export class SessionService {
           threadId: thread.id,
           alias: thread.alias,
           currentModel: thread.currentModel,
-          quotaSummary: "额度待接入",
+          quotaSummary: "额度信息待接入",
           preview: summary?.previews.find((item) => item.provider === thread.provider)?.text ?? "",
           running: runningThreadIds.has(thread.id)
         }
@@ -83,24 +83,14 @@ export class SessionService {
 
     const timeline = threads
       .flatMap((thread) =>
-        this.repository.listMessages(thread.id).map(
-          (message): TimelineMessage => ({
-            id: message.id,
-            provider: thread.provider,
-            alias: thread.alias,
-            role: message.role,
-            content: message.role === "user" ? `@${thread.alias} ${message.content}` : message.content,
-            model: thread.currentModel,
-            createdAt: message.createdAt
-          })
-        )
+        this.repository.listMessages(thread.id).map((message) => this.mapTimelineMessage(thread, message.id, message.role, message.content, message.createdAt))
       )
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 
     return {
       id: groupId,
-      title: summary?.title ?? "未命名会话",
-      meta: `最近更新：${summary ? new Date(summary.updatedAt).toLocaleString("zh-CN") : "--"}，当前按三方会话组展示。`,
+      title: summary?.title ?? "新会话",
+      meta: `最近更新时间：${summary ? new Date(summary.updatedAt).toLocaleString("zh-CN") : "--"}，消息会按统一时间线展示。`,
       timeline,
       providers
     };
@@ -108,6 +98,14 @@ export class SessionService {
 
   findThread(threadId: string) {
     return this.repository.getThreadById(threadId) ?? null;
+  }
+
+  findThreadByGroupAndProvider(sessionGroupId: string, provider: Provider) {
+    return this.repository.listThreadsByGroup(sessionGroupId).find((thread) => thread.provider === provider) ?? null;
+  }
+
+  listGroupThreads(sessionGroupId: string) {
+    return this.repository.listThreadsByGroup(sessionGroupId);
   }
 
   appendUserMessage(threadId: string, content: string) {
@@ -122,6 +120,20 @@ export class SessionService {
     this.repository.overwriteMessage(messageId, content);
   }
 
+  toTimelineMessage(threadId: string, messageId: string): TimelineMessage | null {
+    const thread = this.repository.getThreadById(threadId);
+    if (!thread) {
+      return null;
+    }
+
+    const message = this.repository.listMessages(threadId).find((item) => item.id === messageId);
+    if (!message) {
+      return null;
+    }
+
+    return this.mapTimelineMessage(thread, message.id, message.role, message.content, message.createdAt);
+  }
+
   listHistory(threadId: string) {
     return this.repository.listMessages(threadId).map((message) => ({
       role: message.role,
@@ -129,10 +141,43 @@ export class SessionService {
     }));
   }
 
+  listSharedHistory(sessionGroupId: string) {
+    const threads = this.repository.listThreadsByGroup(sessionGroupId);
+
+    return threads
+      .flatMap((thread) =>
+        this.repository.listMessages(thread.id).map((message) => ({
+          role: message.role,
+          content: message.role === "user" ? `@${thread.alias} ${message.content}` : `${thread.alias}: ${message.content}`,
+          createdAt: message.createdAt
+        }))
+      )
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map(({ role, content }) => ({ role, content }));
+  }
+
   updateThread(threadId: string, model: string | null, nativeSessionId: string | null) {
     this.repository.updateThread(threadId, {
       currentModel: model,
       nativeSessionId
     });
+  }
+
+  private mapTimelineMessage(
+    thread: { provider: Provider; alias: string; currentModel: string | null },
+    id: string,
+    role: "user" | "assistant",
+    content: string,
+    createdAt: string
+  ): TimelineMessage {
+    return {
+      id,
+      provider: thread.provider,
+      alias: thread.alias,
+      role,
+      content: role === "user" ? `@${thread.alias} ${content}` : content,
+      model: thread.currentModel,
+      createdAt
+    };
   }
 }

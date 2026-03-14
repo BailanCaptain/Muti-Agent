@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "multi_agent_room": {
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "C:\\Users\\-\\Desktop\\Multi-Agent\\packages\\api\\dist\\mcp\\server.js"
+      ],
+      "env": {
+        "CAT_ROOM_API_URL": "http://127.0.0.1:8787",
+        "CAT_ROOM_INVOCATION_ID": "inv-1",
+        "CAT_ROOM_CALLBACK_TOKEN": "tok"
+      }
+    }
+  }
+}

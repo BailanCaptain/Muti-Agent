@@ -56,6 +56,7 @@ type ThreadStore = {
   replaceSessionGroups: (groups: SessionGroupSummary[]) => void;
   replaceActiveGroup: (group: ActiveGroupPayload) => void;
   applyAssistantDelta: (messageId: string, delta: string) => void;
+  appendTimelineMessage: (message: TimelineMessage) => void;
   buildSendPayload: (input: string) => SendPayload | null;
 };
 
@@ -66,7 +67,7 @@ const emptyProviders = Object.fromEntries(
       threadId: "",
       alias: PROVIDER_ALIASES[provider],
       currentModel: null,
-      quotaSummary: "额度待同步",
+      quotaSummary: "额度信息待接入",
       preview: "还没有消息",
       running: false
     }
@@ -101,17 +102,45 @@ function parseMention(input: string): Provider | null {
   }
 
   const alias = match[1].toLowerCase();
-  if (alias === "范德彪" || alias === "codex") {
+  if (alias === PROVIDER_ALIASES.codex.toLowerCase() || alias === "codex") {
     return "codex";
   }
-  if (alias === "黄仁勋" || alias === "claude" || alias === "claudecode") {
+  if (alias === PROVIDER_ALIASES.claude.toLowerCase() || alias === "claude" || alias === "claudecode") {
     return "claude";
   }
-  if (alias === "桂芬" || alias === "gemini") {
+  if (alias === PROVIDER_ALIASES.gemini.toLowerCase() || alias === "gemini") {
     return "gemini";
   }
 
   return null;
+}
+
+function mergeTimeline(existing: TimelineMessage[], incoming: TimelineMessage[]) {
+  const existingById = new Map(existing.map((message) => [message.id, message]));
+
+  return incoming
+    .map((message) => {
+      const current = existingById.get(message.id);
+      if (!current) {
+        return message;
+      }
+
+      // `thread_snapshot` 里的 assistant 内容来自数据库，流式过程中它往往会落后于
+      // 前端本地已经通过 assistant_delta 追加的内容。这里优先保留更长的那份文本，
+      // 避免气泡被快照回滚成旧内容，最终表现成“最后一瞬间整段弹出来”。
+      const content =
+        current.role === message.role &&
+        current.provider === message.provider &&
+        current.content.length > message.content.length
+          ? current.content
+          : message.content;
+
+      return {
+        ...message,
+        content
+      };
+    })
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -193,10 +222,21 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     set({ sessionGroups: normalizeSessionGroups(groups) });
   },
   replaceActiveGroup: (group) => {
-    set({
+    set((state) => ({
       activeGroup: { id: group.id, title: group.title, meta: group.meta },
-      timeline: group.timeline,
+      timeline: mergeTimeline(state.timeline, group.timeline),
       providers: group.providers
+    }));
+  },
+  appendTimelineMessage: (message) => {
+    set((state) => {
+      if (state.timeline.some((item) => item.id === message.id)) {
+        return state;
+      }
+
+      return {
+        timeline: [...state.timeline, message].sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      };
     });
   },
   applyAssistantDelta: (messageId, delta) => {

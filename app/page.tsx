@@ -14,6 +14,7 @@ import { connectRealtime } from "@/components/ws/client";
 export default function HomePage() {
   const bootstrap = useThreadStore((state) => state.bootstrap);
   const applyAssistantDelta = useThreadStore((state) => state.applyAssistantDelta);
+  const appendTimelineMessage = useThreadStore((state) => state.appendTimelineMessage);
   const replaceActiveGroup = useThreadStore((state) => state.replaceActiveGroup);
   const status = useChatStore((state) => state.status);
   const setStatus = useChatStore((state) => state.setStatus);
@@ -43,6 +44,11 @@ export default function HomePage() {
           return;
         }
 
+        if (event.type === "message.created") {
+          appendTimelineMessage(event.payload.message);
+          return;
+        }
+
         if (event.type === "thread_snapshot") {
           replaceActiveGroup(event.payload.activeGroup);
           return;
@@ -55,7 +61,7 @@ export default function HomePage() {
     });
 
     return disconnect;
-  }, [applyAssistantDelta, bootstrap, replaceActiveGroup, setSocketState, setStatus]);
+  }, [appendTimelineMessage, applyAssistantDelta, bootstrap, replaceActiveGroup, setSocketState, setStatus]);
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-[1600px] flex-col gap-4 p-4">
