@@ -99,6 +99,18 @@ export class MessageService {
       historyMode: "thread",
       rootMessageId
     });
+
+    // 用户消息里可能同时 @ 了多个 agent（前端只剥离了第一个 @），
+    // 主 agent 跑完后，把剩余 @ 也扫一遍，触发对应 agent。
+    this.dispatch.enqueuePublicMentions({
+      messageId: userMessage.id,
+      sessionGroupId: thread.sessionGroupId,
+      sourceProvider: thread.provider,
+      sourceAlias: thread.alias,
+      rootMessageId,
+      content: event.payload.content
+    });
+    await this.flushDispatchQueue(thread.sessionGroupId, emit);
   }
 
   private async runThreadTurn(options: {
@@ -164,13 +176,6 @@ export class MessageService {
     });
 
     options.emit({
-      type: "thread_snapshot",
-      payload: {
-        activeGroup: this.sessions.getActiveGroup(thread.sessionGroupId, new Set(this.invocations.keys()))
-      }
-    });
-
-    options.emit({
       type: "status",
       payload: { message: `Running ${thread.alias}` }
     });
@@ -210,6 +215,14 @@ export class MessageService {
     });
 
     this.invocations.attachRun(thread.id, identity.invocationId, run);
+
+    // 在 attachRun 之后发快照，这样前端能收到 running: true，显示正确的加载状态。
+    options.emit({
+      type: "thread_snapshot",
+      payload: {
+        activeGroup: this.sessions.getActiveGroup(thread.sessionGroupId, new Set(this.invocations.keys()))
+      }
+    });
 
     try {
       const result = await run.promise;

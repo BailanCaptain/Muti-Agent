@@ -21,9 +21,7 @@ export class GeminiRuntime extends BaseCliRuntime {
       "--output-format",
       "stream-json",
       "--approval-mode",
-      "yolo",
-      "--sandbox",
-      "true"
+      "yolo"
     ];
     const model = input.env?.MULTI_AGENT_MODEL;
     const sessionId = input.env?.MULTI_AGENT_NATIVE_SESSION_ID;

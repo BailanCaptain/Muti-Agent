@@ -3,7 +3,10 @@
     "allow": [
       "Bash(find:*)",
       "Bash(xargs grep:*)",
-      "Bash(gemini:*)"
+      "Bash(gemini:*)",
+      "Bash(timeout:*)",
+      "Bash(cd:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }
