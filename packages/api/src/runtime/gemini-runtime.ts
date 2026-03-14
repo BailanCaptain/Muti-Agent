@@ -12,19 +12,18 @@ export class GeminiRuntime extends BaseCliRuntime {
 
   protected buildCommand(input: AgentRunInput): RuntimeCommand {
     const runtime = resolveNodeScript("@google/gemini-cli", ["dist", "index.js"]);
-    const instructions = [input.env?.MULTI_AGENT_SYSTEM_PROMPT ?? "", buildCallbackPrompt("Gemini")].filter(Boolean).join(
-      "\n\n"
-    );
-    const args = [
-      "-p",
-      wrapPromptWithInstructions(instructions, input.prompt),
-      "--output-format",
-      "stream-json",
-      "--approval-mode",
-      "yolo"
-    ];
-    const model = input.env?.MULTI_AGENT_MODEL;
     const sessionId = input.env?.MULTI_AGENT_NATIVE_SESSION_ID;
+    // 会话已恢复时模型已有指令，不重复附加，减少每轮 ~500 token 的额外开销。
+    const prompt = sessionId
+      ? input.prompt
+      : (() => {
+          const instructions = [input.env?.MULTI_AGENT_SYSTEM_PROMPT ?? "", buildCallbackPrompt("Gemini")]
+            .filter(Boolean)
+            .join("\n\n");
+          return wrapPromptWithInstructions(instructions, input.prompt);
+        })();
+    const args = ["-p", prompt, "--output-format", "stream-json", "--approval-mode", "yolo"];
+    const model = input.env?.MULTI_AGENT_MODEL;
 
     if (model) {
       args.push("--model", model);

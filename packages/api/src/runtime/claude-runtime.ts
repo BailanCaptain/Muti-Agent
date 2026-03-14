@@ -13,21 +13,15 @@ export class ClaudeRuntime extends BaseCliRuntime {
 
   protected buildCommand(input: AgentRunInput): RuntimeCommand {
     const runtime = resolveNodeScript("@anthropic-ai/claude-code", ["cli.js"]);
-    const systemPrompt = [input.env?.MULTI_AGENT_SYSTEM_PROMPT ?? "", buildClaudeMcpPrompt()].filter(Boolean).join("\n\n");
-    const args = [
-      "-p",
-      input.prompt,
-      "--output-format",
-      "stream-json",
-      "--verbose",
-      "--strict-mcp-config",
-      "--append-system-prompt",
-      systemPrompt,
-      "--allowedTools",
-      "mcp__multi_agent_room__*"
-    ];
     const model = input.env?.MULTI_AGENT_MODEL;
     const sessionId = input.env?.MULTI_AGENT_NATIVE_SESSION_ID;
+    // 会话已恢复时不重复附加 system prompt，避免冗余 token。
+    const args = ["--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--allowedTools", "mcp__multi_agent_room__*"];
+    if (!sessionId) {
+      const systemPrompt = [input.env?.MULTI_AGENT_SYSTEM_PROMPT ?? "", buildClaudeMcpPrompt()].filter(Boolean).join("\n\n");
+      args.push("--append-system-prompt", systemPrompt);
+    }
+    args.unshift("-p", input.prompt);
     const workspaceRoot = input.cwd ?? process.cwd();
     const runtimeDir = path.join(workspaceRoot, ".multi-agent-runtime");
     const mcpConfigPath = path.join(runtimeDir, `${input.invocationId}.claude.mcp.json`);

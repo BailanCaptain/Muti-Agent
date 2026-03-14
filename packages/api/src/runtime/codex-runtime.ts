@@ -27,10 +27,15 @@ export class CodexRuntime extends BaseCliRuntime {
     const runtime = resolveCodexCommand();
     const model = input.env?.MULTI_AGENT_MODEL;
     const sessionId = input.env?.MULTI_AGENT_NATIVE_SESSION_ID;
-    const instructions = [input.env?.MULTI_AGENT_SYSTEM_PROMPT ?? "", buildCallbackPrompt("Codex")].filter(Boolean).join(
-      "\n\n"
-    );
-    const prompt = wrapPromptWithInstructions(instructions, input.prompt);
+    // 会话已恢复时模型已有指令，不重复附加，减少每轮 ~500 token 的额外开销。
+    const prompt = sessionId
+      ? input.prompt
+      : (() => {
+          const instructions = [input.env?.MULTI_AGENT_SYSTEM_PROMPT ?? "", buildCallbackPrompt("Codex")]
+            .filter(Boolean)
+            .join("\n\n");
+          return wrapPromptWithInstructions(instructions, input.prompt);
+        })();
     const topLevelArgs = [...(model ? ["-m", model] : []), "-a", "never", "-s", "workspace-write"];
     const baseArgs = sessionId
       ? ["exec", "resume", "--skip-git-repo-check", "--json", sessionId, prompt]

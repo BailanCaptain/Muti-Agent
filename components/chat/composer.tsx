@@ -1,20 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import { PROVIDERS } from "@multi-agent/shared";
 import { useChatStore } from "@/components/stores/chat-store";
+import { useThreadStore } from "@/components/stores/thread-store";
 
 export function Composer() {
   const value = useChatStore((state) => state.draft);
   const setDraft = useChatStore((state) => state.setDraft);
   const send = useChatStore((state) => state.sendMessage);
   const status = useChatStore((state) => state.status);
+  const providers = useThreadStore((state) => state.providers);
+  const stopThread = useThreadStore((state) => state.stopThread);
+
+  const runningProviders = PROVIDERS.filter((p) => providers[p].running);
+  const isRunning = runningProviders.length > 0;
+
+  function handleStop() {
+    for (const provider of runningProviders) {
+      void stopThread(provider);
+    }
+  }
 
   return (
     <form
       className="grid gap-3 border-t border-black/5 bg-white/70 p-5"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!value.trim()) {
+        if (!value.trim() || isRunning) {
           return;
         }
         void send(value);
@@ -40,9 +52,19 @@ export function Composer() {
       />
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-sand-700">{status}</p>
-        <button className="rounded-full bg-sand-500 px-5 py-2.5 font-semibold text-white" type="submit">
-          发送
-        </button>
+        {isRunning ? (
+          <button
+            className="rounded-full bg-red-500 px-5 py-2.5 font-semibold text-white"
+            onClick={handleStop}
+            type="button"
+          >
+            停止
+          </button>
+        ) : (
+          <button className="rounded-full bg-sand-500 px-5 py-2.5 font-semibold text-white" type="submit">
+            发送
+          </button>
+        )}
       </div>
     </form>
   );
