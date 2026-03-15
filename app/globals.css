@@ -8,11 +8,18 @@
 
 body {
   font-family: "Avenir Next", "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
-  @apply min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(255,237,213,0.75),transparent_26%),radial-gradient(circle_at_bottom_right,rgba(220,252,231,0.5),transparent_22%),linear-gradient(180deg,#fffaf4_0%,#fff5eb_100%)] text-slate-800 antialiased;
+  @apply min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(255,244,214,0.55),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(209,250,229,0.4),transparent_22%),linear-gradient(180deg,#f8fafc_0%,#f5f7fb_100%)] text-slate-800 antialiased;
 }
 
 * {
   box-sizing: border-box;
+}
+
+code,
+pre,
+.font-mono {
+  font-family: "JetBrains Mono", "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", Menlo,
+    monospace;
 }
 
 ::-webkit-scrollbar {

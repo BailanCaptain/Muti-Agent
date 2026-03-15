@@ -1,48 +1,60 @@
-"use client";
+"use client"
 
-import { type TimelineMessage } from "@multi-agent/shared";
-import { ChevronDown, ChevronRight, Copy, Share2, Trash2 } from "lucide-react";
-import { useState } from "react";
-import { formatTokenCount } from "@/lib/format";
-import { MarkdownMessage } from "./markdown-message";
-import { ProviderAvatar } from "./provider-avatar";
+import { formatTokenCount } from "@/lib/format"
+import type { TimelineMessage } from "@multi-agent/shared"
+import { ChevronDown, ChevronRight, Copy, Share2, Trash2 } from "lucide-react"
+import { useState } from "react"
+import { MarkdownMessage } from "./markdown-message"
+import { ProviderAvatar } from "./provider-avatar"
 
 interface MessageBubbleProps {
-  message: TimelineMessage;
-  onDelete?: (id: string) => void;
-  onCopy?: (content: string) => void;
+  message: TimelineMessage
+  onDelete?: (id: string) => void
+  onCopy?: (content: string) => void
 }
 
 function formatClock(value: string) {
   return new Date(value).toLocaleTimeString([], {
     hour: "2-digit",
-    minute: "2-digit"
-  });
+    minute: "2-digit",
+  })
 }
 
 function MessageMeta({ message }: { message: TimelineMessage }) {
-  const inputTokens = message.inputTokens ?? 0;
-  const outputTokens = message.outputTokens ?? 0;
-  const totalTokens = inputTokens + outputTokens;
-  const cachedPercent = message.cachedPercent ?? 0;
+  const inputTokens = message.inputTokens ?? 0
+  const outputTokens = message.outputTokens ?? 0
+  const totalTokens = inputTokens + outputTokens
+  const cachedPercent = message.cachedPercent ?? 0
 
   return (
     <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-200/80 pt-3 font-mono text-[10px] text-slate-400">
-      <span className="rounded-full bg-slate-100/90 px-2 py-1 text-slate-500">{message.provider}</span>
-      {message.model ? <span className="rounded-full bg-slate-100/70 px-2 py-1 text-slate-500">{message.model}</span> : null}
-      <span className="rounded-full bg-slate-50 px-2 py-1">total {formatTokenCount(totalTokens)}</span>
+      <span className="rounded-full bg-slate-100/90 px-2 py-1 text-slate-500">
+        {message.provider}
+      </span>
+      {message.model ? (
+        <span className="rounded-full bg-slate-100/70 px-2 py-1 text-slate-500">
+          {message.model}
+        </span>
+      ) : null}
+      <span className="rounded-full bg-slate-50 px-2 py-1">
+        total {formatTokenCount(totalTokens)}
+      </span>
       <span className="rounded-full bg-slate-50 px-2 py-1">in {formatTokenCount(inputTokens)}</span>
-      <span className="rounded-full bg-slate-50 px-2 py-1">out {formatTokenCount(outputTokens)}</span>
-      <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-600">cache {cachedPercent}%</span>
+      <span className="rounded-full bg-slate-50 px-2 py-1">
+        out {formatTokenCount(outputTokens)}
+      </span>
+      <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-600">
+        cache {cachedPercent}%
+      </span>
     </div>
-  );
+  )
 }
 
 export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps) {
-  const [isThinkingOpen, setIsThinkingOpen] = useState(false);
-  const isUser = message.role === "user";
-  const avatarIdentity = isUser ? "user" : message.provider;
-  const displayAlias = isUser ? "Host" : message.alias;
+  const [isThinkingOpen, setIsThinkingOpen] = useState(false)
+  const isUser = message.role === "user"
+  const avatarIdentity = isUser ? "user" : message.provider
+  const displayAlias = isUser ? "Host" : message.alias
 
   return (
     <div className={`group mb-6 flex w-full flex-col ${isUser ? "items-end" : "items-start"}`}>
@@ -64,7 +76,9 @@ export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps)
               ) : null}
             </span>
             <span>{formatClock(message.createdAt)}</span>
-            {!isUser ? <span className="cursor-pointer text-slate-300 hover:text-slate-500">&#9654;</span> : null}
+            {!isUser ? (
+              <span className="cursor-pointer text-slate-300 hover:text-slate-500">&#9654;</span>
+            ) : null}
           </div>
 
           <div className="relative">
@@ -82,7 +96,11 @@ export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps)
                     onClick={() => setIsThinkingOpen(!isThinkingOpen)}
                     type="button"
                   >
-                    {isThinkingOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                    {isThinkingOpen ? (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    )}
                     Inner Thoughts
                   </button>
                   {isThinkingOpen ? (
@@ -120,7 +138,10 @@ export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps)
               >
                 <Trash2 className="h-3.5 w-3.5 text-slate-400" />
               </button>
-              <button className="rounded-full bg-white/95 p-1.5 shadow-sm ring-1 ring-black/5 hover:bg-slate-50" type="button">
+              <button
+                className="rounded-full bg-white/95 p-1.5 shadow-sm ring-1 ring-black/5 hover:bg-slate-50"
+                type="button"
+              >
                 <Share2 className="h-3.5 w-3.5 text-slate-400" />
               </button>
             </div>
@@ -128,5 +149,5 @@ export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps)
         </div>
       </div>
     </div>
-  );
+  )
 }
