@@ -1,4 +1,4 @@
-# Cat Cafe Skills
+# Multi-Agent Skills
 
 这里预留给后续的 skill 系统。
 

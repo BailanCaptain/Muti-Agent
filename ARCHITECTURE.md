@@ -482,9 +482,9 @@ Codex 读取共享上下文，继续协作
 
 并在 runtime 启动时注入：
 
-- `CAT_ROOM_API_URL`
-- `CAT_ROOM_INVOCATION_ID`
-- `CAT_ROOM_CALLBACK_TOKEN`
+- `MULTI_AGENT_API_URL`
+- `MULTI_AGENT_INVOCATION_ID`
+- `MULTI_AGENT_CALLBACK_TOKEN`
 
 #### 解决什么问题
 

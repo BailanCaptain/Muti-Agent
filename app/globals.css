@@ -7,9 +7,28 @@
 }
 
 body {
-  @apply min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(180,83,42,0.16),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(37,99,235,0.12),transparent_22%),linear-gradient(145deg,#f7f2ea,#ead4b8)] text-sand-900;
+  font-family: "Avenir Next", "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
+  @apply min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(255,237,213,0.75),transparent_26%),radial-gradient(circle_at_bottom_right,rgba(220,252,231,0.5),transparent_22%),linear-gradient(180deg,#fffaf4_0%,#fff5eb_100%)] text-slate-800 antialiased;
 }
 
 * {
   box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-slate-200 hover:bg-slate-300;
+}
+
+@layer components {
+  .shadow-soft {
+    @apply shadow-[0_8px_30px_rgb(0,0,0,0.04)];
+  }
 }

@@ -14,6 +14,7 @@ class SocketClient {
     }
   ) {
     const url = process.env.NEXT_PUBLIC_API_WS_URL ?? "ws://localhost:8787/ws";
+    // The browser keeps a single socket; higher layers subscribe through callbacks instead of re-opening per action.
     this.socket = new WebSocket(url);
 
     this.socket.addEventListener("open", callbacks.onOpen);
@@ -29,6 +30,7 @@ class SocketClient {
   }
 
   send(event: RealtimeClientEvent) {
+    // Outgoing chat actions reuse the same event contract as the server-side ws route.
     this.socket?.send(JSON.stringify(event));
   }
 }

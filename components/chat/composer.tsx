@@ -3,6 +3,7 @@
 import { PROVIDERS } from "@multi-agent/shared";
 import { useChatStore } from "@/components/stores/chat-store";
 import { useThreadStore } from "@/components/stores/thread-store";
+import { Send, Square } from "lucide-react";
 
 export function Composer() {
   const value = useChatStore((state) => state.draft);
@@ -23,7 +24,7 @@ export function Composer() {
 
   return (
     <form
-      className="grid gap-3 border-t border-black/5 bg-white/70 p-5"
+      className="flex flex-col gap-3 rounded-[28px] border border-black/5 bg-white p-4 shadow-lg shadow-black/5"
       onSubmit={(event) => {
         event.preventDefault();
         if (!value.trim() || isRunning) {
@@ -32,37 +33,47 @@ export function Composer() {
         void send(value);
       }}
     >
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 px-2">
         {["@范德彪", "@黄仁勋", "@桂芬"].map((mention) => (
           <button
-            className="rounded-full border border-black/10 bg-white/80 px-3 py-1.5 text-xs font-semibold"
             key={mention}
-            onClick={() => setDraft((current) => `${mention} ${current}`.trim())}
             type="button"
+            onClick={() => setDraft((current) => `${mention} ${current}`.trim())}
+            className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold text-slate-500 transition-colors hover:bg-slate-200"
           >
             {mention}
           </button>
         ))}
       </div>
-      <textarea
-        className="min-h-28 rounded-[22px] border border-black/5 bg-white/85 px-4 py-4 text-sm outline-none"
-        onChange={(event) => setDraft(event.target.value)}
-        placeholder="例如：@黄仁勋 帮我分析这个报错"
-        value={value}
-      />
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-sand-700">{status}</p>
+
+      <div className="relative flex items-end gap-2 px-2 pb-2">
+        <textarea
+          rows={1}
+          value={value}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            event.target.style.height = 'auto';
+            event.target.style.height = event.target.scrollHeight + 'px';
+          }}
+          placeholder="输入指令，@ 选择 Agent..."
+          className="max-h-48 w-full resize-none bg-transparent py-2 text-sm text-slate-700 outline-none placeholder:text-slate-300"
+        />
+
         {isRunning ? (
           <button
-            className="rounded-full bg-red-500 px-5 py-2.5 font-semibold text-white"
-            onClick={handleStop}
             type="button"
+            onClick={handleStop}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-500 text-white shadow-lg shadow-red-500/20 transition-all hover:bg-red-600 active:scale-95"
           >
-            停止
+            <Square className="h-4 w-4 fill-current" />
           </button>
         ) : (
-          <button className="rounded-full bg-sand-500 px-5 py-2.5 font-semibold text-white" type="submit">
-            发送
+          <button
+            type="submit"
+            disabled={!value.trim()}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-500 text-white shadow-lg shadow-orange-500/20 transition-all hover:bg-orange-600 active:scale-95 disabled:bg-slate-200 disabled:shadow-none"
+          >
+            <Send className="h-4 w-4" />
           </button>
         )}
       </div>

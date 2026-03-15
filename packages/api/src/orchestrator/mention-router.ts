@@ -37,7 +37,9 @@ export function resolveMentions(content: string, aliases: Record<Provider, strin
     const patterns = [alias, provider, `${provider[0].toUpperCase()}${provider.slice(1)}`];
 
     for (const candidate of patterns) {
-      const pattern = new RegExp(`@${escapeRegex(candidate)}`, "gi");
+      // Only match @mention at the start of a line, allowing optional
+      // whitespace and markdown formatting chars (backticks, bold, italic).
+      const pattern = new RegExp(`(?:^|\\n)[\\s\`*_~]*@${escapeRegex(candidate)}`, "gi");
 
       for (const match of content.matchAll(pattern)) {
         matches.push({

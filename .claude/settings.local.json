@@ -6,7 +6,12 @@
       "Bash(gemini:*)",
       "Bash(timeout:*)",
       "Bash(cd:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Read(//c/Users/-/AppData/Roaming/npm/**)",
+      "Bash(npx pnpm:*)",
+      "Bash(kill:*)",
+      "Bash(netstat:*)",
+      "Bash(powershell.exe -Command \"Stop-Process -Id 52804 -Force\" 2>&1; sleep 2 && echo \"killed\")"
     ]
   }
 }

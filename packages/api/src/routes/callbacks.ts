@@ -2,8 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { RealtimeServerEvent } from "@multi-agent/shared";
 import type { SessionRepository } from "../db/repositories";
 import type { InvocationRegistry } from "../orchestrator/invocation-registry";
-import type { RealtimeBroadcaster } from "./ws";
 import type { SessionService } from "../services/session-service";
+import type { RealtimeBroadcaster } from "./ws";
 
 type CallbackBody = {
   invocationId?: string;
@@ -20,7 +20,7 @@ function assertInvocation(
     return null;
   }
 
-  // callback API 只认“当前这次运行”的临时身份，不认裸请求。
+  // Callback routes only trust the short-lived identity created for the current CLI turn.
   return registry.verifyInvocation(invocationId, callbackToken);
 }
 
@@ -61,6 +61,7 @@ export function registerCallbackRoutes(
       return { error: "Thread not found." };
     }
 
+    // Persist first so snapshots and follow-up A2A hops see the same message id and timeline state.
     const message = options.repository.appendMessage(thread.id, "assistant", body.content.trim());
     const activeGroup = options.sessions.getActiveGroup(thread.sessionGroupId, options.getRunningThreadIds());
     const timelineMessage = activeGroup.timeline.find((item) => item.id === message.id);
@@ -81,7 +82,7 @@ export function registerCallbackRoutes(
       payload: { activeGroup }
     });
 
-    // agent 主动发出的公开消息也会进入 A2A 路由检查，看看有没有 @ 到下一只 agent。
+    // Public callback messages re-enter dispatch so an agent can @mention the next agent in the chain.
     await options.onPublicMessage?.({
       threadId: thread.id,
       messageId: message.id,

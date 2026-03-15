@@ -38,9 +38,9 @@ export class ClaudeRuntime extends BaseCliRuntime {
               command: process.execPath,
               args: [mcpServerPath],
               env: {
-                CAT_ROOM_API_URL: input.env?.CAT_ROOM_API_URL ?? "",
-                CAT_ROOM_INVOCATION_ID: input.env?.CAT_ROOM_INVOCATION_ID ?? "",
-                CAT_ROOM_CALLBACK_TOKEN: input.env?.CAT_ROOM_CALLBACK_TOKEN ?? ""
+                MULTI_AGENT_API_URL: input.env?.MULTI_AGENT_API_URL ?? "",
+                MULTI_AGENT_INVOCATION_ID: input.env?.MULTI_AGENT_INVOCATION_ID ?? "",
+                MULTI_AGENT_CALLBACK_TOKEN: input.env?.MULTI_AGENT_CALLBACK_TOKEN ?? ""
               }
             }
           }

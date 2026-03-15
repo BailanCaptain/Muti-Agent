@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
+import { ChatHeader } from "@/components/chat/chat-header";
 import { Composer } from "@/components/chat/composer";
-import { HeroHeader } from "@/components/chat/hero-header";
-import { ProviderStrip } from "@/components/chat/provider-strip";
 import { SessionSidebar } from "@/components/chat/session-sidebar";
+import { StatusPanel } from "@/components/chat/status-panel";
 import { TimelinePanel } from "@/components/chat/timeline-panel";
 import { useChatStore } from "@/components/stores/chat-store";
 import { useSettingsStore } from "@/components/stores/settings-store";
@@ -16,7 +16,6 @@ export default function HomePage() {
   const applyAssistantDelta = useThreadStore((state) => state.applyAssistantDelta);
   const appendTimelineMessage = useThreadStore((state) => state.appendTimelineMessage);
   const replaceActiveGroup = useThreadStore((state) => state.replaceActiveGroup);
-  const status = useChatStore((state) => state.status);
   const setStatus = useChatStore((state) => state.setStatus);
   const setSocketState = useSettingsStore((state) => state.setSocketState);
 
@@ -25,6 +24,7 @@ export default function HomePage() {
       setStatus(error instanceof Error ? error.message : "初始化失败");
     });
 
+    // Keep one websocket subscription for the page and fan updates into the local stores.
     const disconnect = connectRealtime({
       onOpen: () => {
         setSocketState("connected");
@@ -39,6 +39,7 @@ export default function HomePage() {
         setStatus("实时层连接失败");
       },
       onMessage: (event) => {
+        // The page only routes normalized event envelopes; store-specific merge logic lives downstream.
         if (event.type === "assistant_delta") {
           applyAssistantDelta(event.payload.messageId, event.payload.delta);
           return;
@@ -64,16 +65,20 @@ export default function HomePage() {
   }, [appendTimelineMessage, applyAssistantDelta, bootstrap, replaceActiveGroup, setSocketState, setStatus]);
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-[1600px] flex-col gap-4 p-4">
-      <HeroHeader status={status} />
-      <ProviderStrip />
-      <section className="grid min-h-[70vh] gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <SessionSidebar />
-        <div className="grid overflow-hidden rounded-[28px] border border-black/5 bg-white/75 shadow-soft backdrop-blur xl:grid-rows-[auto_1fr_auto]">
+    <div className="flex h-screen w-full overflow-hidden bg-[rgba(255,250,244,0.78)]">
+      <SessionSidebar />
+      <main className="flex flex-1 flex-col overflow-hidden">
+        <ChatHeader />
+        <div className="flex flex-1 flex-col overflow-hidden bg-white/35 backdrop-blur-sm">
           <TimelinePanel />
-          <Composer />
+          <div className="p-6">
+            <div className="mx-auto max-w-4xl">
+              <Composer />
+            </div>
+          </div>
         </div>
-      </section>
-    </main>
+      </main>
+      <StatusPanel />
+    </div>
   );
 }

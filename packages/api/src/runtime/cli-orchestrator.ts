@@ -1,11 +1,11 @@
 import crypto from "node:crypto";
 import type { Provider } from "@multi-agent/shared";
+import { buildSystemPrompt, formatSkillsForPrompt, loadSkillsForTask } from "../skills/loader";
+import type { SkillIntent } from "../skills/matcher";
 import { buildHistoryPrompt, findSessionId, parseEventModel, type AgentRunInput } from "./base-runtime";
 import { claudeRuntime } from "./claude-runtime";
 import { codexRuntime } from "./codex-runtime";
 import { geminiRuntime } from "./gemini-runtime";
-import { buildSystemPrompt, formatSkillsForPrompt, loadSkillsForTask } from "../skills/loader";
-import type { SkillIntent } from "../skills/matcher";
 
 export type RunTurnOptions = {
   invocationId?: string;
@@ -45,7 +45,8 @@ export function runTurn(options: RunTurnOptions) {
   const basePrompt = options.nativeSessionId
     ? options.userMessage
     : buildHistoryPrompt(options.history, options.userMessage);
-  // system prompt 每次都加载，task skill 只在命中对应任务意图时追加。
+
+  // The orchestrator materializes a single prompt up front so runtime adapters only deal with process launching.
   const systemPrompt = buildSystemPrompt(options.agentId ?? options.provider);
   const skillsPrompt = formatSkillsForPrompt(
     loadSkillsForTask({
@@ -55,21 +56,23 @@ export function runTurn(options: RunTurnOptions) {
   );
   const prompt = skillsPrompt ? `${skillsPrompt}\n\n${basePrompt}` : basePrompt;
   const runtime = runtimeAdapters[options.provider];
+
   const input: AgentRunInput = {
     invocationId: options.invocationId ?? crypto.randomUUID(),
     threadId: options.threadId,
     agentId: options.agentId ?? options.provider,
     prompt,
     env: {
-      // runtime 统一通过 env 接收运行期身份、模型、system prompt 等信息。
+      // Callback credentials and model/session context travel through env because each CLI exposes a different shell surface.
       MULTI_AGENT_SYSTEM_PROMPT: systemPrompt,
-      CAT_ROOM_API_URL: options.apiBaseUrl ?? "",
-      CAT_ROOM_INVOCATION_ID: options.invocationId ?? "",
-      CAT_ROOM_CALLBACK_TOKEN: options.callbackToken ?? "",
+      MULTI_AGENT_API_URL: options.apiBaseUrl ?? "",
+      MULTI_AGENT_INVOCATION_ID: options.invocationId ?? "",
+      MULTI_AGENT_CALLBACK_TOKEN: options.callbackToken ?? "",
       MULTI_AGENT_MODEL: options.model ?? "",
       MULTI_AGENT_NATIVE_SESSION_ID: options.nativeSessionId ?? ""
     }
   };
+
   let cancelled = false;
   let content = "";
   let currentModel = options.model;
@@ -102,7 +105,7 @@ export function runTurn(options: RunTurnOptions) {
           options.onModel(eventModel);
         }
       } catch {
-        // 某些 CLI 不会始终输出结构化 JSON；兜底时直接把原始文本当增量内容处理。
+        // Some CLIs still write plain text lines instead of structured JSON; stream them anyway.
         content += line;
         options.onAssistantDelta(line);
       }

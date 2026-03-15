@@ -22,6 +22,7 @@ export function registerWsRoute(
   const sockets = new Set<SocketLike>();
 
   options.broadcaster.broadcast = (event) => {
+    // Broadcasts are room-wide fan-out events: snapshots, public callback messages and shared status updates.
     for (const socket of sockets) {
       try {
         sendSocketEvent(socket, event);
@@ -46,6 +47,7 @@ export function registerWsRoute(
       });
 
       socket.on("message", async (raw: Buffer) => {
+        // Client websocket messages stay tiny on purpose: parse, hand off to MessageService, then emit normalized server events.
         const event = JSON.parse(raw.toString()) as RealtimeClientEvent;
         options.messages.handleClientEvent(event, (payload) => sendSocketEvent(socket as SocketLike, payload));
       });

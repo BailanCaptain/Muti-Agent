@@ -148,7 +148,10 @@ export class SessionService {
       .flatMap((thread) =>
         this.repository.listMessages(thread.id).map((message) => ({
           role: message.role,
-          content: message.role === "user" ? `@${thread.alias} ${message.content}` : `${thread.alias}: ${message.content}`,
+          content: message.role === "user"
+            // A2A dispatch 消息已经包含了完整上下文，不再重复添加 @前缀，减少冗余 mention
+            ? (message.content.startsWith("You were mentioned by") ? message.content : `@${thread.alias} ${message.content}`)
+            : `${thread.alias}: ${message.content}`,
           createdAt: message.createdAt
         }))
       )
@@ -173,10 +176,12 @@ export class SessionService {
     return {
       id,
       provider: thread.provider,
-      alias: thread.alias,
+      alias: role === "user" ? "村长" : thread.alias,
       role,
-      content: role === "user" ? `@${thread.alias} ${content}` : content,
-      model: thread.currentModel,
+      content: role === "user"
+        ? (content.startsWith("You were mentioned by") ? content : `@${thread.alias} ${content}`)
+        : content,
+      model: role === "user" ? null : thread.currentModel,
       createdAt
     };
   }

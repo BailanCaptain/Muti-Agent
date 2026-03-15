@@ -8,8 +8,53 @@ import type { SessionService } from "./session-service";
 type ActiveRun = ReturnType<typeof runTurn>;
 type EmitEvent = (event: RealtimeServerEvent) => void;
 
+function stripAnsi(value: string) {
+  return value.replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
+}
+
+function extractPromptFromActivityChunk(chunk: string) {
+  const lines = stripAnsi(chunk)
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) {
+    return null;
+  }
+
+  const promptLikeLines = lines.filter((line) => {
+    if (line.length < 6) {
+      return false;
+    }
+
+    if (
+      /(please confirm|need your confirmation|awaiting your confirmation|do you want|would you like|should i|can you clarify|please provide|please choose|approval required|user input required)/i.test(
+        line
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      /(\u8bf7\u786e\u8ba4|\u9700\u8981\u4f60\u786e\u8ba4|\u9700\u8981\u786e\u8ba4|\u7b49\u5f85\u4f60\u7684\u786e\u8ba4|\u8bf7\u63d0\u4f9b|\u8bf7\u8865\u5145|\u8bf7\u9009\u62e9|\u8bf7\u95ee)/.test(
+        line
+      )
+    ) {
+      return true;
+    }
+
+    return /(?:\?|\uFF1F)$/.test(line);
+  });
+
+  if (!promptLikeLines.length) {
+    return null;
+  }
+
+  return promptLikeLines.join("\n").slice(0, 1200);
+}
+
 export class MessageService {
-  // 防止同一个 session group 被并发 flush，导致下一跳重复拉起。
   private readonly flushingGroups = new Set<string>();
 
   constructor(
@@ -46,7 +91,6 @@ export class MessageService {
       return;
     }
 
-    // agent 的公开消息也要挂到当前 root 上，这样 A2A 路由才能沿着同一条链继续传播。
     this.dispatch.attachMessageToRoot(options.messageId, invocation.rootMessageId);
     this.dispatch.enqueuePublicMentions({
       messageId: options.messageId,
@@ -74,6 +118,7 @@ export class MessageService {
     }
 
     const userMessage = this.sessions.appendUserMessage(thread.id, event.payload.content);
+    // Every user turn starts a new root chain so direct replies and later A2A hops stay correlated.
     const rootMessageId = this.dispatch.registerUserRoot(userMessage.id);
     const userTimeline = this.sessions.toTimelineMessage(thread.id, userMessage.id);
     if (userTimeline) {
@@ -85,6 +130,7 @@ export class MessageService {
         }
       });
     }
+
     emit({
       type: "thread_snapshot",
       payload: {
@@ -100,8 +146,6 @@ export class MessageService {
       rootMessageId
     });
 
-    // 用户消息里可能同时 @ 了多个 agent（前端只剥离了第一个 @），
-    // 主 agent 跑完后，把剩余 @ 也扫一遍，触发对应 agent。
     this.dispatch.enqueuePublicMentions({
       messageId: userMessage.id,
       sessionGroupId: thread.sessionGroupId,
@@ -141,7 +185,8 @@ export class MessageService {
       options.historyMode === "shared"
         ? this.sessions.listSharedHistory(thread.sessionGroupId)
         : this.sessions.listHistory(thread.id);
-    // 先写一个 assistant 占位消息，前端后续收到 delta 时就知道该往哪条消息上追加。
+
+    // The placeholder is created before the CLI starts so deltas always know which bubble to append into.
     const assistant = this.sessions.appendAssistantMessage(thread.id, "");
     this.dispatch.attachMessageToRoot(assistant.id, options.rootMessageId);
     const assistantTimeline = this.sessions.toTimelineMessage(thread.id, assistant.id);
@@ -155,7 +200,6 @@ export class MessageService {
       });
     }
 
-    // invocation 是“这一次真实运行”的身份，不等同于 thread 或 session。
     const identity = this.invocations.createInvocation(thread.id, thread.alias);
     this.dispatch.bindInvocation(identity.invocationId, {
       rootMessageId: options.rootMessageId,
@@ -164,6 +208,8 @@ export class MessageService {
     });
 
     const startedAt = new Date().toISOString();
+    let promptRequestedByCli: string | null = null;
+    let run: ActiveRun | null = null;
 
     this.events.emit({
       type: "invocation.started",
@@ -180,7 +226,7 @@ export class MessageService {
       payload: { message: `Running ${thread.alias}` }
     });
 
-    const run = runTurn({
+    run = runTurn({
       invocationId: identity.invocationId,
       threadId: thread.id,
       provider: thread.provider,
@@ -200,7 +246,6 @@ export class MessageService {
       onSession: () => {},
       onModel: () => {},
       onActivity: (activity) => {
-        // stdout 更像在正式回复，stderr 更像 thinking / tool 过程；两者都算活跃。
         this.events.emit({
           type: "invocation.activity",
           invocationId: identity.invocationId,
@@ -211,12 +256,36 @@ export class MessageService {
           status: activity.stream === "stdout" ? "replying" : "thinking",
           createdAt: activity.at
         });
+
+        if (promptRequestedByCli || activity.stream !== "stderr") {
+          return;
+        }
+
+        // Some CLIs surface clarifications on stderr while waiting for the user; promote that into the timeline and stop.
+        const prompt = extractPromptFromActivityChunk(activity.chunk);
+        if (!prompt) {
+          return;
+        }
+
+        promptRequestedByCli = prompt;
+        this.sessions.overwriteMessage(assistant.id, prompt);
+        options.emit({
+          type: "status",
+          payload: { message: `${thread.alias} needs your confirmation. The current run was paused, reply to continue.` }
+        });
+        options.emit({
+          type: "thread_snapshot",
+          payload: {
+            activeGroup: this.sessions.getActiveGroup(thread.sessionGroupId, new Set(this.invocations.keys()))
+          }
+        });
+
+        run?.cancel();
       }
     });
 
     this.invocations.attachRun(thread.id, identity.invocationId, run);
 
-    // 在 attachRun 之后发快照，这样前端能收到 running: true，显示正确的加载状态。
     options.emit({
       type: "thread_snapshot",
       payload: {
@@ -229,7 +298,9 @@ export class MessageService {
       this.invocations.invalidateInvocation(identity.invocationId);
       this.dispatch.releaseInvocation(identity.invocationId);
       this.sessions.updateThread(thread.id, result.currentModel, result.nativeSessionId);
-      this.sessions.overwriteMessage(assistant.id, result.content || "[empty response]");
+      if (!promptRequestedByCli) {
+        this.sessions.overwriteMessage(assistant.id, result.content || "[empty response]");
+      }
 
       this.events.emit({
         type: "invocation.finished",
@@ -241,8 +312,7 @@ export class MessageService {
         createdAt: new Date().toISOString()
       });
 
-      if (result.content.trim()) {
-        // 普通 CLI 最终回复也被当成公开消息处理，这样 agent 文本里的 @ 也能触发下一跳。
+      if (!promptRequestedByCli && result.content.trim()) {
         this.dispatch.enqueuePublicMentions({
           messageId: assistant.id,
           sessionGroupId: thread.sessionGroupId,
@@ -303,7 +373,7 @@ export class MessageService {
 
     try {
       while (true) {
-        // 队列里拿出来的不是“原用户问题”，而是共享上下文下的下一跳任务。
+        // A2A hops are serialized per session group so shared context evolves in a predictable order.
         const next = this.dispatch.takeNextQueuedDispatch(sessionGroupId, new Set(this.invocations.keys()));
         if (!next) {
           return;

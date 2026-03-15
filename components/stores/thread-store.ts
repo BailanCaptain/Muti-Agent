@@ -7,7 +7,8 @@ import {
   type Provider,
   type ProviderCatalog,
   type SessionGroupSummary,
-  type TimelineMessage
+  type TimelineMessage,
+  type InvocationStats
 } from "@multi-agent/shared";
 
 type ProviderCardState = {
@@ -48,6 +49,7 @@ type ThreadStore = {
   activeGroupId: string | null;
   activeGroup: { id: string; title: string; meta: string } | null;
   timeline: TimelineMessage[];
+  invocationStats: InvocationStats[];
   bootstrap: () => Promise<void>;
   createSessionGroup: () => Promise<void>;
   selectSessionGroup: (groupId: string) => Promise<void>;
@@ -161,7 +163,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   activeGroupId: null,
   activeGroup: null,
   timeline: [],
+  invocationStats: [],
   bootstrap: async () => {
+    // Bootstrap stitches together the static provider catalog and the latest session list before selecting a room.
     const [groupsPayload, providersPayload] = await Promise.all([
       fetchJson<{ sessionGroups: SessionGroupSummary[] }>("/api/bootstrap"),
       fetchJson<{ providers: ProviderCatalog[] }>("/api/providers")
@@ -224,6 +228,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   replaceActiveGroup: (group) => {
     set((state) => ({
       activeGroup: { id: group.id, title: group.title, meta: group.meta },
+      // Snapshots come from the database and can momentarily lag behind local deltas, so merge instead of replacing.
       timeline: mergeTimeline(state.timeline, group.timeline),
       providers: group.providers
     }));
@@ -247,6 +252,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     }));
   },
   buildSendPayload: (input) => {
+    // The frontend sends the resolved provider/thread pair so the backend ws route can stay transport-focused.
     const provider = parseMention(input);
     if (!provider) {
       return null;

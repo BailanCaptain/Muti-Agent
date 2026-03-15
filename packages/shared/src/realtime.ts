@@ -15,11 +15,34 @@ export type TimelineMessage = {
   role: "user" | "assistant";
   /** 真正显示在聊天气泡里的文本内容。 */
   content: string;
+  /** 心里话内容，推理过程。 */
+  thinking?: string;
+  /** 输入 token 数。 */
+  inputTokens?: number;
+  /** 输出 token 数。 */
+  outputTokens?: number;
+  /** 缓存百分比。 */
+  cachedPercent?: number;
   /** 这条消息产生时，该 thread 当前使用的模型名。 */
   model: string | null;
   /** ISO 时间字符串，用来排序时间线。 */
   createdAt: string;
 };
+
+/**
+ * Invocation 事件统计。
+ */
+export interface InvocationStats {
+  sessionId: string;
+  agentId: string;
+  provider: Provider;
+  model: string;
+  startedAt: string;
+  status: "ACTIVE" | "IDLE" | "ERROR";
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+}
 
 /**
  * 左侧历史会话列表里的一条摘要。

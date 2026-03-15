@@ -39,12 +39,12 @@ type ToolResult = {
 };
 
 function getCallbackIdentity(): CallbackIdentity {
-  const apiUrl = process.env.CAT_ROOM_API_URL || process.env.API_URL || "";
-  const invocationId = process.env.CAT_ROOM_INVOCATION_ID || process.env.INVOCATION_ID || "";
-  const callbackToken = process.env.CAT_ROOM_CALLBACK_TOKEN || process.env.CALLBACK_TOKEN || "";
+  const apiUrl = process.env.MULTI_AGENT_API_URL || process.env.API_URL || "";
+  const invocationId = process.env.MULTI_AGENT_INVOCATION_ID || process.env.INVOCATION_ID || "";
+  const callbackToken = process.env.MULTI_AGENT_CALLBACK_TOKEN || process.env.CALLBACK_TOKEN || "";
 
   if (!apiUrl || !invocationId || !callbackToken) {
-    throw new Error("Missing CAT_ROOM callback environment variables.");
+    throw new Error("Missing MULTI_AGENT callback environment variables.");
   }
 
   return { apiUrl, invocationId, callbackToken };
