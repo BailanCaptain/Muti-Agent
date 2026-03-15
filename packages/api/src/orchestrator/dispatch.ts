@@ -38,8 +38,6 @@ export class DispatchOrchestrator {
   private readonly rootHopCounts = new Map<string, number>();
   // messageId -> 这条公开消息已经触发过哪些 provider，防止重复触发
   private readonly messageTriggeredProviders = new Map<string, Set<Provider>>();
-  // rootMessageId -> 在此协作链中已经被触发过的 provider，防止同一 agent 在同一链中被反复拉起浪费跳数
-  private readonly rootTriggeredProviders = new Map<string, Set<Provider>>();
   // invocationId -> 当前运行属于哪条协作链
   private readonly invocationContexts = new Map<string, InvocationContext>();
   // sessionGroupId -> 等待执行的下一跳队列；第一版故意做成串行
@@ -58,7 +56,6 @@ export class DispatchOrchestrator {
   registerUserRoot(messageId: string) {
     this.messageRoots.set(messageId, messageId);
     this.rootHopCounts.set(messageId, 0);
-    this.rootTriggeredProviders.set(messageId, new Set());
     return messageId;
   }
 
@@ -86,7 +83,6 @@ export class DispatchOrchestrator {
     rootMessageId: string;
     content: string;
   }) {
-    // All public-room mentions funnel through this method so user messages, callback posts and final answers share one A2A rule set.
     // 只对“公开消息”做 mention 解析；用户消息和 agent 主动 post_message 都会走到这里。
     const mentions = resolveMentions(options.content, this.aliases);
     if (!mentions.length) {
@@ -94,7 +90,6 @@ export class DispatchOrchestrator {
     }
 
     const alreadyTriggered = this.messageTriggeredProviders.get(options.messageId) ?? new Set<Provider>();
-    const rootTriggered = this.rootTriggeredProviders.get(options.rootMessageId) ?? new Set<Provider>();
     const currentHopCount = this.rootHopCounts.get(options.rootMessageId) ?? 0;
     const remainingHops = Math.max(0, DispatchOrchestrator.MAX_HOPS - currentHopCount);
     if (remainingHops <= 0) {
@@ -115,12 +110,6 @@ export class DispatchOrchestrator {
       }
 
       if (alreadyTriggered.has(mention.provider) || dedupedProviders.has(mention.provider)) {
-        continue;
-      }
-
-      // 同一协作链中已经触发过的 provider 不再消耗跳数，直接跳过，
-      // 避免 agent 之间 ping-pong 式互相 @ 迅速耗尽配额。
-      if (rootTriggered.has(mention.provider)) {
         continue;
       }
 
@@ -154,10 +143,6 @@ export class DispatchOrchestrator {
 
     this.messageTriggeredProviders.set(options.messageId, alreadyTriggered);
     this.rootHopCounts.set(options.rootMessageId, currentHopCount + queued.length);
-    for (const item of queued) {
-      rootTriggered.add(item.targetProvider);
-    }
-    this.rootTriggeredProviders.set(options.rootMessageId, rootTriggered);
 
     const queue = this.queues.get(options.sessionGroupId) ?? [];
     queue.push(...queued);
@@ -167,7 +152,6 @@ export class DispatchOrchestrator {
 
   takeNextQueuedDispatch(sessionGroupId: string, runningThreadIds: Set<string>) {
     const groupThreads = this.sessions.listGroupThreads(sessionGroupId);
-    // Session-group dispatch stays serialized so the next hop always sees a stable shared transcript.
     // 同一会话组内只做串行调度：只要还有 agent 在跑，就先不触发下一跳。
     const hasRunningThread = groupThreads.some((thread) => runningThreadIds.has(thread.id));
     if (hasRunningThread) {
