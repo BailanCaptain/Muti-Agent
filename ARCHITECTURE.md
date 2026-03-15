@@ -1,1408 +1,858 @@
 # Multi-Agent 架构文档
 
-## 目录
+这份文档不是泛泛而谈的“概念介绍”，而是直接对照当前代码，把系统里最容易混淆的几件事讲清楚：
 
-1. [先看结论：这次整改到底做成了什么](#先看结论这次整改到底做成了什么)
-2. [为什么要整改：旧系统能用，但不够支撑多 agent 协作](#为什么要整改旧系统能用但不够支撑多-agent-协作)
-3. [这次整改后，系统现在具备什么能力](#这次整改后系统现在具备什么能力)
-4. [这次整改没有做什么，为什么故意不做](#这次整改没有做什么为什么故意不做)
-5. [整体架构图](#整体架构图)
-6. [从全局看，一条消息是怎么跑完整条链路的](#从全局看一条消息是怎么跑完整条链路的)
-7. [为什么要按阶段整改，而不是一次性全写完](#为什么要按阶段整改而不是一次性全写完)
-8. [每一步整改做了什么、解决什么、为什么只做这些](#每一步整改做了什么解决什么为什么只做这些)
-9. [前后端怎么通信](#前后端怎么通信)
-10. [运行时层是怎么统一三家 CLI 的](#运行时层是怎么统一三家-cli-的)
-11. [为什么需要 invocation、事件记录和状态管理](#为什么需要-invocation事件记录和状态管理)
-12. [callback API 是什么，为什么它比 MCP 更基础](#callback-api-是什么为什么它比-mcp-更基础)
-13. [MCP 本地工具桥是怎么接进来的](#mcp-本地工具桥是怎么接进来的)
-14. [A2A：agent 为什么终于能互相叫人了](#a2aagent-为什么终于能互相叫人了)
-15. [skills 和 system prompt 为什么要分开](#skills-和-system-prompt-为什么要分开)
-16. [数据库和持久化结构](#数据库和持久化结构)
-17. [重构前后对比：你实际能感受到什么变化](#重构前后对比你实际能感受到什么变化)
-18. [术语表：把所有关键技术名词讲清楚](#术语表把所有关键技术名词讲清楚)
-19. [后续演进建议](#后续演进建议)
+1. 前端、后端、CLI、MCP、callback API、A2A 分别在哪一层。
+2. `session group`、`thread`、`message`、`invocation` 在代码里各代表什么。
+3. 新建一个会话和继续使用原会话，在技术上到底有什么区别。
+4. 当前会话正在进行时，能不能再新建一个会话跑别的任务。
 
 ---
 
-## 先看结论：这次整改到底做成了什么
+## 一句话结论
 
-一句话总结：
+这个项目现在已经不是“一个页面分别调用三个 CLI”，而是一个真正有调度层的多 agent orchestrator：
 
-**这次整改不是单纯把网页换了个框架，而是把原来“一个网页去调三个 CLI”的系统，升级成了一个真正能做多 agent 协作的 orchestrator。**
+- 前端负责输入、展示、状态同步。
+- 后端负责调度、持久化、callback、A2A、MCP 桥接。
+- CLI 只是被 runtime 统一拉起的执行端。
+- `session group -> threads -> messages -> invocations -> agent_events` 才是整个系统真正的骨架。
 
-从结果上看，现在系统已经能做到：
+---
 
-- 有统一聊天 UI，用户在同一个界面里和多个 agent 协作。
-- 用户可以通过 `@范德彪`、`@黄仁勋`、`@桂芬` 路由到不同 agent。
-- 三家 CLI 都能被拉起，而且不再散落在业务代码里，而是走统一 runtime。
-- 后端能通过 WebSocket 把生成中的内容实时推给前端。
-- 对话、消息、会话组、运行记录都能持久化到 SQLite。
-- agent 不再只能被动回复，已经能主动发公开消息、主动拿上下文。
-- Claude 可以通过 MCP 工具桥调用本地工具。
-- Codex / Gemini 虽然第一版不走原生 MCP，但也能通过 callback API 获得同等能力。
-- agent 发出的公开消息里如果 `@另一个 agent`，系统会自动触发下一跳协作。
-- system prompt 和 task skill 已经拆分，agent 的行为更稳定，不再全靠“临场发挥”。
+## 1. 一张架构图先看全局
 
-换句话说，整改后的系统已经从：
+```mermaid
+flowchart LR
+    subgraph FE["前端 / Browser"]
+        PAGE["app/page.tsx<br/>页面级事件分发"]
+        CHAT["components/chat/*<br/>输入框、时间线、侧边栏"]
+        STORE["Zustand stores<br/>chat-store / thread-store"]
+        WSCLIENT["components/ws/client.ts<br/>WebSocket 客户端"]
+    end
 
-```text
-统一聊天页 -> 调三个 CLI
+    subgraph API["后端 / Fastify"]
+        THREADS["routes/threads.ts<br/>HTTP：bootstrap / session-groups / threads"]
+        WS["routes/ws.ts<br/>WebSocket 入口"]
+        CALLBACKS["routes/callbacks.ts<br/>callback API"]
+    end
+
+    subgraph CORE["业务核心"]
+        MSG["services/message-service.ts<br/>消息主链路"]
+        SESSION["services/session-service.ts<br/>会话聚合与视图组装"]
+        DISPATCH["orchestrator/dispatch.ts<br/>A2A 队列与 mention 调度"]
+        INV["orchestrator/invocation-registry.ts<br/>运行身份与 stop 句柄"]
+        RUN["runtime/cli-orchestrator.ts<br/>统一 runtime 入口"]
+    end
+
+    subgraph RT["Runtime 适配层"]
+        CLAUDE["claude-runtime.ts"]
+        CODEX["codex-runtime.ts"]
+        GEMINI["gemini-runtime.ts"]
+    end
+
+    subgraph TOOLS["协作与工具层"]
+        MCP["mcp/server.ts<br/>本地 MCP stdio server"]
+        SKILLS["skills/loader.ts + matcher.ts<br/>system prompt / task skills"]
+    end
+
+    subgraph DATA["数据层"]
+        SQLITE["SQLite<br/>session_groups / threads / messages / invocations / agent_events"]
+    end
+
+    subgraph CLI["本地 CLI 进程"]
+        CLAUDECLI["Claude Code CLI"]
+        CODEXCLI["Codex CLI"]
+        GEMINICLI["Gemini CLI"]
+    end
+
+    PAGE --> STORE
+    CHAT --> STORE
+    STORE --> WSCLIENT
+    STORE --> THREADS
+    WSCLIENT --> WS
+    THREADS --> SESSION
+    WS --> MSG
+    CALLBACKS --> MSG
+    CALLBACKS --> SESSION
+    MSG --> SESSION
+    MSG --> DISPATCH
+    MSG --> INV
+    MSG --> RUN
+    RUN --> SKILLS
+    RUN --> CLAUDE
+    RUN --> CODEX
+    RUN --> GEMINI
+    CLAUDE --> CLAUDECLI
+    CODEX --> CODEXCLI
+    GEMINI --> GEMINICLI
+    CLAUDE --> MCP
+    MCP --> CALLBACKS
+    CODEXCLI -. callback prompt .-> CALLBACKS
+    GEMINICLI -. callback prompt .-> CALLBACKS
+    SESSION --> SQLITE
+    MSG --> SQLITE
+    DISPATCH --> SQLITE
+    INV --> SQLITE
 ```
 
-升级成：
+### 这张图要记住的重点
 
-```text
-统一聊天页 -> orchestrator -> runtime -> callback / MCP / A2A / skills
+- 前端不直接调 CLI，前端只调 Fastify。
+- `MessageService` 是消息链路的主入口，不是 `routes/ws.ts`。
+- `DispatchOrchestrator` 决定 A2A 怎么排队，不是 runtime 决定。
+- `InvocationRegistry` 管的是“这一次运行的临时身份”，不是“整个会话”。
+- Claude 走原生 MCP，Codex / Gemini 当前走 callback prompt 注入，但最终都落到同一套 callback API。
+
+---
+
+## 2. 先把五个最重要的对象讲清楚
+
+很多概念之所以容易混，是因为它们在中文里都容易被叫成“会话”“消息”“任务”。但代码里它们不是一回事。
+
+```mermaid
+flowchart TD
+    SG["session_group<br/>一次完整的多 agent 房间"]
+    TH1["thread<br/>Codex 在这个房间里的工作线"]
+    TH2["thread<br/>Claude 在这个房间里的工作线"]
+    TH3["thread<br/>Gemini 在这个房间里的工作线"]
+    MSG["message<br/>某条具体消息"]
+    INV["invocation<br/>一次真实 CLI 运行"]
+    EVT["agent_event<br/>这次运行的过程事件"]
+    SID["nativeSessionId<br/>底层 CLI 自己的 resume 会话号"]
+
+    SG --> TH1
+    SG --> TH2
+    SG --> TH3
+    TH1 --> MSG
+    TH2 --> MSG
+    TH3 --> MSG
+    TH1 --> INV
+    TH2 --> INV
+    TH3 --> INV
+    INV --> EVT
+    TH1 -.可能持有.-> SID
+    TH2 -.可能持有.-> SID
+    TH3 -.可能持有.-> SID
 ```
 
----
+### 2.1 `session_group`
 
-## 为什么要整改：旧系统能用，但不够支撑多 agent 协作
+代码位置：
 
-旧系统并不是“完全不能用”。它其实已经能做到几件很有价值的事：
+- `SessionRepository.createSessionGroup()`
+- `SessionService.createSessionGroup()`
+- 表：`session_groups`
 
-- 一个网页里同时接三个本地 CLI。
-- 用户可以发消息并看到返回。
-- 有历史记录。
-- 有基本的实时流式输出。
+它表示：
 
-但旧系统有一个根本问题：
+**一个完整的协作房间。**
 
-**它更像“一个统一入口去调三个聊天机器人”，而不像“一个多 agent 协作系统”。**
+一个 `session_group` 下面会自动创建 3 条 `thread`，分别给 `codex`、`claude`、`gemini`。
 
-这里的区别非常重要。
+### 2.2 `thread`
 
-### 旧系统的问题不是“不能聊天”，而是“不能协作”
+代码位置：
 
-如果只是问答，旧系统够用。
+- `threads` 表
+- `ProviderThreadRecord`
+- `SessionService.findThreadByGroupAndProvider()`
 
-但只要目标变成“多 agent 协作”，就会马上遇到这些问题：
+它表示：
 
-- 上层代码直接知道不同 CLI 的命令细节，扩展困难。
-- 系统不知道 agent 现在到底是忙着 thinking、调用工具，还是已经真的停了。
-- agent 没有自己的临时身份，任何进程都可以伪造 callback。
-- agent 不能主动发言，只能被用户点名。
-- agent 不能主动读共享上下文。
-- Claude 即使支持 MCP，也没有本地工具桥去转发业务。
-- agent 之间不能通过公开消息协作。
-- 就算偶尔能协作，也缺乏统一规则，容易出现“三个人各说各话”。
+**某个 provider 在某个房间里的单独工作线。**
 
-所以这次整改的核心目标不是“换技术栈显得更高级”，而是：
+要特别注意：这里的 `thread` 不是操作系统线程，也不是 WebSocket 线程。
 
-**把系统补齐成一个真正能组织、约束、追踪和扩展多 agent 协作的工程骨架。**
+在这个项目里，`thread` 的意思是：
 
----
+- 一个 agent 的上下文线
+- 一条消息归属线
+- 一个 `nativeSessionId` 的挂载点
 
-## 这次整改后，系统现在具备什么能力
+### 2.3 `message`
 
-按功能看，当前系统已经具备以下能力。
+代码位置：
 
-### 1. 统一聊天 UI
+- `messages` 表
+- `appendUserMessage()`
+- `appendAssistantMessage()`
 
-前端是一个统一聊天界面，而不是三个互不相干的小页面。
+它表示：
 
-它负责：
+**一条具体消息。**
 
-- 展示历史会话组。
-- 展示当前会话的统一时间线。
-- 展示三个 agent 的状态、模型、头像和操作入口。
-- 让用户通过 `@谁` 决定这句话交给谁。
+一条消息只属于一个 `thread`。
 
-### 2. `@agent` 用户路由
+### 2.4 `invocation`
 
-用户输入 `@范德彪`、`@黄仁勋`、`@桂芬` 之后，系统会先做 mention 解析，再把这条消息路由到对应 provider 的 thread。
+代码位置：
 
-这一步的意义是：
+- `InvocationRegistry`
+- `invocations` 表
+- `MessageService.runThreadTurn()`
 
-- 用户不需要切换多个窗口。
-- 同一个聊天室里就能明确“这次要谁来处理”。
+它表示：
 
-### 3. Fastify + WebSocket
-
-后端使用 Fastify 提供 API 和 WebSocket 服务。
-
-它负责：
-
-- 提供 HTTP 路由。
-- 维持浏览器和服务端之间的实时连接。
-- 把运行状态、增量文本、消息创建事件、线程快照推给前端。
-
-### 4. SQLite 持久化
-
-SQLite 是当前系统的落地数据库。
-
-它负责保存：
-
-- 会话组
-- thread
-- message
-- invocation
-- agent event
-
-这样做的好处是：
-
-- 重启后历史不会丢。
-- A2A、callback、事件追踪都有基础数据可查。
-
-### 5. 三个 CLI 可拉起
-
-系统已经能统一调起：
-
-- Codex CLI
-- Claude Code CLI
-- Gemini CLI
-
-而且不是“硬编码一堆命令拼接”了，而是放在 runtime 层里按统一输入输出协议调用。
-
----
-
-## 这次整改没有做什么，为什么故意不做
-
-这一部分非常重要，因为工程整改最怕“什么都想做，结果什么都做不稳”。
-
-这次整改有很多事情**故意没有做**。
-
-### 1. 不先做移动端
-
-原因：
-
-- 当前最核心的问题是 runtime、callback、A2A、skills 这些后端协作能力。
-- 移动端属于表现层优化，不是这次的主战场。
-
-### 2. 不先做复杂 rich blocks
-
-原因：
-
-- 现在消息的核心问题不是“展示得够不够花”，而是“消息链路是否可靠”。
-- 如果过早引入复杂消息块，反而会干扰实时事件设计。
-
-### 3. 不先做多用户体系
-
-原因：
-
-- 当前系统仍然是单机、本地、自用/小范围协作定位。
-- 多用户会立刻带来鉴权、隔离、权限、租户边界等复杂度。
-
-### 4. 不先做云部署
-
-原因：
-
-- 当前主要依赖本机 CLI、本机登录态、本机工具。
-- 在本地多 agent 逻辑没稳定前，上云只会放大问题。
-
-### 5. 不先做复杂向量检索
-
-原因：
-
-- 当前更缺的是“正确协作机制”，不是“更花的检索层”。
-- 在 system prompt、skills、callback、A2A 没稳定前，上向量检索会让问题更混。
-
-一句话解释：
-
-**这次整改优先解决的是“系统骨架”和“协作机制”，不是“外观扩展”和“部署规模”。**
-
----
-
-## 整体架构图
-
-```text
-┌────────────────────────────────────────────────────────────┐
-│                        浏览器前端                          │
-│  Next.js + React + TypeScript                             │
-│                                                            │
-│  - 统一聊天页                                              │
-│  - 历史会话侧栏                                            │
-│  - 顶部 agent 卡片                                         │
-│  - 输入框 / @agent 路由                                    │
-│  - WebSocket 客户端                                        │
-└───────────────────────┬────────────────────────────────────┘
-                        │
-                        │ HTTP + WebSocket
-                        │
-┌───────────────────────▼────────────────────────────────────┐
-│                      Fastify 后端                          │
-│                 Node.js + TypeScript                       │
-│                                                            │
-│  routes/                                                   │
-│  - threads / messages / callbacks / ws                     │
-│                                                            │
-│  services/                                                 │
-│  - session-service                                         │
-│  - message-service                                         │
-│                                                            │
-│  orchestrator/                                             │
-│  - dispatch                                                │
-│  - mention-router                                          │
-│  - invocation-registry                                     │
-│                                                            │
-│  runtime/                                                  │
-│  - claude-runtime                                          │
-│  - codex-runtime                                           │
-│  - gemini-runtime                                          │
-│                                                            │
-│  callback API                                              │
-│  - post-message                                            │
-│  - thread-context                                          │
-│  - pending-mentions                                        │
-│                                                            │
-│  mcp/                                                      │
-│  - 本地 MCP server                                         │
-│                                                            │
-│  skills/                                                   │
-│  - loader                                                  │
-│  - matcher                                                 │
-└───────────────┬───────────────────────┬────────────────────┘
-                │                       │
-                │                       │
-     ┌──────────▼──────────┐   ┌────────▼─────────────────┐
-     │      SQLite         │   │     本地 CLI 进程        │
-     │                     │   │                           │
-     │ - session_groups    │   │ - Codex CLI              │
-     │ - threads           │   │ - Claude Code CLI        │
-     │ - messages          │   │ - Gemini CLI             │
-     │ - invocations       │   │                           │
-     │ - agent_events      │   │ Claude 还会挂 MCP tool   │
-     └─────────────────────┘   └───────────────────────────┘
-```
-
-这张图的重点不是“画得炫”，而是帮你建立一个正确心智模型：
-
-- 前端只负责界面和交互。
-- 后端负责业务、调度、运行时、callback、持久化。
-- CLI 只是运行时的执行对象，不直接决定系统架构。
-- SQLite 负责把系统从“临时对话”变成“可恢复、可追踪、可审计”的系统。
-
----
-
-## 从全局看，一条消息是怎么跑完整条链路的
-
-下面用一条典型消息举例：
-
-```text
-@黄仁勋 帮我分析这个功能，然后请需要的话找范德彪 review
-```
-
-### 全局流程图
-
-```text
-用户输入
-  ↓
-前端解析输入并通过 WebSocket 发 send_message
-  ↓
-Fastify 收到事件
-  ↓
-MessageService 创建用户消息
-  ↓
-DispatchOrchestrator 为这条用户消息登记 rootMessageId
-  ↓
-MessageService 选择目标 thread，创建 assistant 占位消息
-  ↓
-InvocationRegistry 创建本轮 invocationId + callbackToken
-  ↓
-runTurn 调用 ClaudeRuntime
-  ↓
-ClaudeRuntime 拉起 Claude CLI
-  ↓
-CLI 通过 stdout/stderr 输出活动
-  ↓
-后端把 assistant_delta / status / snapshot 通过 WebSocket 推给前端
-  ↓
-如果 Claude 主动 post_message，callback API 会把公共消息写入 thread
-  ↓
-如果这条公共消息里有 @范德彪
-  ↓
-mention-router 识别到目标 agent
-  ↓
-dispatch 把 Codex 下一跳放入队列
-  ↓
-当前 invocation 结束后，系统自动拉起 Codex
-  ↓
-Codex 读取共享上下文，继续协作
-```
-
-### 为什么这条链路重要
-
-它说明现在系统不只是：
-
-```text
-用户 -> 模型 -> 回答
-```
-
-而是：
-
-```text
-用户 -> orchestrator -> runtime -> callback / A2A -> 继续协作
-```
-
-也就是说，真正负责“多 agent 协作”的，不是单个 CLI，而是后端这一整条调度链。
-
----
-
-## 为什么要按阶段整改，而不是一次性全写完
-
-因为这类系统不是“写一个大文件”就能自然长出来的。
-
-如果把 runtime、callback、MCP、A2A、skills 一次性全部混着做，会出现几个问题：
-
-- 你分不清每一层到底负责什么。
-- 一出 bug，不知道是 CLI、callback、路由还是状态机的问题。
-- 很多能力会半实现，表面看有，实际上不稳定。
-
-所以这次整改采用了**分层、分阶段、逐步补能力**的方式。
-
-每一步都只解决一个非常明确的问题。
-
-这样做的好处是：
-
-- 每一步的目标清楚。
-- 每一步都能单独验证。
-- 每一步都能解释“为什么这一步先加这个，不加那个”。
-
-这也是为什么你前面一直要求：
-
-- 这一步具体目标是什么
-- 为什么必须先做这一步
-- 为什么这一步只加这个不加那个
-
-这些问题其实非常关键，因为它们能防止架构演进变成“想到哪写到哪”。
-
----
-
-## 每一步整改做了什么、解决什么、为什么只做这些
-
-这一节是全文最重要的部分之一。它不仅讲“做了什么”，更讲“为什么这么做”。
-
-### 第 1 步：先整理目标模块结构
-
-#### 做了什么
-
-把后端目录整理成：
-
-- `routes/`
-- `services/`
-- `orchestrator/`
-- `runtime/`
-- `mcp/`
-- `skills/`
-- `db/`
-- `events/`
-
-#### 解决什么问题
-
-解决“未来能力到底该落在哪一层”的问题。
-
-#### 为什么这一步只做目录和边界，不先写新功能
-
-因为如果边界没立住，后面的 callback、MCP、A2A、skills 最后都容易继续堆进 service 里，系统会再次回到“能跑，但越来越乱”的状态。
-
----
-
-### 第 2 步：把 CLI 调用升级成统一 runtime
-
-#### 做了什么
-
-定义统一输入输出：
-
-- `AgentRunInput`
-- `AgentRunOutput`
-- `AgentRuntime`
-
-然后分别实现：
-
-- `ClaudeRuntime`
-- `CodexRuntime`
-- `GeminiRuntime`
-
-#### 解决什么问题
-
-让上层不再关心不同 CLI 的命令细节。
-
-#### 为什么这一步只做 runtime，不先做 callback / skills
-
-因为如果连“怎么跑一个 agent”都没有统一接口，后面任何 callback 注入、MCP 配置、system prompt 注入都会散在业务层里，无法维护。
-
----
-
-### 第 3 步：让系统正确知道 agent 还活着没有
-
-#### 做了什么
-
-- runtime 同时监听 `stdout` 和 `stderr`
-- 新增 `invocations`
-- 新增 `agent_events`
-- 新增状态枚举：`idle / running / replying / thinking / error`
-
-#### 解决什么问题
-
-避免把“没有 stdout”误判成“已经卡死”。
-
-#### 为什么这一步只做活动检测和事件记录
-
-因为如果连“它是不是还活着”都判断不准，后面的 callback、A2A、状态栏、调度时机都会错。
-
----
-
-### 第 4 步：给 agent 一个 callback API
-
-#### 做了什么
-
-实现三个 callback 接口：
-
-- `POST /api/callbacks/post-message`
-- `GET /api/callbacks/thread-context`
-- `GET /api/callbacks/pending-mentions`
-
-#### 解决什么问题
-
-让 agent 可以：
-
-- 主动发公共消息
-- 主动获取上下文
-- 主动查看最近谁在叫自己
-
-#### 为什么这一步不先做 MCP
-
-因为 MCP 只是“工具调用协议”。
-
-如果系统里还没有真正可调用的 callback API，那么 MCP server 只会变成一个空转发壳子。
-
-所以 callback API 比 MCP 更基础。
-
----
-
-### 第 5 步：给 callback 一个 invocation 身份
-
-#### 做了什么
-
-每次 agent 运行前创建：
-
-- `invocationId`
-- `callbackToken`
-- `expiresAt`
-
-并在 runtime 启动时注入：
-
-- `MULTI_AGENT_API_URL`
-- `MULTI_AGENT_INVOCATION_ID`
-- `MULTI_AGENT_CALLBACK_TOKEN`
-
-#### 解决什么问题
-
-让 callback API 不再裸奔。
-
-#### 为什么这一步不先做用户登录 / 权限系统
-
-因为当前要解决的是“当前这次 agent 运行是谁”，而不是“整个平台有哪些用户和租户”。
-
-这一步是 invocation 级身份，不是多用户平台级身份。
-
----
-
-### 第 6 步：写 MCP 本地工具桥
-
-#### 做了什么
-
-实现本地 MCP server，并注册：
-
-- `post_message`
-- `get_thread_context`
-
-#### 解决什么问题
-
-让 Claude 能通过原生 MCP 方式调本地工具。
-
-#### 为什么这一步不直接让 MCP 自己查数据库
-
-因为 MCP server 的职责是**协议适配和转发**，不是业务层。
-
-如果 MCP server 直接查库，它就会和 callback API 并列成两套业务入口，后面更难维护。
-
----
-
-### 第 7 步：让三家 agent 都具备“主动参与”能力
-
-#### 做了什么
-
-- ClaudeRuntime：注入 MCP
-- CodexRuntime：注入 callback prompt
-- GeminiRuntime：注入 callback prompt
-
-#### 解决什么问题
-
-让三家 agent 都能主动发消息、主动读上下文。
-
-#### 为什么这一步允许三家实现方式不完全一样
-
-因为这一步的目标是**能力对齐**，不是**协议洁癖**。
-
-只要结果上三家都能主动参与协作，就已经达到阶段目标。
-
----
-
-### 第 8 步：让 agent 的公开消息也能触发 `@agent`
-
-#### 做了什么
-
-- 对 agent 发出的公开消息执行 mention 解析
-- 为下一跳创建新的 invocation
-- 下一跳读共享 thread 上下文
-- 加 hop 限制和去重逻辑
-
-#### 解决什么问题
-
-把系统从：
-
-```text
-User -> Agent
-```
-
-扩展成：
-
-```text
-User -> Agent -> Agent -> User
-```
-
-#### 为什么这一步只做串行，不做并行 storm
-
-因为第一版的目标是**稳定协作**，不是“让所有 agent 一起冲出去说话”。
-
-串行更容易：
-
-- 控制 hop
-- 保证顺序
-- 降低无限循环风险
-
----
-
-### 第 9 步：引入 skills 和 system prompt
-
-#### 做了什么
-
-- 把长期规则拆到 `multi-agent-skills/system/room-charter.md`
-- 把任务型技能拆成：
-  - `review.md`
-  - `handoff.md`
-- 实现 `buildSystemPrompt(agentId)`
-- 每次调用 runtime 都注入 system prompt
-- 命中 review / handoff 意图时额外加载 task skill
-
-#### 解决什么问题
-
-让协作从“随机发挥”变成“有规则、有 SOP 的协作”。
-
-#### 为什么要把 system prompt 和 skills 分开
-
-因为它们解决的问题不同：
-
-- system prompt：长期生效的基本规则
-- task skill：只在某类任务触发的专项规则
-
-如果把它们全混在一起，模型每次都要吃下全部规则，提示会越来越重，也会越来越乱。
-
----
-
-## 前后端怎么通信
-
-这部分需要讲得非常清楚，因为“前后端通信”是很多初学者最容易抽象不起来的地方。
-
-### 一共有两种通信方式
-
-#### 1. HTTP
-
-HTTP 更适合这些事情：
-
-- 页面初始化拉数据
-- 普通接口查询
-- callback API
-- 一次请求，一次返回
-
-比如：
-
-- 获取线程列表
-- 获取会话组
-- agent 回调 `post-message`
-
-#### 2. WebSocket
-
-WebSocket 更适合这些事情：
-
-- 实时增量回复
-- 状态变化推送
-- 线程快照同步
-- 长连接双向通信
-
-这里的“双向通信”并不是“听起来很高级”的空话，它的意思是：
-
-- 前端可以随时向后端发事件
-- 后端也可以随时向前端发事件
-
-而不是像普通 HTTP 那样必须“一问一答，一来一回就结束”。
-
-### 为什么你平时感觉不出 WebSocket 和以前差很多
-
-因为你现在最常见的使用方式仍然是：
-
-```text
-我发一句 -> 它回一句
-```
-
-这种场景下，HTTP 流式和 WebSocket 看起来都像“一问一答”。
-
-但 WebSocket 真正的价值在于：
-
-- 一条长连接可以持续发事件
-- 可以很自然地同时推：
-  - delta
-  - status
-  - snapshot
-  - message.created
-- 后面做更多实时协作时，不需要继续新增一堆零散接口
-
-### 通信图
-
-```text
-浏览器
-  │
-  ├─ HTTP -> 拉初始化数据、调用普通 API、callback API
-  │
-  └─ WebSocket -> send_message / stop_thread / assistant_delta / status / snapshot
-                    ↑
-                    │
-                  Fastify
-```
-
-### 前端具体在监听什么
-
-前端主要监听两类东西。
-
-#### 1. 监听用户操作
+**某一个 agent 被真正拉起执行的一次运行实例。**
 
 例如：
 
-- 输入框提交
-- 点击某个 agent
-- 点击停止
-- 选择某个历史会话
+- 用户 `@黄仁勋` 发起一次 Claude 运行
+- A2A 链路里再自动拉起一次 Codex 运行
 
-这类监听的作用是：
+这两次就是两个不同的 `invocation`。
 
-**把用户意图变成一个前端事件。**
+### 2.5 `agent_event`
 
-#### 2. 监听 WebSocket 消息
+代码位置：
 
-例如：
+- `agent_events` 表
+- `events.emit({ type: "invocation.activity", ... })`
 
-- `assistant_delta`
-- `status`
-- `message.created`
-- `thread_snapshot`
+它表示：
 
-这类监听的作用是：
+**某次 invocation 过程中的活动日志。**
 
-**把后端发来的最新状态同步到页面上。**
-
-一句话理解：
-
-- 监听用户操作：知道用户想干什么
-- 监听 WebSocket：知道后端刚刚发生了什么
+不是聊天消息，不直接显示在普通时间线里，而是给调试、状态判断、可观测性用的。
 
 ---
 
-## 运行时层是怎么统一三家 CLI 的
+## 3. 新建会话，到底创建了什么
 
-这是整改里的一个关键技术点。
+这个问题很关键，因为“新建一个会话”和“继续在当前会话里说话”在系统内部不是同一种操作。
 
-### 以前的问题
+### 3.1 创建流程
 
-以前如果业务层直接知道这些信息：
+当前前端点左侧 `New` 按钮时，会调用：
 
-- Claude 命令怎么拼
-- Codex 参数怎么传
-- Gemini 要不要 shell
-- 哪家如何 resume
+- `components/chat/session-sidebar.tsx`
+- `useThreadStore().createSessionGroup()`
 
-那么上层代码就会越来越脏。
+前端随后调用：
 
-### 现在怎么做
+- `POST /api/session-groups`
 
-现在引入了统一 runtime 接口：
+后端链路是：
+
+1. `routes/threads.ts` 接收 `POST /api/session-groups`
+2. `SessionService.createSessionGroup()`
+3. `SessionRepository.createSessionGroup()`
+4. `SessionRepository.ensureDefaultThreads(...)`
+
+也就是说，新建会话不是只插入一条 `session_groups` 记录，它还会立刻补齐该房间下的默认线程。
+
+### 3.2 技术上新建会话会生成什么
+
+```mermaid
+flowchart TD
+    BTN["前端点击 New"]
+    API["POST /api/session-groups"]
+    SG["插入 session_groups 一条记录"]
+    T1["创建 codex thread"]
+    T2["创建 claude thread"]
+    T3["创建 gemini thread"]
+    VIEW["GET /api/session-groups/:groupId<br/>返回 activeGroup 视图"]
+
+    BTN --> API
+    API --> SG
+    SG --> T1
+    SG --> T2
+    SG --> T3
+    T1 --> VIEW
+    T2 --> VIEW
+    T3 --> VIEW
+```
+
+新建一个会话后，系统会得到一整套新的隔离对象：
+
+- 一个新的 `sessionGroupId`
+- 三个新的 `threadId`
+- 三条新的 provider 工作线
+- 三个新的 `nativeSessionId` 挂载位，初始都是 `null`
+- 一条新的时间线视图 `activeGroup`
+
+### 3.3 它和之前的会话有什么区别
+
+区别不在“UI 看起来像是开了个新房间”，而在于它在数据和调度上是新的一套边界。
+
+| 对比项 | 继续用原会话 | 新建会话 |
+| --- | --- | --- |
+| `sessionGroupId` | 不变 | 新建一个 |
+| 三个 `threadId` | 继续复用原来的 | 全部新建 |
+| 历史消息 | 继续接在原 timeline 上 | 从空房间开始 |
+| `nativeSessionId` | 可能复用原 CLI 会话，支持 resume | 初始为空，需要重新建立 |
+| A2A 队列 | 继续沿用原会话组队列 | 新开一条会话组队列 |
+| `rootMessageId` 链路 | 接在原房间消息树上 | 从新房间里重新开始 |
+| 停止按钮影响范围 | 只影响当前 thread 的当前 invocation | 只影响新房间对应 thread |
+
+一句话：
+
+**新建会话不是“把页面清空”，而是新建一套 `session_group + 3 threads + 后续消息链`。**
+
+---
+
+## 4. 当前会话进行中，能不能再新建一个会话做别的任务
+
+### 4.1 后端能力层面：可以
+
+从后端实现看，答案是：
+
+**可以，而且是被当前架构允许的。**
+
+原因有三个。
+
+#### 第一，运行锁是按 `threadId` 做的，不是按全局 provider 做的
+
+`MessageService.runThreadTurn()` 里拦截的是：
+
+- `this.invocations.has(thread.id)`
+
+不是：
+
+- “Claude 全局只能跑一个”
+- “整个系统一次只能跑一个”
+
+所以技术上允许：
+
+- 会话 A 里的 Claude 在跑
+- 会话 B 里的 Claude 也再跑一个
+
+因为它们是两个不同的 `threadId`。
+
+#### 第二，A2A 队列是按 `sessionGroupId` 分开的
+
+`DispatchOrchestrator` 里维护的是：
+
+- `queues: Map<string, QueuedDispatch[]>`
+
+key 是 `sessionGroupId`。
+
+这意味着：
+
+- 会话 A 的 A2A 接力不会塞进会话 B 的队列
+- 会话 B 的 hop 计数也不会污染会话 A
+
+#### 第三，串行限制只发生在“同一个会话组内部”
+
+`takeNextQueuedDispatch(sessionGroupId, runningThreadIds)` 会检查：
+
+- 当前 `sessionGroupId` 下面是否还有 thread 在运行
+
+如果有，就先不触发下一跳。
+
+这条限制是：
+
+**同房间串行。**
+
+不是：
+
+**全系统串行。**
+
+### 4.2 当前实现下的真实结论
+
+```mermaid
+flowchart LR
+    A["会话 A / session_group_A"]
+    B["会话 B / session_group_B"]
+
+    subgraph AG["A 房间"]
+        A1["thread: codex_A"]
+        A2["thread: claude_A"]
+        A3["thread: gemini_A"]
+    end
+
+    subgraph BG["B 房间"]
+        B1["thread: codex_B"]
+        B2["thread: claude_B"]
+        B3["thread: gemini_B"]
+    end
+
+    A --> AG
+    B --> BG
+```
+
+技术上当前允许的并发：
+
+- 会话 A 跑 Claude，同时会话 B 跑 Codex
+- 会话 A 跑 Claude，同时会话 B 也跑 Claude
+- 同一个会话组里，用户手动再点另一个 provider，也可以启动另一条 `thread`
+- 会话 A 空闲时，A 内部再串行接 A2A 下一跳
+
+不允许的并发：
+
+- 同一个 `threadId` 上重复启动第二次运行
+- 同一个会话组里 A2A 队列无序并发冲出去
+
+### 4.3 但前端展示层面，当前还有一个重要限制
+
+这里要非常诚实地写清楚：
+
+**后端允许跨会话并发，但当前前端页面状态仍然更接近“单活动房间视图”。**
+
+原因在于：
+
+- `app/page.tsx` 收到任何 `thread_snapshot` 都直接 `replaceActiveGroup(event.payload.activeGroup)`
+- 收到任何 `message.created` 都直接 `appendTimelineMessage(...)`
+- 收到任何 `assistant_delta` 都直接 `applyAssistantDelta(...)`
+
+当前页面没有先判断：
+
+- 这条事件是不是当前 `activeGroupId`
+- 这条消息是不是当前正在看的会话组
+
+这意味着如果你在**同一个页面实例**里同时让多个会话组都跑起来，当前 UI 可能出现这些表现：
+
+- 时间线被另一个会话组的快照覆盖
+- 顶部状态栏显示的是别的房间的状态
+- 你明明在看会话 A，但突然刷进会话 B 的更新
+
+### 4.4 所以这个问题的准确回答应该怎么说
+
+准确答案不是简单的“能”或者“不能”，而是：
+
+1. 后端和数据模型上，能。
+2. 调度层上，能，并且不同会话组互相隔离。
+3. 当前前端展示层还没有把 WebSocket 事件按 `sessionGroupId` 做过滤，所以同页面并发多会话时，UI 还不完全隔离。
+
+也就是说：
+
+**架构已经支持“后台并发开新会话做别的任务”，但当前页面层还没有把这种并发体验完全做成稳定的多房间实时视图。**
+
+---
+
+## 5. 前后端调用链，详细到事件级别
+
+这一节只讲“用户发一条消息，到底怎么穿过前后端”。
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant C as composer.tsx
+    participant CS as chat-store.ts
+    participant TS as thread-store.ts
+    participant WSC as ws/client.ts
+    participant WS as routes/ws.ts
+    participant MSG as MessageService
+    participant SES as SessionService
+    participant DIS as DispatchOrchestrator
+    participant INV as InvocationRegistry
+    participant RUN as runTurn
+    participant CLI as CLI runtime
+    participant PAGE as app/page.tsx
+
+    U->>C: 输入 @claude 帮我分析
+    C->>CS: sendMessage(input)
+    CS->>TS: buildSendPayload(input)
+    TS-->>CS: { threadId, provider, content, alias }
+    CS->>WSC: send(send_message)
+    WSC->>WS: WebSocket JSON
+    WS->>MSG: handleClientEvent(event)
+    MSG->>SES: appendUserMessage(...)
+    MSG->>DIS: registerUserRoot(userMessage.id)
+    MSG-->>PAGE: message.created
+    MSG-->>PAGE: thread_snapshot
+    MSG->>SES: appendAssistantMessage(...)
+    MSG->>INV: createInvocation(...)
+    MSG->>DIS: bindInvocation(...)
+    MSG->>RUN: runTurn(...)
+    RUN->>CLI: 拉起真实 CLI
+    CLI-->>MSG: stdout/stderr 活动
+    MSG-->>PAGE: assistant_delta / status / thread_snapshot
+```
+
+### 5.1 前端发出的是什么
+
+前端发的不是“随便一段文本”，而是 `RealtimeClientEvent`。
+
+代码定义：
+
+- `packages/shared/src/realtime.ts`
+
+当前前端真正发送的是：
 
 ```ts
-export type AgentRunInput = {
-  invocationId: string;
-  threadId: string;
-  agentId: string;
-  prompt: string;
-  cwd?: string;
-  env?: Record<string, string>;
-};
-
-export type AgentRunOutput = {
-  finalText?: string;
-  rawStdout: string;
-  rawStderr: string;
-  exitCode: number | null;
-};
+{
+  type: "send_message",
+  payload: {
+    threadId,
+    provider,
+    content,
+    alias
+  }
+}
 ```
 
-然后分别实现：
+这些字段里最容易误解的是：
 
-- `ClaudeRuntime`
-- `CodexRuntime`
-- `GeminiRuntime`
+- `provider`: 内部固定 ID，只可能是 `codex | claude | gemini`
+- `alias`: 展示给用户看的名字，比如“黄仁勋”
+- `threadId`: 目标 provider 在当前房间里的工作线 ID
 
-### 这样做的价值
+### 5.2 后端回推的是什么
 
-上层 orchestrator 现在只需要说一句：
+后端回推的是 `RealtimeServerEvent`，核心有四种：
 
-```text
-请按这个输入运行这个 agent
-```
+| 事件名 | 谁发出 | 作用 |
+| --- | --- | --- |
+| `assistant_delta` | `MessageService` | 往某个 assistant 气泡继续追加文本 |
+| `message.created` | `MessageService` / callback 路由 | 告诉前端“新消息已经落地了” |
+| `thread_snapshot` | `MessageService` / callback 路由 | 推一份当前 `activeGroup` 完整快照 |
+| `status` | `MessageService` / WebSocket 生命周期 | 更新顶部短状态 |
 
-它不需要知道：
+### 5.3 为什么既要 `assistant_delta` 又要 `thread_snapshot`
 
-- 底层命令是什么
-- 参数怎么拼
-- 特殊能力怎么注入
+因为它们解决的是两个不同的问题。
 
-这些细节全部收进 runtime 里。
+`assistant_delta` 解决：
 
-### 技术原理
+- 流式打字机效果
+- 用户能立刻看到生成中的内容
 
-runtime 的本质就是一层**适配器（adapter）**。
+`thread_snapshot` 解决：
 
-“适配器”这个词的意思是：
+- 前后端状态重新对齐
+- callback 消息落库后全量刷新
+- CLI 结束后把数据库里的最终状态同步回来
 
-> 外部统一看起来一样，内部各做各的转换。
+一句话：
 
-这很适合三家 CLI 场景，因为：
-
-- 上层想统一
-- 下层命令细节不统一
-
-runtime 就是专门拿来消化这种差异的。
+- `delta` 是“过程流”
+- `snapshot` 是“对账流”
 
 ---
 
-## 为什么需要 invocation、事件记录和状态管理
+## 6. runtime 层，到底统一了什么
 
-这是很多初学者最容易忽略、但实际工程里最重要的一层。
+### 6.1 为什么一定要有 runtime
 
-### 什么是 invocation
+如果没有 runtime，业务层就得直接知道：
 
-这里的 invocation 不是“线程”也不是“会话”，它指的是：
+- Claude 命令怎么拼
+- Codex 走什么参数
+- Gemini 怎么 resume
+- 哪家走 MCP，哪家走 callback prompt
 
-**某一个 agent 被真正拉起运行的一次执行实例。**
+这会导致：
 
-比如：
+- service 层掺杂大量 CLI 细节
+- 扩展新的 provider 时改动面很大
+- 调试时不知道 bug 到底在“业务链路”还是“命令拼装”
 
-- 用户这次 `@黄仁勋`
-- 系统拉起一次 Claude
+### 6.2 当前 runtime 的统一输入
 
-这一次运行，就是一个 invocation。
+代码位置：
 
-### 为什么不能只有 thread，没有 invocation
+- `packages/api/src/runtime/base-runtime.ts`
+- `packages/api/src/runtime/cli-orchestrator.ts`
 
-因为 thread 只表示“这段会话”。
+统一输入对象叫：
 
-但系统真正关心的很多问题是：
+- `AgentRunInput`
 
-- 现在这次运行是谁？
-- 它有没有 callback 身份？
-- 它什么时候开始？
-- 它什么时候结束？
-- 它出错了没有？
+它在代码里的意思是：
 
-这些都是 invocation 层的问题，不是 thread 层的问题。
+**上层已经把这次运行整理成了一份标准任务单，runtime 只负责把它翻译成真实 CLI 命令。**
 
-### 为什么要记录 agent events
+### 6.3 `runTurn()` 实际做了什么
 
-因为单靠最终结果，很多问题你根本定位不了。
+`runTurn()` 不是直接跑命令那么简单，它在启动 CLI 前还会做三件重要的事：
 
-例如：
+1. 组装 prompt 历史
+2. 注入 system prompt 和 task skill
+3. 把 callback 身份、模型、native session 信息塞进环境变量
 
-- 是真的卡死，还是只是在 stderr thinking？
-- 是工具调用太久，还是模型回复慢？
-- 是 callback 失败，还是 CLI 本身异常？
+```mermaid
+flowchart TD
+    HIST["history + userMessage"]
+    SYS["buildSystemPrompt(agentId)"]
+    SKILL["loadSkillsForTask(...)"]
+    PROMPT["最终 prompt"]
+    ENV["运行时 env<br/>API_URL / INVOCATION_ID / CALLBACK_TOKEN / MODEL / NATIVE_SESSION_ID"]
+    RT["runtime adapter"]
+    CLI["真实 CLI 进程"]
 
-所以系统会把关键活动记录成事件。
-
-### 为什么不能只看 stdout
-
-因为很多 CLI 在 thinking 或工具调用时，活动可能先出现在 stderr。
-
-如果系统只看 stdout，就会错误地以为：
-
-```text
-没 stdout = 卡死了
+    HIST --> PROMPT
+    SYS --> PROMPT
+    SKILL --> PROMPT
+    PROMPT --> RT
+    ENV --> RT
+    RT --> CLI
 ```
 
-这是错误的。
+### 6.4 `nativeSessionId` 在代码里是什么
 
-正确做法是：
+它不是平台层的会话组 ID。
 
-- stdout 活动算活着
-- stderr 活动也算活着
+它在代码里表示：
+
+**底层某家 CLI 自己返回的 resume 会话号。**
+
+挂载位置：
+
+- `threads.native_session_id`
+- `ProviderThreadRecord.nativeSessionId`
+
+作用：
+
+- 下次同一个 `thread` 再运行时，可以让底层 CLI 走 `resume`
+- 这样就不是每一轮都完全从零开始
 
 ---
 
-## callback API 是什么，为什么它比 MCP 更基础
+## 7. callback API、MCP、A2A 之间是什么关系
 
-这一节非常关键。
+这三个词最容易被混在一起，但它们不是一层东西。
 
-很多人会先问：
+```mermaid
+flowchart LR
+    CLI["运行中的 agent / CLI"]
+    MCP["MCP 协议层<br/>仅 Claude 原生接入"]
+    PROMPT["callback prompt<br/>Codex / Gemini"]
+    API["callback API<br/>真正的业务能力"]
+    MSG["MessageService / SessionService"]
+    DIS["DispatchOrchestrator"]
 
-```text
-怎么接 MCP？
+    CLI --> MCP
+    CLI --> PROMPT
+    MCP --> API
+    PROMPT --> API
+    API --> MSG
+    MSG --> DIS
 ```
 
-但更底层的问题其实是：
+### 7.1 callback API 是业务能力层
 
-```text
-agent 到底通过什么业务接口发消息、读上下文？
-```
+代码位置：
 
-答案就是 callback API。
+- `packages/api/src/routes/callbacks.ts`
 
-### callback API 是什么
-
-callback API 就是系统专门提供给运行中 agent 调用的一组后端接口。
-
-当前有三条：
+当前提供三类能力：
 
 - `POST /api/callbacks/post-message`
 - `GET /api/callbacks/thread-context`
 - `GET /api/callbacks/pending-mentions`
 
-### 它们分别干什么
+它们才是“agent 主动参与协作”的真正业务入口。
 
-#### `post-message`
+### 7.2 MCP 是协议层，不是业务层
 
-让 agent 主动发一条公共消息。
+代码位置：
 
-#### `thread-context`
+- `packages/api/src/mcp/server.ts`
 
-让 agent 主动读取当前 thread 最近消息。
+当前这个 MCP server 并不直接查数据库，它只做三件事：
 
-#### `pending-mentions`
+1. 从环境变量读取这次 invocation 的身份
+2. 把 Claude 的工具调用翻译成 HTTP 请求
+3. 调 callback API
 
-让 agent 看最近有没有新的公开消息在 `@自己`。
+所以要记住：
 
-### 为什么 callback API 比 MCP 更基础
+- `callback API` = 业务能力
+- `MCP server` = 协议适配器
 
-因为 MCP 只是“工具调用协议”。
+### 7.3 Codex / Gemini 为什么没走原生 MCP
 
-它本身不等于业务能力。
+当前实现里：
 
-真正的业务能力是：
+- `claude-runtime.ts` 会为每次 invocation 生成临时 MCP 配置文件
+- `codex-runtime.ts` / `gemini-runtime.ts` 通过 `buildCallbackPrompt(...)` 把 callback 调用说明塞进 prompt
 
-- 发公共消息
+这代表的不是“能力不同”，而是“接入方式不同”。
+
+结果上三家都能做到：
+
 - 读上下文
-- 查 mentions
+- 发公开消息
+- 触发后续协作
 
-这些能力必须先落在 callback API 上。
-
-然后 Claude 再通过 MCP 去调这些 callback API。
-
-所以层级关系是：
-
-```text
-业务能力 = callback API
-协议桥 = MCP server
-```
-
-不是反过来。
+只是 Claude 是原生 tool call，Codex / Gemini 目前是 prompt 驱动调用。
 
 ---
 
-## MCP 本地工具桥是怎么接进来的
+## 8. A2A 详细解释：代码里到底怎么让 agent 互相叫人
 
-当前 MCP 的定位非常清楚：
+A2A = agent-to-agent。
 
-**它不是业务层，而是 Claude 调本地工具的一层协议适配。**
+在当前代码里，它不是“两个 CLI 彼此建连接”，而是：
 
-### MCP server 现在做什么
+**公开消息 -> mention 解析 -> 入队 -> 下一跳 runtime**
 
-当前本地 MCP server 只做三件事：
+### 8.1 触发入口
 
-1. 接收 Claude 的 MCP tool call
-2. 从环境变量拿 invocation 身份
-3. 转发到 callback API
+代码位置：
 
-它不做：
+- `DispatchOrchestrator.enqueuePublicMentions(...)`
 
-- 直接查 SQLite
-- 直接写 message 表
-- 直接决定业务规则
+它会处理三类公开文本里的 mention：
 
-### 为什么要这么做
+- 用户消息里的 `@agent`
+- callback `post-message` 发出的公共消息里的 `@agent`
+- agent 最终回答里的 `@agent`
 
-因为这样能保证业务只有一套。
+### 8.2 队列里存的不是“原消息”，而是“下一跳任务单”
 
-如果 MCP server 直接查库，那就会变成：
+`QueuedDispatch` 里保存的是：
 
-- callback API 一套业务
-- MCP server 一套业务
+- `sessionGroupId`
+- `rootMessageId`
+- `sourceMessageId`
+- `sourceProvider`
+- `targetProvider`
+- `content`
 
-这会让后续维护非常痛苦。
+这里最重要的是 `rootMessageId`。
 
-### 调用图
+它在代码里的意义是：
 
-```text
-Claude CLI
-  ↓
-MCP tool call
-  ↓
-本地 MCP server
-  ↓
-callback API
-  ↓
-MessageService / SessionService
-  ↓
-SQLite + WebSocket 广播
+**把整条协作链串成同一个 root，后续 hop 限制、去重、追踪都围绕它计算。**
+
+### 8.3 A2A 流程图
+
+```mermaid
+flowchart TD
+    PUB["公开消息产生"]
+    MENTION["resolveMentions(...)"]
+    SELF["是否 mention 自己？"]
+    DEDUP["本 message 是否已触发过同 provider？"]
+    HOP["root hop 是否超限？"]
+    QUEUE["写入 queues[sessionGroupId]"]
+    TAKE["takeNextQueuedDispatch(...)"]
+    RUN["runThreadTurn(..., historyMode='shared')"]
+
+    PUB --> MENTION
+    MENTION --> SELF
+    SELF -->|是| END1["跳过"]
+    SELF -->|否| DEDUP
+    DEDUP -->|已触发| END2["跳过"]
+    DEDUP -->|未触发| HOP
+    HOP -->|超限| END3["跳过"]
+    HOP -->|未超限| QUEUE
+    QUEUE --> TAKE
+    TAKE --> RUN
 ```
+
+### 8.4 为什么要有 hop 限制和去重
+
+因为如果没有这两个东西，就很容易出现：
+
+- A `@B`
+- B `@A`
+- A 再 `@B`
+
+然后整条链路无限 ping-pong。
+
+当前代码里的保护包括：
+
+- `MAX_HOPS = 10`
+- 单条 message 对同一 provider 去重
+- 同会话组按队列串行触发下一跳
+
+### 8.5 为什么当前 A2A 是串行，不是并发
+
+`takeNextQueuedDispatch(...)` 会先检查：
+
+- 同一个 `sessionGroupId` 下面是否已有 thread 在运行
+
+只要还有运行中的 thread，就先不发下一跳。
+
+这么设计的目标不是炫技，而是为了：
+
+- 共享上下文更稳定
+- 时间线更好理解
+- hop 关系更好追踪
+
+第一版追求的是：
+
+**可解释的接力协作。**
+
+不是：
+
+**黑箱式全并发群聊。**
 
 ---
 
-## A2A：agent 为什么终于能互相叫人了
+## 9. 术语表：名词和代码对象一一对应
 
-A2A 是 agent-to-agent 的缩写，意思是：
+这一节专门回答“某个名词在代码中到底代表什么”。
 
-**一个 agent 可以通过公开消息触发另一个 agent。**
-
-### 以前为什么做不到
-
-以前系统只能识别：
-
-- 用户输入里的 `@agent`
-
-但不能识别：
-
-- agent 公开消息里的 `@agent`
-
-所以系统最多只能做到：
-
-```text
-User -> Agent
-Agent -> User
-```
-
-### 现在怎么做到的
-
-现在系统会在“新创建的公开消息”上做 mention 解析。
-
-如果消息里出现：
-
-```text
-我先给方案，再请 @范德彪 review
-```
-
-那么 orchestrator 会：
-
-1. 识别出目标 provider
-2. 检查这条链的 hop 是否超限
-3. 检查这条 message 是否已经触发过同一个 provider
-4. 把下一跳放入队列
-5. 当前运行结束后，再串行触发下一只 agent
-
-### 为什么要有 hop 限制
-
-因为如果不限制，就可能出现：
-
-```text
-A @ B
-B @ C
-C @ A
-```
-
-然后无限循环。
-
-所以第一版规定：
-
-- 每条用户根消息最多 4 跳
-- 同一条 message 不能重复触发同一 agent
-- 当前只做串行，不做并行 storm
-
-### A2A 调用图
-
-```text
-用户消息
-  ↓
-触发 Claude
-  ↓
-Claude 公开发消息
-  ↓
-消息中包含 @Codex
-  ↓
-mention-router 识别目标
-  ↓
-dispatch 入队
-  ↓
-当前 invocation 结束
-  ↓
-系统自动拉起 Codex
-  ↓
-Codex 读取共享上下文继续协作
-```
+| 名词 | 代码对象 / 类型 | 主要位置 | 在项目里代表什么 |
+| --- | --- | --- | --- |
+| provider | `Provider` | `packages/shared/src/constants.ts` | 固定内部 ID，只能是 `codex` / `claude` / `gemini` |
+| alias | `PROVIDER_ALIASES`、`thread.alias` | `constants.ts`、`threads` 表 | 给用户看的显示名，例如“黄仁勋” |
+| session group | `session_groups` 表、`SessionGroupSummary` | `session-repository.ts`、`realtime.ts` | 一次完整多 agent 房间 |
+| thread | `ProviderThreadRecord`、`threads` 表 | `db/sqlite.ts` | 某个 provider 在某个房间里的工作线 |
+| message | `MessageRecord`、`TimelineMessage` | `db/sqlite.ts`、`realtime.ts` | 一条具体消息 |
+| activeGroup | HTTP / WS 返回的视图模型 | `SessionService.getActiveGroup()` | 前端当前正在渲染的房间快照 |
+| rootMessageId | `DispatchOrchestrator.messageRoots` | `dispatch.ts` | 一整条协作链的根 ID |
+| invocation | `InvocationIdentity`、`invocations` 表 | `invocation-registry.ts`、`session-repository.ts` | 一次真实 CLI 运行 |
+| callbackToken | `InvocationIdentity.callbackToken` | `invocation-registry.ts` | 本次 invocation 的临时凭证 |
+| nativeSessionId | `threads.native_session_id` | `threads` 表、runtime | 底层 CLI 自己的 resume 会话号 |
+| RealtimeClientEvent | 前端 -> 后端 WS 事件 | `packages/shared/src/realtime.ts` | 浏览器发给 Fastify 的标准事件 envelope |
+| RealtimeServerEvent | 后端 -> 前端 WS 事件 | `packages/shared/src/realtime.ts` | Fastify 主动推送给前端的标准事件 envelope |
+| thread_snapshot | `RealtimeServerEvent` 的一种 | `realtime.ts` | 当前房间完整快照，用来对账 |
+| runtime adapter | `ClaudeRuntime` / `CodexRuntime` / `GeminiRuntime` | `packages/api/src/runtime/*` | 把统一任务单翻译成真实 CLI 命令 |
+| callback API | `routes/callbacks.ts` | `packages/api/src/routes/callbacks.ts` | 运行中 agent 主动参与协作的后端入口 |
+| MCP server | `startMcpServer()` | `packages/api/src/mcp/server.ts` | Claude 的本地工具协议桥 |
+| skill | `LoadedSkill` | `skills/loader.ts` | 针对某类任务额外拼进 prompt 的规则 |
+| system prompt | `buildSystemPrompt()` | `skills/loader.ts` | 每次 invocation 都会注入的长期规则 |
 
 ---
 
-## skills 和 system prompt 为什么要分开
+## 10. 如果你只想抓主线，建议按这个顺序读代码
 
-这也是这次整改非常关键的一点。
+1. `components/chat/composer.tsx`
+2. `components/stores/chat-store.ts`
+3. `components/stores/thread-store.ts`
+4. `components/ws/client.ts`
+5. `app/page.tsx`
+6. `packages/api/src/routes/ws.ts`
+7. `packages/api/src/services/message-service.ts`
+8. `packages/api/src/orchestrator/dispatch.ts`
+9. `packages/api/src/orchestrator/invocation-registry.ts`
+10. `packages/api/src/runtime/cli-orchestrator.ts`
+11. `packages/api/src/routes/callbacks.ts`
+12. `packages/api/src/mcp/server.ts`
 
-### system prompt 是什么
+这个顺序对应的是：
 
-system prompt 是**长期规则**。
-
-当前放在：
-
-- `multi-agent-skills/system/room-charter.md`
-
-它描述的是每个 agent 都必须长期遵守的东西，例如：
-
-- 你运行在多 agent 协作房间里
-- 你不是单轮聊天机器人
-- 不确定就说不知道
-- 需要协作时才 `@另一个 agent`
-- 重要中间结论要主动 `post_message`
-
-### task skill 是什么
-
-task skill 是**针对某类任务额外加载的专项规则**。
-
-当前有：
-
-- `review.md`
-- `handoff.md`
-
-它们不是每次都加载，而是命中对应意图时才额外拼进 prompt。
-
-### 为什么一定要分开
-
-因为它们解决的问题根本不同：
-
-- system prompt：决定“你是谁、你在什么环境、长期规则是什么”
-- task skill：决定“这次任务要按什么 SOP 做”
-
-如果混在一起，会出现两个问题：
-
-1. 每次提示都越来越大
-2. 模型更难分辨哪些是长期规则，哪些是当前任务规则
-
-### 当前加载顺序
-
-现在每次调用大致是：
-
-```text
-system prompt
-  + task skill（如果命中）
-  + 用户消息 / 历史上下文
-```
-
-这样做的好处是：
-
-- 长期规则始终稳定存在
-- 任务规则只在需要时出现
+- 前端怎么发
+- 后端怎么接
+- 任务怎么跑
+- agent 怎么反向发消息
+- A2A 怎么继续接力
 
 ---
 
-## 数据库和持久化结构
+## 11. 当前架构最重要的边界和限制
 
-数据库现在的核心表可以简单理解成三层。
+当前已经做好的：
 
-### 1. `session_groups`
+- 多会话组数据隔离
+- 每个会话组三条默认 thread
+- invocation 级身份
+- callback API
+- Claude 原生 MCP
+- Codex / Gemini callback prompt
+- A2A 串行接力
 
-表示“一次三方协作会话”。
+当前明确还没完全做好的：
 
-你可以把它理解成：
+- 前端按 `sessionGroupId` 过滤实时事件
+- 多会话并发运行时的页面隔离体验
+- 全并发 A2A 群聊
+- 多用户 / 多租户权限体系
+- 云端分布式调度
 
-**一个总房间。**
+所以这套系统今天最准确的定位是：
 
-### 2. `threads`
-
-表示某个 provider 在这个会话组里的单独会话。
-
-你可以把它理解成：
-
-**这个总房间里，每个 agent 自己的一条工作线。**
-
-### 3. `messages`
-
-表示 thread 里的具体消息。
-
-### 4. `invocations`
-
-表示一次真实运行。
-
-### 5. `agent_events`
-
-表示这次运行过程中的活动记录。
-
-### 数据关系图
-
-```text
-session_groups
-   │
-   ├── threads (Codex)
-   │      └── messages
-   │
-   ├── threads (Claude)
-   │      └── messages
-   │
-   └── threads (Gemini)
-          └── messages
-
-invocations
-   └── 关联某一个 thread 的某一次运行
-
-agent_events
-   └── 关联某一个 invocation 的活动过程
-```
-
-### 为什么要拆成这几层
-
-因为这些层表示的不是同一个东西：
-
-- `session_group`：一次整体协作
-- `thread`：某个 agent 的会话线
-- `message`：一条具体内容
-- `invocation`：一次真实运行
-- `agent_event`：这次运行里的活动过程
-
-如果全塞进一两张表里，后面就很难表达：
-
-- 历史会话
-- 运行状态
-- A2A 路由
-- callback 身份
-- 事件追踪
+**后端已经具备多房间、多 agent、多次 invocation 并存的能力；前端视图层还主要是“单活动房间”的实时体验。**
 
 ---
 
-## 重构前后对比：你实际能感受到什么变化
-
-很多架构升级，使用者第一感受不会是“天翻地覆”，而是“好像还是聊天”。这很正常。
-
-因为这次整改的很多收益属于：
-
-- 稳定性收益
-- 可扩展性收益
-- 可观测性收益
-
-而不是“立刻多一个花哨按钮”。
-
-### 你现在能直接感受到的变化
-
-#### 1. 不再是三个孤立窗口，而是统一协作页面
-
-你不需要在三个小会话里切来切去。
-
-#### 2. 用户可以直接 `@谁`
-
-一条消息就能定向路由到某个 agent。
-
-#### 3. 历史会话和当前会话的组织更清晰
-
-因为现在已经有会话组和 thread 的结构。
-
-#### 4. 实时状态更稳定
-
-因为系统不再只看 stdout，而是把 stderr 也纳入活动判断。
-
-#### 5. agent 开始具备主动参与能力
-
-这点是本次整改最本质的变化。
-
-以前是你必须一直点它们；
-现在它们已经开始能自己协作。
-
-### 你不一定第一眼能感受到，但工程上差别很大的变化
-
-#### 1. runtime 统一了
-
-以后再接更多能力，不需要把业务层改得满地都是 CLI 细节。
-
-#### 2. callback 和 invocation 身份接上了
-
-这决定了 agent 主动参与能不能做得安全、稳定。
-
-#### 3. MCP 不再是空概念
-
-现在 Claude 的 MCP 已经有真实业务落点。
-
-#### 4. A2A 已经有了基础调度机制
-
-这意味着系统已经从“多聊天窗口”走向“多 agent 协作系统”。
-
----
-
-## 术语表：把所有关键技术名词讲清楚
-
-这一节是给技术小白专门准备的。遇到不懂的词，可以先回来看这里。
-
-### 前端
-
-你在浏览器里看到的页面和交互层。
-
-### 后端
-
-在本机服务里运行的程序，负责接收请求、调起 CLI、保存数据、做实时推送。
-
-### HTTP
-
-最常见的网页请求协议。
-
-特点是：
-
-- 一次请求
-- 一次响应
-- 适合普通接口
-
-### WebSocket
-
-一种长连接协议。
-
-特点是：
-
-- 连接建立后可以持续通信
-- 前后端都能主动发消息
-- 适合实时聊天、状态同步
-
-### Fastify
-
-一个 Node.js 的后端框架。
-
-你可以把它理解成：
-
-**负责搭 API 服务和 WebSocket 服务的后端骨架。**
-
-### Next.js
-
-一个 React 全栈框架。
-
-当前这里主要把它用作前端应用框架。
-
-### React
-
-一种前端 UI 库，用来组织组件和页面状态。
-
-### TypeScript
-
-JavaScript 的带类型版本。
-
-它最大的价值是：
-
-- 在开发阶段更早发现错误
-- 让大型工程更容易维护
-
-### SQLite
-
-一个轻量级本地数据库。
-
-它不是远程数据库，而是一个本地文件数据库。
-
-### thread
-
-这里指的是**某个 agent 的会话线**，不是操作系统线程。
-
-### session group
-
-表示一次整体多 agent 会话。
-
-### invocation
-
-表示一次真实的 agent 运行实例。
-
-### runtime
-
-一层适配器，用统一接口包装不同 CLI 的调用细节。
-
-### orchestrator
-
-协调者。
-
-它负责决定：
-
-- 这条消息该交给谁
-- 谁触发谁
-- 下一跳什么时候开始
-
-### callback API
-
-给运行中的 agent 调用的后端接口。
-
-### callback token
-
-调用 callback API 的临时凭证。
-
-### MCP
-
-Model Context Protocol，一种工具调用协议标准。
-
-在当前系统里，它是 Claude 调本地工具桥的协议层。
-
-### skill
-
-针对特定任务附加的规则或 SOP。
-
-### system prompt
-
-每次运行都要注入的长期规则。
-
-### stdout
-
-命令行程序的标准输出流，通常用来输出正文或结构化事件。
-
-### stderr
-
-命令行程序的标准错误流。
-
-注意：它不一定只表示“错误”，有些 CLI 也会把 thinking 或工具过程写到这里。
-
----
-
-## 后续演进建议
-
-当前架构已经能支撑下一阶段继续演进，但建议按顺序来，不要一次性加太多层。
-
-### 建议的下一步
-
-#### 1. 把 Claude MCP 配置做成更正式的能力管理
-
-例如支持更多本地工具，而不是只停在两个 callback tool。
-
-#### 2. 让 Codex / Gemini 也逐步靠近标准工具调用
-
-当前它们先走 callback prompt 注入，这是阶段性方案。
-
-#### 3. 把 agent event 更完整地展示到调试面板
-
-现在已经落库了，但前端还没有充分利用。
-
-#### 4. 视需求引入 Redis
-
-Redis 更适合这些东西：
-
-- 短期 token
-- 运行态队列
-- 高频事件
-- 临时锁
-
-SQLite 适合持久化，Redis 适合运行态。
-
-#### 5. 在 system prompt / skills 稳定后，再考虑更复杂检索
-
-例如：
-
-- skill embedding 检索
-- 更多专项 skill
-- 自动评估
-
-这一步不该抢在前面做。
-
----
-
-如果你只想记住最核心的一句话，请记住这句：
-
-**这次整改真正做成的，不是“一个更漂亮的聊天页”，而是“一个已经具备 runtime、callback、invocation、MCP、A2A、skills 这五层关键能力的多 agent orchestrator”。**
+## 12. 最后记住这三句话就够了
+
+1. `session group` 是房间，`thread` 是某个 agent 在房间里的工作线，`invocation` 是一次真实运行。
+2. callback API 才是业务能力，MCP 只是 Claude 接入这套能力的协议桥。
+3. 当前可以技术上并发开多个会话做不同任务，但同一个页面实例里的实时展示还没有完全按房间隔离。

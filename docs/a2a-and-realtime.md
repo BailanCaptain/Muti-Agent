@@ -1,70 +1,89 @@
-# A2A 与前后端通信详解
+# A2A、MCP 与前后端调用详解
 
-这份文档专门回答三个问题：
+这份文档专门把三条链讲透：
 
-1. 前端把一条消息发出去之后，后端到底怎么接住并调起 CLI？
-2. agent 在运行时怎么把增量内容、状态和公开消息再推回聊天室？
-3. A2A 协作具体是怎么触发、排队和继续执行的？
+1. 前端一条 `send_message` 怎么变成一次真实 CLI 运行。
+2. 运行中的 agent 怎么通过 callback API / MCP 把消息再送回系统。
+3. A2A 为什么能继续接力，以及它现在为什么是串行而不是全并发。
 
-下面的解释都直接对应当前代码，而不是抽象示意图。
+本文所有术语都对照当前代码，不做脱离实现的抽象说明。
 
-## 1. 总体角色分工
+---
 
-### 前端负责什么
+## 1. 先看三条主链
 
-前端负责两件事：
+```mermaid
+flowchart LR
+    USER["用户输入"]
+    FE["前端 store + WebSocket"]
+    MSG["MessageService"]
+    RT["runTurn + runtime"]
+    CLI["CLI 进程"]
+    API["callback API"]
+    DIS["A2A dispatch queue"]
+    UI["前端时间线更新"]
 
-- 把用户输入整理成一个标准的实时事件发给后端
-- 把后端推回来的标准事件更新到 Zustand store，再渲染成界面
+    USER --> FE
+    FE --> MSG
+    MSG --> RT
+    RT --> CLI
+    CLI --> API
+    API --> MSG
+    MSG --> DIS
+    MSG --> UI
+    DIS --> RT
+```
 
-关键文件：
+你可以把系统里的实时链路理解成三段：
+
+- 用户发起链：前端 -> 后端 -> CLI
+- agent 回流链：CLI -> callback / MCP -> 后端
+- agent 接力链：公开消息 -> mention 解析 -> A2A 队列 -> 下一跳 runtime
+
+---
+
+## 2. 前端先做了什么
+
+### 2.1 用户输入不是直接发字符串
+
+入口：
 
 - `components/chat/composer.tsx`
 - `components/stores/chat-store.ts`
-- `components/ws/client.ts`
-- `app/page.tsx`
-- `components/stores/thread-store.ts`
 
-### 后端负责什么
+用户提交输入后，前端会先走：
 
-后端负责把“聊天输入”变成“可追踪的 agent 运行”：
+- `useChatStore().sendMessage(input)`
 
-- 创建用户消息
-- 创建 assistant 占位消息
-- 注册 invocation 身份
-- 拉起 runtime
-- 把 CLI 输出变成 websocket 事件
-- 在需要时通过 callback API 和 A2A 继续协作
+然后在 `thread-store.ts` 里调用：
 
-关键文件：
+- `buildSendPayload(input)`
 
-- `packages/api/src/routes/ws.ts`
-- `packages/api/src/services/message-service.ts`
-- `packages/api/src/runtime/cli-orchestrator.ts`
-- `packages/api/src/routes/callbacks.ts`
-- `packages/api/src/orchestrator/dispatch.ts`
-- `packages/api/src/orchestrator/invocation-registry.ts`
+### 2.2 `buildSendPayload()` 在代码里代表什么
 
-## 2. 前端发消息到后端的链路
+它不是简单的“裁掉 `@` 前缀”，它做了四件事：
 
-### 第一步：用户提交输入
+1. 解析 `@agent`
+2. 把别名映射成内部 `provider`
+3. 找到当前活动会话组里该 provider 对应的 `threadId`
+4. 把用户输入整理成标准事件
 
-入口在 `components/chat/composer.tsx`。
+对应字段含义：
 
-提交表单时，组件调用：
+| 字段 | 在代码里是什么 | 作用 |
+| --- | --- | --- |
+| `provider` | `Provider` | 内部固定 ID，路由时使用 |
+| `alias` | `thread.alias` | 前端显示名，状态文案会用 |
+| `threadId` | `providers[provider].threadId` | 指明消息进入哪条工作线 |
+| `content` | 去掉 `@agent` 后的正文 | 真正发给 agent 的文本 |
 
-- `useChatStore().sendMessage`
+### 2.3 前端真正发到 WebSocket 的内容
 
-这一步不直接碰 WebSocket 细节，而是先经过 store。
+共享类型定义：
 
-### 第二步：前端组装标准事件
+- `packages/shared/src/realtime.ts`
 
-`components/stores/chat-store.ts` 里：
-
-- 调用 `useThreadStore.getState().buildSendPayload(input)`
-- 解析 `@agent`
-- 找到目标 `provider` 和对应 `threadId`
-- 通过 `socketClient.send(...)` 发出：
+发送事件是：
 
 ```ts
 {
@@ -78,86 +97,113 @@
 }
 ```
 
-为什么这里就把 `threadId` 和 `provider` 一起发过去？
+这里的关键点是：
 
-- 前端已经知道当前会话组里每个 provider 对应哪个 thread
-- 后端的 ws route 就可以保持简单，只处理“运输”和“交给 service”
+**前端已经先把“我要找谁”解析好了，所以 WebSocket 路由层不用再做 mention 解析。**
 
-### 第三步：浏览器通过 WebSocket 发给 Fastify
+---
 
-`components/ws/client.ts` 只做一件事：
+## 3. WebSocket 路由层只负责运输，不负责业务
 
-- 把标准事件序列化成 JSON
-- 通过同一个 WebSocket 连接发出去
-
-对应的后端入口是：
+入口：
 
 - `packages/api/src/routes/ws.ts`
 
-`registerWsRoute` 的 `wsHandler` 收到浏览器消息后，会：
+### 3.1 `routes/ws.ts` 做的事非常克制
 
-1. `JSON.parse(raw.toString())`
-2. 转成 `RealtimeClientEvent`
-3. 交给 `options.messages.handleClientEvent(...)`
+它只做三件事：
 
-也就是说：
+1. 收到浏览器发来的 JSON
+2. 解析成 `RealtimeClientEvent`
+3. 交给 `MessageService.handleClientEvent(...)`
 
-- `routes/ws.ts` 不做业务判断
-- 真正的调度逻辑都放在 `MessageService`
+它不做：
 
-## 3. 后端如何把一条聊天输入变成一次 agent 运行
+- 写数据库
+- 组装 prompt
+- 拉起 CLI
+- 处理 A2A
 
-### 第一步：写入用户消息
+这意味着：
 
-代码在：
+**真正的消息业务主链路，不在路由层，而在 `MessageService`。**
 
-- `packages/api/src/services/message-service.ts`
+### 3.2 为什么要这么设计
 
-`handleSendMessage(...)` 会先：
+因为路由层如果直接知道“怎么写消息、怎么建 invocation、怎么调 runtime”，后面 HTTP / callback / WebSocket 三套入口都会各写一遍业务逻辑，最后很难维护。
 
-1. 找到目标 thread
-2. `appendUserMessage`
-3. `registerUserRoot(userMessage.id)`
+---
 
-这里的 `rootMessageId` 很关键。
+## 4. `MessageService` 怎么把一条输入变成一次运行
 
-它不是给前端看的，而是给协作链看的：
+```mermaid
+sequenceDiagram
+    participant WS as routes/ws.ts
+    participant MSG as MessageService
+    participant SES as SessionService
+    participant DIS as DispatchOrchestrator
+    participant INV as InvocationRegistry
+    participant RUN as runTurn
 
-- 同一条用户消息触发出来的后续 agent 接力
-- 都会挂在同一个 root 上
-- 后面做 hop 限制、A2A 去重和链路追踪都靠它
+    WS->>MSG: handleClientEvent(send_message)
+    MSG->>SES: appendUserMessage()
+    MSG->>DIS: registerUserRoot(userMessage.id)
+    MSG-->>前端: message.created
+    MSG-->>前端: thread_snapshot
+    MSG->>SES: appendAssistantMessage("")
+    MSG->>INV: createInvocation(thread.id, alias)
+    MSG->>DIS: bindInvocation(invocationId, context)
+    MSG->>RUN: runTurn(...)
+```
 
-### 第二步：立刻把用户消息推回前端
+### 4.1 `appendUserMessage()` 的意义
 
-服务端接着会发两个事件：
+它表示：
 
-- `message.created`
-- `thread_snapshot`
+**先把用户消息落库，再启动后续链路。**
 
-这样前端不需要等 CLI 启动完，用户消息会立即出现在时间线里。
+这样做的好处是：
 
-### 第三步：创建 assistant 占位消息
+- 时间线不会等 CLI 启动完才显示用户消息
+- A2A、快照、历史读取都能看到这条真实消息
 
-真正拉起 CLI 前，`runThreadTurn(...)` 会先：
+### 4.2 `registerUserRoot(userMessage.id)` 的意义
 
-1. `appendAssistantMessage(thread.id, "")`
-2. 把这个占位消息绑定到当前 `rootMessageId`
-3. 立即发一个 `message.created`
+这一步很容易被忽略，但它对 A2A 非常关键。
 
-这样做的原因非常现实：
+`rootMessageId` 在当前代码里的含义是：
 
-- CLI 的输出通常是流式的
-- 后续每个 `assistant_delta` 都必须知道该追加到哪一条消息
+**把“这条用户输入触发出来的一整串后续接力”串成一条协作链。**
 
-如果不先建占位消息，前端就没有稳定的目标气泡可以追加内容。
+后面这些逻辑都靠它：
 
-### 第四步：注册 invocation 身份
+- hop 限制
+- 去重
+- 下一跳继续归属于哪条链
 
-还是在 `runThreadTurn(...)` 里：
+### 4.3 为什么要先建 assistant 占位消息
 
-- `InvocationRegistry.createInvocation(thread.id, thread.alias)`
+`runThreadTurn()` 在真正拉起 CLI 前，会先：
 
-这里生成的是一组临时身份：
+- `appendAssistantMessage(thread.id, "")`
+
+它在代码里的作用不是“假装回了一句”，而是：
+
+**先创建一条空的 assistant 气泡，让后续每个 `assistant_delta` 都有稳定的落点。**
+
+否则前端根本不知道流式文本应该往哪条消息上拼。
+
+---
+
+## 5. invocation 是怎么创建并被验证的
+
+### 5.1 `InvocationRegistry.createInvocation()` 生成什么
+
+代码位置：
+
+- `packages/api/src/orchestrator/invocation-registry.ts`
+
+每次运行会生成：
 
 - `invocationId`
 - `callbackToken`
@@ -165,352 +211,333 @@
 - `agentId`
 - `expiresAt`
 
-对应代码：
+这组对象在代码里的地位是：
 
-- `packages/api/src/orchestrator/invocation-registry.ts`
+**本次运行的临时身份。**
 
-这组身份的用途是：
+### 5.2 为什么 `invocation` 不是 `thread`
 
-- 让 callback API 能确认“是谁在发请求”
-- 防止裸请求直接伪造 agent 行为
-- 把正在运行的 CLI turn 和后续 callback 操作绑定起来
+因为同一条 `thread` 可能跑很多轮。
 
-## 4. runtime 如何拉起不同的 CLI
+例如同一个 Claude thread：
 
-入口在：
+- 上午用户问一次
+- 下午用户再追问一次
+- 晚上 A2A 再唤起一次
+
+它们都属于同一个 `thread`，但必须是三个不同的 `invocation`。
+
+### 5.3 `callbackToken` 解决的不是登录问题
+
+它解决的是：
+
+**当前这一次运行，能不能合法调用 callback API。**
+
+所以它是：
+
+- invocation 级权限
+- 临时的
+- 过期的
+- 只对本次运行有效
+
+不是：
+
+- 用户账号 token
+- 房间长期 token
+- 多租户权限 token
+
+---
+
+## 6. `runTurn()` 怎么把统一任务单交给不同 CLI
+
+代码位置：
 
 - `packages/api/src/runtime/cli-orchestrator.ts`
 
-`runTurn(...)` 做的事情是：
+### 6.1 `runTurn()` 先做的不是启动命令，而是组装上下文
 
-1. 根据历史消息构造 prompt
-2. 注入 system prompt
-3. 注入技能 prompt
-4. 选择对应 runtime 适配器
-5. 通过环境变量传入 invocation 身份和 callback 信息
+它会先准备：
 
-几个关键环境变量：
+- 历史消息 prompt
+- system prompt
+- task skill prompt
+- 模型名
+- callback 身份
+- `nativeSessionId`
 
-- `MULTI_AGENT_API_URL`
-- `MULTI_AGENT_INVOCATION_ID`
-- `MULTI_AGENT_CALLBACK_TOKEN`
-- `MULTI_AGENT_MODEL`
-- `MULTI_AGENT_NATIVE_SESSION_ID`
+然后再交给：
 
-这一步的设计重点是：
+- `claudeRuntime`
+- `codexRuntime`
+- `geminiRuntime`
 
-- 上层统一 `RunTurnOptions`
-- 下层 `codexRuntime` / `claudeRuntime` / `geminiRuntime` 各自处理命令差异
+### 6.2 统一输入对象是什么
 
-所以 orchestrator 看起来像这样：
+`AgentRunInput` 在代码里的意思是：
 
-```text
-MessageService
-  -> runTurn
-    -> runtime adapter
-      -> CLI process
-```
+**上层已经把这轮运行整理成标准结构，runtime 适配层只负责把它翻译成 CLI 命令。**
 
-## 5. CLI 输出为什么能实时回到前端
+重要字段解释：
 
-### stdout 走增量文本
+| 字段 | 代码定义位置 | 在当前系统里的意思 |
+| --- | --- | --- |
+| `invocationId` | `base-runtime.ts` | 这次运行的唯一 ID |
+| `threadId` | `base-runtime.ts` | 这次运行属于哪条工作线 |
+| `agentId` | `base-runtime.ts` | 当前运行中 agent 的身份标签 |
+| `prompt` | `base-runtime.ts` | 最终要喂给 CLI 的文本 |
+| `env` | `base-runtime.ts` | callback token、模型、session 等运行时信息 |
 
-`cli-orchestrator.ts` 里：
+### 6.3 `nativeSessionId` 为什么放在线程上
 
-- `runtime.runStream(...)`
-- `onStdoutLine(...)`
+因为它的语义是：
 
-如果一行 stdout 是 JSON 事件，就尝试解析：
+**这个 provider 在这条 thread 上，与底层 CLI 的原生上下文关系。**
 
-- assistant delta
-- session id
-- model
+它不是跟着单条消息走，也不是跟着单次 invocation 走。
 
-如果不是结构化 JSON，也会退化成普通文本 delta。
+所以它挂在：
 
-然后 `MessageService` 会把它转成：
-
-- `assistant_delta`
-
-再由 websocket route 推给浏览器。
-
-### stderr 走活动流
-
-同时，runtime 也会把 stdout / stderr 的活动通过 `onActivity` 往上抛。
-
-`MessageService` 会记录为：
-
-- `invocation.activity`
-
-此外，这里还专门做了一层“确认提示提取”：
-
-- 如果 CLI 在 stderr 里输出“请确认 / need your confirmation / please provide ...”
-- 服务端会把这段提示写回当前 assistant 消息
-- 然后暂停本轮运行
-
-这样前端能直接看到 agent 的追问，而不会卡在一个空白气泡里。
-
-## 6. 前端如何消费这些实时事件
-
-浏览器的主入口在：
-
-- `app/page.tsx`
-
-页面只做事件分发：
-
-- `assistant_delta` -> `applyAssistantDelta`
-- `message.created` -> `appendTimelineMessage`
-- `thread_snapshot` -> `replaceActiveGroup`
-- `status` -> `setStatus`
-
-真正的合并策略在 `components/stores/thread-store.ts`：
-
-- `mergeTimeline(...)`
-
-这里为什么不是“快照来了就整段替换”？
-
-因为流式过程里经常会出现：
-
-- 本地已经拼到了更长的 assistant 文本
-- 数据库快照还稍微落后一点
-
-如果直接替换，界面会出现内容回退闪烁。
-
-所以这里做的是：
-
-- 优先保留更长的那份文本
-- 再按 `createdAt` 排序
-
-## 7. callback API 到底解决什么问题
-
-callback API 的代码在：
-
-- `packages/api/src/routes/callbacks.ts`
-
-它提供三类能力：
-
-### `POST /api/callbacks/post-message`
-
-作用：
-
-- agent 在运行期间主动往当前 thread 发一条公开消息
-
-典型用途：
-
-- 中间状态同步
-- 主动解释
-- 呼叫下一个 agent
-
-### `GET /api/callbacks/thread-context`
-
-作用：
-
-- agent 读取自己当前 thread 最近的上下文
-
-适用场景：
-
-- CLI 不是原生 MCP，但仍然需要“看最近消息”
-
-### `GET /api/callbacks/pending-mentions`
-
-作用：
-
-- agent 查询在自己运行期间有没有新的公开 mention
-
-适用场景：
-
-- 需要看 A2A 队列前后的补充信息
-
-### 为什么 callback API 需要 `callbackToken`
-
-因为这些接口不是给浏览器直接开放业务能力的，而是给“当前正在执行的 agent”开的临时后门。
-
-只有：
-
-- invocationId 匹配
-- callbackToken 匹配
-- 没过期
-
-才允许调用。
-
-## 8. A2A 是怎么触发的
-
-真正的 A2A 调度在：
-
-- `packages/api/src/orchestrator/dispatch.ts`
-
-核心入口：
-
-- `enqueuePublicMentions(...)`
-
-它只处理“公开消息里的 mention”，包括：
-
-- 用户消息里的 `@agent`
-- agent 通过 callback 发出来的公开消息里的 `@agent`
-- agent 最终回答里的 `@agent`
-
-### 触发流程
-
-1. 解析公开消息里的 mention
-2. 跳过自己 mention 自己的情况
-3. 对单条消息做 provider 去重
-4. 对同一 root 协作链做 provider 去重
-5. 做 hop 限制
-6. 把下一个 agent 的任务放入队列
-
-这部分为什么这么多去重和限制？
-
-因为如果没有这些约束，agent 很容易出现：
-
-- A 提到 B
-- B 又提到 A
-- 两边不断 ping-pong
-
-所以 `DispatchOrchestrator` 里专门维护了：
-
-- `messageRoots`
-- `rootHopCounts`
-- `messageTriggeredProviders`
-- `rootTriggeredProviders`
-- `queues`
-
-## 9. A2A 为什么不是立刻并发触发
-
-看 `takeNextQueuedDispatch(...)`：
-
-- 同一个 session group 里，只要还有 thread 在跑
-- 就先不触发下一跳
-
-这是有意设计成串行的。
-
-好处是：
-
-- 共享上下文更稳定
-- 时间线顺序更容易理解
-- 更容易追踪每一跳是谁触发谁
-
-也就是说当前系统更偏向：
-
-```text
-可解释的接力式协作
-```
+- `threads.native_session_id`
 
 而不是：
 
-```text
-完全并发的黑箱式群聊
+- `messages`
+- `invocations`
+
+---
+
+## 7. Claude、Codex、Gemini 在调用 callback 能力上有什么区别
+
+### 7.1 Claude：原生 MCP
+
+代码位置：
+
+- `runtime/claude-runtime.ts`
+- `mcp/server.ts`
+
+每次 Claude 运行时会做：
+
+1. 生成临时 `.claude.mcp.json`
+2. 把 `MULTI_AGENT_API_URL / INVOCATION_ID / CALLBACK_TOKEN` 写进 MCP server 环境
+3. Claude 通过原生 MCP tool call 调本地 `multi_agent_room`
+
+### 7.2 Codex / Gemini：callback prompt 注入
+
+代码位置：
+
+- `runtime/codex-runtime.ts`
+- `runtime/gemini-runtime.ts`
+- `buildCallbackPrompt()` in `base-runtime.ts`
+
+它们当前不是挂原生 MCP，而是把 callback 使用说明直接注入 prompt：
+
+- 有哪些环境变量
+- 有哪些 callback endpoint
+- 怎么用 Node 内置 `fetch` 调
+
+所以它们是“被 prompt 教会怎么回调”。
+
+### 7.3 能力层面有没有差别
+
+能力目标是一致的：
+
+- 主动发公共消息
+- 主动读上下文
+- 主动查 mention
+
+差别只在接入形式：
+
+- Claude：MCP tool call
+- Codex / Gemini：prompt + shell / node fetch
+
+---
+
+## 8. callback API 具体是怎么回流到聊天室的
+
+```mermaid
+sequenceDiagram
+    participant CLI as 运行中的 agent
+    participant MCP as MCP server / callback prompt
+    participant CB as routes/callbacks.ts
+    participant REPO as SessionRepository
+    participant SES as SessionService
+    participant MSG as MessageService
+    participant WS as broadcaster
+    participant FE as 前端
+
+    CLI->>MCP: 调用 post_message / get_thread_context
+    MCP->>CB: HTTP 请求 + invocationId + callbackToken
+    CB->>CB: verifyInvocation()
+    CB->>REPO: appendMessage() / listRecentMessages()
+    CB->>SES: getActiveGroup()
+    CB-->>WS: message.created / thread_snapshot
+    WS-->>FE: 推送实时事件
+    CB->>MSG: onPublicMessage(...)
+    MSG->>MSG: 继续触发 A2A 检查
 ```
 
-## 10. 一条完整的 A2A 链路示例
+### 8.1 `POST /api/callbacks/post-message`
 
-假设用户输入：
+它的本质是：
 
-```text
-@claude 先分析这个问题，如果需要就 @codex review
-```
+**让运行中的 agent 主动往当前 thread 写一条公开消息。**
 
-实际链路如下：
+后端收到后会：
 
-1. 前端发送 `send_message`
-2. `MessageService.handleSendMessage` 写入用户消息
-3. 创建 rootMessageId
-4. 创建 Claude 的 assistant 占位消息
-5. 注册 invocation 身份
-6. `runTurn` 拉起 Claude CLI
-7. Claude 产生流式输出，前端收到 `assistant_delta`
-8. Claude 最终文本或 callback 公开消息里出现 `@codex`
-9. `dispatch.enqueuePublicMentions(...)` 识别到下一跳
-10. 当前 invocation 结束后，`flushDispatchQueue(...)` 取出下一跳
-11. `runThreadTurn(...)` 再拉起 Codex
-12. Codex 基于共享上下文继续接力
+1. 验证 invocation 身份
+2. 写入 `messages`
+3. 生成 `message.created`
+4. 广播新的 `thread_snapshot`
+5. 调用 `onPublicMessage(...)`
+6. 再进入 A2A mention 解析
 
-所以真正的协作骨架是：
+所以一条 callback 公开消息不是“只给前端看”，它也可能成为下一跳协作的触发源。
 
-```text
-公开消息 -> mention 解析 -> 队列 -> 下一跳 runtime
-```
+### 8.2 `GET /api/callbacks/thread-context`
 
-而不是直接让两个 CLI 彼此长连接互聊。
+它不是“查整个房间全部历史”，而是：
 
-## 11. 关键对象分别解决什么问题
+**读取当前 invocation 所属 thread 的最近消息。**
 
-### `threadId`
+这点很重要，因为当前 callback API 设计偏向“当前工作线上下文”，不是全局任意查。
 
-解决：
+### 8.3 `GET /api/callbacks/pending-mentions`
 
-- 一条消息到底属于哪个 provider 线程
+它在代码里会：
 
-### `sessionGroupId`
+- 读 `invocation.startedAt`
+- 只查这次运行开始之后的新 mention
 
-解决：
+也就是说它回答的问题是：
 
-- 三个 provider 的 thread 如何组成同一个会话房间
+**从我这次开始跑以后，有没有人在公开消息里又叫我。**
 
-### `rootMessageId`
+---
 
-解决：
+## 9. A2A 队列到底怎么工作
 
-- 一整条协作链如何串起来
-- hop 限制和去重如何按同一条链计算
+代码位置：
 
-### `invocationId`
+- `packages/api/src/orchestrator/dispatch.ts`
 
-解决：
+### 9.1 `enqueuePublicMentions()` 会做哪些判断
 
-- 当前这次 CLI 运行如何被唯一标识
+它不是看到 `@agent` 就立刻开跑，而是依次做这些判断：
 
-### `callbackToken`
+1. 解析 mention
+2. 跳过自己 `@` 自己
+3. 这条 message 是否已经触发过同一个 provider
+4. 这条 root 链的 hop 是否已到上限
+5. 当前房间是否存在这个目标 provider 的 thread
+6. 满足条件后再入队
 
-解决：
+### 9.2 队列是按什么粒度隔离的
 
-- callback API 如何确认请求来自当前这次 agent 运行
+按：
 
-## 12. 读代码时建议的顺序
+- `sessionGroupId`
 
-如果你要真正吃透这个项目，建议按这个顺序读：
+隔离。
 
-1. `components/chat/composer.tsx`
-2. `components/stores/chat-store.ts`
-3. `components/ws/client.ts`
-4. `app/page.tsx`
-5. `packages/api/src/routes/ws.ts`
-6. `packages/api/src/services/message-service.ts`
-7. `packages/api/src/runtime/cli-orchestrator.ts`
-8. `packages/api/src/routes/callbacks.ts`
-9. `packages/api/src/orchestrator/dispatch.ts`
-10. `packages/api/src/orchestrator/invocation-registry.ts`
+不是按：
 
-这样你会先理解：
+- provider
+- 全局单队列
 
-- 前端怎么发
-- 后端怎么接
-- CLI 怎么跑
-- callback 怎么回流
-- A2A 怎么继续
+### 9.3 为什么下一跳运行使用 `historyMode: "shared"`
 
-## 13. 当前设计的边界
+用户直接点名某个 agent 时，`runThreadTurn()` 用的是：
 
-这套链路现在的优点是：
+- `historyMode: "thread"`
 
-- 清晰
-- 可追踪
-- 易调试
-- 适合单机多 agent 协作
+因为它主要沿用该 provider 自己的工作线历史。
 
-当前没有优先做的事情包括：
+而 A2A 下一跳会使用：
 
-- 全并发 A2A
-- 多租户权限体系
-- 云端分布式队列
-- 超复杂富块协议
+- `historyMode: "shared"`
 
-这不是缺陷，而是当前架构阶段的取舍。
+因为下一跳要看到的是：
 
-先把：
+**整个房间到目前为止的共享公开上下文。**
 
-- 消息链路
-- invocation 身份
-- callback 调用
-- A2A 接力
+这也是 `SessionService.listSharedHistory()` 存在的原因。
 
-做稳，后面再扩复杂能力，代价最低。
+---
+
+## 10. 新建会话和并发多会话，对实时链路意味着什么
+
+### 10.1 后端隔离边界
+
+新建会话时会创建：
+
+- 新的 `sessionGroupId`
+- 新的 3 条 `thread`
+- 新的后续消息链
+- 新的 A2A 队列分区
+
+所以技术上：
+
+- 会话 A 的 `rootMessageId` 不会串到会话 B
+- 会话 A 的 A2A hop 计数不会污染会话 B
+- 会话 A 的 `threadId` 运行锁不会挡住会话 B 的新 thread
+
+### 10.2 什么时候可以并发
+
+后端当前允许：
+
+- 不同会话组并发
+- 不同会话组中同 provider 并发
+- 同会话组里不同 thread 由用户手动分别拉起运行
+
+但 A2A 下一跳是：
+
+- 同会话组串行
+
+### 10.3 当前页面为什么还不算“完全多房间实时隔离”
+
+因为 `app/page.tsx` 对 WebSocket 事件的消费方式是全局的：
+
+- 任意 `thread_snapshot` 都直接替换当前 `activeGroup`
+- 任意 `message.created` 都直接追加到当前时间线 store
+- 任意 `assistant_delta` 都直接按 `messageId` 改当前 timeline
+
+也就是说，当前前端还没有做：
+
+- 先判断这条事件属于哪个 `sessionGroupId`
+- 再决定要不要更新当前正在看的房间
+
+### 10.4 这件事应该怎么向业务侧解释
+
+最准确的说法是：
+
+- 架构和后端已经支持你在旧会话跑着的时候，再开一个新会话去跑别的任务。
+- 但当前同一个页面实例里，多会话并发时的实时展示还没有完全房间级隔离。
+
+这不是“后端不支持”，而是“前端当前仍是单活动房间视图模型”。
+
+---
+
+## 11. 读这部分代码时，建议重点盯住的对象
+
+| 对象名 | 主要文件 | 看它时应该关注什么 |
+| --- | --- | --- |
+| `RealtimeClientEvent` | `packages/shared/src/realtime.ts` | 前端究竟发了哪些标准事件 |
+| `RealtimeServerEvent` | `packages/shared/src/realtime.ts` | 后端究竟推回了哪些标准事件 |
+| `buildSendPayload()` | `components/stores/thread-store.ts` | 前端如何把 `@agent` 变成 `threadId` |
+| `handleSendMessage()` | `message-service.ts` | 一条输入如何进入主链路 |
+| `runThreadTurn()` | `message-service.ts` | 占位消息、invocation、runtime 的衔接点 |
+| `InvocationRegistry` | `invocation-registry.ts` | stop、运行态、callback 身份 |
+| `runTurn()` | `cli-orchestrator.ts` | prompt / env / runtime adapter 的总装口 |
+| `registerCallbackRoutes()` | `routes/callbacks.ts` | callback 是怎么重新回到系统里的 |
+| `enqueuePublicMentions()` | `dispatch.ts` | A2A 为什么会被排队而不是立刻乱跑 |
+| `takeNextQueuedDispatch()` | `dispatch.ts` | 为什么当前 A2A 是串行 |
+
+---
+
+## 12. 如果只记住最关键的五句话
+
+1. 前端发的不是普通字符串，而是标准化的 `RealtimeClientEvent`。
+2. `MessageService` 才是消息主链路，WebSocket 路由只是运输层。
+3. `invocationId + callbackToken` 代表“本次运行的临时身份”，不是用户登录态。
+4. callback API 是业务能力层，MCP 只是 Claude 接入这层能力的协议桥。
+5. A2A 的本质不是 agent 直接互聊，而是“公开消息 -> mention 解析 -> 队列 -> 下一跳 runtime”。
