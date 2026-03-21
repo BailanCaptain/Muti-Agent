@@ -10,6 +10,8 @@ export type MentionMatch = {
   index: number;
 };
 
+export type MentionMatchMode = "line-start" | "anywhere";
+
 export function resolveMention(content: string, aliases: Record<Provider, string>) {
   const trimmed = content.trim();
 
@@ -29,7 +31,19 @@ function escapeRegex(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function resolveMentions(content: string, aliases: Record<Provider, string>) {
+function buildMentionPattern(candidate: string, mode: MentionMatchMode) {
+  const escaped = escapeRegex(candidate);
+
+  if (mode === "anywhere") {
+    // User text may mention agents mid-sentence; avoid matching inside email/domain-like strings.
+    return new RegExp(`(?<![\\w.-])@${escaped}(?=$|[\\s\`*_~:,.!?;()\\[\\]{}<>，。！？；：“”"'、])`, "gi");
+  }
+
+  // Agent-authored messages only trigger A2A on line-leading mentions.
+  return new RegExp(`(?:^|\\n)[\\s\`*_~]*@${escaped}(?=$|[\\s:,.!?;()\\[\\]{}<>，。！？；：“”"'、])`, "gi");
+}
+
+export function resolveMentions(content: string, aliases: Record<Provider, string>, mode: MentionMatchMode = "line-start") {
   const matches: MentionMatch[] = [];
 
   for (const provider of Object.keys(aliases) as Provider[]) {
@@ -37,9 +51,7 @@ export function resolveMentions(content: string, aliases: Record<Provider, strin
     const patterns = [alias, provider, `${provider[0].toUpperCase()}${provider.slice(1)}`];
 
     for (const candidate of patterns) {
-      // Only match @mention at the start of a line, allowing optional
-      // whitespace and markdown formatting chars (backticks, bold, italic).
-      const pattern = new RegExp(`(?:^|\\n)[\\s\`*_~]*@${escapeRegex(candidate)}`, "gi");
+      const pattern = buildMentionPattern(candidate, mode);
 
       for (const match of content.matchAll(pattern)) {
         matches.push({

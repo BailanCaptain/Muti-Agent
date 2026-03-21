@@ -140,21 +140,6 @@ export class SessionRepository {
       .all(threadId, limit) as MessageRecord[];
   }
 
-  listPendingMentions(threadId: string, agentId: string, since: string, limit: number) {
-    return this.store.db
-      .prepare(
-        `SELECT id, thread_id as threadId, role, content, created_at as createdAt
-         FROM messages
-         WHERE thread_id = ?
-           AND role = 'user'
-           AND created_at >= ?
-           AND content LIKE ?
-         ORDER BY created_at DESC
-         LIMIT ?`
-      )
-      .all(threadId, since, `%@${agentId}%`, limit) as MessageRecord[];
-  }
-
   appendMessage(threadId: string, role: "user" | "assistant", content: string) {
     const message: MessageRecord = {
       id: crypto.randomUUID(),

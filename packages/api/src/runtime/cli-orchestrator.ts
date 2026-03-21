@@ -1,7 +1,5 @@
 import crypto from "node:crypto";
 import type { Provider } from "@multi-agent/shared";
-import { buildSystemPrompt, formatSkillsForPrompt, loadSkillsForTask } from "../skills/loader";
-import type { SkillIntent } from "../skills/matcher";
 import { buildHistoryPrompt, findSessionId, parseEventModel, type AgentRunInput } from "./base-runtime";
 import { claudeRuntime } from "./claude-runtime";
 import { codexRuntime } from "./codex-runtime";
@@ -18,7 +16,6 @@ export type RunTurnOptions = {
   nativeSessionId: string | null;
   history: Array<{ role: "user" | "assistant"; content: string }>;
   userMessage: string;
-  skillIntent?: SkillIntent;
   onAssistantDelta: (delta: string) => void;
   onSession: (nativeSessionId: string) => void;
   onModel: (model: string) => void;
@@ -42,19 +39,10 @@ const runtimeAdapters = {
 } as const;
 
 export function runTurn(options: RunTurnOptions) {
-  const basePrompt = options.nativeSessionId
+  const prompt = options.nativeSessionId
     ? options.userMessage
     : buildHistoryPrompt(options.history, options.userMessage);
 
-  // The orchestrator materializes a single prompt up front so runtime adapters only deal with process launching.
-  const systemPrompt = buildSystemPrompt(options.agentId ?? options.provider);
-  const skillsPrompt = formatSkillsForPrompt(
-    loadSkillsForTask({
-      message: options.userMessage,
-      intent: options.skillIntent
-    })
-  );
-  const prompt = skillsPrompt ? `${skillsPrompt}\n\n${basePrompt}` : basePrompt;
   const runtime = runtimeAdapters[options.provider];
 
   const input: AgentRunInput = {
@@ -64,7 +52,6 @@ export function runTurn(options: RunTurnOptions) {
     prompt,
     env: {
       // Callback credentials and model/session context travel through env because each CLI exposes a different shell surface.
-      MULTI_AGENT_SYSTEM_PROMPT: systemPrompt,
       MULTI_AGENT_API_URL: options.apiBaseUrl ?? "",
       MULTI_AGENT_INVOCATION_ID: options.invocationId ?? "",
       MULTI_AGENT_CALLBACK_TOKEN: options.callbackToken ?? "",

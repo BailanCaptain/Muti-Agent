@@ -131,38 +131,4 @@ export function registerCallbackRoutes(
     };
   });
 
-  app.get("/api/callbacks/pending-mentions", async (request: FastifyRequest, reply: FastifyReply) => {
-    const query = request.query as { invocationId?: string; callbackToken?: string; limit?: string };
-    const invocation = assertInvocation(options.invocations, query.invocationId, query.callbackToken);
-
-    if (!invocation) {
-      reply.code(401);
-      return { error: "Invalid invocation identity." };
-    }
-
-    const thread = options.repository.getThreadById(invocation.threadId);
-    if (!thread) {
-      reply.code(404);
-      return { error: "Thread not found." };
-    }
-
-    const limit = Math.max(1, Math.min(Number(query.limit ?? 20) || 20, 50));
-    const startedAt = options.repository.getInvocationById(invocation.invocationId)?.startedAt ?? new Date(0).toISOString();
-    const mentions = options.repository
-      .listPendingMentions(thread.id, invocation.agentId, startedAt, limit)
-      .reverse()
-      .map((message) => ({
-        id: message.id,
-        role: message.role,
-        content: message.content,
-        createdAt: message.createdAt
-      }));
-
-    return {
-      threadId: thread.id,
-      agentId: invocation.agentId,
-      expiresAt: invocation.expiresAt,
-      mentions
-    };
-  });
 }

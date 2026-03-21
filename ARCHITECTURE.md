@@ -856,3 +856,857 @@ flowchart TD
 1. `session group` 是房间，`thread` 是某个 agent 在房间里的工作线，`invocation` 是一次真实运行。
 2. callback API 才是业务能力，MCP 只是 Claude 接入这套能力的协议桥。
 3. 当前可以技术上并发开多个会话做不同任务，但同一个页面实例里的实时展示还没有完全按房间隔离。
+---
+
+## 13. A2A 补充说明：用户的 `@`、agent 互相 `@`、callback 回流分别是什么
+
+这一节专门补给第一次接触这套系统的人。重点不是代码细节，而是先把三件事分开：
+
+1. 用户在输入框里写 `@agent`
+2. agent 在公开消息里继续 `@另一个 agent`
+3. 运行中的 agent 通过 callback / MCP 主动把消息发回后端
+
+如果这三件事混在一起看，会很容易觉得“为什么一会儿是前端触发，一会儿又是后端触发”。
+
+### 13.1 第一层：用户的 `@agent` 是“入口选择”
+
+用户在前端输入：
+
+```text
+请 @黄仁勋 先分析，再 @范德彪 实现，最后 @桂芬 验证
+```
+
+前端会先做一件很重要的事：
+
+- 解析第一个 mention
+- 决定这条消息先发给哪个 `threadId`
+
+对应代码是：
+
+- `components/stores/thread-store.ts`
+- `parseMention()`
+- `buildSendPayload()`
+
+所以：
+
+- **第一跳由前端决定入口**
+- 前端会把消息通过 WebSocket 发给后端
+- 发的时候已经带上了目标 `threadId`
+
+这一步的设计目的很简单：
+
+- 前端必须先知道把消息送到哪张 provider 卡片
+- 后端不需要再从整句里猜“第一跳到底该先叫谁”
+
+当前实现里，用户消息的 mention 规则是：
+
+- **宽松匹配**
+- `@agent` 可以出现在句子任意位置
+
+这是为了让用户能自然说话，而不是强迫用户每次都把 `@agent` 写在行首。
+
+### 13.2 第二层：agent 之间互相 `@agent` 是“A2A 接力”
+
+第一只 agent 启动后，系统进入真正的 A2A 阶段。
+
+这一阶段不再是前端在选人，而是后端在做调度。
+
+关键代码在：
+
+- `packages/api/src/orchestrator/dispatch.ts`
+- `packages/api/src/orchestrator/mention-router.ts`
+- `packages/api/src/services/message-service.ts`
+
+后端看到一条“公开消息”时，会做这几步：
+
+1. 解析里面有没有 `@agent`
+2. 如果有，就生成 `QueuedDispatch`
+3. 放进当前 `sessionGroupId` 对应的队列
+4. 等当前运行结束后，再把下一只 agent 拉起来
+
+这一层的匹配规则和用户消息不一样：
+
+- **agent 的公开回复用行首匹配**
+- 只有行首 `@agent` 才会触发 A2A
+
+这样做的目的，是避免 agent 在正文里随便提到别人的名字就误触发协作。
+
+例如：
+
+```text
+@范德彪 请按上面的分析实现
+@桂芬 请做最终验证
+```
+
+这会触发 A2A。
+
+但如果 agent 只是写：
+
+```text
+我觉得这个问题还需要范德彪看看，必要时也可以让桂芬验证。
+```
+
+这不会触发 A2A，因为它只是正文提及，不是明确的接力指令。
+
+### 13.3 第三层：callback / MCP 是“运行中的 agent 主动回后端”
+
+很多人以为 callback 是另一个聊天接口，其实不是。
+
+callback 的本质是：
+
+- **运行中的 agent 主动调用后端能力**
+
+当前主要能力是：
+
+- `POST /api/callbacks/post-message`
+- `GET /api/callbacks/thread-context`
+- `GET /api/callbacks/pending-mentions`
+
+#### `post-message`
+
+作用：
+
+- 让 agent 在自己这轮还没结束时，就主动往房间里发一条公开消息
+
+这条消息发回后端后，后端会：
+
+1. 校验 `invocationId + callbackToken`
+2. 写入数据库
+3. 广播 `message.created`
+4. 广播 `thread_snapshot`
+5. 再对这条公开消息做 mention 解析
+6. 必要时继续 A2A 入队
+
+所以 `post-message` 是“运行中的 agent 主动发起协作”的入口。
+
+#### `thread-context`
+
+作用：
+
+- 让 agent 运行过程中向后端要最近上下文
+
+这不是模型脑内上下文，而是后端数据库里的最近 thread / room 消息。
+
+#### `pending-mentions`
+
+作用：
+
+- 让 agent 查询“我这次运行开始之后，有没有新的公开消息在 `@我`”
+
+它更像“待处理点名箱”。
+
+### 13.4 Claude 的 MCP 和 Codex / Gemini 的 callback，有什么区别
+
+它们最终都会落到同一套后端 callback API，只是接入方式不同。
+
+#### Claude
+
+Claude 当前是原生 MCP 接入：
+
+```text
+Claude CLI
+-> MCP tool
+-> 本地 MCP stdio server
+-> callback API
+-> 后端业务逻辑
+```
+
+也就是说，Claude 不是直接改数据库，它是先调 MCP tool，再由 MCP server 转成 callback HTTP 请求。
+
+#### Codex / Gemini
+
+Codex / Gemini 当前没有原生挂这个 MCP。
+
+它们走的是 callback prompt：
+
+```text
+Codex / Gemini CLI
+-> prompt 里读到 callback 用法
+-> 直接调用 HTTP callback API
+-> 后端业务逻辑
+```
+
+因此：
+
+- `MCP` 是 Claude 的 transport / 协议桥
+- `callback API` 才是后端真正的业务能力入口
+
+### 13.5 为什么会出现“第一个是前端触发，后面是后端触发”
+
+因为当前系统就是这样分层的：
+
+- **前端负责把用户送进第一个入口 thread**
+- **后端负责把后续协作链接力下去**
+
+这是刻意设计，不是偶然。
+
+前端负责首跳，是因为前端必须先知道：
+
+- 该把消息投到哪个 thread
+- 该显示哪张卡片进入运行态
+
+后端负责后续跳，是因为只有后端知道：
+
+- 当前 `sessionGroupId` 里谁在跑
+- 当前 root message 已经 hop 了几次
+- 哪些 provider 已经对这条消息触发过
+- callback / MCP 回流后应该怎么继续调度
+
+### 13.6 从头到尾的一张时序图
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant FE as Frontend
+    participant WS as WebSocket
+    participant MSG as MessageService
+    participant DIS as Dispatch
+    participant A1 as First Agent CLI
+    participant CB as Callback API
+    participant A2 as Next Agent CLI
+
+    U->>FE: 输入消息，包含多个 @agent
+    FE->>FE: 解析第一个 @，决定首跳 threadId
+    FE->>WS: send_message(threadId, content)
+    WS->>MSG: handleSendMessage()
+    MSG->>MSG: appendUserMessage()
+    MSG->>A1: runThreadTurn() 启动第一跳
+    MSG->>DIS: enqueuePublicMentions(user message, matchMode=anywhere)
+
+    A1-->>MSG: stdout/stderr 增量输出
+    MSG-->>FE: assistant_delta / status / thread_snapshot
+
+    alt 运行中主动 callback
+        A1->>CB: post-message / thread-context / pending-mentions
+        CB->>MSG: handleAgentPublicMessage(...)
+        MSG->>DIS: enqueuePublicMentions(public callback message, matchMode=line-start)
+        CB-->>FE: message.created / thread_snapshot
+    end
+
+    A1-->>MSG: 最终公开回复
+    MSG->>DIS: enqueuePublicMentions(agent final text, matchMode=line-start)
+    MSG->>DIS: flushDispatchQueue()
+    DIS->>A2: 取队列中的下一跳
+    A2-->>MSG: 下一跳输出
+    MSG-->>FE: 持续广播实时状态
+```
+
+### 13.7 给小白的最短理解
+
+如果只记一句话，就记这句：
+
+**用户的 `@` 是“先叫谁开工”，agent 的 `@` 是“接下来叫谁接力”，callback / MCP 是“正在干活的人随时回房间说话”。**
+
+### 13.8 队列为什么会继续执行：结合代码看一遍
+
+很多人第一次看到 A2A 队列时都会有一个疑问：
+
+> 假设队列里本来只剩一个“黄仁勋”，黄仁勋被取出来开始执行了。  
+> 执行过程中，黄仁勋又 `@范德彪`。  
+> 这时队列不是从 `0` 又变回 `1` 了吗？  
+> 为什么系统还会继续执行，而不是停住？
+
+答案是：
+
+**因为队列不是“只检查一次”，而是每次一跳执行结束后，后端都会再刷一轮队列。**
+
+#### 1. 真正负责“刷队列”的代码
+
+关键入口在：
+
+- `packages/api/src/services/message-service.ts`
+- `flushDispatchQueue(sessionGroupId, emit)`
+
+这段逻辑的骨架是：
+
+```ts
+private async flushDispatchQueue(sessionGroupId: string, emit: EmitEvent) {
+  if (this.flushingGroups.has(sessionGroupId)) {
+    return;
+  }
+
+  this.flushingGroups.add(sessionGroupId);
+
+  try {
+    while (true) {
+      const next = this.dispatch.takeNextQueuedDispatch(sessionGroupId, new Set(this.invocations.keys()));
+      if (!next) {
+        return;
+      }
+
+      const targetThread = this.sessions.findThreadByGroupAndProvider(sessionGroupId, next.targetProvider);
+      if (!targetThread) {
+        continue;
+      }
+
+      await this.runThreadTurn({
+        threadId: targetThread.id,
+        content: next.content,
+        emit,
+        historyMode: "shared",
+        rootMessageId: next.rootMessageId
+      });
+    }
+  } finally {
+    this.flushingGroups.delete(sessionGroupId);
+  }
+}
+```
+
+重点有三个：
+
+- `while (true)`：不是只取一条，而是会持续循环检查
+- `await runThreadTurn(...)`：当前这跳跑完之后，循环会继续往下走
+- `flushingGroups`：同一个 `sessionGroupId` 同时只允许一个刷队列循环在跑
+
+#### 2. 真正负责“能不能出队”的代码
+
+判断能不能执行下一条，不是在 `flushDispatchQueue()` 里猜，而是在：
+
+- `packages/api/src/orchestrator/dispatch.ts`
+- `takeNextQueuedDispatch(sessionGroupId, runningThreadIds)`
+
+核心逻辑是：
+
+```ts
+takeNextQueuedDispatch(sessionGroupId: string, runningThreadIds: Set<string>) {
+  const groupThreads = this.sessions.listGroupThreads(sessionGroupId);
+  const hasRunningThread = groupThreads.some((thread) => runningThreadIds.has(thread.id));
+  if (hasRunningThread) {
+    return null;
+  }
+
+  const queue = this.queues.get(sessionGroupId);
+  if (!queue?.length) {
+    return null;
+  }
+
+  const next = queue.shift() ?? null;
+  if (!queue.length) {
+    this.queues.delete(sessionGroupId);
+  }
+
+  return next;
+}
+```
+
+它只看两件事：
+
+1. 当前 `sessionGroupId` 下有没有 thread 正在运行
+2. 队列里还有没有待办
+
+只要“还有人在跑”，它就返回 `null`，暂时不让下一跳出队。
+
+#### 3. 真正负责“入队”的代码
+
+入队发生在：
+
+- `packages/api/src/orchestrator/dispatch.ts`
+- `enqueuePublicMentions(...)`
+
+当后端发现一条公开消息里有合法 mention 时，会做：
+
+```ts
+const queue = this.queues.get(options.sessionGroupId) ?? [];
+queue.push(...queued);
+this.queues.set(options.sessionGroupId, queue);
+```
+
+所以队列随时都可能在运行中被追加新任务。
+
+#### 4. 按你举的例子逐步走一遍
+
+假设一开始队列是：
+
+```text
+[黄仁勋]
+```
+
+##### 第一步：刷队列启动
+
+`flushDispatchQueue()` 开始运行：
+
+1. `takeNextQueuedDispatch()` 发现当前会话组没人跑
+2. 把 `黄仁勋` `shift()` 出来
+
+于是队列暂时变成：
+
+```text
+[]
+```
+
+然后执行：
+
+```ts
+await runThreadTurn(黄仁勋)
+```
+
+##### 第二步：黄仁勋执行过程中又 `@范德彪`
+
+这时会有两种常见来源：
+
+- 黄仁勋最终回复里写了行首 `@范德彪`
+- 黄仁勋运行过程中通过 callback `post-message` 发了一条公开消息，里面 `@范德彪`
+
+无论哪种来源，最后都会走到：
+
+- `enqueuePublicMentions(...)`
+
+于是队列又变成：
+
+```text
+[范德彪]
+```
+
+##### 第三步：为什么不会立刻执行范德彪
+
+因为此时黄仁勋还在运行。
+
+如果这时候有人调用 `flushDispatchQueue()`，`takeNextQueuedDispatch()` 会看到：
+
+- 当前 `sessionGroupId` 下有 thread 正在跑
+
+于是直接返回 `null`。
+
+这表示：
+
+- **现在先不执行**
+- **但队列保留**
+
+#### 5. 黄仁勋跑完之后，为什么范德彪又会继续执行
+
+关键就在 `flushDispatchQueue()` 的 `while (true)`。
+
+外层刷队列循环并没有结束，它只是一直在：
+
+```ts
+取一条
+-> await runThreadTurn(...)
+-> 再回来继续下一轮 while
+```
+
+所以黄仁勋这跳结束后，外层循环会再次执行：
+
+1. 再调一次 `takeNextQueuedDispatch()`
+2. 这时没人跑了
+3. 队列里又正好有 `[范德彪]`
+4. 于是范德彪被取出来继续执行
+
+也就是说，队列从：
+
+```text
+[黄仁勋] -> [] -> [范德彪]
+```
+
+完全没问题，因为后端后面还会再检查一次。
+
+#### 6. `flushingGroups` 在这里到底起什么作用
+
+你可能还会看到另一个现象：
+
+- 运行过程中 callback 回来时，也会尝试 `flushDispatchQueue()`
+- 但那个调用有时会直接返回
+
+原因就在：
+
+```ts
+if (this.flushingGroups.has(sessionGroupId)) {
+  return;
+}
+```
+
+它的目的不是丢队列，而是防止：
+
+- 同一个会话组同时开两个刷队列循环
+- 造成并发出队、顺序混乱
+
+所以：
+
+- **重复调用 `flushDispatchQueue()` 可以被挡掉**
+- **但新入队的数据不会丢**
+- 因为原来那条外层 `while` 还会继续往下跑
+
+#### 7. 最短理解
+
+如果只记一句话，就记这个：
+
+**队列不是“清空一次就完”，而是“每执行完一跳，再重新看一眼还有没有下一跳”。**
+
+所以黄仁勋执行时新加进去的范德彪，不会丢；黄仁勋结束后，外层刷队列循环会把范德彪继续拉起来。
+
+### 13.9 我们的 A2A 和 cat-cafe 的 A2A，到底差在哪
+
+这一节专门对照 `cat-cafe` 的两课：
+
+- 第四课：A2A routing
+- 第五课：MCP callback
+
+目标不是说谁更好，而是把两套系统在“用户入口、agent 互相 @、callback 回流、调度收口”上的差异讲清楚。
+
+#### 1. 共同点：两边都把“用户首跳”和“A2A 后续跳”分开
+
+`cat-cafe` 第四课一上来讲的就是：
+
+```text
+用户先 @布偶猫 开工
+布偶猫写完后自己 @缅因猫 review
+```
+
+这说明它和我们一样，都把问题拆成两层：
+
+- 用户先叫第一只 agent
+- 之后再由 agent 自己接力调用下一只
+
+我们当前系统也是这个思路：
+
+- 前端先选首跳 thread
+- 后端再负责后续 A2A 接力
+
+所以在设计意图上，两边是一致的：
+
+**不要让用户做人肉调度器。**
+
+#### 2. 最大差异：cat-cafe 早期有“两条 A2A 路”，我们当前只有“一条主路”
+
+`cat-cafe` 第四课里最关键的一点，是它早期 A2A 实际上有两条路径。
+
+##### Path A：Worklist 链
+
+猫跑完以后：
+
+- 从最终回复文本里解析 `@mention`
+- 再把下一只猫追加到 worklist
+- 同一个循环串行继续执行
+
+也就是：
+
+```text
+最终回复
+-> parseA2AMentions()
+-> worklist.push(nextCat)
+-> 继续 routeSerial()
+```
+
+##### Path B：Callback 触发
+
+如果猫在执行过程中通过 callback 主动发公共消息：
+
+- callback 路由先看到 `@另一只猫`
+- 然后直接触发新的 child invocation
+
+也就是：
+
+```text
+执行中 post_message("@另一只猫")
+-> callbacks.ts
+-> triggerA2AInvocation()
+-> 后台独立 routeExecution()
+```
+
+这两条路径在 `cat-cafe` 早期是并存的。
+
+**我们当前项目不是这样。**
+
+我们现在只有一条真正的 A2A 主路：
+
+```text
+公开消息
+-> enqueuePublicMentions(...)
+-> queues[sessionGroupId]
+-> flushDispatchQueue()
+-> runThreadTurn(...)
+```
+
+不管公开消息来自：
+
+- 用户消息
+- agent 最终公开回复
+- callback `post-message`
+
+最后都会重新回到同一个：
+
+- `DispatchOrchestrator.enqueuePublicMentions(...)`
+- `MessageService.flushDispatchQueue(...)`
+
+也就是说：
+
+**我们项目当前没有“callback 直接另起一条独立 child invocation 链”的第二条路。**
+
+这点是和 `cat-cafe` 第四课早期设计最大的差异。
+
+#### 3. 为什么 cat-cafe 会出事故，而我们现在相对不容易
+
+`cat-cafe` 第四课明确提到了情人节那次 P0：
+
+- 同一个 `@opus`
+- 既被 callback 路检测到一次
+- 又被最终回复检测到一次
+- 于是双重开火
+
+这导致了几个问题：
+
+- 同一只猫被并发拉起两次
+- callback 路没有统一深度限制
+- child invocation 不在同一个 stop / abort 控制面里
+
+也就是：
+
+```text
+Path A: worklist
+Path B: callback child invocation
+```
+
+两条路都能点火，但不共用一套统一的串行调度状态。
+
+我们当前项目因为只有“一条主路”，所以天然规避了这类问题：
+
+- callback 公共消息不会直接自己拉起下一只 agent
+- callback 只是把公开消息重新送回 dispatch
+- 是否执行下一跳，仍然要经过统一队列和 `flushDispatchQueue()`
+
+这也是为什么我们前面解释队列时，一直强调：
+
+**callback 会入队，但不会绕过队列。**
+
+#### 4. mention 匹配规则：两边方向相同，但细节还有差异
+
+`cat-cafe` 第四课里把规则说得非常清楚：
+
+- 用户消息：宽松匹配
+- agent 回复：行首匹配
+- 解析前先剥离代码块
+
+也就是说，`cat-cafe` 做了三件事：
+
+1. 用户说话自然一点没关系
+2. agent 只有明确“喊话”才触发 A2A
+3. 代码块里的 `@mention` 不算
+
+我们当前项目现在也已经和它对齐了前两点：
+
+- 用户消息：宽松匹配
+- agent 公开回复：行首匹配
+
+但还有一个差异：
+
+- **我们当前还没有像 cat-cafe 那样先剥离 fenced code block 再做 mention 解析**
+
+所以如果 agent 在代码块示例里恰好写了行首 `@agent`，我们理论上仍然有误触发风险；`cat-cafe` 第四课专门把这件事当成经验教训写进了解析逻辑。
+
+#### 5. 深度保护也不完全一样
+
+`cat-cafe` 第四课里，Worklist 路有：
+
+- `a2aCount`
+- `maxDepth`
+- 默认 15
+
+而 callback 路早期没有统一深度计数，这是事故根源之一。
+
+我们当前项目的保护方式是：
+
+- `DispatchOrchestrator.MAX_HOPS = 10`
+- `rootHopCounts`
+- `messageTriggeredProviders`
+- self-skip
+
+也就是说，我们不是单纯“循环次数计数”，而是：
+
+- 对同一个 root message 算 hop
+- 对同一条 message 做 provider 去重
+- 同一个 provider 不会在同一条 message 上被重复触发
+
+所以两边都在做“防 ping-pong / 防无限互相 @”，只是实现方式不同。
+
+#### 6. callback 在两边的地位也不一样
+
+`cat-cafe` 第五课把 callback 描述成一个不断扩张的平台：
+
+- post_message
+- thread-context
+- pending-mentions
+- 之后又扩到 permission / search / reflect / retain-memory
+
+它的意思是：
+
+**callback 是整套协作平台的统一能力底座。**
+
+我们当前项目里，callback 也很重要，但角色更收敛：
+
+- `post-message`
+- `thread-context`
+- `pending-mentions`
+
+其中真正会重新进入 A2A 主流程的，是：
+
+- `post-message`
+
+而：
+
+- `thread-context`
+- `pending-mentions`
+
+当前只是辅助查询能力，不直接推动下一跳调度。
+
+这点和 `cat-cafe` 第五课相比，明显更保守。
+
+#### 7. Claude / Codex / Gemini 接入方式也有差异
+
+`cat-cafe` 第五课强调的是一套“统一 callback 能力”，但 transport 可以不同。
+
+我们当前项目也是这个思路，不过实现更收口：
+
+- Claude：原生 MCP -> 本地 stdio MCP server -> callback API
+- Codex / Gemini：callback prompt -> 直接 HTTP callback API
+
+所以从架构上看，两边思想一致：
+
+**真正统一的是 callback 业务能力，不一定是 transport。**
+
+但和 `cat-cafe` 相比，我们当前的 Claude 原生 MCP tool 面更窄：
+
+- 只有 `post_message`
+- 只有 `get_thread_context`
+
+`pending-mentions` 还没有暴露成 Claude 的原生 MCP tool。
+
+#### 8. 如果用一句话概括两边现在的差异
+
+可以这样记：
+
+- `cat-cafe` 第四、五课展示的是一套从“worklist + callback child invocation 双路径”逐步收敛的演化过程
+- 我们当前项目更像是一开始就站在“统一队列 + callback 回流到同一调度入口”的版本上
+
+所以最核心的差异不是“有没有 A2A”，而是：
+
+**cat-cafe 更像在公开课里展示它是怎么从两条路慢慢收口的；我们当前实现已经更接近“只保留一条主路”的收敛版本。**
+
+#### 9. 最短总结
+
+如果只记三点，就记这三条：
+
+1. `cat-cafe` 早期 A2A 有两条触发路：最终回复 worklist + callback child invocation；我们当前只有一条统一队列主路。
+2. 两边都认同“用户宽松匹配、agent 行首匹配”，但 `cat-cafe` 还额外先剥离代码块，我们当前暂时没有。
+3. `cat-cafe` 的 callback 平台更宽，我们当前 callback 更收敛，真正直接参与 A2A 主流程的主要还是 `post-message`。
+### 13.10 为什么 `pending-mentions` 在 cat-cafe 更有用，而在我们这里基本边缘化
+
+这是一个很容易让人误解的点。
+
+前面我们一直说：
+
+- 我们和 `cat-cafe` 的 A2A 高层方向相近
+
+但这并不等于：
+
+- 每个 callback 能力在两边的地位都一样
+
+`pending-mentions` 就是最典型的例子。
+
+#### 1. 在 `cat-cafe` 里，它属于“基础 callback 协作能力”的一部分
+
+从第 5 课可以直接确认：
+
+最早那批 callback 能力就是：
+
+- `post_message`
+- `thread-context`
+- `pending-mentions`
+
+而且第 5 课后面把它们整体归纳成：
+
+- 基础回传能力
+- 后续平台扩展的底座
+
+也就是说，在 `cat-cafe` 的设计语义里，`pending-mentions` 不是一个顺手加的查询接口，而是：
+
+**运行中的猫主动感知协作变化的基础能力之一。**
+
+#### 2. 在我们项目里，它更像“有接口，但没进入主链路”
+
+我们当前项目里：
+
+- 后端确实有 `GET /api/callbacks/pending-mentions`
+- `base-runtime.ts` 里也把它写进了 Codex / Gemini 的 callback prompt
+
+但它现在没有进入真正的产品主链路：
+
+- 不参与 `enqueuePublicMentions(...)`
+- 不参与 `flushDispatchQueue()`
+- 不会自动入队
+- 不会自动拉起下一跳
+- Claude 的原生 MCP 也没有暴露这个 tool
+
+所以从系统行为上看，它现在更像：
+
+**一个预留的辅助查询能力，而不是调度核心。**
+
+#### 3. 为什么 `cat-cafe` 更需要它
+
+原因不在于 A2A 有没有，而在于两边“协作责任放在哪一层”不一样。
+
+`cat-cafe` 更强调：
+
+- 运行中的猫自己也要有较强的协作感知能力
+- callback 平台本身就是协作底座
+- 猫在执行中可以主动查看“有没有人新点名我”
+
+因此 `pending-mentions` 在 `cat-cafe` 里更自然：
+
+- 它是“工作中的猫抬头看一眼群消息”的工具
+
+#### 4. 为什么我们当前不太需要它
+
+我们当前更偏后端统一调度：
+
+```text
+公开消息
+-> enqueuePublicMentions(...)
+-> 队列
+-> flushDispatchQueue()
+-> 下一跳
+```
+
+也就是说：
+
+- 谁该接力
+- 什么时候接力
+- 当前房间是否空闲
+- 当前 root 是否还能继续 hop
+
+这些判断主要都已经由后端统一做了。
+
+于是 agent 自己频繁去查：
+
+- “最近有没有新 `@我`”
+
+这件事的必要性自然下降了。
+
+在我们的当前模型里，更核心的能力其实是：
+
+- `post-message`
+- `thread-context`
+
+因为：
+
+- `post-message` 能把运行中的公共消息重新送回 A2A 主流程
+- `thread-context` 能让 agent 补足最近上下文
+
+相比之下，`pending-mentions` 没有一个不可替代的位置。
+
+#### 5. 最短类比
+
+如果打个比方：
+
+- `cat-cafe` 更像：猫在工作时会主动抬头看群里有没有人又点自己
+- 我们项目更像：群管理员已经排好队，轮到谁时后端会直接叫谁
+
+所以：
+
+- 在前者里，`pending-mentions` 更有存在感
+- 在后者里，`pending-mentions` 会自然边缘化
+
+#### 6. 一句话总结
+
+`pending-mentions` 在 `cat-cafe` 更有用，不是因为它们有 A2A 我们没有，而是因为：
+
+**`cat-cafe` 把更多协作感知责任放在运行中的 agent 身上；我们当前把更多调度责任收回到了后端统一队列。**

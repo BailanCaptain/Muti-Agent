@@ -1,56 +1,57 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
-import {
-  BaseCliRuntime,
-  resolveNodeScript,
-  buildClaudeMcpPrompt,
-  type AgentRunInput,
-  type RuntimeCommand
-} from "./base-runtime";
+import { BaseCliRuntime, resolveNpmRoot, type AgentRunInput, type RuntimeCommand } from "./base-runtime";
+import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts";
+
+function resolveClaudeCommand() {
+  // 1. npm 全局安装：cli.js 在 npm node_modules 里
+  const npmRoot = resolveNpmRoot();
+  const cliJs = npmRoot ? path.join(npmRoot, "node_modules", "@anthropic-ai", "claude-code", "cli.js") : "";
+  if (cliJs && existsSync(cliJs)) {
+    return { command: process.execPath, prefixArgs: [cliJs], shell: false };
+  }
+
+  // 2. PowerShell / standalone 安装：claude.exe 在 ~/.local/bin/
+  const homeDir = process.env.USERPROFILE || process.env.HOME || "";
+  const standaloneExe = path.join(homeDir, ".local", "bin", "claude.exe");
+  if (existsSync(standaloneExe)) {
+    return { command: standaloneExe, prefixArgs: [], shell: false };
+  }
+
+  // 3. 兜底：shell 模式（避免 --append-system-prompt 换行符被截断，不推荐）
+  return { command: "claude", prefixArgs: [], shell: true };
+}
 
 export class ClaudeRuntime extends BaseCliRuntime {
   readonly agentId = "claude";
 
   protected buildCommand(input: AgentRunInput): RuntimeCommand {
-    const runtime = resolveNodeScript("@anthropic-ai/claude-code", ["cli.js"]);
+    const runtime = resolveClaudeCommand();
     const model = input.env?.MULTI_AGENT_MODEL;
     const sessionId = input.env?.MULTI_AGENT_NATIVE_SESSION_ID;
     // 会话已恢复时不重复附加 system prompt，避免冗余 token。
-    const args = ["--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--allowedTools", "mcp__multi_agent_room__*"];
+    const args = ["--output-format", "stream-json", "--verbose"];
     if (!sessionId) {
-      const systemPrompt = [input.env?.MULTI_AGENT_SYSTEM_PROMPT ?? "", buildClaudeMcpPrompt()].filter(Boolean).join("\n\n");
-      args.push("--append-system-prompt", systemPrompt);
+      args.push("--append-system-prompt", AGENT_SYSTEM_PROMPTS.claude);
     }
     args.unshift("-p", input.prompt);
-    const workspaceRoot = input.cwd ?? process.cwd();
-    const runtimeDir = path.join(workspaceRoot, ".multi-agent-runtime");
-    const mcpConfigPath = path.join(runtimeDir, `${input.invocationId}.claude.mcp.json`);
     const mcpServerPath = path.join(__dirname, "..", "mcp", "server.js");
 
-    mkdirSync(runtimeDir, { recursive: true });
-    // 每次 invocation 生成一份临时 MCP 配置，把 callback 身份透传给本地 MCP server。
-    writeFileSync(
-      mcpConfigPath,
-      JSON.stringify(
-        {
-          mcpServers: {
-            multi_agent_room: {
-              command: process.execPath,
-              args: [mcpServerPath],
-              env: {
-                MULTI_AGENT_API_URL: input.env?.MULTI_AGENT_API_URL ?? "",
-                MULTI_AGENT_INVOCATION_ID: input.env?.MULTI_AGENT_INVOCATION_ID ?? "",
-                MULTI_AGENT_CALLBACK_TOKEN: input.env?.MULTI_AGENT_CALLBACK_TOKEN ?? ""
-              }
-            }
+    // 直接把 MCP 配置作为 JSON 字符串内联传入，省去临时文件的创建与清理。
+    const mcpConfig = JSON.stringify({
+      mcpServers: {
+        multi_agent_room: {
+          command: process.execPath,
+          args: [mcpServerPath],
+          env: {
+            MULTI_AGENT_API_URL: input.env?.MULTI_AGENT_API_URL ?? "",
+            MULTI_AGENT_INVOCATION_ID: input.env?.MULTI_AGENT_INVOCATION_ID ?? "",
+            MULTI_AGENT_CALLBACK_TOKEN: input.env?.MULTI_AGENT_CALLBACK_TOKEN ?? ""
           }
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    args.push("--mcp-config", mcpConfigPath);
+        }
+      }
+    });
+    args.push("--mcp-config", mcpConfig);
 
     if (model) {
       args.push("--model", model);
@@ -62,15 +63,7 @@ export class ClaudeRuntime extends BaseCliRuntime {
     return {
       command: runtime.command,
       args: [...runtime.prefixArgs, ...args],
-      shell: runtime.shell,
-      cleanup() {
-        // 配置文件只服务本次运行，退出后就清理，避免残留旧 token。
-        try {
-          rmSync(mcpConfigPath, { force: true });
-        } catch {
-          return;
-        }
-      }
+      shell: runtime.shell
     };
   }
 

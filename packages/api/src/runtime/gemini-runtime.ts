@@ -1,11 +1,5 @@
-import {
-  BaseCliRuntime,
-  buildCallbackPrompt,
-  resolveNodeScript,
-  wrapPromptWithInstructions,
-  type AgentRunInput,
-  type RuntimeCommand
-} from "./base-runtime";
+import { BaseCliRuntime, resolveNodeScript, wrapPromptWithInstructions, type AgentRunInput, type RuntimeCommand } from "./base-runtime";
+import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts";
 
 export class GeminiRuntime extends BaseCliRuntime {
   readonly agentId = "gemini";
@@ -16,12 +10,7 @@ export class GeminiRuntime extends BaseCliRuntime {
     // 会话已恢复时模型已有指令，不重复附加，减少每轮 ~500 token 的额外开销。
     const prompt = sessionId
       ? input.prompt
-      : (() => {
-          const instructions = [input.env?.MULTI_AGENT_SYSTEM_PROMPT ?? "", buildCallbackPrompt("Gemini")]
-            .filter(Boolean)
-            .join("\n\n");
-          return wrapPromptWithInstructions(instructions, input.prompt);
-        })();
+      : wrapPromptWithInstructions(AGENT_SYSTEM_PROMPTS.gemini, input.prompt);
     const args = ["-p", prompt, "--output-format", "stream-json", "--approval-mode", "yolo"];
     const model = input.env?.MULTI_AGENT_MODEL;
 

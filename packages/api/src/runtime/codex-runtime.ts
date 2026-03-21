@@ -1,13 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import {
-  BaseCliRuntime,
-  buildCallbackPrompt,
-  resolveNpmRoot,
-  wrapPromptWithInstructions,
-  type AgentRunInput,
-  type RuntimeCommand
-} from "./base-runtime";
+import { BaseCliRuntime, resolveNpmRoot, wrapPromptWithInstructions, type AgentRunInput, type RuntimeCommand } from "./base-runtime";
+import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts";
 
 function resolveCodexCommand() {
   const npmRoot = resolveNpmRoot();
@@ -30,12 +24,7 @@ export class CodexRuntime extends BaseCliRuntime {
     // 会话已恢复时模型已有指令，不重复附加，减少每轮 ~500 token 的额外开销。
     const prompt = sessionId
       ? input.prompt
-      : (() => {
-          const instructions = [input.env?.MULTI_AGENT_SYSTEM_PROMPT ?? "", buildCallbackPrompt("Codex")]
-            .filter(Boolean)
-            .join("\n\n");
-          return wrapPromptWithInstructions(instructions, input.prompt);
-        })();
+      : wrapPromptWithInstructions(AGENT_SYSTEM_PROMPTS.codex, input.prompt);
     const topLevelArgs = [...(model ? ["-m", model] : []), "-a", "never", "-s", "workspace-write"];
     const baseArgs = sessionId
       ? ["exec", "resume", "--skip-git-repo-check", "--json", sessionId, prompt]

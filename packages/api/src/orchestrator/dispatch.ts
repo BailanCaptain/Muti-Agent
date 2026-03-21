@@ -1,6 +1,6 @@
 import type { Provider } from "@multi-agent/shared";
 import type { SessionService } from "../services/session-service";
-import { resolveMention, resolveMentions } from "./mention-router";
+import { resolveMention, resolveMentions, type MentionMatchMode } from "./mention-router";
 
 type InvocationContext = {
   /** 这次 invocation 属于哪条用户根消息链。 */
@@ -82,9 +82,10 @@ export class DispatchOrchestrator {
     sourceAlias: string;
     rootMessageId: string;
     content: string;
+    matchMode?: MentionMatchMode;
   }) {
     // 只对“公开消息”做 mention 解析；用户消息和 agent 主动 post_message 都会走到这里。
-    const mentions = resolveMentions(options.content, this.aliases);
+    const mentions = resolveMentions(options.content, this.aliases, options.matchMode);
     if (!mentions.length) {
       return [];
     }

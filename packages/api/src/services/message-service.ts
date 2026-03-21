@@ -98,7 +98,8 @@ export class MessageService {
       sourceProvider: thread.provider,
       sourceAlias: thread.alias,
       rootMessageId: invocation.rootMessageId,
-      content: options.content
+      content: options.content,
+      matchMode: "line-start"
     });
 
     await this.flushDispatchQueue(thread.sessionGroupId, options.emit);
@@ -152,7 +153,8 @@ export class MessageService {
       sourceProvider: thread.provider,
       sourceAlias: thread.alias,
       rootMessageId,
-      content: event.payload.content
+      content: event.payload.content,
+      matchMode: "anywhere"
     });
     await this.flushDispatchQueue(thread.sessionGroupId, emit);
   }
@@ -319,7 +321,8 @@ export class MessageService {
           sourceProvider: thread.provider,
           sourceAlias: thread.alias,
           rootMessageId: options.rootMessageId,
-          content: result.content
+          content: result.content,
+          matchMode: "line-start"
         });
       }
 
