@@ -1,97 +1,133 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 
-/** 一轮对话历史。这里只保留 role + content，供 runtime 组装 prompt。 */
-export type ConversationHistory = Array<{ role: "user" | "assistant"; content: string }>;
-
-/**
- * 上层传给 runtime 的统一输入。
- * runtime 不关心消息从前端来的还是从 A2A 队列来的，只关心这份标准化输入。
- */
-export type AgentRunInput = {
-  /** 本次运行的唯一 ID。callback 身份、事件记录都会围绕它展开。 */
-  invocationId: string;
-  /** 本次运行属于哪个 thread。 */
-  threadId: string;
-  /** 当前运行中的 agent 标识，通常是别名或 provider 名。 */
-  agentId: string;
-  /** 最终要喂给 CLI 的 prompt。 */
-  prompt: string;
-  /** 进程工作目录；不传时默认使用当前项目目录。 */
-  cwd?: string;
-  /**
-   * 运行时环境变量。
-   * 这里会放 callback token、system prompt、当前模型、native session id 等运行期信息。
-   */
-  env?: Record<string, string>;
+export type RuntimeLifecycleConfig = {
+  heartbeatIntervalMs: number;
+  inactivityTimeoutMs: number;
+  shutdownGracePeriodMs: number;
 };
 
-/**
- * runtime 返回给上层的统一输出。
- * 上层只处理这个结构，不关心底层是哪家 CLI。
- */
+export type AgentRunInput = {
+  invocationId: string;
+  threadId: string;
+  agentId: string;
+  prompt: string;
+  cwd?: string;
+  env?: Record<string, string>;
+  runtime?: Partial<RuntimeLifecycleConfig>;
+};
+
 export type AgentRunOutput = {
-  /** runtime 尝试抽取出的最终文本；有些 CLI 可能拿不到，允许为空。 */
   finalText?: string;
-  /** 本次运行 stdout 的完整原始文本。调试时很有用。 */
   rawStdout: string;
-  /** 本次运行 stderr 的完整原始文本。thinking / tool 过程通常会出现在这里。 */
   rawStderr: string;
-  /** 进程退出码。 */
   exitCode: number | null;
 };
 
-/** 三家运行时适配器都要实现的最小接口。 */
 export interface AgentRuntime {
   run(input: AgentRunInput): Promise<AgentRunOutput>;
 }
 
-/**
- * runtime 最终要执行的命令描述。
- * 这是“统一 runtime 接口”和“真实 CLI 命令细节”之间的中间层。
- */
 export type RuntimeCommand = {
-  /** 真正要执行的命令，例如 node / codex.cmd。 */
   command: string;
-  /** 命令参数数组。 */
   args: string[];
-  /** 是否通过 shell 运行。Windows 下有些 CLI 需要 shell 包装。 */
   shell: boolean;
-  /** 本次运行结束后要执行的清理动作，例如删除临时 MCP 配置。 */
   cleanup?: () => void | Promise<void>;
 };
 
-/** 运行流上的钩子，供上层拿增量输出和活动信号。 */
 export type RuntimeStreamHooks = {
-  /** stdout 每读到一行就会回调。 */
   onStdoutLine?: (line: string) => void;
-  /** stderr 每读到一块数据就会回调。 */
   onStderrChunk?: (chunk: string) => void;
-  /**
-   * 统一活动事件。
-   * 不管 stdout 还是 stderr，只要有数据，就说明 agent 还活着。
-   */
   onActivity?: (activity: { stream: "stdout" | "stderr"; at: string; chunk: string }) => void;
 };
 
-/**
- * 对外暴露的一次运行句柄。
- * 上层拿到它后可以：
- * 1. 调 cancel 终止运行
- * 2. 等 promise 获取最终结果
- */
 export type RuntimeExecutionHandle = {
-  /** 主动停止本次 CLI 运行。 */
   cancel: () => void;
-  /** 本次运行完成后的最终结果。 */
   promise: Promise<AgentRunOutput>;
 };
 
+type SpawnLike = (
+  command: string,
+  args?: readonly string[],
+  options?: Parameters<typeof spawn>[2]
+) => ChildProcessWithoutNullStreams;
+
+export type RuntimeDependencies = {
+  spawn?: SpawnLike;
+  now?: () => number;
+  setTimeout?: typeof globalThis.setTimeout;
+  clearTimeout?: typeof globalThis.clearTimeout;
+  setInterval?: typeof globalThis.setInterval;
+  clearInterval?: typeof globalThis.clearInterval;
+  platform?: NodeJS.Platform;
+  forceKillProcessTree?: (pid: number) => void;
+};
+
+const DEFAULT_RUNTIME_LIFECYCLE: RuntimeLifecycleConfig = {
+  heartbeatIntervalMs: 30_000,
+  inactivityTimeoutMs: 5 * 60_000,
+  shutdownGracePeriodMs: 5_000
+};
+
+function readMs(preferred: number | undefined, fallback: string | undefined, defaultValue: number) {
+  if (typeof preferred === "number" && Number.isFinite(preferred) && preferred >= 0) {
+    return preferred;
+  }
+
+  const parsed = Number(fallback);
+  if (Number.isFinite(parsed) && parsed >= 0) {
+    return parsed;
+  }
+
+  return defaultValue;
+}
+
+function formatRuntimeTimeoutMessage(inactivityTimeoutMs: number, lastActivityAt: string) {
+  const seconds = Math.round(inactivityTimeoutMs / 1000);
+  const minutes = inactivityTimeoutMs >= 60_000 ? `（约 ${Math.round(inactivityTimeoutMs / 60_000)} 分钟）` : "";
+  return `Agent 好像睡着了，已经有 ${seconds} 秒${minutes} 没有新活动。最后一次活动时间：${lastActivityAt}。请检查它的状态或重试一次。`;
+}
+
+function defaultForceKillProcessTree(pid: number) {
+  const killer = spawn("taskkill", ["/pid", String(pid), "/t", "/f"], {
+    shell: true,
+    stdio: "ignore",
+    windowsHide: true
+  });
+
+  killer.on("error", () => undefined);
+  killer.unref();
+}
+
+export function resolveRuntimeLifecycleConfig(
+  runtime?: Partial<RuntimeLifecycleConfig>,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): RuntimeLifecycleConfig {
+  return {
+    heartbeatIntervalMs: readMs(
+      runtime?.heartbeatIntervalMs,
+      env.MULTI_AGENT_HEARTBEAT_INTERVAL_MS,
+      DEFAULT_RUNTIME_LIFECYCLE.heartbeatIntervalMs
+    ),
+    inactivityTimeoutMs: readMs(
+      runtime?.inactivityTimeoutMs,
+      env.MULTI_AGENT_INACTIVITY_TIMEOUT_MS,
+      DEFAULT_RUNTIME_LIFECYCLE.inactivityTimeoutMs
+    ),
+    shutdownGracePeriodMs: readMs(
+      runtime?.shutdownGracePeriodMs,
+      env.MULTI_AGENT_SHUTDOWN_GRACE_PERIOD_MS,
+      DEFAULT_RUNTIME_LIFECYCLE.shutdownGracePeriodMs
+    )
+  };
+}
+
 export abstract class BaseCliRuntime implements AgentRuntime {
-  /** 当前 runtime 对应哪个 provider。 */
   abstract readonly agentId: string;
+
+  constructor(private readonly dependencies: RuntimeDependencies = {}) {}
 
   run(input: AgentRunInput): Promise<AgentRunOutput> {
     return this.runStream(input).promise;
@@ -99,12 +135,22 @@ export abstract class BaseCliRuntime implements AgentRuntime {
 
   runStream(input: AgentRunInput, hooks: RuntimeStreamHooks = {}): RuntimeExecutionHandle {
     const command = this.buildCommand(input);
-    const child = spawn(command.command, command.args, {
+    const env = {
+      ...process.env,
+      ...input.env
+    };
+    const lifecycle = resolveRuntimeLifecycleConfig(input.runtime, env);
+    const spawnProcess = this.dependencies.spawn ?? spawn;
+    const now = this.dependencies.now ?? Date.now;
+    const setTimeoutImpl = this.dependencies.setTimeout ?? globalThis.setTimeout;
+    const clearTimeoutImpl = this.dependencies.clearTimeout ?? globalThis.clearTimeout;
+    const setIntervalImpl = this.dependencies.setInterval ?? globalThis.setInterval;
+    const clearIntervalImpl = this.dependencies.clearInterval ?? globalThis.clearInterval;
+    const platform = this.dependencies.platform ?? process.platform;
+    const forceKillProcessTree = this.dependencies.forceKillProcessTree ?? defaultForceKillProcessTree;
+    const child = spawnProcess(command.command, command.args, {
       cwd: input.cwd,
-      env: {
-        ...process.env,
-        ...input.env
-      },
+      env,
       shell: command.shell,
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -112,7 +158,72 @@ export abstract class BaseCliRuntime implements AgentRuntime {
     let rawStdout = "";
     let rawStderr = "";
     let cancelled = false;
-    let lastActivityAt: string | null = null;
+    let timedOut = false;
+    let settled = false;
+    let terminationStarted = false;
+    let lastActivityMs = now();
+    let lastActivityAt = new Date(lastActivityMs).toISOString();
+    let heartbeatTimer: ReturnType<typeof globalThis.setInterval> | undefined;
+    let forceKillTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+
+    const clearTimers = () => {
+      if (heartbeatTimer) {
+        clearIntervalImpl(heartbeatTimer);
+        heartbeatTimer = undefined;
+      }
+
+      if (forceKillTimer) {
+        clearTimeoutImpl(forceKillTimer);
+        forceKillTimer = undefined;
+      }
+    };
+
+    const recordActivity = (stream: "stdout" | "stderr", chunk: string) => {
+      lastActivityMs = now();
+      lastActivityAt = new Date(lastActivityMs).toISOString();
+      hooks.onActivity?.({ stream, at: lastActivityAt, chunk });
+    };
+
+    const forceKill = () => {
+      if (child.exitCode !== null) {
+        return;
+      }
+
+      if (platform === "win32" && typeof child.pid === "number") {
+        forceKillProcessTree(child.pid);
+        return;
+      }
+
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        return;
+      }
+    };
+
+    const requestTermination = () => {
+      if (terminationStarted) {
+        return;
+      }
+
+      terminationStarted = true;
+      clearTimers();
+
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        return;
+      }
+
+      if (lifecycle.shutdownGracePeriodMs <= 0) {
+        forceKill();
+        return;
+      }
+
+      forceKillTimer = setTimeoutImpl(() => {
+        forceKill();
+      }, lifecycle.shutdownGracePeriodMs);
+    };
 
     const promise = new Promise<AgentRunOutput>((resolve, reject) => {
       const lines = readline.createInterface({
@@ -120,53 +231,83 @@ export abstract class BaseCliRuntime implements AgentRuntime {
         crlfDelay: Infinity
       });
 
+      const settle = (callback: () => void) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        clearTimers();
+        lines.close();
+
+        Promise.resolve(command.cleanup?.())
+          .catch(() => undefined)
+          .finally(callback);
+      };
+
       lines.on("line", (line) => {
-        const now = new Date().toISOString();
-        // stdout 有数据，说明 agent 正在活跃。
-        lastActivityAt = now;
         rawStdout += `${line}\n`;
         hooks.onStdoutLine?.(line);
-        hooks.onActivity?.({ stream: "stdout", at: now, chunk: line });
+        recordActivity("stdout", line);
       });
 
       child.stderr.on("data", (chunk) => {
         const text = chunk.toString();
-        const now = new Date().toISOString();
-        // stderr 也必须算活跃信号，因为很多 CLI 会把 thinking / tool 日志写到这里。
-        lastActivityAt = now;
         rawStderr += text;
         hooks.onStderrChunk?.(text);
-        hooks.onActivity?.({ stream: "stderr", at: now, chunk: text });
+        recordActivity("stderr", text);
       });
 
-      child.on("error", reject);
-      child.on("close", (code) => {
-        Promise.resolve(command.cleanup?.())
-          .catch(() => undefined)
-          .finally(() => {
-            resolve({
-              finalText: this.extractFinalText(rawStdout),
-              rawStdout,
-              rawStderr,
-              exitCode: cancelled && code === null ? 0 : code
-            });
-          });
+      child.on("error", (error) => {
+        settle(() => reject(error));
       });
+
+      child.on("close", (code) => {
+        settle(() => {
+          if (timedOut) {
+            reject(new Error(formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt)));
+            return;
+          }
+
+          resolve({
+            finalText: this.extractFinalText(rawStdout),
+            rawStdout,
+            rawStderr,
+            exitCode: cancelled && code === null ? 0 : code
+          });
+        });
+      });
+
+      if (lifecycle.heartbeatIntervalMs > 0 && lifecycle.inactivityTimeoutMs > 0) {
+        heartbeatTimer = setIntervalImpl(() => {
+          if (terminationStarted) {
+            return;
+          }
+
+          if (now() - lastActivityMs < lifecycle.inactivityTimeoutMs) {
+            return;
+          }
+
+          timedOut = true;
+          rawStderr = rawStderr
+            ? `${rawStderr.trimEnd()}\n[runtime] ${formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt)}\n`
+            : `[runtime] ${formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt)}\n`;
+          requestTermination();
+        }, lifecycle.heartbeatIntervalMs);
+      }
     });
 
     return {
       cancel() {
         cancelled = true;
-        child.kill();
+        requestTermination();
       },
       promise
     };
   }
 
-  /** 子类负责把统一输入转换成真实 CLI 命令。 */
   protected abstract buildCommand(input: AgentRunInput): RuntimeCommand;
 
-  /** 子类可覆盖这个方法，自定义如何从 stdout 抽出最终文本。 */
   protected extractFinalText(rawStdout: string) {
     return rawStdout.trim() || undefined;
   }
@@ -200,27 +341,6 @@ export function resolveNodeScript(packageName: string, relativeScriptPath: strin
   };
 }
 
-export function buildHistoryPrompt(history: ConversationHistory, userMessage: string) {
-  if (!history.length) {
-    return userMessage;
-  }
-
-  // 这里只取最近 12 条，避免 prompt 无限制膨胀。
-  const transcript = history
-    .slice(-12)
-    .map((message) => `${message.role === "assistant" ? "Assistant" : "User"}: ${message.content}`)
-    .join("\n\n");
-
-  return [
-    "Continue the conversation below.",
-    "Keep the existing context and answer the final user message directly.",
-    "",
-    transcript,
-    "",
-    `User: ${userMessage}`
-  ].join("\n");
-}
-
 export function findSessionId(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") {
     return null;
@@ -244,7 +364,6 @@ export function findSessionId(payload: unknown): string | null {
   return null;
 }
 
-/** 从 CLI 事件里尽量抽取当前模型名。 */
 export function parseEventModel(event: Record<string, unknown>) {
   return typeof event.model === "string"
     ? event.model
@@ -253,8 +372,6 @@ export function parseEventModel(event: Record<string, unknown>) {
       : null;
 }
 
-/** 把系统说明包在用户请求前面，得到最终给 CLI 的 prompt。 */
 export function wrapPromptWithInstructions(instructions: string, userPrompt: string) {
   return [instructions.trim(), "", "User request:", userPrompt].join("\n");
 }
-

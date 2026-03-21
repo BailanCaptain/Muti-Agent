@@ -134,30 +134,6 @@ export class SessionService {
     return this.mapTimelineMessage(thread, message.id, message.role, message.content, message.createdAt);
   }
 
-  listHistory(threadId: string) {
-    return this.repository.listMessages(threadId).map((message) => ({
-      role: message.role,
-      content: message.content
-    }));
-  }
-
-  listSharedHistory(sessionGroupId: string) {
-    const threads = this.repository.listThreadsByGroup(sessionGroupId);
-
-    return threads
-      .flatMap((thread) =>
-        this.repository.listMessages(thread.id).map((message) => ({
-          role: message.role,
-          content: message.role === "user"
-            // A2A dispatch 消息已经包含了完整上下文，不再重复添加 @前缀，减少冗余 mention
-            ? (message.content.startsWith("You were mentioned by") ? message.content : `@${thread.alias} ${message.content}`)
-            : `${thread.alias}: ${message.content}`,
-          createdAt: message.createdAt
-        }))
-      )
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-      .map(({ role, content }) => ({ role, content }));
-  }
 
   updateThread(threadId: string, model: string | null, nativeSessionId: string | null) {
     this.repository.updateThread(threadId, {

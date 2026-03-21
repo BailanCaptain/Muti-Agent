@@ -143,7 +143,6 @@ export class MessageService {
       threadId: thread.id,
       content: event.payload.content,
       emit,
-      historyMode: "thread",
       rootMessageId
     });
 
@@ -163,7 +162,6 @@ export class MessageService {
     threadId: string;
     content: string;
     emit: EmitEvent;
-    historyMode: "thread" | "shared";
     rootMessageId: string;
   }) {
     const thread = this.dispatch.resolveThread(options.threadId);
@@ -183,11 +181,6 @@ export class MessageService {
       return;
     }
 
-    const history =
-      options.historyMode === "shared"
-        ? this.sessions.listSharedHistory(thread.sessionGroupId)
-        : this.sessions.listHistory(thread.id);
-
     // The placeholder is created before the CLI starts so deltas always know which bubble to append into.
     const assistant = this.sessions.appendAssistantMessage(thread.id, "");
     this.dispatch.attachMessageToRoot(assistant.id, options.rootMessageId);
@@ -203,6 +196,11 @@ export class MessageService {
     }
 
     const identity = this.invocations.createInvocation(thread.id, thread.alias);
+    const dispatchContextTtlMs = Math.max(0, new Date(identity.expiresAt).getTime() - Date.now());
+    const dispatchCleanupTimer = globalThis.setTimeout(() => {
+      this.dispatch.releaseInvocation(identity.invocationId);
+    }, dispatchContextTtlMs);
+    dispatchCleanupTimer.unref?.();
     this.dispatch.bindInvocation(identity.invocationId, {
       rootMessageId: options.rootMessageId,
       sessionGroupId: thread.sessionGroupId,
@@ -237,7 +235,6 @@ export class MessageService {
       callbackToken: identity.callbackToken,
       model: thread.currentModel,
       nativeSessionId: thread.nativeSessionId,
-      history,
       userMessage: options.content,
       onAssistantDelta: (delta: string) => {
         options.emit({
@@ -297,9 +294,14 @@ export class MessageService {
 
     try {
       const result = await run.promise;
-      this.invocations.invalidateInvocation(identity.invocationId);
-      this.dispatch.releaseInvocation(identity.invocationId);
-      this.sessions.updateThread(thread.id, result.currentModel, result.nativeSessionId);
+      this.invocations.detachRun(thread.id);
+      // If the run produced no content and no new session ID was received, the resumed session
+      // was likely invalid. Clear it so the next turn starts a fresh session instead of looping.
+      const effectiveSessionId =
+        !result.content.trim() && result.nativeSessionId === thread.nativeSessionId
+          ? null
+          : result.nativeSessionId;
+      this.sessions.updateThread(thread.id, result.currentModel, effectiveSessionId);
       if (!promptRequestedByCli) {
         this.sessions.overwriteMessage(assistant.id, result.content || "[empty response]");
       }
@@ -335,8 +337,7 @@ export class MessageService {
 
       await this.flushDispatchQueue(thread.sessionGroupId, options.emit);
     } catch (error) {
-      this.invocations.invalidateInvocation(identity.invocationId);
-      this.dispatch.releaseInvocation(identity.invocationId);
+      this.invocations.detachRun(thread.id);
       const message = error instanceof Error ? error.message : "Unknown error";
       this.sessions.overwriteMessage(assistant.id, `Error: ${message}`);
 
@@ -391,7 +392,6 @@ export class MessageService {
           threadId: targetThread.id,
           content: next.content,
           emit,
-          historyMode: "shared",
           rootMessageId: next.rootMessageId
         });
       }

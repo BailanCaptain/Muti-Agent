@@ -15,6 +15,7 @@ import { registerThreadRoutes } from "./routes/threads";
 import { registerWsRoute, type RealtimeBroadcaster } from "./routes/ws";
 import { listProviderProfiles } from "./runtime/provider-profiles";
 import { getRedisReservation } from "./runtime/redis";
+import { awaitRunsToStop } from "./runtime/shutdown";
 import { MessageService } from "./services/message-service";
 import { SessionService } from "./services/session-service";
 
@@ -125,6 +126,9 @@ export async function createApiServer(options: {
     credentials: true
   });
   await app.register(websocket);
+  app.addHook("onClose", async () => {
+    await awaitRunsToStop(invocations.values());
+  });
 
   registerThreadRoutes(app, {
     sessions,

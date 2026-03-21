@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { Provider } from "@multi-agent/shared";
-import { buildHistoryPrompt, findSessionId, parseEventModel, type AgentRunInput } from "./base-runtime";
+import { findSessionId, parseEventModel, type AgentRunInput } from "./base-runtime";
 import { claudeRuntime } from "./claude-runtime";
 import { codexRuntime } from "./codex-runtime";
 import { geminiRuntime } from "./gemini-runtime";
@@ -14,7 +14,6 @@ export type RunTurnOptions = {
   callbackToken?: string;
   model: string | null;
   nativeSessionId: string | null;
-  history: Array<{ role: "user" | "assistant"; content: string }>;
   userMessage: string;
   onAssistantDelta: (delta: string) => void;
   onSession: (nativeSessionId: string) => void;
@@ -39,9 +38,7 @@ const runtimeAdapters = {
 } as const;
 
 export function runTurn(options: RunTurnOptions) {
-  const prompt = options.nativeSessionId
-    ? options.userMessage
-    : buildHistoryPrompt(options.history, options.userMessage);
+  const prompt = options.userMessage;
 
   const runtime = runtimeAdapters[options.provider];
 

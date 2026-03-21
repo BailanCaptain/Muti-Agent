@@ -112,16 +112,20 @@ export function registerCallbackRoutes(
       return { error: "Thread not found." };
     }
 
-    const limit = Math.max(1, Math.min(Number(query.limit ?? 20) || 20, 50));
-    const messages = options.repository
-      .listRecentMessages(thread.id, limit)
-      .reverse()
-      .map((message) => ({
-        id: message.id,
-        role: message.role,
-        content: message.content,
-        createdAt: message.createdAt
-      }));
+    const limit = Math.max(1, Math.min(Number(query.limit ?? 40) || 40, 100));
+    const threads = options.repository.listThreadsByGroup(thread.sessionGroupId);
+    const messages = threads
+      .flatMap((t) =>
+        options.repository.listMessages(t.id).map((message) => ({
+          id: message.id,
+          role: message.role,
+          agentId: message.role === "assistant" ? t.alias : undefined,
+          content: message.content,
+          createdAt: message.createdAt
+        }))
+      )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(-limit);
 
     return {
       threadId: thread.id,
