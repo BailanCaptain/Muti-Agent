@@ -1,0 +1,1374 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clowder AI vs Multi-Agent — 架构对比分析</title>
+<style>
+  :root {
+    --clowder: #7c3aed;
+    --clowder-light: #ede9fe;
+    --multi: #0369a1;
+    --multi-light: #e0f2fe;
+    --both: #065f46;
+    --both-light: #d1fae5;
+    --warn: #b45309;
+    --warn-light: #fef3c7;
+    --danger: #be123c;
+    --danger-light: #ffe4e6;
+    --bg: #0f172a;
+    --card: #1e293b;
+    --card2: #273549;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --border: #334155;
+    --highlight: #f59e0b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', 'PingFang SC', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 15px;
+  }
+  /* ── Layout ── */
+  .container { max-width: 1400px; margin: 0 auto; padding: 0 24px 80px; }
+  header {
+    background: linear-gradient(135deg, #1e1b4b 0%, #0c1a2e 100%);
+    border-bottom: 2px solid #3730a3;
+    padding: 48px 24px 40px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  header::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(124,58,237,.25) 0%, transparent 70%);
+  }
+  header h1 { font-size: 2.6rem; font-weight: 800; letter-spacing: -1px; position: relative; }
+  header h1 span.c1 { color: #a78bfa; }
+  header h1 span.c2 { color: #38bdf8; }
+  header p { color: var(--muted); margin-top: 10px; font-size: 1rem; position: relative; }
+  .badges { display: flex; gap: 8px; justify-content: center; margin-top: 16px; flex-wrap: wrap; position: relative; }
+  .badge {
+    padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; letter-spacing: .5px;
+    border: 1px solid; display: flex; align-items: center; gap: 5px;
+  }
+  .badge-clowder { background: rgba(124,58,237,.2); border-color: #7c3aed; color: #c4b5fd; }
+  .badge-multi   { background: rgba(3,105,161,.2);  border-color: #0369a1; color: #7dd3fc; }
+  .badge-date    { background: rgba(100,116,139,.15); border-color: #475569; color: #94a3b8; }
+
+  /* ── Section ── */
+  section { margin-top: 52px; }
+  h2 {
+    font-size: 1.35rem; font-weight: 700; margin-bottom: 20px;
+    display: flex; align-items: center; gap: 10px;
+    border-left: 4px solid var(--highlight); padding-left: 14px;
+  }
+  h3 { font-size: 1.05rem; font-weight: 700; color: #cbd5e1; margin: 18px 0 10px; }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px 24px; margin-bottom: 16px;
+  }
+  .card-clowder { border-left: 4px solid var(--clowder); }
+  .card-multi   { border-left: 4px solid var(--multi); }
+  .card-both    { border-left: 4px solid #10b981; }
+
+  /* ── Grid ── */
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 900px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+
+  /* ── Compare Table ── */
+  .compare-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .compare-table th, .compare-table td { padding: 12px 16px; border: 1px solid var(--border); }
+  .compare-table thead { background: var(--card2); }
+  .compare-table th { font-weight: 700; font-size: 13px; letter-spacing: .5px; text-transform: uppercase; }
+  .compare-table th.c { color: #a78bfa; }
+  .compare-table th.m { color: #38bdf8; }
+  .compare-table tr:nth-child(even) { background: rgba(255,255,255,.02); }
+  .compare-table .dim { color: var(--muted); font-size: 13px; }
+  .plus  { color: #34d399; font-weight: 700; }
+  .minus { color: #f87171; font-weight: 700; }
+  .eq    { color: #fbbf24; font-weight: 700; }
+
+  /* ── Architecture Diagram ── */
+  .arch-box {
+    background: var(--card2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; font-family: 'Consolas', monospace;
+    font-size: 13px; line-height: 1.9; white-space: pre; overflow-x: auto;
+  }
+  .arch-title {
+    font-family: 'Segoe UI', sans-serif; font-size: 14px; font-weight: 700;
+    margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
+  }
+
+  /* ── Flow Diagram ── */
+  .flow {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 0;
+    background: var(--card2); border-radius: 12px; padding: 20px 24px;
+    border: 1px solid var(--border); overflow-x: auto;
+  }
+  .flow-node {
+    background: var(--card); border: 1px solid; border-radius: 8px;
+    padding: 8px 14px; font-size: 13px; white-space: nowrap; flex-shrink: 0;
+  }
+  .flow-node.c { border-color: #7c3aed; color: #c4b5fd; }
+  .flow-node.m { border-color: #0369a1; color: #7dd3fc; }
+  .flow-node.g { border-color: #10b981; color: #6ee7b7; }
+  .flow-node.o { border-color: #f59e0b; color: #fcd34d; }
+  .flow-node.r { border-color: #ef4444; color: #fca5a5; }
+  .flow-arrow { color: var(--muted); padding: 0 6px; font-size: 16px; flex-shrink: 0; }
+  .flow-col { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+
+  /* ── Pill tags ── */
+  .tag {
+    display: inline-block; padding: 2px 9px; border-radius: 12px;
+    font-size: 11px; font-weight: 600; margin: 2px;
+  }
+  .tag-c { background: rgba(124,58,237,.25); color: #c4b5fd; border: 1px solid #7c3aed; }
+  .tag-m { background: rgba(3,105,161,.25); color: #7dd3fc; border: 1px solid #0369a1; }
+  .tag-g { background: rgba(16,185,129,.2); color: #6ee7b7; border: 1px solid #10b981; }
+
+  /* ── Code ── */
+  code {
+    background: rgba(255,255,255,.08); border: 1px solid var(--border);
+    border-radius: 4px; padding: 1px 6px; font-family: Consolas, monospace; font-size: 12.5px;
+    color: #fbbf24;
+  }
+  pre {
+    background: rgba(0,0,0,.4); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 20px; overflow-x: auto;
+    font-size: 13px; line-height: 1.7; margin: 10px 0;
+  }
+  pre code { background: none; border: none; padding: 0; color: #e2e8f0; }
+
+  /* ── Score ── */
+  .score-row { display: flex; gap: 12px; align-items: center; margin: 8px 0; }
+  .score-label { width: 160px; font-size: 13px; color: var(--muted); flex-shrink: 0; }
+  .score-bar { flex: 1; background: rgba(255,255,255,.07); border-radius: 6px; height: 8px; overflow: hidden; }
+  .score-fill-c { background: linear-gradient(90deg, #7c3aed, #a78bfa); height: 100%; border-radius: 6px; }
+  .score-fill-m { background: linear-gradient(90deg, #0369a1, #38bdf8); height: 100%; border-radius: 6px; }
+  .score-val { width: 30px; font-size: 13px; font-weight: 700; text-align: right; }
+
+  /* ── Icon helpers ── */
+  .ico { font-size: 1.1em; }
+
+  /* ── Divider ── */
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+
+  /* ── Callout ── */
+  .callout {
+    border-radius: 10px; padding: 14px 18px; margin: 12px 0;
+    display: flex; gap: 12px; align-items: flex-start; font-size: 14px;
+  }
+  .callout-c { background: rgba(124,58,237,.12); border: 1px solid rgba(124,58,237,.4); }
+  .callout-m { background: rgba(3,105,161,.12);  border: 1px solid rgba(3,105,161,.4); }
+  .callout-g { background: rgba(16,185,129,.1);  border: 1px solid rgba(16,185,129,.35); }
+  .callout-y { background: rgba(245,158,11,.1);  border: 1px solid rgba(245,158,11,.35); color: #fde68a; }
+
+  /* ── Footnote ── */
+  .note { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+
+  /* sticky TOC */
+  .toc {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(15,23,42,.92); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 24px; display: flex; gap: 20px; overflow-x: auto;
+    white-space: nowrap;
+  }
+  .toc a { color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 600; }
+  .toc a:hover { color: var(--text); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="c1">🐱 Clowder AI</span> vs <span class="c2">⚡ Multi-Agent</span></h1>
+  <p>多智能体编排平台 — 深度架构对比分析报告</p>
+  <div class="badges">
+    <span class="badge badge-clowder">🐾 Clowder AI · Monorepo · Fastify + Next.js</span>
+    <span class="badge badge-multi">⚡ Multi-Agent · Monorepo · Fastify + Next.js</span>
+    <span class="badge badge-date">📅 2026-03-22</span>
+  </div>
+</header>
+
+<div class="toc">
+  <a href="#s1">📋 项目概览</a>
+  <a href="#s2">🏗️ 架构图</a>
+  <a href="#s3">🔌 前后端通信</a>
+  <a href="#s4">🧠 记忆系统</a>
+  <a href="#s5">🤝 A2A通信</a>
+  <a href="#s6">🛠️ Skill工具</a>
+  <a href="#s7">📝 SystemPrompt</a>
+  <a href="#s8">🔧 MCP实现</a>
+  <a href="#s9">⚖️ 对比分析</a>
+  <a href="#s10">📊 综合评分</a>
+</div>
+
+<div class="container">
+
+<!-- ══════════════════════════════════════════
+     §1 PROJECT OVERVIEW
+══════════════════════════════════════════ -->
+<section id="s1">
+  <h2><span class="ico">📋</span> 一、项目概览</h2>
+
+  <div class="grid2">
+    <div class="card card-clowder">
+      <div class="arch-title">🐾 Clowder AI</div>
+      <p><strong>定位：</strong>全功能 Cat Café 多猫智能体平台，支持多 AI provider（Claude/GPT/Gemini）协作，配备持久化证据库、MCP 工具集、技能系统、实时 WebSocket + HTTP 双通道通信。</p>
+      <br>
+      <div>
+        <span class="tag tag-c">TypeScript</span>
+        <span class="tag tag-c">Fastify 4</span>
+        <span class="tag tag-c">Next.js</span>
+        <span class="tag tag-c">Socket.IO</span>
+        <span class="tag tag-c">Redis (IORedis)</span>
+        <span class="tag tag-c">SQLite + sqlite-vec</span>
+        <span class="tag tag-c">MCP SDK v1</span>
+        <span class="tag tag-c">pnpm workspace</span>
+        <span class="tag tag-c">Hugging Face</span>
+        <span class="tag tag-c">Biome</span>
+      </div>
+      <br>
+      <p class="note">📦 packages: api / web / shared / mcp-server</p>
+      <p class="note">🐱 支持 11+ 猫猫智能体（opus, sonnet, codex, gemini, dare, antigravity...）</p>
+      <p class="note">💾 Redis (端口 6399) + SQLite evidence.sqlite + 文件 transcript</p>
+    </div>
+
+    <div class="card card-multi">
+      <div class="arch-title">⚡ Multi-Agent</div>
+      <p><strong>定位：</strong>轻量化多模型控制台，聚焦 Claude + Codex + Gemini 三大 provider 协同工作，基于 SQLite 持久化、WebSocket 实时推送、Callback API 反馈机制，设计更为精简。</p>
+      <br>
+      <div>
+        <span class="tag tag-m">TypeScript</span>
+        <span class="tag tag-m">Fastify 5</span>
+        <span class="tag tag-m">Next.js 16</span>
+        <span class="tag tag-m">WebSocket (原生)</span>
+        <span class="tag tag-m">SQLite (node:sqlite)</span>
+        <span class="tag tag-m">MCP SDK</span>
+        <span class="tag tag-m">Zustand</span>
+        <span class="tag tag-m">pnpm workspace</span>
+        <span class="tag tag-m">Biome</span>
+      </div>
+      <br>
+      <p class="note">📦 packages: api / shared · app/ (Next.js 16)</p>
+      <p class="note">🤖 支持 3 大 provider（Claude/范德彪, Codex/黄仁勋, Gemini/桂芬）</p>
+      <p class="note">💾 仅 SQLite (data/multi-agent.sqlite)，无 Redis 依赖</p>
+    </div>
+  </div>
+
+  <!-- Quick diff stats -->
+  <div class="card" style="margin-top:0">
+    <h3>📊 关键规模指标对比</h3>
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>指标</th>
+          <th class="c">🐾 Clowder AI</th>
+          <th class="m">⚡ Multi-Agent</th>
+          <th>差异</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>API 路由文件数</td><td>87+ 个路由文件</td><td>~8 个路由</td><td><span class="minus">Clowder 复杂 10x</span></td></tr>
+        <tr><td>支持 AI Provider 数</td><td>7 种 (Claude/GPT/Gemini/DARE/OpenCode/Antigravity/A2A)</td><td>3 种 (Claude/Codex/Gemini)</td><td><span class="minus">Clowder 多 4 种</span></td></tr>
+        <tr><td>存储层</td><td>Redis + SQLite + 文件</td><td>仅 SQLite</td><td><span class="minus">Clowder 更复杂</span></td></tr>
+        <tr><td>记忆系统</td><td>向量检索 + 摘要 + 证据库</td><td>无 (仅 DB 历史)</td><td><span class="minus">Clowder 大幅领先</span></td></tr>
+        <tr><td>实时通信</td><td>Socket.IO (Room 模式)</td><td>原生 WebSocket (广播)</td><td><span class="eq">同等功能，实现不同</span></td></tr>
+        <tr><td>前端状态管理</td><td>未明确 (Next.js)</td><td>Zustand (轻量)</td><td><span class="plus">Multi-Agent 更现代</span></td></tr>
+        <tr><td>Skill 系统</td><td>20+ 技能 (SKILL.md 驱动)</td><td>6 个技能 (精简)</td><td><span class="minus">Clowder 更丰富</span></td></tr>
+        <tr><td>依赖体量</td><td>极重 (puppeteer/Sharp/HF...)</td><td>精简 (仅必要依赖)</td><td><span class="plus">Multi-Agent 更轻</span></td></tr>
+        <tr><td>MCP 集成范围</td><td>全部 Cat (含 Callback 工具集)</td><td>仅 Claude</td><td><span class="minus">Clowder 覆盖更广</span></td></tr>
+        <tr><td>A2A 协议</td><td>JSON-RPC 2.0 over HTTPS</td><td>内部 EventBus + Dispatch</td><td><span class="eq">思路相近，实现不同</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════
+     §2 ARCHITECTURE DIAGRAMS
+══════════════════════════════════════════ -->
+<section id="s2">
+  <h2><span class="ico">🏗️</span> 二、整体架构图</h2>
+
+  <div class="grid2">
+    <!-- Clowder arch -->
+    <div>
+      <div class="arch-title">
+        <span style="color:#a78bfa">🐾</span> Clowder AI — 系统架构
+      </div>
+      <div class="arch-box" style="color:#cbd5e1; font-size:12px">
+<span style="color:#a78bfa">┌──────────────────────────────────────────────────┐</span>
+<span style="color:#a78bfa">│              📱 Frontend (Next.js)               │</span>
+<span style="color:#a78bfa">│  Thread UI · Skill Palette · Voice · Backlog     │</span>
+<span style="color:#a78bfa">└────────────┬──────────────────────┬─────────────┘</span>
+             │ HTTP REST (87 routes)│ Socket.IO
+             ▼                      ▼
+<span style="color:#7c3aed">┌──────────────────────────────────────────────────┐</span>
+<span style="color:#7c3aed">│            🚀 Fastify API Server                 │</span>
+<span style="color:#7c3aed">│  ┌──────────┐ ┌──────────┐ ┌────────────────┐  │</span>
+<span style="color:#7c3aed">│  │AgentRouter│ │SocketMgr │ │CallbackRouter  │  │</span>
+<span style="color:#7c3aed">│  │ (routing)│ │(room mgmt│ │(MCP → API)     │  │</span>
+<span style="color:#7c3aed">│  └────┬─────┘ └──────────┘ └───────┬────────┘  │</span>
+<span style="color:#7c3aed">│       │  SystemPromptBuilder        │            │</span>
+<span style="color:#7c3aed">│       │  IntentParser               │            │</span>
+<span style="color:#7c3aed">└───────┼─────────────────────────────┼────────────┘</span>
+        │ spawn CLI / REST             │ HTTP
+        ▼                             ▼
+<span style="color:#10b981">┌───────────────────────────────────────────┐</span>
+<span style="color:#10b981">│          🤖 Agent Services Layer           │</span>
+<span style="color:#10b981">│  ClaudeAgentService  → claude CLI         │</span>
+<span style="color:#10b981">│  GeminiAgentService  → REST API           │</span>
+<span style="color:#10b981">│  CodexAgentService   → codex CLI          │</span>
+<span style="color:#10b981">│  A2AAgentService     → JSON-RPC remote    │</span>
+<span style="color:#10b981">│  DareAgentService / AntigravityService    │</span>
+<span style="color:#10b981">└──────┬────────────────┬──────────────────┘</span>
+       │ stdio MCP       │ A2A HTTPS
+       ▼                 ▼
+<span style="color:#f59e0b">┌─────────────┐  ┌─────────────────────────┐</span>
+<span style="color:#f59e0b">│  MCP Server  │  │  Remote A2A Endpoint     │</span>
+<span style="color:#f59e0b">│  (collab /   │  │  (JSON-RPC 2.0)          │</span>
+<span style="color:#f59e0b">│  memory /    │  └─────────────────────────┘</span>
+<span style="color:#f59e0b">│  signals /   │</span>
+<span style="color:#f59e0b">│  limb tools) │</span>
+<span style="color:#f59e0b">└─────────────┘</span>
+<span style="color:#ef4444">┌─────────────────────────────────────────────┐</span>
+<span style="color:#ef4444">│             💾 Storage Layer                 │</span>
+<span style="color:#ef4444">│  Redis 6399 (sessions/threads/messages)      │</span>
+<span style="color:#ef4444">│  SQLite evidence.sqlite (vector + summaries) │</span>
+<span style="color:#ef4444">│  data/transcripts/ (file-based records)      │</span>
+<span style="color:#ef4444">└─────────────────────────────────────────────┘</span>
+      </div>
+    </div>
+
+    <!-- Multi-Agent arch -->
+    <div>
+      <div class="arch-title">
+        <span style="color:#38bdf8">⚡</span> Multi-Agent — 系统架构
+      </div>
+      <div class="arch-box" style="color:#cbd5e1; font-size:12px">
+<span style="color:#38bdf8">┌──────────────────────────────────────────────────┐</span>
+<span style="color:#38bdf8">│         📱 Frontend (Next.js 16 + Zustand)       │</span>
+<span style="color:#38bdf8">│  ThreadView · MessageTimeline · ProviderCards    │</span>
+<span style="color:#38bdf8">└────────────┬──────────────────────┬─────────────┘</span>
+             │ HTTP REST (~8 routes) │ WebSocket (原生)
+             ▼                      ▼
+<span style="color:#0369a1">┌──────────────────────────────────────────────────┐</span>
+<span style="color:#0369a1">│            🚀 Fastify 5 API Server               │</span>
+<span style="color:#0369a1">│  ┌──────────────┐  ┌──────────────────────────┐  │</span>
+<span style="color:#0369a1">│  │MessageService│  │  AppEventBus              │  │</span>
+<span style="color:#0369a1">│  │(orchestration│  │  (内部事件总线)            │  │</span>
+<span style="color:#0369a1">│  └──────┬───────┘  └────────────┬─────────────┘  │</span>
+<span style="color:#0369a1">│         │                       │                  │</span>
+<span style="color:#0369a1">│  ┌──────▼───────────────────────▼─────────┐      │</span>
+<span style="color:#0369a1">│  │  DispatchOrchestrator (A2A 调度核心)    │      │</span>
+<span style="color:#0369a1">│  │  MentionRouter + HopCount + Queue       │      │</span>
+<span style="color:#0369a1">│  └──────────────────────┬─────────────────┘      │</span>
+<span style="color:#0369a1">└─────────────────────────┼────────────────────────┘</span>
+                           │ spawn CLI
+                           ▼
+<span style="color:#10b981">┌───────────────────────────────────────────┐</span>
+<span style="color:#10b981">│       🤖 Runtime Adapter Layer             │</span>
+<span style="color:#10b981">│  ClaudeRuntime  → claude CLI              │</span>
+<span style="color:#10b981">│  CodexRuntime   → codex CLI               │</span>
+<span style="color:#10b981">│  GeminiRuntime  → gemini CLI (自建)       │</span>
+<span style="color:#10b981">└──────┬────────────────────────────────────┘</span>
+       │ stdio MCP (仅 Claude)
+       ▼
+<span style="color:#f59e0b">┌─────────────┐</span>
+<span style="color:#f59e0b">│  MCP Server  │ ← 仅 Claude 可用</span>
+<span style="color:#f59e0b">│  (callback   │   Codex/Gemini 用</span>
+<span style="color:#f59e0b">│   tools)     │   Callback Prompt</span>
+<span style="color:#f59e0b">└─────────────┘</span>
+<span style="color:#ef4444">┌─────────────────────────────────────────────┐</span>
+<span style="color:#ef4444">│             💾 Storage Layer                 │</span>
+<span style="color:#ef4444">│  SQLite only: data/multi-agent.sqlite        │</span>
+<span style="color:#ef4444">│  (session_groups / threads / messages /      │</span>
+<span style="color:#ef4444">│   invocations / agent_events)                │</span>
+<span style="color:#ef4444">└─────────────────────────────────────────────┘</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════
+     §3 FRONTEND / BACKEND COMM
+══════════════════════════════════════════ -->
+<section id="s3">
+  <h2><span class="ico">🔌</span> 三、前后端通信</h2>
+
+  <div class="grid2">
+    <div class="card card-clowder">
+      <h3>🐾 Clowder AI — 双通道模式</h3>
+
+      <p><strong>通道 1：HTTP REST (87 个路由文件)</strong></p>
+      <pre><code>POST /api/invocations        ← 发起 Agent 调用
+GET  /api/messages           ← 历史消息拉取
+POST /api/callbacks/*        ← MCP → API 回调
+GET  /api/skills             ← Skill Manifest
+GET  /api/evidence           ← 证据库搜索
+GET  /api/tasks / /api/backlog</code></pre>
+
+      <p><strong>通道 2：Socket.IO (带 Room 管理)</strong></p>
+      <pre><code>// 房间结构
+thread:{threadId}     ← 线程隔离广播
+user:{userId}         ← 多 Tab 同步
+worktree:*            ← Worktree 事件
+preview:global        ← 预览广播
+
+// 事件流
+agent_message   ← 流式响应块 (text/tool_use/error/done)
+join_room       ← 房间加入
+cancel_invocation ← 中止运行</code></pre>
+
+      <div class="callout callout-c">
+        💡 <strong>Socket.IO Room 机制</strong>：同一用户多 Tab 均订阅 <code>user:{userId}</code>，消息实时同步。Room 验证防止越权取消他人调用。
+      </div>
+    </div>
+
+    <div class="card card-multi">
+      <h3>⚡ Multi-Agent — 精简双通道</h3>
+
+      <p><strong>通道 1：HTTP REST (~8 个路由)</strong></p>
+      <pre><code>GET  /api/bootstrap          ← 初始化加载
+GET  /api/providers          ← Provider 列表
+POST /api/session-groups     ← 创建会话组
+GET  /api/session-groups/:id ← 获取 Timeline
+POST /api/threads/:id/model  ← 切换模型
+POST /api/threads/:id/stop   ← 停止调用
+POST /api/callbacks/post-message  ← Agent → 公共消息
+GET  /api/callbacks/thread-context ← Agent 读上下文</code></pre>
+
+      <p><strong>通道 2：原生 WebSocket (广播模式)</strong></p>
+      <pre><code>// 客户端 → 服务端
+{ type: "send_message", threadId, content... }
+{ type: "stop_thread", threadId }
+
+// 服务端 → 客户端 (广播所有连接)
+{ type: "assistant_delta",   delta }
+{ type: "message.created",   message }
+{ type: "thread_snapshot",   activeGroup }
+{ type: "dispatch.blocked",  attempts[] }</code></pre>
+
+      <div class="callout callout-m">
+        💡 <strong>广播模式</strong>：所有 WebSocket 连接均收到全量事件，无 Room 隔离。适合小规模单用户场景，多用户时存在信息泄露风险。
+      </div>
+    </div>
+  </div>
+
+  <!-- Flow: message lifecycle -->
+  <h3>📬 消息生命周期对比流程</h3>
+  <div class="grid2">
+    <div>
+      <p style="color:#a78bfa; font-size:13px; margin-bottom:8px">🐾 Clowder AI</p>
+      <div class="flow" style="flex-direction:column; align-items:flex-start; gap:4px">
+        <div style="display:flex; align-items:center; gap:6px">
+          <div class="flow-node c">📱 前端 POST /invocations</div>
+          <span class="flow-arrow">→</span>
+          <div class="flow-node c">IntentParser</div>
+          <span class="flow-arrow">→</span>
+          <div class="flow-node c">A2A 提及分析</div>
+        </div>
+        <div style="padding-left:20px; color:var(--muted); font-size:12px">↓ buildSystemPrompt()</div>
+        <div style="display:flex; align-items:center; gap:6px">
+          <div class="flow-node g">AgentRouter.execute()</div>
+          <span class="flow-arrow">→</span>
+          <div class="flow-node g">spawn claude CLI</div>
+          <span class="flow-arrow">→</span>
+          <div class="flow-node g">NDJSON stream</div>
+        </div>
+        <div style="padding-left:20px; color:var(--muted); font-size:12px">↓ AgentMessage</div>
+        <div style="display:flex; align-items:center; gap:6px">
+          <div class="flow-node o">Redis MessageStore.append()</div>
+          <span class="flow-arrow">→</span>
+          <div class="flow-node o">SQLite index</div>
+        </div>
+        <div style="padding-left:20px; color:var(--muted); font-size:12px">↓</div>
+        <div class="flow-node r">Socket.IO broadcast → thread:{id} room</div>
+      </div>
+    </div>
+    <div>
+      <p style="color:#38bdf8; font-size:13px; margin-bottom:8px">⚡ Multi-Agent</p>
+      <div class="flow" style="flex-direction:column; align-items:flex-start; gap:4px">
+        <div style="display:flex; align-items:center; gap:6px">
+          <div class="flow-node m">📱 WS: send_message</div>
+          <span class="flow-arrow">→</span>
+          <div class="flow-node m">MessageService</div>
+          <span class="flow-arrow">→</span>
+          <div class="flow-node m">SQLite persist</div>
+        </div>
+        <div style="padding-left:20px; color:var(--muted); font-size:12px">↓ DispatchOrchestrator.registerUserRoot()</div>
+        <div style="display:flex; align-items:center; gap:6px">
+          <div class="flow-node g">InvocationRegistry.createInvocation()</div>
+          <span class="flow-arrow">→</span>
+          <div class="flow-node g">spawn CLI</div>
+        </div>
+        <div style="padding-left:20px; color:var(--muted); font-size:12px">↓ readline parse</div>
+        <div style="display:flex; align-items:center; gap:6px">
+          <div class="flow-node o">AppEventBus.emit()</div>
+          <span class="flow-arrow">→</span>
+          <div class="flow-node o">SQLite update</div>
+        </div>
+        <div style="padding-left:20px; color:var(--muted); font-size:12px">↓</div>
+        <div class="flow-node r">WebSocket broadcast → ALL 连接</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════
+     §4 MEMORY SYSTEM
+══════════════════════════════════════════ -->
+<section id="s4">
+  <h2><span class="ico">🧠</span> 四、记忆处理系统</h2>
+
+  <div class="grid2">
+    <div class="card card-clowder">
+      <h3>🐾 Clowder AI — 三层记忆架构</h3>
+
+      <div class="arch-box" style="font-size:12px; color:#cbd5e1">
+<span style="color:#a78bfa">Layer 1: Redis (热存储 · 6399)</span>
+  thread:{id}          线程元数据
+  message:{tid}:*      消息历史 (append-only)
+  session:*            交付游标、会话状态
+  task:{id}            任务追踪
+  invocation:*         调用记录
+  ↳ 支持 --memory 内存模式降级
+
+<span style="color:#10b981">Layer 2: SQLite evidence.sqlite (冷存储 · 长期)</span>
+  + sqlite-vec 向量扩展
+  + Hugging Face transformers 生成 Embedding
+  ┌──────────────────────────────────┐
+  │ SqliteEvidenceStore              │
+  │  EmbeddingService (HF本地模型)   │
+  │  IndexBuilder (增量索引 30s刷新) │
+  │  KnowledgeResolver (查询引擎)    │
+  │  VectorStore (余弦相似度检索)    │
+  └──────────────────────────────────┘
+  功能: 特征文档/决策日志/Thread摘要/语义搜索
+
+<span style="color:#f59e0b">Layer 3: data/transcripts/ (文件存储)</span>
+  TranscriptWriter   记录 session 事件
+  TranscriptReader   加载封存 session 数据
+  → Session 启动时 Bootstrap 注入
+      </div>
+
+      <div class="callout callout-c">
+        🔍 <strong>摘要压缩</strong>：F102 Phase G 通过 Claude 模型对长 Thread 做抽象摘要，配合滚动窗口机制，保持上下文新鲜度。
+      </div>
+      <div class="callout callout-c">
+        ⏱️ <strong>脏读防抖</strong>：IndexBuilder 30s 批量刷新，避免高频写入冲击 SQLite。
+      </div>
+    </div>
+
+    <div class="card card-multi">
+      <h3>⚡ Multi-Agent — 单层 SQLite 存储</h3>
+
+      <div class="arch-box" style="font-size:12px; color:#cbd5e1">
+<span style="color:#38bdf8">仅 SQLite: data/multi-agent.sqlite (WAL 模式)</span>
+
+  session_groups  协作房间
+    id, title, created_at, updated_at
+
+  threads         各 provider 上下文线
+    id, session_group_id, provider,
+    alias, current_model, native_session_id
+
+  messages        聊天消息
+    id, thread_id, role, content,
+    thinking, created_at
+
+  invocations     Agent 执行实例
+    id, thread_id, agent_id,
+    callback_token, status,
+    started_at, finished_at, exit_code
+
+  agent_events    执行活动日志 (事件溯源)
+    id, invocation_id, thread_id,
+    agent_id, event_type, payload
+
+<span style="color:#f87171">⚠ 无向量检索  ⚠ 无摘要压缩  ⚠ 无语义搜索</span>
+<span style="color:#f87171">⚠ 无持久化会话记忆 (每次仅读当前 thread 历史)</span>
+      </div>
+
+      <div class="callout callout-m">
+        💡 <strong>Callback 上下文</strong>：Agent 可通过 <code>GET /api/callbacks/thread-context</code> 在执行期间读取 thread 历史，实现有限的上下文感知，但不具备跨 session 记忆能力。
+      </div>
+      <div class="callout callout-y">
+        ⚠️ <strong>局限</strong>：长对话后没有摘要机制，context 窗口满后必须依赖 CLI 的原生 resume 机制，无法主动控制。
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>📊 记忆能力对比</h3>
+    <table class="compare-table">
+      <thead>
+        <tr><th>能力</th><th class="c">🐾 Clowder</th><th class="m">⚡ Multi-Agent</th><th>优劣评判</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>消息持久化</td><td><span class="plus">✓</span> Redis append-only</td><td><span class="plus">✓</span> SQLite</td><td><span class="eq">同等</span></td></tr>
+        <tr><td>语义向量检索</td><td><span class="plus">✓</span> sqlite-vec + HF embeddings</td><td><span class="minus">✗</span></td><td><span class="minus">Clowder 领先</span></td></tr>
+        <tr><td>跨 Session 记忆</td><td><span class="plus">✓</span> evidence.sqlite</td><td><span class="minus">✗</span> 仅当前 thread</td><td><span class="minus">Clowder 领先</span></td></tr>
+        <tr><td>摘要压缩</td><td><span class="plus">✓</span> Claude 抽象摘要</td><td><span class="minus">✗</span></td><td><span class="minus">Clowder 领先</span></td></tr>
+        <tr><td>决策日志</td><td><span class="plus">✓</span> evidence reflect()</td><td><span class="minus">✗</span></td><td><span class="minus">Clowder 领先</span></td></tr>
+        <tr><td>部署复杂度</td><td><span class="minus">高</span> Redis + SQLite + HF</td><td><span class="plus">低</span> 仅 SQLite</td><td><span class="plus">Multi-Agent 更简</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════
+     §5 A2A COMMUNICATION
+══════════════════════════════════════════ -->
+<section id="s5">
+  <h2><span class="ico">🤝</span> 五、A2A Agent-to-Agent 通信</h2>
+
+  <div class="grid2">
+    <div class="card card-clowder">
+      <h3>🐾 Clowder AI — 混合 A2A 架构</h3>
+      <p><strong>模式 1：外部 A2A (JSON-RPC 2.0)</strong></p>
+      <pre><code>// 标准 A2A Protocol 调用
+POST https://remote-cat/
+Content-Type: application/json
+Authorization: Bearer {apiKey}
+
+{
+  "jsonrpc": "2.0",
+  "id": "<taskId>",
+  "method": "tasks/send",
+  "params": {
+    "id": "<taskId>",
+    "message": {
+      "role": "user",
+      "parts": [{"type": "text", "text": "..."}]
+    }
+  }
+}</code></pre>
+
+      <p><strong>模式 2：内部 Mention 路由</strong></p>
+      <pre><code>// 消息中 @mention → AgentRouter 派发
+@opus 帮我review这段代码
+@gemini 设计这个界面
+
+// 解析规则
+- 行首 @catId 或 @alias
+- 最长模式优先 (防止 @opus-45 → @opus)
+- 剥除代码块后再解析
+- 最多 2 个目标/消息
+- 深度限制: MAX_A2A_DEPTH=15</code></pre>
+
+      <div class="callout callout-c">
+        🔗 <strong>路由策略</strong>：有 @mention → 直接路由；有 ideate intent + 多猫 → 并行；有 execute intent → 串行链；默认 → 上一次回复者 / opus。
+      </div>
+    </div>
+
+    <div class="card card-multi">
+      <h3>⚡ Multi-Agent — 内部 Dispatch 机制</h3>
+      <p><strong>DispatchOrchestrator 调度核心</strong></p>
+      <pre><code>// Mention 解析 (行首匹配)
+@范德彪 (Codex)   @黄仁勋 (Claude)
+@桂芬 (Gemini)
+
+// 也支持 Markdown 强调格式
+**@范德彪** *@桂芬*
+
+// 调度队列
+dispatchQueue[sessionGroupId] = []
+→ 串行执行 (不并行)
+→ 最大 Hop 数: 10
+→ 同根消息链防重复 provider
+
+// 防护机制
+- hop count ≤ 10
+- 同一根消息链不重复触发同 provider
+- session 取消时清空队列</code></pre>
+
+      <div class="callout callout-m">
+        ⚡ <strong>Callback 触发</strong>：Agent 执行中可通过 <code>POST /callbacks/post-message</code> 发布公共消息，触发 mention 解析，实现执行中的 A2A 分发。
+      </div>
+    </div>
+  </div>
+
+  <!-- A2A Flow -->
+  <h3>🔄 A2A 消息流程对比</h3>
+  <div class="grid2">
+    <div>
+      <p style="color:#a78bfa; font-size:13px; margin-bottom:8px">🐾 Clowder AI — 外部 JSON-RPC</p>
+      <div class="arch-box" style="font-size:12px; color:#cbd5e1">
+用户消息: "@opus 评审代码"
+  ↓
+a2a-mentions.ts → 解析 targets = [opus]
+  ↓
+AgentRouter.routeToMentioned()
+  ↓
+A2AAgentService.invoke() [如果是远程 cat]
+  ↓
+POST tasks/send (JSON-RPC 2.0)
+  → 远程 Cat 实例处理
+  → 返回 A2ATask 结果
+  ↓
+transformA2ATaskToMessages()
+  ↓
+广播到 thread:{id} room
+
+内部 cat → ClaudeAgentService / GeminiAgentService
+  (走本地 CLI 派发, 非 JSON-RPC)
+      </div>
+    </div>
+    <div>
+      <p style="color:#38bdf8; font-size:13px; margin-bottom:8px">⚡ Multi-Agent — 内部队列</p>
+      <div class="arch-box" style="font-size:12px; color:#cbd5e1">
+用户消息: "@范德彪 帮我 review"
+  ↓
+DispatchOrchestrator.registerUserRoot()
+  ↓
+MentionRouter.parse() → targets = [codex]
+  ↓
+dispatchQueue[groupId].push({provider:'codex'})
+  ↓
+MessageService.flushDispatchQueue()
+  ↓
+runThreadTurn(codex) → spawn codex CLI
+  ↓
+Codex 输出 "@黄仁勋 已完成..." (行首)
+  ↓ Callback POST /post-message
+DispatchOrchestrator 再次解析 mention
+  ↓
+dispatchQueue.push({provider:'claude'})
+  ↓
+flushQueue → runThreadTurn(claude)
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>📊 A2A 能力对比</h3>
+    <table class="compare-table">
+      <thead>
+        <tr><th>特性</th><th class="c">🐾 Clowder</th><th class="m">⚡ Multi-Agent</th><th>优劣</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>A2A 协议标准</td><td><span class="plus">JSON-RPC 2.0 (标准)</span></td><td><span class="eq">内部事件驱动</span></td><td><span class="minus">Clowder 更标准化</span></td></tr>
+        <tr><td>并行执行</td><td><span class="plus">✓ routeParallel()</span></td><td><span class="minus">✗ 严格串行</span></td><td><span class="minus">Clowder 领先</span></td></tr>
+        <tr><td>串行执行</td><td><span class="plus">✓ routeSerial()</span></td><td><span class="plus">✓ 队列串行</span></td><td><span class="eq">同等</span></td></tr>
+        <tr><td>防循环机制</td><td><span class="plus">MAX_A2A_DEPTH=15</span></td><td><span class="plus">hop count≤10 + dedup</span></td><td><span class="eq">同等，策略不同</span></td></tr>
+        <tr><td>跨机器 A2A</td><td><span class="plus">✓ 远程 JSON-RPC</span></td><td><span class="minus">✗ 仅本机</span></td><td><span class="minus">Clowder 领先</span></td></tr>
+        <tr><td>执行中触发 A2A</td><td><span class="plus">✓ MCP post_message</span></td><td><span class="plus">✓ Callback API</span></td><td><span class="eq">同等</span></td></tr>
+        <tr><td>路由复杂度</td><td>高 (意图+上下文感知)</td><td>中 (mention-only)</td><td>Clowder 更灵活但更复杂</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════
+     §6 SKILL TOOLS
+══════════════════════════════════════════ -->
+<section id="s6">
+  <h2><span class="ico">🛠️</span> 六、Skill 工具系统</h2>
+
+  <div class="grid2">
+    <div class="card card-clowder">
+      <h3>🐾 Clowder AI — SKILL.md 驱动框架</h3>
+      <p>技能以 <code>SKILL.md</code> 文件定义，包含 frontmatter 元数据，通过 <code>/api/skills</code> 端点动态加载：</p>
+      <pre><code>---
+name: feat-lifecycle
+description: Feature lifecycle management
+triggers: ["开个新功能", "new feature", "立项"]
+argument-hint: "feature-id or description"
+---
+# Skill content (prompt injection)...</code></pre>
+
+      <p><strong>20+ 内置 Skills：</strong></p>
+      <div>
+        <span class="tag tag-c">feat-lifecycle</span><span class="tag tag-c">tdd</span>
+        <span class="tag tag-c">quality-gate</span><span class="tag tag-c">merge-gate</span>
+        <span class="tag tag-c">debugging</span><span class="tag tag-c">deep-research</span>
+        <span class="tag tag-c">collaborative-thinking</span><span class="tag tag-c">cross-cat-handoff</span>
+        <span class="tag tag-c">incident-response</span><span class="tag tag-c">self-evolution</span>
+        <span class="tag tag-c">bootcamp-guide</span><span class="tag tag-c">hyperfocus-brake</span>
+        <span class="tag tag-c">image-generation</span><span class="tag tag-c">pencil-design</span>
+        <span class="tag tag-c">browser-preview</span><span class="tag tag-c">writing-plans</span>
+        <span class="tag tag-c">writing-skills</span><span class="tag tag-c">workspace-navigator</span>
+      </div>
+      <br>
+      <p><strong>MCP 工具集 (供 Agent 调用)：</strong></p>
+      <pre><code>collabTools:  post_message, send_a2a, rich_block
+memoryTools:  search_evidence, reflect, publish
+signalTools:  list_signals, study_signal, add_signal
+limbTools:    file_ops, execute</code></pre>
+    </div>
+
+    <div class="card card-multi">
+      <h3>⚡ Multi-Agent — Prompt 注入式 Skill</h3>
+      <p>技能以目录结构定义，内容注入 system prompt 或通过 callback API 暴露给 Agent：</p>
+      <pre><code>/.agents/skills/
+  feat-lifestyle/        特性生命周期
+  hardline-review/       严格代码审查
+  receiving-review/      接受 review 反馈
+  merge-approval-gate/   合并审批流程
+  cross-role-handoff/    跨角色交接
+  ask-dont-guess/        不确定时询问</code></pre>
+
+      <p><strong>工具注入方式：</strong></p>
+      <pre><code>// 通过 system prompt 注入工作流规则
+## 工作流（主动 @ 触发点）
+- 完成开发/修复 → @reviewer 请 review
+- 修完 review 意见 → @reviewer 确认修复
+
+// Agent 可调用的 Callback API
+POST /api/callbacks/post-message
+GET  /api/callbacks/thread-context</code></pre>
+
+      <div class="callout callout-m">
+        ⚠️ <strong>局限</strong>：Skill 仅通过文字注入到 prompt，Agent 无法像 Clowder 那样通过 MCP 工具主动调用搜索证据库、发布决策等结构化操作。
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>📊 Skill 系统对比</h3>
+    <table class="compare-table">
+      <thead>
+        <tr><th>特性</th><th class="c">🐾 Clowder</th><th class="m">⚡ Multi-Agent</th><th>优劣</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Skill 定义方式</td><td>SKILL.md 文件 (frontmatter)</td><td>目录 + prompt 文本</td><td>Clowder 更规范</td></tr>
+        <tr><td>Skill 数量</td><td>20+</td><td>6</td><td><span class="minus">Clowder 远多</span></td></tr>
+        <tr><td>动态加载</td><td><span class="plus">✓ /api/skills 端点</span></td><td><span class="minus">✗ 编译时注入</span></td><td><span class="minus">Clowder 更灵活</span></td></tr>
+        <tr><td>工具调用 (MCP)</td><td><span class="plus">✓ 结构化 MCP 工具</span></td><td><span class="minus">✗ 仅 Callback HTTP</span></td><td><span class="minus">Clowder 能力更强</span></td></tr>
+        <tr><td>Claude Code CLI 集成</td><td><span class="plus">✓ 与 CLI /skill 命令对接</span></td><td><span class="minus">✗</span></td><td><span class="minus">Clowder 领先</span></td></tr>
+        <tr><td>添加新 Skill 难度</td><td>写 SKILL.md 即可</td><td>修改 agent-prompts.ts</td><td><span class="plus">Clowder 更低门槛</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════
+     §7 SYSTEM PROMPT
+══════════════════════════════════════════ -->
+<section id="s7">
+  <h2><span class="ico">📝</span> 七、SystemPrompt 构建</h2>
+
+  <div class="grid2">
+    <div class="card card-clowder">
+      <h3>🐾 Clowder AI — 动态多维 Prompt Builder</h3>
+      <p>由 <code>SystemPromptBuilder</code> 纯函数生成，每次调用时动态组装：</p>
+
+      <div class="arch-box" style="font-size:11.5px; color:#cbd5e1">
+<span style="color:#a78bfa">SystemPrompt 组成 (动态注入)</span>
+
+[1] 身份注入
+    • catId, 品种名, 角色列表, 优势描述
+
+[2] 可召唤伙伴 (@mention 列表)
+    • @opus @sonnet @gemini @codex ...
+
+[3] 调用上下文
+    • mode: independent / serial / parallel
+    • chainIndex / chainTotal (串行位置)
+    • teammates (并行伙伴列表)
+    • mcpAvailable (工具使用开关)
+
+[4] 意图标签 (IntentParser 解析)
+    • critique / design / ideate / execute
+
+[5] A2A 上下文
+    • directMessageFrom: 来源猫猫 ID
+    • a2aEnabled: 路由是否激活
+
+[6] Thread 状态
+    • mentionRoutingFeedback: 上次提及反馈
+    • activeParticipants: 最近回复者
+    • routingPolicy: Thread 级路由规则
+
+[7] 任务/阶段上下文
+    • sopStageHint: 当前工作流阶段
+    • bootcampState: 新手引导进度
+
+[8] 信号/研究
+    • activeSignals: 关联文章摘要
+    • relatedDiscussions: 语义检索结果
+
+[9] 输出控制
+    • voiceMode: TTS 音频优先
+      </div>
+
+      <div class="callout callout-c">
+        ✨ <strong>上下文感知</strong>：Prompt 包含语义检索到的相关历史讨论，使 Agent 天然具备"记忆"能力。
+      </div>
+    </div>
+
+    <div class="card card-multi">
+      <h3>⚡ Multi-Agent — 首次注入式 Prompt</h3>
+      <pre><code>// agent-prompts.ts
+const SYSTEM_PROMPT = `
+# Multi-Agent 系统协作规范
+
+## 工作流（主动 @ 触发点）
+- 完成开发/修复 → @reviewer 请 review
+- 修完 review 意见 → @reviewer 确认修复
+- 遇到视觉/体验问题 → @designer 征询
+
+## @ 触发格式（严格）
+@别名 必须在行首
+
+## Callback API
+POST /api/callbacks/post-message
+GET  /api/callbacks/thread-context
+`</code></pre>
+
+      <p><strong>注入策略：</strong></p>
+      <pre><code>// 仅首次 (新 session) 注入 system prompt
+// resume 时省略 (~500 tokens/轮)
+
+// Claude: --append-system-prompt
+// Codex: 前缀拼接到 prompt 字符串
+// Gemini: 前缀拼接到 prompt 字符串</code></pre>
+
+      <div class="callout callout-m">
+        💡 <strong>Token 优化</strong>：Resume 时跳过 system prompt 注入是一个很实用的优化，Clowder 目前未明确实现此优化（在 context 压缩时会重注入）。
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>📊 SystemPrompt 策略对比</h3>
+    <table class="compare-table">
+      <thead>
+        <tr><th>特性</th><th class="c">🐾 Clowder</th><th class="m">⚡ Multi-Agent</th><th>优劣</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>动态构建</td><td><span class="plus">✓ 每次调用重新生成</span></td><td><span class="minus">✗ 固定模板</span></td><td><span class="minus">Clowder 更灵活</span></td></tr>
+        <tr><td>上下文注入</td><td><span class="plus">✓ 语义检索相关历史</span></td><td><span class="minus">✗ 无</span></td><td><span class="minus">Clowder 大幅领先</span></td></tr>
+        <tr><td>Resume Token 节省</td><td><span class="minus">未明确优化</span></td><td><span class="plus">✓ Resume 跳过注入</span></td><td><span class="plus">Multi-Agent 更省</span></td></tr>
+        <tr><td>多 Provider 差异化</td><td><span class="plus">✓ 每个 Cat 独立 Prompt</span></td><td><span class="eq">基本统一</span></td><td><span class="minus">Clowder 更精细</span></td></tr>
+        <tr><td>可维护性</td><td><span class="minus">Builder 复杂</span></td><td><span class="plus">直观，易修改</span></td><td><span class="plus">Multi-Agent 更易</span></td></tr>
+        <tr><td>角色感知</td><td><span class="plus">✓ catId + roles + strengths</span></td><td><span class="minus">✗ 无差异化身份</span></td><td><span class="minus">Clowder 更有个性</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════
+     §8 MCP IMPLEMENTATION
+══════════════════════════════════════════ -->
+<section id="s8">
+  <h2><span class="ico">🔧</span> 八、MCP 实现对比</h2>
+
+  <div class="grid2">
+    <div class="card card-clowder">
+      <h3>🐾 Clowder AI — 全套 MCP 工具集</h3>
+      <p>独立的 <code>packages/mcp-server</code> 包，通过 stdio transport 与 Claude CLI 通信：</p>
+
+      <div class="arch-box" style="font-size:12px; color:#cbd5e1">
+<span style="color:#a78bfa">MCP Server (packages/mcp-server/src/)</span>
+  Transport: StdioServerTransport
+  SDK: @modelcontextprotocol/sdk v1.0.0
+
+<span style="color:#10b981">工具集 (4 类)</span>
+  ┌─ collabTools ──────────────────┐
+  │  post_message  → 发布公共消息  │
+  │  send_a2a      → 直发 A2A 消息 │
+  │  rich_block    → 富媒体块      │
+  └────────────────────────────────┘
+  ┌─ memoryTools ──────────────────┐
+  │  search_evidence → 语义/词法搜索 │
+  │  reflect       → 添加决策日志  │
+  │  publish       → 发布到证据库  │
+  └────────────────────────────────┘
+  ┌─ signalTools ──────────────────┐
+  │  list_signals  → 浏览文章      │
+  │  study_signal  → 深度研究      │
+  │  add_signal    → 添加研究素材  │
+  └────────────────────────────────┘
+  ┌─ limbTools ────────────────────┐
+  │  文件操作 / 代码执行           │
+  └────────────────────────────────┘
+
+<span style="color:#f59e0b">所有工具 → HTTP callback → /api/callbacks/*</span>
+<span style="color:#f59e0b">支持范围: 全部 Cat (Claude/Codex/Gemini...)</span>
+      </div>
+
+      <p><strong>CLI 启动命令：</strong></p>
+      <pre><code>claude -p "..." \
+  --output-format stream-json \
+  --mcp-config /path/to/mcp-server/dist/index.js \
+  --model claude-opus-4-6</code></pre>
+    </div>
+
+    <div class="card card-multi">
+      <h3>⚡ Multi-Agent — 最小化 MCP</h3>
+      <p>MCP 服务仅供 Claude 使用，其他 Provider 用 Callback Prompt 替代：</p>
+
+      <div class="arch-box" style="font-size:12px; color:#cbd5e1">
+<span style="color:#38bdf8">MCP Server (packages/api/src/mcp/server.ts)</span>
+  Transport: StdioServerTransport
+  仅 Claude 可用
+
+<span style="color:#10b981">工具集 (回调封装)</span>
+  post_message → POST /callbacks/post-message
+  [其他工具通过 JSON-RPC 暴露]
+
+<span style="color:#f87171">Codex / Gemini: 不使用 MCP!</span>
+  → 通过 Callback Prompt 注入方式
+  → Agent 自行调用 HTTP API
+
+<span style="color:#f59e0b">MCP Config: 内联 JSON 字符串</span>
+<span style="color:#f59e0b">(不写临时文件，更安全)</span>
+
+claude --mcp-config '{
+  "mcpServers": {
+    "multi-agent": {
+      "command": "node",
+      "args": ["/path/to/mcp-server/dist/index.js"],
+      "env": {
+        "MULTI_AGENT_INVOCATION_ID": "...",
+        "MULTI_AGENT_CALLBACK_TOKEN": "..."
+      }
+    }
+  }
+}'
+      </div>
+
+      <p><strong>Codex / Gemini 的替代方案：</strong></p>
+      <pre><code>// 环境变量注入给 CLI 子进程
+MULTI_AGENT_API_URL=http://localhost:8787
+MULTI_AGENT_INVOCATION_ID=xxx
+MULTI_AGENT_CALLBACK_TOKEN=yyy
+
+// Agent 在 prompt 中学习到 API 规范后
+// 自行调用 HTTP callback 端点</code></pre>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>📊 MCP 实现对比</h3>
+    <table class="compare-table">
+      <thead>
+        <tr><th>特性</th><th class="c">🐾 Clowder</th><th class="m">⚡ Multi-Agent</th><th>优劣</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>MCP 覆盖范围</td><td><span class="plus">全部 Cat</span></td><td><span class="minus">仅 Claude</span></td><td><span class="minus">Clowder 更全面</span></td></tr>
+        <tr><td>工具丰富度</td><td><span class="plus">4 大工具集 (15+ 工具)</span></td><td><span class="minus">1-2 个工具</span></td><td><span class="minus">Clowder 大幅领先</span></td></tr>
+        <tr><td>MCP Config 安全</td><td><span class="eq">文件路径方式</span></td><td><span class="plus">内联 JSON (无临时文件)</span></td><td><span class="plus">Multi-Agent 更安全</span></td></tr>
+        <tr><td>非 MCP Provider 支持</td><td><span class="plus">MCP 工具统一封装</span></td><td><span class="eq">Callback Prompt 降级</span></td><td><span class="eq">均能工作，方式不同</span></td></tr>
+        <tr><td>MCP SDK 版本</td><td>v1.0.0</td><td>当前版本</td><td><span class="eq">相近</span></td></tr>
+        <tr><td>工具认证</td><td>通过 callback 路由隐式</td><td><span class="plus">明确 token 验证</span></td><td><span class="plus">Multi-Agent 更显式</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════
+     §9 COMPREHENSIVE COMPARISON
+══════════════════════════════════════════ -->
+<section id="s9">
+  <h2><span class="ico">⚖️</span> 九、深度对比分析 — 共同点与差异</h2>
+
+  <!-- COMMONALITIES -->
+  <div class="card card-both">
+    <h3>🟢 共同点</h3>
+    <table class="compare-table">
+      <thead>
+        <tr><th>共同点</th><th class="c">🐾 Clowder 的实现方式</th><th class="m">⚡ Multi-Agent 的实现方式</th><th>优劣对比</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>pnpm Monorepo</strong></td>
+          <td>packages/api + web + shared + mcp-server</td>
+          <td>packages/api + shared · app/(Next.js)</td>
+          <td><span class="eq">结构相近，Clowder 多 mcp-server 包</span></td>
+        </tr>
+        <tr>
+          <td><strong>Fastify HTTP 框架</strong></td>
+          <td>Fastify 4.25 + Socket.IO</td>
+          <td>Fastify 5.8.2 + WebSocket 插件</td>
+          <td><span class="plus">Multi-Agent 用更新的 Fastify 5；Clowder 更多插件</span></td>
+        </tr>
+        <tr>
+          <td><strong>CLI 进程派发 Agent</strong></td>
+          <td>ClaudeAgentService spawn claude CLI</td>
+          <td>ClaudeRuntime spawn claude CLI</td>
+          <td><span class="eq">几乎相同模式；Clowder 有更多配置参数</span></td>
+        </tr>
+        <tr>
+          <td><strong>NDJSON 流式解析</strong></td>
+          <td>逐行解析 NDJSON → AgentMessage</td>
+          <td>readline 逐行 JSON.parse → delta 事件</td>
+          <td><span class="eq">完全相同思路；Clowder 类型更丰富</span></td>
+        </tr>
+        <tr>
+          <td><strong>Session ID 续传</strong></td>
+          <td>claude CLI --resume &lt;sessionId&gt;</td>
+          <td>相同 --resume 机制</td>
+          <td><span class="eq">完全相同，来源于 Claude CLI 特性</span></td>
+        </tr>
+        <tr>
+          <td><strong>@Mention A2A 路由</strong></td>
+          <td>a2a-mentions.ts 行首解析</td>
+          <td>mention-router.ts 行首解析</td>
+          <td><span class="eq">核心逻辑相同；Clowder 防护规则更多</span></td>
+        </tr>
+        <tr>
+          <td><strong>MCP stdio 集成</strong></td>
+          <td>独立 mcp-server 包</td>
+          <td>内嵌 packages/api/src/mcp</td>
+          <td><span class="eq">同为 stdio 模式；Clowder 独立包更解耦</span></td>
+        </tr>
+        <tr>
+          <td><strong>Agent Callback API</strong></td>
+          <td>POST /api/callbacks/*</td>
+          <td>POST /api/callbacks/post-message</td>
+          <td><span class="eq">理念相同；Clowder 端点更多</span></td>
+        </tr>
+        <tr>
+          <td><strong>SQLite 持久化</strong></td>
+          <td>evidence.sqlite (vector store)</td>
+          <td>multi-agent.sqlite (主存储)</td>
+          <td><span class="eq">用途不同：Clowder 做证据库，Multi-Agent 做主数据库</span></td>
+        </tr>
+        <tr>
+          <td><strong>TypeScript + Biome</strong></td>
+          <td>TypeScript 5.3 + Biome</td>
+          <td>TypeScript 5.8 + Biome</td>
+          <td><span class="plus">Multi-Agent TS 版本更新；都用 Biome 保持统一风格</span></td>
+        </tr>
+        <tr>
+          <td><strong>Skill/工作流体系</strong></td>
+          <td>cat-cafe-skills/ (20+ SKILL.md)</td>
+          <td>.agents/skills/ (6 个目录)</td>
+          <td><span class="eq">理念相同；Clowder 规模更大</span></td>
+        </tr>
+        <tr>
+          <td><strong>进程取消机制</strong></td>
+          <td>cancel_invocation → 信号 + taskkill</td>
+          <td>run.cancel() → 信号 + taskkill</td>
+          <td><span class="eq">几乎相同，都处理 Windows/Unix 差异</span></td>
+        </tr>
+        <tr>
+          <td><strong>Provider 检测</strong></td>
+          <td>cat-template.json + catRegistry</td>
+          <td>provider-profiles.ts (读~/.codex 等)</td>
+          <td><span class="eq">思路不同：Clowder 配置驱动；Multi-Agent 运行时检测</span></td>
+        </tr>
+        <tr>
+          <td><strong>Next.js 前端</strong></td>
+          <td>packages/web/ (Next.js)</td>
+          <td>app/ (Next.js 16 + React 19)</td>
+          <td><span class="plus">Multi-Agent 更新的 Next/React 版本</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- UNIQUE TO CLOWDER -->
+  <div class="card card-clowder" style="margin-top:20px">
+    <h3>🟣 Clowder AI 独有特性</h3>
+    <div class="grid3">
+      <div>
+        <p><strong>🧠 向量记忆引擎</strong></p>
+        <p class="note">sqlite-vec + HF embeddings 实现语义搜索，Agent 可检索历史证据，跨 session 保持记忆</p>
+      </div>
+      <div>
+        <p><strong>🗜️ 摘要压缩</strong></p>
+        <p class="note">长 Thread 由 Claude 生成抽象摘要，Rolling Window 保持上下文活跃，避免 token 爆炸</p>
+      </div>
+      <div>
+        <p><strong>🌐 远程 A2A</strong></p>
+        <p class="note">JSON-RPC 2.0 over HTTPS，支持跨机器 Cat 协作，可接入外部 A2A 服务</p>
+      </div>
+      <div>
+        <p><strong>⚡ 并行 Agent 执行</strong></p>
+        <p class="note">routeParallel() 同时启动多个 Cat，适合创意头脑风暴，快速获取多视角</p>
+      </div>
+      <div>
+        <p><strong>📡 Socket.IO Room 隔离</strong></p>
+        <p class="note">Room 模式实现多用户、多 Tab 精确推送，避免信息越权泄露</p>
+      </div>
+      <div>
+        <p><strong>🐾 11+ AI Provider</strong></p>
+        <p class="note">支持 Claude/GPT/Gemini/DARE/Antigravity/OpenCode/外部A2A，覆盖面远超对手</p>
+      </div>
+      <div>
+        <p><strong>🛠️ 全套 MCP 工具集</strong></p>
+        <p class="note">4 大工具集 15+ 工具，覆盖协作/记忆/信号/执行，全部 Cat 均可使用</p>
+      </div>
+      <div>
+        <p><strong>📋 Skill 动态加载</strong></p>
+        <p class="note">/api/skills 端点动态服务 Skill，与 Claude Code CLI /skill 命令深度集成</p>
+      </div>
+      <div>
+        <p><strong>🎮 附加功能</strong></p>
+        <p class="note">狼人杀游戏引擎(F101)、Telegram Bot、Email 摄取、RSS、Puppeteer 浏览器、PTY 终端</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- UNIQUE TO MULTI-AGENT -->
+  <div class="card card-multi" style="margin-top:20px">
+    <h3>🔵 Multi-Agent 独有/更优特性</h3>
+    <div class="grid3">
+      <div>
+        <p><strong>🪶 零 Redis 部署</strong></p>
+        <p class="note">仅 SQLite 依赖，本地一键启动，无需安装/配置 Redis，显著降低部署门槛</p>
+      </div>
+      <div>
+        <p><strong>🔑 内联 MCP Config</strong></p>
+        <p class="note">MCP 配置作为 JSON 字符串直接传给 CLI，无需写临时文件，更安全、更原子</p>
+      </div>
+      <div>
+        <p><strong>⚡ Resume Token 优化</strong></p>
+        <p class="note">Resume 时不注入 system prompt，每轮节省 ~500 tokens，长会话成本大幅降低</p>
+      </div>
+      <div>
+        <p><strong>🏪 运行时 Provider 检测</strong></p>
+        <p class="note">启动时读取 ~/.codex/config.toml、~/.Claude Code/profiles 等，自动发现可用模型</p>
+      </div>
+      <div>
+        <p><strong>⚡ Fastify 5 + React 19</strong></p>
+        <p class="note">采用最新框架版本，Fastify 5 有更好性能和类型安全，React 19 并发特性更佳</p>
+      </div>
+      <div>
+        <p><strong>🧩 Zustand 状态管理</strong></p>
+        <p class="note">精简的前端状态管理，无 Redux 复杂性，代码量更少，易于理解和扩展</p>
+      </div>
+      <div>
+        <p><strong>📝 明确 Token 认证</strong></p>
+        <p class="note">callbackToken 显式验证，invocationId + token 二元认证，比 Clowder 的隐式路由更安全</p>
+      </div>
+      <div>
+        <p><strong>📊 完整事件溯源</strong></p>
+        <p class="note">agent_events 表记录所有执行活动，提供完整审计日志，Clowder 的 Redis 数据易丢失</p>
+      </div>
+      <div>
+        <p><strong>🎯 专注核心功能</strong></p>
+        <p class="note">不引入 puppeteer/Sharp/HF 等重依赖，代码库精简，启动快，维护成本低</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════
+     §10 SCORING
+══════════════════════════════════════════ -->
+<section id="s10">
+  <h2><span class="ico">📊</span> 十、综合评分</h2>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>能力维度评分</h3>
+      <div>
+        <div style="color:#a78bfa; font-size:13px; margin-bottom:10px">🐾 Clowder AI</div>
+        <div class="score-row"><span class="score-label">记忆系统</span><div class="score-bar"><div class="score-fill-c" style="width:95%"></div></div><span class="score-val" style="color:#a78bfa">95</span></div>
+        <div class="score-row"><span class="score-label">A2A 通信</span><div class="score-bar"><div class="score-fill-c" style="width:90%"></div></div><span class="score-val" style="color:#a78bfa">90</span></div>
+        <div class="score-row"><span class="score-label">Skill 系统</span><div class="score-bar"><div class="score-fill-c" style="width:92%"></div></div><span class="score-val" style="color:#a78bfa">92</span></div>
+        <div class="score-row"><span class="score-label">MCP 集成</span><div class="score-bar"><div class="score-fill-c" style="width:88%"></div></div><span class="score-val" style="color:#a78bfa">88</span></div>
+        <div class="score-row"><span class="score-label">Provider 覆盖</span><div class="score-bar"><div class="score-fill-c" style="width:95%"></div></div><span class="score-val" style="color:#a78bfa">95</span></div>
+        <div class="score-row"><span class="score-label">前后端通信</span><div class="score-bar"><div class="score-fill-c" style="width:85%"></div></div><span class="score-val" style="color:#a78bfa">85</span></div>
+        <div class="score-row"><span class="score-label">部署复杂度</span><div class="score-bar"><div class="score-fill-c" style="width:30%"></div></div><span class="score-val" style="color:#a78bfa">30</span></div>
+        <div class="score-row"><span class="score-label">代码可维护性</span><div class="score-bar"><div class="score-fill-c" style="width:60%"></div></div><span class="score-val" style="color:#a78bfa">60</span></div>
+        <div class="score-row"><span class="score-label">安全性</span><div class="score-bar"><div class="score-fill-c" style="width:72%"></div></div><span class="score-val" style="color:#a78bfa">72</span></div>
+        <div class="score-row"><span class="score-label">扩展性</span><div class="score-bar"><div class="score-fill-c" style="width:88%"></div></div><span class="score-val" style="color:#a78bfa">88</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="visibility:hidden">.</h3>
+      <div>
+        <div style="color:#38bdf8; font-size:13px; margin-bottom:10px">⚡ Multi-Agent</div>
+        <div class="score-row"><span class="score-label">记忆系统</span><div class="score-bar"><div class="score-fill-m" style="width:35%"></div></div><span class="score-val" style="color:#38bdf8">35</span></div>
+        <div class="score-row"><span class="score-label">A2A 通信</span><div class="score-bar"><div class="score-fill-m" style="width:72%"></div></div><span class="score-val" style="color:#38bdf8">72</span></div>
+        <div class="score-row"><span class="score-label">Skill 系统</span><div class="score-bar"><div class="score-fill-m" style="width:60%"></div></div><span class="score-val" style="color:#38bdf8">60</span></div>
+        <div class="score-row"><span class="score-label">MCP 集成</span><div class="score-bar"><div class="score-fill-m" style="width:55%"></div></div><span class="score-val" style="color:#38bdf8">55</span></div>
+        <div class="score-row"><span class="score-label">Provider 覆盖</span><div class="score-bar"><div class="score-fill-m" style="width:50%"></div></div><span class="score-val" style="color:#38bdf8">50</span></div>
+        <div class="score-row"><span class="score-label">前后端通信</span><div class="score-bar"><div class="score-fill-m" style="width:78%"></div></div><span class="score-val" style="color:#38bdf8">78</span></div>
+        <div class="score-row"><span class="score-label">部署复杂度</span><div class="score-bar"><div class="score-fill-m" style="width:90%"></div></div><span class="score-val" style="color:#38bdf8">90</span></div>
+        <div class="score-row"><span class="score-label">代码可维护性</span><div class="score-bar"><div class="score-fill-m" style="width:85%"></div></div><span class="score-val" style="color:#38bdf8">85</span></div>
+        <div class="score-row"><span class="score-label">安全性</span><div class="score-bar"><div class="score-fill-m" style="width:82%"></div></div><span class="score-val" style="color:#38bdf8">82</span></div>
+        <div class="score-row"><span class="score-label">扩展性</span><div class="score-bar"><div class="score-fill-m" style="width:68%"></div></div><span class="score-val" style="color:#38bdf8">68</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Final verdict -->
+  <div class="card" style="margin-top:20px; border: 2px solid #f59e0b">
+    <h3 style="color:#fcd34d">🏆 综合结论</h3>
+    <div class="grid2">
+      <div>
+        <div class="callout callout-c">
+          <div>
+            <strong>🐾 Clowder AI — 企业级多猫平台</strong><br>
+            适合：需要长期记忆、跨 session 知识沉淀、多 AI provider 协作、复杂工作流自动化的团队。<br>
+            代价：部署复杂（需 Redis）、代码量庞大、学习曲线陡峭、维护成本高。
+          </div>
+        </div>
+        <div class="callout callout-c">
+          <div>
+            <strong>核心优势：</strong>向量记忆 + 摘要压缩 + 并行 A2A + 11 个 Provider + 20+ Skill + 完整 MCP 工具集
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="callout callout-m">
+          <div>
+            <strong>⚡ Multi-Agent — 轻量协作控制台</strong><br>
+            适合：快速部署、个人/小团队使用、专注 Claude+Codex+Gemini 协作的场景。<br>
+            代价：无长期记忆、无并行执行、MCP 覆盖有限、Skill 体系弱。
+          </div>
+        </div>
+        <div class="callout callout-m">
+          <div>
+            <strong>核心优势：</strong>零 Redis 部署 + Token 优化 + 明确安全认证 + 新框架 + 代码精简易读
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <hr>
+
+    <h3 style="color:#fcd34d; margin-bottom:12px">💡 互相借鉴建议</h3>
+    <div class="grid2">
+      <div>
+        <p style="color:#c4b5fd; font-size:13px; font-weight:700; margin-bottom:8px">Multi-Agent 可向 Clowder 借鉴：</p>
+        <ul style="font-size:13px; padding-left:16px; line-height:2">
+          <li>引入 sqlite-vec 实现语义记忆检索</li>
+          <li>Thread 摘要压缩机制 (防 context 溢出)</li>
+          <li>MCP 工具集扩展到 Codex/Gemini</li>
+          <li>WebSocket Room 隔离（多用户安全）</li>
+          <li>并行 A2A 执行支持</li>
+          <li>SKILL.md frontmatter 标准化 Skill 定义</li>
+        </ul>
+      </div>
+      <div>
+        <p style="color:#7dd3fc; font-size:13px; font-weight:700; margin-bottom:8px">Clowder 可向 Multi-Agent 借鉴：</p>
+        <ul style="font-size:13px; padding-left:16px; line-height:2">
+          <li>Resume 时跳过 system prompt 注入 (省 token)</li>
+          <li>内联 MCP Config JSON（无临时文件）</li>
+          <li>显式 callbackToken 双重认证</li>
+          <li>运行时 Provider 自动检测</li>
+          <li>Zustand 精简前端状态管理</li>
+          <li>升级 Fastify 5 + React 19</li>
+          <li>agent_events 事件溯源表</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<div style="text-align:center; margin-top:60px; padding:24px; color:var(--muted); font-size:13px; border-top:1px solid var(--border)">
+  📅 Generated 2026-03-22 · 🐾 Clowder AI Ragdoll · Architecture Comparison Report<br>
+  <span style="font-size:11px">基于代码库静态分析，部分内部实现细节可能随版本迭代变化</span>
+</div>
+
+</div><!-- /container -->
+</body>
+</html>

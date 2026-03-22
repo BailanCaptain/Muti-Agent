@@ -1,0 +1,5468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clowder AI vs Multi-Agent — 深度架构对比</title>
+<style>
+:root {
+  --c:#7c3aed; --cl:#ede9fe; --m:#0369a1; --ml:#e0f2fe;
+  --g:#065f46; --gl:#d1fae5; --bg:#0f172a; --card:#1e293b;
+  --card2:#273549; --text:#e2e8f0; --muted:#94a3b8;
+  --border:#334155; --hl:#f59e0b;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI','PingFang SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.75;font-size:14.5px}
+.wrap{max-width:1480px;margin:0 auto;padding:0 24px 80px}
+header{background:linear-gradient(135deg,#1e1b4b,#0c1a2e);border-bottom:2px solid #3730a3;padding:44px 24px 36px;text-align:center;position:relative;overflow:hidden}
+header::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 80% 50% at 50% 0%,rgba(124,58,237,.25),transparent 70%)}
+h1{font-size:2.4rem;font-weight:800;letter-spacing:-1px;position:relative}
+h1 .a{color:#a78bfa} h1 .b{color:#38bdf8}
+.sub{color:var(--muted);margin-top:8px;font-size:.95rem;position:relative}
+.badges{display:flex;gap:8px;justify-content:center;margin-top:14px;flex-wrap:wrap;position:relative}
+.badge{padding:3px 11px;border-radius:20px;font-size:11.5px;font-weight:600;border:1px solid;display:flex;align-items:center;gap:4px}
+.bc{background:rgba(124,58,237,.2);border-color:#7c3aed;color:#c4b5fd}
+.bm{background:rgba(3,105,161,.2);border-color:#0369a1;color:#7dd3fc}
+.bd{background:rgba(100,116,139,.15);border-color:#475569;color:#94a3b8}
+/* TOC */
+.toc{position:sticky;top:0;z-index:50;background:rgba(15,23,42,.94);backdrop-filter:blur(8px);border-bottom:1px solid var(--border);padding:9px 24px;display:flex;gap:18px;overflow-x:auto;white-space:nowrap}
+.toc a{color:var(--muted);text-decoration:none;font-size:12.5px;font-weight:600}
+.toc a:hover{color:var(--text)}
+/* Sections */
+section{margin-top:48px}
+h2{font-size:1.28rem;font-weight:800;margin-bottom:18px;display:flex;align-items:center;gap:10px;border-left:4px solid var(--hl);padding-left:14px}
+h3{font-size:1rem;font-weight:700;color:#cbd5e1;margin:16px 0 9px}
+h4{font-size:.9rem;font-weight:700;color:#94a3b8;margin:12px 0 6px}
+/* Cards */
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px 24px;margin-bottom:14px}
+.cc{border-left:4px solid var(--c)} .cm{border-left:4px solid var(--m)} .cg{border-left:4px solid #10b981}
+/* Grid */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+@media(max-width:960px){.g2,.g3{grid-template-columns:1fr}}
+/* Table */
+.t{width:100%;border-collapse:collapse;font-size:13px}
+.t th,.t td{padding:10px 14px;border:1px solid var(--border)}
+.t thead{background:var(--card2)}
+.t th{font-weight:700;font-size:12px;letter-spacing:.5px;text-transform:uppercase}
+.t th.tc{color:#a78bfa} .t th.tm{color:#38bdf8}
+.t tr:nth-child(even){background:rgba(255,255,255,.02)}
+/* Code */
+code{background:rgba(255,255,255,.08);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-family:Consolas,monospace;font-size:12.5px;color:#fbbf24}
+pre{background:rgba(0,0,0,.45);border:1px solid var(--border);border-radius:10px;padding:14px 18px;overflow-x:auto;font-size:12.5px;line-height:1.75;margin:10px 0}
+pre code{background:none;border:none;padding:0;color:#e2e8f0}
+/* Arch box */
+.ab{background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:20px;font-family:Consolas,monospace;font-size:12px;line-height:1.9;white-space:pre;overflow-x:auto;color:#cbd5e1}
+/* Tags */
+.tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;margin:2px}
+.tc{background:rgba(124,58,237,.25);color:#c4b5fd;border:1px solid #7c3aed}
+.tm{background:rgba(3,105,161,.25);color:#7dd3fc;border:1px solid #0369a1}
+.tg{background:rgba(16,185,129,.2);color:#6ee7b7;border:1px solid #10b981}
+/* Callout */
+.co{border-radius:10px;padding:13px 17px;margin:10px 0;display:flex;gap:11px;align-items:flex-start;font-size:13.5px}
+.coc{background:rgba(124,58,237,.12);border:1px solid rgba(124,58,237,.4)}
+.com{background:rgba(3,105,161,.12);border:1px solid rgba(3,105,161,.4)}
+.cog{background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.35)}
+.coy{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35);color:#fde68a}
+.cor{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.35);color:#fca5a5}
+/* Verdict pills */
+.v-c{color:#c4b5fd;font-weight:700} .v-m{color:#7dd3fc;font-weight:700}
+.v-eq{color:#fbbf24;font-weight:700} .v-bad{color:#f87171;font-weight:700}
+.v-good{color:#34d399;font-weight:700}
+/* Score bar */
+.sb-row{display:flex;gap:10px;align-items:center;margin:7px 0}
+.sb-label{width:150px;font-size:12.5px;color:var(--muted);flex-shrink:0}
+.sb-track{flex:1;background:rgba(255,255,255,.07);border-radius:6px;height:7px;overflow:hidden}
+.sb-fc{background:linear-gradient(90deg,#7c3aed,#a78bfa);height:100%;border-radius:6px}
+.sb-fm{background:linear-gradient(90deg,#0369a1,#38bdf8);height:100%;border-radius:6px}
+.sb-val{width:28px;font-size:12.5px;font-weight:700;text-align:right}
+hr{border:none;border-top:1px solid var(--border);margin:28px 0}
+.note{color:var(--muted);font-size:12.5px;margin-top:5px}
+/* side-by-side code diff */
+.diff{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:860px){.diff{grid-template-columns:1fr}}
+.diff-hdr{font-size:12px;font-weight:700;padding:5px 12px;border-radius:6px 6px 0 0;margin-bottom:-2px}
+.diff-c{background:rgba(124,58,237,.25);color:#c4b5fd}
+.diff-m{background:rgba(3,105,161,.25);color:#7dd3fc}
+/* verdict row */
+.vr{display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-radius:8px;margin:6px 0;font-size:13px}
+.vr-c{background:rgba(124,58,237,.1);border-left:3px solid #7c3aed}
+.vr-m{background:rgba(3,105,161,.1);border-left:3px solid #0369a1}
+.vr-g{background:rgba(16,185,129,.1);border-left:3px solid #10b981}
+/* number badge */
+.num{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;margin-top:1px}
+.num-c{background:#7c3aed;color:#fff} .num-m{background:#0369a1;color:#fff} .num-g{background:#10b981;color:#fff}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="a">🐾 Clowder AI</span> <span style="color:#475569">vs</span> <span class="b">⚡ Multi-Agent</span></h1>
+  <p class="sub">多智能体编排平台 — 源码级深度架构对比分析</p>
+  <div class="badges">
+    <span class="badge bc">🐾 Clowder AI · Fastify 4 · Redis+SQLite · 11 Providers · 20+ Skills</span>
+    <span class="badge bm">⚡ Multi-Agent · Fastify 5 · SQLite Only · 3 Providers · 6 Skills</span>
+    <span class="badge bd">📅 2026-03-22 · 基于真实源码分析</span>
+  </div>
+</header>
+
+<div class="toc">
+  <a href="#s0">📋 概览</a>
+  <a href="#s1">🏗️ 整体架构</a>
+  <a href="#s2">🔌 前后端通信</a>
+  <a href="#s3">🧠 记忆系统</a>
+  <a href="#s4">🤝 A2A通信</a>
+  <a href="#s5">🛠️ Skill工具</a>
+  <a href="#s6">📝 SystemPrompt</a>
+  <a href="#s7">🔧 MCP实现</a>
+  <a href="#s8">🚀 Agent派发</a>
+  <a href="#s9">⚖️ 综合对比</a>
+  <a href="#s10">📊 评分</a>
+  <a href="#s11">🀄 为何全中文</a>
+  <a href="#s12">🖥️ 前端展示</a>
+  <a href="#s13">🔄 工作流实现</a>
+  <a href="#s14">🔐 权限控制</a>
+  <a href="#s15">❌ 命令失败原因</a>
+  <a href="#s16">🎭 角色专职化</a>
+  <a href="#s17">🚧 权限静默终止</a>
+  <a href="#s18">🗂️ A2A秩序控制</a>
+  <a href="#s19">🧩 精确角色分工场景</a>
+  <a href="#s20">🔏 权限控制深度剖析</a>
+  <a href="#s21">🔀 A2A冲突指令与串行保序</a>
+  <a href="#s22">📬 Agent如何知道该看谁的消息</a>
+</div>
+
+<div class="wrap">
+
+<!-- ══════════ §0 OVERVIEW ══════════ -->
+<section id="s0">
+<h2>📋 一、项目定位与规模概览</h2>
+<div class="g2">
+<div class="card cc">
+  <h3>🐾 Clowder AI</h3>
+  <p>企业级 Cat Café 多猫平台，把 AI 协作拟人化为"猫猫团队"。核心目标：长期知识积累 + 多 provider 统一调度 + 完整工作流自动化。</p>
+  <br>
+  <div><span class="tag tc">Fastify 4</span><span class="tag tc">Socket.IO</span><span class="tag tc">Redis 6399</span><span class="tag tc">SQLite+vec</span><span class="tag tc">HuggingFace</span><span class="tag tc">MCP SDK v1</span><span class="tag tc">Puppeteer</span><span class="tag tc">node-pty</span><span class="tag tc">11 Providers</span></div>
+  <br>
+  <p class="note">📦 packages: api · web · shared · mcp-server</p>
+  <p class="note">🐱 Claude(opus/sonnet) · GPT(codex/gpt52/spark) · Gemini · DARE · Antigravity · OpenCode · A2A</p>
+  <p class="note">💾 Redis(热) + SQLite evidence(冷/向量) + 文件 transcripts</p>
+  <p class="note">🛣️ 87+ 路由文件 · 20+ Skill · 4 类 MCP 工具集</p>
+</div>
+<div class="card cm">
+  <h3>⚡ Multi-Agent</h3>
+  <p>轻量化多模型控制台，聚焦 Claude + Codex + Gemini 三大 provider 协同，设计原则：最小依赖、快速部署、代码可读。</p>
+  <br>
+  <div><span class="tag tm">Fastify 5</span><span class="tag tm">WebSocket原生</span><span class="tag tm">SQLite WAL</span><span class="tag tm">node:sqlite</span><span class="tag tm">Zustand</span><span class="tag tm">Next.js 16</span><span class="tag tm">React 19</span><span class="tag tm">3 Providers</span></div>
+  <br>
+  <p class="note">📦 packages: api · shared · app/(Next.js)</p>
+  <p class="note">🤖 Claude(范德彪) · Codex(黄仁勋) · Gemini(桂芬)</p>
+  <p class="note">💾 SQLite only: data/multi-agent.sqlite (WAL)</p>
+  <p class="note">🛣️ ~8 路由 · 6 Skill · 2 MCP 工具</p>
+</div>
+</div>
+
+<div class="card">
+<h3>🔢 关键规模对比</h3>
+<table class="t">
+<thead><tr><th>指标</th><th class="tc">🐾 Clowder AI</th><th class="tm">⚡ Multi-Agent</th><th>差距</th></tr></thead>
+<tbody>
+<tr><td>API 路由文件</td><td>87+</td><td>~8</td><td><span class="v-bad">Clowder 10x 复杂度</span></td></tr>
+<tr><td>AI Provider 数</td><td>7 类 11+ 变体</td><td>3 类</td><td><span class="v-c">Clowder 多 4 类</span></td></tr>
+<tr><td>存储层数量</td><td>3 层 (Redis/SQLite/File)</td><td>1 层 (SQLite)</td><td><span class="v-bad">Clowder 部署复杂</span></td></tr>
+<tr><td>记忆/检索能力</td><td>向量+FTS5+摘要压缩</td><td>无，仅DB历史</td><td><span class="v-c">Clowder 代差级领先</span></td></tr>
+<tr><td>实时通信</td><td>Socket.IO (Room隔离)</td><td>原生 WS (广播)</td><td><span class="v-eq">功能同等，隔离不同</span></td></tr>
+<tr><td>Skill 数量</td><td>20+</td><td>6</td><td><span class="v-c">Clowder 多 3x</span></td></tr>
+<tr><td>MCP 工具覆盖</td><td>全部 provider</td><td>仅 Claude</td><td><span class="v-c">Clowder 更全</span></td></tr>
+<tr><td>前端框架版本</td><td>Next.js (旧)</td><td>Next.js 16 + React 19</td><td><span class="v-m">Multi-Agent 更新</span></td></tr>
+<tr><td>部署门槛</td><td>高 (需 Redis)</td><td>低 (仅 Node)</td><td><span class="v-m">Multi-Agent 更简</span></td></tr>
+<tr><td>代码可读性</td><td>中 (规模大)</td><td>高 (精简)</td><td><span class="v-m">Multi-Agent 更易读</span></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ══════════ §1 ARCHITECTURE ══════════ -->
+<section id="s1">
+<h2>🏗️ 二、整体架构对比</h2>
+<div class="g2">
+<div>
+<div style="color:#a78bfa;font-size:13px;font-weight:700;margin-bottom:8px">🐾 Clowder AI — 分层架构</div>
+<div class="ab"><span style="color:#a78bfa">┌─────────────────────────────────────────────────┐
+│          📱 Frontend (Next.js + packages/web)    │
+│   Thread UI · Skill面板 · Voice · Backlog · PTY  │
+└──────────────┬──────────────────────┬────────────┘
+               │ HTTP REST (87 routes) │ Socket.IO
+               ▼                      ▼</span>
+<span style="color:#7c3aed">┌─────────────────────────────────────────────────┐
+│            🚀 Fastify 4 API Server               │
+│  ┌───────────────┐  ┌─────────┐  ┌───────────┐  │
+│  │ AgentRouter   │  │SocketMgr│  │ Callback  │  │
+│  │ intent解析    │  │ Room管理 │  │ Router    │  │
+│  │ 路由策略      │  │ 多Tab同步│  │ MCP→API  │  │
+│  └───────┬───────┘  └─────────┘  └─────┬─────┘  │
+│          │ SystemPromptBuilder          │         │
+│          │ IntentParser / A2A分析       │         │
+└──────────┼──────────────────────────────┼─────────┘
+           │ spawn/REST                   │ HTTP</span>
+           ▼                             ▼
+<span style="color:#10b981">┌──────────────────────────────────────────────┐
+│         🤖 Agent Services Layer               │
+│  ClaudeAgentService  → claude CLI (spawn)     │
+│  GeminiAgentService  → REST API (直接)        │
+│  CodexAgentService   → codex CLI (spawn)      │
+│  A2AAgentService     → JSON-RPC 2.0 (HTTPS)   │
+│  DareAgentService / AntigravityAgentService   │
+└────┬─────────────────────┬─────────────────┘</span>
+     │ stdio MCP            │ A2A 远程 HTTPS
+     ▼                      ▼
+<span style="color:#f59e0b">┌────────────────┐   ┌──────────────────────┐
+│  MCP Server    │   │ Remote A2A Endpoint  │
+│  packages/     │   │ JSON-RPC 2.0         │
+│  mcp-server/   │   │ Bearer Auth          │
+│  4 工具集      │   └──────────────────────┘
+└────────────────┘</span>
+<span style="color:#ef4444">┌─────────────────────────────────────────────┐
+│           💾 Storage Layer (3层)             │
+│  Redis 6399  threads/messages/sessions(热)   │
+│  SQLite      evidence+vector+summary(冷)     │
+│  data/       transcripts文件(归档)           │
+└─────────────────────────────────────────────┘</span></div>
+</div>
+<div>
+<div style="color:#38bdf8;font-size:13px;font-weight:700;margin-bottom:8px">⚡ Multi-Agent — 精简架构</div>
+<div class="ab"><span style="color:#38bdf8">┌─────────────────────────────────────────────────┐
+│     📱 Frontend (Next.js 16 + Zustand)           │
+│  ThreadView · Timeline · ProviderCards           │
+└──────────────┬──────────────────────┬────────────┘
+               │ HTTP REST (~8 routes) │ 原生 WebSocket
+               ▼                      ▼</span>
+<span style="color:#0369a1">┌─────────────────────────────────────────────────┐
+│            🚀 Fastify 5 API Server               │
+│  ┌──────────────────┐  ┌──────────────────────┐  │
+│  │  MessageService  │  │   AppEventBus        │  │
+│  │  (主编排器)      │  │   (内部事件总线)     │  │
+│  └────────┬─────────┘  └──────────┬───────────┘  │
+│           │                       │               │
+│  ┌────────▼───────────────────────▼────────────┐  │
+│  │    DispatchOrchestrator (A2A调度核心)        │  │
+│  │    MentionRouter + HopCount + Queue          │  │
+│  └──────────────────────┬──────────────────────┘  │
+└─────────────────────────┼──────────────────────── ┘
+                          │ spawn CLI</span>
+                          ▼
+<span style="color:#10b981">┌──────────────────────────────────────────────┐
+│       🤖 Runtime Adapter Layer                │
+│  ClaudeRuntime  → claude CLI (spawn)          │
+│  CodexRuntime   → codex CLI (spawn)           │
+│  GeminiRuntime  → gemini node CLI (spawn)     │
+└────────────────────────┬─────────────────────┘</span>
+                         │ stdio MCP (仅Claude)
+                         ▼
+<span style="color:#f59e0b">┌─────────────────────────────────────────────┐
+│  MCP Server (packages/api/src/mcp/)          │
+│  2 工具: post_message + get_thread_context   │
+│  Codex/Gemini: 用 Callback Prompt 替代       │
+└─────────────────────────────────────────────┘</span>
+<span style="color:#ef4444">┌─────────────────────────────────────────────┐
+│           💾 Storage Layer (1层)             │
+│  SQLite WAL  data/multi-agent.sqlite         │
+│  5张表：groups/threads/messages/             │
+│           invocations/agent_events           │
+└─────────────────────────────────────────────┘</span></div>
+</div>
+</div>
+
+<div class="card" style="margin-top:0">
+<h3>架构设计哲学对比</h3>
+<div class="g2">
+<div class="vr vr-c"><div class="num num-c">C</div><div><strong>Clowder：分层解耦 + 能力堆叠</strong><br>每层职责清晰分离（路由/执行/存储），通过 CatRegistry 全局注册中心统一管理 provider 配置。能力以"插件"形式叠加（新 provider → 新 AgentService），但随之而来的是复杂度爆炸。<br><span class="note">⚡优：扩展性极强；⚠️劣：新人上手需熟悉 10+ 层抽象</span></div></div>
+<div class="vr vr-m"><div class="num num-m">M</div><div><strong>Multi-Agent：扁平直连 + 约定优于配置</strong><br>MessageService 作为单一编排核心，DispatchOrchestrator 内嵌于其中。Runtime Adapter 直接暴露 spawn 逻辑，无额外注册层。代码流程一眼可见。<br><span class="note">⚡优：阅读路径短，3文件能理解全局；⚠️劣：新增 provider 需改核心类</span></div></div>
+</div>
+</div>
+</section>
+
+<!-- ══════════ §2 FRONTEND/BACKEND COMM ══════════ -->
+<section id="s2">
+<h2>🔌 三、前后端通信 — 逐行源码对比</h2>
+
+<h3>3.1 WebSocket 实现</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — Socket.IO + Room 隔离</div>
+  <pre><code>// SocketManager.ts
+// Room 结构: thread:{threadId}, user:{userId}
+io.on('connection', (socket) => {
+  socket.on('join_room', ({ threadId, userId }) => {
+    socket.join(`thread:${threadId}`)
+    socket.join(`user:${userId}`)  // 多Tab同步
+  })
+
+  socket.on('cancel_invocation', ({ threadId, invocationId }) => {
+    // 验证发送者必须在该 thread 的 room 里
+    const rooms = socket.rooms
+    if (!rooms.has(`thread:${threadId}`)) {
+      socket.emit('error', { code: 'UNAUTHORIZED' })
+      return
+    }
+    invocationTracker.cancel(invocationId)
+  })
+})
+
+// 广播 — 只发给该 thread 的订阅者
+broadcastAgentMessage(threadId, msg) {
+  io.to(`thread:${threadId}`).emit('agent_message', msg)
+}
+// 永远不用 io.emit() 全局广播</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — 原生 WS + 全局广播</div>
+  <pre><code>// ws.ts
+const sockets = new Set&lt;SocketLike&gt;()
+
+wss.on('connection', (ws) => {
+  sockets.add(ws)
+  ws.on('message', async (raw) => {
+    const event = JSON.parse(raw.toString())
+    // 直接交给 MessageService 处理
+    await messageService.handleClientEvent(event, ws)
+  })
+  ws.on('close', () => sockets.delete(ws))
+})
+
+// 广播 — 发给所有连接的 socket
+broadcast(event) {
+  const payload = JSON.stringify(event)
+  for (const socket of sockets) {
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(payload)
+    }
+  }
+}
+// 无 Room 概念，全量广播</code></pre>
+</div>
+</div>
+
+<div class="g2" style="margin-top:8px">
+<div class="co coc">
+  <div><strong>🐾 Clowder 优势：</strong> Room 隔离确保消息只推送给有权限的客户端。<code>user:{userId}</code> room 实现多 Tab 状态同步。取消调用需验证 room 成员资格，防越权操作。<br><span class="note">👎 代价：引入 Socket.IO 库（~200KB），比原生 WS 重</span></div>
+</div>
+<div class="co com">
+  <div><strong>⚡ Multi-Agent 优势：</strong> 零依赖原生 WS，代码 40 行即实现完整通信层。Fastify 5 的 <code>@fastify/websocket</code> 原生集成无额外封装。<br><span class="note">👎 代价：多用户场景下所有人收到所有事件，存在信息泄露风险</span></div>
+</div>
+</div>
+
+<h3>3.2 HTTP 路由规模对比</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — 87+ 路由文件（按领域划分）</div>
+  <pre><code>packages/api/src/routes/
+├── invocations.ts     POST /api/invocations
+├── messages.ts        GET/POST /api/messages
+├── threads.ts         CRUD /api/threads
+├── tasks.ts           /api/tasks (Backlog)
+├── evidence.ts        /api/evidence
+├── memory.ts          /api/memory
+├── skills.ts          GET /api/skills
+├── signals.ts         /api/signals
+├── callbacks.ts       POST /api/callbacks/* (47KB!)
+├── cats.ts            /api/cats (Cat管理)
+├── config.ts          /api/config
+├── games.ts           /api/games (狼人杀)
+├── backlog.ts         /api/backlog
+├── articles.ts        /api/articles
+├── ... (80+更多)
+
+// callbacks.ts 是最大路由文件 47.3 KB
+// 处理所有 MCP → API 回调逻辑</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — ~8 个路由（按功能划分）</div>
+  <pre><code>packages/api/src/routes/
+├── bootstrap.ts    GET /api/bootstrap
+├── providers.ts    GET /api/providers
+├── session-groups.ts  POST /api/session-groups
+│                      GET  /api/session-groups/:id
+├── threads.ts      POST /api/threads/:id/model
+│                   POST /api/threads/:id/stop
+├── callbacks.ts    POST /api/callbacks/post-message
+│                   GET  /api/callbacks/thread-context
+├── health.ts       GET /health
+└── ws.ts           GET /ws (WebSocket upgrade)
+
+// 核心业务逻辑全在
+// message-service.ts + dispatch.ts
+// 路由层极薄，仅做参数校验和转发</code></pre>
+</div>
+</div>
+
+<div class="co coy" style="margin-top:8px">
+  <div><strong>⚠️ 路由数量背后的故事：</strong> Clowder 的 87 个路由文件对应的是 11 个 provider、完整的任务/信号/证据/游戏等子系统，每个都有独立的 CRUD。这是功能丰富的必然代价，并非设计失误。Multi-Agent 的精简路由来自有意的功能边界收窄——它不做证据管理、不做游戏、不做信号研究。</div>
+</div>
+
+<h3>3.3 事件协议对比</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — AgentMessage 类型体系</div>
+  <pre><code>// 丰富的事件类型 (AgentMessage union)
+type AgentMessage =
+  | { type: 'text';     content: string; catId: string }
+  | { type: 'tool_use'; name: string; input: unknown }
+  | { type: 'tool_result'; content: string }
+  | { type: 'thinking'; content: string }  // 思考链
+  | { type: 'error';    message: string; code: string }
+  | { type: 'done';     usage: TokenUsage }
+  | { type: 'system_info'; message: string }
+
+// Socket.IO 事件
+socket.emit('agent_message', {
+  threadId, catId, invocationId,
+  message: AgentMessage,
+  timestamp: Date.now()
+})</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — RealtimeEvent 简化协议</div>
+  <pre><code>// 精简的事件类型 (realtime.ts)
+type RealtimeServerEvent =
+  | { type: 'assistant_delta';
+      messageId: string; delta: string }
+  | { type: 'assistant_thinking_delta';
+      messageId: string; delta: string }
+  | { type: 'message.created';
+      threadId: string; message: MessageRecord }
+  | { type: 'thread_snapshot';
+      activeGroup: ActiveGroupView }
+  | { type: 'dispatch.blocked';
+      attempts: BlockedDispatch[] }
+  | { type: 'status'; message: string }
+
+// 原生 WebSocket
+ws.send(JSON.stringify(event))</code></pre>
+</div>
+</div>
+
+<div class="card" style="margin-top:8px">
+<h3>📊 前后端通信维度评分</h3>
+<table class="t">
+<thead><tr><th>维度</th><th class="tc">🐾 Clowder</th><th class="tm">⚡ Multi-Agent</th><th>结论</th></tr></thead>
+<tbody>
+<tr><td>多用户隔离</td><td><span class="v-good">✓ Socket.IO Room</span></td><td><span class="v-bad">✗ 全局广播</span></td><td><span class="v-c">Clowder 安全性更高</span></td></tr>
+<tr><td>多Tab同步</td><td><span class="v-good">✓ user:{uid} room</span></td><td><span class="v-bad">✗ 无用户概念</span></td><td><span class="v-c">Clowder 更完善</span></td></tr>
+<tr><td>事件类型丰富度</td><td>7种 (含 thinking/tool)</td><td>6种 (含 thinking)</td><td><span class="v-eq">相近</span></td></tr>
+<tr><td>依赖体量</td><td><span class="v-bad">Socket.IO ~200KB</span></td><td><span class="v-good">原生 WS 0KB</span></td><td><span class="v-m">Multi-Agent 更轻</span></td></tr>
+<tr><td>取消调用安全性</td><td><span class="v-good">Room验证防越权</span></td><td>无权限验证</td><td><span class="v-c">Clowder 更安全</span></td></tr>
+<tr><td>连接断线重连</td><td>Socket.IO 自动重连</td><td>需前端自实现</td><td><span class="v-c">Clowder 开箱即用</span></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ══════════ §3 MEMORY ══════════ -->
+<section id="s3">
+<h2>🧠 四、记忆处理系统 — 代差级差异</h2>
+
+<div class="g2">
+<div class="card cc">
+<h3>🐾 Clowder — 三层记忆架构</h3>
+<div class="ab" style="font-size:11.5px"><span style="color:#a78bfa">Layer 1: Redis (热存储, 端口 6399)</span>
+  IORedis 5.3 · 支持 --memory 降级模式
+  Key spaces:
+    thread:{id}         → 线程元数据
+    message:{tid}:*     → 消息 (append-only)
+    session:*           → 交付游标/状态
+    task:{id}           → 任务追踪
+    invocation:*        → 调用记录
+
+<span style="color:#10b981">Layer 2: SQLite evidence.sqlite (冷存储)</span>
+  better-sqlite3 12.6 + sqlite-vec 向量扩展
+
+  SqliteEvidenceStore
+    ├── EmbeddingService (HF local models)
+    │     @huggingface/transformers 3.x
+    │     本地推理，无需外部 API
+    ├── IndexBuilder (增量索引)
+    │     扫描目录: features/ decisions/ plans/
+    │              discussions/ research/ phases/
+    │     种类优先级: feature(4) > decision(3)
+    │                > plan/discussion(2) > session(1)
+    │     FTS5 全文检索 + 向量余弦相似度
+    │     脏线程 30s 防抖批量刷新
+    ├── KnowledgeResolver (联邦查询引擎)
+    │     RRF (Reciprocal Rank Fusion, k=60)
+    │     project store + global store 并行搜索
+    │     去重 + 来源标注
+    └── VectorStore (向量检索)
+          sqlite-vec 余弦相似度
+
+<span style="color:#f59e0b">Layer 3: data/transcripts/ (文件归档)</span>
+  TranscriptWriter  → 记录 session 事件流
+  TranscriptReader  → 启动时 Bootstrap 注入
+  封存 session 的完整回放数据</div>
+
+<div class="co coc" style="margin-top:10px">
+  <div><strong>核心亮点：摘要压缩 (F102 Phase G)</strong><br>长 Thread 由 Claude 生成抽象摘要，配合 Rolling Window 机制，保持上下文活跃。脏读防抖 30s 批量 flush 避免高频写入。</div>
+</div>
+</div>
+
+<div class="card cm">
+<h3>⚡ Multi-Agent — 单层 SQLite 存储</h3>
+<div class="ab" style="font-size:11.5px"><span style="color:#38bdf8">仅 SQLite: data/multi-agent.sqlite (WAL 模式)</span>
+node:sqlite 原生模块 (Node.js 22+ 内置)
+
+Schema (5 张表):
+  session_groups
+    id TEXT PK, title TEXT,
+    created_at TEXT, updated_at TEXT
+
+  threads
+    id TEXT PK,
+    session_group_id TEXT FK,
+    provider TEXT,        ← 'claude'|'codex'|'gemini'
+    alias TEXT,           ← '范德彪'|'黄仁勋'|'桂芬'
+    current_model TEXT,
+    native_session_id TEXT, ← CLI resume 用
+    updated_at TEXT
+
+  messages
+    id TEXT PK, thread_id TEXT FK,
+    role TEXT, content TEXT,
+    thinking TEXT,        ← 思考链内容
+    created_at TEXT
+
+  invocations
+    id TEXT PK, thread_id TEXT FK,
+    agent_id TEXT, callback_token TEXT,
+    status TEXT, started_at TEXT,
+    finished_at TEXT, exit_code INTEGER,
+    last_activity_at TEXT
+
+  agent_events             ← 事件溯源表
+    id TEXT PK, invocation_id TEXT,
+    thread_id TEXT, agent_id TEXT,
+    event_type TEXT, payload TEXT,
+    created_at TEXT
+
+<span style="color:#f87171">❌ 无向量检索   ❌ 无摘要压缩
+❌ 无语义搜索   ❌ 无跨 session 记忆
+❌ 无证据积累   ❌ 无决策日志</span></div>
+
+<div class="co com" style="margin-top:10px">
+  <div><strong>有限上下文感知：</strong>Agent 执行中可 GET <code>/api/callbacks/thread-context</code> 读取当前 thread 历史（默认最近 20 条），实现有限的上下文感知，但无法跨 session 记忆。</div>
+</div>
+<div class="co cog" style="margin-top:6px">
+  <div><strong>✓ 独有优势：agent_events 事件溯源</strong><br>每个调用的所有活动都记录在 <code>agent_events</code> 表，提供完整审计追踪。Clowder 的 Redis 存储在 restart 后有丢失风险。</div>
+</div>
+</div>
+</div>
+
+<h3>记忆系统实现代码对比</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — KnowledgeResolver 联邦搜索</div>
+  <pre><code>// KnowledgeResolver.ts
+async resolve(query: string, opts?: ResolveOpts) {
+  // 并行搜索 project + global 两个索引
+  const [projectResults, globalResults] = await Promise.all([
+    this.projectStore.search(query, opts),
+    this.globalStore?.search(query, opts) ?? []
+  ])
+
+  // RRF 融合 (Reciprocal Rank Fusion, k=60)
+  const merged = reciprocalRankFusion(
+    [projectResults, globalResults], 60
+  )
+
+  // 去重，project 结果优先
+  return deduplicate(merged, 'anchor', 'project')
+    .slice(0, opts?.limit ?? 10)
+}
+
+// IndexBuilder — 扫描多类文档
+async rebuild() {
+  await this.indexDir('docs/features')    // priority 4
+  await this.indexDir('docs/decisions')   // priority 3
+  await this.indexDir('docs/discussions') // priority 2
+  await this.indexThreadSummaries()       // priority 1
+  // 生成 embeddings via HuggingFace
+  await this.embeddingService.embed(chunks)
+}</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — 直接 SQL 查询</div>
+  <pre><code>// session-repository.ts
+// 无语义搜索，只有 SQL JOIN
+
+getThreadContext(threadId: string, limit = 20) {
+  return this.db.prepare(`
+    SELECT role, content, thinking, created_at
+    FROM messages
+    WHERE thread_id = ?
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(threadId, limit)
+}
+
+// Agent 通过 Callback API 获取
+// GET /api/callbacks/thread-context
+// 返回最近 N 条消息的原始内容
+// 没有摘要、没有相关性排序
+// 纯时序历史，无知识检索</code></pre>
+</div>
+</div>
+
+<div class="card">
+<h3>📊 记忆系统能力对比</h3>
+<table class="t">
+<thead><tr><th>能力</th><th class="tc">🐾 Clowder</th><th class="tm">⚡ Multi-Agent</th><th>优劣</th></tr></thead>
+<tbody>
+<tr><td>消息持久化</td><td>Redis append-only</td><td>SQLite 即时写入</td><td><span class="v-m">Multi-Agent 更可靠 (不丢数据)</span></td></tr>
+<tr><td>语义向量检索</td><td><span class="v-good">✓ sqlite-vec + HF</span></td><td><span class="v-bad">✗</span></td><td><span class="v-c">Clowder 独有</span></td></tr>
+<tr><td>全文检索 FTS5</td><td><span class="v-good">✓</span></td><td><span class="v-bad">✗ 仅 SQL LIKE</span></td><td><span class="v-c">Clowder 更强</span></td></tr>
+<tr><td>跨 Session 记忆</td><td><span class="v-good">✓ evidence.sqlite</span></td><td><span class="v-bad">✗</span></td><td><span class="v-c">Clowder 独有</span></td></tr>
+<tr><td>摘要压缩</td><td><span class="v-good">✓ Claude 摘要</span></td><td><span class="v-bad">✗</span></td><td><span class="v-c">Clowder 独有</span></td></tr>
+<tr><td>决策日志</td><td><span class="v-good">✓ reflect() MCP工具</span></td><td><span class="v-bad">✗</span></td><td><span class="v-c">Clowder 独有</span></td></tr>
+<tr><td>事件溯源/审计</td><td>部分 (Redis 可丢失)</td><td><span class="v-good">✓ agent_events 全量</span></td><td><span class="v-m">Multi-Agent 更完整</span></td></tr>
+<tr><td>部署复杂度</td><td><span class="v-bad">高 (Redis+SQLite+HF)</span></td><td><span class="v-good">低 (仅 SQLite)</span></td><td><span class="v-m">Multi-Agent 大幅领先</span></td></tr>
+<tr><td>存储可靠性</td><td>Redis 断电丢数据风险</td><td><span class="v-good">SQLite WAL 事务安全</span></td><td><span class="v-m">Multi-Agent 更可靠</span></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ══════════ §4 A2A ══════════ -->
+<section id="s4">
+<h2>🤝 五、A2A Agent-to-Agent 通信</h2>
+
+<div class="g2">
+<div class="card cc">
+<h3>🐾 Clowder — 双模 A2A 架构</h3>
+<p><strong>模式1：内部 Mention 路由 (AgentRouter)</strong></p>
+<pre><code>// a2a-mentions.ts
+// 算法：strip代码块 → 最长模式优先匹配 → 行首检测
+function analyzeA2AMentions(text: string, cats: CatConfig[]) {
+  const stripped = stripFencedCodeBlocks(text)
+  // 按 pattern 长度降序排列防止短名吃掉长名
+  const patterns = sortByLength(buildPatterns(cats))
+
+  return patterns.flatMap(p => {
+    const regex = new RegExp(
+      `(?:^|\\n)[\\s${BOUNDARY}]*@(${p.pattern})` +
+      `(?=[\\s${CJK_PUNCT}]|$)`, 'gim'
+    )
+    // 过滤自提及、限制最多 2 个目标
+    return matchAll(regex, stripped)
+      .filter(m => m.catId !== currentCatId)
+      .slice(0, MAX_A2A_MENTION_TARGETS) // = 2
+  })
+}
+
+// AgentRouter — 路由策略
+resolveTargets(mentions, threadCtx) {
+  // 支持: @all @全体 @全体{breed} @thread @本帖
+  if (mention === '@all') return allAvailableCats
+  // 串行 or 并行由 intent 决定
+  if (intent === 'ideate') return routeParallel(targets)
+  if (intent === 'execute') return routeSerial(targets)
+  return routeDefault(lastResponder ?? 'opus')
+}</code></pre>
+
+<p><strong>模式2：外部 A2A JSON-RPC (A2AAgentService)</strong></p>
+<pre><code>// A2AAgentService.ts
+async invoke(config, prompt, signal?) {
+  const response = await fetch(config.url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.apiKey}`
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: taskId,
+      method: 'tasks/send',
+      params: {
+        id: taskId,
+        message: {
+          role: 'user',
+          parts: [{ type: 'text', text: prompt }]
+        }
+      }
+    }),
+    signal: mergeSignals(signal, AbortSignal.timeout(
+      config.timeoutMs ?? 120_000
+    ))
+  })
+  return transformA2ATaskToMessages(await response.json())
+}</code></pre>
+</div>
+
+<div class="card cm">
+<h3>⚡ Multi-Agent — DispatchOrchestrator 内部调度</h3>
+<pre><code>// dispatch.ts
+class DispatchOrchestrator {
+  private readonly MAX_HOPS = 10
+  // 每个 root 消息的 hop 计数
+  private rootHopCounts = new Map&lt;string, number&gt;()
+  // 每个 root 已触发的 provider 集合 (防重复)
+  private rootTriggeredProviders = new Map&lt;string, Set&lt;string&gt;&gt;()
+  // per-group 串行队列
+  private queues = new Map&lt;string, QueuedDispatch[]&gt;()
+
+  enqueuePublicMentions(
+    sessionGroupId: string,
+    messageRootId: string,
+    mentions: MentionMatch[],  // 由 MentionRouter 解析
+    sourceProvider: string
+  ) {
+    const hopCount = this.rootHopCounts.get(messageRootId) ?? 0
+    if (hopCount >= this.MAX_HOPS) {
+      // 达到上限，记录 blocked dispatch
+      this.blockedDispatches.push({...})
+      return
+    }
+
+    for (const mention of mentions) {
+      // 去重：同一根消息链不触发同一 provider 两次
+      const triggered = this.rootTriggeredProviders
+        .get(messageRootId) ?? new Set()
+      if (triggered.has(mention.provider)) continue
+      if (mention.provider === sourceProvider) continue
+
+      this.queues.get(sessionGroupId)?.push({
+        sessionGroupId, messageRootId,
+        targetProvider: mention.provider,
+        prompt: '...',  // 原始消息内容
+        hopCount: hopCount + 1
+      })
+    }
+  }
+
+  // 串行取出下一个待处理任务
+  takeNextQueuedDispatch(sessionGroupId: string) {
+    return this.queues.get(sessionGroupId)?.shift()
+  }
+}</code></pre>
+
+<div class="co com" style="margin-top:8px">
+  <div><strong>Callback 触发 A2A：</strong> Agent 执行中 POST <code>/callbacks/post-message</code> 发布含 @mention 的消息 → 重入 DispatchOrchestrator → 入队 → flushQueue 触发下一个 Agent。</div>
+</div>
+</div>
+</div>
+
+<h3>Mention 解析算法对比</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder a2a-mentions.ts</div>
+  <pre><code>// 分词边界 (含中文标点)
+const BOUNDARY = `\\s,.:;!?()[]{}${'<>'}，。！？、：；（）【】《》「」`
+
+// 最长模式优先 (防短名吃长名)
+// @opus-45 不被 @opus 误匹配
+patterns.sort((a,b) => b.length - a.length)
+
+// 仅行首 mention 触发 (agent 消息)
+const LINE_START = `(?:^|\\n)[\\s${BOUNDARY}]*`
+
+// 自提及过滤
+.filter(m => m.catId !== self.catId)
+
+// 最多 2 个目标
+.slice(0, 2)
+
+// 支持中文别名
+// 支持 @全体 @all @thread @本帖 群组提及</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent mention-router.ts</div>
+  <pre><code>// 两种模式
+type MentionMatchMode = 'line-start' | 'anywhere'
+
+// line-start: agent 消息 (进入A2A系统)
+// (?:^|\n)[\s*_~]*@alias
+
+// anywhere: 用户消息 (更宽松)
+// (?<![\w.-])@alias (负向回溯防邮件误匹配)
+
+// 共用终止符 (含CJK标点)
+const TERMINATOR = `(?=$|[\\s*_~:,.!?;()\\[\\]{}&lt;&gt;` +
+  `\\u3000-\\u303f\\uff00-\\uffef])`
+
+// 三种格式尝试
+tryAlias(alias)          // 直接别名
+tryProvider(provider)    // provider名
+tryCapitalized(provider) // 首字母大写
+
+// ⚠️ 无自提及过滤
+// ⚠️ 无最大目标数限制</code></pre>
+</div>
+</div>
+
+<div class="card">
+<h3>📊 A2A 通信对比</h3>
+<table class="t">
+<thead><tr><th>特性</th><th class="tc">🐾 Clowder</th><th class="tm">⚡ Multi-Agent</th><th>优劣</th></tr></thead>
+<tbody>
+<tr><td>A2A 协议标准</td><td><span class="v-good">JSON-RPC 2.0 (标准)</span></td><td>内部 EventBus</td><td><span class="v-c">Clowder 可接入第三方</span></td></tr>
+<tr><td>跨机器 A2A</td><td><span class="v-good">✓ HTTPS 远程调用</span></td><td><span class="v-bad">✗ 仅本机</span></td><td><span class="v-c">Clowder 支持分布式</span></td></tr>
+<tr><td>并行执行</td><td><span class="v-good">✓ routeParallel()</span></td><td><span class="v-bad">✗ 严格串行</span></td><td><span class="v-c">Clowder 速度更快</span></td></tr>
+<tr><td>群组提及</td><td><span class="v-good">✓ @all @全体{breed}</span></td><td><span class="v-bad">✗ 仅个人提及</span></td><td><span class="v-c">Clowder 更灵活</span></td></tr>
+<tr><td>自提及防护</td><td><span class="v-good">✓ 自动过滤</span></td><td><span class="v-bad">✗ 无过滤</span></td><td><span class="v-c">Clowder 更安全</span></td></tr>
+<tr><td>循环防护机制</td><td>MAX_DEPTH=15 + 自过滤</td><td><span class="v-good">hop≤10 + provider去重</span></td><td><span class="v-m">Multi-Agent 去重策略更强</span></td></tr>
+<tr><td>执行中触发 A2A</td><td>MCP post_message</td><td><span class="v-good">Callback POST</span></td><td><span class="v-eq">同等能力</span></td></tr>
+<tr><td>实现复杂度</td><td>高 (双模式)</td><td>中 (单模式)</td><td><span class="v-m">Multi-Agent 更易维护</span></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ══════════ §5 SKILLS ══════════ -->
+<section id="s5">
+<h2>🛠️ 六、Skill 工具系统</h2>
+
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — SKILL.md 文件驱动</div>
+  <pre><code>// cat-cafe-skills/tdd/SKILL.md
+---
+name: tdd
+description: Red-Green-Refactor TDD 纪律
+triggers:
+  - "写新功能"
+  - "修 bug"
+  - "new feature"
+argument-hint: "feature description"
+---
+# TDD Skill 内容
+## Red Phase
+先写失败测试...
+
+// GET /api/skills 动态服务
+// Claude Code CLI /skill 命令触发
+// 20+ skills:
+cat-cafe-skills/
+  feat-lifecycle/  tdd/  quality-gate/
+  merge-gate/  debugging/  deep-research/
+  collaborative-thinking/  cross-cat-handoff/
+  incident-response/  self-evolution/
+  bootcamp-guide/  hyperfocus-brake/
+  image-generation/  pencil-design/
+  browser-preview/  writing-plans/
+  writing-skills/  workspace-navigator/
+  rich-messaging/  worktree/  ...</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — 目录文本注入式</div>
+  <pre><code>// .agents/skills/feat-lifestyle/ (目录结构)
+// 内容注入到 system prompt 或通过
+// Callback Prompt 告知 Agent
+
+// 6 个 skills:
+.agents/skills/
+  feat-lifestyle/      特性生命周期
+  hardline-review/     严格代码审查
+  receiving-review/    接受 review 反馈
+  merge-approval-gate/ 合并审批流程
+  cross-role-handoff/  跨角色交接
+  ask-dont-guess/      不确定时询问
+
+// 无标准化 frontmatter
+// 无动态加载端点
+// 无 CLI /skill 命令集成
+// Skill 激活完全依赖 system prompt 文本指导</code></pre>
+</div>
+</div>
+
+<h3>MCP 工具集对比</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — 4 类 15+ MCP 工具</div>
+  <pre><code>// packages/mcp-server/src/index.ts
+// 独立包，所有 Cat 均可使用
+
+registerCollabToolset(server)
+  → post_message(threadId, content, blocks)
+  → send_a2a(catId, message)
+  → rich_block(type, content)
+
+registerMemoryToolset(server)
+  → search_evidence(query, limit, kind)
+  → reflect(content, tags)    // 写决策日志
+  → publish(title, content)   // 发布到证据库
+  → session_chain(op)         // 会话链操作
+
+registerSignalToolset(server)
+  → list_signals(filter)
+  → study_signal(id)          // 深度研究
+  → add_signal(url, notes)
+
+registerLimbToolset(server)
+  → file_read/write/delete
+  → execute(command)</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — 2 个 MCP 工具 (仅 Claude)</div>
+  <pre><code>// packages/api/src/mcp/server.ts
+// 内嵌于 API 包，仅 Claude CLI 可用
+
+tools/list → [
+  {
+    name: 'post_message',
+    description: '向公共房间发消息',
+    inputSchema: {
+      content: string,
+      // invocationId/token 从 env 读取
+    }
+  },
+  {
+    name: 'get_thread_context',
+    description: '获取当前 thread 历史',
+    inputSchema: { limit?: number }
+  }
+]
+
+// Codex / Gemini:
+// 不使用 MCP，通过 system prompt 中的
+// Callback API 文档自行调用 HTTP 接口
+// MULTI_AGENT_API_URL + TOKEN</code></pre>
+</div>
+</div>
+
+<div class="card">
+<h3>📊 Skill/工具系统对比</h3>
+<table class="t">
+<thead><tr><th>维度</th><th class="tc">🐾 Clowder</th><th class="tm">⚡ Multi-Agent</th><th>优劣</th></tr></thead>
+<tbody>
+<tr><td>Skill 定义规范</td><td>SKILL.md frontmatter 标准化</td><td>目录文本，无规范</td><td><span class="v-c">Clowder 更易工程化</span></td></tr>
+<tr><td>Skill 数量</td><td>20+</td><td>6</td><td><span class="v-c">Clowder 覆盖更广</span></td></tr>
+<tr><td>Skill 动态加载</td><td><span class="v-good">✓ /api/skills 端点</span></td><td><span class="v-bad">✗ 编译时固定</span></td><td><span class="v-c">Clowder 可热更新</span></td></tr>
+<tr><td>CLI 集成</td><td><span class="v-good">✓ /skill 命令直接触发</span></td><td><span class="v-bad">✗</span></td><td><span class="v-c">Clowder 工作流更顺畅</span></td></tr>
+<tr><td>MCP 工具数量</td><td>15+</td><td>2</td><td><span class="v-c">Clowder 能力远超</span></td></tr>
+<tr><td>MCP 覆盖范围</td><td>全部 Cat</td><td>仅 Claude</td><td><span class="v-c">Clowder 更公平</span></td></tr>
+<tr><td>Agent 主动写记忆</td><td><span class="v-good">✓ reflect()/publish()</span></td><td><span class="v-bad">✗</span></td><td><span class="v-c">Clowder 独有</span></td></tr>
+<tr><td>新增 Skill 难度</td><td>写 SKILL.md 文件即可</td><td>修改 agent-prompts.ts 代码</td><td><span class="v-c">Clowder 门槛更低</span></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ══════════ §6 SYSTEM PROMPT ══════════ -->
+<section id="s6">
+<h2>📝 七、SystemPrompt 构建策略</h2>
+
+<div class="g2">
+<div class="card cc">
+<h3>🐾 Clowder — 动态多维 Prompt Builder</h3>
+<pre><code>// SystemPromptBuilder.ts
+// 纯函数，每次调用重新构建
+
+function buildSystemPrompt(catId, ctx): string {
+  const cat = catRegistry.get(catId)
+
+  // === 静态部分 (每次相同) ===
+  const static = buildStaticIdentity(cat)
+  // 包含:
+  // - 品种名/角色/工作流触发词
+  // - MCP 工具使用说明
+  // - L0 治理摘要 (shared-rules.md)
+  // - A2A 协作格式说明
+
+  // === 动态部分 (每次不同) ===
+  const dynamic = buildInvocationContext(ctx)
+  // 包含:
+  // - mode: 'independent'|'serial'|'parallel'
+  // - chainIndex/chainTotal (串行位置)
+  // - teammates (并行伙伴列表)
+  // - directMessageFrom (A2A来源)
+  // - sopStageHint (当前工作流阶段)
+  // - bootcampState (新手引导进度)
+  // - activeSignals (关联文章摘要)
+  // - relatedDiscussions (语义检索结果!)
+  // - mentionRoutingFeedback
+  // - routingPolicy (thread级路由规则)
+  // - voiceMode (TTS优先)
+
+  // === Reviewer 段 (按需) ===
+  const reviewer = ctx.isReviewer
+    ? buildReviewerSection(cat) : ''
+
+  return [static, dynamic, reviewer].join('\n\n')
+}</code></pre>
+<div class="co coc">
+  <div><strong>关键特性：</strong><code>relatedDiscussions</code> 字段把 KnowledgeResolver 搜索到的相关历史内容注入 Prompt，让 Agent 在每次回复前"记起"相关的过往知识。这是记忆系统和 Prompt 系统的深度整合。</div>
+</div>
+</div>
+
+<div class="card cm">
+<h3>⚡ Multi-Agent — 固定模板 + 首次注入</h3>
+<pre><code>// agent-prompts.ts
+// 静态字符串，所有 agent 共用基础部分
+
+export const COMMON_PROMPT = `
+你是一个多 Agent 协作系统中的成员。
+
+## 工作流（主动 @ 触发点）
+- 完成开发/修复 → @reviewer 请 review
+- 修完 review 意见 → @reviewer 确认修复
+- 遇到视觉/体验问题 → @designer 征询
+
+## @ 触发三问（必须同时满足才发送）
+1. 对方需要采取行动?
+2. 对方需要了解此信息?
+3. 此信息影响对方工作?
+
+## @ 格式（严格）
+@别名 必须在行首，行前只允许 * _ ~ 等 Markdown 符号
+`
+
+export const CALLBACK_API_PROMPT = `
+## Callback API (运行时可用)
+环境变量:
+  MULTI_AGENT_API_URL       API 基础 URL
+  MULTI_AGENT_INVOCATION_ID 本次调用 ID
+  MULTI_AGENT_CALLBACK_TOKEN 回调 Token
+
+接口:
+  POST /api/callbacks/post-message  发公共消息
+  GET  /api/callbacks/thread-context 读上下文
+`
+
+// 注入策略：
+// 新 session → 注入 SYSTEM_PROMPT + CALLBACK_API_PROMPT
+// Resume    → 跳过注入 (节省 ~500 tokens/轮)
+// --append-system-prompt (Claude)
+// 字符串前缀拼接 (Codex/Gemini)</code></pre>
+<div class="co com">
+  <div><strong>Resume Token 优化：</strong> Resume 时不注入 system prompt 是 Multi-Agent 的独到设计。长期会话中每轮节省 ~500 tokens，显著降低 API 成本。Clowder 在 context 压缩后会重注入，无此优化。</div>
+</div>
+</div>
+</div>
+
+<div class="card">
+<h3>📊 SystemPrompt 策略对比</h3>
+<table class="t">
+<thead><tr><th>维度</th><th class="tc">🐾 Clowder</th><th class="tm">⚡ Multi-Agent</th><th>优劣</th></tr></thead>
+<tbody>
+<tr><td>构建方式</td><td>动态纯函数，每次重建</td><td>静态模板字符串</td><td><span class="v-c">Clowder 灵活但有开销</span></td></tr>
+<tr><td>历史知识注入</td><td><span class="v-good">✓ KnowledgeResolver 语义检索</span></td><td><span class="v-bad">✗</span></td><td><span class="v-c">Clowder 独有，记忆感知</span></td></tr>
+<tr><td>Resume Token节省</td><td><span class="v-bad">✗ 压缩后仍重注入</span></td><td><span class="v-good">✓ Resume跳过注入</span></td><td><span class="v-m">Multi-Agent 省 ~500 tokens/轮</span></td></tr>
+<tr><td>角色差异化</td><td><span class="v-good">✓ 每个Cat独立身份/角色</span></td><td>无差异 (共用模板)</td><td><span class="v-c">Clowder 个性更鲜明</span></td></tr>
+<tr><td>工作流阶段感知</td><td><span class="v-good">✓ sopStageHint</span></td><td><span class="v-bad">✗</span></td><td><span class="v-c">Clowder 更智能</span></td></tr>
+<tr><td>多 Provider 差异</td><td>每个Cat独立配置</td><td><span class="v-good">按 provider 分别注入方式不同</span></td><td><span class="v-eq">各有优势</span></td></tr>
+<tr><td>可维护性</td><td>Builder 复杂，需熟悉 9 个字段</td><td><span class="v-good">直观，一眼读懂</span></td><td><span class="v-m">Multi-Agent 更易修改</span></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ══════════ §7 MCP ══════════ -->
+<section id="s7">
+<h2>🔧 八、MCP 实现对比</h2>
+
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — 独立 mcp-server 包</div>
+  <pre><code>// packages/mcp-server/src/index.ts
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { StdioServerTransport } from '...'
+
+const server = new McpServer({ name:'clowder-mcp', version })
+
+// 4 大工具集全部注册
+registerCollabToolset(server)   // 协作工具
+registerMemoryToolset(server)   // 记忆工具
+registerSignalToolset(server)   // 信号工具
+registerLimbToolset(server)     // 执行工具
+
+const transport = new StdioServerTransport()
+await server.connect(transport)
+
+// 启动方式: claude CLI 子进程
+// --mcp-config /path/to/mcp-server/dist/index.js
+
+// 所有 Cat 均可使用 MCP 工具
+// 工具调用 → HTTP callback → /api/callbacks/*</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — 内嵌 mcp/server.ts</div>
+  <pre><code>// packages/api/src/mcp/server.ts
+// 手写 JSON-RPC 2.0 处理 (非 SDK)
+
+async function handleRequest(req: JsonRpcRequest) {
+  if (req.method === 'initialize') return { ... }
+  if (req.method === 'tools/list') return {
+    tools: [
+      { name: 'post_message', ... },
+      { name: 'get_thread_context', ... }
+    ]
+  }
+  if (req.method === 'tools/call') {
+    const { name, arguments: args } = req.params
+    if (name === 'post_message') {
+      return await postMessage(args)  // HTTP→API
+    }
+    if (name === 'get_thread_context') {
+      return await getContext(args)   // HTTP→API
+    }
+  }
+}
+
+// 认证: env 变量读取
+// MULTI_AGENT_INVOCATION_ID
+// MULTI_AGENT_CALLBACK_TOKEN
+
+// ⚡ MCP Config 内联传给 Claude CLI:
+// --mcp-config '{"mcpServers":{...,"env":{token}}}'
+// 无临时文件，更安全</code></pre>
+</div>
+</div>
+
+<h3>非 Claude Provider 的 MCP 处理策略</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — 统一 MCP 工具集</div>
+  <pre><code>// GeminiAgentService.ts
+// Gemini 也注册 MCP 服务器路径
+// 通过 Gemini CLI 的 MCP 支持使用工具
+
+// CodexAgentService.ts
+// Codex 通过 MCP 桥接器访问同一工具集
+
+// 所有 Cat 使用相同的 MCP 工具接口
+// 统一的 callback 路由处理所有回调
+// → 工具一致性高，各 Cat 能力均等</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — Callback Prompt 降级</div>
+  <pre><code>// agent-prompts.ts
+// Codex/Gemini 不使用 MCP
+// 而是通过 system prompt 教会它们 HTTP API
+
+export const CALLBACK_API_PROMPT = `
+你可以通过以下方式与系统交互:
+
+# 发布消息
+fetch(process.env.MULTI_AGENT_API_URL +
+  '/api/callbacks/post-message', {
+  method: 'POST',
+  headers: { 'Content-Type':'application/json' },
+  body: JSON.stringify({
+    invocationId: process.env.MULTI_AGENT_INVOCATION_ID,
+    callbackToken: process.env.MULTI_AGENT_CALLBACK_TOKEN,
+    content: '...'
+  })
+})
+`
+// Agent 自行 fetch，无结构化工具调用
+// 依赖 Agent 理解并执行 HTTP 代码</code></pre>
+</div>
+</div>
+
+<div class="card">
+<h3>📊 MCP 实现对比</h3>
+<table class="t">
+<thead><tr><th>维度</th><th class="tc">🐾 Clowder</th><th class="tm">⚡ Multi-Agent</th><th>优劣</th></tr></thead>
+<tbody>
+<tr><td>MCP 覆盖范围</td><td>全部 Cat</td><td>仅 Claude</td><td><span class="v-c">Clowder 公平性更好</span></td></tr>
+<tr><td>工具数量</td><td>15+</td><td>2</td><td><span class="v-c">Clowder 大幅领先</span></td></tr>
+<tr><td>实现方式</td><td>MCP SDK 官方</td><td>手写 JSON-RPC</td><td><span class="v-m">Multi-Agent 零依赖但维护成本高</span></td></tr>
+<tr><td>Config 安全性</td><td>文件路径方式</td><td><span class="v-good">内联 JSON，无临时文件</span></td><td><span class="v-m">Multi-Agent 更安全</span></td></tr>
+<tr><td>Token 认证</td><td>路由隐式验证</td><td><span class="v-good">invocationId+token 显式双验</span></td><td><span class="v-m">Multi-Agent 更明确</span></td></tr>
+<tr><td>非 MCP Agent 支持</td><td>MCP 统一桥接</td><td>Callback Prompt 降级</td><td><span class="v-c">Clowder 结构化更强</span></td></tr>
+<tr><td>包结构</td><td>独立 mcp-server 包 (解耦)</td><td>内嵌 API 包 (紧耦合)</td><td><span class="v-c">Clowder 架构更清晰</span></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ══════════ §8 AGENT SPAWN ══════════ -->
+<section id="s8">
+<h2>🚀 九、Agent 派发与进程管理</h2>
+
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — ClaudeAgentService.invoke()</div>
+  <pre><code>// ClaudeAgentService.ts
+async *invoke(prompt, opts): AsyncIterable&lt;AgentMessage&gt; {
+  const args = [
+    '-p', systemPrompt + '\n\n' + prompt,
+    '--output-format', 'stream-json',
+    '--permission-mode', 'bypassPermissions',
+    '--model', opts.model ?? 'claude-opus-4-6',
+    '--mcp-config', this.mcpServerPath,
+  ]
+  if (opts.sessionId) {
+    args.push('--resume', opts.sessionId)
+  }
+  if (opts.effort) {
+    args.push('--effort', opts.effort)  // 'high'|'low'
+  }
+
+  // 环境变量: API key / subscription 模式
+  const env = {
+    ...process.env,
+    ANTHROPIC_API_KEY: opts.apiKey,
+    // Windows Git Bash 路径
+    PATH: resolveGitBashPath() + ':' + process.env.PATH
+  }
+
+  const proc = spawn('claude', args, { env })
+
+  // NDJSON 流解析
+  for await (const line of proc.stdout) {
+    const event = JSON.parse(line)
+    if (event.type === 'assistant') {
+      yield transformToAgentMessage(event)
+    }
+    if (event.type === 'result') {
+      yield { type: 'done', usage: event.usage }
+      return
+    }
+  }
+}</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — BaseCliRuntime.runStream()</div>
+  <pre><code>// base-runtime.ts
+async runStream(input: AgentRunInput, hooks: Hooks) {
+  const cmd = this.buildCommand(input)  // 子类实现
+
+  const proc = spawn(cmd.command, cmd.args, {
+    env: { ...process.env, ...input.env },
+    shell: cmd.shell ?? false,
+    stdio: ['pipe','pipe','pipe']
+  })
+
+  // 心跳 + 超时监控
+  const heartbeat = setInterval(() => {
+    const idle = Date.now() - lastActivity
+    if (idle > INACTIVITY_TIMEOUT_MS) {  // 5min
+      proc.kill('SIGTERM')
+      setTimeout(() => proc.kill('SIGKILL'),
+        SHUTDOWN_GRACE_PERIOD_MS)       // 5s
+    }
+  }, HEARTBEAT_INTERVAL_MS)             // 30s
+
+  // readline 逐行解析
+  const rl = readline.createInterface({ input: proc.stdout })
+  rl.on('line', (line) => {
+    lastActivity = Date.now()
+    hooks.onActivity?.()
+    try {
+      const event = JSON.parse(line)
+      // 解析 delta / session / model
+      this.parseActivityLine(event, hooks)
+    } catch {
+      // 非 JSON → 原始文本行，忽略
+    }
+  })
+
+  await new Promise((res, rej) => {
+    proc.on('exit', (code) => {
+      clearInterval(heartbeat)
+      code === 0 ? res(code) : rej(new Error(...))
+    })
+  })
+}</code></pre>
+</div>
+</div>
+
+<h3>进程管理关键差异</h3>
+<div class="g3">
+<div class="co coc">
+  <div><strong>🐾 Clowder：SessionMutex</strong><br>per-cliSessionId 互斥锁防止同一会话并发双启动。<code>InvocationTracker</code> 全局追踪活跃调用，支持批量取消。</div>
+</div>
+<div class="co com">
+  <div><strong>⚡ Multi-Agent：InvocationRegistry TTL</strong><br>每个调用身份有 15 分钟 TTL，自动过期清理。<code>callbackToken</code> 验证确保只有合法进程能回调。TTL 机制防止孤儿进程泄露。</div>
+</div>
+<div class="co cog">
+  <div><strong>共同：Windows 兼容</strong><br>两者都处理 Windows 进程树杀死问题：<code>taskkill /F /T /PID</code> 强制递归终止。都支持 Git Bash 路径解析。</div>
+</div>
+</div>
+
+<div class="diff" style="margin-top:12px">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — InvocationQueue 异步队列</div>
+  <pre><code>// InvocationQueue.ts
+// 用户可排队多个调用，支持:
+// - 自动出队 (成功后)
+// - 手动出队 (失败/取消后)
+// - 队列状态广播给前端
+
+class InvocationQueue {
+  async enqueue(invocation: PendingInvocation) {
+    this.queue.push(invocation)
+    this.broadcastQueueState()
+    if (!this.isRunning) await this.processNext()
+  }
+
+  async processNext() {
+    const next = this.queue.shift()
+    if (!next) return
+    this.isRunning = true
+    try {
+      await this.executor(next)
+    } finally {
+      this.isRunning = false
+      await this.processNext()  // 递归处理下一个
+    }
+  }
+}
+// 外发交付钩子: 可推送到外部系统</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — 简单 Dispatch 队列</div>
+  <pre><code>// message-service.ts
+async flushDispatchQueue(sessionGroupId: string) {
+  // 取出队列中下一个待处理的 A2A 任务
+  const next = this.dispatch
+    .takeNextQueuedDispatch(sessionGroupId)
+  if (!next) return
+
+  // 直接运行 (同步)
+  await this.runThreadTurn(
+    next.sessionGroupId,
+    next.targetProvider,
+    next.prompt,
+    next.messageRootId,
+    next.hopCount
+  )
+  // runThreadTurn 完成后再 flush 下一个
+  await this.flushDispatchQueue(sessionGroupId)
+}
+
+// 无用户排队能力
+// 无队列状态 UI
+// 无交付钩子</code></pre>
+</div>
+</div>
+</section>
+
+<!-- ══════════ §9 COMPREHENSIVE ══════════ -->
+<section id="s9">
+<h2>⚖️ 十、综合对比 — 共同点与差异深析</h2>
+
+<div class="card cg">
+<h3>🟢 14 大共同点 — 实现对比与差异</h3>
+<table class="t">
+<thead><tr><th>#</th><th>共同点</th><th class="tc">🐾 Clowder 实现</th><th class="tm">⚡ Multi-Agent 实现</th><th>关键差异</th></tr></thead>
+<tbody>
+<tr>
+  <td>1</td><td><strong>pnpm Monorepo</strong></td>
+  <td>4 包: api/web/shared/mcp-server</td>
+  <td>3 包: api/shared + app/(Next.js)</td>
+  <td>Clowder 多独立 mcp-server 包，解耦更好</td>
+</tr>
+<tr>
+  <td>2</td><td><strong>Fastify HTTP 框架</strong></td>
+  <td>Fastify 4.25 + Socket.IO + 87 routes</td>
+  <td>Fastify 5.8.2 + WS插件 + ~8 routes</td>
+  <td>Multi-Agent 用更新 Fastify 5；Clowder 插件更多</td>
+</tr>
+<tr>
+  <td>3</td><td><strong>CLI 进程派发 Agent</strong></td>
+  <td><code>spawn('claude', args)</code> + 自定义超时</td>
+  <td><code>spawn(cmd)</code> + 心跳30s + 超时5min</td>
+  <td>Multi-Agent 有更完善的心跳+超时机制</td>
+</tr>
+<tr>
+  <td>4</td><td><strong>NDJSON 流式解析</strong></td>
+  <td>逐行 JSON.parse → AgentMessage 类型</td>
+  <td>readline 逐行 + try/catch JSON.parse</td>
+  <td>Multi-Agent 更健壮 (非JSON行静默忽略)</td>
+</tr>
+<tr>
+  <td>5</td><td><strong>Session ID 续传</strong></td>
+  <td><code>claude --resume sessionId</code></td>
+  <td><code>claude --resume sessionId</code></td>
+  <td>完全相同，均来自 Claude CLI 特性</td>
+</tr>
+<tr>
+  <td>6</td><td><strong>@Mention A2A 路由</strong></td>
+  <td>行首解析 + 自过滤 + 最多2目标 + 最长匹配</td>
+  <td>行首解析 + 2模式 + 3格式尝试</td>
+  <td>Clowder 安全规则更多；Multi-Agent 模式更灵活</td>
+</tr>
+<tr>
+  <td>7</td><td><strong>MCP stdio 集成</strong></td>
+  <td>独立 mcp-server 包，StdioTransport</td>
+  <td>内嵌 mcp/server.ts，手写 JSON-RPC</td>
+  <td>Clowder 用官方SDK；Multi-Agent 手写零依赖</td>
+</tr>
+<tr>
+  <td>8</td><td><strong>Agent Callback API</strong></td>
+  <td>POST /api/callbacks/* (47KB路由文件)</td>
+  <td>POST /api/callbacks/post-message</td>
+  <td>Clowder 端点多10x；Multi-Agent 专注核心</td>
+</tr>
+<tr>
+  <td>9</td><td><strong>SQLite 持久化</strong></td>
+  <td>better-sqlite3 (evidence专用)</td>
+  <td>node:sqlite 内置模块 (主数据库)</td>
+  <td>用途完全不同；Multi-Agent 用内置模块零依赖</td>
+</tr>
+<tr>
+  <td>10</td><td><strong>TypeScript + Biome</strong></td>
+  <td>TS 5.3 + Biome 格式化/Lint</td>
+  <td>TS 5.8 + Biome 格式化/Lint</td>
+  <td>Multi-Agent TS 版本更新，类型更安全</td>
+</tr>
+<tr>
+  <td>11</td><td><strong>Skill/工作流体系</strong></td>
+  <td>SKILL.md 文件 (20+，标准化 frontmatter)</td>
+  <td>.agents/skills/ 目录 (6个，文本注入)</td>
+  <td>Clowder 规模3x，有动态加载；Multi-Agent 更简单</td>
+</tr>
+<tr>
+  <td>12</td><td><strong>进程取消机制</strong></td>
+  <td>cancel_invocation → InvocationTracker.cancel()</td>
+  <td>run.cancel() → InvocationRegistry</td>
+  <td>两者都处理 Windows taskkill，Clowder 有Room验证</td>
+</tr>
+<tr>
+  <td>13</td><td><strong>防 A2A 无限循环</strong></td>
+  <td>MAX_A2A_DEPTH=15 + 自提及过滤</td>
+  <td>MAX_HOPS=10 + provider去重 + group取消</td>
+  <td>Multi-Agent 去重策略更强，Clowder 深度限制更宽</td>
+</tr>
+<tr>
+  <td>14</td><td><strong>Next.js 前端</strong></td>
+  <td>packages/web/ (未知版本)</td>
+  <td>app/ (Next.js 16 + React 19 + Zustand)</td>
+  <td>Multi-Agent 版本更新，有 Zustand 状态管理</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="g2" style="margin-top:16px">
+<div class="card cc">
+<h3>🟣 Clowder AI 独有优势</h3>
+<div class="vr vr-c"><div class="num num-c">1</div><div><strong>向量记忆引擎</strong> — sqlite-vec + HF 本地模型实现语义搜索，跨 session 积累项目知识。Agent 每次回复前注入相关历史，实现真正的"记忆感知"。<br><span class="v-bad">劣：HuggingFace 本地推理需要额外内存/计算资源</span></div></div>
+<div class="vr vr-c"><div class="num num-c">2</div><div><strong>摘要压缩机制</strong> — 长 Thread 由 Claude 生成抽象摘要，Rolling Window 滚动保持上下文新鲜。30s 防抖批量索引避免频繁写入。<br><span class="v-bad">劣：消耗额外 API 调用 token</span></div></div>
+<div class="vr vr-c"><div class="num num-c">3</div><div><strong>并行 Agent 执行</strong> — routeParallel() 同时启动多个 Cat，适合头脑风暴/多视角评审，显著缩短协作时间。<br><span class="v-bad">劣：并发调用多倍 API 成本</span></div></div>
+<div class="vr vr-c"><div class="num num-c">4</div><div><strong>标准化 A2A 协议</strong> — JSON-RPC 2.0 over HTTPS，可接入任何实现 A2A 协议的第三方系统，支持分布式跨机器协作。<br><span class="v-bad">劣：增加了网络跳转延迟</span></div></div>
+<div class="vr vr-c"><div class="num num-c">5</div><div><strong>Socket.IO Room 隔离</strong> — 多用户场景消息精准推送，user room 实现多 Tab 同步，Room 验证防越权取消。<br><span class="v-bad">劣：Socket.IO 依赖体积大</span></div></div>
+<div class="vr vr-c"><div class="num num-c">6</div><div><strong>完整 MCP 工具生态</strong> — 4 类 15+ MCP 工具，全部 Cat 均可使用，Agent 可主动写证据库(reflect/publish)，工具链完整。<br><span class="v-bad">劣：工具越多 token 消耗越大</span></div></div>
+<div class="vr vr-c"><div class="num num-c">7</div><div><strong>群组提及</strong> — @all @全体 @全体{breed} @thread @本帖，支持一次触发多 Cat 协作，灵活的广播路由。<br><span class="v-bad">劣：容易引发多 Cat 同时响应的混乱</span></div></div>
+<div class="vr vr-c"><div class="num num-c">8</div><div><strong>11 AI Provider</strong> — 覆盖 Claude/GPT/Gemini/DARE/Antigravity/OpenCode/A2A，可根据任务特性选择最适合的 Cat。</div></div>
+<div class="vr vr-c"><div class="num num-c">9</div><div><strong>调用排队系统</strong> — InvocationQueue 支持用户排队多任务，自动/手动出队，队列状态实时同步前端。</div></div>
+</div>
+
+<div class="card cm">
+<h3>🔵 Multi-Agent 独有优势</h3>
+<div class="vr vr-m"><div class="num num-m">1</div><div><strong>零 Redis 部署</strong> — 仅 SQLite (node:sqlite 内置模块)，本地一键启动，无需安装配置 Redis，Docker 镜像更小。<br><span class="v-bad">劣：无 Redis 的 pub/sub 和 TTL 特性</span></div></div>
+<div class="vr vr-m"><div class="num num-m">2</div><div><strong>Resume Token 优化</strong> — Resume 时跳过 system prompt 注入，每轮节省 ~500 tokens。长期会话 API 成本显著降低。<br><span class="v-bad">劣：Agent 可能"忘记"工作流规则</span></div></div>
+<div class="vr vr-m"><div class="num num-m">3</div><div><strong>内联 MCP Config</strong> — JSON 字符串直接传给 CLI，无需写临时文件，更安全(无磁盘痕迹)，也更原子。</div></div>
+<div class="vr vr-m"><div class="num num-m">4</div><div><strong>显式 Token 认证</strong> — invocationId + callbackToken 双重验证，TTL 15min 自动过期，比 Clowder 的路由隐式验证更安全清晰。</div></div>
+<div class="vr vr-m"><div class="num num-m">5</div><div><strong>完整事件溯源</strong> — agent_events 表记录每个调用的所有活动，提供完整审计追踪。Clowder Redis 有丢失风险。</div></div>
+<div class="vr vr-m"><div class="num num-m">6</div><div><strong>运行时 Provider 检测</strong> — 读取 ~/.codex/config.toml、~/.Claude Code/profiles 自动发现可用模型和版本，无需手动配置。</div></div>
+<div class="vr vr-m"><div class="num num-m">7</div><div><strong>Zustand 前端状态</strong> — 精简状态管理，chat-store/thread-store/settings-store 职责清晰，无 Redux 样板代码。</div></div>
+<div class="vr vr-m"><div class="num num-m">8</div><div><strong>心跳超时机制</strong> — 30s 心跳检测 + 5min 不活跃超时，防止 Agent 挂死占用资源。Clowder 超时处理相对简单。</div></div>
+<div class="vr vr-m"><div class="num num-m">9</div><div><strong>Fastify 5 + React 19</strong> — 更新的框架版本，Fastify 5 有更好性能和类型推断，React 19 并发特性更优。</div></div>
+</div>
+</div>
+</section>
+
+<!-- ══════════ §10 SCORING ══════════ -->
+<section id="s10">
+<h2>📊 十一、综合评分与选型建议</h2>
+
+<div class="g2">
+<div class="card">
+<h3>能力评分对比</h3>
+<div style="color:#a78bfa;font-size:12.5px;font-weight:700;margin:10px 0 4px">🐾 Clowder AI</div>
+<div class="sb-row"><span class="sb-label">记忆/知识积累</span><div class="sb-track"><div class="sb-fc" style="width:96%"></div></div><span class="sb-val" style="color:#a78bfa">96</span></div>
+<div class="sb-row"><span class="sb-label">A2A 通信</span><div class="sb-track"><div class="sb-fc" style="width:90%"></div></div><span class="sb-val" style="color:#a78bfa">90</span></div>
+<div class="sb-row"><span class="sb-label">Skill 工具体系</span><div class="sb-track"><div class="sb-fc" style="width:92%"></div></div><span class="sb-val" style="color:#a78bfa">92</span></div>
+<div class="sb-row"><span class="sb-label">MCP 集成</span><div class="sb-track"><div class="sb-fc" style="width:88%"></div></div><span class="sb-val" style="color:#a78bfa">88</span></div>
+<div class="sb-row"><span class="sb-label">Provider 覆盖</span><div class="sb-track"><div class="sb-fc" style="width:95%"></div></div><span class="sb-val" style="color:#a78bfa">95</span></div>
+<div class="sb-row"><span class="sb-label">多用户安全</span><div class="sb-track"><div class="sb-fc" style="width:82%"></div></div><span class="sb-val" style="color:#a78bfa">82</span></div>
+<div class="sb-row"><span class="sb-label">扩展性</span><div class="sb-track"><div class="sb-fc" style="width:90%"></div></div><span class="sb-val" style="color:#a78bfa">90</span></div>
+<div class="sb-row"><span class="sb-label">部署简易度</span><div class="sb-track"><div class="sb-fc" style="width:28%"></div></div><span class="sb-val" style="color:#a78bfa">28</span></div>
+<div class="sb-row"><span class="sb-label">代码可维护性</span><div class="sb-track"><div class="sb-fc" style="width:55%"></div></div><span class="sb-val" style="color:#a78bfa">55</span></div>
+<div class="sb-row"><span class="sb-label">认证安全性</span><div class="sb-track"><div class="sb-fc" style="width:68%"></div></div><span class="sb-val" style="color:#a78bfa">68</span></div>
+<div class="sb-row"><span class="sb-label">Token 效率</span><div class="sb-track"><div class="sb-fc" style="width:60%"></div></div><span class="sb-val" style="color:#a78bfa">60</span></div>
+<br>
+<div style="color:#38bdf8;font-size:12.5px;font-weight:700;margin:10px 0 4px">⚡ Multi-Agent</div>
+<div class="sb-row"><span class="sb-label">记忆/知识积累</span><div class="sb-track"><div class="sb-fm" style="width:30%"></div></div><span class="sb-val" style="color:#38bdf8">30</span></div>
+<div class="sb-row"><span class="sb-label">A2A 通信</span><div class="sb-track"><div class="sb-fm" style="width:72%"></div></div><span class="sb-val" style="color:#38bdf8">72</span></div>
+<div class="sb-row"><span class="sb-label">Skill 工具体系</span><div class="sb-track"><div class="sb-fm" style="width:58%"></div></div><span class="sb-val" style="color:#38bdf8">58</span></div>
+<div class="sb-row"><span class="sb-label">MCP 集成</span><div class="sb-track"><div class="sb-fm" style="width:52%"></div></div><span class="sb-val" style="color:#38bdf8">52</span></div>
+<div class="sb-row"><span class="sb-label">Provider 覆盖</span><div class="sb-track"><div class="sb-fm" style="width:48%"></div></div><span class="sb-val" style="color:#38bdf8">48</span></div>
+<div class="sb-row"><span class="sb-label">多用户安全</span><div class="sb-track"><div class="sb-fm" style="width:55%"></div></div><span class="sb-val" style="color:#38bdf8">55</span></div>
+<div class="sb-row"><span class="sb-label">扩展性</span><div class="sb-track"><div class="sb-fm" style="width:65%"></div></div><span class="sb-val" style="color:#38bdf8">65</span></div>
+<div class="sb-row"><span class="sb-label">部署简易度</span><div class="sb-track"><div class="sb-fm" style="width:92%"></div></div><span class="sb-val" style="color:#38bdf8">92</span></div>
+<div class="sb-row"><span class="sb-label">代码可维护性</span><div class="sb-track"><div class="sb-fm" style="width:85%"></div></div><span class="sb-val" style="color:#38bdf8">85</span></div>
+<div class="sb-row"><span class="sb-label">认证安全性</span><div class="sb-track"><div class="sb-fm" style="width:84%"></div></div><span class="sb-val" style="color:#38bdf8">84</span></div>
+<div class="sb-row"><span class="sb-label">Token 效率</span><div class="sb-track"><div class="sb-fm" style="width:82%"></div></div><span class="sb-val" style="color:#38bdf8">82</span></div>
+</div>
+
+<div class="card">
+<h3>选型建议</h3>
+<div class="co coc" style="margin-bottom:10px">
+  <div>
+    <strong>选 🐾 Clowder AI，当你需要：</strong>
+    <ul style="margin-top:8px;padding-left:16px;line-height:2;font-size:13px">
+      <li>多 session、多月的长期知识积累（证据库 + 向量检索）</li>
+      <li>10+ AI provider 统一调度（Claude/GPT/Gemini/DARE/Antigravity）</li>
+      <li>并行多 Agent 协作（头脑风暴、多视角评审）</li>
+      <li>完整工作流自动化（20+ Skill，深度 CLI 集成）</li>
+      <li>分布式跨机器 A2A（JSON-RPC 2.0 标准协议）</li>
+      <li>多用户场景（Room 隔离、多 Tab 同步）</li>
+      <li>愿意接受 Redis + SQLite + Node 三重依赖</li>
+    </ul>
+  </div>
+</div>
+<div class="co com" style="margin-bottom:10px">
+  <div>
+    <strong>选 ⚡ Multi-Agent，当你需要：</strong>
+    <ul style="margin-top:8px;padding-left:16px;line-height:2;font-size:13px">
+      <li>快速部署（仅 Node.js + SQLite，5 分钟启动）</li>
+      <li>Claude + Codex + Gemini 三 provider 协作已够用</li>
+      <li>关注 Token 成本（Resume 优化，无冗余 prompt 注入）</li>
+      <li>代码审查/修改/理解（代码库精简，逻辑清晰）</li>
+      <li>安全优先（显式 Token 认证，内联 MCP Config）</li>
+      <li>个人/小团队使用（无多用户隔离需求）</li>
+      <li>想用最新框架（Fastify 5 + React 19 + TS 5.8）</li>
+    </ul>
+  </div>
+</div>
+
+<h3 style="margin-top:16px">💡 互相借鉴的最高价值点</h3>
+<table class="t">
+<thead><tr><th>借鉴方向</th><th>具体内容</th><th>价值</th></tr></thead>
+<tbody>
+<tr><td>Multi-Agent → Clowder</td><td>Resume 时跳过 system prompt 注入</td><td>每轮节省 ~500 tokens，长会话成本↓30%</td></tr>
+<tr><td>Multi-Agent → Clowder</td><td>内联 MCP Config（无临时文件）</td><td>消除磁盘安全风险</td></tr>
+<tr><td>Multi-Agent → Clowder</td><td>invocationId + callbackToken 显式双认证</td><td>Callback 安全性提升</td></tr>
+<tr><td>Multi-Agent → Clowder</td><td>心跳 30s + 超时 5min 机制</td><td>防 Agent 挂死泄露资源</td></tr>
+<tr><td>Clowder → Multi-Agent</td><td>sqlite-vec 向量检索</td><td>添加语义记忆，无需 Redis</td></tr>
+<tr><td>Clowder → Multi-Agent</td><td>Thread 摘要压缩</td><td>解决长对话 context 溢出问题</td></tr>
+<tr><td>Clowder → Multi-Agent</td><td>Socket.IO Room 隔离</td><td>支持多用户场景</td></tr>
+<tr><td>Clowder → Multi-Agent</td><td>SKILL.md 标准化 + /api/skills 端点</td><td>Skill 热更新，无需重启</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+
+</section>
+
+<!-- ══════════ §11 CHINESE LANGUAGE ══════════ -->
+<section id="s11">
+<h2>🀄 十二、为什么 Clowder 全程中文 — 语言策略溯源</h2>
+
+<div class="co coy">
+  <div><strong>核心答案：</strong>Clowder AI 的中文不是偶然，而是系统提示词的强制约束 + 品种人格设定 + 家规文化三重叠加的结果。Multi-Agent 则完全没有语言约束，Agent 的语言由用户输入语言决定。</div>
+</div>
+
+<h3>12.1 中文强制来源1：身份注入（SystemPromptBuilder.ts）</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — 中文身份描述强制 Agent 用中文思考</div>
+  <pre><code>// SystemPromptBuilder.ts — buildStaticIdentity()
+// 全程用中文定义身份，Agent 天然用中文回应
+
+lines.push(
+  `你是 ${nameLabel}，由 ${providerLabel} 提供的 AI 猫猫。`,
+  `角色：${config.roleDescription}`,
+  `性格：${config.personality}`,
+)
+
+// 工作流触发词也是中文
+lines.push(`## 工作流触发`)
+lines.push(`- 收到新功能需求 → 触发 feat-lifecycle`)
+lines.push(`- 准备 review    → 触发 quality-gate`)
+
+// A2A 协作格式 — 中文
+lines.push(`## 协作规范`)
+lines.push(`提及伙伴格式：@catId 消息内容`)
+lines.push(`行首 @提及 = A2A 路由触发`)
+
+// 猫猫名字本身是中文文化符号
+// opus = 砚砚, gemini = 玉若, codex = 范德彪...</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — 中文别名但无语言约束</div>
+  <pre><code>// agent-prompts.ts
+// 中文别名仅用于 @mention 路由识别
+// 没有指定 Agent 必须用哪种语言回复
+
+// 三大 provider 的中文别名
+// Codex  → @范德彪
+// Claude → @黄仁勋
+// Gemini → @桂芬
+
+// COMMON_PROMPT 混合中英文描述
+// 工作流说明是中文，但没有语言约束指令
+// Agent 的回复语言完全跟随用户输入语言
+
+// 如果用户说英文 → Agent 用英文回
+// 如果用户说中文 → Agent 用中文回
+// 无强制语言政策</code></pre>
+</div>
+</div>
+
+<h3>12.2 中文强制来源2：家规 GOVERNANCE_L0_DIGEST（最核心）</h3>
+<div class="card cc">
+<p>在 <code>SystemPromptBuilder.ts</code> 的 <code>GOVERNANCE_L0_DIGEST</code> 常量中，嵌入了来自 <code>cat-cafe-skills/refs/shared-rules.md</code> 的完整家规摘要。这是强制中文行为的根本来源：</p>
+<pre><code>// SystemPromptBuilder.ts — GOVERNANCE_L0_DIGEST (约 232 行起)
+// 这段 prompt 决定了 Clowder 所有 Cat 的"世界观"
+
+const GOVERNANCE_L0_DIGEST = `
+## 家规 L0（每次调用都注入）
+
+### 第一原则 (P1-P5)
+P1 铲屎官主权：铲屎官 = 总设计师，猫猫 = 首席助手
+P2 不撒谎：不能为了安抚而说"好的没问题"
+P3 主动说出不确定：不确定时要说"我不确定"
+P4 聚焦当前任务：不做不必要的发散
+P5 用中文回复：默认中文，除非铲屎官要求其他语言
+
+### 世界观 (W1-W6)
+W1 我们是猫猫家族，铲屎官是家长
+W2 工作是共同创作，不是打工
+W3 失败是学习机会，不是灾难
+...
+
+### 魔法词（特殊触发）
+- "脚手架" → 临时结构，完成后拆除
+- "绕路了" → 偏离目标，立即纠正
+- "喵约"   → 严肃承诺，不可违背
+- "星星罐子" → 记录重大风险
+
+### 行为规范
+- 默认用中文回复            ← ★ 直接语言约束
+- 不使用 emoji（除非被要求）
+- 回复要简洁，不重复已知信息
+- 工具调用前先说明意图
+`
+// 这个 digest 在 buildSystemPrompt() 里
+// 每次调用时都会注入到 prompt 末尾</code></pre>
+<div class="co coc" style="margin-top:8px">
+  <div><strong>P5 原则 = 中文约束的直接来源：</strong>"默认用中文回复：除非铲屎官要求其他语言" — 这一条嵌入在每次调用的系统提示中，确保所有 Cat 无论用哪个底层模型（Claude/GPT/Gemini），都优先用中文回复。</div>
+</div>
+</div>
+
+<h3>12.3 中文强制来源3：品种人格 + 中文文化设定</h3>
+<div class="g2">
+<div class="card cc">
+<p><strong>cat-template.json — 中文角色设定</strong></p>
+<pre><code>// cat-template.json (部分)
+{
+  "breeds": [
+    {
+      "id": "ragdoll",
+      "name": "布偶猫",              // ← 中文品种名
+      "mentionPatterns": ["@opus", "@砚砚"],  // ← 中文昵称
+      "variants": [{
+        "roleDescription":
+          "首席架构师，负责系统设计与技术决策",  // ← 中文角色描述
+        "personality":
+          "严谨、专注、偶尔卖萌"              // ← 中文性格描述
+      }]
+    },
+    {
+      "id": "maine-coon",
+      "name": "缅因猫",
+      "mentionPatterns": ["@codex", "@范德彪"],
+      "roleDescription": "代码评审专家，GPT家族"
+    }
+  ]
+}
+// 所有品种名、角色描述、性格描述均为中文
+// 注入 system prompt 后，Agent 的自我认知是中文的
+// 中文身份 → 中文思维 → 中文回复</code></pre>
+</div>
+<div class="card cc">
+<p><strong>文化设定的深层影响</strong></p>
+<div class="vr vr-c"><div class="num num-c">1</div><div><strong>猫猫人格</strong> — Agent 被设定为"猫猫"，有品种、昵称、性格。"我是砚砚" 这种自我认知本身就是中文表达，促使 Agent 用中文"思考"。</div></div>
+<div class="vr vr-c"><div class="num num-c">2</div><div><strong>铲屎官文化</strong> — "铲屎官"（cat owner）是中文互联网特有表达，整个权力关系的描述框架是中文的，Agent 无法用英文正确表达这套关系。</div></div>
+<div class="vr vr-c"><div class="num num-c">3</div><div><strong>魔法词系统</strong> — "脚手架""绕路了""喵约""星星罐子" 都是中文专有词，无英文对应物。这些词在工作流中有特殊触发作用，强迫 Agent 理解并使用中文术语。</div></div>
+<div class="vr vr-c"><div class="num num-c">4</div><div><strong>Skill 全中文</strong> — 20+ SKILL.md 文件里的触发词、工作流描述均为中文，让 Agent 在执行技能时自然切入中文语境。</div></div>
+</div>
+</div>
+
+<div class="card">
+<h3>📊 语言策略对比</h3>
+<table class="t">
+<thead><tr><th>维度</th><th class="tc">🐾 Clowder AI</th><th class="tm">⚡ Multi-Agent</th><th>结论</th></tr></thead>
+<tbody>
+<tr><td>语言约束</td><td><span class="v-good">强制：P5原则"默认中文"</span></td><td>无约束，跟随用户</td><td>Clowder 有团队语言一致性</td></tr>
+<tr><td>中文来源</td><td>身份注入 + 家规 + 品种设定 三重</td><td>仅别名为中文</td><td>Clowder 中文深度嵌入</td></tr>
+<tr><td>魔法词/专有词</td><td><span class="v-good">脚手架/绕路了/喵约/星星罐子</span></td><td>无</td><td>Clowder 有丰富的中文工作流词汇</td></tr>
+<tr><td>多语言切换</td><td>可以（铲屎官指令覆盖）</td><td>自动（跟随输入）</td><td><span class="v-m">Multi-Agent 更自然</span></td></tr>
+<tr><td>国际化潜力</td><td>弱（中文深度绑定）</td><td><span class="v-good">强（无语言绑定）</span></td><td><span class="v-m">Multi-Agent 更易国际化</span></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ══════════ §12 FRONTEND RENDERING ══════════ -->
+<section id="s12">
+<h2>🖥️ 十三、前端推理与工具内容展示 — 源码级对比</h2>
+
+<h3>13.1 消息数据模型对比</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — 富类型 ChatMessage（chat-types.ts）</div>
+  <pre><code>// packages/web/src/stores/chat-types.ts
+interface ChatMessage {
+  id: string
+  type: 'user'|'assistant'|'system'|'summary'|'connector'
+  variant?: 'error'|'info'|'tool'|'evidence'
+           |'a2a_followup'|'governance_blocked'
+  catId?: string
+  content: string           // 主文本
+  contentBlocks?: MessageContent[]  // 富内容块
+
+  // ★ 推理内容
+  thinking?: string         // 折叠推理块
+
+  // ★ 工具执行事件序列
+  toolEvents?: ToolEvent[]  // [{type:'tool_use'|'tool_result', label, detail}]
+
+  // ★ 富媒体块（卡片/diff/音频/交互）
+  extra?: {
+    rich?: { v:1; blocks: RichBlock[] }
+    crossPost?: { sourceThreadId: string }
+    timeoutDiagnostics?: TimeoutDiagnostics
+    governanceBlocked?: { ... }
+  }
+
+  origin?: 'stream'|'callback'
+  isStreaming?: boolean
+}
+
+// ToolEvent 接口
+interface ToolEvent {
+  id: string
+  type: 'tool_use' | 'tool_result'
+  label: string    // 工具名称
+  detail?: string  // 输入参数摘要
+  timestamp: number
+  status?: 'streaming'|'done'|'failed'|'interrupted'
+}</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — 精简 TimelineMessage（realtime.ts）</div>
+  <pre><code>// packages/shared/src/realtime.ts
+export type TimelineMessage = {
+  id: string
+  provider: Provider      // 'claude'|'codex'|'gemini'
+  alias: string           // '范德彪'|'黄仁勋'|'桂芬'
+  role: "user" | "assistant"
+  content: string         // 主文本（流式拼接）
+
+  // ★ 推理内容
+  thinking?: string       // 流式拼接
+
+  // Token 统计（显示在消息底部）
+  inputTokens?: number
+  outputTokens?: number
+  cachedPercent?: number
+  model: string | null
+  createdAt: string
+}
+
+// ⚠️ 没有 toolEvents 字段
+// ⚠️ 没有 rich blocks 字段
+// ⚠️ 没有 variant 类型区分
+// 工具调用完全不在前端展示
+// 消息结构极度精简</code></pre>
+</div>
+</div>
+
+<h3>13.2 推理内容（Thinking）展示</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — ThinkingContent.tsx（品种色调折叠块）</div>
+  <pre><code>// ThinkingContent.tsx — 视觉上非常精致
+// 使用 breedColor 做颜色混合，每个 Cat 颜色不同
+
+const accent = breedColor || '#7C3AED'   // 品种主色
+const surface = tintedDark(accent, 0.25) // 外层按钮底色
+const surfaceInner = tintedDark(accent, 0.18) // 内容区底色
+// tintedDark: 将 accent 色混入 #1A1625 暗色背景
+
+// 渲染结构
+&lt;div style={{ background: surface }}&gt;
+  &lt;button onClick={toggle}&gt;
+    &lt;BrainIcon /&gt;  {/* 脑部图标 */}
+    &lt;span&gt;{isExpanded ? '收起' : '思考过程'}&lt;/span&gt;
+    &lt;ChevronIcon rotate={isExpanded} /&gt;
+    {!isExpanded && (
+      &lt;span class="preview"&gt;
+        {content.slice(0, 60)}...  {/* 折叠预览 */}
+      &lt;/span&gt;
+    )}
+  &lt;/button&gt;
+  {isExpanded && (
+    &lt;div style={{ background: surfaceInner }}&gt;
+      &lt;MarkdownContent content={thinking} /&gt;
+    &lt;/div&gt;
+  )}
+&lt;/div&gt;
+
+// ★ 实时状态区分：
+// ThinkingIndicator.tsx — 独立的流式状态横幅
+// 'thinking' 状态: 🐾 "思考中"
+// 'alive_but_silent' (30s无输出): ⚠️ 琥珀色警告横幅
+//   "{name} 静默等待中… {elapsed}"
+//   背景: #FFF8E7
+// 'suspected_stall' (更长无输出): 🔴 橙色危险横幅
+//   "{name} 可能卡住了 — {elapsed} 无输出"
+//   背景: #FFF0ED + 取消按钮</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — MessageBubble.tsx（翠绿折叠块）</div>
+  <pre><code>// components/chat/message-bubble.tsx
+// 固定翠绿色主题，不区分 provider
+
+{!isUser && message.thinking && (
+  &lt;div className="mb-4 rounded-2xl border
+    border-emerald-100/80 bg-emerald-50/50 p-4"&gt;
+    &lt;button
+      onClick={() => setIsThinkingOpen(!isThinkingOpen)}
+      className="flex items-center gap-1.5 text-xs
+        font-semibold text-emerald-700"
+    &gt;
+      {isThinkingOpen
+        ? &lt;ChevronDown className="h-3.5 w-3.5" /&gt;
+        : &lt;ChevronRight className="h-3.5 w-3.5" /&gt;
+      }
+      Inner Thoughts  {/* ← 英文标签 */}
+    &lt;/button&gt;
+    {isThinkingOpen && (
+      &lt;div className="mt-3 max-h-60  {/* ← 最大60vh */}
+        overflow-y-auto border-t
+        border-emerald-100/80 pt-3"&gt;
+        &lt;MarkdownMessage
+          className="text-[12px] text-emerald-950/70"
+          content={message.thinking}
+        /&gt;
+      &lt;/div&gt;
+    )}
+  &lt;/div&gt;
+)}
+
+// ★ 无实时流式状态区分
+// ★ 无超时/挂起警告机制
+// ★ 无品种色调差异
+// ★ 标签是英文 "Inner Thoughts"</code></pre>
+</div>
+</div>
+
+<h3>13.3 工具调用（Tool Use）展示</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — CliOutputBlock.tsx（完整工具执行可视化）</div>
+  <pre><code>// CliOutputBlock.tsx — 完整的工具执行轨迹展示
+
+// 工具事件列表渲染
+{toolEvents.map(event => (
+  &lt;div key={event.id} className={statusClass(event.status)}&gt;
+    {/* 工具图标 */}
+    {event.type === 'tool_use' && &lt;WrenchIcon /&gt;}
+    {event.status === 'done' && &lt;CheckIcon color="cyan" /&gt;}
+    {event.status === 'streaming' && &lt;Loader spin /&gt;}
+    {event.status === 'failed' && &lt;XIcon color="red" /&gt;}
+
+    {/* 工具名称 + 参数摘要 */}
+    &lt;span className="tool-label"&gt;{event.label}&lt;/span&gt;
+    {event.detail && (
+      &lt;span className="tool-detail"&gt;{event.detail}&lt;/span&gt;
+    )}
+  &lt;/div&gt;
+))}
+
+// 状态颜色编码
+// streaming → 蓝色旋转 Loader
+// done      → 青色 Check ✓
+// failed    → 红色 X
+// interrupted → 灰色
+
+// 支持的工具类型展示:
+// search_evidence   → 🔍 搜索证据库
+// reflect           → 📝 写决策日志
+// post_message      → 💬 发消息
+// file_read/write   → 📁 文件操作
+// execute           → ⚡ 执行命令</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — 工具调用不展示</div>
+  <pre><code>// ⚠️ Multi-Agent 完全不显示工具调用
+
+// TimelineMessage 类型没有 toolEvents 字段
+// MessageBubble.tsx 没有工具渲染逻辑
+
+// 用户看到的只有:
+// 1. 推理内容 (Inner Thoughts 折叠块)
+// 2. 最终文本回复
+// 3. Token 统计 (inputTokens/outputTokens/cachedPercent)
+
+// 工具调用发生在 CLI 进程内部
+// 结果混在 assistant_delta 的文本流里
+// 或者完全不可见
+
+// 这意味着:
+// - 用户不知道 Agent 调用了哪些工具
+// - 不知道 Agent 是否在读文件/执行命令
+// - 无法判断 Agent 是在思考还是在执行
+// 只有 thinking 流 + 文本流 两种可见状态</code></pre>
+</div>
+</div>
+
+<h3>13.4 流式更新机制</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — Socket.IO 分类事件推送</div>
+  <pre><code>// SocketManager.ts — 事件类型驱动不同UI更新
+socket.on('agent_message', (payload) => {
+  const { type, content } = payload.message
+  switch (type) {
+    case 'text':
+      // 追加到 content 字段
+      store.appendContent(id, content)
+      break
+    case 'thinking':
+      // 追加到 thinking 字段
+      store.appendThinking(id, content)
+      break
+    case 'tool_use':
+      // 添加到 toolEvents 列表
+      store.addToolEvent(id, {
+        type: 'tool_use',
+        label: content.name,
+        detail: summarize(content.input),
+        status: 'streaming'
+      })
+      break
+    case 'tool_result':
+      // 更新对应 toolEvent 的状态
+      store.updateToolEvent(id, content.toolId, {
+        status: content.isError ? 'failed' : 'done'
+      })
+      break
+    case 'done':
+      // 标记结束，附带 usage 统计
+      store.markDone(id, content.usage)
+      break
+  }
+})</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — WS 两类 delta 事件</div>
+  <pre><code>// app/page.tsx — 简单的两类 delta 处理
+ws.onmessage = (e) => {
+  const event = JSON.parse(e.data)
+  switch (event.type) {
+    case 'assistant_delta':
+      // 追加到 content
+      store.applyAssistantDelta(
+        event.payload.messageId,
+        event.payload.delta
+      )
+      break
+    case 'assistant_thinking_delta':
+      // 追加到 thinking
+      store.applyThinkingDelta(
+        event.payload.messageId,
+        event.payload.delta
+      )
+      break
+    case 'message.created':
+      // 新消息出现
+      store.appendTimelineMessage(event.payload.message)
+      break
+    case 'thread_snapshot':
+      // 全量快照 (重连/刷新时)
+      store.mergeTimeline(event.payload.activeGroup)
+      break
+  }
+  // 工具调用没有对应事件类型
+  // 完全在 CLI 内部黑盒执行
+}</code></pre>
+</div>
+</div>
+
+<h3>13.5 Token 统计展示</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — 调用完成后 done 事件附带</div>
+  <pre><code>// AgentMessage type='done' 时携带
+{ type: 'done', usage: {
+  inputTokens: number,
+  outputTokens: number,
+  cacheCreationInputTokens?: number,
+  cacheReadInputTokens?: number
+}}
+
+// 前端在消息底部展示 token 用量
+// 仅在 isStreaming=false 后显示
+// 精确到每次调用</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — 内嵌在 TimelineMessage</div>
+  <pre><code>// TimelineMessage 直接携带 token 字段
+{
+  inputTokens: number,
+  outputTokens: number,
+  cachedPercent: number,  // ← 缓存命中率 %
+  model: string           // ← 当前使用的模型名
+}
+
+// MessageBubble.tsx 底部元数据展示:
+// "claude-opus-4-6  in:1234 out:567  cache:42%"
+// ★ Multi-Agent 多了 cachedPercent 和 model 显示
+// ★ 用户能看到缓存命中率，了解成本效率</code></pre>
+</div>
+</div>
+
+<h3>13.6 富媒体内容（Rich Blocks）</h3>
+<div class="g2">
+<div class="card cc">
+<h3>🐾 Clowder — 完整富媒体系统</h3>
+<pre><code>// RichBlock 类型 (chat-types.ts)
+type RichBlock =
+  | RichCardBlock       // info/success/warning/danger 卡片
+  | RichDiffBlock       // 语法高亮 diff 展示
+  | RichChecklistBlock  // 可交互 checkbox 清单
+  | RichMediaGalleryBlock  // 图片画廊
+  | RichAudioBlock      // TTS 语音播放块
+  | RichInteractiveBlock // 按钮/选择/确认交互
+  | RichHtmlWidgetBlock  // 沙箱 iframe HTML
+
+// Cat 通过 MCP rich_block() 工具生成
+// 前端 RichBlocks.tsx 按类型渲染
+// 支持用户与 Agent 的富交互</code></pre>
+<div class="co coc"><div>Agent 可以发送可点击的选项卡、播放语音消息、展示代码 diff、渲染自定义 HTML 小组件。这让 Agent 的输出远超纯文本。</div></div>
+</div>
+<div class="card cm">
+<h3>⚡ Multi-Agent — 纯文本 + Markdown</h3>
+<pre><code>// 只有文本内容，通过 MarkdownMessage 渲染
+// 支持标准 Markdown:
+// - 代码块 (语法高亮)
+// - 表格
+// - 列表/引用
+// - 粗体/斜体
+// - 任务列表 (checkbox)
+
+// 没有:
+// - 卡片 (info/warning/danger)
+// - 语音播放
+// - 代码 diff 专用视图
+// - 交互按钮
+// - 自定义 HTML 组件
+
+// 所有 Agent 输出都通过 Markdown 表达</code></pre>
+<div class="co com"><div>Markdown 已足够表达大部分内容，且渲染成本低。但无法做到 Agent 发送一个"确认按钮"或"语音消息"。</div></div>
+</div>
+</div>
+
+<div class="card">
+<h3>📊 前端展示能力综合对比</h3>
+<table class="t">
+<thead><tr><th>展示能力</th><th class="tc">🐾 Clowder</th><th class="tm">⚡ Multi-Agent</th><th>优劣</th></tr></thead>
+<tbody>
+<tr><td>推理块折叠展示</td><td><span class="v-good">✓ 品种色调 + 脑图标 + 预览</span></td><td><span class="v-good">✓ 翠绿色 + Inner Thoughts</span></td><td><span class="v-eq">均有，Clowder 视觉更精致</span></td></tr>
+<tr><td>实时思考状态</td><td><span class="v-good">✓ 思考中/静默等待/可能卡住 三态</span></td><td><span class="v-bad">✗ 无状态区分</span></td><td><span class="v-c">Clowder 大幅领先</span></td></tr>
+<tr><td>工具调用展示</td><td><span class="v-good">✓ 完整 CliOutputBlock 带状态图标</span></td><td><span class="v-bad">✗ 完全不展示</span></td><td><span class="v-c">Clowder 独有，透明度极高</span></td></tr>
+<tr><td>工具执行状态</td><td><span class="v-good">✓ streaming/done/failed/interrupted</span></td><td><span class="v-bad">✗</span></td><td><span class="v-c">Clowder 独有</span></td></tr>
+<tr><td>Rich Blocks</td><td><span class="v-good">✓ 卡片/diff/音频/交互/HTML</span></td><td><span class="v-bad">✗ 仅 Markdown</span></td><td><span class="v-c">Clowder 独有，交互能力强</span></td></tr>
+<tr><td>Token 统计</td><td>✓ in/out token</td><td><span class="v-good">✓ in/out + cachedPercent + model</span></td><td><span class="v-m">Multi-Agent 信息更全</span></td></tr>
+<tr><td>每猫视觉区分</td><td><span class="v-good">✓ 品种色调 + 气泡圆角方向</span></td><td>✓ provider 头像图标</td><td><span class="v-c">Clowder 更有个性</span></td></tr>
+<tr><td>流式更新事件</td><td>5+ 事件类型分类推送</td><td>2 类 delta 事件</td><td><span class="v-c">Clowder 粒度更细</span></td></tr>
+<tr><td>代码复杂度</td><td><span class="v-bad">高 (ThinkingContent+CliOutputBlock+RichBlocks...)</span></td><td><span class="v-good">低 (MessageBubble 单文件)</span></td><td><span class="v-m">Multi-Agent 更易维护</span></td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>13.7 前端架构流程图</h3>
+<div class="g2">
+<div>
+<p style="color:#a78bfa;font-size:13px;font-weight:700;margin-bottom:8px">🐾 Clowder — 多组件渲染管线</p>
+<div class="ab" style="font-size:12px">
+Socket.IO event: 'agent_message'
+  ↓
+chatStore.dispatch(event)
+  ↓ 按 type 分发
+  ├─ 'text'       → message.content += delta
+  ├─ 'thinking'   → message.thinking += delta
+  ├─ 'tool_use'   → message.toolEvents.push(event)
+  ├─ 'tool_result'→ toolEvent.status = 'done'
+  └─ 'done'       → message.usage = payload
+
+React re-render → ChatMessage.tsx
+  ├─ &lt;ThinkingIndicator /&gt;  ← 实时状态横幅
+  ├─ &lt;ThinkingContent  /&gt;  ← 推理折叠块(品种色)
+  ├─ &lt;ContentBlocks    /&gt;  ← 主文本 Markdown
+  ├─ &lt;CliOutputBlock   /&gt;  ← 工具执行轨迹
+  └─ &lt;RichBlocks       /&gt;  ← 富媒体卡片/交互
+</div>
+</div>
+<div>
+<p style="color:#38bdf8;font-size:13px;font-weight:700;margin-bottom:8px">⚡ Multi-Agent — 精简单组件渲染</p>
+<div class="ab" style="font-size:12px">
+原生 WS message event
+  ↓
+app/page.tsx 路由
+  ├─ 'assistant_delta'
+  │    → store.applyAssistantDelta(id, delta)
+  │    → message.content += delta
+  ├─ 'assistant_thinking_delta'
+  │    → store.applyThinkingDelta(id, delta)
+  │    → message.thinking += delta
+  └─ 'message.created' / 'thread_snapshot'
+       → store.appendTimelineMessage()
+
+React re-render → MessageBubble.tsx
+  ├─ [Inner Thoughts 折叠块] ← 翠绿色
+  ├─ &lt;MarkdownMessage /&gt;   ← 主文本
+  └─ [Token 统计 footer]    ← in/out/cache%
+  (无工具展示，无富媒体)
+</div>
+</div>
+</div>
+</section>
+
+<!-- ══════════ §13 WORKFLOW ══════════ -->
+<section id="s13">
+<h2>🔄 十四、工作流实现对比</h2>
+
+<div class="co coy">
+  <div><strong>核心差异：</strong>Clowder AI 有一套完整的 6 阶段 SOP 状态机，由 Redis 持久化驱动，每个功能特性从立项到关闭全程有状态追踪。Multi-Agent 只有会话组生命周期，无工作流状态机。</div>
+</div>
+
+<h3>14.1 Clowder — 6 阶段 SOP 状态机</h3>
+<div class="card cc">
+<div class="ab" style="font-size:12px">
+<span style="color:#a78bfa">WorkflowSop 结构 (Redis key: workflow:sop:{backlogItemId})</span>
+{
+  featureId:      'F127',
+  backlogItemId:  'xxx',
+  stage:          'kickoff' | 'impl' | 'quality_gate'
+                | 'review'  | 'merge' | 'completion',
+  batonHolder:    'opus',    ← 当前持球猫猫
+  nextSkill:      'tdd',     ← 推荐下一步技能
+  resumeCapsule: {           ← 压缩后恢复用 (30秒冷启动)
+    goal:         '实现用户登录',
+    done:         ['接口设计', 'DB Schema'],
+    currentFocus: '编写单元测试'
+  },
+  checks: {
+    remoteMainSynced:    'attested'|'verified'|'unknown',
+    qualityGatePassed:   'attested'|'verified'|'unknown',
+    reviewApproved:      'attested'|'verified'|'unknown',
+    visionGuardDone:     'attested'|'verified'|'unknown'
+  },
+  version:  42,   ← CAS 乐观锁，防并发写冲突
+  updatedAt: ...,
+  updatedBy: 'opus'
+}
+
+<span style="color:#10b981">更新路径</span>
+  ① 前端/人工: PUT /api/backlog/:id/workflow-sop
+  ② 猫猫 MCP:  POST /api/callbacks/update-workflow-sop
+              (需要 invocationId + callbackToken 双验证)
+  → Redis Lua 脚本原子 CAS 更新，version 不匹配则拒绝
+</div>
+</div>
+
+<div class="g2" style="margin-top:12px">
+<div>
+<p style="color:#a78bfa;font-size:13px;font-weight:700;margin-bottom:8px">🐾 6 阶段 Pipeline 流程图</p>
+<div class="ab" style="font-size:11.5px">
+<span style="color:#fbbf24">── STAGE 1: KICKOFF ──────────────────────────</span>
+feat-lifecycle skill 触发
+  • 分配 F{NNN} ID
+  • 创建 docs/features/Fxxx.md (spec文件)
+  • 更新 ROADMAP.md + 双向链接
+  • 提交: docs(F{N}): kickoff {name}
+  • SOP: stage=kickoff, batonHolder={author}
+
+<span style="color:#34d399">── STAGE 2: IMPL ─────────────────────────────</span>
+tdd skill 驱动 Red-Green-Refactor 循环
+  • 写失败测试 → 最小实现 → 重构
+  • AC checkbox [ ] → [x] 逐项完成
+  • SOP: stage=impl
+
+<span style="color:#38bdf8">── STAGE 3: QUALITY GATE ─────────────────────</span>
+quality-gate skill 自检
+  • pnpm test → 0 failures
+  • pnpm lint → 0 errors
+  • pnpm check:fix (Biome)
+  • pnpm -r build → exit 0
+  • 对照原始需求做愿景对齐
+  • SOP: stage=quality_gate,
+         checks.qualityGatePassed=attested
+
+<span style="color:#a78bfa">── STAGE 4: REVIEW ───────────────────────────</span>
+request-review skill → receive-review skill
+  • 跨家族 reviewer 优先 (ReviewPolicy)
+  • 五件套: 质检报告+测试输出+原始需求+截图+疑问
+  • 创建 review sandbox: /tmp/cat-cafe-review/...
+  • P1/P2 问题修复 → 重新 review
+  • SOP: stage=review, batonHolder={reviewer}
+
+<span style="color:#f59e0b">── STAGE 5: MERGE ────────────────────────────</span>
+merge-gate skill (5 硬条件)
+  ① reviewer 明确 LGTM/pass/can merge
+  ② 所有 P1/P2 已修复且 reviewer 确认
+  ③ review 针对当前分支 (非历史)
+  ④ BACKLOG items [x]
+  ⑤ pnpm gate 全通过
+  → gh pr create + squash merge
+  → Phase 文档立即同步 (✅ + Timeline)
+  → SOP: stage=merge
+
+<span style="color:#ef4444">── STAGE 6: COMPLETION ───────────────────────</span>
+Vision Guard (跨猫验证, 强制)
+  • 原作者写愿景对齐清单
+  • 找第三方猫 (≠ 作者 ≠ reviewer) 独立验证
+  • ≤3 截图 + 逻辑证明
+  • 双方签字 vision-evidence 对照表
+  • 反思胶囊: 成功/失败/遗漏触发/文档/规则
+  • SOP: stage=completion,
+         checks.visionGuardDone=verified
+</div>
+</div>
+<div>
+<p style="color:#38bdf8;font-size:13px;font-weight:700;margin-bottom:8px">⚡ Multi-Agent — 仅会话组生命周期</p>
+<div class="ab" style="font-size:11.5px">
+<span style="color:#38bdf8">Multi-Agent 没有工作流状态机</span>
+只有 Session Group 生命周期:
+
+CREATE session_group
+  → 自动建 3 个 threads
+    (codex / claude / gemini)
+
+USER 发消息
+  → 指定 provider 的 thread 运行
+  → A2A @mention 触发其他 thread
+
+RUNNING
+  ├─ invocation 记录创建
+  ├─ agent_events 追踪活动
+  └─ 流式输出推送 WebSocket
+
+DONE / ERROR / CANCELLED
+  ├─ invocation 记录更新状态
+  └─ flushDispatchQueue 继续 A2A
+
+<span style="color:#f87171">❌ 无 SOP 阶段 (kickoff/impl/review...)
+❌ 无 batonHolder (持球人)
+❌ 无 checks 门禁 (qualityGate/reviewApproved)
+❌ 无 resumeCapsule (压缩恢复)
+❌ 无 Version CAS (并发保护)
+❌ 无跨 session 工作流延续
+
+工作流完全靠 Skill prompt 文字指导 Agent
+Agent 自己决定什么时候 @review
+没有系统级强制</span>
+
+<span style="color:#fbbf24">仅有的状态管理:</span>
+  invocations.status:
+    running | done | failed | cancelled
+  dispatchQueue: 串行 A2A 队列
+  cancelledSessionGroups: 取消标记
+</div>
+<div class="co com" style="margin-top:8px">
+  <div><strong>Multi-Agent 的工作流依赖：</strong>用户 + Agent 自觉遵守 Skill 中的文字规范。没有系统强制。如果 Agent 忘记 @review，流程就断了，没有任何机制会提醒或阻止。</div>
+</div>
+</div>
+</div>
+
+<div class="card">
+<h3>📊 工作流系统对比</h3>
+<table class="t">
+<thead><tr><th>能力</th><th class="tc">🐾 Clowder</th><th class="tm">⚡ Multi-Agent</th><th>优劣</th></tr></thead>
+<tbody>
+<tr><td>工作流状态机</td><td><span class="v-good">✓ 6阶段 SOP + Redis持久化</span></td><td><span class="v-bad">✗ 无状态机</span></td><td><span class="v-c">Clowder 工程化程度代差级</span></td></tr>
+<tr><td>门禁强制</td><td><span class="v-good">✓ merge前必须 qualityGatePassed</span></td><td><span class="v-bad">✗ 全靠 Agent 自觉</span></td><td><span class="v-c">Clowder 流程不可绕过</span></td></tr>
+<tr><td>跨 Session 延续</td><td><span class="v-good">✓ resumeCapsule 30s冷启动恢复</span></td><td><span class="v-bad">✗ 每次全新开始</span></td><td><span class="v-c">Clowder 长期任务不丢失</span></td></tr>
+<tr><td>Vision Guard</td><td><span class="v-good">✓ 第三方猫猫强制验收</span></td><td><span class="v-bad">✗ 无</span></td><td><span class="v-c">Clowder 质量闭环更严格</span></td></tr>
+<tr><td>并发保护</td><td><span class="v-good">✓ Redis CAS + 乐观锁</span></td><td><span class="v-bad">✗ 无并发保护</span></td><td><span class="v-c">Clowder 多猫同时工作时安全</span></td></tr>
+<tr><td>Baton (持球人)</td><td><span class="v-good">✓ 明确谁负责下一步</span></td><td><span class="v-bad">✗ 无责任归属</span></td><td><span class="v-c">Clowder 不会出现"以为对方在做"</span></td></tr>
+<tr><td>实现复杂度</td><td><span class="v-bad">极高 (WorkflowSop + Redis + Callback)</span></td><td><span class="v-good">极低 (无状态)</span></td><td><span class="v-m">Multi-Agent 更轻量</span></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ══════════ §14 PERMISSIONS ══════════ -->
+<section id="s14">
+<h2>🔐 十五、权限控制机制</h2>
+
+<h3>15.1 CLI 层权限标志对比</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — bypassPermissions 模式</div>
+  <pre><code>// ClaudeAgentService.ts (line 33)
+const PERMISSION_MODE = 'bypassPermissions'
+
+// CLI 调用时传入
+args.push('--permission-mode', 'bypassPermissions')
+
+// 含义：
+// Claude CLI 执行所有文件编辑时不弹出确认框
+// 无需用户点击"允许写入 xxx.ts"
+// 专为服务端自动化设计
+
+// 逻辑是：Bot 已经过 quality-gate 验证
+// CLI 层的确认是多余的，只会拖慢自动化
+
+// 对比默认行为:
+// default 'acceptEdits' → 每个文件写入需确认
+// bypassPermissions     → 所有写入自动执行</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — 三 Provider 各自模式</div>
+  <pre><code>// claude-runtime.ts
+// 没有显式 --permission-mode 参数
+// 使用 MCP 工具调用，由 Claude 自身判断
+
+// codex-runtime.ts (line 28)
+args = ['-m', model,
+  '-a', 'never',        // 从不询问确认
+  '-s', 'workspace-write',  // 允许写入工作区
+  'exec', ...
+]
+// '-a never' = auto-approve 所有工具调用
+
+// gemini-runtime.ts (line 51)
+args = ['--approval-mode', 'yolo', ...]
+// 'yolo' = 所有工具调用自动通过
+// 不询问任何确认
+
+// 三个 provider 都是"全自动"模式
+// 没有细粒度的权限控制</code></pre>
+</div>
+</div>
+
+<h3>15.2 Clowder 的双层权限架构</h3>
+<div class="card cc">
+<div class="ab" style="font-size:12px">
+<span style="color:#a78bfa">Layer 1: CLI 层 (bypassPermissions)</span>
+  → Cat CLI 进程内部的文件操作自动执行
+  → 无弹框、无暂停
+  → 假设: 外层 Callback 授权层已经把关
+
+<span style="color:#10b981">Layer 2: Callback 授权层 (AuthorizationManager)</span>
+  → Cat 通过 MCP 调用 request-permission
+  → 触发 POST /api/callbacks/request-permission
+
+  流程:
+  ① 查缓存规则 (ruleStore.match)
+     → 有匹配规则 → 直接返回 allow/deny
+  ② 无规则 → 创建 PendingRequest
+     → WebSocket 推送到前端
+     → 前端弹出授权对话框
+  ③ 人工决策 (120s 超时)
+     → POST /api/authorization/respond
+     → scope: 'once' | 'thread' | 'global'
+  ④ 如 scope ≠ 'once' → 写入持久规则
+     → 下次同类操作自动通过
+
+<span style="color:#f59e0b">PendingRequestRecord 结构</span>
+  { invocationId, catId, action,
+    reason, status: 'waiting'|'granted'|'denied' }
+
+<span style="color:#ef4444">AuthorizationRule 结构</span>
+  { catId, action, scope, decision,
+    threadId?, createdAt }
+</div>
+
+<h4>授权粒度范围 (RespondScope)</h4>
+<div class="g3">
+<div class="co coc"><div><strong>once</strong> — 本次仅此一次，下次同样操作还需确认。用于首次尝试未知操作。</div></div>
+<div class="co coc"><div><strong>thread</strong> — 本 thread 内永久允许，其他 thread 仍需确认。用于当前任务的持续操作。</div></div>
+<div class="co coc"><div><strong>global</strong> — 全局永久允许。用于完全信任的常规操作（如 git commit）。</div></div>
+</div>
+</div>
+
+<h3>15.3 Multi-Agent 的权限模型</h3>
+<div class="card cm">
+<div class="ab" style="font-size:12px">
+<span style="color:#38bdf8">只有 Invocation Token 验证（一层）</span>
+
+每次 CLI 调用创建短生命周期身份:
+  InvocationRegistry.createInvocation()
+  → invocationId: uuid
+  → callbackToken: uuid  (TTL 15分钟)
+  → 存储于内存 Map + SQLite
+
+Callback API 验证:
+  // callbacks.ts (line 14-25)
+  const inv = registry.getByInvocationId(invocationId)
+  if (!inv || inv.callbackToken !== callbackToken) {
+    return reply.status(401).send({ error: 'Unauthorized' })
+  }
+  if (cancelledGroups.has(inv.sessionGroupId)) {
+    return reply.status(403).send({ error: 'Cancelled' })
+  }
+
+<span style="color:#f87171">没有:</span>
+  ❌ 人工授权弹框
+  ❌ 持久化权限规则
+  ❌ 操作级别细粒度控制
+  ❌ scope (once/thread/global) 概念
+  ❌ 审计日志 (谁批准了什么)
+
+<span style="color:#34d399">有:</span>
+  ✓ Token TTL 防过期重放
+  ✓ Session 取消立即失效所有 callback
+  ✓ 401/403 快速拒绝
+  ✓ agent_events 事件溯源记录操作历史
+</div>
+</div>
+
+<h3>15.4 Agent 能做什么 — 能力边界</h3>
+<div class="g2">
+<div class="card cc">
+<h3>🐾 Clowder — 受控能力</h3>
+<table class="t" style="font-size:12.5px">
+<thead><tr><th>操作</th><th>控制方式</th></tr></thead>
+<tbody>
+<tr><td>文件读写</td><td>bypassPermissions + cwd白名单</td></tr>
+<tr><td>执行命令</td><td>MCP limbTools.execute() + 授权层</td></tr>
+<tr><td>写 Git commit</td><td>授权层 (可设 global 永久允许)</td></tr>
+<tr><td>跨 Cat 发消息</td><td>MCP collab.post_message() 限当前 thread</td></tr>
+<tr><td>写证据库</td><td>MCP memory.reflect/publish() 鉴权</td></tr>
+<tr><td>修改 Redis</td><td>❌ 不允许，只能通过 MCP 工具</td></tr>
+<tr><td>访问其他用户数据</td><td>❌ X-Cat-Cafe-User header 隔离</td></tr>
+<tr><td>跨 project 访问</td><td>❌ --add-dir 白名单严格限制</td></tr>
+<tr><td>直接网络调用</td><td>❌ 无 --network 标志</td></tr>
+</tbody>
+</table>
+</div>
+<div class="card cm">
+<h3>⚡ Multi-Agent — 宽松能力</h3>
+<table class="t" style="font-size:12.5px">
+<thead><tr><th>操作</th><th>控制方式</th></tr></thead>
+<tbody>
+<tr><td>文件读写</td><td>CLI 全自动 (-a never / yolo)，无限制</td></tr>
+<tr><td>执行 Shell 命令</td><td>CLI 全自动执行，无确认</td></tr>
+<tr><td>写 Git commit</td><td>CLI 直接执行，无拦截</td></tr>
+<tr><td>发公共消息</td><td>Callback API + Token 验证</td></tr>
+<tr><td>读 thread 历史</td><td>Callback API + Token 验证</td></tr>
+<tr><td>跨 session 操作</td><td>❌ Token 绑定 invocation，无法跨越</td></tr>
+<tr><td>数据库操作</td><td>❌ 无直接DB访问</td></tr>
+<tr><td>人工授权弹框</td><td>❌ 无此机制，全自动</td></tr>
+<tr><td>权限规则持久化</td><td>❌ 无，Token 即过期即失效</td></tr>
+</tbody>
+</table>
+<div class="co cor" style="margin-top:8px">
+  <div><strong>⚠️ 安全隐患：</strong>Multi-Agent 中的 Codex/Gemini 以 <code>-a never</code>/<code>yolo</code> 全自动模式运行，理论上可以在工作目录内执行任意文件操作和 Shell 命令，没有细粒度的人工确认机制。</div>
+</div>
+</div>
+</div>
+
+<div class="card">
+<h3>📊 权限控制对比</h3>
+<table class="t">
+<thead><tr><th>维度</th><th class="tc">🐾 Clowder</th><th class="tm">⚡ Multi-Agent</th><th>优劣</th></tr></thead>
+<tbody>
+<tr><td>权限层数</td><td>2层 (CLI bypass + Callback授权)</td><td>1层 (Token验证)</td><td><span class="v-c">Clowder 更深防护</span></td></tr>
+<tr><td>人工授权弹框</td><td><span class="v-good">✓ 120s 超时等待确认</span></td><td><span class="v-bad">✗ 全自动无弹框</span></td><td><span class="v-c">Clowder 人工监督更强</span></td></tr>
+<tr><td>权限规则持久化</td><td><span class="v-good">✓ Redis 存 once/thread/global</span></td><td><span class="v-bad">✗ TTL过期即失效</span></td><td><span class="v-c">Clowder 用户体验更好</span></td></tr>
+<tr><td>Token 安全</td><td>invocationId + callbackToken</td><td><span class="v-good">同，TTL 15min</span></td><td><span class="v-eq">同等</span></td></tr>
+<tr><td>CLI 操作控制</td><td>bypassPermissions (后有Callback把关)</td><td>全 yolo/never (无后置把关)</td><td><span class="v-c">Clowder 整体更安全</span></td></tr>
+<tr><td>审计追踪</td><td>Authorization rules 日志</td><td><span class="v-good">agent_events 全量溯源</span></td><td><span class="v-m">Multi-Agent 事件溯源更完整</span></td></tr>
+<tr><td>实现复杂度</td><td><span class="v-bad">高 (AuthorizationManager + ruleStore)</span></td><td><span class="v-good">低 (Token验证 ~30行)</span></td><td><span class="v-m">Multi-Agent 更易审计</span></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ══════════ §15 WHY COMMANDS FAIL ══════════ -->
+<section id="s15">
+<h2>❌ 十六、为什么 Multi-Agent 很多命令实现不了</h2>
+
+<div class="co cor">
+  <div><strong>根本原因：</strong>Multi-Agent 的 Agent 能力完全受制于底层 CLI 工具本身的能力。缺少 MCP 工具链、缺少持久化记忆、缺少系统级工作流支撑，导致许多 Clowder 能做到的事情在 Multi-Agent 里根本没有触发路径。</div>
+</div>
+
+<h3>16.1 失败原因分类</h3>
+
+<div class="g2">
+<div class="card cm">
+<h3>⏱️ 原因1：5分钟不活跃超时</h3>
+<pre><code>// base-runtime.ts (line 68-125)
+const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000  // 5分钟
+
+const heartbeat = setInterval(() => {
+  const idle = Date.now() - lastActivity
+  if (idle > INACTIVITY_TIMEOUT_MS) {
+    proc.kill('SIGTERM')  // 先发 SIGTERM
+    setTimeout(() =>
+      proc.kill('SIGKILL'),  // 5s后强杀
+      SHUTDOWN_GRACE_PERIOD_MS
+    )
+  }
+}, HEARTBEAT_INTERVAL_MS)  // 30s 检查一次
+
+// 错误消息:
+`Agent 好像睡着了，已经有 300 秒（约 5 分钟）
+ 没有新活动。最后一次活动时间：{timestamp}`</code></pre>
+<div class="co cor">
+  <div><strong>影响：</strong>Agent 执行复杂任务（深度代码重构、大量文件读取、网络等待）时，如果超过 5 分钟没有 stdout/stderr 输出，进程直接被杀死。Clowder 的 ThinkingIndicator 只是告警，不会强制杀死进程。</div>
+</div>
+</div>
+
+<div class="card cm">
+<h3>🔒 原因2：无 MCP 工具 → Codex/Gemini 能力残缺</h3>
+<pre><code>// Multi-Agent 的工具供给方式:
+// Claude   → MCP stdio (2个工具)
+// Codex    → 环境变量 + Callback Prompt
+// Gemini   → 环境变量 + Callback Prompt
+
+// Codex/Gemini 的 MCP 工具 = 0 个
+// 只能靠 system prompt 文字教它用 HTTP fetch
+// 如果 Agent 忘记看 prompt 里的 API 文档
+// 或者 fetch 的 URL/headers 写错
+// → 静默失败，无任何工具调用保障
+
+// 对比 Clowder MCP 工具:
+// search_evidence → 主动搜索历史
+// reflect         → 写决策日志
+// post_message    → 结构化发消息
+// execute         → 受控执行命令
+// Codex/Gemini 都能用，有类型验证</code></pre>
+<div class="co cor">
+  <div><strong>影响：</strong>Codex/Gemini 无法主动搜索历史记录、无法写决策日志、无法发送结构化消息。只能依赖 Agent 自己理解并调用裸 HTTP，容易出错且无结构化保障。</div>
+</div>
+</div>
+
+<div class="card cm">
+<h3>📭 原因3：无跨 Session 记忆 → 上下文断裂</h3>
+<pre><code>// Multi-Agent 的 "记忆" 只有:
+// GET /api/callbacks/thread-context
+// → 返回当前 thread 最近 N 条消息
+
+// 当 native_session_id 被清空时 (错误后):
+// message-service.ts line 387-391
+if (content === '' && sessionId === thread.nativeSessionId) {
+  await sessionService.updateThread(
+    thread.id, thread.currentModel, null  // ← 清空 session
+  )
+}
+
+// Session 被清空后:
+// ① Agent 失去所有工具调用历史
+// ② 失去所有文件操作上下文
+// ③ 下次调用从零开始，不知道做了什么
+// ④ 容易重复做同样的工作或冲突</code></pre>
+<div class="co cor">
+  <div><strong>影响：</strong>一旦出现错误（网络抖动、超时），native_session_id 被清空，Agent 在下次调用时完全不知道上次做了什么，可能重复操作或产生冲突。Clowder 有 resumeCapsule 记录当前进度和目标。</div>
+</div>
+</div>
+
+<div class="card cm">
+<h3>🤖 原因4：Prompt 检测不可靠 → 确认对话失败</h3>
+<pre><code>// message-service.ts (line 52-88)
+// 尝试从 stderr 检测 Agent 暂停等待确认的模式
+
+function extractPromptFromStderr(line: string) {
+  const PROMPT_PATTERNS = [
+    /please confirm/i,
+    /awaiting confirmation/i,
+    /请确认/,
+    /需要你确认/,
+    /\?$/  // 以问号结尾
+  ]
+  return PROMPT_PATTERNS.some(p => p.test(line))
+    ? line : null
+}
+
+// 问题:
+// ① 仅匹配 stderr，stdout 中的确认被忽略
+// ② 正则过于简单，复杂的确认对话无法识别
+// ③ 如果识别失败 → CLI 继续执行，跳过用户确认
+// ④ Codex/Gemini 的确认信息格式各不相同</code></pre>
+<div class="co cor">
+  <div><strong>影响：</strong>当 Agent 需要用户确认危险操作（覆盖文件、删除内容）时，如果 stderr 输出格式不符合预设正则，系统无法捕获暂停信号，直接执行。</div>
+</div>
+</div>
+
+<div class="card cm">
+<h3>🔄 原因5：A2A 严格串行 → 复杂协作超时</h3>
+<pre><code>// dispatch.ts
+// A2A 调度是严格串行的
+async flushDispatchQueue(sessionGroupId) {
+  const next = this.takeNextQueuedDispatch(groupId)
+  if (!next) return
+
+  await this.runThreadTurn(...)  // 等待完成
+  // ↑ 如果这个 Agent 超时 5min 被杀死
+  //   下一个 Agent 也要等 5min 才能开始
+
+  await this.flushDispatchQueue(groupId)  // 递归
+}
+
+// 多 Agent 链式协作场景:
+// A → B → C (每个 5min 超时)
+// 最坏情况: 15min 全部超时，什么都没做
+// Clowder 支持并行: A+B+C 同时跑，3x 效率</code></pre>
+<div class="co cor">
+  <div><strong>影响：</strong>涉及多个 Agent 协作的复杂任务（如：编写 → 审查 → 测试三步流程），每步之间需要等待上一步完全结束，无法并行，总耗时是所有步骤之和。</div>
+</div>
+</div>
+
+<div class="card cm">
+<h3>🧰 原因6：工具能力依赖 CLI 版本</h3>
+<pre><code>// provider-profiles.ts
+// 系统运行时探测 CLI 工具是否存在
+
+async detectClaude() {
+  try {
+    const result = execSync('claude --version')
+    return parseVersion(result)
+  } catch { return null }  // CLI 未安装
+}
+
+// 如果用户没有安装 claude CLI → 无法使用 Claude
+// 如果 codex CLI 版本过旧 → 某些参数不支持
+// 如果 gemini CLI 是自建版本 → 可能有 bug
+
+// Clowder 对比:
+// 使用 spawn + 固定参数 + MCP 工具集
+// 工具能力由服务端控制，不受客户端 CLI 版本影响
+// ClaudeAgentService 有完整的版本兼容处理</code></pre>
+<div class="co cor">
+  <div><strong>影响：</strong>Multi-Agent 的可用功能取决于用户本地安装的 CLI 工具版本。老版本 Codex CLI 可能不支持 <code>--json</code> 参数，Gemini CLI 如果是自建版本可能有兼容问题。</div>
+</div>
+</div>
+</div>
+
+<h3>16.2 Multi-Agent vs Clowder 能力对照表（命令视角）</h3>
+<div class="card">
+<table class="t">
+<thead><tr><th>操作/命令类型</th><th class="tc">🐾 Clowder 能否实现</th><th class="tm">⚡ Multi-Agent 能否实现</th><th>Multi-Agent 失败原因</th></tr></thead>
+<tbody>
+<tr><td>搜索历史相关讨论</td><td><span class="v-good">✓ search_evidence MCP</span></td><td><span class="v-bad">✗</span></td><td>无向量检索，无跨 session 记忆</td></tr>
+<tr><td>记录决策/反思</td><td><span class="v-good">✓ reflect() MCP</span></td><td><span class="v-bad">✗</span></td><td>无持久化记忆写入工具</td></tr>
+<tr><td>执行 30min+ 长任务</td><td><span class="v-good">✓ ThinkingIndicator 告警不杀</span></td><td><span class="v-bad">❌ 5min 超时强杀</span></td><td>inactivity timeout 机制</td></tr>
+<tr><td>任务中断后恢复</td><td><span class="v-good">✓ resumeCapsule + stage</span></td><td><span class="v-bad">✗ session 清空</span></td><td>错误后 nativeSessionId 清零</td></tr>
+<tr><td>多 Agent 并行协作</td><td><span class="v-good">✓ routeParallel()</span></td><td><span class="v-bad">✗ 严格串行</span></td><td>Queue 设计为串行</td></tr>
+<tr><td>发送卡片/音频/交互</td><td><span class="v-good">✓ rich_block MCP</span></td><td><span class="v-bad">✗ 仅纯文本</span></td><td>无 Rich Blocks 系统</td></tr>
+<tr><td>Codex 搜索证据库</td><td><span class="v-good">✓ MCP 统一工具集</span></td><td><span class="v-bad">✗</span></td><td>Codex 无 MCP，靠 Prompt 教 HTTP</td></tr>
+<tr><td>功能从立项到关闭追踪</td><td><span class="v-good">✓ 6阶段 SOP + Redis</span></td><td><span class="v-bad">✗</span></td><td>无工作流状态机</td></tr>
+<tr><td>人工审批危险操作</td><td><span class="v-good">✓ AuthorizationManager 弹框</span></td><td><span class="v-bad">✗ 全自动执行</span></td><td>无授权拦截层</td></tr>
+<tr><td>Gemini 写证据库</td><td><span class="v-good">✓ MCP memory 工具集</span></td><td><span class="v-bad">✗</span></td><td>Gemini 无 MCP</td></tr>
+<tr><td>跨 thread 消息同步</td><td><span class="v-good">✓ Socket.IO Room</span></td><td><span class="v-bad">有限，全局广播</span></td><td>无 Room 隔离</td></tr>
+<tr><td>查看工具执行过程</td><td><span class="v-good">✓ CliOutputBlock UI</span></td><td><span class="v-bad">✗ 黑盒</span></td><td>无 toolEvents 字段</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>16.3 根本差距：设计哲学不同</h3>
+<div class="g2">
+<div class="co coc">
+  <div>
+    <strong>🐾 Clowder：平台思维</strong><br>
+    把 AI 编排当成一个<strong>工程系统</strong>来建设。MCP 工具集、授权层、工作流状态机、记忆引擎都是"基础设施"，Agent 在这套基础设施上运行，能力由平台决定而非由 CLI 决定。<br><br>
+    结果：Agent 能做的事情很多，但平台本身的复杂度极高，部署、维护、理解都有门槛。
+  </div>
+</div>
+<div class="co com">
+  <div>
+    <strong>⚡ Multi-Agent：工具思维</strong><br>
+    把 AI 编排当成一个<strong>CLI 协调器</strong>来建设。不提供额外基础设施，只负责把 CLI 工具拉起来、传递消息、处理 @mention。Agent 的能力边界 = CLI 工具本身的边界。<br><br>
+    结果：简单易部署，但 Agent 的能力天花板是 CLI 版本和配置，很多"高级"操作根本没有触发路径。
+  </div>
+</div>
+</div>
+</section>
+
+<!-- ══════════ §16 ROLE SPECIALIZATION ══════════ -->
+<section id="s16">
+<h2>🎭 十七、Agent 角色专职化 — "只干一件事"是如何实现的</h2>
+
+<div class="co coy">
+  <div><strong>核心问题：</strong>能不能让某个 Agent 只做开发、另一个只做 Review，互相不越界？<br>
+  <strong>Clowder：能，三层机制联合保障。Multi-Agent：不能，架构上根本没有角色约束路径。</strong></div>
+</div>
+
+<h3>17.1 Clowder — 三层角色约束机制</h3>
+
+<div class="card cc">
+<h4>第一层：cat-template.json roster — 角色硬编码定义</h4>
+<pre><code>// cat-template.json — roster 字段
+// 每只猫的角色在配置时就固定下来
+
+"roster": {
+  "opus":      { "roles": ["architect", "peer-reviewer"], "lead": true  },
+  "sonnet":    { "roles": ["assistant"],                  "lead": false },
+  "codex":     { "roles": ["peer-reviewer", "security"],  "lead": true  },
+  "gpt52":     { "roles": ["peer-reviewer", "thinker"],   "lead": true  },
+  "spark":     { "roles": ["coder"],                      "lead": false },
+  "gemini":    { "roles": ["designer"],                   "lead": true  },
+  "dare":      { "roles": ["coding"],                     "lead": false },
+  "opencode":  { "roles": ["coding","multi-agent-orchestration"] }
+}
+
+// evaluation 字段可以写强制禁令：
+// gemini 的 evaluation:
+// "热血小笨蛋！视觉天才但技术残废——禁止写代码"
+// ↑ 这条中文禁令会被注入 system prompt
+
+// reviewPolicy — 全局 reviewer 选择策略
+"reviewPolicy": {
+  "requireDifferentFamily": true,  // ← 必须跨家族 review（防自审）
+  "preferActiveInThread":   true,  // ← 优先选本 thread 活跃成员
+  "preferLead":             true,  // ← 优先选 lead=true 的猫
+  "excludeUnavailable":     true   // ← 排除不可用的猫
+}</code></pre>
+</div>
+
+<div class="card cc" style="margin-top:0">
+<h4>第二层：SystemPromptBuilder — 角色身份注入 + 品种专属工作流触发词</h4>
+<pre><code>// SystemPromptBuilder.ts — buildStaticIdentity()
+// 每次调用时把角色定义注入 prompt，Agent 知道自己是谁
+
+lines.push(`角色：${config.roleDescription}`)
+// opus   → "首席架构师，负责系统设计与技术决策"
+// codex  → "代码评审专家，安全分析，GPT家族"
+// gemini → "UI/UX 设计师，禁止写代码"
+
+// WORKFLOW_TRIGGERS — 品种专属触发词（每个品种不同！）
+const WORKFLOW_TRIGGERS = {
+  ragdoll: [           // Claude (opus/sonnet) 的工作流
+    '- 收到新功能需求 → 触发 feat-lifecycle skill',
+    '- 完成开发/修复 → @缅因猫 请 review',       // ← 主动找 Codex review
+    '- Review 别人代码：每个发现必须有明确立场',
+  ].join('\n'),
+
+  siamese: [           // Gemini 的工作流
+    '- 遇到技术实现问题 → @布偶猫 征询',          // ← 技术问题找 Claude
+    '- 设计完成 → @布偶猫 确认可实现性',          // ← 不自己写代码
+    '- ❌ 不写任何代码，只做设计和视觉',           // ← 明确禁令
+  ].join('\n'),
+
+  'maine-coon': [      // Codex 的工作流
+    '- 收到 review 请求 → 触发 quality-gate 验证',
+    '- Review 完成 → 给出 P1/P2 明确列表',
+    '- 不做功能开发，只做 review 和安全分析',      // ← 明确禁令
+  ].join('\n'),
+}
+// 这段触发词在每次调用时注入对应猫猫的 prompt
+// 让 Claude/Codex/Gemini 记住自己该做什么、不该做什么</code></pre>
+</div>
+
+<div class="card cc" style="margin-top:0">
+<h4>第三层：AgentRouter + reviewPolicy — 路由层强制过滤</h4>
+<pre><code>// AgentRouter.ts — applyThreadRoutingPolicy()
+// 当 request-review skill 触发 reviewer 选择时：
+
+function buildReviewerSection(cats, threadCtx) {
+  // Step 1: 只有 roles 包含 'peer-reviewer' 的猫才能被选中
+  const reviewCandidates = cats.filter(cat =>
+    catHasRole(cat.id, 'peer-reviewer')
+  )
+  // spark(coder) 和 gemini(designer) 直接排除
+  // 只剩 opus(architect+reviewer) / codex / gpt52
+
+  // Step 2: reviewPolicy.requireDifferentFamily
+  // 如果当前写代码的是 Claude 家族 (ragdoll)
+  // 那必须找 GPT 家族 (maine-coon) 来 review
+  const crossFamily = reviewCandidates.filter(cat =>
+    cat.family !== currentCat.family
+  )
+  if (crossFamily.length > 0) {
+    candidates = crossFamily  // 强制跨家族
+  }
+
+  // Step 3: routingPolicy.scopes (Thread 级别路由规则)
+  // 可以在 thread 维度设置 prefer/avoid 列表
+  // 例如: { scope: 'review', prefer: ['codex'], avoid: ['opus'] }
+  const rule = policy.scopes['review']
+  filtered = candidates.filter(id => !rule.avoid.includes(id))
+  sorted   = filtered.sort by rule.prefer first
+}
+
+// 结果：reviewer 的选择完全由系统决定
+// Agent 自己无法决定"我来 review"——必须被路由过来</code></pre>
+</div>
+
+<h3>17.2 端到端角色专职化流程</h3>
+<div class="ab" style="font-size:12px">
+<span style="color:#fbbf24">场景：opus 开发完，需要 codex review</span>
+
+<span style="color:#a78bfa">① opus (ragdoll/architect) 开发代码</span>
+   system prompt 包含: "角色：首席架构师"
+   WORKFLOW_TRIGGER: "完成开发 → @缅因猫 请 review"
+   → opus 自然会在完成时 @codex (缅因猫)
+
+<span style="color:#38bdf8">② @mention 被 a2a-mentions.ts 解析</span>
+   targets = ['codex']
+   自提及过滤: opus ≠ codex ✓
+   最多2目标: 1 ≤ 2 ✓
+
+<span style="color:#10b981">③ AgentRouter 路由到 codex</span>
+   catRegistry.get('codex').roles = ['peer-reviewer','security']
+   codex 确实有 'peer-reviewer' 角色 ✓
+   codex family='maine-coon' ≠ opus family='ragdoll' ✓ (跨家族)
+
+<span style="color:#f59e0b">④ codex 接收 review 任务</span>
+   system prompt 包含: "角色：代码评审专家"
+   WORKFLOW_TRIGGER (maine-coon):
+     "收到 review 请求 → 触发 quality-gate 验证"
+     "不做功能开发，只做 review"
+   → codex 知道自己只能做 review，不能改代码
+
+<span style="color:#ef4444">⑤ 防越界机制</span>
+   如果 codex 试图直接修改代码文件：
+   - system prompt 明确写着 "不做功能开发"
+   - 没有 coder 触发词引导它写代码
+   - 如果还是越界 → Vision Guard / 家规 P2 约束
+   如果 gemini 被 @mention 去 review：
+   - AgentRouter.buildReviewerSection() 过滤掉 gemini
+     (roles=['designer'], 不含 'peer-reviewer')
+   - gemini 不会出现在 reviewer 候选列表里
+</div>
+
+<h3>17.3 Multi-Agent — 为什么实现不了</h3>
+<div class="card cm">
+<pre><code>// agent-prompts.ts — 所有 provider 的 system prompt
+export const AGENT_SYSTEM_PROMPTS: Record&lt;Provider, string&gt; = {
+  claude: COMMON_PROMPT,                              // 完全一样的通用 prompt
+  codex:  [COMMON_PROMPT, CALLBACK_API_PROMPT].join('\n\n'),  // 只多了 API 说明
+  gemini: [COMMON_PROMPT, CALLBACK_API_PROMPT].join('\n\n'),
+}
+
+// COMMON_PROMPT 的关键部分：
+const COMMON_PROMPT = `
+## 工作流（主动 @ 触发点）
+- 完成开发/修复 → @reviewer 请 review   ← 通用别名，非具体cat
+- 修完 review 意见 → @reviewer 确认修复
+- 遇到视觉/体验问题 → @designer 征询
+`
+// 问题：
+// ① @reviewer 是字符串别名，不是角色约束
+//    Claude/Codex/Gemini 都可以自称 @reviewer
+// ② 没有 roles 字段，无法过滤"谁有资格做review"
+// ③ 没有 requireDifferentFamily，Claude 可以自己 review 自己的代码
+// ④ 没有 "gemini 禁止写代码" 这样的明确禁令
+// ⑤ 三个 provider 的 prompt 几乎完全相同
+//    它们对自己的"职责边界"没有任何感知</code></pre>
+
+<div class="g3" style="margin-top:12px">
+<div class="co cor"><div><strong>没有 roles 配置</strong><br>Multi-Agent 中所有 provider 地位平等，没有任何配置说"codex=reviewer"或"gemini=designer"。即使你想加，也没有地方存这个配置。</div></div>
+<div class="co cor"><div><strong>没有路由过滤</strong><br>mention-router.ts 只负责解析 @alias 是谁，不检查被 mention 的 agent 是否有对应角色资格。任何人 @谁，谁就响应。</div></div>
+<div class="co cor"><div><strong>没有品种触发词</strong><br>三个 provider 用同一套 COMMON_PROMPT，没有"你是开发者所以完成后 @reviewer"这样的品种专属工作流引导。角色意识完全靠 Agent 自己猜。</div></div>
+</div>
+</div>
+
+<h3>17.4 若要在 Multi-Agent 中实现角色专职化，需要什么</h3>
+<div class="card cm">
+<table class="t">
+<thead><tr><th>需要新增</th><th>对应 Clowder 实现</th><th>改动难度</th></tr></thead>
+<tbody>
+<tr><td>Provider 角色配置</td><td>cat-template.json roster.roles</td><td>中：加配置文件</td></tr>
+<tr><td>per-provider system prompt</td><td>WORKFLOW_TRIGGERS per breed</td><td>低：改 agent-prompts.ts</td></tr>
+<tr><td>mention 路由角色校验</td><td>catHasRole() in AgentRouter</td><td>高：改 dispatch.ts 核心逻辑</td></tr>
+<tr><td>跨家族 review 强制</td><td>reviewPolicy.requireDifferentFamily</td><td>高：需要家族/家谱概念</td></tr>
+<tr><td>Thread 级路由策略</td><td>routingPolicy.scopes</td><td>高：需要新增存储和 API</td></tr>
+<tr><td>明确禁令注入 prompt</td><td>"gemini 禁止写代码"</td><td>低：改 COMMON_PROMPT</td></tr>
+</tbody>
+</table>
+<div class="co com" style="margin-top:8px"><div><strong>结论：</strong>角色专职化在 Multi-Agent 中不是"加一行代码"能解决的问题。它需要在配置层、路由层、prompt 层三处同时改造，而这三处改造会引入大量新的复杂度，背离 Multi-Agent "精简"的设计原则。</div></div>
+</div>
+
+<div class="card">
+<h3>📊 角色专职化能力对比</h3>
+<table class="t">
+<thead><tr><th>能力</th><th class="tc">🐾 Clowder</th><th class="tm">⚡ Multi-Agent</th><th>差距</th></tr></thead>
+<tbody>
+<tr><td>角色硬编码定义</td><td><span class="v-good">✓ roster.roles per cat</span></td><td><span class="v-bad">✗ 无角色概念</span></td><td><span class="v-c">Clowder 独有</span></td></tr>
+<tr><td>品种专属工作流</td><td><span class="v-good">✓ WORKFLOW_TRIGGERS per breed</span></td><td><span class="v-bad">✗ 三者相同 prompt</span></td><td><span class="v-c">Clowder 独有</span></td></tr>
+<tr><td>reviewer 资格过滤</td><td><span class="v-good">✓ catHasRole('peer-reviewer')</span></td><td><span class="v-bad">✗ 无过滤</span></td><td><span class="v-c">Clowder 独有</span></td></tr>
+<tr><td>跨家族 review 强制</td><td><span class="v-good">✓ requireDifferentFamily</span></td><td><span class="v-bad">✗</span></td><td><span class="v-c">Clowder 独有</span></td></tr>
+<tr><td>明确角色禁令</td><td><span class="v-good">✓ "gemini 禁止写代码"</span></td><td><span class="v-bad">✗</span></td><td><span class="v-c">Clowder 独有</span></td></tr>
+<tr><td>Thread 级路由策略</td><td><span class="v-good">✓ routingPolicy.scopes</span></td><td><span class="v-bad">✗</span></td><td><span class="v-c">Clowder 独有</span></td></tr>
+<tr><td>实现复杂度</td><td>高（cat-template + Builder + Router）</td><td>零（无此功能）</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ══════════ §17 SILENT PERMISSION FAILURE ══════════ -->
+<section id="s17">
+<h2>🚧 十八、权限机制深析 — Clowder 真的全放行吗？Multi-Agent 为何静默终止？</h2>
+
+<h3>18.1 Clowder 的 bypassPermissions 不是"完全放行"</h3>
+
+<div class="co coc">
+  <div><strong>误解澄清：</strong><code>bypassPermissions</code> 只是关闭了 <strong>Claude CLI 自身的交互确认弹框</strong>，并不是放弃所有权限控制。Clowder 在 CLI 之外构建了一套更精细的授权层来补位。</div>
+</div>
+
+<div class="card cc">
+<div class="ab" style="font-size:12px">
+<span style="color:#a78bfa">理解 bypassPermissions 的正确方式：</span>
+
+默认 Claude CLI 行为 (acceptEdits):
+  Agent 想写文件 → CLI 弹框 "是否允许写入 xxx.ts?" → 用户点击
+  ↓ 在服务端自动化中，没有人在点击，请求会永远挂起
+
+bypassPermissions 的含义：
+  Agent 想写文件 → CLI 直接执行，不弹框
+  ↓ 但"什么文件能写"由上层 Callback 授权层控制
+
+<span style="color:#10b981">真正的权限控制在 Callback 授权层：</span>
+
+Agent 调用 MCP tool (如 execute命令、写关键文件)
+  ↓
+POST /api/callbacks/request-permission
+  { invocationId, catId, action, reason }
+  ↓
+AuthorizationManager.check(action, catId, threadId)
+  ├─ 匹配到持久规则 (allow/deny) → 立即返回
+  └─ 无规则 → WebSocket 推送到前端弹框 (120s超时)
+              用户选择: allow once / allow thread / allow global
+              ↓
+              写入 AuthorizationRule 到 Redis
+              下次同类操作自动放行
+
+<span style="color:#f59e0b">所以 bypassPermissions = 把 CLI 层确认挪到 API 层</span>
+不是"不确认"，而是"用更好的方式确认"
+</div>
+
+<h4>哪些操作仍然受控？</h4>
+<div class="g2">
+<div>
+<table class="t" style="font-size:12.5px">
+<thead><tr><th>操作类型</th><th>控制方式</th></tr></thead>
+<tbody>
+<tr><td>写普通源代码文件</td><td>bypassPermissions 自动通过（已质检）</td></tr>
+<tr><td>执行 Shell 命令</td><td>Callback 授权层弹框确认</td></tr>
+<tr><td>push 到远程仓库</td><td>Callback 授权 + merge-gate 5条件</td></tr>
+<tr><td>修改 .env / config</td><td>铁律禁止，家规 P3 Config Immutability</td></tr>
+<tr><td>访问其他 thread 数据</td><td>X-Cat-Cafe-User header 隔离</td></tr>
+<tr><td>直接访问 Redis/SQLite</td><td>❌ 无 MCP 工具开放此能力</td></tr>
+<tr><td>跑测试/lint</td><td>quality-gate 门禁强制要求</td></tr>
+</tbody>
+</table>
+</div>
+<div class="co coc" style="align-self:start"><div>
+<strong>关键设计思路：</strong><br>
+质检门禁（quality-gate 必须通过）已经保证了代码质量，CLI 层的文件写入确认是多余的重复劳动。把它移到 Callback 层，可以针对"真正高风险"的操作（shell命令、push）做精准拦截，而不是对每个文件写入都烦扰用户。
+</div></div>
+</div>
+</div>
+
+<h3>18.2 Multi-Agent 的权限模型 — 三种 CLI 各自行事</h3>
+<div class="card cm">
+<div class="ab" style="font-size:12px">
+<span style="color:#38bdf8">Claude CLI (claude-runtime.ts)</span>
+  没有 --permission-mode 参数
+  使用 MCP 工具调用
+  → 当 Claude 需要执行危险操作时：
+    选项A: 通过 MCP post_message 发消息 (可控)
+    选项B: Claude CLI 自己判断是否需要确认
+         → 如果需要确认，弹框信息发到 STDERR
+         → message-service.ts 尝试从 stderr 解析
+         → 但前端没有对应的弹框 UI！
+
+<span style="color:#f59e0b">Codex CLI (codex-runtime.ts)</span>
+  参数: -a never -s workspace-write
+  '-a never'        = 自动拒绝所有需要用户确认的操作
+  '-s workspace-write' = workspace 内文件写入全部自动允许
+  → Codex 根本不会弹框，遇到高风险操作直接拒绝或执行
+  → 用户永远看不到 Codex 想做什么
+
+<span style="color:#a78bfa">Gemini CLI (gemini-runtime.ts)</span>
+  参数: --approval-mode yolo
+  'yolo' = 所有工具调用自动批准
+  → Gemini 执行任何操作都不询问
+  → 包括删除文件、执行命令等
+</div>
+</div>
+
+<h3>18.3 静默终止的根本原因 — 完整解析</h3>
+
+<div class="g2">
+<div class="card cm">
+<h4>🔴 场景A：Claude 需要确认但前端无弹框</h4>
+<div class="ab" style="font-size:12px">
+Claude CLI 执行中，遇到需要确认的操作:
+  例如: 写入敏感文件、执行 shell 命令
+
+Claude CLI 在 STDERR 输出:
+  "Do you want to proceed? (y/n)"
+  或: "请确认是否执行此操作？"
+         ↓
+message-service.ts extractPromptFromActivityChunk()
+  检测到 STDERR 中的确认模式
+         ↓
+  把确认文本存入 invocation 的 prompt 字段
+  广播 WS 事件: { type: 'dispatch.blocked', attempts }
+         ↓
+前端收到 dispatch.blocked 事件
+  但前端 UI 只有:
+  - 消息气泡
+  - "停止" 按钮
+  没有"授权弹框"组件！
+         ↓
+用户看不到任何提示
+CLI 等待 stdin 输入，但 stdin 是 pipe，无人输入
+         ↓
+30秒无活动 heartbeat 检测
+5分钟超时 → SIGTERM → SIGKILL
+Agent 静默死亡
+</div>
+</div>
+
+<div class="card cm">
+<h4>🔴 场景B：Codex -a never 静默拒绝</h4>
+<div class="ab" style="font-size:12px">
+Codex 执行中，遇到需要确认的工具调用:
+  例如: 执行某个 bash 命令
+
+'-a never' 的实际含义:
+  不是"从不询问"，而是
+  "遇到需要确认的操作 → 自动拒绝执行"
+         ↓
+Codex 在输出中可能只有:
+  "I was unable to execute the command
+   because it requires approval."
+         ↓
+这段文本混在 assistant_delta 流里
+用户只看到一串解释性文字
+看不出这是权限失败
+         ↓
+任务实际上没有完成
+但前端 UI 显示为"正常结束"
+用户以为成功了
+
+// 更糟糕的情况：
+// Codex 认为自己已经完成（输出了解释）
+// 触发 @reviewer 的 A2A dispatch
+// Reviewer 拿到一个"假完成"的代码去 review
+// 整个链条建立在错误假设上
+</div>
+</div>
+</div>
+
+<div class="card cm">
+<h4>🔴 场景C：Claude 需要确认但 -a 未设置（最常见的静默失败）</h4>
+<pre><code>// message-service.ts (line 52-88)
+// 这是系统唯一的"权限感知"代码
+
+function extractPromptFromActivityChunk(line: string): boolean {
+  // 只检测 STDERR 中的这些固定模式
+  const patterns = [
+    /please confirm/i,
+    /awaiting confirmation/i,
+    /请确认/,
+    /需要你确认/,
+    /\?$/   // 以问号结尾的行
+  ]
+  return patterns.some(p => p.test(line))
+}
+
+// 问题1: Claude CLI 的确认信息格式不只这几种
+// "Would you like me to proceed?" → 不匹配
+// "Should I continue?" → 不匹配
+// "Confirm (yes/no):" → 不匹配 (没有?)
+
+// 问题2: 即使检测到了，也只是设置一个标志
+// 前端的 dispatch.blocked 事件没有弹框 UI
+// 没有"允许"/"拒绝"按钮
+// 用户能做的只有"停止整个会话"
+
+// 问题3: 检测基于 STDERR，但 Claude stream-json 模式
+// 很多内容通过 STDOUT NDJSON 输出，不经过 STDERR</code></pre>
+</div>
+
+<h3>18.4 对比：Clowder 如何解决同样问题</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — 授权弹框完整闭环</div>
+  <pre><code>// 1. Agent 主动请求授权 (不是被动等待)
+// MCP memory/collab 工具调用时，如果需要
+// 高权限操作，会调用 request-permission
+
+// 2. 前端有完整的授权 UI
+// Socket.IO 事件: 'authorization:request'
+// 前端弹出: 操作名 + 原因 + 三个按钮:
+//   [允许一次] [允许此Thread] [全局允许] [拒绝]
+
+// 3. 持久化规则
+// 选"允许此Thread" → Redis 写入 AuthorizationRule
+// 下次同类操作自动通过，不再打扰用户
+
+// 4. 超时保护
+// 120秒无响应 → 视为拒绝，不是无限挂起
+// Agent 收到拒绝回应，可以优雅降级</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — 三种失效模式</div>
+  <pre><code>// 模式1: Claude 需要确认
+// STDERR → 解析 → dispatch.blocked 事件
+// 前端无弹框 UI → 用户无法响应
+// → 超时后静默终止
+
+// 模式2: Codex -a never
+// 遇到需确认操作 → 自动拒绝
+// 输出一段解释文字看起来像正常回复
+// → 任务实际失败，但外观正常结束
+
+// 模式3: Gemini --approval-mode yolo
+// 所有操作自动通过，包括危险操作
+// → 无权限控制，安全风险
+
+// 三种 CLI 行为不一致
+// 用户对"操作是否真的执行了"完全没有感知</code></pre>
+</div>
+</div>
+
+<div class="card">
+<h3>📊 权限与静默失败对比</h3>
+<table class="t">
+<thead><tr><th>场景</th><th class="tc">🐾 Clowder 表现</th><th class="tm">⚡ Multi-Agent 表现</th><th>结果</th></tr></thead>
+<tbody>
+<tr><td>Agent 需要执行 shell 命令</td><td>前端弹授权框，用户决定</td><td>Codex: 静默拒绝; Gemini: 静默执行</td><td><span class="v-c">Clowder 用户有感知</span></td></tr>
+<tr><td>Agent 需要写入敏感文件</td><td>Callback 授权层拦截，弹框</td><td>Claude: 可能挂起; Gemini: 直接写</td><td><span class="v-c">Clowder 行为可预期</span></td></tr>
+<tr><td>5min 无输出</td><td>ThinkingIndicator 警告 + 用户可取消</td><td>SIGTERM 静默杀死进程</td><td><span class="v-c">Clowder 用户可干预</span></td></tr>
+<tr><td>权限规则记忆</td><td>Redis 持久化 once/thread/global</td><td>无，每次重新遇到</td><td><span class="v-c">Clowder 用户体验更好</span></td></tr>
+<tr><td>三 Provider 行为一致性</td><td>全走 Callback 授权层</td><td>Claude/Codex/Gemini 三套逻辑</td><td><span class="v-c">Clowder 更可靠</span></td></tr>
+<tr><td>危险操作误执行风险</td><td>低 (授权拦截)</td><td>Gemini: 高 (yolo模式)</td><td><span class="v-c">Clowder 更安全</span></td></tr>
+<tr><td>实现复杂度</td><td>高 (AuthorizationManager)</td><td>低 (Token验证)</td><td><span class="v-m">Multi-Agent 更简单</span></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="co coy" style="margin-top:8px">
+  <div>
+    <strong>一句话总结：</strong><br>
+    Clowder 的 <code>bypassPermissions</code> 是"把确认从 CLI 层移到 API 层"，配合前端弹框形成闭环，Agent 能做什么用户清楚知道。<br>
+    Multi-Agent 的三个 CLI 各走各的路：Claude 可能挂起、Codex 静默拒绝、Gemini 无脑执行——用户对整个过程缺乏感知，这才是"很多命令实现不了"的核心原因之一。
+  </div>
+</div>
+</section>
+
+<!-- ══════════ §18 A2A ORDER ══════════ -->
+<section id="s18">
+<h2>🗂️ 十九、A2A 秩序控制 — 如何防止 Agent 之间的混乱</h2>
+
+<div class="co coy">
+  <div><strong>核心问题：</strong>多 Agent 相互 @mention，怎么保证不无限循环、不重复触发、不乱序、不相互打断？<br>
+  Clowder 用 <strong>7 层防护</strong>构建了完整的秩序体系。Multi-Agent 只有 2 层，存在多个真实的失控场景。</div>
+</div>
+
+<h3>19.1 Clowder — 7 层 A2A 秩序防护</h3>
+
+<div class="card cc">
+<div class="ab" style="font-size:12px">
+<span style="color:#a78bfa">【全局视图】Clowder A2A 防护层次</span>
+
+用户消息 → AgentRouter → routeSerial / routeParallel
+                              │
+         ┌────────────────────┼────────────────────────┐
+         ▼                    ▼                         ▼
+    Layer 1              Layer 2                   Layer 3
+  深度上限            Mention 解析规则           队列公平门禁
+MAX_A2A_DEPTH=15      行首+最多2目标        用户新消息则暂停A2A
+         │                    │                         │
+         └────────────────────┼────────────────────────┘
+                              ▼
+                    WorklistRegistry (动态工作列表)
+                         │              │
+                    Layer 4          Layer 5
+                 跨路径去重         Pending-tail去重
+              (InvocationQueue)   (已排队不重复)
+                         │
+                    Layer 6         Layer 7
+                 SessionMutex    Signal 中止传播
+                (同session串行)  (取消→整链优雅退出)
+</div>
+</div>
+
+<div class="card cc" style="margin-top:8px">
+<h4>Layer 1：深度硬限制（MAX_A2A_DEPTH = 15）</h4>
+<pre><code>// a2a-mentions.ts (line 19-21)
+export function getMaxA2ADepth(): number {
+  return parseInt(process.env.MAX_A2A_DEPTH ?? '15', 10)
+}
+
+// route-serial.ts — 工作列表推送时检查
+for (const nextCat of a2aMentions) {
+  if (worklistEntry.a2aCount >= maxDepth) break  // 超限直接停
+  worklist.push(nextCat)
+  worklistEntry.a2aCount++  // 全局计数，跨所有 A2A 跳转累加
+}
+
+// 注意：a2aCount 是整条链的全局计数
+// A→B→C→A→B 每一跳都+1，不是每个 agent 各自计数
+// 防止：A↔B 相互 @mention 15 次后强制停止</code></pre>
+</div>
+
+<div class="card cc" style="margin-top:8px">
+<h4>Layer 2：Mention 解析的多重过滤规则</h4>
+<pre><code>// a2a-mentions.ts — parseA2AMentions()
+// 过滤规则叠加，每一条都能独立阻断乱触发
+
+// ① 必须行首：只有行首 @mention 才触发 A2A
+// "分析一下 @opus 的代码" → ❌ 不触发（不在行首）
+// "@opus 帮我看看"        → ✓ 触发
+
+// ② 剥除代码块：先去掉 ``` ... ``` 内容再解析
+// 防止代码示例里的 @username 误触发
+
+// ③ 最长模式优先匹配：
+entries.sort((a, b) => b.pattern.length - a.pattern.length)
+// @opus-45 (8字) 排在 @opus (5字) 前面
+// 防止 @opus-45 被 @opus 误匹配吃掉
+
+// ④ Token 边界检查：@mention 后必须跟空白/标点
+const isBoundary = !charAfter
+  || TOKEN_BOUNDARY_RE.test(charAfter)
+// "@opuscode" 不触发（o后面跟c，无边界）
+
+// ⑤ 自提及过滤：猫猫不能 @自己
+if (id === currentCatId) continue  // line 84
+
+// ⑥ 不可用猫过滤：
+if (!isCatAvailable(id)) continue  // line 85
+
+// ⑦ 最多 2 个目标：
+const MAX_A2A_MENTION_TARGETS = 2  // line 24
+// 防止一条消息同时触发 10 个 agent</code></pre>
+</div>
+
+<div class="card cc" style="margin-top:8px">
+<h4>Layer 3：队列公平门禁（用户优先）</h4>
+<pre><code>// route-serial.ts (lines 708-717)
+// 在扩展 A2A 工作列表之前，先检查用户是否有新消息在排队
+
+const queuedMessagesPending = queueHasQueuedMessages(threadId)
+
+if (a2aMentions.length > 0
+    && worklistEntry.a2aCount < maxDepth
+    && !signal?.aborted
+    && !queuedMessagesPending) {   // ← 关键门禁
+  // 只有用户没有排队消息时，才允许 A2A 链继续延伸
+  worklist.push(nextCat)
+}
+
+// 场景：A→B 正在执行，用户发了新消息
+// queuedMessagesPending = true
+// B 的 @C mention 被忽略
+// A2A 链在此终止，用户新消息优先处理
+// 防止用户被 agent 链条"架空"</code></pre>
+</div>
+
+<div class="card cc" style="margin-top:8px">
+<h4>Layer 4：跨路径去重（InvocationQueue 双路检测）</h4>
+<pre><code>// route-serial.ts (lines 722-729)
+// 防止"文本扫描 A2A"和"MCP Callback A2A"同时触发同一个 Cat
+
+if (hasQueuedOrActiveAgentForCat?.(threadId, nextCat)) {
+  log.info(
+    'A2A text-scan dedup: cat already in InvocationQueue, skipping'
+  )
+  continue  // 跳过，不重复入队
+}
+
+// 场景：
+// A 的回复文本里有 @B（文本扫描检测到）
+// 同时 A 还通过 MCP post_message 带 @B（Callback 路径）
+// 没有这层去重 → B 会被触发两次
+// 有了去重 → 检测到 B 已在 InvocationQueue → 文本扫描路径跳过</code></pre>
+</div>
+
+<div class="card cc" style="margin-top:8px">
+<h4>Layer 5：Pending-tail 去重（工作列表内部去重）</h4>
+<pre><code>// WorklistRegistry.ts — pushToWorklist()
+// 去重范围是"尚未执行的尾部"，而非全部历史
+// 这个设计允许 A→B→A 的乒乓，但防止 A 被同时排队两次
+
+const pending = entry.list.slice(entry.executedIndex)
+// entry.executedIndex = 已执行到第几项
+
+for (const cat of cats) {
+  if (entry.a2aCount >= entry.maxDepth) break
+  if (!pending.includes(cat)) {
+    entry.list.push(cat)   // 不在待执行列表中 → 可以加入
+    entry.a2aCount++
+    added.push(cat)
+    pending.push(cat)      // 立即更新 pending 视图，防同批次重复
+  }
+  // 已在 pending 中 → 只更新元数据（a2aFrom/triggerMsgId），不重复入队
+}
+
+// 设计哲学：
+// 已执行过的 cat 可以再次被加入（允许 A→B→A）
+// 待执行的 cat 不可以重复加入（防止同时排队两个 B）</code></pre>
+</div>
+
+<div class="card cc" style="margin-top:8px">
+<h4>Layer 6：SessionMutex — 同 CLI Session 串行化</h4>
+<pre><code>// SessionMutex.ts — invoke-single-cat.ts line 59 引用单例
+class SessionMutex {
+  private held  = new Map&lt;string, () => void&gt;()
+  private waiters = new Map&lt;string, Waiter[]&gt;()
+
+  async acquire(sessionId: string, signal?: AbortSignal) {
+    if (this.held.has(sessionId)) {
+      // 已被持有 → 排队等待（FIFO）
+      return new Promise((resolve, reject) => {
+        this.waiters.get(sessionId)!.push({ resolve, reject })
+        signal?.addEventListener('abort', () => reject(signal.reason))
+      })
+    }
+    // 快路径：直接获取锁
+    return this.lock(sessionId)
+  }
+}
+
+// 每次 invoke-single-cat 执行时：
+if (sessionId) {
+  sessionMutexRelease = await sessionMutex.acquire(sessionId, signal)
+}
+// 同一 --resume sessionId 只能有一个调用在执行
+// 防止两个 agent 同时 resume 同一个 CLI session → 状态污染
+
+// 用户取消时：
+// signal.abort() → 排队中的 acquire() 抛出 AbortError
+// yield { type:'done', isFinal:true }
+// 整条 A2A 链优雅退出</code></pre>
+</div>
+
+<div class="card cc" style="margin-top:8px">
+<h4>Layer 7：Signal 中止传播（取消 → 整链退出）</h4>
+<pre><code>// 取消信号从 SocketManager 发出，贯穿整条 A2A 链
+
+// 用户点击"取消"
+socket.on('cancel_invocation', ({ threadId }) => {
+  invocationTracker.cancel(invocationId)
+  multiMentionOrchestrator.abortByThread(threadId)  // 中止所有多提及
+})
+
+// 信号传播路径：
+// cancel() → AbortController.abort()
+//   → sessionMutex.acquire() 排队中的 promise reject
+//   → route-serial.ts 中 signal?.aborted 检查
+//     → 停止扩展 worklist
+//     → 当前 cat 完成后 isFinal=true
+//     → 前端收到 done，UI 清除 loading 状态
+
+// 每个 invoke-single-cat 都持有 signal 引用
+// 整条 A2A 链共享同一个 AbortController
+// 一次取消 → 全链有序退出，不留半执行状态</code></pre>
+</div>
+
+<h3>19.2 并行 A2A 的特殊设计：routeParallel 永不链式触发</h3>
+<div class="card cc">
+<pre><code>// route-parallel.ts (line 10 注释)
+// "routeParallel never chains" — 并行模式中 A2A 被完全禁用
+
+// 设计原因：
+// 并行执行 A→B, A→C 同时进行
+// 如果 B 触发 A2A @D，C 也触发 A2A @D → D 被触发两次
+// 如果 B 触发 @C，C 正在执行中 → 状态不一致
+// 并行中任何 A2A 链式都会导致不可预测的级联
+
+// 实现：
+async function* routeParallel(cats, ...) {
+  // 所有 cat 并发执行，共享 teammates 上下文
+  const tasks = cats.map(cat => invokeSingleCat(cat, {
+    mode: 'parallel',
+    teammates: cats.filter(c => c !== cat),
+    // 注意：没有传入 a2aEnabled 或 worklistRegistry
+    // → 并行模式中 parseA2AMentions 的结果被忽略
+  }))
+  yield* mergeAsyncIterables(tasks)
+}
+
+// 串行 (routeSerial) vs 并行 (routeParallel)
+// 串行: 支持 A2A 链式延伸，每个 cat 看到前一个的回复
+// 并行: 禁止 A2A，所有 cat 独立回复，互不触发</code></pre>
+<div class="co coc" style="margin-top:8px"><div><strong>设计哲学：</strong>并行适合"集思广益"（ideate intent），每个 Cat 独立思考不互相影响；串行适合"流水线执行"（execute intent），前一个的输出是下一个的输入，A2A 在此有意义。</div></div>
+</div>
+
+<h3>19.3 Multi-Agent — 2 层防护及其缺陷</h3>
+<div class="card cm">
+<pre><code>// dispatch.ts — Multi-Agent 的全部 A2A 防护
+class DispatchOrchestrator {
+  private readonly MAX_HOPS = 10
+  private rootHopCounts = new Map&lt;string, number&gt;()
+  // 每条消息根的 hop 计数
+
+  private rootTriggeredProviders = new Map&lt;string, Set&lt;string&gt;&gt;()
+  // 每条消息根已触发过的 provider 集合
+
+  enqueuePublicMentions(sessionGroupId, messageRootId, mentions, sourceProvider) {
+    const hopCount = this.rootHopCounts.get(messageRootId) ?? 0
+
+    // 防护1：hop 上限
+    if (hopCount >= this.MAX_HOPS) {
+      this.blockedDispatches.push({ reason: 'hop_limit', ... })
+      return
+    }
+
+    for (const mention of mentions) {
+      const triggered = this.rootTriggeredProviders.get(messageRootId) ?? new Set()
+
+      // 防护2：同根消息链不重复触发同一 provider
+      if (triggered.has(mention.provider)) continue
+      if (mention.provider === sourceProvider) continue
+
+      triggered.add(mention.provider)
+      this.queues.get(sessionGroupId)?.push({ ... })
+    }
+  }
+}</code></pre>
+</div>
+
+<h3>19.4 Multi-Agent A2A 的具体缺陷逐条分析</h3>
+
+<div class="g2">
+<div class="card cm">
+<h4>❌ 缺陷1：rootTriggeredProviders 去重太激进</h4>
+<pre><code>// 问题：同一根消息链，每个 provider 只能被触发一次
+// 场景：
+// 用户: "实现登录功能"
+// Claude: "@Codex 写代码"      → Codex 入队，触发记录
+// Codex: 写完 "@Claude review"  → Claude 触发记录
+// Claude review 完: "@Codex 有bug" → ❌ Codex 已在记录里，跳过！
+
+// Codex 永远没机会修复它自己发现的 bug
+// 工作流在第二轮就断掉了
+
+// Clowder 的做法：
+// 使用 Pending-tail 去重（只查待执行列表）
+// 已执行完的 cat 可以重新入队
+// A→B→A 是合法的修复迭代</code></pre>
+<div class="co cor"><div>根去重策略在"同一问题需要多轮迭代"的场景下会提前断链，导致工作流无法完成。</div></div>
+</div>
+
+<div class="card cm">
+<h4>❌ 缺陷2：hop count 是根级别的，非链级别</h4>
+<pre><code>// rootHopCounts 按 messageRootId 计数
+// messageRootId = 用户原始消息的 id
+
+// 问题：如果用户消息触发了很长的协作链
+// 每一跳都消耗这个根的配额
+// 用完 10 跳后，即使只是简单的确认消息也被阻断
+
+// 更严重的：不同 session group 的计数互不干扰
+// 但同一 group 内的所有 A2A 共享一个根的计数
+// 如果链条中某个 Agent 发了多条消息，每条都算一跳
+
+// Clowder 的做法：
+// a2aCount 按 worklist 全局计数，但不与根绑定
+// 同一个 agent 发多条消息只算一次扩展
+// 更精确地反映"实际 A2A 跳转次数"</code></pre>
+<div class="co cor"><div>hop 计数颗粒度粗，容易误伤正常的多条消息交流，把合法协作当成无限循环截断。</div></div>
+</div>
+
+<div class="card cm">
+<h4>❌ 缺陷3：完全没有用户优先机制</h4>
+<pre><code>// dispatch.ts / message-service.ts
+// 没有任何检查"用户是否有新消息在等待"
+
+async flushDispatchQueue(sessionGroupId) {
+  const next = this.dispatch.takeNextQueuedDispatch(groupId)
+  if (!next) return
+  await this.runThreadTurn(...)  // 直接执行，不检查用户队列
+  await this.flushDispatchQueue(groupId)  // 递归继续
+}
+
+// 场景：
+// Agent A→B→C 链式执行（每个 5 分钟）
+// 用户发现 A 的回复有问题，想纠正
+// 但 B 和 C 还在排队执行
+// 用户无法插入新消息（isRunning 标志阻止）
+// 只能等待整条链结束（最长 15 分钟）
+
+// Clowder 的做法（Layer 3）：
+// queueHasQueuedMessages(threadId)
+// 用户有新消息 → A2A 链立即停止延伸
+// 优先响应用户</code></pre>
+<div class="co cor"><div>用户一旦触发 A2A 链，就会被"架空"，无法干预正在进行的多 Agent 协作，只能等待或强制停止全部。</div></div>
+</div>
+
+<div class="card cm">
+<h4>❌ 缺陷4：无 SessionMutex，同 CLI 会话可能并发</h4>
+<pre><code>// Multi-Agent 中，同一个 provider 的 thread 有
+// nativeSessionId 作为 CLI resume 标识
+
+// 但没有 SessionMutex！
+// 场景（理论上可能发生）：
+// A2A 链触发 Claude 运行（使用 sessionId_1）
+// 用户同时（在另一个浏览器 Tab）也触发 Claude
+// 两个 claude --resume sessionId_1 进程并发运行
+// → CLI session 状态损坏
+// → 历史上下文混乱
+
+// Multi-Agent 的唯一防护：
+if (this.activeRuns.has(threadId)) {
+  throw new Error(`${thread.alias} is already running.`)
+}
+// 只检查 threadId，不检查 sessionId
+// 如果 threadId 不同但 sessionId 相同 → 无法防护</code></pre>
+<div class="co cor"><div>缺少 session 级别的互斥锁，在边缘场景下（多 Tab、A2A 并发触发）可能导致 CLI session 状态损坏。</div></div>
+</div>
+
+<div class="card cm">
+<h4>❌ 缺陷5：串行队列是全局的，一个超时拖死整链</h4>
+<pre><code>// message-service.ts — flushDispatchQueue
+// 递归调用，严格串行：
+await this.runThreadTurn(...)  // 等待完成（或超时）
+await this.flushDispatchQueue(groupId)
+
+// 如果某个 Agent 超时（5 分钟）：
+// → SIGTERM → SIGKILL
+// → runThreadTurn 抛出错误
+// → flushDispatchQueue 被 try/catch 捕获
+// → 继续下一个... 或者停止？
+
+// 实际行为（message-service.ts line 424-452）：
+catch (err) {
+  await sessionService.clearNativeSessionId(threadId)
+  // ↑ 清空 sessionId，下次重新开始
+  // 但 flushDispatchQueue 的调用链取决于是否继续
+}
+
+// 问题：
+// A 超时 → B 拿到的是 A "失败后的上下文"
+// B 不知道 A 没有完成它的工作
+// B 可能基于不完整信息继续工作
+// 整个链条的"知识流转"断裂</code></pre>
+<div class="co cor"><div>A2A 链中任何一个 Agent 超时失败，下游 Agent 拿到的是不完整的上下文，但系统不会告知这个事实，导致后续工作建立在错误基础上。</div></div>
+</div>
+
+<div class="card cm">
+<h4>❌ 缺陷6：无并行 A2A，也无并行保护</h4>
+<pre><code>// Multi-Agent 只有串行队列，但也没有并行的防护设计
+
+// 如果将来想加并行：
+// Agent A 回复同时 @B 和 @C
+// mentions = ['codex', 'gemini']
+// for mention of mentions → queue.push(...)
+// → B 和 C 都进队，但仍然串行执行
+
+// 没有 routeParallel 对应的实现
+// 没有"并行模式禁止 A2A 链式"的约束
+// 如果 B 和 C 各自再 @对方：
+//   → rootTriggeredProviders 阻止（但会误伤合理场景）
+
+// Clowder：
+// 明确区分 parallel (禁止链式) / serial (允许链式)
+// intent parser 决定走哪条路
+// 两种模式的边界完全清晰</code></pre>
+<div class="co cor"><div>执行模式单一（只有串行），且没有为将来扩展并行预留设计空间，如果要加并行会直接破坏现有的 A2A 秩序控制。</div></div>
+</div>
+</div>
+
+<h3>19.5 乒乓 A2A（A↔B 互相 @mention）的不同处理</h3>
+<div class="diff">
+<div>
+  <div class="diff-hdr diff-c">🐾 Clowder — 允许且有界的乒乓</div>
+  <pre><code>// WorklistRegistry.ts
+// Pending-tail 去重：只看"待执行"部分
+
+// 场景：用户 → A → B → A（第二次）
+// 执行序列:   [A,  B,  A]
+//              ↑已执行
+
+// B 回复 @A 时：
+// executedIndex = 1（A和B已执行）
+// pending = [] （没有待执行的）
+// A 不在 pending 中 → ✓ 允许入队
+// Worklist: [A, B, A], a2aCount=2
+
+// A 第二次执行后 @B：
+// executedIndex = 2, pending = []
+// B 不在 pending → 入队, a2aCount=3
+
+// ...直到 a2aCount 达到 MAX_A2A_DEPTH=15 停止
+
+// ✅ A↔B 可以迭代多轮（最多15次总跳数）
+// ✅ 每轮都能看到上一轮的输出（知识流转）
+// ✅ 超限后优雅停止</code></pre>
+</div>
+<div>
+  <div class="diff-hdr diff-m">⚡ Multi-Agent — 乒乓第二轮就被阻断</div>
+  <pre><code>// dispatch.ts
+// rootTriggeredProviders 记录已触发过的 provider
+
+// 场景：用户 → Claude → Codex → Claude（第二次）
+// 根消息: msg_001
+// rootTriggeredProviders[msg_001] = Set()
+
+// Claude 触发 @Codex：
+// triggered.add('codex')
+// Set = {'codex'}
+
+// Codex 触发 @Claude：
+// triggered.add('claude')
+// Set = {'codex', 'claude'}
+
+// Claude 完成后 @Codex（修复建议）：
+// triggered.has('codex') → true ✗ 跳过！
+
+// ❌ Codex 永远无法收到 Claude 的修复请求
+// ❌ 工作流在第二轮迭代就强制断掉
+// 这意味着"开发→review→修复→再review"
+// 这种标准工作流在一个根消息内只能走一轮</code></pre>
+</div>
+</div>
+
+<h3>19.6 完整对比表</h3>
+<div class="card">
+<table class="t">
+<thead><tr><th>A2A 秩序机制</th><th class="tc">🐾 Clowder</th><th class="tm">⚡ Multi-Agent</th><th>优劣</th></tr></thead>
+<tbody>
+<tr><td>循环防护层数</td><td><span class="v-good">7 层纵深防护</span></td><td>2 层（hop + provider去重）</td><td><span class="v-c">Clowder 更健壮</span></td></tr>
+<tr><td>最大跳转深度</td><td>15（可配置 env）</td><td>10（硬编码）</td><td><span class="v-eq">均有上限，Clowder 可调</span></td></tr>
+<tr><td>乒乓 A2A（A↔B 多轮）</td><td><span class="v-good">✓ 允许，pending-tail 去重</span></td><td><span class="v-bad">✗ 第二轮被根去重阻断</span></td><td><span class="v-c">Clowder 支持迭代工作流</span></td></tr>
+<tr><td>用户消息优先</td><td><span class="v-good">✓ 队列公平门禁</span></td><td><span class="v-bad">✗ 链式执行期间用户被架空</span></td><td><span class="v-c">Clowder 用户可随时干预</span></td></tr>
+<tr><td>跨路径双重触发防护</td><td><span class="v-good">✓ InvocationQueue 去重</span></td><td><span class="v-bad">✗ 无双路检测</span></td><td><span class="v-c">Clowder 防 MCP+文本双触发</span></td></tr>
+<tr><td>CLI Session 并发</td><td><span class="v-good">✓ SessionMutex FIFO</span></td><td><span class="v-bad">✗ 仅 threadId 检查</span></td><td><span class="v-c">Clowder 防 session 损坏</span></td></tr>
+<tr><td>取消 → 整链退出</td><td><span class="v-good">✓ AbortSignal 贯穿全链</span></td><td>部分（仅当前 invocation）</td><td><span class="v-c">Clowder 取消更彻底</span></td></tr>
+<tr><td>并行 A2A 支持</td><td><span class="v-good">✓ routeParallel（禁止链式）</span></td><td><span class="v-bad">✗ 只有串行</span></td><td><span class="v-c">Clowder 更灵活</span></td></tr>
+<tr><td>失败后下游感知</td><td>isFinal + 错误消息传递</td><td><span class="v-bad">✗ 下游拿到不完整上下文</span></td><td><span class="v-c">Clowder 知识流转更可靠</span></td></tr>
+<tr><td>实现复杂度</td><td>极高（WorklistRegistry + SessionMutex + MultiMentionOrchestrator）</td><td>低（Map + Set）</td><td><span class="v-m">Multi-Agent 更易理解</span></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="co coy" style="margin-top:8px">
+  <div>
+    <strong>根本差距一句话：</strong><br>
+    Clowder 把 A2A 当成"可靠的工程管道"来设计——允许多轮迭代、有层层防护、用户随时可干预、任何一层出问题都有其他层兜底。<br>
+    Multi-Agent 把 A2A 当成"简单的消息转发"来设计——够用但脆弱，rootTriggeredProviders 去重策略把"防无限循环"和"允许合理迭代"混为一谈，导致标准的开发→review→修复工作流都跑不通。
+  </div>
+</div>
+</section>
+
+<!-- ══════════ §19 PRECISE ROLE SCENARIO ══════════ -->
+<section id="s19">
+<h2>🧩 二十、精确分工场景深析 — "A分析 → B改代码 → A+C一起review"</h2>
+
+<div class="co coy">
+  <div>
+    <strong>具体场景：</strong>用户说 "帮我看看这个 bug"<br>
+    期望结果：A（架构师）分析问题 → @B（开发者）修代码 → B修完后 @A 和 @C 一起 review<br>
+    核心挑战：B修代码时，A和C不能也去改代码；A和C review时，B不能再发起新修改；每个人要能看到前面人做了什么
+  </div>
+</div>
+
+<h3>20.1 Clowder 能实现吗？— 可以，逐步拆解</h3>
+
+<div class="card cc">
+<h4>第 0 步：用户消息触发，A 被路由为第一响应者</h4>
+<pre><code>// 用户: "帮我看看 src/auth.ts 里的 bug"
+// AgentRouter 解析：无明确 @mention → 路由到默认猫 (opus/A)
+// A 的 invocation context:
+{
+  mode: 'independent',   // 只有一只猫
+  catId: 'opus',
+  chainIndex: 1,
+  chainTotal: 1,
+  directMessageFrom: undefined,  // 来自用户，不是来自其他猫
+}
+// A 的 system prompt 包含：
+// "角色：首席架构师，负责系统设计与技术决策"
+// "性格：严谨，遇到技术问题先分析根因"
+// WORKFLOW_TRIGGER(ragdoll): "完成分析 → @dare 或 @spark 修复代码"</code></pre>
+</div>
+
+<div class="card cc" style="margin-top:0">
+<h4>第 1 步：A 分析完，输出中 @B（开发者）和 @C（另一 reviewer）</h4>
+<pre><code>// A (opus) 的回复内容（会被扫描 @mention）：
+"分析完毕，根因是 JWT 过期判断逻辑有误。
+@dare 请修复 src/auth.ts line 42 的判断条件，
+具体修法见上文分析。"
+
+// ↓ route-serial.ts 的 parseA2AMentions() 扫描：
+// 检测到行首 @dare → 加入 worklist
+// a2aFrom.set('dare', 'opus')        // 记录：dare 是被 opus 提及的
+// a2aTriggerMessageId.set('dare', storedMsgId)
+
+// 此时 worklist = [dare]
+// a2aCount = 1</code></pre>
+</div>
+
+<div class="card cc" style="margin-top:0">
+<h4>第 2 步：B (dare) 收到的 prompt — 关键：他知道自己该做什么</h4>
+<pre><code>// route-serial.ts lines 140-153 构建 B 的 prompt：
+const contextParts = previousResponses.map(r =>
+  `[${r.catId} responded: ${r.content}]`
+)
+prompt = `${userMessage}\n\n${contextParts.join('\n')}`
+
+// B 实际收到的 prompt：
+"""
+帮我看看 src/auth.ts 里的 bug
+
+[opus responded: 分析完毕，根因是 JWT 过期判断逻辑有误。
+@dare 请修复 src/auth.ts line 42 的判断条件，具体修法见上文分析。]
+"""
+
+// B 的 invocation context（SystemPromptBuilder 注入）：
+{
+  mode: 'serial',
+  chainIndex: 2,      // 第 2 只被召唤
+  chainTotal: 2,      // 目前共 2 只
+  directMessageFrom: 'opus',  // ← 关键！A 叫我来的
+}
+
+// B 的 system prompt 额外段：
+"Direct message from 布偶猫(opus); reply to 布偶猫(opus)"
+// ↑ 告知 B：这是 A 发给你的直接指令，你要回复 A
+// + B 的品种触发词 (dragon-li/dare):
+// "角色：确定性执行专家，严格按指令修改，不添加无关改动"
+// → B 知道自己只需要按 A 的分析修代码，不需要分析，不需要 review</code></pre>
+<div class="co coc"><div><strong>关键机制：</strong><code>directMessageFrom: 'opus'</code> 告诉 B "你是被 A 专门叫来的"，结合 B 的角色定义（执行者/coder），B 的行为被自然约束在"按指令修代码"上。B 不会去 review，因为它的角色触发词里没有 review 相关工作流。</div></div>
+</div>
+
+<div class="card cc" style="margin-top:0">
+<h4>第 3 步：B 修完代码，@A 和 @C 请求 review</h4>
+<pre><code>// B (dare) 的回复：
+"已修复 src/auth.ts line 42，将 > 改为 >=。
+已验证基础用例通过。
+@opus @codex 请帮忙 review 这次修改。"
+
+// ↓ parseA2AMentions() 扫描 B 的回复：
+// 行1: @opus → 加入 worklist (第3位)
+// 行1: @codex → 加入 worklist (第4位, MAX_A2A_MENTION_TARGETS=2 刚好满)
+// a2aFrom.set('opus', 'dare')
+// a2aFrom.set('codex', 'dare')
+
+// worklist = [dare(已执行), opus, codex]
+// a2aCount = 3</code></pre>
+</div>
+
+<div class="card cc" style="margin-top:0">
+<h4>第 4 步：A (opus) 第二次执行 — 收到完整上下文，知道自己是 reviewer</h4>
+<pre><code>// A 第二次的 prompt（previousResponses 包含 A 第一次 + B 的输出）：
+"""
+帮我看看 src/auth.ts 里的 bug
+
+[opus responded: 分析完毕，根因是 JWT 过期判断逻辑有误...]
+[dare responded: 已修复 src/auth.ts line 42，将 > 改为 >=...]
+"""
+
+// A 的 invocation context（第二次）：
+{
+  mode: 'serial',
+  chainIndex: 3,           // 第 3 只被召唤
+  chainTotal: 4,           // 现在共 4 只（含即将到来的 C）
+  directMessageFrom: 'dare',   // ← B 叫我来的
+}
+
+// A 的 system prompt 额外段：
+"Direct message from 狸花猫(dare); reply to 狸花猫(dare)"
+// + A 的品种触发词 (ragdoll/opus):
+// "Review 别人代码：每个发现必须有明确立场，P1/P2 分级"
+// → A 知道自己现在是 reviewer 角色（B 叫我来的），不是分析师
+// → A 不会再去改代码（那是 B 的工作）
+// → A 会输出 review 意见</code></pre>
+<div class="co coc"><div><strong>A 第一次是"分析师"，第二次变成"reviewer"，原因：</strong>第一次 <code>directMessageFrom=undefined</code>（来自用户），A 按架构师职责分析；第二次 <code>directMessageFrom='dare'</code>（B 叫我来的），加上 B 的消息内容里有"请 review"，A 的上下文完全指向 review 任务。同一只猫，上下文不同，行为截然不同。</div></div>
+</div>
+
+<div class="card cc" style="margin-top:0">
+<h4>第 5 步：C (codex) 执行 — 看到 A+B 的所有工作再 review</h4>
+<pre><code>// C 的 prompt（previousResponses 包含 A1 + B + A2 的输出）：
+"""
+帮我看看 src/auth.ts 里的 bug
+
+[opus responded: 分析完毕，根因是 JWT 过期判断逻辑有误...]
+[dare responded: 已修复 src/auth.ts line 42，将 > 改为 >=...]
+[opus responded: Review意见: P2 - 建议同时处理 token refresh 边界情况...]
+"""
+
+// C 的 invocation context：
+{
+  mode: 'serial',
+  chainIndex: 4,           // 第 4 只，最后
+  chainTotal: 4,
+  directMessageFrom: 'dare',   // B 叫 C 来的
+}
+
+// C 的 system prompt：
+"Direct message from 狸花猫(dare); reply to 狸花猫(dare)"
+// + C (codex) 的品种触发词 (maine-coon):
+// "不做功能开发，只做 review 和安全分析"
+// "每个 review 意见必须有代码依据"
+// → C 看到 A 已经给了 P2 意见，C 会补充不同角度的分析
+// → C 不会再去改代码（角色触发词禁止）</code></pre>
+</div>
+
+<div class="card cc" style="margin-top:0">
+<h4>完整执行时序图</h4>
+<div class="ab" style="font-size:11.5px">
+<span style="color:#fbbf24">时间轴</span>
+
+t=0  用户: "帮我看看 src/auth.ts 里的 bug"
+     └─ AgentRouter → worklist=[opus]
+
+t=1  [opus执行] mode=independent, chainIndex=1/1
+     角色=架构师, directMessageFrom=undefined (来自用户)
+     输出: 分析根因 + "@dare 请修复"
+     └─ parseA2AMentions → [dare]
+        worklist=[opus✓, dare]  a2aCount=1
+
+t=2  [dare执行] mode=serial, chainIndex=2/2
+     角色=执行者, directMessageFrom=opus
+     prompt包含: [opus responded: 分析...]
+     输出: 修复代码 + "@opus @codex 请review"
+     └─ parseA2AMentions → [opus, codex]
+        worklist=[opus✓, dare✓, opus, codex]  a2aCount=3
+
+t=3  [opus执行-第2次] mode=serial, chainIndex=3/4
+     角色=架构师, directMessageFrom=dare ← 变成reviewer了！
+     prompt包含: [opus responded: ...] + [dare responded: 已修复...]
+     输出: Review意见 P2
+
+t=4  [codex执行] mode=serial, chainIndex=4/4
+     角色=代码评审专家, directMessageFrom=dare
+     prompt包含: [opus1...] + [dare...] + [opus2 review...]
+     输出: 独立Review意见（不重复opus已说的）
+
+<span style="color:#34d399">✅ 结果：</span>
+  - dare 只改了代码，没有review（角色=执行者）
+  - opus 先分析后review，行为随上下文自适应
+  - codex 只review，看到完整上下文给出补充意见
+  - 三者从未"同时"修改代码
+  - 每个人看到前面所有人的工作
+</div>
+</div>
+
+<h3>20.2 "只让 B 改代码" 的真正保障机制 — 不是硬锁，是软约束叠加</h3>
+<div class="g2">
+<div>
+<div class="vr vr-c"><div class="num num-c">1</div><div>
+<strong>worklist 顺序隔离</strong><br>
+B 执行时 A 和 C 还没有执行，物理上不可能同时改代码。串行 worklist 保证同一时刻只有一个 Cat 在运行。
+</div></div>
+<div class="vr vr-c"><div class="num num-c">2</div><div>
+<strong>directMessageFrom 语义约束</strong><br>
+B 被 A @mention，prompt 里说"A 让我来修代码"。B 的上下文清晰：任务是按 A 的分析修代码，不是做其他事。
+</div></div>
+<div class="vr vr-c"><div class="num num-c">3</div><div>
+<strong>品种触发词角色约束</strong><br>
+dare 的触发词："严格按指令执行，不添加无关改动"<br>
+codex 的触发词："不做功能开发，只做 review"<br>
+系统 prompt 级别的行为约束。
+</div></div>
+<div class="vr vr-c"><div class="num num-c">4</div><div>
+<strong>previousResponses 上下文感知</strong><br>
+A 第二次执行时已知道 B 修了什么。C 执行时看到 A 和 B 都做了什么。没有信息盲区，不会重复工作。
+</div></div>
+</div>
+<div>
+<div class="co coc">
+  <div>
+    <strong>⚠️ 重要澄清：Clowder 没有"硬锁"</strong><br><br>
+    Clowder 不会在代码层面阻止 A 去修改文件。如果 A 真的想改代码，它有 MCP 文件工具。<br><br>
+    真正的约束是：<br>
+    ① 角色 prompt 让 A 知道自己是架构师，不是编码者<br>
+    ② 上下文让 A 知道 B 已经修好了<br>
+    ③ directMessageFrom 让 A 知道现在是被叫来 review 的<br><br>
+    这是"认知约束"而非"执行锁"。<br>
+    如果 A 的 system prompt 足够清晰，A 不会想去改代码。<br>
+    如果 A 真的改了代码（AI 幻觉），Callback 授权层可以拦截。
+  </div>
+</div>
+</div>
+</div>
+
+<h3>20.3 Multi-Agent — 为什么这个场景完全实现不了</h3>
+<div class="card cm">
+<h4>Multi-Agent 实际会发生什么</h4>
+<pre><code>// dispatch.ts — 被 @mention 的 Agent 收到什么？
+queued.push({
+  targetProvider: mention.provider,   // 'codex'
+  content: [
+    `You were mentioned by ${sourceAlias} in the shared room.`,
+    `Latest public message: ${latestMessage}`,
+    `Read the shared room context and continue the collaboration as ${targetAlias}.`,
+  ].join("\n"),
+})
+
+// B (Codex) 收到的消息：
+"""
+You were mentioned by Claude in the shared room.
+Latest public message: 分析完毕，@Codex 请修复...
+Read the shared room context and continue the collaboration as 范德彪.
+"""
+
+// 问题：
+// ① 没有 chainIndex/chainTotal → B 不知道自己在链的第几位
+// ② 没有 directMessageFrom 系统提示注入 → B 不知道这是 A 专门叫它来的
+// ③ 没有 previousResponses → B 只能读"公共频道最新消息"
+// ④ 没有品种触发词 → B 不知道自己是"只写代码不review"的角色
+// ⑤ 三个 provider 用同样的 COMMON_PROMPT → 无法区分谁该做什么</code></pre>
+</div>
+
+<div class="g2">
+<div class="card cm">
+<h4>❌ 问题1：A 无法变成 reviewer</h4>
+<pre><code>// 当 B 修完代码 @Claude（A）时
+// A 的 system prompt 没有变化
+// A 收到：
+// "You were mentioned by 范德彪"
+// "Latest: 已修复，@黄仁勋 请review"
+
+// A 不知道自己现在是 reviewer 而不是分析师
+// A 可能：
+// - 再次分析问题（重复第一次做的事）
+// - 修改代码（认为自己也要贡献）
+// - 或者如果它碰巧理解上下文，做一个 review
+
+// 行为完全不可预测
+// 取决于当前 LLM 对上下文的理解</code></pre>
+</div>
+<div class="card cm">
+<h4>❌ 问题2：C 可能和 B 同时工作</h4>
+<pre><code>// rootTriggeredProviders 去重：
+// A @B 后：triggered = {codex}
+// B @A 后：triggered = {codex, claude}
+// B @C 时：triggered.has('gemini') = false → 入队 ✓
+
+// 但如果 A 和 C 的 dispatch 时机接近：
+// A 还在 review，C 也可能被触发
+// 没有"A在review时C等待"的机制
+// （实际上 Multi-Agent 串行队列会防止并发）
+// 但 C 不知道 A 的 review 结果
+// C 会基于 B 修完的代码做独立 review
+// 而不是基于 A 的 review 做补充 review</code></pre>
+</div>
+<div class="card cm">
+<h4>❌ 问题3：第二轮迭代完全断掉</h4>
+<pre><code>// 假设 A review 后发现需要 B 再改：
+// A: "@范德彪 P1 bug，请修复第54行"
+
+// dispatch.ts 检查：
+// rootTriggeredProviders[msg_root] 包含 'codex'
+// → triggered.has('codex') = true → 跳过！
+
+// Codex（B）永远收不到 A 的修复请求
+// 整个"开发→review→修复→再review"工作流
+// 在第一个完整回合后就断掉了
+
+// 这是 rootTriggeredProviders 策略的根本缺陷：
+// 防循环 和 允许合理迭代 是矛盾的
+// Multi-Agent 选择了前者，牺牲了后者</code></pre>
+</div>
+<div class="card cm">
+<h4>❌ 问题4：没有人"没有作用"的保障</h4>
+<pre><code>// 没有 chainTotal 告知 Agent 还有几个人在后面
+// 没有 previousResponses 让每个人看到前面的工作
+// 每个 Agent 只看到"公共频道最新消息"
+
+// 结果：
+// A review 说"需要修复JWT判断"
+// C 也 review 说"需要修复JWT判断"（重复）
+// 两个 reviewer 说了完全相同的话
+// 因为 C 没有看到 A 的 review，无法做差异化补充
+
+// 理想情况：
+// A 关注整体架构合理性
+// C 关注安全漏洞和边界情况
+// 但没有机制保证这种分工</code></pre>
+</div>
+</div>
+
+<h3>20.4 如何改进 Multi-Agent 来实现这个场景</h3>
+<div class="card cm">
+<h4>需要改造的 6 个部分（按难度排序）</h4>
+<table class="t">
+<thead><tr><th>#</th><th>改造内容</th><th>对应 Clowder 实现</th><th>难度</th><th>说明</th></tr></thead>
+<tbody>
+<tr>
+  <td>1</td>
+  <td><strong>per-provider system prompt 差异化</strong></td>
+  <td>WORKFLOW_TRIGGERS per breed</td>
+  <td><span class="v-good">低</span></td>
+  <td>直接修改 agent-prompts.ts，给 Claude/Codex/Gemini 写不同的角色描述和工作流触发词</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><strong>directMessageFrom 注入 system prompt</strong></td>
+  <td>SystemPromptBuilder directMessageFrom</td>
+  <td><span class="v-good">低</span></td>
+  <td>dispatch 时记录 sourceProvider，在 buildCommand 里把 "Direct message from X; reply to X" 追加到 --append-system-prompt</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><strong>chainIndex / chainTotal 注入</strong></td>
+  <td>route-serial.ts invocationContext</td>
+  <td><span class="v-eq">中</span></td>
+  <td>队列需要知道总长度，dispatch 时把位置信息附加到 prompt 或 system prompt</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td><strong>previousResponses 传递</strong></td>
+  <td>route-serial.ts prompt 拼接</td>
+  <td><span class="v-eq">中</span></td>
+  <td>每个 dispatch 时把前面已完成 Agent 的输出拼接到 prompt 里。目前 Multi-Agent 只传 "latest public message"，需要改成传完整链</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td><strong>将 rootTriggeredProviders 改为 pending-tail 去重</strong></td>
+  <td>WorklistRegistry pending-tail</td>
+  <td><span class="v-eq">中</span></td>
+  <td>允许同一 provider 在同一根消息链中被多次触发（前提是不在当前待执行队列里），支持迭代工作流</td>
+</tr>
+<tr>
+  <td>6</td>
+  <td><strong>用户消息优先门禁</strong></td>
+  <td>route-serial.ts queueHasQueuedMessages</td>
+  <td><span class="v-bad">高</span></td>
+  <td>需要区分"A2A dispatch 队列"和"用户新消息队列"，并在 flushDispatchQueue 时检查用户队列是否非空</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="card cm" style="margin-top:0">
+<h4>最小可行改造方案（只改最核心的 2 处）</h4>
+<pre><code>// ═══ 改造1：dispatch.ts — 改用 pending-tail 去重 ═══
+// 现在：
+private rootTriggeredProviders = new Map&lt;string, Set&lt;string&gt;&gt;()
+// if (triggered.has(mention.provider)) continue  ← 删掉这行
+
+// 改为：
+private pendingQueues = new Map&lt;string, Set&lt;string&gt;&gt;()
+// 只检查"当前已排队但未执行"的 provider
+
+enqueuePublicMentions(...) {
+  const pending = this.pendingQueues.get(sessionGroupId) ?? new Set()
+  for (const mention of mentions) {
+    if (mention.provider === sourceProvider) continue  // 自提及过滤
+    if (pending.has(mention.provider)) continue        // 已在待执行队列里
+    pending.add(mention.provider)
+    this.queues.get(sessionGroupId)?.push(...)
+  }
+}
+
+takeNextQueuedDispatch(...) {
+  const next = queue.shift()
+  // 执行完后从 pending 中移除
+  this.pendingQueues.get(next.sessionGroupId)?.delete(next.targetProvider)
+  return next
+}
+// 效果：A→B→A 第二轮可以执行（A 已经出了 pending）
+
+// ═══ 改造2：dispatch.ts — 在 content 里携带完整链上下文 ═══
+// 现在：
+content: [
+  `You were mentioned by ${sourceAlias}.`,
+  `Latest public message: ${latestMessage}`,
+].join('\n')
+
+// 改为：
+content: [
+  `Direct message from ${sourceAlias}: please ${taskDescription}`,
+  `You are step ${position} of ${total} in this collaboration chain.`,
+  `Context so far:\n${chainHistory.join('\n')}`,  // 前面所有人的输出
+].join('\n')
+// 效果：每个 Agent 知道自己在链中的位置，看到前面的工作</code></pre>
+
+<div class="co com" style="margin-top:8px"><div><strong>改造成本评估：</strong>这两处改造约 100 行代码，不需要引入 Redis/新存储。但要做到 Clowder 的完整效果（品种触发词+SessionMutex+并行模式），至少还需要 500 行 + 架构重新设计。改造1 解决"工作流断链"问题，改造2 解决"每个人知道自己该干什么"问题，两个加在一起能覆盖 70% 的场景。</div></div>
+</div>
+
+<div class="card">
+<h3>📊 场景实现能力对比</h3>
+<table class="t">
+<thead><tr><th>场景要素</th><th class="tc">🐾 Clowder</th><th class="tm">⚡ Multi-Agent</th><th>差距原因</th></tr></thead>
+<tbody>
+<tr><td>A分析完→@B改代码</td><td><span class="v-good">✓ B收到A的分析作为上下文</span></td><td><span class="v-eq">⚠ B只收到"你被A提及了"</span></td><td>previousResponses vs latest message</td></tr>
+<tr><td>B只改代码不review</td><td><span class="v-good">✓ 品种触发词约束+directMessageFrom</span></td><td><span class="v-bad">✗ 靠B自己判断，无约束</span></td><td>缺 per-provider 角色 prompt</td></tr>
+<tr><td>B改完→@A @C review</td><td><span class="v-good">✓ 工作列表动态扩展</span></td><td><span class="v-good">✓ rootTriggeredProviders允许</span></td><td>均可，但Multi-Agent只有一次机会</td></tr>
+<tr><td>A第二次知道自己是reviewer</td><td><span class="v-good">✓ directMessageFrom='dare'</span></td><td><span class="v-bad">✗ A不知道角色变了</span></td><td>缺 directMessageFrom 注入</td></tr>
+<tr><td>C看到A的review再补充</td><td><span class="v-good">✓ previousResponses完整链</span></td><td><span class="v-bad">✗ C只看到"最新公共消息"</span></td><td>缺完整链上下文传递</td></tr>
+<tr><td>A发现bug→@B再修</td><td><span class="v-good">✓ pending-tail允许B重入</span></td><td><span class="v-bad">✗ B已在triggered set里，被跳过</span></td><td>rootTriggeredProviders策略缺陷</td></tr>
+<tr><td>任何人都不重复造轮子</td><td><span class="v-good">✓ previousResponses让每人看到前面工作</span></td><td><span class="v-bad">✗ 两个reviewer可能说完全相同的话</span></td><td>缺上下文链传递</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ══════════ §20 PERMISSION DEEP DIVE ══════════ -->
+<section id="s20">
+<h2>🔏 二十一、权限控制深度剖析 — Claude Code / Codex / Gemini CLI 各自是怎么做的</h2>
+
+<div class="card" style="background:linear-gradient(135deg,rgba(124,58,237,.12),rgba(3,105,161,.08));border-color:#7c3aed">
+<h3>🎯 核心问题：为什么 Multi-Agent 没有权限控制</h3>
+<p style="margin-bottom:12px">三个 CLI 工具各自都有权限控制机制，但 Multi-Agent 把它们<strong>全部关掉了</strong>，而且没有在外层建立任何替代机制。要理解为什么，先要理解每个 CLI 的权限设计。</p>
+</div>
+
+<!-- ── Claude Code 权限模式 ── -->
+<h3>① Claude Code 的四种权限模式</h3>
+<div class="card cc">
+<p style="margin-bottom:14px">Claude Code CLI 通过 <code>--permission-mode</code> 参数控制工具使用时是否暂停等待人工确认：</p>
+<table class="t">
+<thead><tr>
+  <th>权限模式</th>
+  <th>文件读</th>
+  <th>文件写/编辑</th>
+  <th>Bash命令执行</th>
+  <th>交互方式</th>
+</tr></thead>
+<tbody>
+<tr>
+  <td><code>default</code></td>
+  <td>✓ 自动</td>
+  <td>⚠ 弹确认框</td>
+  <td>⚠ 弹确认框</td>
+  <td>CLI 交互式 stdin 等待用户输入</td>
+</tr>
+<tr>
+  <td><code>acceptEdits</code></td>
+  <td>✓ 自动</td>
+  <td>✓ 自动</td>
+  <td>⚠ 弹确认框</td>
+  <td>只有 bash/命令需要确认</td>
+</tr>
+<tr>
+  <td><code>bypassPermissions</code></td>
+  <td>✓ 自动</td>
+  <td>✓ 自动</td>
+  <td>✓ 自动</td>
+  <td><strong>全部跳过，CLI 从不暂停</strong></td>
+</tr>
+<tr>
+  <td><code>plan</code></td>
+  <td>✓ 自动</td>
+  <td>✗ 禁止</td>
+  <td>✗ 禁止</td>
+  <td>只读模式，只能规划不能执行</td>
+</tr>
+</tbody>
+</table>
+<div class="co com" style="margin-top:12px">
+<strong>⚠️ bypassPermissions 的真正含义：</strong>
+Claude CLI 本身<em>完全不会暂停</em>等待人工确认。文件写入、bash 命令、一切工具调用都立即执行。
+这看起来很危险——但 Clowder 用这个模式的理由是：它在 CLI <em>外层</em>建立了自己的权限系统。
+</div>
+</div>
+
+<div class="g2">
+<div class="card cc">
+<h4>🐾 Clowder 为什么选 bypassPermissions</h4>
+<pre><code>// ClaudeAgentService.ts:33
+const PERMISSION_MODE = 'bypassPermissions';
+
+// 启动时注入 MCP server config
+args.push('--mcp-config', JSON.stringify({
+  mcpServers: {
+    'cat-cafe': {
+      command: 'node',
+      args: [this.mcpServerPath],  // 指向 packages/mcp-server
+    }
+  }
+}));
+
+// ← Claude CLI 的工具调用会先经过 MCP server
+// ← MCP server 再调用 Clowder API → AuthorizationManager</code></pre>
+<p style="margin-top:10px;font-size:12.5px;color:#94a3b8">
+CLI 层面放行 → 控制权交给 MCP server → Clowder API 的 AuthorizationManager 再做判断。
+实质是"把确认框从 CLI 的 stdin 移到了 Web 前端的弹窗"。
+</p>
+</div>
+<div class="card cm">
+<h4>⚡ Multi-Agent 的选择</h4>
+<pre><code>// claude-runtime.ts (Multi-Agent)
+// 使用 Claude Code，但没有专门的 runtime 文件
+// 没有设置 --permission-mode
+// → 默认使用 'default' 模式
+// → Claude 会在 CLI stdin 等待确认
+// → 但 Multi-Agent 把 stdin 设为 'ignore'！
+
+const child = spawnProcess(command.command, command.args, {
+  cwd: input.cwd,
+  env,
+  shell: command.shell,
+  stdio: ["ignore", "pipe", "pipe"]  // ← stdin=ignore
+});
+// Claude 等待确认时，stdin 是关闭的
+// Claude 收不到任何输入 → 一直等 → 5分钟后被 kill</code></pre>
+<div class="co bad" style="margin-top:8px">
+Multi-Agent 用 Claude Code 时走 <code>default</code> 模式但 stdin 关闭 → 权限弹框永远等不到回答 → 静默死亡
+</div>
+</div>
+</div>
+
+<!-- ── Codex 权限模式 ── -->
+<h3>② OpenAI Codex CLI 的权限模式</h3>
+<div class="card" style="border-left:4px solid #f59e0b">
+<p style="margin-bottom:12px">Codex CLI 用 <code>-a</code> / <code>--approval-mode</code> 和 <code>-s</code> / <code>--sandbox</code> 两个参数控制权限：</p>
+<div class="g2">
+<div>
+<h4>-a / --approval-mode 取值</h4>
+<table class="t">
+<thead><tr><th>值</th><th>含义</th></tr></thead>
+<tbody>
+<tr><td><code>suggest</code> (默认)</td><td>每次执行前都询问用户：是否继续？</td></tr>
+<tr><td><code>auto-edit</code></td><td>文件编辑自动批准，bash命令仍询问</td></tr>
+<tr><td><code>full-auto</code></td><td>所有操作自动批准，不询问</td></tr>
+<tr><td><code>never</code></td><td><strong>从不询问，一切自动执行</strong>（等同于 full-auto）</td></tr>
+</tbody>
+</table>
+</div>
+<div>
+<h4>-s / --sandbox 取值</h4>
+<table class="t">
+<thead><tr><th>值</th><th>含义</th></tr></thead>
+<tbody>
+<tr><td><code>none</code></td><td>无沙箱，可访问整个文件系统</td></tr>
+<tr><td><code>read-only</code></td><td>只读沙箱，不能写任何文件</td></tr>
+<tr><td><code>workspace-write</code></td><td>只能写当前工作目录内的文件</td></tr>
+<tr><td><code>full</code></td><td>完整沙箱（需要 Docker/VM 支持）</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<pre style="margin-top:12px"><code>// codex-runtime.ts:28 (Multi-Agent)
+const topLevelArgs = [
+  ...(model ? ["-m", model] : []),
+  "-a", "never",            // ← 从不询问，一切自动执行
+  "-s", "workspace-write"   // ← 沙箱限制：只能写工作目录内
+];
+// 结论：Codex 可以随意读写工作目录内任何文件、执行任意命令
+// 但不询问用户，没有确认步骤</code></pre>
+
+<div class="co com">
+<strong>注意：</strong><code>-s workspace-write</code> 只是文件系统隔离（不能写工作目录外的文件），不是"询问用户是否允许"。
+<code>-a never</code> 才是权限确认控制，设为 <code>never</code> = 完全自动，没有任何人工介入。
+</div>
+</div>
+
+<!-- ── Gemini 权限模式 ── -->
+<h3>③ Gemini CLI 的权限模式</h3>
+<div class="card" style="border-left:4px solid #10b981">
+<p style="margin-bottom:12px">Gemini CLI 用 <code>--approval-mode</code> 控制，取值更直接：</p>
+<table class="t">
+<thead><tr><th>值</th><th>含义</th></tr></thead>
+<tbody>
+<tr><td><code>default</code></td><td>每次执行工具前询问用户</td></tr>
+<tr><td><code>auto</code></td><td>低风险操作自动批准，高风险仍询问</td></tr>
+<tr><td><code>yolo</code></td><td><strong>"You Only Live Once" — 一切自动批准，绝不询问</strong></td></tr>
+</tbody>
+</table>
+
+<pre style="margin-top:12px"><code>// gemini-runtime.ts:51 (Multi-Agent)
+const args = [
+  "-p", prompt,
+  "--output-format", "stream-json",
+  "--approval-mode", "yolo"    // ← 不解释，字面意思
+];
+// Gemini 可以执行任何操作：删文件、运行系统命令、网络请求
+// 没有任何确认步骤，没有任何安全网</code></pre>
+
+<div class="co bad">
+<code>yolo</code> 模式下 Gemini 甚至可以：删除整个目录、修改 .env 文件、执行 <code>rm -rf</code>……全都无需确认。
+</div>
+</div>
+
+<!-- ── 对比总图 ── -->
+<h3>三个 CLI 的权限设置对比</h3>
+<table class="t">
+<thead><tr>
+  <th>CLI</th>
+  <th>Clowder 设置</th>
+  <th>Multi-Agent 设置</th>
+  <th>Multi-Agent 效果</th>
+</tr></thead>
+<tbody>
+<tr>
+  <td>Claude Code</td>
+  <td><code>--permission-mode bypassPermissions</code><br><small>+ AuthorizationManager 外层兜底</small></td>
+  <td>未设置 (default 模式)<br><small>但 stdin=ignore</small></td>
+  <td><span class="v-bad">需要确认时 stdin 无输入 → 挂起 → 5min 后被 kill</span></td>
+</tr>
+<tr>
+  <td>Codex</td>
+  <td>N/A (Clowder 不使用 Codex)</td>
+  <td><code>-a never -s workspace-write</code></td>
+  <td><span class="v-eq">完全自动，无确认；文件系统隔离到工作目录</span></td>
+</tr>
+<tr>
+  <td>Gemini CLI</td>
+  <td><code>-y</code> (headless 自动确认)<br><small>+ AuthorizationManager 外层兜底</small></td>
+  <td><code>--approval-mode yolo</code></td>
+  <td><span class="v-bad">完全自动，无任何安全限制</span></td>
+</tr>
+</tbody>
+</table>
+
+<div class="card" style="margin-top:16px">
+<h3>🔎 Clowder Gemini 也用 -y，跟 Multi-Agent 的 yolo 有什么区别？</h3>
+<div class="g2">
+<div>
+<pre><code>// GeminiAgentService.ts:98 (Clowder)
+const args: string[] = options?.sessionId
+  ? ['--resume', options.sessionId, ...modelArgs,
+     '-p', effectivePrompt, '-o', 'stream-json',
+     '-y']      // ← -y = yes to all (headless 模式必须)
+  : [...modelArgs, '-p', effectivePrompt,
+     '-o', 'stream-json', '-y'];</code></pre>
+<p style="font-size:12.5px;color:#94a3b8;margin-top:8px">
+Clowder 的 Gemini 也用 <code>-y</code>（等同于 yolo）——<br>
+但 Gemini 在 Clowder 中的角色是"暹罗猫"(siamese)，<br>
+breed 触发词写明 <strong>❌ 不写任何代码</strong>，只做 UI/设计。<br>
+实际有害操作的机会极低。
+</p>
+</div>
+<div>
+<pre><code>// AuthorizationManager.ts（Clowder 所有 provider 共享）
+async requestPermission(catId, threadId, req) {
+  // Step 1: 查 Redis 持久化规则
+  const rule = await this.ruleStore.match(...)
+  if (rule) return rule.decision
+
+  // Step 2: 没有规则 → 推送到前端弹窗
+  this.io.to(`thread:${threadId}`)
+         .emit('authorization:request', {...})
+
+  // Step 3: 等人工确认 120 秒
+  // 超时 → 返回 pending（不是自动放行）
+}</code></pre>
+<p style="font-size:12.5px;color:#94a3b8;margin-top:8px">
+无论哪个 CLI 用了 yolo/-y/never，<br>
+MCP server 层的敏感操作仍然会调用 AuthorizationManager。<br>
+CLI 层"不问"，但 MCP server 会问。
+</p>
+</div>
+</div>
+</div>
+
+<!-- ── 完整流程图 ── -->
+<h3>🗺️ Clowder 的双层权限架构（全流程）</h3>
+<div class="ab">
+用户发消息
+    │
+    ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Clowder API  (route-serial / route-parallel)                   │
+│                                                                  │
+│  SessionMutex.acquire()   ← 防止同一 session 并发执行           │
+│       │                                                          │
+│       ▼                                                          │
+│  spawn claude / gemini --permission-mode bypassPermissions       │
+│  (CLI 层：工具调用全部自动执行，从不暂停等待 stdin)               │
+└────────────────────────┬────────────────────────────────────────┘
+                         │ CLI 通过 MCP 调用工具
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  packages/mcp-server (独立进程，15+ 工具)                        │
+│                                                                  │
+│  当 Agent 调用敏感工具时 (e.g. write_file, exec_bash):           │
+│       │                                                          │
+│       ▼                                                          │
+│  mcp-server → HTTP POST /api/auth/request                        │
+│                        │                                         │
+│                        ▼                                         │
+│  ┌──── AuthorizationManager.requestPermission() ─────────────┐  │
+│  │                                                            │  │
+│  │  Step 1: ruleStore.match(catId, action, threadId)          │  │
+│  │    ├─ 命中 Redis 规则 → 立即返回 granted/denied            │  │
+│  │    └─ 未命中 → Step 2                                      │  │
+│  │                                                            │  │
+│  │  Step 2: pendingStore.create() → requestId                 │  │
+│  │          Socket.IO emit('authorization:request') to        │  │
+│  │          room `thread:{threadId}`                          │  │
+│  │          + Web Push 通知（即使关了页面也收到）              │  │
+│  │                                                            │  │
+│  │  Step 3: await Promise (最多 120s)                         │  │
+│  │    ├─ 铲屎官在前端点击 [允许/拒绝]                         │  │
+│  │    │    ├─ scope=once   → 本次有效，不存规则               │  │
+│  │    │    ├─ scope=thread → 当前对话有效，存 Redis           │  │
+│  │    │    └─ scope=global → 永久有效，存 Redis               │  │
+│  │    └─ 120s 超时 → 返回 pending（等待后续审批）              │  │
+│  └────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                         │ 返回 granted/denied/pending
+                         ▼
+              MCP server 执行或拒绝工具调用
+                         │
+                         ▼
+                 结果返回给 Agent CLI
+</div>
+
+<div class="g2" style="margin-top:16px">
+<div class="card cc">
+<h4>持久化规则存储结构</h4>
+<pre><code>// ruleStore.add() — Redis 持久化
+{
+  catId: 'opus',
+  action: 'write_file',
+  scope: 'thread',          // once | thread | global
+  decision: 'allow',        // allow | deny
+  threadId: 'thread-xyz',   // scope=thread 时有值
+  createdBy: 'user-001',
+  reason: '铲屎官批准文件写入'
+}
+// scope=global 时：猫猫以后永远不用问这个操作
+// scope=thread 时：当前 thread 内不再问
+// scope=once   时：用完即废，下次还会问</code></pre>
+</div>
+<div class="card cc">
+<h4>审计日志（每次操作都记录）</h4>
+<pre><code>// auditStore.append() — 不可篡改的操作记录
+{
+  requestId: 'req-abc123',
+  invocationId: 'inv-xyz',
+  catId: 'dare',
+  threadId: 'thread-xyz',
+  action: 'exec_bash',
+  reason: '运行测试套件',
+  decision: 'allow',        // 或 'deny' / 'pending'
+  scope: 'thread',
+  decidedBy: 'user-001',    // 哪个用户批准的
+  matchedRuleId: 'rule-456' // 命中了哪条规则
+}
+// 可以查询：谁批准了什么，什么时候，在哪个对话里</code></pre>
+</div>
+</div>
+
+<!-- ── Multi-Agent 无权限的根本原因 ── -->
+<h3>🚫 Multi-Agent 完全没有权限控制的根本原因</h3>
+<div class="card cm">
+<div class="ab" style="font-size:11.5px">
+Multi-Agent 权限流程（实际等于没有）:
+
+用户发消息
+    │
+    ▼
+dispatch.ts → spawn codex/gemini/claude
+    │
+    ├── Codex:  -a never -s workspace-write
+    │           → 不问任何问题，直接执行所有操作
+    │
+    ├── Gemini: --approval-mode yolo
+    │           → 不问任何问题，直接执行所有操作
+    │
+    └── Claude: stdin="ignore", 默认权限模式
+                → 遇到需要确认的操作
+                    → CLI 等待 stdin 输入
+                    → stdin 是 ignore，永远收不到输入
+                    → heartbeat 检测到 5 分钟不活动
+                    → SIGTERM → SIGKILL
+                    → Agent 死亡，没有任何错误提示
+</div>
+</div>
+
+<h3>📍 "权限静默终止"的完整代码证据链</h3>
+<div class="g3">
+<div class="card">
+<h4>证据 1：stdin 被关闭</h4>
+<pre><code>// base-runtime.ts:151-156
+const child = spawnProcess(
+  command.command,
+  command.args,
+  {
+    cwd: input.cwd,
+    env,
+    shell: command.shell,
+    stdio: ["ignore", "pipe", "pipe"]
+    //      ↑ stdin关闭 stdout/stderr保留
+  }
+)</code></pre>
+<p style="font-size:11.5px;color:#94a3b8;margin-top:6px">Claude CLI 需要 stdin 来接收用户的 y/n 回答。stdin 被设为 ignore，所有等待用户确认的操作都会永远阻塞。</p>
+</div>
+<div class="card">
+<h4>证据 2：尝试检测但无法处理</h4>
+<pre><code>// message-service.ts:52-88
+function extractPromptFromActivityChunk(chunk) {
+  // 从 stderr 里用正则找权限弹框文字
+  const promptLikeLines = lines.filter(line =>
+    /(please confirm|do you want|
+      请确认|等待你的确认)/i.test(line)
+    || /(?:\?|\uFF1F)$/.test(line)
+  )
+  // 找到了又怎样？
+  // Multi-Agent 没有前端 UI 展示这些内容
+  // 没有 WebSocket emit('authorization:request')
+  // 只是把文本存起来，没人看
+  return promptLikeLines.join('\n').slice(0, 1200)
+}</code></pre>
+<p style="font-size:11.5px;color:#94a3b8;margin-top:6px">代码能<em>发现</em>权限弹框，但不能<em>处理</em>它。发现了也只是提取文本，没有通道传到前端。</p>
+</div>
+<div class="card">
+<h4>证据 3：5 分钟后 kill</h4>
+<pre><code>// base-runtime.ts:68-72
+const DEFAULT_RUNTIME_LIFECYCLE = {
+  heartbeatIntervalMs: 30_000,   // 每30s检查
+  inactivityTimeoutMs: 5 * 60_000, // 5分钟阈值
+  shutdownGracePeriodMs: 5_000
+};
+
+// base-runtime.ts:287-295
+if (now() - lastActivityMs
+      >= lifecycle.inactivityTimeoutMs) {
+  timedOut = true
+  requestTermination()  // SIGTERM
+  // 5s 后 SIGKILL
+}
+// 错误信息："Agent 好像睡着了，
+// 已经有 300 秒（约5分钟）没有新活动"</code></pre>
+<p style="font-size:11.5px;color:#94a3b8;margin-top:6px">Claude 在等确认期间 stdout/stderr 没有新输出（因为它在等 stdin），被判定为"不活跃"，直接 kill。</p>
+</div>
+</div>
+
+<!-- ── 对比总结 ── -->
+<h3>📊 权限控制完整对比表</h3>
+<table class="t">
+<thead>
+<tr>
+  <th>维度</th>
+  <th class="tc">🐾 Clowder (Claude/Gemini)</th>
+  <th class="tm">⚡ Multi-Agent (Codex/Gemini/Claude)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Claude CLI 权限模式</td>
+  <td><code>bypassPermissions</code> — CLI 不暂停，外层控制</td>
+  <td>未设置 (default) + stdin=ignore = 必然挂死</td>
+</tr>
+<tr>
+  <td>Gemini CLI 权限模式</td>
+  <td><code>-y</code> (headless) + AuthorizationManager 兜底</td>
+  <td><code>--approval-mode yolo</code> + 无任何外层控制</td>
+</tr>
+<tr>
+  <td>Codex CLI 权限模式</td>
+  <td>N/A</td>
+  <td><code>-a never</code> + 无任何外层控制</td>
+</tr>
+<tr>
+  <td>人工审批通道</td>
+  <td>WebSocket <code>authorization:request</code> → 前端弹窗</td>
+  <td>❌ 无任何前端 UI</td>
+</tr>
+<tr>
+  <td>规则持久化</td>
+  <td>Redis — once / thread / global 三级范围</td>
+  <td>❌ 无</td>
+</tr>
+<tr>
+  <td>审计日志</td>
+  <td>所有操作都记录 who/what/when/why</td>
+  <td>❌ 无</td>
+</tr>
+<tr>
+  <td>超时处理</td>
+  <td>120s 超时 → 返回 pending，等待后续审批</td>
+  <td>5min 超时 → SIGKILL，会话结束</td>
+</tr>
+<tr>
+  <td>手机通知</td>
+  <td>Web Push — 关了页面也能收到权限请求</td>
+  <td>❌ 无</td>
+</tr>
+<tr>
+  <td>危险操作保护</td>
+  <td>MCP server 拦截，AuthorizationManager 判断</td>
+  <td>❌ 无任何拦截</td>
+</tr>
+<tr>
+  <td>遇到权限弹框时</td>
+  <td>前端显示弹窗，Agent 暂停等待人工决定</td>
+  <td>Claude: 挂死5分钟被kill；Codex/Gemini: 直接执行</td>
+</tr>
+</tbody>
+</table>
+
+<!-- ── 如何给 Multi-Agent 加权限控制 ── -->
+<h3>🔧 如何给 Multi-Agent 加权限控制（改造方案）</h3>
+<div class="card cm">
+<h4>方案 A：修复 Claude 挂死问题（最小改造，10 行）</h4>
+<pre><code>// 方法1：给 Claude 也加 --permission-mode
+// claude-runtime.ts (需要新建，目前 Multi-Agent 没有专门的 Claude runtime)
+const args = [
+  "-p", prompt,
+  "--output-format", "stream-json",
+  "--permission-mode", "bypassPermissions",  // ← 加这一行
+];
+// 效果：Claude 不再等 stdin，不会挂死
+// 缺点：完全没有任何权限确认，等于 yolo</code></pre>
+</div>
+
+<div class="card cm">
+<h4>方案 B：加简单的前端权限弹窗（中等改造，~150 行）</h4>
+<pre><code>// 1. 在 base-runtime.ts 中，把 extractPromptFromActivityChunk 结果发到前端
+hooks.onStderrChunk?.(text);
+// 改为：
+const prompt = extractPromptFromActivityChunk(text);
+if (prompt) {
+  // 通过 WebSocket 发到前端
+  this.ws.emit('permission:request', {
+    agentId: input.agentId,
+    prompt,
+    threadId: input.threadId,
+  });
+  // 暂停 Agent（Claude 的 stdin 设为 pipe 而非 ignore）
+  // 等待前端返回 y/n
+}
+
+// 2. 前端加一个简单的弹窗组件
+// 用户点击 [允许]/[拒绝] → WS 发回 y/n
+// Agent stdin 写入 y/n → CLI 继续执行
+
+// 3. 把 Claude 的 stdin 改为 pipe：
+stdio: ["pipe", "pipe", "pipe"]  // 可以写入 stdin
+//      ↑ 改 ignore 为 pipe</code></pre>
+</div>
+
+<div class="card cm">
+<h4>方案 C：完整规则引擎（大改造，~500 行，接近 Clowder 方案）</h4>
+<pre><code>// 参考 Clowder AuthorizationManager 的设计：
+// 1. 规则存储（SQLite 或内存 Map）
+// 2. 前端弹窗 + once/session/global 三级范围
+// 3. 审计日志
+// 4. Web Push（可选）
+// 5. MCP server 层拦截（需要给 Codex/Gemini 也加 MCP）
+
+// 最关键的是：
+// Codex/Gemini 用的是 CLI 工具，没有 MCP 接口
+// 要拦截它们的操作，需要在操作系统层面做沙箱
+// 或者用 Proxy 拦截 HTTP 请求
+// 这是 Clowder 没有对 Codex/Gemini 做权限拦截的原因
+// Clowder 只对 Claude (via MCP) 和 Gemini (via MCP) 做了完整权限控制</code></pre>
+</div>
+
+<div class="co com" style="margin-top:12px">
+<strong>总结：</strong>Multi-Agent 权限问题分三个层次：<br>
+1. <strong>Claude 挂死</strong>：stdin=ignore + default 权限模式 → 5分钟超时 → 最容易修复<br>
+2. <strong>Codex/Gemini 无约束</strong>：yolo/never 模式，没有外层控制 → 需要前端弹窗才能修复<br>
+3. <strong>无规则持久化</strong>：每次都要重新决定 → 需要规则引擎才能修复（最难）
+</div>
+</section>
+
+<!-- ══════════ §21 A2A CONFLICT + SERIAL ORDER ══════════ -->
+<section id="s21">
+<h2>🔀 二十二、A2A 冲突指令与串行保序 — "C 到底该 review 还是改代码？"</h2>
+
+<div class="card" style="background:linear-gradient(135deg,rgba(245,158,11,.1),rgba(124,58,237,.08));border-color:#f59e0b">
+<h3>⚠️ 用户提出的三个问题</h3>
+<div class="g3">
+<div>
+<strong>问题 1：C 收到冲突指令</strong><br>
+<small style="color:#94a3b8">A 修改完 → @B @C review<br>B review 完 → @A @C 改代码<br>C 现在"又要 review 又要改"<br>→ C 该听谁的？</small>
+</div>
+<div>
+<strong>问题 2：C 基于过时代码 review</strong><br>
+<small style="color:#94a3b8">A 改代码 → @B @C review<br>B review 后 → A 继续改<br>C review 时 A 已经又改了<br>→ C 是否在 review 旧版本？</small>
+</div>
+<div>
+<strong>问题 3：无限循环风险</strong><br>
+<small style="color:#94a3b8">C review → @A 改<br>A 改 → @B @C review<br>B review → @A @C 改<br>→ 会不会永远转圈？</small>
+</div>
+</div>
+</div>
+
+<!-- ═══ 问题 1：冲突指令 ═══ -->
+<h3>🔎 问题 1：C 收到冲突指令时 Clowder 怎么处理</h3>
+
+<div class="card cc">
+<h4>关键代码：WorklistRegistry.ts 第 172-184 行 — "最新发送者覆盖"规则</h4>
+<pre><code>// pushToWorklist() — 当 C 已经在待执行队列里，B 又 @C 时：
+} else if (callerCatId !== undefined) {
+  const existingIndex = entry.list.findIndex(
+    (id, idx) => idx >= entry.executedIndex && id === cat
+  );
+  // 判断 C 是"用户直接选的"还是"A2A 追加进来的"
+  const isOriginalPendingTarget =
+    existingIndex !== -1 && existingIndex < entry.originalCount;
+
+  if (!isOriginalPendingTarget) {
+    // C 是 A2A 追加的目标（不是用户直接选的）
+    // → a2aFrom[C] 更新为最新发送者 B
+    entry.a2aFrom.set(cat, callerCatId);  // ← 这里：A 设的被 B 覆盖
+  }
+  // C 是用户直接选的原始目标
+  // → a2aFrom[C] 不变（保持"回复用户"的语义）
+}</code></pre>
+
+<p style="margin-top:12px">这段代码决定了 C 最终的 <code>directMessageFrom</code> 是谁：</p>
+<table class="t" style="margin-top:8px">
+<thead><tr><th>C 的来源</th><th>A 说 @C review</th><th>B 后来说 @C modify</th><th>C 执行时的 directMessageFrom</th><th>C 的实际任务</th></tr></thead>
+<tbody>
+<tr>
+  <td>用户原始选定（originalTarget）</td>
+  <td>isOriginalPendingTarget = true</td>
+  <td>a2aFrom 不更新</td>
+  <td><code>a2aFrom 为空 → 回复用户</code></td>
+  <td>按用户指令，不受 A2A 干扰</td>
+</tr>
+<tr>
+  <td>A 通过 @mention 追加的</td>
+  <td>a2aFrom[C] = A (review)</td>
+  <td>a2aFrom[C] 更新为 B (modify)</td>
+  <td><code>directMessageFrom = 'B'</code></td>
+  <td>C 知道 B 要求 modify，但有 breed 约束兜底</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="card cc" style="margin-top:0">
+<h4>C 执行时的完整认知（以 A2A 追加的 C 为例）</h4>
+<div class="ab" style="font-size:11.5px">
+C 的系统提示中注入（由 SystemPromptBuilder.buildInvocationContext 构建）：
+
+  ┌─ directMessageFrom 注入 ──────────────────────────────────────────┐
+  │ "Direct message from 缅因猫(dare);                                │
+  │  reply to 缅因猫(dare)"                                           │
+  │ → C 知道：最后@我的是 B(dare)，B 说的是"请修改"                   │
+  └──────────────────────────────────────────────────────────────────┘
+
+  ┌─ previousResponses 上下文 ────────────────────────────────────────┐
+  │ [opus 说: 我已经完成了功能实现，@dare @codex 请 review]           │
+  │ [dare 说: review 结果：发现3个问题..., @opus @codex 请修复]       │
+  │ → C 看到了完整链路：A 写了什么，B 发现了什么问题                   │
+  └──────────────────────────────────────────────────────────────────┘
+
+  ┌─ WORKFLOW_TRIGGERS (breed 约束) ─────────────────────────────────┐
+  │ 如果 C 是 codex breed:                                           │
+  │   "你是代码审查专家。你的职责是识别安全问题和代码质量问题。"       │
+  │ 如果 C 是 siamese breed:                                         │
+  │   "❌ 不写任何代码。你的职责是 UI/设计方向。"                     │
+  └──────────────────────────────────────────────────────────────────┘
+
+  ┌─ chainIndex 位置感 ───────────────────────────────────────────────┐
+  │ "You are step 3 of 4 in this collaboration chain."              │
+  │ → C 知道自己在链中的位置，前面已经有两个人做了工作                 │
+  └──────────────────────────────────────────────────────────────────┘
+</div>
+
+<p style="margin-top:10px">C 拿到这些信息后，大概率会：</p>
+<ul style="margin-left:20px;font-size:13px;line-height:2">
+  <li>如果 C 是 <strong>reviewer breed (codex)</strong>：breed 触发词限制它不改代码 → C 会说"B 要求修改，但修改是 A (opus) 的职责，这里是我的 review 意见：..."</li>
+  <li>如果 C 是 <strong>通用 breed</strong>：C 会看到 B 要求修改，并且有 A 的原始代码 + B 的 review → C 可能直接帮忙修改其中一部分</li>
+  <li>无论如何：<strong>C 有完整上下文，它可以做出有依据的判断</strong>，而不是在信息真空里乱猜</li>
+</ul>
+</div>
+
+<!-- ═══ 问题 2：C 基于过时代码？ ═══ -->
+<h3>🔎 问题 2：C 是否基于"A 改之前"的代码来 review</h3>
+
+<div class="card cc">
+<h4>串行执行保证了时序正确性 — 这个担心是多余的</h4>
+<div class="ab" style="font-size:11.5px">
+场景：A 修改 → @B @C review → B review 后 → @A 继续改 → C 此时 review 的是哪个版本？
+
+Worklist 演化：
+  ┌──────────────────────────────────────────────────────────────┐
+  │ 初始：   [A]                   用户把任务给 A              │
+  │          ↓ A 执行完，说 "@B @C review"                      │
+  │ 扩展1：  [A✓, B, C]            a2aFrom: {B→A, C→A}        │
+  │          ↓ B 执行完，说 "@A @C 请修复以下3个问题"           │
+  │ 扩展2：  [A✓, B✓, C, A]        a2aFrom: {C更新为→B, A→B}  │
+  │          ↓ C 接下来执行（第3步）                            │
+  │ C执行：  [A✓, B✓, C✓, A]       ← C 是第3个执行的          │
+  │          ↓ A 最后执行（第4步，基于 B 和 C 的 review 修改）  │
+  │ A执行：  [A✓, B✓, C✓, A✓]      ← A 重新修改               │
+  └──────────────────────────────────────────────────────────────┘
+
+关键：C 在 A 重新修改"之前"执行 ✓
+      A 重新修改时已经拥有 B 的 review + C 的 review ✓
+      这正是正常的代码 review 流程！
+</div>
+
+<div class="co com" style="margin-top:10px">
+<strong>正常 code review 就是这个顺序：</strong><br>
+A 写代码 → B review → C review（基于 A 的原始代码）→ A 根据 B+C 两人的 review 统一修改<br>
+C 不需要等 A 修改完再 review——C 是 reviewer，C 的工作就是 review A 的当前代码，给 A 提意见。
+</div>
+</div>
+
+<div class="card">
+<h4>什么情况下才会出现"C 看到过时代码"的问题？</h4>
+<table class="t">
+<thead><tr><th>场景</th><th>Clowder 表现</th><th>是否真的是问题？</th></tr></thead>
+<tbody>
+<tr>
+  <td>C review A 的原始代码，然后 A 修改</td>
+  <td>串行：C先于A修改执行 → C 永远 review 当前版本</td>
+  <td><span class="v-good">✓ 正常流程，不是问题</span></td>
+</tr>
+<tr>
+  <td>A 修改后再次 @B @C，但 C 在第一轮 review 里说了"没问题"</td>
+  <td>B 再次@C → C 再次入队 → C 会拿到 A 修改后的代码（在 previousResponses 里）</td>
+  <td><span class="v-good">✓ C 第二次执行时上下文是最新的</span></td>
+</tr>
+<tr>
+  <td>C review 完 → @A 改 → A 改完 → 但 C 没被再次@</td>
+  <td>C 不会再执行，chain 结束</td>
+  <td><span class="v-eq">⚠ 可能需要手动再发消息触发新一轮</span></td>
+</tr>
+<tr>
+  <td>A 修改完 @B @C → B review 时 A 同时在改（并行模式）</td>
+  <td>routeParallel 模式下确实可能出现这个问题</td>
+  <td><span class="v-bad">✗ 并行模式不保证时序，用 routeSerial 才有保序</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<!-- ═══ 问题 3：无限循环 ═══ -->
+<h3>🔎 问题 3：无限循环风险 — Clowder 如何防止</h3>
+
+<div class="card cc">
+<h4>四重防护机制</h4>
+<div class="g2">
+<div>
+<pre><code>// ── 防护1：a2aCount 硬上限 ──
+// route-serial.ts:717
+if (a2aMentions.length > 0
+    && worklistEntry.a2aCount < maxDepth  // ← 超过就不再扩展
+    && !signal?.aborted
+    && !queuedMessagesPending) {
+
+// a2a-mentions.ts
+export function getMaxA2ADepth(): number {
+  const env = process.env.MAX_A2A_DEPTH;
+  return env ? Number(env) : 15;  // 默认15跳
+}
+// 无论 A→B→C→A→B→C 怎么循环
+// 到第15步后 chain 强制停止</code></pre>
+</div>
+<div>
+<pre><code>// ── 防护2：用户新消息优先门 ──
+// route-serial.ts:708-715
+let queuedMessagesPending = false;
+if (queueHasQueuedMessages) {
+  try {
+    queuedMessagesPending =
+      queueHasQueuedMessages(threadId);
+  } catch {
+    queuedMessagesPending = false;
+  }
+}
+// 用户如果发了新消息
+// A2A chain 停止继续扩展
+// 用户消息优先级 > A2A 追加</code></pre>
+</div>
+</div>
+<div class="g2" style="margin-top:0">
+<div>
+<pre><code>// ── 防护3：pending-tail 去重 ──
+// route-serial.ts:718-730
+const pendingTail = worklist.slice(index + 1);
+for (const nextCat of a2aMentions) {
+  if (pendingTail.includes(nextCat)) {
+    // C 已经在队列里了
+    // 就算 B 再@C，也不会重复添加
+    // (但会更新 a2aFrom)
+    continue;
+  }
+  worklist.push(nextCat);  // 只有不在队列里才加
+}
+// A→B→A 的 ping-pong 允许（A已执行，不在pending里）
+// A→B→C→B（B还没执行，不重复加）</code></pre>
+</div>
+<div>
+<pre><code>// ── 防护4：parseA2AMentions 每次最多2个目标 ──
+// a2a-mentions.ts
+// strip code fences → longest-match-first
+// → line-start only → token boundary
+// → self-filter → max 2 targets per turn
+
+// 一个 Agent 每轮最多只能@2个人
+// 避免"我@所有人"式的爆炸式扩展
+// 即使深度15，最差情况也是 2^15
+// 但 pending-tail 去重大幅限制实际数量</code></pre>
+</div>
+</div>
+
+<p style="margin-top:8px;font-size:12.5px;color:#94a3b8">
+四重防护合力：<strong>深度15跳</strong>（硬停）+ <strong>用户消息抢占</strong>（软停）+ <strong>pending去重</strong>（防快速振荡）+ <strong>每轮最多2目标</strong>（防爆炸扩展）
+</p>
+</div>
+
+<!-- ═══ 完整场景走一遍 ═══ -->
+<h3>📽️ 完整场景逐步演示：A改→@B@C review→B review→@A@C改→C拿到冲突指令</h3>
+<div class="ab" style="font-size:11.5px">
+用户：@A 帮我实现这个功能
+Worklist：[A]
+
+═══ Step 0：A 执行 ═══
+A (opus) 实现功能，输出："已完成实现，@dare @codex 请 review"
+a2a mentions 解析：[dare, codex]
+pendingTail = [] (A 后面没有人了)
+→ dare 加入队列，a2aFrom[dare] = opus
+→ codex 加入队列，a2aFrom[codex] = opus
+Worklist：[A✓, B(dare), C(codex)]   a2aCount=2
+
+═══ Step 1：B (dare/缅因猫) 执行 ═══
+B 的系统提示：directMessageFrom=opus, chainIndex=2/3
+B 的上下文：previousResponses = [A 的实现内容]
+B review 后输出："发现3个问题，@opus @codex 请修复"
+a2a mentions 解析：[opus, codex]
+pendingTail = [codex] (C还没执行)
+→ opus: 不在 pendingTail → 加入队列，a2aFrom[opus] = dare
+→ codex: 已在 pendingTail，且是 A2A 追加目标（非原始用户选定）
+   → 不重复加入，但更新 a2aFrom[codex] = dare (从 opus 改为 dare)
+Worklist：[A✓, B✓, C(codex), A(opus)]   a2aCount=3
+         ↑ C 的 a2aFrom 已从 opus 更新为 dare
+
+═══ Step 2：C (codex) 执行 ═══
+C 的系统提示：directMessageFrom=dare(B), chainIndex=3/4
+C 的上下文：previousResponses = [A 的实现 + B 的 review "发现3问题请修复"]
+C 知道：B(最后叫我的那个) 说要修复代码
+
+C 是 codex breed，WORKFLOW_TRIGGERS："你是代码审查专家，发现安全问题"
+→ C 判断：B 说修复，但我的职责是 review，不是改代码
+→ C 输出："同意 B 的3个问题，补充发现第4个安全漏洞。修复建议：[...] A 可以按以下步骤修复"
+→ C 没有再@任何人（认为修复是 A 的事）
+
+a2a mentions 解析：[] (C 没有@人)
+Worklist：[A✓, B✓, C✓, A(opus)]   a2aCount 不变=3
+
+═══ Step 3：A (opus) 再次执行 ═══
+A 的系统提示：directMessageFrom=dare(B), chainIndex=4/4
+A 的上下文：previousResponses = [A原始实现 + B的review + C的review]
+A 看到了 B 和 C 两人的完整 review 意见
+→ A 修复了所有4个问题
+→ A 输出："已修复全部问题：修复了B提的3个+C提的安全漏洞"
+→ A 没有再@任何人（认为工作已完成）
+
+Worklist 执行完毕。Chain 结束。
+
+════════════════════════════════════════════════════
+关键结论：
+1. C 执行时的 directMessageFrom = B（最新发送者），不是A
+2. C review 的是 A 的原始代码（A 还没有再改），这是正确的
+3. A 最终修改时拿到了 B+C 的全部反馈
+4. C 的 breed 触发词使其保持 reviewer 角色，没有去改代码
+5. 没有无限循环（C 没有@人，A 也没有@人，链自然结束）
+════════════════════════════════════════════════════
+</div>
+
+<!-- ═══ 如果 C 真的接受了冲突指令怎么办 ═══ -->
+<h3>⚠️ 边界情况：如果 C 是通用 breed，真的尝试"既 review 又改"</h3>
+<div class="card" style="border-left:4px solid #f59e0b">
+<p>假设 C 是没有严格角色约束的通用 Agent：</p>
+<ul style="margin-left:20px;line-height:2.2;font-size:13px">
+  <li>C 有 <code>previousResponses</code> — C 看到了所有上下文，知道"A 写了什么、B review 了什么"</li>
+  <li>C 有 <code>directMessageFrom=B</code> — C 知道 B 最后叫的自己，B 说"修复"</li>
+  <li>C 有 <code>chainIndex=3/4</code> — C 知道 A 还在后面，A 是第4个执行的</li>
+  <li>→ <strong>即使没有 breed 约束</strong>，C 也倾向于说："我 review 一下，但主要修复交给 A(第4步)来做，因为 A 在我后面"</li>
+</ul>
+<div class="co com" style="margin-top:8px">
+Clowder 没有代码层面的"角色锁"。角色分离靠的是：<br>
+① breed 触发词（行为约束）<br>② previousResponses（知道已经有谁做了什么）<br>③ chainIndex（知道自己前后的人是谁）<br>
+三者叠加后，Agent 通常会自然选择合适的角色。<strong>但如果 breed 配置不合理，确实可能出现角色混乱。</strong>
+</div>
+</div>
+
+<!-- ═══ Multi-Agent 为什么不能处理这些 ═══ -->
+<h3>💀 Multi-Agent 在这个场景里会发生什么</h3>
+
+<div class="g2">
+<div class="card cm">
+<h4>问题1：C 收到冲突指令</h4>
+<pre><code>// dispatch.ts — enqueuePublicMentions
+content: [
+  `You were mentioned by ${sourceAlias}.`,
+  `Latest public message: ${latestMessage}.`,
+  `Read the shared room context.`  // ← "看公共房间"
+].join('\n')</code></pre>
+<p style="font-size:12.5px;margin-top:8px">A 叫 C review，B 叫 C modify：</p>
+<ul style="font-size:12px;margin-left:16px;line-height:2">
+  <li>C 收到 A 的"被提及"通知</li>
+  <li>C 如果还能被再触发（rootTriggeredProviders 允许），收到 B 的"被提及"通知</li>
+  <li>C 没有 <code>directMessageFrom</code>，不知道谁叫自己</li>
+  <li>C 没有 <code>previousResponses</code>，看不到 A 和 B 做了什么</li>
+  <li>C 只能"读公共消息"——但公共消息是流式的，C 可能读到的是任何时间点的内容</li>
+  <li>→ C 完全不知道自己该干什么</li>
+</ul>
+</div>
+<div class="card cm">
+<h4>问题2：rootTriggeredProviders 直接封杀迭代</h4>
+<pre><code>// dispatch.ts
+private rootTriggeredProviders =
+  new Map&lt;string, Set&lt;string&gt;&gt;()
+
+enqueuePublicMentions(...) {
+  const triggered =
+    this.rootTriggeredProviders
+        .get(sessionGroupId) ?? new Set()
+  for (const mention of mentions) {
+    if (triggered.has(mention.provider))
+      continue  // ← A 如果被触发过一次
+                // B 叫 A 来修改 → 被跳过
+    triggered.add(mention.provider)
+    this.queues.get(...)?.push(...)
+  }
+}
+// 结果：A 修改一次后，B 说"@A 继续修复"
+// → A 已在 triggered set → 跳过
+// → 修复任务断链</code></pre>
+</div>
+</div>
+
+<div class="card cm">
+<h4>问题3：C 拿到的是哪个版本的代码？</h4>
+<table class="t">
+<thead><tr><th>时序问题</th><th class="tc">🐾 Clowder</th><th class="tm">⚡ Multi-Agent</th></tr></thead>
+<tbody>
+<tr>
+  <td>C review 的是哪个版本</td>
+  <td>A 的当前版本（串行保证：C 在 A 再修改之前执行）</td>
+  <td>不确定——C 在独立线程运行，A 可能同时在修改</td>
+</tr>
+<tr>
+  <td>C 能否看到 A 的实现内容</td>
+  <td>previousResponses 里有 A 的完整输出</td>
+  <td>只能看"公共房间最新消息"，可能被 B 的消息覆盖</td>
+</tr>
+<tr>
+  <td>C 知道 A 后面还会再修改吗</td>
+  <td>chainIndex 告诉 C：后面还有 A（step 4/4）</td>
+  <td>C 不知道，可能做出重复的修改工作</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<!-- ═══ Multi-Agent 如何改进 ═══ -->
+<h3>🔧 Multi-Agent 如何解决这些问题（改进方案）</h3>
+
+<div class="card cm">
+<h4>根本改造：从"广播通知"改为"定向消息 + 上下文传递"</h4>
+
+<div class="g2">
+<div>
+<pre><code>// ═══ 现在的问题代码 ═══
+// dispatch.ts — enqueuePublicMentions
+content: [
+  `You were mentioned by ${sourceAlias}.`,
+  `Latest public message: ${content}.`,
+  `Read the shared room context.`
+].join('\n')
+
+// A 叫 C review = C 收到"A 提到你了，看公共消息"
+// B 叫 C modify = C 收到"B 提到你了，看公共消息"
+// C 完全不知道：
+//   - 自己该做 review 还是 modify
+//   - A 做了什么
+//   - B 做了什么
+//   - 自己在链中的位置</code></pre>
+</div>
+<div>
+<pre><code>// ═══ 改造后的设计 ═══
+// 维护一个 chainContext Map
+const chainContext = new Map()  // sessionGroupId → [...]
+
+// Agent 完成时，把输出追加到 chainContext
+chainContext.get(id)?.push({
+  provider: sourceAlias,
+  content: agentOutput
+})
+
+// 给目标 Agent 的 content 包含完整上下文
+content: [
+  `Direct message from ${sourceAlias}: ${task}`,
+  `You are step ${pos} of ${total}`,
+  `What has been done so far:`,
+  chainContext.get(id)?.map(x =>
+    `[${x.provider}]: ${x.content}`
+  ).join('\n')
+].join('\n')</code></pre>
+</div>
+</div>
+
+<div style="margin-top:12px">
+<h4>改造2：用 pending-tail 去重替换 rootTriggeredProviders（解决 A 只能触发一次的问题）</h4>
+<pre><code>// 现在（有问题）：
+private rootTriggeredProviders = new Map&lt;string, Set&lt;string&gt;&gt;()
+// 一旦 A 被触发过，就永远不会再触发
+
+// 改为：
+private pendingProviders = new Map&lt;string, Set&lt;string&gt;&gt;()  // 只记录"排队中但未执行"
+// A 执行完后从 pendingProviders 里移除
+// 下次 B 说 @A，A 不在 pending 里了，可以重新入队
+// 效果：A 可以被多次触发，但不会重复排队</code></pre>
+</div>
+
+<div style="margin-top:12px">
+<h4>改造3：串行执行（解决时序问题）</h4>
+<pre><code>// 现在：每个 Agent 在独立线程运行（可并行）
+// A 修改时，C 可能同时在 review
+
+// 改为：维护一个执行队列，串行消费
+class SerialExecutionQueue {
+  private queue: DispatchTask[] = []
+  private running = false
+
+  async enqueue(task: DispatchTask) {
+    this.queue.push(task)
+    if (!this.running) await this.drain()
+  }
+
+  private async drain() {
+    this.running = true
+    while (this.queue.length > 0) {
+      const task = this.queue.shift()!
+      await this.execute(task)
+      // 执行完后，从 pendingProviders 移除
+    }
+    this.running = false
+  }
+}
+// 效果：C 一定在 A 再次修改之前完成 review</code></pre>
+</div>
+</div>
+
+<!-- ═══ 总结对比 ═══ -->
+<h3>📊 三个问题的处理能力对比</h3>
+<table class="t">
+<thead>
+<tr>
+  <th>问题</th>
+  <th class="tc">🐾 Clowder 解决方案</th>
+  <th class="tm">⚡ Multi-Agent 现状</th>
+  <th>Multi-Agent 如何改进</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>C 收到冲突指令</strong><br><small>又要review又要改</small></td>
+  <td>最新发送者覆盖 a2aFrom → C 知道 B(最后叫自己的) 要什么<br>+ breed 触发词约束行为<br>+ previousResponses 给 C 完整上下文</td>
+  <td>C 收到"你被提及了，看公共消息"<br>不知道谁叫自己、要干什么</td>
+  <td>在通知内容里注入 directMessageFrom + 任务描述</td>
+</tr>
+<tr>
+  <td><strong>C 基于过时代码 review</strong><br><small>A 在改，C review 旧版</small></td>
+  <td>串行执行：C 在 A 再修改之前执行<br>时序天然正确</td>
+  <td>并行执行：A 和 C 可能同时运行<br>C 可能 review 到一半 A 已经改完了</td>
+  <td>改为串行队列执行</td>
+</tr>
+<tr>
+  <td><strong>无限循环</strong><br><small>A→B→C→A→B→C...</small></td>
+  <td>a2aCount ≤ 15 硬上限<br>+ 用户消息抢占门<br>+ pending-tail 防快速振荡<br>+ 每轮最多@2人</td>
+  <td>MAX_HOPS=10（total），rootTriggeredProviders<br>一刀切：禁止重复触发同一 provider<br>（把 anti-loop 和 anti-workflow 混在一起）</td>
+  <td>pending-tail 去重 + 单独的 maxDepth 计数</td>
+</tr>
+<tr>
+  <td><strong>C 知道自己在链中位置</strong><br><small>前面有人做了啥</small></td>
+  <td>chainIndex + previousResponses<br>C 看得到 A 写了什么、B review 了什么</td>
+  <td>只有"公共消息"广播，顺序不保证<br>C 不知道自己是第几步</td>
+  <td>chainIndex 注入 + chainContext 传递</td>
+</tr>
+</tbody>
+</table>
+
+<div class="co com" style="margin-top:12px">
+<strong>一句话总结：</strong>Clowder 的串行执行 + previousResponses + 最新发送者覆盖，共同保证了"C 永远基于最新状态工作，永远知道自己该干什么，永远不会重复别人已做的工作"。Multi-Agent 的并行广播架构从根本上无法保证这三点。
+</div>
+</section>
+
+<div style="text-align:center;margin-top:60px;padding:24px;color:var(--muted);font-size:12.5px;border-top:1px solid var(--border)">
+<!-- ══════════ §22 HOW AGENTS KNOW WHOSE MESSAGES TO READ ══════════ -->
+<section id="s22">
+<h2>📬 二十三、Agent 怎么知道该看谁的消息 — context 是怎么传进来的</h2>
+
+<div class="card" style="background:linear-gradient(135deg,rgba(16,185,129,.1),rgba(124,58,237,.08));border-color:#10b981">
+<h3>💡 核心答案：A 不需要"主动去找" B 和 C 的消息 — 系统直接塞给 A</h3>
+<p>每次轮到 A 执行时，Clowder 会自动把"在 A 上次发言之后、当前轮次开始之前"的所有消息从数据库里拉出来，<strong>直接拼进 A 的 prompt</strong>。A 不需要搜索、不需要工具调用，它的输入本身就包含了 B 和 C 的内容。</p>
+</div>
+
+<!-- ─── 两种模式 ─── -->
+<h3>🔧 route-serial.ts 的两种上下文组装模式</h3>
+<div class="g2">
+<div class="card cc">
+<h4>模式 A：增量模式 (incrementalMode) — 生产环境默认</h4>
+<pre><code>// route-serial.ts:81
+const incrementalMode = Boolean(
+  currentUserMessageId &&
+  deps.deliveryCursorStore
+);
+// 条件：调用方提供了 currentUserMessageId
+// 这是生产环境的标准路径
+
+// 当 A 第二次执行时：
+const inc = await assembleIncrementalContext(
+  deps, userId, threadId, catId,
+  currentUserMessageId,
+  thinkingMode
+);
+// ↑ 从数据库里读取：
+//   从"上次 A 读到的位置"往后的所有新消息
+//   → 包括 B 的 review + C 的 review
+//   → 它们此时已经被存进数据库了
+
+prompt = [invocationContext, inc.contextText,
+          message].join('\n\n---\n\n');
+// A 的最终 prompt = 系统身份 + 新消息历史 + 用户原始消息</code></pre>
+<div class="co com" style="margin-top:8px">
+关键：每个 Agent 执行完 <strong>立即存入数据库</strong>（messageStore.append），下一个 Agent 运行时就能读到它。这是"看到前面所有人的工作"的真正机制。
+</div>
+</div>
+<div class="card cc">
+<h4>模式 B：previousResponses 注入 — 仅 debug 模式</h4>
+<pre><code>// route-serial.ts:77
+const previousResponses:
+  { catId: CatId; content: string }[] = [];
+
+// route-serial.ts:562-564
+// 注意这里的条件！
+if (!incrementalMode
+    && thinkingMode === 'debug') {  // ← 只有 debug 模式
+  previousResponses.push({
+    catId, content: storedContent
+  });
+}
+
+// route-serial.ts:150-153
+let prompt = message;
+if (!incrementalMode
+    && previousResponses.length > 0) {
+  const contextParts = previousResponses
+    .map(r => `[${r.catId} responded: ${r.content}]`);
+  prompt = `${message}\n\n${contextParts.join('\n')}`;
+}
+// 这种模式只在调试时使用
+// 生产环境中 previousResponses 始终为空</code></pre>
+<div class="co bad" style="margin-top:8px">
+常见误解：以为 previousResponses 是主要机制。实际上在 play 模式（默认）下它从不被填充。真正的上下文传递靠数据库。
+</div>
+</div>
+</div>
+
+<!-- ─── 完整数据流 ─── -->
+<h3>🗺️ 增量模式下的完整数据流 — A 是怎么"看到"B 和 C 的</h3>
+<div class="ab" style="font-size:11.5px">
+用户发消息："@A 实现功能X"
+                    │
+                    ▼
+          messageStore.append(用户消息)
+          currentUserMessageId = "msg-001"
+                    │
+                    ▼
+════════ Step 1：A 执行 ════════════════════════════════════════════════
+│                                                                      │
+│  assembleIncrementalContext("msg-001")                               │
+│  → 读取从 msg-001 之后的新消息                                        │
+│  → 目前没有新消息（A 是第一个）                                        │
+│  → A 的 prompt = 系统提示 + 用户原始消息                              │
+│                                                                      │
+│  A 执行完毕 → "我实现了功能X，@dare @codex 请 review"                 │
+│  messageStore.append(A的回复)  →  数据库新增 "msg-002"                │
+│  parsedA2AMentions = [dare, codex]                                   │
+│  worklist 扩展为: [A✓, B(dare), C(codex)]                            │
+└──────────────────────────────────────────────────────────────────────┘
+                    │
+                    ▼
+════════ Step 2：B 执行 ════════════════════════════════════════════════
+│                                                                      │
+│  assembleIncrementalContext("msg-001")                               │
+│  → 读取从 msg-001 之后的新消息：                                       │
+│     msg-002: [A 说: "我实现了功能X..."]    ← A 刚才存的！             │
+│  → B 的 prompt = 系统提示 + A的实现内容 + 用户原始消息                 │
+│                                                                      │
+│  B 执行完毕 → "发现3个问题：... @opus @codex 请修复"                   │
+│  messageStore.append(B的review) → 数据库新增 "msg-003"                │
+│  worklist 扩展为: [A✓, B✓, C(codex), A(opus)]                       │
+└──────────────────────────────────────────────────────────────────────┘
+                    │
+                    ▼
+════════ Step 3：C 执行 ════════════════════════════════════════════════
+│                                                                      │
+│  assembleIncrementalContext("msg-001")                               │
+│  → 读取从 msg-001 之后的新消息：                                       │
+│     msg-002: [A 说: "我实现了功能X..."]                               │
+│     msg-003: [B 说: "发现3个问题...@opus @codex 请修复"]  ← B 刚存的！│
+│  → C 的 prompt = 系统提示 + A的实现 + B的review + 用户原始消息         │
+│                                                                      │
+│  C 执行完毕 → "同意B，补充第4个安全漏洞"                               │
+│  messageStore.append(C的review) → 数据库新增 "msg-004"                │
+│  C 没有@任何人，worklist 不再扩展                                      │
+└──────────────────────────────────────────────────────────────────────┘
+                    │
+                    ▼
+════════ Step 4：A 第二次执行 ════════════════════════════════════════════
+│                                                                      │
+│  assembleIncrementalContext("msg-001")                               │
+│  → 读取从 msg-001 之后的新消息：                                       │
+│     msg-002: [A 说: "我实现了功能X..."]                               │
+│     msg-003: [B 说: "发现3个问题..."]      ← B 的完整 review          │
+│     msg-004: [C 说: "同意B，补充第4个问题"] ← C 的完整 review         │
+│  → A 的 prompt = 系统提示 + 全部上下文 + 用户原始消息                  │
+│                                                                      │
+│  A 不需要"搜索"、不需要"找"B和C的消息                                  │
+│  它们已经在 A 的 prompt 里了！                                         │
+│                                                                      │
+│  A 执行完毕 → "已修复全部4个问题"                                      │
+│  messageStore.append(A的修复) → msg-005                               │
+└──────────────────────────────────────────────────────────────────────┘
+</div>
+
+<!-- ─── 重要细节 ─── -->
+<h3>❓ 如果 C 的回复和这次功能开发无关，A 会把 B 和 C 的消息都读完吗？</h3>
+
+<div class="card">
+<h4>答：会都读，但 A 知道该关注什么</h4>
+<p style="margin-bottom:14px">因为 <code>assembleIncrementalContext</code> 是按时间顺序读取所有新消息，C 的无关消息也会出现在 A 的上下文里。</p>
+<p>但 A 有足够的信息判断"C 的消息跟我有什么关系"：</p>
+
+<table class="t" style="margin-top:12px">
+<thead>
+<tr>
+  <th>信号</th>
+  <th>A 从哪里获得</th>
+  <th>对 A 的影响</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>directMessageFrom = B</code></td>
+  <td>worklistEntry.a2aFrom — 最后 @A 的是 B</td>
+  <td>A 知道：B 叫我来的，B 要我修复 3 个问题</td>
+</tr>
+<tr>
+  <td>B 的消息里有 "@A 请修复"</td>
+  <td>msg-003 在 A 的上下文里</td>
+  <td>A 看到 B 给了具体的修复指令</td>
+</tr>
+<tr>
+  <td>C 的消息没有 @A</td>
+  <td>msg-004 在 A 的上下文里，但没有 @A</td>
+  <td>A 会读到 C 的消息，但 C 没给 A 任务</td>
+</tr>
+<tr>
+  <td>C 的内容是"无关话题"</td>
+  <td>A 看到 C 在说别的事情</td>
+  <td>A 认为 C 没有对这次任务表态，A 专注于 B 的 review</td>
+</tr>
+<tr>
+  <td><code>chainIndex = 4/4</code></td>
+  <td>invocationContext 里注入</td>
+  <td>A 知道自己是最后一步，应该把工作收尾</td>
+</tr>
+</tbody>
+</table>
+
+<div class="co com" style="margin-top:12px">
+<strong>类比：</strong>就像你在看一个微信群的聊天记录，里面有别人给你的任务（B 说"@A 请修复"），也有跟你无关的对话（C 在聊别的）。你会读完所有记录，但你只会去做 B 给你的任务，C 的无关消息不影响你。<br><br>
+Clowder 的 Agent 也一样——上下文全给了，但有 <code>directMessageFrom</code> 告诉它"谁是最后找你的人、找你干啥"。
+</div>
+</div>
+
+<!-- ─── 上下文预算 ─── -->
+<h3>⚖️ 如果历史太长怎么办 — 上下文预算机制</h3>
+<div class="card cc">
+<pre><code>// route-serial.ts:276-288 — 按 cat 独立的上下文预算
+const budget = getCatContextBudget(catId as string);
+
+// 估算系统提示、调用上下文等已占用的 token
+const systemPartsTokens = estimateTokens(
+  [staticIdentity, invocationContext, mcpInstructions].join('\n')
+);
+const promptTokens = estimateTokens(prompt);
+
+// 剩余预算分给历史消息
+const budgetForContext = Math.max(
+  0,
+  budget.maxPromptTokens - systemPartsTokens - promptTokens - 200
+);
+
+// 按预算组装历史消息
+const { contextText, messageCount } = assembleContext(history, {
+  maxMessages: budget.maxMessages,
+  maxContentLength: budget.maxContentLengthPerMsg,   // 每条消息最多截取多少字符
+  maxTotalTokens: Math.min(budgetForContext, budget.maxContextTokens),
+});</code></pre>
+<p style="margin-top:8px;font-size:12.5px;color:#94a3b8">
+如果 B 和 C 的 review 加起来太长超出预算，<code>assembleContext</code> 会：① 截断单条消息内容；② 保留最近的消息，丢弃更早的消息。A 的历史有可能被截断，但通常 review 内容不会太长，不会触发截断。
+</p>
+</div>
+
+<!-- ─── Multi-Agent 对比 ─── -->
+<h3>⚡ Multi-Agent 是怎么做的（对比）</h3>
+<div class="g2">
+<div class="card cm">
+<h4>A 怎么知道 B 和 C 做了什么？</h4>
+<pre><code>// dispatch.ts — enqueuePublicMentions
+content: [
+  `You were mentioned by ${sourceAlias}.`,
+  `Latest public message: ${content}.`,
+  `Read the shared room context.`
+].join('\n')
+// ↑ 只有"最新一条公共消息"
+// 不是完整链路——如果 B 和 C 都说了话
+// A 只拿到最后一个人的消息
+// 而且是"通知"不是"历史"</code></pre>
+<div class="co bad" style="margin-top:6px">
+A 无法可靠地看到 B 和 C 的完整 review。可能只看到最后一条，前面的内容可能已经被覆盖或截断。
+</div>
+</div>
+<div class="card cm">
+<h4>"Read the shared room context" 能解决问题吗？</h4>
+<pre><code>// 这句话让 Agent 自己去"读公共房间"
+// 听起来可以读到所有人的消息
+
+// 问题：
+// 1. "公共房间" = 所有参与者的所有历史消息
+//    不区分"当前任务相关"和"历史无关消息"
+// 2. Agent 需要自己判断哪些消息与自己有关
+//    没有 directMessageFrom 指引
+// 3. 没有增量机制——不知道从哪里开始读
+//    不知道自己上次"读到哪"
+// 4. 内容太多时 Agent 可能混淆
+//    或者用 tool 去搜索（浪费 token）</code></pre>
+<div class="co bad" style="margin-top:6px">
+"自己去读"和"系统自动注入"是两种截然不同的可靠性。前者依赖 Agent 的主动行为，后者是系统保证。
+</div>
+</div>
+</div>
+
+<!-- ─── 一句话对比 ─── -->
+<div class="card" style="margin-top:8px;border-left:4px solid #10b981">
+<table class="t">
+<thead>
+<tr>
+  <th>维度</th>
+  <th class="tc">🐾 Clowder</th>
+  <th class="tm">⚡ Multi-Agent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>A 如何获得 B 的 review</td>
+  <td>系统自动从数据库取，直接拼进 A 的 prompt</td>
+  <td>"你被 B 提及了，看最新消息，自己读公共房间"</td>
+</tr>
+<tr>
+  <td>A 能否看到完整链路</td>
+  <td>✓ 所有人的消息按顺序在 prompt 里</td>
+  <td>⚠ 只有"最新公共消息"，历史可能丢失</td>
+</tr>
+<tr>
+  <td>C 无关消息的处理</td>
+  <td>A 看到但有 directMessageFrom 指引焦点</td>
+  <td>A 不知道哪条消息是给自己的任务</td>
+</tr>
+<tr>
+  <td>上下文是否确定性</td>
+  <td>✓ 确定性 — 数据库读取，顺序固定</td>
+  <td>✗ 不确定 — 依赖 Agent 自己的读取行为</td>
+</tr>
+<tr>
+  <td>上下文预算管理</td>
+  <td>per-cat 预算，自动截断，报告截断状态</td>
+  <td>无专门预算，由 CLI 自身的 context window 处理</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+
+  📅 2026-03-23 · 基于源码直接分析 · 🐾 Clowder AI Ragdoll<br>
+  <span style="font-size:11px">分析覆盖: route-serial · WorklistRegistry(a2aFrom覆盖逻辑) · SystemPromptBuilder · AgentRouter ·<br>dispatch.ts(rootTriggeredProviders) · agent-prompts · WORKFLOW_TRIGGERS · AuthorizationManager ·<br>ClaudeAgentService · codex-runtime · gemini-runtime · base-runtime</span>
+</div>
+
+</div>
+</body>
+</html>
