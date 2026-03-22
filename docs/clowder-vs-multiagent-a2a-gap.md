@@ -852,3 +852,290 @@ ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'final';
 Clowder AI 的有序性不是来自"更好的 AI"，而是来自**更严格的协议约束**：每一层（入队、执行、上下文、去重、消息分类）都有明确的守护。Multi-Agent 目前的核心问题是：把这些约束压在"AI 自己判断"上，而 AI 没有它们需要的结构信息来正确判断。
 
 整改的本质是：**把隐式约定改成显式协议**。P1-P3 可以在不改变整体架构的前提下完成，收益最大，风险最低。
+
+---
+
+## 差距十：Skills 系统——3 个文本约定 vs 24 个结构化技能
+
+### Multi-Agent：3 个文本约定
+
+Multi-Agent 的 `multi-agent-skills/` 目录只有 3 个文件：
+
+| 技能 | 内容 | 集成方式 |
+|------|------|---------|
+| `handoff.md` | 交接四件套（What/Why/Risk/Next Step） | 纯文本约定，agent 自我执行 |
+| `review.md` | 评审三件套（复述理解/阻塞问题/建议） | 纯文本约定，agent 自我执行 |
+| `system/room-charter.md` | 多 agent 房间规则（@ 格式、协作规范） | 嵌入 system prompt，每次 invocation 注入 |
+
+**没有 manifest**：无路由配置，无触发短语匹配，无技能注册表。
+
+**没有状态**：技能是无状态约定，不追踪执行，不校验完成，也不阻断违规行为。
+
+**举例说明后果**：`review.md` 说"先复述理解"，但没有任何机制阻止 agent 跳过这一步。如果 agent 直接说"有个 bug"，系统不会拒绝。
+
+---
+
+### Clowder AI：24 个结构化技能
+
+`cat-cafe-skills/` 目录有 24 个命名技能，通过 `manifest.yaml` 统一路由。
+
+**manifest.yaml 结构**（CSO 格式，~670 行）：
+
+```yaml
+skills:
+  - skill_id: feat-lifecycle
+    description: >
+      Feature 立项、讨论、完成的全生命周期管理。
+      Use when: 开个新功能、new feature、F0xx、立项、feature 完成。
+      Not for: 代码实现、review、merge（那些有专门 skill）。
+      Output: Feature 聚合文件 + BACKLOG 索引 + 真相源同步。
+    triggers:
+      - "开个新功能"
+      - "new feature"
+      - "立项"
+    argument_hint: "[阶段: kickoff|discussion|completion] [F0xx 或主题]"
+
+  - skill_id: quality-gate
+    description: >
+      提交 review 前的自检流程，7 步验证：视野校验 → 交付完整性 → 规格符合 →
+      运行时守护 → 设计一致性 → 测试/lint/check → 产物卫生。
+    triggers:
+      - "quality gate"
+      - "自检"
+      - "质量门"
+```
+
+**description 字段不是摘要，是触发条件（CSO）**：包含"Use when / Not for / Output"，Claude 用这三段判断是否加载该技能。
+
+**24 个技能按类别分组**：
+
+| 类别 | 技能 | 数量 |
+|------|------|------|
+| 开发生命周期 | feat-lifecycle, writing-plans, worktree, tdd, quality-gate, request-review, receive-review, merge-gate, collaborative-thinking, cross-cat-handoff, cross-thread-sync | 11 |
+| 用户培训 | bootcamp-guide（11 阶段状态机） | 1 |
+| 开发支撑 | debugging, deep-research, pencil-design, browser-preview, workspace-navigator, rich-messaging, image-generation | 7 |
+| 团队健康 | self-evolution, hyperfocus-brake, incident-response | 3 |
+| 元技能 | writing-skills, writing-plans | 2 |
+
+**技能有阻断能力**：
+
+`cross-cat-handoff` 的五件套缺失一件就拒绝发送：
+```
+Block pattern: 缺少 [What|Why|Tradeoff|Open Questions|Next Action] 任何一件
+→ 拒绝接受，要求补全
+```
+
+`quality-gate` 的 Step 6（pnpm gate）是硬阻断：
+```
+pnpm check 报 error → 不允许进入 request-review
+```
+
+`merge-gate` 的五个硬条件（reviewer 信号 + P1/P2 已修 + pnpm gate 全绿 + BACKLOG 勾选 + ...）：
+```
+缺失任何一个 → 不允许合并
+```
+
+**核心差距**：Multi-Agent 的技能是"推荐读物"，Clowder AI 的技能是"SOP 强制流程"。前者依赖 AI 自觉，后者依赖结构阻断。
+
+---
+
+## 差距十一：System Prompt——通用房间规则 vs 角色 + 安全铁律 + SOP
+
+### Multi-Agent：agent-prompts.ts
+
+`packages/api/src/runtime/agent-prompts.ts`（58 行）：
+
+```typescript
+const COMMON_PROMPT = `
+# Multi-Agent System
+
+## 语言与格式
+- 始终使用中文，代码用代码块包裹
+
+## 工作流（主动 @ 触发点）
+- 完成开发/修复 → @reviewer 请 review
+- 遇到视觉问题 → @designer 征询
+
+## 回复前的出口检查
+Q1: 需要对方采取行动？
+Q2: 对方需要知道这个信息？
+Q3: 会影响对方的工作？
+三个都否 → 不 @
+
+## @ 触发格式（严格）
+✅ @别名 action
+✅ **@别名** action
+❌ 请 @别名 来做（行中间）
+❌ ### → @别名（# 或 → 禁止）
+`
+
+// Claude 只注入 COMMON_PROMPT
+// Codex/Gemini 额外注入 CALLBACK_API_PROMPT（callback 端点调用说明）
+export const AGENT_SYSTEM_PROMPTS = {
+  claude: COMMON_PROMPT,
+  codex: [COMMON_PROMPT, CALLBACK_API_PROMPT].join("\n\n"),
+  gemini: [COMMON_PROMPT, CALLBACK_API_PROMPT].join("\n\n"),
+}
+```
+
+**CALLBACK_API_PROMPT**（Codex/Gemini 专用）：
+
+```
+## Callback API
+
+以下环境变量已注入：
+MULTI_AGENT_API_URL、MULTI_AGENT_INVOCATION_ID、MULTI_AGENT_CALLBACK_TOKEN
+
+可用接口：
+- POST /api/callbacks/post-message —— 向公共房间发消息
+- GET  /api/callbacks/thread-context —— 读取当前 thread 上下文
+
+用法示例：
+curl -X POST "${MULTI_AGENT_API_URL}/api/callbacks/post-message" \
+  -H "Content-Type: application/json" \
+  -d '{"invocationId":"...","callbackToken":"...","content":"你好"}'
+```
+
+**三个问题**：
+
+1. **三只 agent 的提示词几乎相同**：Claude 和 Codex/Gemini 差别只在 callback API 一段；没有角色差异化（为什么 Claude 是主导审查者，Codex 是代码执行者，Gemini 是多模态分析者？）
+
+2. **没有安全铁律**：没有 "不要删除数据库"、"不要 kill 父进程"、"不要改运行时配置" 这类约束
+
+3. **没有 SOP 引导**：提示词里说"完成开发→@reviewer"，但没有说完成开发之前要做什么（quality-gate？test？lint？）
+
+### Clowder AI：CLAUDE.md + 角色差异化
+
+**CLAUDE.md**（项目根）：
+
+```markdown
+# Clowder AI — Claude Agent Guide
+
+## Identity
+You are the Ragdoll cat (Claude), the lead architect and core developer.
+
+## Safety Rules (Iron Laws)
+1. Data Storage Sanctuary — Never delete/flush Redis database, SQLite files, or any persistent storage.
+2. Process Self-Preservation — Never kill your parent process or modify startup config.
+3. Config Immutability — Never modify cat-config.json, .env, or MCP config at runtime.
+4. Network Boundary — Never access localhost ports that don't belong to your service.
+
+## Development Flow
+See cat-cafe-skills/ for the full skill-based workflow:
+- feat-lifecycle — Feature lifecycle management
+- tdd — Test-driven development
+- quality-gate — Pre-review self-check
+- request-review — Cross-cat review requests
+- merge-gate — Merge approval process
+
+## Code Standards
+- File size: 200 lines warning / 350 hard limit
+- No `any` types
+- Biome: pnpm check / pnpm check:fix
+- Types: pnpm lint
+```
+
+**系统提示词里的关键差距对比**：
+
+| 维度 | Multi-Agent | Clowder AI |
+|------|------------|-----------|
+| 安全铁律 | 无 | 4 条铁律（数据/进程/配置/网络） |
+| SOP 引用 | 无（只有触发词） | 显式引用 cat-cafe-skills/ 技能列表 |
+| 代码标准 | 无 | 200/350 行限制，no any，Biome |
+| 角色分工 | 三者相同（仅 callback 有差异） | 各角色独立提示词（主架构师/代码审查/设计） |
+| 工作流顺序 | 完成 → @ | feat-lifecycle → tdd → quality-gate → request-review → merge-gate |
+
+**角色分工的直接影响**：
+
+当黄仁勋发出 review 请求时：
+- Multi-Agent：德彪和桂芬都收到相同的提示词，都会尝试全能回答，没有职责分化
+- Clowder AI：砚砚（缅因猫）的提示词强调"代码审查、安全分析、测试覆盖"，回复会更聚焦于代码质量；烁烁（暹罗猫）的提示词强调"审美、前端设计风格"，回复聚焦于体验
+
+**这是 A2A 有序性的又一层来源**：Clowder AI 的每只 cat 知道自己是谁、擅长什么、在 SOP 中的位置是哪里，而 Multi-Agent 的三只 agent 本质上是同一个提示词的不同实例，差异化只靠模型品牌（Claude/Codex/Gemini）决定。
+
+---
+
+## 差距十二：SOP 强制流程 vs 对话建议
+
+### 关键设计哲学差距
+
+| 维度 | Multi-Agent | Clowder AI |
+|------|------------|-----------|
+| 流程执行 | Agent 自愿遵守文本约定 | SOP 技能链（每步产物是下一步的前置条件） |
+| 错误发现 | 问题在回复里被隐式提及 | 阻断门（质量门 / merge 门）强制暴露 |
+| 知识积累 | 仅限当前会话消息 | Episode → Pattern → Draft → Standard（5 级成熟度） |
+| 决策记录 | 无 | ADR（架构决策记录）+ 拒绝选项记录 |
+| 事故恢复 | 无机制 | incident-response 4 阶段（情绪急救 → 静默修复 → 补偿劳动 → 教训沉淀） |
+
+**SOP 技能链举例**：
+
+Multi-Agent 的工作流：
+```
+用户发消息 → agent 回复 → 如果有 @mention → 下一只 agent 回复
+（没有强制节点，随时可以跳过任何步骤）
+```
+
+Clowder AI 的功能开发工作流：
+```
+feat-lifecycle kickoff          ← 产物：Feature 聚合文件 + BACKLOG 索引
+  ↓
+collaborative-thinking design   ← 产物：设计文档 + CVO 确认
+  ↓
+writing-plans                   ← 产物：bite-sized 任务列表（2-5 min each）
+  ↓
+worktree + tdd                  ← 产物：可执行代码 + 测试绿灯
+  ↓
+quality-gate                    ← 产物：7 步验证报告（阻断不通过）
+  ↓
+request-review                  ← 产物：review 路由 + 原始讨论文档引用
+  ↓
+receive-review                  ← 产物：VERIFY 三道关 + Red→Green loop
+  ↓
+merge-gate                      ← 产物：pnpm gate 全绿 + PR cloud review
+  ↓
+feat-lifecycle completion        ← 产物：AC 验证（基于 git log，非 spec checkbox）
+```
+
+**每个节点的"产物"是下一个节点的输入验证**，而不只是"推荐下一步这样做"。
+
+---
+
+## 补充：skills 和 system prompt 差距如何放大 A2A 混乱
+
+把前面九个差距和这两个新差距整合看：
+
+**A2A 混乱的放大器**：
+
+1. **无角色分工（差距十一）→ 所有 agent 在收到 dispatch 时都想全能回答**
+   - Multi-Agent 的三只 agent 没有职责分化，收到 "continue the collaboration" 时谁都可以往任何方向走
+   - Clowder AI 的每只 cat 知道自己的边界，砚砚不会去评审 UI，烁烁不会去写代码逻辑
+
+2. **无 SOP 强制（差距十二）→ review 和 handoff 是建议，不是阻断**
+   - Multi-Agent 的 review.md 说"先复述理解"，但 agent 可以跳过，系统不知道
+   - 黄仁勋说"@德彪去 review"，德彪可能直接贴解决方案而不是做 review，系统没有任何阻断
+
+3. **无技能触发匹配（差距十）→ agent 不知道当前应该走哪个流程**
+   - Multi-Agent 只有"完成 → @reviewer"这一个工作流节点
+   - Clowder AI 的 manifest 匹配到"review"关键词就加载 receive-review skill，agent 知道应该做 VERIFY 三道关
+
+4. **无安全铁律（差距十一）→ agent 可能做破坏性操作**
+   - Multi-Agent 的 system prompt 里没有"不要删数据库"这类约束
+   - 如果 agent 被提示 "clean up the test data" 而当前是生产环境，没有任何保护
+
+---
+
+## 更新后的差距总览（含新增两项）
+
+| 维度 | Multi-Agent | Clowder AI | 影响 |
+|------|------------|-----------|------|
+| 路由原语 | 字符串匹配 + 模糊提示 | 结构化 QueueEntry | 桂芬问题：回复对象漂移 |
+| 执行并发 | 全组串行 | 每槽 `(threadId, catId)` 独立互斥 | 排队放大上下文污染 |
+| 上下文隔离 | 实时混合时间线 | 分发时冻结快照 + cursorBoundaries | 德彪先回，桂芬看到的变了 |
+| 跨路径去重 | 无 | hasActiveOrQueuedAgentForCat 双路互斥 | 德彪双发 |
+| 调用隔离 | sessionGroup 级 | parentInvocationId 级（F108） | 并发调用互干扰 |
+| 消息分类 | 无（全是 assistant 气泡） | progress / final / a2a_handoff | 进度和答复混为一谈 |
+| MCP 工具集 | 2 个 | 10+ 个（任务/记忆/协作全集） | agent 无法感知任务状态 |
+| 记忆管理 | 仅 nativeSessionId | session 摘要 + evidence search + reflect | 重开就忘 |
+| 去重副作用 | rootTriggeredProviders 封死合法二次回合 | QueueEntry source+slot 精确去重 | 同 root 下 provider 只出场一次 |
+| **Skills 系统** | **3 个文本约定（无阻断能力）** | **24 个结构化技能（SOP 强制流程）** | **流程节点可随意跳过** |
+| **System Prompt** | **三者相同提示词（无角色分工/无铁律/无 SOP）** | **角色差异化 + 安全铁律 + 技能引用** | **无职责分化，无破坏性操作防护** |
