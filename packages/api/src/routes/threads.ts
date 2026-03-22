@@ -5,6 +5,11 @@ type SendModelBody = {
   model?: string;
 };
 
+type DispatchState = {
+  hasPendingDispatches: boolean
+  dispatchBarrierActive: boolean
+}
+
 export function registerThreadRoutes(
   app: FastifyInstance,
   options: {
@@ -12,6 +17,7 @@ export function registerThreadRoutes(
     getRunningThreadIds: () => Set<string>;
     stopThread: (threadId: string) => boolean;
     redisSummary: unknown;
+    getDispatchState?: (groupId: string) => DispatchState;
   }
 ) {
   app.get("/health", async () => ({
@@ -36,7 +42,11 @@ export function registerThreadRoutes(
   app.get("/api/session-groups/:groupId", async (request) => {
     const params = request.params as { groupId: string };
     return {
-      activeGroup: options.sessions.getActiveGroup(params.groupId, options.getRunningThreadIds())
+      activeGroup: options.sessions.getActiveGroup(
+        params.groupId,
+        options.getRunningThreadIds(),
+        options.getDispatchState?.(params.groupId),
+      ),
     };
   });
 
@@ -59,7 +69,11 @@ export function registerThreadRoutes(
 
     return {
       ok: true,
-      activeGroup: options.sessions.getActiveGroup(thread.sessionGroupId, options.getRunningThreadIds())
+      activeGroup: options.sessions.getActiveGroup(
+        thread.sessionGroupId,
+        options.getRunningThreadIds(),
+        options.getDispatchState?.(thread.sessionGroupId),
+      ),
     };
   });
 

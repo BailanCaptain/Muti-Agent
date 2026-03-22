@@ -1,6 +1,43 @@
 import { BaseCliRuntime, resolveNodeScript, wrapPromptWithInstructions, type AgentRunInput, type RuntimeCommand } from "./base-runtime";
 import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts";
 
+function formatGeminiParams(toolName: string, params: Record<string, unknown>): string {
+  try {
+    if ("command" in params) {
+      return `$ ${String(params.command).split("\n")[0].slice(0, 80)}`;
+    }
+
+    if ("file_path" in params) {
+      const fp = String(params.file_path);
+      return fp.split(/[/\\]/).slice(-2).join("/");
+    }
+
+    if ("path" in params) {
+      const p = String(params.path);
+      return p.split(/[/\\]/).slice(-2).join("/");
+    }
+
+    if ("pattern" in params) {
+      return String(params.pattern).slice(0, 40);
+    }
+
+    if ("query" in params) {
+      return String(params.query).slice(0, 60);
+    }
+
+    // Default: first string value
+    for (const value of Object.values(params)) {
+      if (typeof value === "string") {
+        return value.slice(0, 60);
+      }
+    }
+
+    return "";
+  } catch {
+    return "";
+  }
+}
+
 export class GeminiRuntime extends BaseCliRuntime {
   readonly agentId = "gemini";
 
@@ -26,6 +63,34 @@ export class GeminiRuntime extends BaseCliRuntime {
       args: [...runtime.prefixArgs, ...args],
       shell: runtime.shell
     };
+  }
+
+  parseActivityLine(event: Record<string, unknown>): string | null {
+    try {
+      if (event.type === "tool_use") {
+        const toolName = String(event.tool_name ?? "");
+        const params = (event.parameters ?? {}) as Record<string, unknown>;
+        const summary = formatGeminiParams(toolName, params);
+        return `⚡ ${toolName} ${summary}`.trimEnd();
+      }
+
+      if (event.type === "tool_result") {
+        const status = event.status as string | undefined;
+        const output = event.output as string | undefined;
+        if (status === "error") {
+          const firstLine = (output ?? "").split("\n")[0].slice(0, 100);
+          return `✗ ${firstLine}`;
+        }
+        if (output && output.trim()) {
+          return `✓ ${output.split("\n")[0].slice(0, 100)}`;
+        }
+        return "✓ done";
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   parseAssistantDelta(event: Record<string, unknown>) {

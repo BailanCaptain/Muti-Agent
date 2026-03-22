@@ -37,6 +37,49 @@ export class CodexRuntime extends BaseCliRuntime {
     };
   }
 
+  parseActivityLine(event: Record<string, unknown>): string | null {
+    try {
+      const type = event.type as string | undefined;
+      const item = event.item as { type?: string; command?: string; output?: string; path?: string } | undefined;
+
+      if (!type || !item) {
+        return null;
+      }
+
+      const itemType = item.type;
+
+      if (itemType === "todo_list") {
+        return null;
+      }
+
+      if (type === "turn.completed") {
+        return null;
+      }
+
+      if ((type === "item.started") && itemType === "command_execution") {
+        const cmd = (item.command ?? "").split("\n")[0].slice(0, 100);
+        return `$ ${cmd}`;
+      }
+
+      if (type === "item.completed" && itemType === "command_execution") {
+        const cmd = (item.command ?? "").split("\n")[0].slice(0, 100);
+        const output = item.output ?? "";
+        const firstOutputLine = output.split("\n")[0].slice(0, 60);
+        return firstOutputLine ? `✓ ${cmd} → ${firstOutputLine}` : `✓ ${cmd}`;
+      }
+
+      if (type === "item.completed" && itemType === "file_change") {
+        const filePath = item.path ?? "";
+        const shortPath = filePath.split(/[/\\]/).slice(-2).join("/");
+        return `📝 ${shortPath}`;
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   parseAssistantDelta(event: Record<string, unknown>) {
     const item = event.item as { type?: string; text?: string } | undefined;
     const delta =

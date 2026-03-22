@@ -1,15 +1,52 @@
-import type { RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared";
-import type { AppEventBus } from "../events/event-bus";
-import type { DispatchOrchestrator } from "../orchestrator/dispatch";
-import type { InvocationRegistry } from "../orchestrator/invocation-registry";
-import { runTurn } from "../runtime/cli-orchestrator";
-import type { SessionService } from "./session-service";
+import type { RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared"
+import type { AppEventBus } from "../events/event-bus"
+import type { DispatchOrchestrator, EnqueueMentionsResult } from "../orchestrator/dispatch"
+import type { InvocationRegistry } from "../orchestrator/invocation-registry"
+import { runTurn } from "../runtime/cli-orchestrator"
+import type { SessionService } from "./session-service"
 
-type ActiveRun = ReturnType<typeof runTurn>;
-type EmitEvent = (event: RealtimeServerEvent) => void;
+type ActiveRun = ReturnType<typeof runTurn>
+type EmitEvent = (event: RealtimeServerEvent) => void
+
+const STDERR_NOISE_PATTERNS = [
+  /^YOLO mode is enabled/i,
+  /^All tool calls will be automatically approved/i,
+  /^Loaded cached credentials/i,
+  /^Using model:/i,
+  /^Tip:/i,
+  /^\[runtime\]/,
+];
+
+function isStderrNoiseLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return true;
+  return STDERR_NOISE_PATTERNS.some((p) => p.test(trimmed));
+}
+
+function filterStderrNoise(chunk: string): string {
+  return chunk
+    .split("\n")
+    .filter((line) => !isStderrNoiseLine(line))
+    .join("\n");
+}
 
 function stripAnsi(value: string) {
-  return value.replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
+  let result = ""
+
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) !== 27 || value[index + 1] !== "[") {
+      result += value[index]
+      continue
+    }
+
+    index += 1
+    while (index + 1 < value.length && !/[A-Za-z]/.test(value[index + 1])) {
+      index += 1
+    }
+    index += 1
+  }
+
+  return result
 }
 
 function extractPromptFromActivityChunk(chunk: string) {
@@ -17,199 +54,239 @@ function extractPromptFromActivityChunk(chunk: string) {
     .replace(/\r/g, "\n")
     .split("\n")
     .map((line) => line.trim())
-    .filter(Boolean);
+    .filter(Boolean)
 
   if (!lines.length) {
-    return null;
+    return null
   }
 
   const promptLikeLines = lines.filter((line) => {
     if (line.length < 6) {
-      return false;
+      return false
     }
 
     if (
       /(please confirm|need your confirmation|awaiting your confirmation|do you want|would you like|should i|can you clarify|please provide|please choose|approval required|user input required)/i.test(
-        line
+        line,
       )
     ) {
-      return true;
+      return true
     }
 
-    if (
-      /(\u8bf7\u786e\u8ba4|\u9700\u8981\u4f60\u786e\u8ba4|\u9700\u8981\u786e\u8ba4|\u7b49\u5f85\u4f60\u7684\u786e\u8ba4|\u8bf7\u63d0\u4f9b|\u8bf7\u8865\u5145|\u8bf7\u9009\u62e9|\u8bf7\u95ee)/.test(
-        line
-      )
-    ) {
-      return true;
+    if (/(请确认|需要你确认|需要确认|等待你的确认|请提供|请补充|请选择|请问)/.test(line)) {
+      return true
     }
 
-    return /(?:\?|\uFF1F)$/.test(line);
-  });
+    return /(?:\?|\uFF1F)$/.test(line)
+  })
 
   if (!promptLikeLines.length) {
-    return null;
+    return null
   }
 
-  return promptLikeLines.join("\n").slice(0, 1200);
+  return promptLikeLines.join("\n").slice(0, 1200)
 }
 
 export class MessageService {
-  private readonly flushingGroups = new Set<string>();
+  private readonly flushingGroups = new Set<string>()
 
   constructor(
     private readonly sessions: SessionService,
     private readonly dispatch: DispatchOrchestrator,
     private readonly invocations: InvocationRegistry<ActiveRun>,
     private readonly events: AppEventBus,
-    private readonly apiBaseUrl: string
+    private readonly apiBaseUrl: string,
   ) {}
 
   handleClientEvent(event: RealtimeClientEvent, emit: EmitEvent) {
     if (event.type === "stop_thread") {
-      this.invocations.get(event.payload.threadId)?.cancel();
-      return;
+      this.cancelThreadChain(event.payload.threadId, emit)
+      return
     }
 
-    void this.handleSendMessage(event, emit);
+    void this.handleSendMessage(event, emit)
+  }
+
+  cancelThreadChain(threadId: string, emit: EmitEvent) {
+    const thread = this.dispatch.resolveThread(threadId)
+    if (!thread) {
+      return false
+    }
+
+    let cancelledRun = false
+    for (const groupThread of this.sessions.listGroupThreads(thread.sessionGroupId)) {
+      const run = this.invocations.get(groupThread.id)
+      if (!run) {
+        for (const invocationId of this.invocations.findInvocationIdsByThread(groupThread.id)) {
+          this.releaseInvocation(invocationId)
+          cancelledRun = true
+        }
+        continue
+      }
+
+      cancelledRun = true
+      run.cancel()
+      for (const invocationId of this.invocations.findInvocationIdsByThread(groupThread.id)) {
+        this.releaseInvocation(invocationId)
+      }
+    }
+
+    const cancelResult = this.dispatch.cancelSessionGroup(thread.sessionGroupId)
+    const changed = cancelledRun || cancelResult.clearedCount > 0 || !cancelResult.alreadyCancelled
+    if (!changed) {
+      return false
+    }
+
+    emit({
+      type: "status",
+      payload: { message: `Stopping pending collaboration in ${thread.alias}'s room.` },
+    })
+    this.emitThreadSnapshot(thread.sessionGroupId, emit)
+    return true
   }
 
   async handleAgentPublicMessage(options: {
-    threadId: string;
-    messageId: string;
-    content: string;
-    invocationId: string;
-    emit: EmitEvent;
+    threadId: string
+    messageId: string
+    content: string
+    invocationId: string
+    emit: EmitEvent
   }) {
-    const thread = this.dispatch.resolveThread(options.threadId);
+    const thread = this.dispatch.resolveThread(options.threadId)
     if (!thread || !options.content.trim()) {
-      return;
+      return
     }
 
-    const invocation = this.dispatch.resolveInvocation(options.invocationId);
+    const invocation = this.dispatch.resolveInvocation(options.invocationId)
     if (!invocation) {
-      return;
+      return
     }
 
-    this.dispatch.attachMessageToRoot(options.messageId, invocation.rootMessageId);
-    this.dispatch.enqueuePublicMentions({
+    this.dispatch.attachMessageToRoot(options.messageId, invocation.rootMessageId)
+    const enqueueResult = this.dispatch.enqueuePublicMentions({
       messageId: options.messageId,
       sessionGroupId: thread.sessionGroupId,
       sourceProvider: thread.provider,
       sourceAlias: thread.alias,
       rootMessageId: invocation.rootMessageId,
       content: options.content,
-      matchMode: "line-start"
-    });
+      matchMode: "line-start",
+    })
+    this.emitBlockedDispatches(enqueueResult, options.emit)
 
-    await this.flushDispatchQueue(thread.sessionGroupId, options.emit);
+    await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
   }
 
   private async handleSendMessage(
     event: Extract<RealtimeClientEvent, { type: "send_message" }>,
-    emit: EmitEvent
+    emit: EmitEvent,
   ) {
-    const thread = this.dispatch.resolveThread(event.payload.threadId);
+    const thread = this.dispatch.resolveThread(event.payload.threadId)
     if (!thread) {
       emit({
         type: "status",
-        payload: { message: "Thread not found." }
-      });
-      return;
+        payload: { message: "Thread not found." },
+      })
+      return
     }
 
-    const userMessage = this.sessions.appendUserMessage(thread.id, event.payload.content);
-    // Every user turn starts a new root chain so direct replies and later A2A hops stay correlated.
-    const rootMessageId = this.dispatch.registerUserRoot(userMessage.id);
-    const userTimeline = this.sessions.toTimelineMessage(thread.id, userMessage.id);
+    const groupBusyMessage = this.getBusyStatus(thread.id, thread.sessionGroupId)
+    if (groupBusyMessage) {
+      emit({
+        type: "status",
+        payload: { message: groupBusyMessage },
+      })
+      this.emitThreadSnapshot(thread.sessionGroupId, emit)
+      return
+    }
+
+    const userMessage = this.sessions.appendUserMessage(thread.id, event.payload.content)
+    const rootMessageId = this.dispatch.registerUserRoot(userMessage.id, thread.sessionGroupId)
+    const userTimeline = this.sessions.toTimelineMessage(thread.id, userMessage.id)
     if (userTimeline) {
       emit({
         type: "message.created",
         payload: {
           threadId: thread.id,
-          message: userTimeline
-        }
-      });
+          message: userTimeline,
+        },
+      })
     }
 
-    emit({
-      type: "thread_snapshot",
-      payload: {
-        activeGroup: this.sessions.getActiveGroup(thread.sessionGroupId, new Set(this.invocations.keys()))
-      }
-    });
+    this.emitThreadSnapshot(thread.sessionGroupId, emit)
 
     await this.runThreadTurn({
       threadId: thread.id,
       content: event.payload.content,
       emit,
-      rootMessageId
-    });
+      rootMessageId,
+    })
 
-    this.dispatch.enqueuePublicMentions({
+    const enqueueResult = this.dispatch.enqueuePublicMentions({
       messageId: userMessage.id,
       sessionGroupId: thread.sessionGroupId,
       sourceProvider: thread.provider,
       sourceAlias: thread.alias,
       rootMessageId,
       content: event.payload.content,
-      matchMode: "anywhere"
-    });
-    await this.flushDispatchQueue(thread.sessionGroupId, emit);
+      matchMode: "anywhere",
+    })
+    this.emitBlockedDispatches(enqueueResult, emit)
+    await this.flushDispatchQueue(thread.sessionGroupId, emit)
   }
 
   private async runThreadTurn(options: {
-    threadId: string;
-    content: string;
-    emit: EmitEvent;
-    rootMessageId: string;
+    threadId: string
+    content: string
+    emit: EmitEvent
+    rootMessageId: string
   }) {
-    const thread = this.dispatch.resolveThread(options.threadId);
+    const thread = this.dispatch.resolveThread(options.threadId)
     if (!thread) {
       options.emit({
         type: "status",
-        payload: { message: "Thread not found." }
-      });
-      return;
+        payload: { message: "Thread not found." },
+      })
+      return
     }
 
     if (this.invocations.has(thread.id)) {
       options.emit({
         type: "status",
-        payload: { message: `${thread.alias} is already running.` }
-      });
-      return;
+        payload: { message: `${thread.alias} is already running.` },
+      })
+      return
     }
 
-    // The placeholder is created before the CLI starts so deltas always know which bubble to append into.
-    const assistant = this.sessions.appendAssistantMessage(thread.id, "");
-    this.dispatch.attachMessageToRoot(assistant.id, options.rootMessageId);
-    const assistantTimeline = this.sessions.toTimelineMessage(thread.id, assistant.id);
+    const assistant = this.sessions.appendAssistantMessage(thread.id, "")
+    this.dispatch.attachMessageToRoot(assistant.id, options.rootMessageId)
+    const assistantTimeline = this.sessions.toTimelineMessage(thread.id, assistant.id)
     if (assistantTimeline) {
       options.emit({
         type: "message.created",
         payload: {
           threadId: thread.id,
-          message: assistantTimeline
-        }
-      });
+          message: assistantTimeline,
+        },
+      })
     }
 
-    const identity = this.invocations.createInvocation(thread.id, thread.alias);
-    const dispatchContextTtlMs = Math.max(0, new Date(identity.expiresAt).getTime() - Date.now());
+    const identity = this.invocations.createInvocation(thread.id, thread.alias)
+    const dispatchContextTtlMs = Math.max(0, new Date(identity.expiresAt).getTime() - Date.now())
     const dispatchCleanupTimer = globalThis.setTimeout(() => {
-      this.dispatch.releaseInvocation(identity.invocationId);
-    }, dispatchContextTtlMs);
-    dispatchCleanupTimer.unref?.();
+      this.dispatch.releaseInvocation(identity.invocationId)
+    }, dispatchContextTtlMs)
+    dispatchCleanupTimer.unref?.()
     this.dispatch.bindInvocation(identity.invocationId, {
       rootMessageId: options.rootMessageId,
       sessionGroupId: thread.sessionGroupId,
-      sourceProvider: thread.provider
-    });
+      sourceProvider: thread.provider,
+    })
 
-    const startedAt = new Date().toISOString();
-    let promptRequestedByCli: string | null = null;
-    let run: ActiveRun | null = null;
+    const startedAt = new Date().toISOString()
+    let promptRequestedByCli: string | null = null
+    let thinking = ""
+    let run: ActiveRun | null = null
 
     this.events.emit({
       type: "invocation.started",
@@ -218,13 +295,13 @@ export class MessageService {
       agentId: identity.agentId,
       callbackToken: identity.callbackToken,
       status: "running",
-      createdAt: startedAt
-    });
+      createdAt: startedAt,
+    })
 
     options.emit({
       type: "status",
-      payload: { message: `Running ${thread.alias}` }
-    });
+      payload: { message: `Running ${thread.alias}` },
+    })
 
     run = runTurn({
       invocationId: identity.invocationId,
@@ -239,11 +316,18 @@ export class MessageService {
       onAssistantDelta: (delta: string) => {
         options.emit({
           type: "assistant_delta",
-          payload: { messageId: assistant.id, delta }
-        });
+          payload: { messageId: assistant.id, delta },
+        })
       },
       onSession: () => {},
       onModel: () => {},
+      onToolActivity: (line: string) => {
+        thinking += line + "\n";
+        options.emit({
+          type: "assistant_thinking_delta",
+          payload: { messageId: assistant.id, delta: line + "\n" },
+        });
+      },
       onActivity: (activity) => {
         this.events.emit({
           type: "invocation.activity",
@@ -253,57 +337,63 @@ export class MessageService {
           stream: activity.stream,
           chunk: activity.chunk,
           status: activity.stream === "stdout" ? "replying" : "thinking",
-          createdAt: activity.at
-        });
+          createdAt: activity.at,
+        })
+
+        if (activity.stream === "stderr" && !promptRequestedByCli) {
+          const cleanedChunk = filterStderrNoise(stripAnsi(activity.chunk))
+          if (cleanedChunk.trim()) {
+            thinking += cleanedChunk
+            options.emit({
+              type: "assistant_thinking_delta",
+              payload: { messageId: assistant.id, delta: cleanedChunk },
+            })
+          }
+        }
 
         if (promptRequestedByCli || activity.stream !== "stderr") {
-          return;
+          return
         }
 
-        // Some CLIs surface clarifications on stderr while waiting for the user; promote that into the timeline and stop.
-        const prompt = extractPromptFromActivityChunk(activity.chunk);
+        const prompt = extractPromptFromActivityChunk(activity.chunk)
         if (!prompt) {
-          return;
+          return
         }
 
-        promptRequestedByCli = prompt;
-        this.sessions.overwriteMessage(assistant.id, prompt);
+        promptRequestedByCli = prompt
+        this.sessions.overwriteMessage(assistant.id, {
+          content: prompt,
+          thinking,
+        })
         options.emit({
           type: "status",
-          payload: { message: `${thread.alias} needs your confirmation. The current run was paused, reply to continue.` }
-        });
-        options.emit({
-          type: "thread_snapshot",
           payload: {
-            activeGroup: this.sessions.getActiveGroup(thread.sessionGroupId, new Set(this.invocations.keys()))
-          }
-        });
+            message: `${thread.alias} needs your confirmation. The current run was paused, reply to continue.`,
+          },
+        })
+        this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
 
-        run?.cancel();
-      }
-    });
+        run?.cancel()
+      },
+    })
 
-    this.invocations.attachRun(thread.id, identity.invocationId, run);
-
-    options.emit({
-      type: "thread_snapshot",
-      payload: {
-        activeGroup: this.sessions.getActiveGroup(thread.sessionGroupId, new Set(this.invocations.keys()))
-      }
-    });
+    this.invocations.attachRun(thread.id, identity.invocationId, run)
+    this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
 
     try {
-      const result = await run.promise;
-      this.invocations.detachRun(thread.id);
-      // If the run produced no content and no new session ID was received, the resumed session
-      // was likely invalid. Clear it so the next turn starts a fresh session instead of looping.
+      const result = await run.promise
+      this.invocations.detachRun(thread.id)
+      this.releaseInvocation(identity.invocationId, dispatchCleanupTimer)
       const effectiveSessionId =
         !result.content.trim() && result.nativeSessionId === thread.nativeSessionId
           ? null
-          : result.nativeSessionId;
-      this.sessions.updateThread(thread.id, result.currentModel, effectiveSessionId);
+          : result.nativeSessionId
+      this.sessions.updateThread(thread.id, result.currentModel, effectiveSessionId)
       if (!promptRequestedByCli) {
-        this.sessions.overwriteMessage(assistant.id, result.content || "[empty response]");
+        this.sessions.overwriteMessage(assistant.id, {
+          content: result.content || "[empty response]",
+          thinking,
+        })
       }
 
       this.events.emit({
@@ -313,33 +403,34 @@ export class MessageService {
         agentId: thread.alias,
         status: "idle",
         exitCode: result.exitCode,
-        createdAt: new Date().toISOString()
-      });
+        createdAt: new Date().toISOString(),
+      })
 
       if (!promptRequestedByCli && result.content.trim()) {
-        this.dispatch.enqueuePublicMentions({
+        const enqueueResult = this.dispatch.enqueuePublicMentions({
           messageId: assistant.id,
           sessionGroupId: thread.sessionGroupId,
           sourceProvider: thread.provider,
           sourceAlias: thread.alias,
           rootMessageId: options.rootMessageId,
           content: result.content,
-          matchMode: "line-start"
-        });
+          matchMode: "line-start",
+        })
+        this.emitBlockedDispatches(enqueueResult, options.emit)
       }
 
-      options.emit({
-        type: "thread_snapshot",
-        payload: {
-          activeGroup: this.sessions.getActiveGroup(thread.sessionGroupId, new Set(this.invocations.keys()))
-        }
-      });
-
-      await this.flushDispatchQueue(thread.sessionGroupId, options.emit);
+      this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
+      await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
     } catch (error) {
-      this.invocations.detachRun(thread.id);
-      const message = error instanceof Error ? error.message : "Unknown error";
-      this.sessions.overwriteMessage(assistant.id, `Error: ${message}`);
+      this.invocations.detachRun(thread.id)
+      this.releaseInvocation(identity.invocationId, dispatchCleanupTimer)
+      const message = error instanceof Error ? error.message : "Unknown error"
+      this.sessions.overwriteMessage(assistant.id, {
+        content: `Error: ${message}`,
+        thinking,
+      })
+      // Clear native session so next run starts fresh instead of retrying a broken session.
+      this.sessions.updateThread(thread.id, thread.currentModel, null)
 
       this.events.emit({
         type: "invocation.failed",
@@ -349,54 +440,111 @@ export class MessageService {
         status: "error",
         error: message,
         exitCode: null,
-        createdAt: new Date().toISOString()
-      });
+        createdAt: new Date().toISOString(),
+      })
 
       options.emit({
         type: "status",
-        payload: { message }
-      });
-
-      options.emit({
-        type: "thread_snapshot",
-        payload: {
-          activeGroup: this.sessions.getActiveGroup(thread.sessionGroupId, new Set(this.invocations.keys()))
-        }
-      });
-
-      await this.flushDispatchQueue(thread.sessionGroupId, options.emit);
+        payload: { message },
+      })
+      this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
+      await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
     }
   }
 
   private async flushDispatchQueue(sessionGroupId: string, emit: EmitEvent) {
     if (this.flushingGroups.has(sessionGroupId)) {
-      return;
+      return
     }
 
-    this.flushingGroups.add(sessionGroupId);
+    this.flushingGroups.add(sessionGroupId)
 
     try {
       while (true) {
-        // A2A hops are serialized per session group so shared context evolves in a predictable order.
-        const next = this.dispatch.takeNextQueuedDispatch(sessionGroupId, new Set(this.invocations.keys()));
+        const next = this.dispatch.takeNextQueuedDispatch(
+          sessionGroupId,
+          new Set(this.invocations.keys()),
+        )
         if (!next) {
-          return;
+          return
         }
 
-        const targetThread = this.sessions.findThreadByGroupAndProvider(sessionGroupId, next.targetProvider);
+        const targetThread = this.sessions.findThreadByGroupAndProvider(
+          sessionGroupId,
+          next.targetProvider,
+        )
         if (!targetThread) {
-          continue;
+          continue
         }
 
         await this.runThreadTurn({
           threadId: targetThread.id,
           content: next.content,
           emit,
-          rootMessageId: next.rootMessageId
-        });
+          rootMessageId: next.rootMessageId,
+        })
       }
     } finally {
-      this.flushingGroups.delete(sessionGroupId);
+      this.flushingGroups.delete(sessionGroupId)
     }
+  }
+
+  emitThreadSnapshot(sessionGroupId: string, emit: EmitEvent) {
+    emit({
+      type: "thread_snapshot",
+      payload: {
+        activeGroup: this.sessions.getActiveGroup(
+          sessionGroupId,
+          new Set(this.invocations.keys()),
+          {
+            hasPendingDispatches: this.dispatch.hasQueuedDispatches(sessionGroupId),
+            dispatchBarrierActive: this.dispatch.isSessionGroupCancelled(sessionGroupId),
+          },
+        ),
+      },
+    })
+  }
+
+  private releaseInvocation(
+    invocationId: string,
+    dispatchCleanupTimer?: ReturnType<typeof globalThis.setTimeout>,
+  ) {
+    if (dispatchCleanupTimer) {
+      clearTimeout(dispatchCleanupTimer)
+    }
+    this.invocations.revokeInvocation(invocationId)
+    this.dispatch.releaseInvocation(invocationId)
+  }
+
+  private emitBlockedDispatches(result: EnqueueMentionsResult, emit: EmitEvent) {
+    if (!result.blocked.length) {
+      return
+    }
+
+    emit({
+      type: "dispatch.blocked",
+      payload: {
+        attempts: result.blocked,
+      },
+    })
+  }
+
+  private getBusyStatus(threadId: string, sessionGroupId: string) {
+    const runningThreadIds = new Set(this.invocations.keys())
+    const runningThread = this.sessions
+      .listGroupThreads(sessionGroupId)
+      .find((candidate) => runningThreadIds.has(candidate.id))
+
+    if (runningThread) {
+      return runningThread.id === threadId
+        ? `${runningThread.alias} is already running.`
+        : `${runningThread.alias} is already running in this room. Wait for the current turn to finish or stop it first.`
+    }
+
+    if (this.dispatch.hasQueuedDispatches(sessionGroupId)) {
+      return "This room is still processing queued follow-ups. Wait for the current collaboration chain to settle."
+    }
+
+    return null
   }
 }

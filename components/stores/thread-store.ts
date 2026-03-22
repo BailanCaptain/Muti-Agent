@@ -1,66 +1,75 @@
-"use client";
+"use client"
 
-import { create } from "zustand";
 import {
-  PROVIDER_ALIASES,
+  type InvocationStats,
   PROVIDERS,
+  PROVIDER_ALIASES,
   type Provider,
   type ProviderCatalog,
   type SessionGroupSummary,
   type TimelineMessage,
-  type InvocationStats
-} from "@multi-agent/shared";
+} from "@multi-agent/shared"
+import { create } from "zustand"
 
 type ProviderCardState = {
-  threadId: string;
-  alias: string;
-  currentModel: string | null;
-  quotaSummary: string;
-  preview: string;
-  running: boolean;
-};
+  threadId: string
+  alias: string
+  currentModel: string | null
+  quotaSummary: string
+  preview: string
+  running: boolean
+}
 
 type ActiveGroupPayload = {
-  id: string;
-  title: string;
-  meta: string;
-  timeline: TimelineMessage[];
-  providers: Record<Provider, ProviderCardState>;
-};
+  id: string
+  title: string
+  meta: string
+  timeline: TimelineMessage[]
+  hasPendingDispatches: boolean
+  dispatchBarrierActive: boolean
+  providers: Record<Provider, ProviderCardState>
+}
 
 type SessionListItem = {
-  id: string;
-  title: string;
-  updatedAtLabel: string;
-  previews: Array<{ provider: Provider; alias: string; text: string }>;
-};
+  id: string
+  title: string
+  updatedAtLabel: string
+  previews: Array<{ provider: Provider; alias: string; text: string }>
+}
 
 type SendPayload = {
-  threadId: string;
-  provider: Provider;
-  content: string;
-  alias: string;
-};
+  threadId: string
+  provider: Provider
+  content: string
+  alias: string
+}
 
 type ThreadStore = {
-  providers: Record<Provider, ProviderCardState>;
-  catalogs: Record<Provider, ProviderCatalog>;
-  sessionGroups: SessionListItem[];
-  activeGroupId: string | null;
-  activeGroup: { id: string; title: string; meta: string } | null;
-  timeline: TimelineMessage[];
-  invocationStats: InvocationStats[];
-  bootstrap: () => Promise<void>;
-  createSessionGroup: () => Promise<void>;
-  selectSessionGroup: (groupId: string) => Promise<void>;
-  updateModel: (provider: Provider, model: string) => Promise<void>;
-  stopThread: (provider: Provider) => Promise<void>;
-  replaceSessionGroups: (groups: SessionGroupSummary[]) => void;
-  replaceActiveGroup: (group: ActiveGroupPayload) => void;
-  applyAssistantDelta: (messageId: string, delta: string) => void;
-  appendTimelineMessage: (message: TimelineMessage) => void;
-  buildSendPayload: (input: string) => SendPayload | null;
-};
+  providers: Record<Provider, ProviderCardState>
+  catalogs: Record<Provider, ProviderCatalog>
+  sessionGroups: SessionListItem[]
+  activeGroupId: string | null
+  activeGroup: {
+    id: string
+    title: string
+    meta: string
+    hasPendingDispatches: boolean
+    dispatchBarrierActive: boolean
+  } | null
+  timeline: TimelineMessage[]
+  invocationStats: InvocationStats[]
+  bootstrap: () => Promise<void>
+  createSessionGroup: () => Promise<void>
+  selectSessionGroup: (groupId: string) => Promise<void>
+  updateModel: (provider: Provider, model: string) => Promise<void>
+  stopThread: (provider: Provider) => Promise<void>
+  replaceSessionGroups: (groups: SessionGroupSummary[]) => void
+  replaceActiveGroup: (group: ActiveGroupPayload) => void
+  applyAssistantDelta: (messageId: string, delta: string) => void
+  applyThinkingDelta: (messageId: string, delta: string) => void
+  appendTimelineMessage: (message: TimelineMessage) => void
+  buildSendPayload: (input: string) => SendPayload | null
+}
 
 const emptyProviders = Object.fromEntries(
   PROVIDERS.map((provider) => [
@@ -71,10 +80,10 @@ const emptyProviders = Object.fromEntries(
       currentModel: null,
       quotaSummary: "额度信息待接入",
       preview: "还没有消息",
-      running: false
-    }
-  ])
-) as Record<Provider, ProviderCardState>;
+      running: false,
+    },
+  ]),
+) as Record<Provider, ProviderCardState>
 
 const emptyCatalogs = Object.fromEntries(
   PROVIDERS.map((provider) => [
@@ -83,48 +92,52 @@ const emptyCatalogs = Object.fromEntries(
       provider,
       alias: PROVIDER_ALIASES[provider],
       currentModel: null,
-      modelSuggestions: []
-    }
-  ])
-) as unknown as Record<Provider, ProviderCatalog>;
+      modelSuggestions: [],
+    },
+  ]),
+) as unknown as Record<Provider, ProviderCatalog>
 
 function normalizeSessionGroups(groups: SessionGroupSummary[]): SessionListItem[] {
   return groups.map((group) => ({
     id: group.id,
     title: group.title,
     updatedAtLabel: group.updatedAtLabel,
-    previews: group.previews
-  }));
+    previews: group.previews,
+  }))
 }
 
 function parseMention(input: string): Provider | null {
-  const match = input.trim().match(/@([^\s]+)/);
+  const match = input.trim().match(/@([^\s]+)/)
   if (!match) {
-    return null;
+    return null
   }
 
-  const alias = match[1].toLowerCase();
+  const alias = match[1].toLowerCase()
   if (alias === PROVIDER_ALIASES.codex.toLowerCase() || alias === "codex") {
-    return "codex";
+    return "codex"
   }
-  if (alias === PROVIDER_ALIASES.claude.toLowerCase() || alias === "claude" || alias === "claudecode") {
-    return "claude";
+  if (
+    alias === PROVIDER_ALIASES.claude.toLowerCase() ||
+    alias === "claude" ||
+    alias === "claudecode"
+  ) {
+    return "claude"
   }
   if (alias === PROVIDER_ALIASES.gemini.toLowerCase() || alias === "gemini") {
-    return "gemini";
+    return "gemini"
   }
 
-  return null;
+  return null
 }
 
 function mergeTimeline(existing: TimelineMessage[], incoming: TimelineMessage[]) {
-  const existingById = new Map(existing.map((message) => [message.id, message]));
+  const existingById = new Map(existing.map((message) => [message.id, message]))
 
   return incoming
     .map((message) => {
-      const current = existingById.get(message.id);
+      const current = existingById.get(message.id)
       if (!current) {
-        return message;
+        return message
       }
 
       // `thread_snapshot` 里的 assistant 内容来自数据库，流式过程中它往往会落后于
@@ -135,25 +148,35 @@ function mergeTimeline(existing: TimelineMessage[], incoming: TimelineMessage[])
         current.provider === message.provider &&
         current.content.length > message.content.length
           ? current.content
-          : message.content;
+          : message.content
+
+      const currentThinking = current.thinking ?? ""
+      const incomingThinking = message.thinking ?? ""
+      const thinking =
+        current.role === message.role &&
+        current.provider === message.provider &&
+        currentThinking.length > incomingThinking.length
+          ? current.thinking
+          : message.thinking
 
       return {
         ...message,
-        content
-      };
+        content,
+        thinking,
+      }
     })
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787";
-  const response = await fetch(`${baseUrl}${path}`, init);
+  const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+  const response = await fetch(`${baseUrl}${path}`, init)
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `请求失败: ${response.status}`);
+    const text = await response.text()
+    throw new Error(text || `请求失败: ${response.status}`)
   }
 
-  return (await response.json()) as T;
+  return (await response.json()) as T
 }
 
 export const useThreadStore = create<ThreadStore>((set, get) => ({
@@ -168,111 +191,135 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     // Bootstrap stitches together the static provider catalog and the latest session list before selecting a room.
     const [groupsPayload, providersPayload] = await Promise.all([
       fetchJson<{ sessionGroups: SessionGroupSummary[] }>("/api/bootstrap"),
-      fetchJson<{ providers: ProviderCatalog[] }>("/api/providers")
-    ]);
+      fetchJson<{ providers: ProviderCatalog[] }>("/api/providers"),
+    ])
 
     set({
       catalogs: Object.fromEntries(
-        providersPayload.providers.map((item) => [item.provider, item])
-      ) as Record<Provider, ProviderCatalog>
-    });
-    get().replaceSessionGroups(groupsPayload.sessionGroups);
+        providersPayload.providers.map((item) => [item.provider, item]),
+      ) as Record<Provider, ProviderCatalog>,
+    })
+    get().replaceSessionGroups(groupsPayload.sessionGroups)
 
     if (groupsPayload.sessionGroups[0]) {
-      await get().selectSessionGroup(groupsPayload.sessionGroups[0].id);
-      return;
+      await get().selectSessionGroup(groupsPayload.sessionGroups[0].id)
+      return
     }
 
-    await get().createSessionGroup();
+    await get().createSessionGroup()
   },
   createSessionGroup: async () => {
     const payload = await fetchJson<{ groupId: string }>("/api/session-groups", {
-      method: "POST"
-    });
-    const groupsPayload = await fetchJson<{ sessionGroups: SessionGroupSummary[] }>("/api/bootstrap");
-    get().replaceSessionGroups(groupsPayload.sessionGroups);
-    await get().selectSessionGroup(payload.groupId);
+      method: "POST",
+    })
+    const groupsPayload = await fetchJson<{ sessionGroups: SessionGroupSummary[] }>(
+      "/api/bootstrap",
+    )
+    get().replaceSessionGroups(groupsPayload.sessionGroups)
+    await get().selectSessionGroup(payload.groupId)
   },
   selectSessionGroup: async (groupId) => {
-    const payload = await fetchJson<{ activeGroup: ActiveGroupPayload }>(`/api/session-groups/${groupId}`);
-    set({ activeGroupId: groupId });
-    get().replaceActiveGroup(payload.activeGroup);
+    const payload = await fetchJson<{ activeGroup: ActiveGroupPayload }>(
+      `/api/session-groups/${groupId}`,
+    )
+    set({ activeGroupId: groupId })
+    get().replaceActiveGroup(payload.activeGroup)
   },
   updateModel: async (provider, model) => {
-    const thread = get().providers[provider];
+    const thread = get().providers[provider]
     if (!thread.threadId) {
-      return;
+      return
     }
 
-    const payload = await fetchJson<{ activeGroup: ActiveGroupPayload }>(`/api/threads/${thread.threadId}/model`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model })
-    });
+    const payload = await fetchJson<{ activeGroup: ActiveGroupPayload }>(
+      `/api/threads/${thread.threadId}/model`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model }),
+      },
+    )
 
-    get().replaceActiveGroup(payload.activeGroup);
+    get().replaceActiveGroup(payload.activeGroup)
   },
   stopThread: async (provider) => {
-    const thread = get().providers[provider];
+    const thread = get().providers[provider]
     if (!thread.threadId) {
-      return;
+      return
     }
 
     await fetchJson(`/api/threads/${thread.threadId}/stop`, {
-      method: "POST"
-    });
+      method: "POST",
+    })
   },
   replaceSessionGroups: (groups) => {
-    set({ sessionGroups: normalizeSessionGroups(groups) });
+    set({ sessionGroups: normalizeSessionGroups(groups) })
   },
   replaceActiveGroup: (group) => {
     set((state) => ({
-      activeGroup: { id: group.id, title: group.title, meta: group.meta },
+      activeGroup: {
+        id: group.id,
+        title: group.title,
+        meta: group.meta,
+        hasPendingDispatches: group.hasPendingDispatches,
+        dispatchBarrierActive: group.dispatchBarrierActive,
+      },
       // Snapshots come from the database and can momentarily lag behind local deltas, so merge instead of replacing.
       timeline: mergeTimeline(state.timeline, group.timeline),
-      providers: group.providers
-    }));
+      providers: group.providers,
+    }))
   },
   appendTimelineMessage: (message) => {
     set((state) => {
       if (state.timeline.some((item) => item.id === message.id)) {
-        return state;
+        return state
       }
 
       return {
-        timeline: [...state.timeline, message].sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-      };
-    });
+        timeline: [...state.timeline, message].sort((left, right) =>
+          left.createdAt.localeCompare(right.createdAt),
+        ),
+      }
+    })
   },
   applyAssistantDelta: (messageId, delta) => {
     set((state) => ({
       timeline: state.timeline.map((message) =>
-        message.id === messageId ? { ...message, content: `${message.content}${delta}` } : message
-      )
-    }));
+        message.id === messageId ? { ...message, content: `${message.content}${delta}` } : message,
+      ),
+    }))
+  },
+  applyThinkingDelta: (messageId, delta) => {
+    set((state) => ({
+      timeline: state.timeline.map((message) =>
+        message.id === messageId
+          ? { ...message, thinking: `${message.thinking ?? ""}${delta}` }
+          : message,
+      ),
+    }))
   },
   buildSendPayload: (input) => {
     // The frontend sends the resolved provider/thread pair so the backend ws route can stay transport-focused.
-    const provider = parseMention(input);
+    const provider = parseMention(input)
     if (!provider) {
-      return null;
+      return null
     }
 
-    const content = input.replace(/@([^\s]+)/, "").trim();
+    const content = input.replace(/@([^\s]+)/, "").trim()
     if (!content) {
-      return null;
+      return null
     }
 
-    const thread = get().providers[provider];
+    const thread = get().providers[provider]
     if (!thread.threadId) {
-      return null;
+      return null
     }
 
     return {
       threadId: thread.threadId,
       provider,
       content,
-      alias: thread.alias
-    };
-  }
-}));
+      alias: thread.alias,
+    }
+  },
+}))

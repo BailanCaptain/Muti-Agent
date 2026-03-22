@@ -1,0 +1,51 @@
+import assert from "node:assert/strict"
+import fs from "node:fs"
+import path from "node:path"
+import test from "node:test"
+import { SqliteStore } from "../sqlite"
+import { SessionRepository } from "./session-repository"
+
+function createRepository() {
+  const runtimeDir = path.join(process.cwd(), ".runtime")
+  fs.mkdirSync(runtimeDir, { recursive: true })
+  const tempDir = fs.mkdtempSync(path.join(runtimeDir, "session-repo-test-"))
+  const sqlitePath = path.join(tempDir, "multi-agent.sqlite")
+  const store = new SqliteStore(sqlitePath)
+  const repository = new SessionRepository(store)
+
+  return {
+    repository,
+    cleanup: () => {
+      store.db.close()
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    },
+  }
+}
+
+test("assistant thinking is persisted with the message and restored on reload", () => {
+  const { repository, cleanup } = createRepository()
+
+  try {
+    const groupId = repository.createSessionGroup("Test Room")
+    repository.ensureDefaultThreads(groupId, {
+      codex: null,
+      claude: null,
+      gemini: null,
+    })
+
+    const thread = repository.listThreadsByGroup(groupId).find((item) => item.provider === "codex")
+    assert.ok(thread, "Expected a codex thread to exist")
+
+    const message = repository.appendMessage(thread.id, "assistant", "Final answer")
+    repository.overwriteMessage(message.id, {
+      content: "Final answer",
+      thinking: "First thought\nSecond thought",
+    })
+
+    const restored = repository.listMessages(thread.id).find((item) => item.id === message.id)
+    assert.equal(restored?.content, "Final answer")
+    assert.equal(restored?.thinking, "First thought\nSecond thought")
+  } finally {
+    cleanup()
+  }
+})

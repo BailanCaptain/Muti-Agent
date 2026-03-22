@@ -51,7 +51,7 @@ function MessageMeta({ message }: { message: TimelineMessage }) {
 }
 
 export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps) {
-  const [isThinkingOpen, setIsThinkingOpen] = useState(false)
+  const [isThinkingOpen, setIsThinkingOpen] = useState(true)
   const isUser = message.role === "user"
   const avatarIdentity = isUser ? "user" : message.provider
   const displayAlias = isUser ? "Host" : message.alias
@@ -104,9 +104,9 @@ export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps)
                     Inner Thoughts
                   </button>
                   {isThinkingOpen ? (
-                    <div className="mt-3 border-t border-emerald-100/80 pt-3">
+                    <div className="mt-3 max-h-60 overflow-y-auto border-t border-emerald-100/80 pt-3 pr-1">
                       <MarkdownMessage
-                        className="text-[13px] leading-6 text-emerald-950/70 [&_blockquote]:border-emerald-200/80 [&_blockquote]:text-emerald-900/70 [&_code]:bg-emerald-100/80 [&_hr]:border-emerald-100/90 [&_thead]:bg-emerald-100/70"
+                        className="text-[12px] leading-5 text-emerald-950/70 [&_blockquote]:border-emerald-200/80 [&_blockquote]:text-emerald-900/70 [&_code]:bg-emerald-100/80 [&_hr]:border-emerald-100/90 [&_thead]:bg-emerald-100/70"
                         content={message.thinking}
                       />
                     </div>

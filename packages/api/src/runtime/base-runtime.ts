@@ -308,6 +308,10 @@ export abstract class BaseCliRuntime implements AgentRuntime {
 
   protected abstract buildCommand(input: AgentRunInput): RuntimeCommand;
 
+  parseActivityLine(_event: Record<string, unknown>): string | null {
+    return null;
+  }
+
   protected extractFinalText(rawStdout: string) {
     return rawStdout.trim() || undefined;
   }

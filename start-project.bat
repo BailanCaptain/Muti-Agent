@@ -14,6 +14,12 @@ if errorlevel 1 (
   exit /b 1
 )
 
+where curl.exe >nul 2>nul
+if errorlevel 1 (
+  echo [Multi-Agent] curl.exe not found ^(requires Windows 10 build 17063 or later^).
+  exit /b 1
+)
+
 if not exist ".runtime" mkdir ".runtime"
 
 echo [Multi-Agent] Stopping stale processes...
@@ -26,29 +32,41 @@ if exist ".next\dev\lock" (
 echo [Multi-Agent] Starting API in background...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$p = Start-Process -FilePath 'npm.cmd' -WorkingDirectory '%CD%' -WindowStyle Hidden -ArgumentList 'run','dev:api' -PassThru; Set-Content -Path '%CD%\.runtime\api.pid' -Value $p.Id"
-call :wait_http "http://localhost:8787/health" 20
+call :wait_for "http://localhost:8787/health" 60
+echo.
 
 echo [Multi-Agent] Starting Web in background...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$p = Start-Process -FilePath 'npm.cmd' -WorkingDirectory '%CD%' -WindowStyle Hidden -ArgumentList 'run','dev:web' -PassThru; Set-Content -Path '%CD%\.runtime\web.pid' -Value $p.Id"
-call :wait_http "http://localhost:3000" 25
+call :wait_for "http://localhost:3000" 60
+echo.
 
 echo.
-echo [Multi-Agent] Background start finished.
-echo API: http://localhost:8787
-echo WEB: http://localhost:3000
+echo [Multi-Agent] Ready.
+echo   API: http://localhost:8787
+echo   WEB: http://localhost:3000
 echo.
 exit /b 0
 
-:wait_http
-set "TARGET_URL=%~1"
-set "MAX_RETRY=%~2"
-set /a COUNT=0
+:: -----------------------------------------------------------------------
+:: :wait_for <url> <max_seconds>
+:: Uses curl.exe (built into Windows 10+) for a hard-capped 2s timeout per
+:: attempt. Prints a dot per second so the console never looks frozen.
+:: -----------------------------------------------------------------------
+:wait_for
+set "WF_URL=%~1"
+set /a WF_MAX=%~2
+set /a WF_COUNT=0
 
-:wait_loop
-set /a COUNT+=1
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r = Invoke-WebRequest -UseBasicParsing '%TARGET_URL%' -TimeoutSec 2; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 500) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>nul
+:_wf_loop
+curl.exe -s -o nul --max-time 2 --connect-timeout 2 "%WF_URL%" >nul 2>nul
 if not errorlevel 1 exit /b 0
-if %COUNT% geq %MAX_RETRY% exit /b 0
+
+set /a WF_COUNT+=1
+if %WF_COUNT% geq %WF_MAX% (
+  echo  [timeout after %WF_MAX%s, continuing anyway]
+  exit /b 0
+)
+<nul set /p ".=."
 timeout /t 1 /nobreak >nul
-goto wait_loop
+goto _wf_loop

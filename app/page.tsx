@@ -11,9 +11,23 @@ import { useThreadStore } from "@/components/stores/thread-store"
 import { connectRealtime } from "@/components/ws/client"
 import { useEffect } from "react"
 
+function formatBlockedDispatchMessage(attempts: Array<{ targetAlias: string }>) {
+  if (!attempts.length) {
+    return "A follow-up mention was blocked."
+  }
+
+  if (attempts.length === 1) {
+    return `Follow-up mention to ${attempts[0].targetAlias} was blocked because the current collaboration chain is cancelled. Send a new user message to start again.`
+  }
+
+  const aliases = attempts.map((attempt) => attempt.targetAlias).join(", ")
+  return `Follow-up mentions to ${aliases} were blocked because the current collaboration chain is cancelled. Send a new user message to start again.`
+}
+
 export default function HomePage() {
   const bootstrap = useThreadStore((state) => state.bootstrap)
   const applyAssistantDelta = useThreadStore((state) => state.applyAssistantDelta)
+  const applyThinkingDelta = useThreadStore((state) => state.applyThinkingDelta)
   const appendTimelineMessage = useThreadStore((state) => state.appendTimelineMessage)
   const replaceActiveGroup = useThreadStore((state) => state.replaceActiveGroup)
   const setStatus = useChatStore((state) => state.setStatus)
@@ -45,6 +59,11 @@ export default function HomePage() {
           return
         }
 
+        if (event.type === "assistant_thinking_delta") {
+          applyThinkingDelta(event.payload.messageId, event.payload.delta)
+          return
+        }
+
         if (event.type === "message.created") {
           appendTimelineMessage(event.payload.message)
           return
@@ -52,6 +71,11 @@ export default function HomePage() {
 
         if (event.type === "thread_snapshot") {
           replaceActiveGroup(event.payload.activeGroup)
+          return
+        }
+
+        if (event.type === "dispatch.blocked") {
+          setStatus(formatBlockedDispatchMessage(event.payload.attempts))
           return
         }
 
@@ -65,6 +89,7 @@ export default function HomePage() {
   }, [
     appendTimelineMessage,
     applyAssistantDelta,
+    applyThinkingDelta,
     bootstrap,
     replaceActiveGroup,
     setSocketState,

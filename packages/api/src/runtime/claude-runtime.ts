@@ -22,6 +22,43 @@ function resolveClaudeCommand() {
   return { command: "claude", prefixArgs: [], shell: true };
 }
 
+function formatClaudeToolInput(name: string, input: Record<string, unknown>): string {
+  try {
+    if (name === "Bash") {
+      const cmd = String(input.command ?? "").split("\n")[0].slice(0, 80);
+      return `$ ${cmd}`;
+    }
+
+    if (["Read", "Write", "Edit", "NotebookEdit"].includes(name)) {
+      const filePath = String(input.file_path ?? "");
+      return filePath.split(/[/\\]/).slice(-2).join("/");
+    }
+
+    if (name === "Glob") {
+      return String(input.pattern ?? "");
+    }
+
+    if (name === "Grep") {
+      return String(input.pattern ?? "").slice(0, 40);
+    }
+
+    if (name === "Task" || name === "Agent") {
+      return String(input.description ?? "").slice(0, 60);
+    }
+
+    // Default: first string value in input
+    for (const value of Object.values(input)) {
+      if (typeof value === "string") {
+        return value.slice(0, 60);
+      }
+    }
+
+    return "";
+  } catch {
+    return "";
+  }
+}
+
 export class ClaudeRuntime extends BaseCliRuntime {
   readonly agentId = "claude";
 
@@ -65,6 +102,55 @@ export class ClaudeRuntime extends BaseCliRuntime {
       args: [...runtime.prefixArgs, ...args],
       shell: runtime.shell
     };
+  }
+
+  parseActivityLine(event: Record<string, unknown>): string | null {
+    try {
+      // Claude extended thinking
+      if (event.type === "content_block_delta") {
+        const delta = event.delta as { type?: string; thinking?: string } | undefined;
+        if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") {
+          return delta.thinking;
+        }
+      }
+
+      if (event.type === "assistant") {
+        const message = event.message as { content?: Array<{ type?: string; name?: string; input?: Record<string, unknown> }> } | undefined;
+        const toolUse = message?.content?.find((item) => item.type === "tool_use");
+        if (toolUse && toolUse.name) {
+          const summary = formatClaudeToolInput(toolUse.name, toolUse.input ?? {});
+          return `⚡ ${toolUse.name} ${summary}`.trimEnd();
+        }
+        return null;
+      }
+
+      if (event.type === "user") {
+        const message = event.message as { content?: Array<{ type?: string; content?: unknown }> } | undefined;
+        const toolResult = message?.content?.find((item) => item.type === "tool_result");
+        if (toolResult) {
+          const content = toolResult.content;
+          if (typeof content === "string" && content.trim()) {
+            return `↩ ${content.split("\n")[0].slice(0, 100)}`;
+          }
+          if (Array.isArray(content)) {
+            for (const part of content) {
+              if (typeof part === "object" && part && typeof (part as { text?: string }).text === "string") {
+                const text = (part as { text: string }).text.trim();
+                if (text) {
+                  return `↩ ${text.split("\n")[0].slice(0, 100)}`;
+                }
+              }
+            }
+          }
+          return "↩ done";
+        }
+        return null;
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   parseAssistantDelta(event: Record<string, unknown>) {

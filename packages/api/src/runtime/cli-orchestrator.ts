@@ -19,6 +19,7 @@ export type RunTurnOptions = {
   onSession: (nativeSessionId: string) => void;
   onModel: (model: string) => void;
   onActivity?: (activity: { stream: "stdout" | "stderr"; at: string; chunk: string }) => void;
+  onToolActivity?: (line: string) => void;
 };
 
 export type RunTurnResult = {
@@ -71,6 +72,10 @@ export function runTurn(options: RunTurnOptions) {
       try {
         const event = JSON.parse(line) as Record<string, unknown>;
         const delta = runtime.parseAssistantDelta(event);
+        const activityLine = runtime.parseActivityLine(event);
+        if (activityLine) {
+          options.onToolActivity?.(activityLine);
+        }
         const sessionId = findSessionId(event);
         const eventModel = parseEventModel(event);
 
@@ -89,9 +94,7 @@ export function runTurn(options: RunTurnOptions) {
           options.onModel(eventModel);
         }
       } catch {
-        // Some CLIs still write plain text lines instead of structured JSON; stream them anyway.
-        content += line;
-        options.onAssistantDelta(line);
+        // Non-JSON line: startup noise, debug output, or partial write — ignore.
       }
     },
     onActivity(activity) {
