@@ -1130,7 +1130,62 @@ feat-lifecycle completion        ← 产物：AC 验证（基于 git log，非 s
 
 ---
 
-## 更新后的差距总览（含新增两项）
+## 差距十三：体验层机制与 A2A 有序性
+
+Multi-Agent 将 A2A 抽象为纯粹的"文本生成和路由"问题，导致视觉表现退化为平铺的"文字墙"。Clowder AI 将 A2A 视为人机协同界面（HCI），通过专门的体验层技能约束协作节奏、视觉层级和认知准入。
+
+### 1. Rich Messaging——信噪比与视觉层级
+
+**Clowder AI**：`rich-messaging` 技能提供 7 种结构化富媒体块（`card` / `checklist` / `interactive` / `diff` / `audio` / `media_gallery` / `html_widget`）。A2A 的流转不是平铺文本，而是有层级的视觉表达：
+- 交接工作 → 结构化交接卡片（五件套）
+- 执行中的进度思考 → 折叠/弱化的过程态（`assistant_thinking_delta`）
+- 最终结果 → 高亮正式气泡
+- 用户需要选择 → `interactive` 块（select/confirm），用户操作后状态持久化
+
+**Multi-Agent**：所有的 A2A 调度指令、中间报错、进度陈述和最终结果全部渲染为平级的 `assistant` 文本气泡。用户无法一眼分辨哪个是中间过程，哪个是最终交付物。
+
+**整改建议**：引入渲染分级协议：
+- 包含 `@` 的 A2A 交接渲染为**任务交接卡片**（显示 From / To / 任务描述 / 状态灯）
+- `callback` 中途消息降级为气泡外的**进度流**（灰色小字或 Spinner，不进主时间线）
+- 只有 invocation 结束后的 final 消息进入主时间线气泡
+
+---
+
+### 2. Hyperfocus Brake——节奏控制与失控阻断
+
+**Clowder AI**：`hyperfocus-brake` 技能结合 PostToolUse Hook 监控连续流转频率，触发三级升级（L1 温和 / L2 关切 / L3 坚定），发出 audio + card 提示，把控制权强制交还 CVO。防止多 agent 自旋刷屏导致认知过载和"失控感"。
+
+用户响应后有三个选项：`[1] 继续 5 分钟` / `[2] 10 分钟暂缓` / `[3] 跳过（每次绕过增加 cooldown：30min→45min→disabled）`——防止用户无脑点跳过。
+
+**Multi-Agent**：缺乏节奏断路器。只要 agent 一直互 @，就会无限循环执行（或触发底层的 MAX_HOPS=15 强行熔断，粗暴报错）。用户在 A2A 爆发期间沦为旁观者，无法介入。
+
+**整改建议**：在连续 N 次（建议 3 次）无人类干预的 A2A 轮转后，系统自动在流中插入一个**交互式确认块**，暂停执行流询问：
+```
+目前已自动协作 3 轮，方向对吗？
+[继续执行]  [我要调整]  [停止本轮]
+```
+确立人类在回路中的核心位置，而不是让 MAX_HOPS 熔断来被动终止。
+
+---
+
+### 3. Bootcamp Guide——认知准入与能力边界渐进解锁
+
+**Clowder AI**：`bootcamp-guide` 结合 MCP `cat_cafe_update_bootcamp_state` 实现 11 阶段状态机。新的协同模式需要建立心智模型，系统根据用户/agent 的成熟度逐步开放功能边界，防止一上来就进行复杂的网状调用：
+- Phase 0-2：环境检查和角色介绍（单猫对话）
+- Phase 5-7：kickoff + design + dev（引入 A2A 协作）
+- Phase 8-9：review + merge（完整多猫工作流）
+- Phase 11：farewell + pin thread（归档）
+
+**Multi-Agent**：零新手引导，无论复杂程度，直接将所有 agent 的全部能力抛到同一个共享空间。
+
+**整改建议**：增加 Room/Thread 的模式状态（`tutorial` / `restricted` / `full-auto`）：
+- 初始阶段：prompt 自动限制 agent 发起 A2A 的频次和深度（如最多 2 跳）
+- 用户主动确认每阶段"我理解了"后，UI 逐步解锁高级能力
+- 这不是手把手教学，而是**防止用户在还没建立心智模型时就被 A2A 链条带着跑**
+
+---
+
+## 更新后的差距总览（含新增三项）
 
 | 维度 | Multi-Agent | Clowder AI | 影响 |
 |------|------------|-----------|------|
@@ -1145,3 +1200,4 @@ feat-lifecycle completion        ← 产物：AC 验证（基于 git log，非 s
 | 去重副作用 | rootTriggeredProviders 封死合法二次回合 | QueueEntry source+slot 精确去重 | 同 root 下 provider 只出场一次 |
 | **Skills 系统** | **3 个文本约定（无阻断能力）** | **23 个结构化技能（SOP 强制流程）** | **流程节点可随意跳过** |
 | **System Prompt** | **三者相同提示词（无角色分工/无铁律/无 SOP）** | **角色差异化 + 安全铁律 + 技能引用** | **无职责分化，无破坏性操作防护** |
+| **体验层机制** | **无（全部平级 assistant 气泡，无节奏控制）** | **rich-messaging / hyperfocus-brake / bootcamp-guide** | **用户无法感知 A2A 层次，沦为旁观者** |
