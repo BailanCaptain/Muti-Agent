@@ -1,9 +1,9 @@
-"use client";
+"use client"
 
-import { useMemo, useState } from "react";
-import { PROVIDERS, type Provider } from "@multi-agent/shared";
-import { useChatStore } from "@/components/stores/chat-store";
-import { useThreadStore } from "@/components/stores/thread-store";
+import { useMemo, useState } from "react"
+import { PROVIDERS, type Provider } from "@multi-agent/shared"
+import { useChatStore } from "@/components/stores/chat-store"
+import { useThreadStore } from "@/components/stores/thread-store"
 
 const providerMeta: Record<
   Provider,
@@ -14,36 +14,36 @@ const providerMeta: Record<
     label: "Codex",
     tint: "from-amber-500 to-orange-600",
     soft: "bg-amber-50",
-    ring: "border-amber-200"
+    ring: "border-amber-200",
   },
   claude: {
     badge: "黄",
     label: "Claude Code",
-    tint: "from-sky-500 to-cyan-600",
-    soft: "bg-sky-50",
-    ring: "border-sky-200"
+    tint: "from-violet-500 to-purple-600",
+    soft: "bg-violet-50",
+    ring: "border-violet-200",
   },
   gemini: {
     badge: "桂",
     label: "Gemini",
-    tint: "from-emerald-500 to-teal-600",
-    soft: "bg-emerald-50",
-    ring: "border-emerald-200"
-  }
-};
+    tint: "from-sky-500 to-cyan-600",
+    soft: "bg-sky-50",
+    ring: "border-sky-200",
+  },
+}
 
 function ProviderCard({
-  provider
+  provider,
 }: {
-  provider: Provider;
+  provider: Provider
 }) {
-  const card = useThreadStore((state) => state.providers[provider]);
-  const catalog = useThreadStore((state) => state.catalogs[provider]);
-  const updateModel = useThreadStore((state) => state.updateModel);
-  const stopThread = useThreadStore((state) => state.stopThread);
-  const setDraft = useChatStore((state) => state.setDraft);
-  const [draftModel, setDraftModel] = useState(card.currentModel ?? "");
-  const meta = providerMeta[provider];
+  const card = useThreadStore((state) => state.providers[provider])
+  const catalog = useThreadStore((state) => state.catalogs[provider])
+  const updateModel = useThreadStore((state) => state.updateModel)
+  const stopThread = useThreadStore((state) => state.stopThread)
+  const setDraft = useChatStore((state) => state.setDraft)
+  const [draftModel, setDraftModel] = useState(card.currentModel ?? "")
+  const meta = providerMeta[provider]
 
   return (
     <article className="grid gap-4 rounded-[24px] border border-black/5 bg-white/90 p-4 shadow-soft">
@@ -122,13 +122,13 @@ function ProviderCard({
         </div>
       </div>
     </article>
-  );
+  )
 }
 
 export function ProviderStrip() {
-  const refresh = useThreadStore((state) => state.bootstrap);
-  const createGroup = useThreadStore((state) => state.createSessionGroup);
-  const cards = useMemo(() => PROVIDERS, []);
+  const refresh = useThreadStore((state) => state.bootstrap)
+  const createGroup = useThreadStore((state) => state.createSessionGroup)
+  const cards = useMemo(() => PROVIDERS, [])
 
   return (
     <section className="rounded-[28px] border border-black/5 bg-white/75 p-5 shadow-soft backdrop-blur">
@@ -160,5 +160,5 @@ export function ProviderStrip() {
         ))}
       </div>
     </section>
-  );
+  )
 }

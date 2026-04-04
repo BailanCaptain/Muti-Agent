@@ -166,14 +166,22 @@ export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps)
                       </span>
                     )}
                   </button>
-                  {isThinkingOpen ? (
-                    <div className="mt-3 max-h-60 overflow-y-auto border-t border-slate-200/60 pt-3 pr-1">
-                      <MarkdownMessage
-                        className={`text-[12px] leading-relaxed ${theme.content}`}
-                        content={message.thinking}
-                      />
+                  <div
+                    className={`grid transition-all duration-300 ease-in-out ${
+                      isThinkingOpen
+                        ? "grid-rows-[1fr] opacity-100 mt-3"
+                        : "grid-rows-[0fr] opacity-0 mt-0"
+                    }`}
+                  >
+                    <div className="overflow-hidden">
+                      <div className="max-h-60 overflow-y-auto border-t border-slate-200/60 pt-3 pr-1">
+                        <MarkdownMessage
+                          className={`text-[12px] leading-relaxed ${theme.content}`}
+                          content={message.thinking}
+                        />
+                      </div>
                     </div>
-                  ) : null}
+                  </div>
                 </div>
               ) : null}
 
@@ -200,12 +208,6 @@ export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps)
                 type="button"
               >
                 <Trash2 className="h-3.5 w-3.5 text-slate-400" />
-              </button>
-              <button
-                className="rounded-full bg-white/95 p-1.5 shadow-sm ring-1 ring-black/5 hover:bg-slate-50"
-                type="button"
-              >
-                <Share2 className="h-3.5 w-3.5 text-slate-400" />
               </button>
             </div>
           </div>

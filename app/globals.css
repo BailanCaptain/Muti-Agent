@@ -38,4 +38,22 @@ pre,
   .shadow-soft {
     @apply shadow-[0_8px_30px_rgb(0,0,0,0.04)];
   }
+
+  @keyframes breathe {
+    0%,
+    100% {
+      transform: scale(1);
+      opacity: 1;
+      filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.2));
+    }
+    50% {
+      transform: scale(1.05);
+      opacity: 0.92;
+      filter: drop-shadow(0 0 15px rgba(245, 158, 11, 0.35));
+    }
+  }
+
+  .animate-breathe {
+    animation: breathe 4s ease-in-out infinite;
+  }
 }
