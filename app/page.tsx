@@ -13,15 +13,15 @@ import { useEffect } from "react"
 
 function formatBlockedDispatchMessage(attempts: Array<{ targetAlias: string }>) {
   if (!attempts.length) {
-    return "A follow-up mention was blocked."
+    return "跟进提及被阻止。"
   }
 
   if (attempts.length === 1) {
-    return `Follow-up mention to ${attempts[0].targetAlias} was blocked because the current collaboration chain is cancelled. Send a new user message to start again.`
+    return `针对 ${attempts[0].targetAlias} 的跟进提及被阻止，因为当前协作链已被取消。请发送新的用户消息以重新开始。`
   }
 
   const aliases = attempts.map((attempt) => attempt.targetAlias).join(", ")
-  return `Follow-up mentions to ${aliases} were blocked because the current collaboration chain is cancelled. Send a new user message to start again.`
+  return `针对 ${aliases} 的跟进提及被阻止，因为当前协作链已被取消。请发送新的用户消息以重新开始。`
 }
 
 export default function HomePage() {
@@ -35,22 +35,22 @@ export default function HomePage() {
 
   useEffect(() => {
     void bootstrap().catch((error) => {
-      setStatus(error instanceof Error ? error.message : "Bootstrap failed")
+      setStatus(error instanceof Error ? error.message : "引导程序启动失败")
     })
 
     // Keep one websocket subscription for the page and fan updates into the local stores.
     const disconnect = connectRealtime({
       onOpen: () => {
         setSocketState("connected")
-        setStatus("Realtime connected")
+        setStatus("实时连接成功")
       },
       onClose: () => {
         setSocketState("disconnected")
-        setStatus("Realtime disconnected")
+        setStatus("实时连接断开")
       },
       onError: () => {
         setSocketState("error")
-        setStatus("Realtime connection failed")
+        setStatus("实时连接失败")
       },
       onMessage: (event) => {
         // The page only routes normalized event envelopes; store-specific merge logic lives downstream.
@@ -97,7 +97,7 @@ export default function HomePage() {
   ])
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(255,244,214,0.45),transparent_22%),radial-gradient(circle_at_right,rgba(209,250,229,0.28),transparent_26%),linear-gradient(180deg,#f8fafc_0%,#f6f7fb_100%)]">
+    <div className="flex h-screen w-full overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(245,208,254,0.35),transparent_35%),radial-gradient(circle_at_top_right,rgba(255,244,214,0.35),transparent_35%),radial-gradient(circle_at_bottom_right,rgba(224,242,254,0.35),transparent_35%),linear-gradient(180deg,#f8fafc_0%,#f6f7fb_100%)]">
       <SessionSidebar />
       <main className="flex flex-1 flex-col overflow-hidden">
         <ChatHeader />

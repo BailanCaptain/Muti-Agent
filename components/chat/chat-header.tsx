@@ -1,13 +1,6 @@
 "use client"
 
-import { Download, LayoutGrid, Menu, PawPrint, Radio, Smartphone } from "lucide-react"
-
-const actions = [
-  { icon: Download, label: "Export" },
-  { icon: Radio, label: "Broadcast" },
-  { icon: LayoutGrid, label: "Layout" },
-  { icon: Smartphone, label: "Mobile Preview" },
-]
+import { Menu, PawPrint } from "lucide-react"
 
 export function ChatHeader() {
   return (
@@ -23,22 +16,9 @@ export function ChatHeader() {
           </div>
           <div>
             <h1 className="text-lg font-semibold tracking-[0.01em] text-slate-900">Multi-Agent</h1>
-            <p className="text-xs text-slate-400">Shared workspace for coordinated agent runs</p>
+            <p className="text-xs text-slate-400">多智能体协同工作空间</p>
           </div>
         </div>
-      </div>
-
-      <div className="flex items-center gap-2">
-        {actions.map((item) => (
-          <button
-            className="rounded-full border border-transparent p-2 text-slate-400 transition hover:border-slate-200/70 hover:bg-white hover:text-slate-600"
-            key={item.label}
-            title={item.label}
-            type="button"
-          >
-            <item.icon className="h-5 w-5" />
-          </button>
-        ))}
       </div>
     </header>
   )

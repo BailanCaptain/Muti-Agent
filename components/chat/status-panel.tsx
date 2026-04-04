@@ -4,7 +4,7 @@ import { useSettingsStore } from "@/components/stores/settings-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { formatTokenCount } from "@/lib/format"
 import type { Provider } from "@multi-agent/shared"
-import { Info, MessageSquare, Settings } from "lucide-react"
+import { Info, MessageSquare } from "lucide-react"
 import { useState } from "react"
 import { ProviderAvatar } from "./provider-avatar"
 
@@ -39,12 +39,12 @@ const providerTheme: Record<
     progress: "bg-violet-500",
   },
   gemini: {
-    badge: "bg-emerald-50 text-emerald-700 ring-emerald-200/80",
-    card: "border-emerald-100/80 bg-emerald-50/40",
-    dot: "bg-emerald-500",
-    focus: "focus:border-emerald-300 focus:ring-emerald-100/80",
-    button: "bg-emerald-500 hover:bg-emerald-600",
-    progress: "bg-emerald-500",
+    badge: "bg-sky-50 text-sky-700 ring-sky-200/80",
+    card: "border-sky-100/80 bg-sky-50/40",
+    dot: "bg-sky-500",
+    focus: "focus:border-sky-300 focus:ring-sky-100/80",
+    button: "bg-sky-500 hover:bg-sky-600",
+    progress: "bg-sky-500",
   },
 }
 
@@ -103,11 +103,11 @@ export function StatusPanel() {
   const modeLabel =
     socketState === "connected"
       ? isAnyRunning
-        ? "Agents running"
-        : "Ready"
+        ? "运行中"
+        : "就绪"
       : socketState === "error"
-        ? "Connection error"
-        : "Offline"
+        ? "连接错误"
+        : "离线"
 
   // Heuristic counters keep the stats card informative until richer backend analytics land.
   const stats = {
@@ -122,11 +122,11 @@ export function StatusPanel() {
   }
 
   const metricCards = [
-    { label: "Total", value: stats.total },
-    { label: "Agent Msgs", value: stats.agents },
-    { label: "System", value: stats.system },
-    { label: "Evidence", value: stats.evidence },
-    { label: "Follow-up", value: stats.followUp },
+    { label: "总计", value: stats.total },
+    { label: "智能体消息", value: stats.agents },
+    { label: "系统", value: stats.system },
+    { label: "证据", value: stats.evidence },
+    { label: "跟进", value: stats.followUp },
   ]
 
   const sortedInvocationStats = [...invocationStats].sort((left, right) => {
@@ -143,29 +143,21 @@ export function StatusPanel() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-400">
-            Control Panel
+            控制面板
           </p>
-          <h2 className="mt-2 text-xl font-semibold tracking-[0.01em] text-slate-900">
-            Status Board
-          </h2>
-          <p className="mt-1 text-xs text-slate-400">Current mode: {modeLabel}</p>
+          <h2 className="mt-2 text-xl font-semibold tracking-[0.01em] text-slate-900">状态看板</h2>
+          <p className="mt-1 text-xs text-slate-400">当前模式: {modeLabel}</p>
         </div>
-        <button
-          className="rounded-full border border-slate-200/70 bg-white/90 p-2.5 shadow-sm transition hover:bg-slate-50"
-          type="button"
-        >
-          <Settings className="h-5 w-5 text-slate-500" />
-        </button>
       </div>
 
       <div className={`${panelClassName} mb-5`}>
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-semibold text-slate-800">Room Health</p>
+            <p className="text-sm font-semibold text-slate-800">房间健康度</p>
             <p className="mt-1 text-xs leading-5 text-slate-400">
               {isAnyRunning
-                ? "At least one agent is streaming or processing."
-                : "No active runs. The room is waiting for the next prompt."}
+                ? "至少有一个智能体正在流式输出或处理中。"
+                : "当前没有活跃任务。房间正在等待下一条指令。"}
             </p>
           </div>
           <div
@@ -181,11 +173,13 @@ export function StatusPanel() {
 
         <div className="grid grid-cols-2 gap-3">
           <div className="rounded-2xl border border-slate-200/70 bg-slate-50/80 px-3 py-3">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Socket</div>
-            <div className="mt-1 font-mono text-sm font-semibold text-slate-900">{socketState}</div>
+            <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">连接</div>
+            <div className="mt-1 font-mono text-sm font-semibold text-slate-900">
+              {socketState === "connected" ? "在线" : socketState === "error" ? "错误" : "离线"}
+            </div>
           </div>
           <div className="rounded-2xl border border-slate-200/70 bg-slate-50/80 px-3 py-3">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Active</div>
+            <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">活跃</div>
             <div className="mt-1 font-mono text-sm font-semibold text-slate-900">
               {providerEntries.filter(([, provider]) => provider.running).length}
             </div>
@@ -195,7 +189,7 @@ export function StatusPanel() {
 
       <div className={`${panelClassName} mb-5`}>
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-800">Message Stats</h3>
+          <h3 className="text-sm font-semibold text-slate-800">消息统计</h3>
           <MessageSquare className="h-4 w-4 text-slate-400" />
         </div>
 
@@ -218,7 +212,7 @@ export function StatusPanel() {
 
       <div className={`${panelClassName} mb-5`}>
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-800">Agent Config</h3>
+          <h3 className="text-sm font-semibold text-slate-800">智能体配置</h3>
           <Info className="h-4 w-4 text-slate-400" />
         </div>
 
@@ -247,14 +241,14 @@ export function StatusPanel() {
                       <span
                         className={`h-2 w-2 rounded-full ${card.running ? theme.dot : "bg-slate-300"}`}
                       />
-                      <span>{card.running ? "Working on the current task" : "Idle and ready"}</span>
+                      <span>{card.running ? "正在处理当前任务" : "空闲并就绪"}</span>
                     </div>
                   </div>
                 </div>
 
                 <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-slate-400">
-                  <span>Model</span>
-                  <span className="font-mono text-slate-500">{card.currentModel ?? "not set"}</span>
+                  <span>模型</span>
+                  <span className="font-mono text-slate-500">{card.currentModel ?? "未设置"}</span>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -277,7 +271,7 @@ export function StatusPanel() {
                         })
                       }
                     }}
-                    placeholder="Select a model"
+                    placeholder="选择一个模型"
                     value={draft}
                   />
                   <datalist id={`status-model-${provider}`}>
@@ -299,7 +293,7 @@ export function StatusPanel() {
                       }}
                       type="button"
                     >
-                      Save
+                      保存
                     </button>
                   ) : null}
                 </div>
@@ -311,16 +305,16 @@ export function StatusPanel() {
 
       <div className={`${panelClassName} min-h-0 flex-1`}>
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-800">Session Chain</h3>
+          <h3 className="text-sm font-semibold text-slate-800">会话链</h3>
           <span className="font-mono text-[11px] text-slate-400">
-            {sortedInvocationStats.length} sessions
+            {sortedInvocationStats.length} 次会话
           </span>
         </div>
 
         <div className="space-y-3 overflow-y-auto pr-1">
           {sortedInvocationStats.length === 0 ? (
             <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50/80 px-4 py-5 text-sm text-slate-400">
-              No session telemetry yet.
+              尚无会话遥测数据。
             </div>
           ) : (
             sortedInvocationStats.map((stat) => {
@@ -340,7 +334,7 @@ export function StatusPanel() {
                       <div className="flex items-center gap-2">
                         <span className={`h-2.5 w-2.5 rounded-full ${statusTheme.dot}`} />
                         <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          Session #{stat.sessionId.slice(0, 8)}
+                          会话 #{stat.sessionId.slice(0, 8)}
                         </span>
                       </div>
                       <div className="mt-2 font-mono text-[11px] text-slate-500">{stat.model}</div>
@@ -354,7 +348,11 @@ export function StatusPanel() {
                       <span
                         className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${statusTheme.badge}`}
                       >
-                        {stat.status.toLowerCase()}
+                        {stat.status === "ACTIVE"
+                          ? "活动"
+                          : stat.status === "ERROR"
+                            ? "错误"
+                            : "空闲"}
                       </span>
                     </div>
                   </div>
@@ -362,14 +360,14 @@ export function StatusPanel() {
                   <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400">
                     <span>{formatStartedAt(stat.startedAt)}</span>
                     <span className="font-mono text-emerald-600">
-                      cache {formatCachePercent(stat.cachedTokens, stat.inputTokens)}%
+                      缓存 {formatCachePercent(stat.cachedTokens, stat.inputTokens)}%
                     </span>
                   </div>
 
                   <div className="mt-3 grid grid-cols-3 gap-2">
                     <div className="rounded-2xl bg-white px-2.5 py-2">
                       <div className="text-[10px] uppercase tracking-[0.16em] text-slate-400">
-                        In
+                        输入
                       </div>
                       <div className="mt-1 font-mono text-[11px] font-semibold text-slate-800">
                         {formatTokenCount(stat.inputTokens)}
@@ -377,7 +375,7 @@ export function StatusPanel() {
                     </div>
                     <div className="rounded-2xl bg-white px-2.5 py-2">
                       <div className="text-[10px] uppercase tracking-[0.16em] text-slate-400">
-                        Out
+                        输出
                       </div>
                       <div className="mt-1 font-mono text-[11px] font-semibold text-slate-800">
                         {formatTokenCount(stat.outputTokens)}
@@ -385,7 +383,7 @@ export function StatusPanel() {
                     </div>
                     <div className="rounded-2xl bg-white px-2.5 py-2">
                       <div className="text-[10px] uppercase tracking-[0.16em] text-slate-400">
-                        Total
+                        总量
                       </div>
                       <div className="mt-1 font-mono text-[11px] font-semibold text-slate-800">
                         {formatTokenCount(totalTokens)}

@@ -8,7 +8,7 @@ import { Send, Square } from "lucide-react"
 const mentionTheme: Record<Provider, string> = {
   codex: "border-amber-200/80 bg-amber-50 text-amber-700 hover:bg-amber-100",
   claude: "border-violet-200/80 bg-violet-50 text-violet-700 hover:bg-violet-100",
-  gemini: "border-emerald-200/80 bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
+  gemini: "border-sky-200/80 bg-sky-50 text-sky-700 hover:bg-sky-100",
 }
 
 export function Composer() {
@@ -50,6 +50,14 @@ export function Composer() {
         void send(value)
       }}
     >
+      {hasRunningProvider && (
+        <div className="flex items-center gap-2 px-2 pt-1">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+          <span className="text-[11px] font-medium text-amber-600">智能体正在回复中...</span>
+          <span className="text-[11px] text-slate-400">继续输入，消息将自动排队。</span>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-2 px-2">
         {PROVIDERS.map((provider) => {
           const mention = `@${provider}`
@@ -75,7 +83,11 @@ export function Composer() {
             event.target.style.height = "auto"
             event.target.style.height = `${event.target.scrollHeight}px`
           }}
-          placeholder="Type a prompt. Use @codex, @claude, or @gemini to route the message."
+          placeholder={
+            isBusy
+              ? "继续输入指令...（消息将自动排队）"
+              : "输入你的指令。使用 @codex, @claude 或 @gemini 来指定智能体。"
+          }
           rows={1}
           value={value}
         />
@@ -100,7 +112,7 @@ export function Composer() {
       </div>
 
       <div className="px-2 text-[11px] text-slate-400">
-        {status || "Ready for the next multi-agent turn."}
+        {status || "就绪，等待下一次多智能体协作。"}
       </div>
     </form>
   )

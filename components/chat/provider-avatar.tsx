@@ -42,22 +42,22 @@ const avatarTheme: Record<
     accent: "bg-amber-200/80",
   },
   claude: {
+    shell: "from-violet-100 via-purple-50 to-indigo-100",
+    ear: "from-violet-500 to-purple-500",
+    face: "from-violet-500 via-purple-400 to-indigo-500",
+    ring: "ring-violet-200/80",
+    badge: "bg-violet-500 text-white",
+    badgeText: "A",
+    accent: "bg-violet-200/80",
+  },
+  gemini: {
     shell: "from-sky-100 via-cyan-50 to-blue-100",
     ear: "from-sky-500 to-cyan-500",
     face: "from-sky-500 via-cyan-400 to-blue-500",
     ring: "ring-sky-200/80",
     badge: "bg-sky-500 text-white",
-    badgeText: "A",
-    accent: "bg-sky-200/80",
-  },
-  gemini: {
-    shell: "from-emerald-100 via-teal-50 to-lime-100",
-    ear: "from-emerald-500 to-teal-500",
-    face: "from-emerald-500 via-teal-400 to-lime-500",
-    ring: "ring-emerald-200/80",
-    badge: "bg-emerald-500 text-white",
     badgeText: "G",
-    accent: "bg-emerald-200/80",
+    accent: "bg-sky-200/80",
   },
 }
 

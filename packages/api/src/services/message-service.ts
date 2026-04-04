@@ -15,19 +15,19 @@ const STDERR_NOISE_PATTERNS = [
   /^Using model:/i,
   /^Tip:/i,
   /^\[runtime\]/,
-];
+]
 
 function isStderrNoiseLine(line: string): boolean {
-  const trimmed = line.trim();
-  if (!trimmed) return true;
-  return STDERR_NOISE_PATTERNS.some((p) => p.test(trimmed));
+  const trimmed = line.trim()
+  if (!trimmed) return true
+  return STDERR_NOISE_PATTERNS.some((p) => p.test(trimmed))
 }
 
 function filterStderrNoise(chunk: string): string {
   return chunk
     .split("\n")
     .filter((line) => !isStderrNoiseLine(line))
-    .join("\n");
+    .join("\n")
 }
 
 function stripAnsi(value: string) {
@@ -139,7 +139,7 @@ export class MessageService {
 
     emit({
       type: "status",
-      payload: { message: `Stopping pending collaboration in ${thread.alias}'s room.` },
+      payload: { message: `正在停止 ${thread.alias} 房间内的待执行协作任务。` },
     })
     this.emitThreadSnapshot(thread.sessionGroupId, emit)
     return true
@@ -185,7 +185,7 @@ export class MessageService {
     if (!thread) {
       emit({
         type: "status",
-        payload: { message: "Thread not found." },
+        payload: { message: "未找到相关线程。" },
       })
       return
     }
@@ -245,7 +245,7 @@ export class MessageService {
     if (!thread) {
       options.emit({
         type: "status",
-        payload: { message: "Thread not found." },
+        payload: { message: "未找到相关线程。" },
       })
       return
     }
@@ -253,7 +253,7 @@ export class MessageService {
     if (this.invocations.has(thread.id)) {
       options.emit({
         type: "status",
-        payload: { message: `${thread.alias} is already running.` },
+        payload: { message: `${thread.alias} 已经在运行中。` },
       })
       return
     }
@@ -300,7 +300,7 @@ export class MessageService {
 
     options.emit({
       type: "status",
-      payload: { message: `Running ${thread.alias}` },
+      payload: { message: `正在运行 ${thread.alias}` },
     })
 
     run = runTurn({
@@ -322,11 +322,11 @@ export class MessageService {
       onSession: () => {},
       onModel: () => {},
       onToolActivity: (line: string) => {
-        thinking += line + "\n";
+        thinking += `${line}\n`
         options.emit({
           type: "assistant_thinking_delta",
-          payload: { messageId: assistant.id, delta: line + "\n" },
-        });
+          payload: { messageId: assistant.id, delta: `${line}\n` },
+        })
       },
       onActivity: (activity) => {
         this.events.emit({
@@ -368,7 +368,7 @@ export class MessageService {
         options.emit({
           type: "status",
           payload: {
-            message: `${thread.alias} needs your confirmation. The current run was paused, reply to continue.`,
+            message: `${thread.alias} 需要你的确认。当前运行已暂停，请回复以继续。`,
           },
         })
         this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
@@ -537,12 +537,12 @@ export class MessageService {
 
     if (runningThread) {
       return runningThread.id === threadId
-        ? `${runningThread.alias} is already running.`
-        : `${runningThread.alias} is already running in this room. Wait for the current turn to finish or stop it first.`
+        ? `${runningThread.alias} 已经在运行中。`
+        : `${runningThread.alias} 已在此房间运行。请等待当前轮次结束或先手动停止。`
     }
 
     if (this.dispatch.hasQueuedDispatches(sessionGroupId)) {
-      return "This room is still processing queued follow-ups. Wait for the current collaboration chain to settle."
+      return "此房间仍在处理队列中的跟进任务。请等待当前协作链完成。"
     }
 
     return null

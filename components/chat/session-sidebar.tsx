@@ -23,11 +23,9 @@ export function SessionSidebar() {
       <div className="mb-5 flex items-center justify-between">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-            Rooms
+            房间
           </p>
-          <h2 className="mt-1 text-xl font-semibold tracking-[0.01em] text-slate-900">
-            Conversations
-          </h2>
+          <h2 className="mt-1 text-xl font-semibold tracking-[0.01em] text-slate-900">会话列表</h2>
         </div>
         <button
           className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_12px_24px_rgba(245,158,11,0.22)] transition hover:bg-amber-600"
@@ -35,7 +33,7 @@ export function SessionSidebar() {
           type="button"
         >
           <Plus className="h-3.5 w-3.5" />
-          New
+          新建
         </button>
       </div>
 
@@ -44,7 +42,7 @@ export function SessionSidebar() {
         <input
           className="w-full rounded-2xl border border-slate-200/80 bg-white/80 py-2.5 pl-10 pr-4 text-sm text-slate-700 outline-none transition focus:border-amber-200 focus:bg-white focus:ring-4 focus:ring-amber-100/70"
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search rooms or previews..."
+          placeholder="搜索房间或预览..."
           type="text"
           value={search}
         />
@@ -52,15 +50,15 @@ export function SessionSidebar() {
 
       <div className="flex-1 overflow-y-auto">
         <div className="mb-3 flex items-center justify-between px-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-          <span>Lobby</span>
-          <span>Now</span>
+          <span>大厅</span>
+          <span>刚刚</span>
         </div>
 
         <div className="mb-3 flex items-center justify-between px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
           <div className="flex items-center gap-1.5">
             <ChevronDown className="h-3 w-3" />
             <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
-            <span>Pinned</span>
+            <span>已置顶</span>
           </div>
           <span className="rounded-full bg-amber-100 px-1.5 py-0.5 font-mono text-amber-600">
             {filteredGroups.length}
@@ -98,7 +96,7 @@ export function SessionSidebar() {
                 <Star className="h-3.5 w-3.5 shrink-0 text-slate-300 transition group-hover:text-amber-300" />
               </div>
               <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-400">
-                {group.previews.find((preview) => preview.text)?.text || "No messages yet."}
+                {group.previews.find((preview) => preview.text)?.text || "尚无消息。"}
               </p>
             </button>
           ))}

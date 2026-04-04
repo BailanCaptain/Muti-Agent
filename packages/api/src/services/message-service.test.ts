@@ -285,8 +285,7 @@ test("handleSendMessage rejects a new root turn while another thread in the same
   assert.deepEqual(runningThreads, ["thread-codex"])
   assert.ok(
     events.some(
-      (event) =>
-        event.type === "status" && event.payload.message.includes("already running in this room"),
+      (event) => event.type === "status" && event.payload.message.includes("已在此房间运行"),
     ),
   )
 })

@@ -1,8 +1,8 @@
 "use client"
 
 import { formatTokenCount } from "@/lib/format"
-import type { TimelineMessage } from "@multi-agent/shared"
-import { ChevronDown, ChevronRight, Copy, Share2, Trash2 } from "lucide-react"
+import type { Provider, TimelineMessage } from "@multi-agent/shared"
+import { ChevronDown, Copy, Share2, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { MarkdownMessage } from "./markdown-message"
 import { ProviderAvatar } from "./provider-avatar"
@@ -18,6 +18,60 @@ function formatClock(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   })
+}
+
+function BrainIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.5"
+      viewBox="0 0 24 24"
+    >
+      <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+      <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
+      <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
+      <path d="M17.599 6.5a3 3 0 0 0 .399-1.375" />
+      <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5" />
+      <path d="M3.477 10.896a4 4 0 0 1 .585-.396" />
+      <path d="M19.938 10.5a4 4 0 0 1 .585.396" />
+      <path d="M6 18a4 4 0 0 1-1.967-.516" />
+      <path d="M19.967 17.484A4 4 0 0 1 18 18" />
+    </svg>
+  )
+}
+
+const thinkingTheme: Record<
+  Provider,
+  {
+    container: string
+    button: string
+    content: string
+    icon: string
+  }
+> = {
+  codex: {
+    container: "bg-amber-50/50 border-amber-100/80",
+    button: "text-amber-600 hover:text-amber-700",
+    content: "text-slate-600 [&_blockquote]:border-amber-200 [&_code]:bg-amber-100/50",
+    icon: "text-amber-500/80",
+  },
+  claude: {
+    container: "bg-violet-50/50 border-violet-100/80",
+    button: "text-violet-600 hover:text-violet-700",
+    content: "text-slate-600 [&_blockquote]:border-violet-200 [&_code]:bg-violet-100/50",
+    icon: "text-violet-500/80",
+  },
+  gemini: {
+    container: "bg-sky-50/50 border-sky-100/80",
+    button: "text-sky-600 hover:text-sky-700",
+    content: "text-slate-600 [&_blockquote]:border-sky-200 [&_code]:bg-sky-100/50",
+    icon: "text-sky-500/80",
+  },
 }
 
 function MessageMeta({ message }: { message: TimelineMessage }) {
@@ -37,14 +91,16 @@ function MessageMeta({ message }: { message: TimelineMessage }) {
         </span>
       ) : null}
       <span className="rounded-full bg-slate-50 px-2 py-1">
-        total {formatTokenCount(totalTokens)}
+        总量 {formatTokenCount(totalTokens)}
       </span>
-      <span className="rounded-full bg-slate-50 px-2 py-1">in {formatTokenCount(inputTokens)}</span>
       <span className="rounded-full bg-slate-50 px-2 py-1">
-        out {formatTokenCount(outputTokens)}
+        输入 {formatTokenCount(inputTokens)}
+      </span>
+      <span className="rounded-full bg-slate-50 px-2 py-1">
+        输出 {formatTokenCount(outputTokens)}
       </span>
       <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-600">
-        cache {cachedPercent}%
+        缓存 {cachedPercent}%
       </span>
     </div>
   )
@@ -54,7 +110,8 @@ export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps)
   const [isThinkingOpen, setIsThinkingOpen] = useState(true)
   const isUser = message.role === "user"
   const avatarIdentity = isUser ? "user" : message.provider
-  const displayAlias = isUser ? "Host" : message.alias
+  const displayAlias = isUser ? "你" : message.alias
+  const theme = !isUser ? thinkingTheme[message.provider] : null
 
   return (
     <div className={`group mb-6 flex w-full flex-col ${isUser ? "items-end" : "items-start"}`}>
@@ -89,24 +146,30 @@ export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps)
                   : "border-slate-200/80 bg-white/95 text-slate-700"
               }`}
             >
-              {!isUser && message.thinking ? (
-                <div className="mb-4 overflow-hidden rounded-2xl border border-emerald-100/80 bg-emerald-50/50 p-4">
+              {!isUser && message.thinking && theme ? (
+                <div
+                  className={`mb-4 overflow-hidden rounded-2xl border p-4 shadow-inner ${theme.container}`}
+                >
                   <button
-                    className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 transition hover:text-emerald-800"
+                    className={`flex w-full items-center gap-2 text-[11px] font-medium transition ${theme.button}`}
                     onClick={() => setIsThinkingOpen(!isThinkingOpen)}
                     type="button"
                   >
-                    {isThinkingOpen ? (
-                      <ChevronDown className="h-3.5 w-3.5" />
-                    ) : (
-                      <ChevronRight className="h-3.5 w-3.5" />
+                    <ChevronDown
+                      className={`h-3 w-3 transition-transform duration-200 ${isThinkingOpen ? "" : "-rotate-90"}`}
+                    />
+                    <BrainIcon className={`h-3.5 w-3.5 ${theme.icon}`} />
+                    <span>深度思考</span>
+                    {!isThinkingOpen && message.thinking && (
+                      <span className="ml-2 truncate opacity-40">
+                        {message.thinking.slice(0, 60)}...
+                      </span>
                     )}
-                    Inner Thoughts
                   </button>
                   {isThinkingOpen ? (
-                    <div className="mt-3 max-h-60 overflow-y-auto border-t border-emerald-100/80 pt-3 pr-1">
+                    <div className="mt-3 max-h-60 overflow-y-auto border-t border-slate-200/60 pt-3 pr-1">
                       <MarkdownMessage
-                        className="text-[12px] leading-5 text-emerald-950/70 [&_blockquote]:border-emerald-200/80 [&_blockquote]:text-emerald-900/70 [&_code]:bg-emerald-100/80 [&_hr]:border-emerald-100/90 [&_thead]:bg-emerald-100/70"
+                        className={`text-[12px] leading-relaxed ${theme.content}`}
                         content={message.thinking}
                       />
                     </div>
