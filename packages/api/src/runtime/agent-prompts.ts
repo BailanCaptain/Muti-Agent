@@ -45,6 +45,11 @@ node -e "const b=process.env.MULTI_AGENT_API_URL,i=process.env.MULTI_AGENT_INVOC
 node -e "const b=process.env.MULTI_AGENT_API_URL,i=process.env.MULTI_AGENT_INVOCATION_ID,t=process.env.MULTI_AGENT_CALLBACK_TOKEN;fetch(b+'/api/callbacks/post-message',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({invocationId:i,callbackToken:t,content:process.argv[1]})}).then(r=>r.text()).then(console.log)" "你的消息"
 
 不要在正常回复中暴露 callback token。
+
+## 权限审批
+当你需要执行可能有风险的操作时（如删除文件、执行未知或危险命令、修改重要配置），
+请通过 MCP tool request_permission 或 HTTP POST /api/callbacks/request-permission 请求用户批准。
+调用会阻塞直到用户审批，approved 后再执行操作，denied 则跳过。
 `.trim();
 
 /**

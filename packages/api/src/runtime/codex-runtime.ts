@@ -25,7 +25,11 @@ export class CodexRuntime extends BaseCliRuntime {
     const prompt = sessionId
       ? input.prompt
       : wrapPromptWithInstructions(AGENT_SYSTEM_PROMPTS.codex, input.prompt);
-    const topLevelArgs = [...(model ? ["-m", model] : []), "-a", "never", "-s", "workspace-write"];
+    const topLevelArgs = [
+      ...(model ? ["-m", model] : []),
+      "--config", 'approval_policy="on-request"',
+      "--sandbox", "workspace-write",
+    ];
     const baseArgs = sessionId
       ? ["exec", "resume", "--skip-git-repo-check", "--json", sessionId, prompt]
       : ["exec", "--skip-git-repo-check", "--json", prompt];

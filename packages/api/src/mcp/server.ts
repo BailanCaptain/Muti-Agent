@@ -241,6 +241,19 @@ export function getTools() {
           keyword: { type: "string", description: "可选：用于筛选记忆的关键词" }
         }
       }
+    },
+    {
+      name: "request_permission",
+      description: "请求用户批准一个操作（如执行命令、修改文件）。调用会阻塞直到用户审批或超时。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: { type: "string", description: "操作类型，如 run_command、edit_file、delete_file" },
+          reason: { type: "string", description: "为什么需要执行这个操作" },
+          context: { type: "string", description: "操作详情（命令内容、文件路径等）" }
+        },
+        required: ["action", "reason"]
+      }
     }
   ];
 }
@@ -316,6 +329,36 @@ async function callTriggerMention(params: { targetAgentId: string; taskSnippet: 
   };
 }
 
+async function callRequestPermission(params: { action: string; reason: string; context?: string }): Promise<ToolResult> {
+  const identity = getCallbackIdentity();
+  const response = await requestJson(`${identity.apiUrl}/api/callbacks/request-permission`, {
+    method: "POST",
+    body: {
+      invocationId: identity.invocationId,
+      callbackToken: identity.callbackToken,
+      action: params.action,
+      reason: params.reason,
+      ...(params.context ? { context: params.context } : {})
+    }
+  });
+
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `request_permission failed: ${JSON.stringify(response.json)}` }]
+    };
+  }
+
+  const result = response.json as { status: string };
+  if (result.status === "granted") {
+    return { content: [{ type: "text", text: "Permission granted. Proceed with the operation." }] };
+  }
+  return {
+    isError: true,
+    content: [{ type: "text", text: `Permission ${result.status}. Do not proceed with this operation.` }]
+  };
+}
+
 async function callGetMemory(keyword?: string): Promise<ToolResult> {
   const identity = getCallbackIdentity();
   const url = new URL(`${identity.apiUrl}/api/callbacks/memory`);
@@ -362,6 +405,8 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
       return callTriggerMention(args as { targetAgentId: string; taskSnippet: string });
     case "get_memory":
       return callGetMemory(args?.keyword as string | undefined);
+    case "request_permission":
+      return callRequestPermission(args as { action: string; reason: string; context?: string });
     default:
       return {
         isError: true,

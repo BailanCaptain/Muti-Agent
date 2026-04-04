@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared";
+import type { ApprovalManager } from "../orchestrator/approval-manager";
 import type { MessageService } from "../services/message-service";
 
 type SocketLike = {
@@ -17,7 +18,7 @@ export type RealtimeBroadcaster = {
 
 export function registerWsRoute(
   app: FastifyInstance,
-  options: { messages: MessageService; broadcaster: RealtimeBroadcaster }
+  options: { messages: MessageService; broadcaster: RealtimeBroadcaster; approvals?: ApprovalManager }
 ) {
   const sockets = new Set<SocketLike>();
 
@@ -47,8 +48,17 @@ export function registerWsRoute(
       });
 
       socket.on("message", async (raw: Buffer) => {
-        // Client websocket messages stay tiny on purpose: parse, hand off to MessageService, then emit normalized server events.
         const event = JSON.parse(raw.toString()) as RealtimeClientEvent;
+
+        if (event.type === "approval.respond" && options.approvals) {
+          options.approvals.respond(
+            event.payload.requestId,
+            event.payload.granted,
+            event.payload.scope,
+          );
+          return;
+        }
+
         options.messages.handleClientEvent(event, (payload) => sendSocketEvent(socket as SocketLike, payload));
       });
     }

@@ -64,6 +64,20 @@ export type ActiveGroupView = {
   providers: Record<Provider, ProviderThreadView>
 }
 
+export type ApprovalRequest = {
+  requestId: string
+  provider: Provider
+  agentAlias: string
+  threadId: string
+  sessionGroupId: string
+  action: string
+  reason: string
+  context?: string
+  createdAt: string
+}
+
+export type ApprovalScope = "once" | "thread" | "global"
+
 export type BlockedDispatchAttempt = {
   sessionGroupId: string
   rootMessageId: string
@@ -93,6 +107,14 @@ export type RealtimeClientEvent =
       type: "end_session"
       payload: {
         sessionGroupId: string
+      }
+    }
+  | {
+      type: "approval.respond"
+      payload: {
+        requestId: string
+        granted: boolean
+        scope: ApprovalScope
       }
     }
 
@@ -134,5 +156,16 @@ export type RealtimeServerEvent =
       type: "dispatch.blocked"
       payload: {
         attempts: BlockedDispatchAttempt[]
+      }
+    }
+  | {
+      type: "approval.request"
+      payload: ApprovalRequest
+    }
+  | {
+      type: "approval.resolved"
+      payload: {
+        requestId: string
+        granted: boolean
       }
     }

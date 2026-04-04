@@ -7,6 +7,7 @@ import { SessionRepository } from "./db/repositories"
 import { SqliteStore } from "./db/sqlite"
 import { AppEventBus } from "./events/event-bus"
 import { registerMcpServer } from "./mcp/server"
+import { ApprovalManager } from "./orchestrator/approval-manager"
 import { DispatchOrchestrator } from "./orchestrator/dispatch"
 import { InvocationRegistry } from "./orchestrator/invocation-registry"
 import { registerCallbackRoutes } from "./routes/callbacks"
@@ -41,6 +42,8 @@ export async function createApiServer(options: {
   const dispatch = new DispatchOrchestrator(sessions, PROVIDER_ALIASES, invocations)
   const messages = new MessageService(sessions, dispatch, invocations, eventBus, options.apiBaseUrl)
   const memoryService = new MemoryService(repository)
+  const approvals = new ApprovalManager((event) => broadcaster.broadcast(event))
+  messages.setApprovalManager(approvals)
   const redisSummary = getRedisReservation(options.redisUrl)
 
   eventBus.on("invocation.started", (event) => {
@@ -192,8 +195,9 @@ export async function createApiServer(options: {
         : memoryService.getMemoriesForGroup(sessionGroupId)
       return { memories }
     },
+    requestPermission: (params) => approvals.requestPermission(params),
   })
-  registerWsRoute(app, { messages, broadcaster })
+  registerWsRoute(app, { messages, broadcaster, approvals })
   registerMcpServer(app)
 
   Object.assign(app, {

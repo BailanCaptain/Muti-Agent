@@ -1,5 +1,6 @@
 import type { RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared"
 import type { AppEventBus } from "../events/event-bus"
+import type { ApprovalManager } from "../orchestrator/approval-manager"
 import type { ContextMessage } from "../orchestrator/context-snapshot"
 import { buildContextSnapshot, extractTaskSnippet } from "../orchestrator/context-snapshot"
 import type {
@@ -97,6 +98,7 @@ function extractPromptFromActivityChunk(chunk: string) {
 export class MessageService {
   private readonly flushingGroups = new Set<string>()
   private readonly parallelGroups = new ParallelGroupRegistry()
+  private approvals: ApprovalManager | null = null
 
   constructor(
     private readonly sessions: SessionService,
@@ -105,6 +107,10 @@ export class MessageService {
     private readonly events: AppEventBus,
     private readonly apiBaseUrl: string,
   ) {}
+
+  setApprovalManager(manager: ApprovalManager) {
+    this.approvals = manager
+  }
 
   handleClientEvent(event: RealtimeClientEvent, emit: EmitEvent) {
     if (event.type === "stop_thread") {
@@ -144,6 +150,7 @@ export class MessageService {
       }
     }
 
+    this.approvals?.cancelAll(thread.sessionGroupId)
     const cancelResult = this.dispatch.cancelSessionGroup(thread.sessionGroupId)
     const changed = cancelledRun || cancelResult.clearedCount > 0 || !cancelResult.alreadyCancelled
     if (!changed) {

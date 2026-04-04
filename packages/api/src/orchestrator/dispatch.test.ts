@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import type { ContextMessage } from "./context-snapshot"
 import { DispatchOrchestrator } from "./dispatch"
 import type { QueueEntry, BlockedDispatch } from "./dispatch"
 
@@ -134,14 +135,30 @@ test("cancels a session group barrier, clears queued hops, and blocks later ment
 test("cancelSessionGroup invalidates all active invocations via registry", () => {
   const cancelledIds: string[] = []
   const mockRegistry = {
-    invalidateInvocation: (id: string) => { cancelledIds.push(id) },
+    invalidateInvocation: (id: string) => {
+      cancelledIds.push(id)
+    },
   }
 
-  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases, mockRegistry)
+  const dispatch = new DispatchOrchestrator(
+    createSessionsStub() as never,
+    defaultAliases,
+    mockRegistry,
+  )
 
   dispatch.registerUserRoot("root-1", "group-1")
-  dispatch.bindInvocation("inv-a", { rootMessageId: "root-1", sessionGroupId: "group-1", sourceProvider: "claude", parentInvocationId: null })
-  dispatch.bindInvocation("inv-b", { rootMessageId: "root-1", sessionGroupId: "group-1", sourceProvider: "codex", parentInvocationId: null })
+  dispatch.bindInvocation("inv-a", {
+    rootMessageId: "root-1",
+    sessionGroupId: "group-1",
+    sourceProvider: "claude",
+    parentInvocationId: null,
+  })
+  dispatch.bindInvocation("inv-b", {
+    rootMessageId: "root-1",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    parentInvocationId: null,
+  })
 
   const result = dispatch.cancelSessionGroup("group-1")
 
@@ -153,13 +170,31 @@ test("cancelSessionGroup invalidates all active invocations via registry", () =>
 
 test("releaseInvocation removes invocation from active tracking before cancel", () => {
   const cancelledIds: string[] = []
-  const mockRegistry = { invalidateInvocation: (id: string) => { cancelledIds.push(id) } }
+  const mockRegistry = {
+    invalidateInvocation: (id: string) => {
+      cancelledIds.push(id)
+    },
+  }
 
-  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases, mockRegistry)
+  const dispatch = new DispatchOrchestrator(
+    createSessionsStub() as never,
+    defaultAliases,
+    mockRegistry,
+  )
 
   dispatch.registerUserRoot("root-1", "group-1")
-  dispatch.bindInvocation("inv-a", { rootMessageId: "root-1", sessionGroupId: "group-1", sourceProvider: "claude", parentInvocationId: null })
-  dispatch.bindInvocation("inv-b", { rootMessageId: "root-1", sessionGroupId: "group-1", sourceProvider: "codex", parentInvocationId: null })
+  dispatch.bindInvocation("inv-a", {
+    rootMessageId: "root-1",
+    sessionGroupId: "group-1",
+    sourceProvider: "claude",
+    parentInvocationId: null,
+  })
+  dispatch.bindInvocation("inv-b", {
+    rootMessageId: "root-1",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    parentInvocationId: null,
+  })
 
   // inv-a 正常完成已 release；inv-b 仍在运行
   dispatch.releaseInvocation("inv-a")
@@ -375,9 +410,21 @@ test("BlockedDispatch includes reason field with group_cancelled", () => {
 })
 
 test("QueueEntry includes contextSnapshot from buildSnapshot callback", () => {
-  const mockSnapshot = [
-    { agentId: "范德彪", content: "Hello world" },
-    { agentId: "桂芬", content: "Hi there" },
+  const mockSnapshot: ContextMessage[] = [
+    {
+      id: "msg-0",
+      role: "assistant",
+      agentId: "范德彪",
+      content: "Hello world",
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: "msg-1",
+      role: "assistant",
+      agentId: "桂芬",
+      content: "Hi there",
+      createdAt: new Date().toISOString(),
+    },
   ]
   const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
   dispatch.registerUserRoot("root-1", "group-1")

@@ -45,6 +45,16 @@ export function registerCallbackRoutes(
     createTask?: (sessionGroupId: string, params: { assignee: string; description: string; priority?: string; createdBy: string }) => { ok: true; taskId: string }
     triggerMention?: (sessionGroupId: string, params: { targetAlias: string; taskSnippet: string; sourceProvider: import("@multi-agent/shared").Provider; invocationId: string }) => Promise<void> | void
     getMemories?: (sessionGroupId: string, keyword?: string) => { memories: Array<{ id: string; summary: string; keywords: string; createdAt: string }> }
+    requestPermission?: (params: {
+      invocationId: string
+      provider: import("@multi-agent/shared").Provider
+      agentAlias: string
+      threadId: string
+      sessionGroupId: string
+      action: string
+      reason: string
+      context?: string
+    }) => Promise<{ status: "granted" | "denied" | "timeout" }>
   },
 ) {
   app.post("/api/callbacks/post-message", async (request: FastifyRequest, reply: FastifyReply) => {
@@ -276,5 +286,43 @@ export function registerCallbackRoutes(
     }
 
     return { memories: [] }
+  })
+
+  app.post("/api/callbacks/request-permission", async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as CallbackBody & { action?: string; reason?: string; context?: string }
+    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
+
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    if (!body.action?.trim() || !body.reason?.trim()) {
+      reply.code(400)
+      return { error: "action and reason are required." }
+    }
+
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+
+    if (!options.requestPermission) {
+      return { status: "granted" as const }
+    }
+
+    const result = await options.requestPermission({
+      invocationId: invocation.invocationId,
+      provider: thread.provider,
+      agentAlias: thread.alias,
+      threadId: thread.id,
+      sessionGroupId: thread.sessionGroupId,
+      action: body.action.trim(),
+      reason: body.reason.trim(),
+      context: body.context?.slice(0, 5000),
+    })
+
+    return result
   })
 }

@@ -6,9 +6,9 @@ import { getTools, handleToolCall } from "./server.js"
 // getTools tests
 // ---------------------------------------------------------------------------
 
-test("getTools returns 6 tools", () => {
+test("getTools returns 7 tools", () => {
   const tools = getTools()
-  assert.equal(tools.length, 6, `Expected 6 tools, got ${tools.length}`)
+  assert.equal(tools.length, 7, `Expected 7 tools, got ${tools.length}`)
   const names = tools.map((t) => t.name).sort()
   assert.deepEqual(names, [
     "create_task",
@@ -16,6 +16,7 @@ test("getTools returns 6 tools", () => {
     "get_task_status",
     "get_thread_context",
     "post_message",
+    "request_permission",
     "trigger_mention",
   ])
 })
