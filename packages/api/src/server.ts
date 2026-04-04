@@ -197,6 +197,12 @@ export async function createApiServer(options: {
         emit: broadcaster.broadcast,
       })
     },
+    parallelThink: async (sessionGroupId, params) => {
+      return messages.handleParallelThink(sessionGroupId, {
+        ...params,
+        emit: broadcaster.broadcast,
+      })
+    },
     getMemories: (sessionGroupId, keyword) => {
       const memories = keyword
         ? memoryService.searchMemories(keyword).filter((m) => m.sessionGroupId === sessionGroupId)

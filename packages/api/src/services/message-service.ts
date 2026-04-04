@@ -9,7 +9,7 @@ import type {
   QueueEntry,
 } from "../orchestrator/dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
-import { ParallelGroupRegistry } from "../orchestrator/parallel-group"
+import { type ParallelGroup, ParallelGroupRegistry } from "../orchestrator/parallel-group"
 import { runTurn } from "../runtime/cli-orchestrator"
 import type { SkillRegistry } from "../skills/registry"
 import type { SopTracker } from "../skills/sop-tracker"
@@ -718,6 +718,131 @@ export class MessageService {
 
     const names = matched.map((m) => m.skill.name).join(", ")
     return `⚡ 匹配 skill: ${names} — 请加载并按 skill 流程执行。`
+  }
+
+  /**
+   * Agent 主动触发的多 agent 并行思考。
+   * 创建 ParallelGroup → 向每个 target agent 派发同一 question → 收集回复 → 回调 callbackTo。
+   */
+  async handleParallelThink(
+    sessionGroupId: string,
+    params: {
+      targets: string[]
+      question: string
+      callbackTo: string
+      sourceProvider: import("@multi-agent/shared").Provider
+      invocationId: string
+      context?: string
+      timeoutMinutes?: number
+      idempotencyKey?: string
+      emit: EmitEvent
+    },
+  ): Promise<{ ok: true; groupId: string }> {
+    const { PROVIDER_ALIASES } = await import("@multi-agent/shared")
+
+    // Resolve target aliases to providers
+    const targetProviders: import("@multi-agent/shared").Provider[] = []
+    for (const alias of params.targets) {
+      const provider = Object.entries(PROVIDER_ALIASES).find(
+        ([, a]) => a === alias,
+      )?.[0] as import("@multi-agent/shared").Provider | undefined
+      if (provider) targetProviders.push(provider)
+    }
+
+    if (!targetProviders.length) {
+      return { ok: true, groupId: "none" }
+    }
+
+    // Resolve callbackTo provider
+    const callbackToProvider = Object.entries(PROVIDER_ALIASES).find(
+      ([, a]) => a === params.callbackTo,
+    )?.[0] as import("@multi-agent/shared").Provider | undefined
+
+    // Create parallel group with state machine
+    const group = this.parallelGroups.create({
+      parentMessageId: params.invocationId,
+      originatorAgentId: params.callbackTo,
+      originatorProvider: params.sourceProvider,
+      targetProviders,
+      joinBehavior: "notify_originator",
+      callbackTo: callbackToProvider ?? params.sourceProvider,
+      question: params.question,
+      timeoutMinutes: params.timeoutMinutes,
+      idempotencyKey: params.idempotencyKey,
+    })
+
+    this.parallelGroups.start(group.id)
+
+    // Start timeout
+    this.parallelGroups.startTimeout(group.id, () => {
+      this.parallelGroups.handleTimeout(group.id)
+      const timedOutGroup = this.parallelGroups.get(group.id)
+      if (timedOutGroup) {
+        this.notifyCallbackAgent(sessionGroupId, timedOutGroup, params.emit)
+      }
+    })
+
+    // Build prompt with context
+    const contextLine = params.context ? `\n\n背景信息：${params.context}` : ""
+    const prompt = `[并行思考请求] 请独立思考以下问题，给出你的分析和观点。不要预测其他 agent 的回答。\n\n${params.question}${contextLine}`
+
+    // Use source thread to create a root message for dispatch tracking
+    const sourceThread = this.sessions.findThreadByGroupAndProvider(sessionGroupId, params.sourceProvider)
+    const rootMessageId = sourceThread
+      ? this.sessions.appendUserMessage(sourceThread.id, prompt).id
+      : crypto.randomUUID()
+
+    for (const provider of targetProviders) {
+      const thread = this.sessions.findThreadByGroupAndProvider(sessionGroupId, provider)
+      if (!thread) continue
+
+      const enrichedPrompt = this.prependSkillHint(prompt, provider)
+      this.runThreadTurn({
+        threadId: thread.id,
+        content: enrichedPrompt,
+        emit: params.emit,
+        rootMessageId,
+        parentInvocationId: params.invocationId,
+      })
+    }
+
+    return { ok: true, groupId: group.id }
+  }
+
+  private notifyCallbackAgent(
+    sessionGroupId: string,
+    group: ParallelGroup,
+    emit: EmitEvent,
+  ): void {
+    if (!group.callbackTo) return
+
+    const callbackThread = this.sessions.findThreadByGroupAndProvider(
+      sessionGroupId,
+      group.callbackTo,
+    )
+    if (!callbackThread) return
+
+    // Build summary of all responses
+    const lines: string[] = ["[并行思考结果汇总]", ""]
+    if (group.question) {
+      lines.push(`**问题**: ${group.question}`, "")
+    }
+
+    for (const [provider, result] of group.completedResults) {
+      lines.push(`### ${provider}`, result.content, "")
+    }
+
+    lines.push("请综合以上各方观点，整理共识、分歧和行动项。")
+    const summary = lines.join("\n")
+
+    const rootMessage = this.sessions.appendUserMessage(callbackThread.id, summary)
+
+    this.runThreadTurn({
+      threadId: callbackThread.id,
+      content: summary,
+      emit,
+      rootMessageId: rootMessage.id,
+    })
   }
 
   private advanceSopIfNeeded(sessionGroupId: string, content: string, emit: EmitEvent): void {

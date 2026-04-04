@@ -1,6 +1,39 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { ParallelGroupRegistry } from "./parallel-group"
+import { ParallelGroupRegistry, isTerminal, isValidTransition } from "./parallel-group"
+
+// ── State machine ────────────────────────────────────────────────────
+
+test("isTerminal returns true for done/timeout/failed", () => {
+  assert.equal(isTerminal("done"), true)
+  assert.equal(isTerminal("timeout"), true)
+  assert.equal(isTerminal("failed"), true)
+  assert.equal(isTerminal("pending"), false)
+  assert.equal(isTerminal("running"), false)
+  assert.equal(isTerminal("partial"), false)
+})
+
+test("isValidTransition allows pending → running", () => {
+  assert.equal(isValidTransition("pending", "running"), true)
+  assert.equal(isValidTransition("pending", "failed"), true)
+  assert.equal(isValidTransition("pending", "done"), false)
+})
+
+test("isValidTransition allows running → partial/done/timeout/failed", () => {
+  assert.equal(isValidTransition("running", "partial"), true)
+  assert.equal(isValidTransition("running", "done"), true)
+  assert.equal(isValidTransition("running", "timeout"), true)
+  assert.equal(isValidTransition("running", "failed"), true)
+  assert.equal(isValidTransition("running", "pending"), false)
+})
+
+test("isValidTransition blocks terminal → anything", () => {
+  assert.equal(isValidTransition("done", "running"), false)
+  assert.equal(isValidTransition("timeout", "running"), false)
+  assert.equal(isValidTransition("failed", "pending"), false)
+})
+
+// ── Registry basics ──────────────────────────────────────────────────
 
 test("create returns a ParallelGroup with correct fields", () => {
   const registry = new ParallelGroupRegistry()
@@ -12,7 +45,7 @@ test("create returns a ParallelGroup with correct fields", () => {
     joinBehavior: "notify_originator",
   })
 
-  assert.ok(group.id, "group should have an id")
+  assert.ok(group.id)
   assert.equal(group.parentMessageId, "msg-1")
   assert.equal(group.originatorAgentId, "Coder")
   assert.equal(group.originatorProvider, "codex")
@@ -21,10 +54,29 @@ test("create returns a ParallelGroup with correct fields", () => {
   assert.ok(group.pendingProviders.has("gemini"))
   assert.equal(group.completedResults.size, 0)
   assert.equal(group.joinBehavior, "notify_originator")
-  assert.ok(group.createdAt, "group should have createdAt")
+  assert.equal(group.status, "pending")
+  assert.equal(group.timeoutMinutes, 8)
+  assert.ok(group.createdAt)
 })
 
-test("markCompleted decrements pendingProviders", () => {
+test("start transitions from pending to running", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude"],
+    joinBehavior: "silent",
+  })
+
+  assert.equal(group.status, "pending")
+  registry.start(group.id)
+  assert.equal(group.status, "running")
+})
+
+// ── markCompleted ────────────────────────────────────────────────────
+
+test("markCompleted decrements pendingProviders and transitions to partial", () => {
   const registry = new ParallelGroupRegistry()
   const group = registry.create({
     parentMessageId: "msg-1",
@@ -33,6 +85,7 @@ test("markCompleted decrements pendingProviders", () => {
     targetProviders: ["claude", "gemini"],
     joinBehavior: "notify_originator",
   })
+  registry.start(group.id)
 
   const result = registry.markCompleted(group.id, "claude", {
     messageId: "reply-1",
@@ -42,16 +95,10 @@ test("markCompleted decrements pendingProviders", () => {
   assert.ok(result)
   assert.equal(result.allDone, false)
   assert.equal(result.group.pendingProviders.size, 1)
-  assert.ok(result.group.pendingProviders.has("gemini"))
-  assert.ok(!result.group.pendingProviders.has("claude"))
-  assert.equal(result.group.completedResults.size, 1)
-  assert.deepEqual(result.group.completedResults.get("claude"), {
-    messageId: "reply-1",
-    content: "Done",
-  })
+  assert.equal(result.group.status, "partial")
 })
 
-test("markCompleted returns allDone=true when all providers complete", () => {
+test("markCompleted returns allDone=true and transitions to done", () => {
   const registry = new ParallelGroupRegistry()
   const group = registry.create({
     parentMessageId: "msg-1",
@@ -60,6 +107,7 @@ test("markCompleted returns allDone=true when all providers complete", () => {
     targetProviders: ["claude", "gemini"],
     joinBehavior: "silent",
   })
+  registry.start(group.id)
 
   registry.markCompleted(group.id, "claude", {
     messageId: "reply-1",
@@ -73,22 +121,178 @@ test("markCompleted returns allDone=true when all providers complete", () => {
 
   assert.ok(result)
   assert.equal(result.allDone, true)
-  assert.equal(result.group.pendingProviders.size, 0)
-  assert.equal(result.group.completedResults.size, 2)
+  assert.equal(result.group.status, "done")
 })
 
 test("markCompleted returns null for unknown groupId", () => {
   const registry = new ParallelGroupRegistry()
-
   const result = registry.markCompleted("nonexistent-id", "claude", {
     messageId: "reply-1",
     content: "Done",
   })
-
   assert.equal(result, null)
 })
 
-test("remove deletes the group", () => {
+test("markCompleted ignores duplicate from same provider", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude", "gemini"],
+    joinBehavior: "silent",
+  })
+  registry.start(group.id)
+
+  registry.markCompleted(group.id, "claude", { messageId: "reply-1", content: "First" })
+  const result = registry.markCompleted(group.id, "claude", { messageId: "reply-2", content: "Duplicate" })
+
+  assert.ok(result)
+  assert.equal(result.group.completedResults.get("claude")?.content, "First")
+})
+
+// ── Timeout ──────────────────────────────────────────────────────────
+
+test("handleTimeout marks remaining providers and transitions to timeout", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude", "gemini"],
+    joinBehavior: "notify_originator",
+    timeoutMinutes: 5,
+  })
+  registry.start(group.id)
+
+  registry.markCompleted(group.id, "claude", { messageId: "reply-1", content: "Done" })
+  registry.handleTimeout(group.id)
+
+  assert.equal(group.status, "timeout")
+  assert.equal(group.pendingProviders.size, 0)
+  assert.equal(group.completedResults.size, 2)
+  assert.ok(group.completedResults.get("gemini")?.content.includes("timeout"))
+})
+
+test("handleTimeout is noop on terminal state", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude"],
+    joinBehavior: "silent",
+  })
+  registry.start(group.id)
+  registry.markCompleted(group.id, "claude", { messageId: "reply-1", content: "Done" })
+
+  assert.equal(group.status, "done")
+  registry.handleTimeout(group.id)
+  assert.equal(group.status, "done")
+})
+
+// ── Failure ──────────────────────────────────────────────────────────
+
+test("handleFailure transitions to failed", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude"],
+    joinBehavior: "silent",
+  })
+  registry.start(group.id)
+
+  registry.handleFailure(group.id)
+  assert.equal(group.status, "failed")
+})
+
+// ── Anti-cascade ─────────────────────────────────────────────────────
+
+test("isActiveTarget returns true for pending provider in running group", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude", "gemini"],
+    joinBehavior: "silent",
+  })
+  registry.start(group.id)
+
+  assert.equal(registry.isActiveTarget("claude"), true)
+  assert.equal(registry.isActiveTarget("gemini"), true)
+  assert.equal(registry.isActiveTarget("codex"), false)
+})
+
+test("isActiveTarget returns false after provider completes", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude", "gemini"],
+    joinBehavior: "silent",
+  })
+  registry.start(group.id)
+  registry.markCompleted(group.id, "claude", { messageId: "reply-1", content: "Done" })
+
+  assert.equal(registry.isActiveTarget("claude"), false)
+  assert.equal(registry.isActiveTarget("gemini"), true)
+})
+
+// ── Idempotency ──────────────────────────────────────────────────────
+
+test("create with same idempotencyKey returns existing group", () => {
+  const registry = new ParallelGroupRegistry()
+  const group1 = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude"],
+    joinBehavior: "silent",
+    idempotencyKey: "key-1",
+  })
+
+  const group2 = registry.create({
+    parentMessageId: "msg-2",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["gemini"],
+    joinBehavior: "silent",
+    idempotencyKey: "key-1",
+  })
+
+  assert.equal(group1.id, group2.id)
+})
+
+test("create with different idempotencyKey returns new group", () => {
+  const registry = new ParallelGroupRegistry()
+  const group1 = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude"],
+    joinBehavior: "silent",
+    idempotencyKey: "key-1",
+  })
+
+  const group2 = registry.create({
+    parentMessageId: "msg-2",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["gemini"],
+    joinBehavior: "silent",
+    idempotencyKey: "key-2",
+  })
+
+  assert.notEqual(group1.id, group2.id)
+})
+
+// ── remove ───────────────────────────────────────────────────────────
+
+test("remove deletes the group and cleans idempotency index", () => {
   const registry = new ParallelGroupRegistry()
   const group = registry.create({
     parentMessageId: "msg-1",
@@ -96,9 +300,21 @@ test("remove deletes the group", () => {
     originatorProvider: "codex",
     targetProviders: ["claude"],
     joinBehavior: "notify_originator",
+    idempotencyKey: "key-1",
   })
 
   assert.ok(registry.get(group.id))
   registry.remove(group.id)
   assert.equal(registry.get(group.id), undefined)
+
+  // After removal, same key creates new group
+  const group2 = registry.create({
+    parentMessageId: "msg-2",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["gemini"],
+    joinBehavior: "silent",
+    idempotencyKey: "key-1",
+  })
+  assert.notEqual(group.id, group2.id)
 })

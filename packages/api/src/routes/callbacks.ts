@@ -45,6 +45,16 @@ export function registerCallbackRoutes(
     createTask?: (sessionGroupId: string, params: { assignee: string; description: string; priority?: string; createdBy: string }) => { ok: true; taskId: string }
     triggerMention?: (sessionGroupId: string, params: { targetAlias: string; taskSnippet: string; sourceProvider: import("@multi-agent/shared").Provider; invocationId: string }) => Promise<void> | void
     getMemories?: (sessionGroupId: string, keyword?: string) => { memories: Array<{ id: string; summary: string; keywords: string; createdAt: string }> }
+    parallelThink?: (sessionGroupId: string, params: {
+      targets: string[]
+      question: string
+      callbackTo: string
+      sourceProvider: import("@multi-agent/shared").Provider
+      invocationId: string
+      context?: string
+      timeoutMinutes?: number
+      idempotencyKey?: string
+    }) => Promise<{ ok: true; groupId: string }> | { ok: true; groupId: string }
     requestPermission?: (params: {
       invocationId: string
       provider: import("@multi-agent/shared").Provider
@@ -286,6 +296,60 @@ export function registerCallbackRoutes(
     }
 
     return { memories: [] }
+  })
+
+  app.post("/api/callbacks/parallel-think", async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as CallbackBody & {
+      targets?: string[]
+      question?: string
+      callbackTo?: string
+      context?: string
+      timeoutMinutes?: number
+      idempotencyKey?: string
+    }
+    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
+
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    if (!body.targets?.length || !body.question?.trim() || !body.callbackTo?.trim()) {
+      reply.code(400)
+      return { error: "targets, question, and callbackTo are required." }
+    }
+
+    if (body.targets.length > 3) {
+      reply.code(400)
+      return { error: "Maximum 3 targets allowed." }
+    }
+
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+
+    if (options.isSessionGroupCancelled(thread.sessionGroupId)) {
+      reply.code(403)
+      return { error: "Session group has been cancelled." }
+    }
+
+    if (options.parallelThink) {
+      const result = await options.parallelThink(thread.sessionGroupId, {
+        targets: body.targets,
+        question: body.question.trim(),
+        callbackTo: body.callbackTo.trim(),
+        sourceProvider: thread.provider,
+        invocationId: invocation.invocationId,
+        context: body.context,
+        timeoutMinutes: body.timeoutMinutes,
+        idempotencyKey: body.idempotencyKey,
+      })
+      return result
+    }
+
+    return { ok: true, groupId: `group-${Date.now()}` }
   })
 
   app.post("/api/callbacks/request-permission", async (request: FastifyRequest, reply: FastifyReply) => {

@@ -22,6 +22,27 @@ skills:
       - name: "/feat"
         description: "启动功能生命周期"
 
+  collaborative-thinking:
+    description: 单人或多 agent 的创意探索、独立思考、讨论收敛
+    triggers:
+      - "brainstorm"
+      - "讨论"
+      - "独立思考"
+      - "收敛"
+      - "讨论结束"
+      - "总结一下"
+      - "多视角"
+    not_for:
+      - "写代码"
+      - "执行已定方案"
+    agents: [claude, codex, gemini]
+    requires_mcp: ["parallel_think"]
+    next: []
+    sop_step: null
+    slashCommands:
+      - name: "/think"
+        description: "启动协作思考"
+
   ask-dont-guess:
     description: 关键前提不确定时强制提问
     triggers:

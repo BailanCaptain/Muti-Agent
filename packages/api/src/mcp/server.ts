@@ -243,6 +243,50 @@ export function getTools() {
       }
     },
     {
+      name: "parallel_think",
+      description: "并行调度多个 agent 独立思考同一问题，收集所有回复后返回综合结果。用于架构选型、方向性讨论等需要多视角的场景。调用前必须提供 searchEvidenceRefs（先搜后问）或 overrideReason。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          targets: {
+            type: "array",
+            items: { type: "string" },
+            description: '要并行调度的 agent 别名列表（最多 3 个）。例如: ["仁勋", "桂芬"]'
+          },
+          question: {
+            type: "string",
+            description: "向所有目标 agent 提出的问题或请求（最多 5000 字）"
+          },
+          callbackTo: {
+            type: "string",
+            description: "收集所有回复后通知的 agent 别名（通常是自己）"
+          },
+          context: {
+            type: "string",
+            description: "可选的额外上下文信息"
+          },
+          timeoutMinutes: {
+            type: "number",
+            description: "超时时间（分钟），默认 8，范围 3-20"
+          },
+          idempotencyKey: {
+            type: "string",
+            description: "幂等键，防止重复派发"
+          },
+          searchEvidenceRefs: {
+            type: "array",
+            items: { type: "string" },
+            description: "调用前搜索的证据引用（先搜后问原则）"
+          },
+          overrideReason: {
+            type: "string",
+            description: "如果跳过搜索证据，必须说明原因"
+          }
+        },
+        required: ["targets", "question", "callbackTo"]
+      }
+    },
+    {
       name: "request_permission",
       description: "请求用户批准一个操作（如执行命令、修改文件）。调用会阻塞直到用户审批或超时。",
       inputSchema: {
@@ -329,6 +373,62 @@ async function callTriggerMention(params: { targetAgentId: string; taskSnippet: 
   };
 }
 
+async function callParallelThink(params: {
+  targets: string[];
+  question: string;
+  callbackTo: string;
+  context?: string;
+  timeoutMinutes?: number;
+  idempotencyKey?: string;
+  searchEvidenceRefs?: string[];
+  overrideReason?: string;
+}): Promise<ToolResult> {
+  if (!params.searchEvidenceRefs?.length && !params.overrideReason) {
+    return {
+      isError: true,
+      content: [{
+        type: "text",
+        text: "parallel_think 要求 searchEvidenceRefs（先搜后问）或 overrideReason（说明跳过原因）。"
+      }]
+    };
+  }
+
+  if (!params.targets.length || params.targets.length > 3) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: "targets 必须是 1-3 个 agent。" }]
+    };
+  }
+
+  const identity = getCallbackIdentity();
+  const response = await requestJson(`${identity.apiUrl}/api/callbacks/parallel-think`, {
+    method: "POST",
+    body: {
+      invocationId: identity.invocationId,
+      callbackToken: identity.callbackToken,
+      targets: params.targets,
+      question: params.question,
+      callbackTo: params.callbackTo,
+      ...(params.context ? { context: params.context } : {}),
+      ...(params.timeoutMinutes !== undefined ? { timeoutMinutes: params.timeoutMinutes } : {}),
+      ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}),
+      ...(params.searchEvidenceRefs ? { searchEvidenceRefs: params.searchEvidenceRefs } : {}),
+      ...(params.overrideReason ? { overrideReason: params.overrideReason } : {})
+    }
+  });
+
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `parallel_think failed: ${JSON.stringify(response.json)}` }]
+    };
+  }
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(response.json) }]
+  };
+}
+
 async function callRequestPermission(params: { action: string; reason: string; context?: string }): Promise<ToolResult> {
   const identity = getCallbackIdentity();
   const response = await requestJson(`${identity.apiUrl}/api/callbacks/request-permission`, {
@@ -405,6 +505,17 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
       return callTriggerMention(args as { targetAgentId: string; taskSnippet: string });
     case "get_memory":
       return callGetMemory(args?.keyword as string | undefined);
+    case "parallel_think":
+      return callParallelThink(args as {
+        targets: string[];
+        question: string;
+        callbackTo: string;
+        context?: string;
+        timeoutMinutes?: number;
+        idempotencyKey?: string;
+        searchEvidenceRefs?: string[];
+        overrideReason?: string;
+      });
     case "request_permission":
       return callRequestPermission(args as { action: string; reason: string; context?: string });
     default:
