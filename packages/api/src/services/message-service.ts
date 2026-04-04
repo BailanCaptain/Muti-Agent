@@ -247,11 +247,12 @@ export class MessageService {
     this.emitThreadSnapshot(thread.sessionGroupId, emit)
 
     // Enqueue ALL mentioned agents BEFORE running any turn, so flushDispatchQueue can dispatch them in parallel.
+    // sourceAlias is "user" (not the thread alias) so that buildA2APrompt correctly attributes the request to the user.
     const enqueueResult = this.dispatch.enqueuePublicMentions({
       messageId: userMessage.id,
       sessionGroupId: thread.sessionGroupId,
       sourceProvider: thread.provider,
-      sourceAlias: thread.alias,
+      sourceAlias: "user",
       rootMessageId,
       content: event.payload.content,
       matchMode: "anywhere",
@@ -578,8 +579,13 @@ export class MessageService {
   }
 
   private buildA2APrompt(entry: QueueEntry): string {
+    const isUserInitiated = entry.from.agentId === "user"
+    const header = isUserInitiated
+      ? `[用户请求]`
+      : `[A2A 协作请求 from ${entry.from.agentId}]`
+
     return [
-      `[A2A 协作请求 from ${entry.from.agentId}]`,
+      header,
       ``,
       `任务: ${entry.taskSnippet}`,
       ``,
