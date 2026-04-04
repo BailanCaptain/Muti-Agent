@@ -1,6 +1,7 @@
 #!/bin/bash
 # mount-skills.sh — 幂等地将 multi-agent-skills/ 下的 skill 目录
 # 以 symlink 形式挂载到三个 CLI 的 skills 目录。
+# 如果目标已存在且内容一致则跳过，避免每次重建拖慢启动。
 #
 # Usage: bash scripts/mount-skills.sh
 
@@ -13,40 +14,44 @@ CLAUDE_DIR="$REPO_ROOT/.claude/skills"
 GEMINI_DIR="$REPO_ROOT/.gemini/skills"
 AGENTS_DIR="$REPO_ROOT/.agents/skills"
 
-# Ensure target directories exist
 mkdir -p "$CLAUDE_DIR" "$GEMINI_DIR" "$AGENTS_DIR"
 
 mounted=0
 skipped=0
+unchanged=0
 
 for skill_dir in "$SKILLS_SRC"/*/; do
   [ ! -d "$skill_dir" ] && continue
   name=$(basename "$skill_dir")
 
-  # Skip if no SKILL.md
   if [ ! -f "$skill_dir/SKILL.md" ]; then
-    echo "SKIP  $name (no SKILL.md)"
     skipped=$((skipped + 1))
     continue
   fi
 
-  # Relative symlink target (from CLI skills dir → source)
   rel_target="../../multi-agent-skills/$name"
 
   for target_dir in "$CLAUDE_DIR" "$GEMINI_DIR" "$AGENTS_DIR"; do
     link_path="$target_dir/$name"
 
-    # Remove existing (real dir or stale symlink)
+    # Quick check: if SKILL.md already accessible, skip
+    if [ -f "$link_path/SKILL.md" ]; then
+      unchanged=$((unchanged + 1))
+      continue
+    fi
+
+    # Remove stale entry
     if [ -e "$link_path" ] || [ -L "$link_path" ]; then
       rm -rf "$link_path"
     fi
 
     ln -s "$rel_target" "$link_path"
+    mounted=$((mounted + 1))
   done
-
-  echo "MOUNT $name"
-  mounted=$((mounted + 1))
 done
 
-echo ""
-echo "Done: $mounted mounted, $skipped skipped."
+if [ "$mounted" -gt 0 ]; then
+  echo "Skills: $mounted mounted, $unchanged unchanged, $skipped skipped."
+else
+  echo "Skills: all up-to-date ($unchanged links ok)."
+fi
