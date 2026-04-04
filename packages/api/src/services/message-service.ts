@@ -2,7 +2,11 @@ import type { RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shar
 import type { AppEventBus } from "../events/event-bus"
 import type { ContextMessage } from "../orchestrator/context-snapshot"
 import { buildContextSnapshot, extractTaskSnippet } from "../orchestrator/context-snapshot"
-import type { DispatchOrchestrator, EnqueueMentionsResult, QueueEntry } from "../orchestrator/dispatch"
+import type {
+  DispatchOrchestrator,
+  EnqueueMentionsResult,
+  QueueEntry,
+} from "../orchestrator/dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
 import { ParallelGroupRegistry } from "../orchestrator/parallel-group"
 import { runTurn } from "../runtime/cli-orchestrator"
@@ -105,6 +109,11 @@ export class MessageService {
   handleClientEvent(event: RealtimeClientEvent, emit: EmitEvent) {
     if (event.type === "stop_thread") {
       this.cancelThreadChain(event.payload.threadId, emit)
+      return
+    }
+
+    if (event.type === "end_session") {
+      // TODO: 实现结束整个会话的逻辑
       return
     }
 
@@ -230,13 +239,7 @@ export class MessageService {
 
     this.emitThreadSnapshot(thread.sessionGroupId, emit)
 
-    await this.runThreadTurn({
-      threadId: thread.id,
-      content: event.payload.content,
-      emit,
-      rootMessageId,
-    })
-
+    // Enqueue ALL mentioned agents BEFORE running any turn, so flushDispatchQueue can dispatch them in parallel.
     const enqueueResult = this.dispatch.enqueuePublicMentions({
       messageId: userMessage.id,
       sessionGroupId: thread.sessionGroupId,
@@ -258,7 +261,16 @@ export class MessageService {
         }),
     })
     this.emitBlockedDispatches(enqueueResult, emit)
-    await this.flushDispatchQueue(thread.sessionGroupId, emit)
+
+    // The user's message was sent to a specific thread — run that thread's turn concurrently with queued dispatches.
+    const directTurn = this.runThreadTurn({
+      threadId: thread.id,
+      content: event.payload.content,
+      emit,
+      rootMessageId,
+    })
+    const queueFlush = this.flushDispatchQueue(thread.sessionGroupId, emit)
+    await Promise.allSettled([directTurn, queueFlush])
   }
 
   private async runThreadTurn(options: {
@@ -534,8 +546,9 @@ export class MessageService {
                   { messageId: "", content: thread?.alias ?? entry.to.agentId },
                 )
                 if (joinResult?.allDone && joinResult.group.joinBehavior === "notify_originator") {
-                  const summaryParts = [...joinResult.group.completedResults.entries()]
-                    .map(([, r]) => r.content)
+                  const summaryParts = [...joinResult.group.completedResults.entries()].map(
+                    ([, r]) => r.content,
+                  )
                   emit({
                     type: "status",
                     payload: {
@@ -613,9 +626,7 @@ export class MessageService {
 
   private captureSnapshot(sessionGroupId: string, triggerMessageId: string): ContextMessage[] {
     const threads = this.sessions.listGroupThreads(sessionGroupId)
-    const threadMeta = new Map(
-      threads.map((t) => [t.id, { provider: t.provider, alias: t.alias }]),
-    )
+    const threadMeta = new Map(threads.map((t) => [t.id, { provider: t.provider, alias: t.alias }]))
     const allMessages = threads.flatMap((t) => {
       const msgs = this.sessions.listThreadMessages?.(t.id) ?? []
       return msgs.map((m: { id: string; role: string; content: string; createdAt: string }) => ({
