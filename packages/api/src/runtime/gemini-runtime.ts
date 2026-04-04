@@ -42,7 +42,11 @@ export class GeminiRuntime extends BaseCliRuntime {
   readonly agentId = "gemini";
 
   protected buildCommand(input: AgentRunInput): RuntimeCommand {
-    const runtime = resolveNodeScript("@google/gemini-cli", ["dist", "index.js"]);
+    const runtime = resolveNodeScript(
+      "@google/gemini-cli",
+      [["dist", "index.js"], ["bundle", "gemini.js"]],
+      "gemini",
+    );
     const sessionId = input.env?.MULTI_AGENT_NATIVE_SESSION_ID;
     // 会话已恢复时模型已有指令，不重复附加，减少每轮 ~500 token 的额外开销。
     const prompt = sessionId

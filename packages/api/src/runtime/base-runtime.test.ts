@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import {
   BaseCliRuntime,
+  resolveNodeScript,
   type AgentRunInput,
   type RuntimeCommand
 } from "./base-runtime";
@@ -150,4 +154,75 @@ test("stdout and stderr activity keep the heartbeat alive until the process clos
 
   const result = await handle.promise;
   assert.equal(result.exitCode, 0);
+});
+
+test("resolveNodeScript selects the first existing script from multiple candidate paths", () => {
+  const originalAppData = process.env.APPDATA;
+  const originalUserProfile = process.env.USERPROFILE;
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "multi-agent-runtime-"));
+  const npmRoot = path.join(tempRoot, "npm");
+  const bundleDir = path.join(npmRoot, "node_modules", "@google", "gemini-cli", "bundle");
+
+  mkdirSync(bundleDir, { recursive: true });
+  writeFileSync(path.join(bundleDir, "gemini.js"), "console.log('ok');");
+  process.env.APPDATA = tempRoot;
+  process.env.USERPROFILE = "Z:\\multi-agent-missing-userprofile";
+
+  try {
+    const runtime = resolveNodeScript(
+      "@google/gemini-cli",
+      [["dist", "index.js"], ["bundle", "gemini.js"]],
+      "gemini"
+    );
+
+    assert.equal(runtime.command, process.execPath);
+    assert.ok(runtime.prefixArgs[0]?.endsWith(path.join("@google", "gemini-cli", "bundle", "gemini.js")));
+    assert.equal(runtime.shell, false);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+
+    if (typeof originalAppData === "undefined") {
+      delete process.env.APPDATA;
+    } else {
+      process.env.APPDATA = originalAppData;
+    }
+
+    if (typeof originalUserProfile === "undefined") {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalUserProfile;
+    }
+  }
+});
+
+test("resolveNodeScript falls back to the executable name when no candidate script exists", () => {
+  const originalAppData = process.env.APPDATA;
+  const originalUserProfile = process.env.USERPROFILE;
+
+  process.env.APPDATA = "Z:\\multi-agent-missing-appdata";
+  process.env.USERPROFILE = "Z:\\multi-agent-missing-userprofile";
+
+  try {
+    const runtime = resolveNodeScript(
+      "@google/gemini-cli",
+      [["dist", "index.js"], ["bundle", "gemini.js"]],
+      "gemini"
+    );
+
+    assert.equal(runtime.command, "gemini");
+    assert.deepEqual(runtime.prefixArgs, []);
+    assert.equal(runtime.shell, true);
+  } finally {
+    if (typeof originalAppData === "undefined") {
+      delete process.env.APPDATA;
+    } else {
+      process.env.APPDATA = originalAppData;
+    }
+
+    if (typeof originalUserProfile === "undefined") {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalUserProfile;
+    }
+  }
 });

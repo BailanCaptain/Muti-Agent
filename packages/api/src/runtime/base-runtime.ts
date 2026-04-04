@@ -326,9 +326,20 @@ export function resolveNpmRoot() {
   return candidates.find((candidate) => candidate && existsSync(candidate)) || "";
 }
 
-export function resolveNodeScript(packageName: string, relativeScriptPath: string[]) {
+export function resolveNodeScript(
+  packageName: string,
+  relativeScriptPath: string[] | string[][],
+  fallbackCommand?: string
+) {
   const npmRoot = resolveNpmRoot();
-  const scriptPath = npmRoot ? path.join(npmRoot, "node_modules", packageName, ...relativeScriptPath) : "";
+  const candidatePaths = Array.isArray(relativeScriptPath[0])
+    ? (relativeScriptPath as string[][])
+    : [relativeScriptPath as string[]];
+  const scriptPath = npmRoot
+    ? candidatePaths
+        .map((segments) => path.join(npmRoot, "node_modules", packageName, ...segments))
+        .find((candidate) => existsSync(candidate)) ?? ""
+    : "";
 
   if (scriptPath && existsSync(scriptPath)) {
     return {
@@ -339,7 +350,7 @@ export function resolveNodeScript(packageName: string, relativeScriptPath: strin
   }
 
   return {
-    command: relativeScriptPath.at(-1)?.replace(/\.js$/, "") ?? packageName,
+    command: fallbackCommand ?? packageName,
     prefixArgs: [],
     shell: true
   };
