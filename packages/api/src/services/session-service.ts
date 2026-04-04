@@ -113,6 +113,7 @@ export class SessionService {
               message.content,
               message.thinking,
               message.createdAt,
+              message.messageType,
             ),
           ),
       )
@@ -145,12 +146,16 @@ export class SessionService {
     return this.repository.listThreadsByGroup(sessionGroupId)
   }
 
-  appendUserMessage(threadId: string, content: string) {
-    return this.repository.appendMessage(threadId, "user", content)
+  listThreadMessages(threadId: string) {
+    return this.repository.listMessages(threadId)
   }
 
-  appendAssistantMessage(threadId: string, content: string, thinking = "") {
-    return this.repository.appendMessage(threadId, "assistant", content, thinking)
+  appendUserMessage(threadId: string, content: string) {
+    return this.repository.appendMessage(threadId, "user", content, "", "final")
+  }
+
+  appendAssistantMessage(threadId: string, content: string, thinking = "", messageType: "progress" | "final" | "a2a_handoff" = "final") {
+    return this.repository.appendMessage(threadId, "assistant", content, thinking, messageType)
   }
 
   overwriteMessage(messageId: string, updates: { content?: string; thinking?: string }) {
@@ -175,6 +180,7 @@ export class SessionService {
       message.content,
       message.thinking,
       message.createdAt,
+      message.messageType,
     )
   }
 
@@ -192,6 +198,7 @@ export class SessionService {
     content: string,
     thinking: string,
     createdAt: string,
+    messageType: "progress" | "final" | "a2a_handoff" = "final",
   ): TimelineMessage {
     return {
       id,
@@ -205,6 +212,7 @@ export class SessionService {
             : `@${thread.alias} ${content}`
           : content,
       thinking: role === "assistant" && thinking ? thinking : undefined,
+      messageType,
       model: role === "user" ? null : thread.currentModel,
       createdAt,
     }

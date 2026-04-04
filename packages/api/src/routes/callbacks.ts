@@ -41,6 +41,10 @@ export function registerCallbackRoutes(
       invocationId: string
       emit: (event: RealtimeServerEvent) => void
     }) => Promise<void> | void
+    getTaskStatus?: (sessionGroupId: string, agentId?: string) => { agents: Array<{ agentId: string; running: boolean; queueDepth: number }> }
+    createTask?: (sessionGroupId: string, params: { assignee: string; description: string; priority?: string; createdBy: string }) => { ok: true; taskId: string }
+    triggerMention?: (sessionGroupId: string, params: { targetAlias: string; taskSnippet: string; sourceProvider: import("@multi-agent/shared").Provider; invocationId: string }) => Promise<void> | void
+    getMemories?: (sessionGroupId: string, keyword?: string) => { memories: Array<{ id: string; summary: string; keywords: string; createdAt: string }> }
   },
 ) {
   app.post("/api/callbacks/post-message", async (request: FastifyRequest, reply: FastifyReply) => {
@@ -69,7 +73,8 @@ export function registerCallbackRoutes(
     }
 
     // Persist first so snapshots and follow-up A2A hops see the same message id and timeline state.
-    const message = options.repository.appendMessage(thread.id, "assistant", body.content.trim())
+    // Callback messages are intermediate results while the agent is still running.
+    const message = options.repository.appendMessage(thread.id, "assistant", body.content.trim(), "", "progress")
     const activeGroup = options.sessions.getActiveGroup(
       thread.sessionGroupId,
       options.getRunningThreadIds(),
@@ -153,5 +158,123 @@ export function registerCallbackRoutes(
       expiresAt: invocation.expiresAt,
       messages,
     }
+  })
+
+  // --- New A2A callback routes ---
+
+  app.get("/api/callbacks/task-status", async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = request.query as { invocationId?: string; callbackToken?: string; agentId?: string }
+    const invocation = assertInvocation(
+      options.invocations,
+      query.invocationId,
+      query.callbackToken,
+    )
+
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+
+    if (options.getTaskStatus) {
+      return options.getTaskStatus(thread.sessionGroupId, query.agentId)
+    }
+
+    return { agents: [] }
+  })
+
+  app.post("/api/callbacks/create-task", async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as CallbackBody & { assignee?: string; description?: string; priority?: string }
+    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
+
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    if (!body.assignee?.trim() || !body.description?.trim()) {
+      reply.code(400)
+      return { error: "assignee and description are required." }
+    }
+
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+
+    if (options.createTask) {
+      return options.createTask(thread.sessionGroupId, {
+        assignee: body.assignee.trim(),
+        description: body.description.trim(),
+        priority: body.priority,
+        createdBy: invocation.agentId,
+      })
+    }
+
+    return { ok: true as const, taskId: `task-${Date.now()}` }
+  })
+
+  app.post("/api/callbacks/trigger-mention", async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as CallbackBody & { targetAgentId?: string; taskSnippet?: string }
+    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
+
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    if (!body.targetAgentId?.trim() || !body.taskSnippet?.trim()) {
+      reply.code(400)
+      return { error: "targetAgentId and taskSnippet are required." }
+    }
+
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+
+    if (options.triggerMention) {
+      await options.triggerMention(thread.sessionGroupId, {
+        targetAlias: body.targetAgentId.trim(),
+        taskSnippet: body.taskSnippet.trim(),
+        sourceProvider: thread.provider,
+        invocationId: invocation.invocationId,
+      })
+    }
+
+    return { ok: true }
+  })
+
+  app.get("/api/callbacks/memory", async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = request.query as { invocationId?: string; callbackToken?: string; keyword?: string }
+    const invocation = assertInvocation(
+      options.invocations,
+      query.invocationId,
+      query.callbackToken,
+    )
+
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+
+    if (options.getMemories) {
+      return options.getMemories(thread.sessionGroupId, query.keyword)
+    }
+
+    return { memories: [] }
   })
 }

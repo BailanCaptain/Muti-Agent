@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { DispatchOrchestrator } from "./dispatch"
+import type { QueueEntry, BlockedDispatch } from "./dispatch"
 
 function createSessionsStub() {
   const threads = [
@@ -35,12 +36,18 @@ function createSessionsStub() {
   }
 }
 
+const defaultAliases = {
+  codex: "范德彪",
+  claude: "黄仁勋",
+  gemini: "桂芬",
+}
+
+// Stub callbacks for buildSnapshot / extractSnippet
+const stubBuildSnapshot = () => []
+const stubExtractSnippet = (content: string) => content.slice(0, 200)
+
 test("dedupes the same target provider across different messages within one root chain", () => {
-  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, {
-    codex: "范德彪",
-    claude: "黄仁勋",
-    gemini: "桂芬",
-  })
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
 
   dispatch.registerUserRoot("root-1", "group-1")
 
@@ -52,6 +59,8 @@ test("dedupes the same target provider across different messages within one root
     rootMessageId: "root-1",
     content: "@桂芬 请接手",
     matchMode: "anywhere",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
   })
 
   const fromAssistantMessage = dispatch.enqueuePublicMentions({
@@ -62,20 +71,20 @@ test("dedupes the same target provider across different messages within one root
     rootMessageId: "root-1",
     content: "@桂芬 请继续",
     matchMode: "line-start",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
   })
 
   assert.equal(fromUserMessage.queued.length, 1)
   assert.equal(fromAssistantMessage.queued.length, 0)
-  assert.equal(dispatch.takeNextQueuedDispatch("group-1", new Set())?.targetProvider, "gemini")
-  assert.equal(dispatch.takeNextQueuedDispatch("group-1", new Set()), null)
+  const next = dispatch.takeNextQueuedDispatch("group-1")
+  assert.ok(next)
+  assert.equal(next.to.provider, "gemini")
+  assert.equal(dispatch.takeNextQueuedDispatch("group-1"), null)
 })
 
 test("cancels a session group barrier, clears queued hops, and blocks later mentions until the next user root", () => {
-  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, {
-    codex: "范德彪",
-    claude: "黄仁勋",
-    gemini: "桂芬",
-  })
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
 
   dispatch.registerUserRoot("root-1", "group-1")
   const firstQueue = dispatch.enqueuePublicMentions({
@@ -86,6 +95,8 @@ test("cancels a session group barrier, clears queued hops, and blocks later ment
     rootMessageId: "root-1",
     content: "@桂芬 请接手",
     matchMode: "anywhere",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
   })
 
   const cancelled = dispatch.cancelSessionGroup("group-1")
@@ -97,6 +108,8 @@ test("cancels a session group barrier, clears queued hops, and blocks later ment
     rootMessageId: "root-1",
     content: "@桂芬 继续",
     matchMode: "line-start",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
   })
 
   assert.equal(firstQueue.queued.length, 1)
@@ -107,11 +120,11 @@ test("cancels a session group barrier, clears queued hops, and blocks later ment
   assert.deepEqual(
     blocked.blocked.map((entry) => ({
       reason: entry.reason,
-      targetProvider: entry.targetProvider,
+      targetProvider: entry.to.provider,
     })),
     [{ reason: "group_cancelled", targetProvider: "gemini" }],
   )
-  assert.equal(dispatch.takeNextQueuedDispatch("group-1", new Set()), null)
+  assert.equal(dispatch.takeNextQueuedDispatch("group-1"), null)
 
   dispatch.registerUserRoot("root-2", "group-1")
 
@@ -124,15 +137,11 @@ test("cancelSessionGroup invalidates all active invocations via registry", () =>
     invalidateInvocation: (id: string) => { cancelledIds.push(id) },
   }
 
-  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, {
-    codex: "范德彪",
-    claude: "黄仁勋",
-    gemini: "桂芬",
-  }, mockRegistry)
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases, mockRegistry)
 
   dispatch.registerUserRoot("root-1", "group-1")
-  dispatch.bindInvocation("inv-a", { rootMessageId: "root-1", sessionGroupId: "group-1", sourceProvider: "claude" })
-  dispatch.bindInvocation("inv-b", { rootMessageId: "root-1", sessionGroupId: "group-1", sourceProvider: "codex" })
+  dispatch.bindInvocation("inv-a", { rootMessageId: "root-1", sessionGroupId: "group-1", sourceProvider: "claude", parentInvocationId: null })
+  dispatch.bindInvocation("inv-b", { rootMessageId: "root-1", sessionGroupId: "group-1", sourceProvider: "codex", parentInvocationId: null })
 
   const result = dispatch.cancelSessionGroup("group-1")
 
@@ -146,15 +155,11 @@ test("releaseInvocation removes invocation from active tracking before cancel", 
   const cancelledIds: string[] = []
   const mockRegistry = { invalidateInvocation: (id: string) => { cancelledIds.push(id) } }
 
-  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, {
-    codex: "范德彪",
-    claude: "黄仁勋",
-    gemini: "桂芬",
-  }, mockRegistry)
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases, mockRegistry)
 
   dispatch.registerUserRoot("root-1", "group-1")
-  dispatch.bindInvocation("inv-a", { rootMessageId: "root-1", sessionGroupId: "group-1", sourceProvider: "claude" })
-  dispatch.bindInvocation("inv-b", { rootMessageId: "root-1", sessionGroupId: "group-1", sourceProvider: "codex" })
+  dispatch.bindInvocation("inv-a", { rootMessageId: "root-1", sessionGroupId: "group-1", sourceProvider: "claude", parentInvocationId: null })
+  dispatch.bindInvocation("inv-b", { rootMessageId: "root-1", sessionGroupId: "group-1", sourceProvider: "codex", parentInvocationId: null })
 
   // inv-a 正常完成已 release；inv-b 仍在运行
   dispatch.releaseInvocation("inv-a")
@@ -187,6 +192,8 @@ test("enforces MAX_HOPS and blocks the 16th mention", () => {
       rootMessageId: rootId,
       content: `@p${i} go`,
       matchMode: "line-start",
+      buildSnapshot: stubBuildSnapshot,
+      extractSnippet: stubExtractSnippet,
     })
     assert.equal(result.queued.length, 1, `Should queue hop ${i}`)
   }
@@ -200,8 +207,317 @@ test("enforces MAX_HOPS and blocks the 16th mention", () => {
     rootMessageId: rootId,
     content: "@p16 stop",
     matchMode: "line-start",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
   })
 
   assert.equal(result.queued.length, 0, "16th hop should be blocked by MAX_HOPS")
   assert.equal(result.blocked.length, 0, "Should not be blocked by barrier, just ignored")
+})
+
+// ===== New tests for QueueEntry structure =====
+
+test("QueueEntry carries structured from/to identity", () => {
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+  dispatch.registerUserRoot("root-1", "group-1")
+
+  const result = dispatch.enqueuePublicMentions({
+    messageId: "msg-1",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    sourceAlias: "范德彪",
+    rootMessageId: "root-1",
+    content: "@桂芬 请接手任务",
+    matchMode: "anywhere",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+
+  assert.equal(result.queued.length, 1)
+  const entry = result.queued[0] as QueueEntry
+  // Verify structured from
+  assert.equal(entry.from.agentId, "范德彪")
+  assert.equal(entry.from.messageId, "msg-1")
+  assert.equal(entry.from.provider, "codex")
+  // Verify structured to
+  assert.equal(entry.to.agentId, "桂芬")
+  assert.equal(entry.to.provider, "gemini")
+  // Verify id exists
+  assert.ok(entry.id, "QueueEntry should have an id")
+  assert.equal(entry.sessionGroupId, "group-1")
+  assert.equal(entry.rootMessageId, "root-1")
+})
+
+test("hopIndex increments per chain depth", () => {
+  const sessions = {
+    findThreadByGroupAndProvider: (_group: string, _provider: string) => ({ id: "target" }),
+    listGroupThreads: () => [],
+  }
+  const aliases: any = { root: "Root", p0: "Agent0", p1: "Agent1", p2: "Agent2" }
+
+  const dispatch = new DispatchOrchestrator(sessions as any, aliases)
+  dispatch.registerUserRoot("root-1", "group-1")
+
+  // Hop 0
+  const r0 = dispatch.enqueuePublicMentions({
+    messageId: "msg-0",
+    sessionGroupId: "group-1",
+    sourceProvider: "root" as any,
+    sourceAlias: "Root",
+    rootMessageId: "root-1",
+    content: "@p0 go",
+    matchMode: "line-start",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+  assert.equal(r0.queued.length, 1)
+  assert.equal((r0.queued[0] as QueueEntry).hopIndex, 0)
+
+  // Hop 1
+  const r1 = dispatch.enqueuePublicMentions({
+    messageId: "msg-1",
+    sessionGroupId: "group-1",
+    sourceProvider: "p0" as any,
+    sourceAlias: "Agent0",
+    rootMessageId: "root-1",
+    content: "@p1 continue",
+    matchMode: "line-start",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+  assert.equal(r1.queued.length, 1)
+  assert.equal((r1.queued[0] as QueueEntry).hopIndex, 1)
+
+  // Hop 2
+  const r2 = dispatch.enqueuePublicMentions({
+    messageId: "msg-2",
+    sessionGroupId: "group-1",
+    sourceProvider: "p1" as any,
+    sourceAlias: "Agent1",
+    rootMessageId: "root-1",
+    content: "@p2 finish",
+    matchMode: "line-start",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+  assert.equal(r2.queued.length, 1)
+  assert.equal((r2.queued[0] as QueueEntry).hopIndex, 2)
+})
+
+test("parentInvocationId is null for user-initiated, non-null for agent-initiated", () => {
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+  dispatch.registerUserRoot("root-1", "group-1")
+
+  // User-initiated: no parentInvocationId
+  const userResult = dispatch.enqueuePublicMentions({
+    messageId: "user-msg",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    sourceAlias: "范德彪",
+    rootMessageId: "root-1",
+    content: "@桂芬 请处理",
+    matchMode: "anywhere",
+    parentInvocationId: null,
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+
+  assert.equal(userResult.queued.length, 1)
+  assert.equal((userResult.queued[0] as QueueEntry).parentInvocationId, null)
+
+  // Agent-initiated: has parentInvocationId
+  dispatch.registerUserRoot("root-2", "group-1")
+  const agentResult = dispatch.enqueuePublicMentions({
+    messageId: "agent-msg",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    sourceAlias: "范德彪",
+    rootMessageId: "root-2",
+    content: "@黄仁勋 请 review",
+    matchMode: "line-start",
+    parentInvocationId: "inv-abc-123",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+
+  assert.equal(agentResult.queued.length, 1)
+  assert.equal((agentResult.queued[0] as QueueEntry).parentInvocationId, "inv-abc-123")
+})
+
+test("BlockedDispatch includes reason field with group_cancelled", () => {
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+  dispatch.registerUserRoot("root-1", "group-1")
+
+  dispatch.cancelSessionGroup("group-1")
+
+  const result = dispatch.enqueuePublicMentions({
+    messageId: "msg-1",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    sourceAlias: "范德彪",
+    rootMessageId: "root-1",
+    content: "@桂芬 请接手",
+    matchMode: "anywhere",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+
+  assert.equal(result.blocked.length, 1)
+  const blocked = result.blocked[0] as BlockedDispatch
+  assert.equal(blocked.reason, "group_cancelled")
+  assert.equal(blocked.from.agentId, "范德彪")
+  assert.equal(blocked.from.messageId, "msg-1")
+  assert.equal(blocked.from.provider, "codex")
+  assert.equal(blocked.to.agentId, "桂芬")
+  assert.equal(blocked.to.provider, "gemini")
+  assert.equal(blocked.sessionGroupId, "group-1")
+  assert.ok(blocked.taskSnippet, "BlockedDispatch should have taskSnippet")
+})
+
+test("QueueEntry includes contextSnapshot from buildSnapshot callback", () => {
+  const mockSnapshot = [
+    { agentId: "范德彪", content: "Hello world" },
+    { agentId: "桂芬", content: "Hi there" },
+  ]
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+  dispatch.registerUserRoot("root-1", "group-1")
+
+  const result = dispatch.enqueuePublicMentions({
+    messageId: "msg-1",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    sourceAlias: "范德彪",
+    rootMessageId: "root-1",
+    content: "@桂芬 请接手",
+    matchMode: "anywhere",
+    buildSnapshot: () => mockSnapshot,
+    extractSnippet: (c: string) => c,
+  })
+
+  assert.equal(result.queued.length, 1)
+  const entry = result.queued[0] as QueueEntry
+  assert.deepEqual(entry.contextSnapshot, mockSnapshot)
+  assert.equal(entry.taskSnippet, "@桂芬 请接手")
+})
+
+// ===== Phase 2: Per-Slot Concurrency & Invocation-Scoped Dedup =====
+
+test("takeNextQueuedDispatch skips busy provider and returns next available", () => {
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+  dispatch.registerUserRoot("root-1", "group-1")
+
+  // Queue entries for gemini and claude
+  dispatch.enqueuePublicMentions({
+    messageId: "msg-1",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    sourceAlias: "范德彪",
+    rootMessageId: "root-1",
+    content: "@桂芬 @黄仁勋 请接手",
+    matchMode: "anywhere",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+
+  // Mark gemini as busy
+  assert.equal(dispatch.acquireSlot("group-1", "gemini"), true)
+
+  // takeNext should skip gemini and return claude
+  const next = dispatch.takeNextQueuedDispatch("group-1")
+  assert.ok(next)
+  assert.equal(next.to.provider, "claude")
+})
+
+test("per-slot lock allows different providers to run concurrently", () => {
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+
+  assert.equal(dispatch.acquireSlot("group-1", "codex"), true)
+  assert.equal(dispatch.acquireSlot("group-1", "claude"), true)
+})
+
+test("per-slot lock blocks same provider from running twice", () => {
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+
+  assert.equal(dispatch.acquireSlot("group-1", "codex"), true)
+  assert.equal(dispatch.acquireSlot("group-1", "codex"), false)
+})
+
+test("releaseSlot allows provider to be dispatched again", () => {
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+
+  assert.equal(dispatch.acquireSlot("group-1", "codex"), true)
+  dispatch.releaseSlot("group-1", "codex")
+  assert.equal(dispatch.acquireSlot("group-1", "codex"), true)
+})
+
+test("invocation-scoped dedup: same provider in different invocation chains is allowed", () => {
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+  dispatch.registerUserRoot("root-1", "group-1")
+
+  // Enqueue from parentInvocationId=A targeting gemini
+  const resultA = dispatch.enqueuePublicMentions({
+    messageId: "msg-a",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    sourceAlias: "范德彪",
+    rootMessageId: "root-1",
+    content: "@桂芬 请接手",
+    matchMode: "anywhere",
+    parentInvocationId: "inv-A",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+
+  // Enqueue from parentInvocationId=B targeting gemini
+  const resultB = dispatch.enqueuePublicMentions({
+    messageId: "msg-b",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    sourceAlias: "范德彪",
+    rootMessageId: "root-1",
+    content: "@桂芬 请继续",
+    matchMode: "anywhere",
+    parentInvocationId: "inv-B",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+
+  assert.equal(resultA.queued.length, 1)
+  assert.equal(resultB.queued.length, 1, "Different invocation chain should allow same provider")
+})
+
+test("invocation-scoped dedup: same provider in same invocation chain is blocked", () => {
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+  dispatch.registerUserRoot("root-1", "group-1")
+
+  // First enqueue from parentInvocationId=A targeting gemini
+  const result1 = dispatch.enqueuePublicMentions({
+    messageId: "msg-1",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    sourceAlias: "范德彪",
+    rootMessageId: "root-1",
+    content: "@桂芬 请接手",
+    matchMode: "anywhere",
+    parentInvocationId: "inv-A",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+
+  // Second enqueue from same parentInvocationId=A targeting gemini
+  const result2 = dispatch.enqueuePublicMentions({
+    messageId: "msg-2",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    sourceAlias: "范德彪",
+    rootMessageId: "root-1",
+    content: "@桂芬 请继续",
+    matchMode: "anywhere",
+    parentInvocationId: "inv-A",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+
+  assert.equal(result1.queued.length, 1)
+  assert.equal(result2.queued.length, 0, "Same invocation chain should block duplicate provider")
 })

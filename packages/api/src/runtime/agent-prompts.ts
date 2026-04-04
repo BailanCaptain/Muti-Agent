@@ -56,3 +56,20 @@ export const AGENT_SYSTEM_PROMPTS: Record<Provider, string> = {
   codex: [COMMON_PROMPT, CALLBACK_API_PROMPT].join("\n\n"),
   gemini: [COMMON_PROMPT, CALLBACK_API_PROMPT].join("\n\n")
 };
+
+export function buildSystemPrompt(
+  provider: Provider,
+  previousSummary: string | null,
+): string {
+  const base = AGENT_SYSTEM_PROMPTS[provider]
+  if (!previousSummary) return base
+
+  const memoryBlock = [
+    "",
+    "## 上一轮会话摘要",
+    previousSummary,
+    "请参考上述背景信息继续协作。",
+  ].join("\n")
+
+  return base + "\n" + memoryBlock
+}

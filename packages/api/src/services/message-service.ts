@@ -1,7 +1,10 @@
 import type { RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared"
 import type { AppEventBus } from "../events/event-bus"
-import type { DispatchOrchestrator, EnqueueMentionsResult } from "../orchestrator/dispatch"
+import type { ContextMessage } from "../orchestrator/context-snapshot"
+import { buildContextSnapshot, extractTaskSnippet } from "../orchestrator/context-snapshot"
+import type { DispatchOrchestrator, EnqueueMentionsResult, QueueEntry } from "../orchestrator/dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
+import { ParallelGroupRegistry } from "../orchestrator/parallel-group"
 import { runTurn } from "../runtime/cli-orchestrator"
 import type { SessionService } from "./session-service"
 
@@ -89,6 +92,7 @@ function extractPromptFromActivityChunk(chunk: string) {
 
 export class MessageService {
   private readonly flushingGroups = new Set<string>()
+  private readonly parallelGroups = new ParallelGroupRegistry()
 
   constructor(
     private readonly sessions: SessionService,
@@ -171,6 +175,17 @@ export class MessageService {
       rootMessageId: invocation.rootMessageId,
       content: options.content,
       matchMode: "line-start",
+      parentInvocationId: options.invocationId,
+      buildSnapshot: () => this.captureSnapshot(thread.sessionGroupId, options.messageId),
+      extractSnippet: (c, alias) => extractTaskSnippet(c, alias),
+      createParallelGroup: (targetProviders) =>
+        this.parallelGroups.create({
+          parentMessageId: options.messageId,
+          originatorAgentId: thread.alias,
+          originatorProvider: thread.provider,
+          targetProviders,
+          joinBehavior: "notify_originator",
+        }),
     })
     this.emitBlockedDispatches(enqueueResult, options.emit)
 
@@ -230,6 +245,17 @@ export class MessageService {
       rootMessageId,
       content: event.payload.content,
       matchMode: "anywhere",
+      parentInvocationId: null,
+      buildSnapshot: () => this.captureSnapshot(thread.sessionGroupId, userMessage.id),
+      extractSnippet: (c, alias) => extractTaskSnippet(c, alias),
+      createParallelGroup: (targetProviders) =>
+        this.parallelGroups.create({
+          parentMessageId: userMessage.id,
+          originatorAgentId: thread.alias,
+          originatorProvider: thread.provider,
+          targetProviders,
+          joinBehavior: "notify_originator",
+        }),
     })
     this.emitBlockedDispatches(enqueueResult, emit)
     await this.flushDispatchQueue(thread.sessionGroupId, emit)
@@ -240,6 +266,7 @@ export class MessageService {
     content: string
     emit: EmitEvent
     rootMessageId: string
+    parentInvocationId?: string | null
   }) {
     const thread = this.dispatch.resolveThread(options.threadId)
     if (!thread) {
@@ -281,6 +308,7 @@ export class MessageService {
       rootMessageId: options.rootMessageId,
       sessionGroupId: thread.sessionGroupId,
       sourceProvider: thread.provider,
+      parentInvocationId: options.parentInvocationId ?? null,
     })
 
     const startedAt = new Date().toISOString()
@@ -415,6 +443,9 @@ export class MessageService {
           rootMessageId: options.rootMessageId,
           content: result.content,
           matchMode: "line-start",
+          parentInvocationId: identity.invocationId,
+          buildSnapshot: () => this.captureSnapshot(thread.sessionGroupId, assistant.id),
+          extractSnippet: (c, alias) => extractTaskSnippet(c, alias),
         })
         this.emitBlockedDispatches(enqueueResult, options.emit)
       }
@@ -460,33 +491,84 @@ export class MessageService {
     this.flushingGroups.add(sessionGroupId)
 
     try {
+      // Outer loop: keep draining until queue is empty AND no slots are running.
+      // Inner loop: dispatch all currently-available entries in parallel.
+      // After all parallel turns settle, loop again to pick up newly enqueued items.
       while (true) {
-        const next = this.dispatch.takeNextQueuedDispatch(
-          sessionGroupId,
-          new Set(this.invocations.keys()),
-        )
-        if (!next) {
-          return
+        const batch: Array<{ entry: QueueEntry; threadId: string }> = []
+
+        while (true) {
+          const next = this.dispatch.takeNextQueuedDispatch(sessionGroupId)
+          if (!next) break
+
+          const targetThread = this.sessions.findThreadByGroupAndProvider(
+            sessionGroupId,
+            next.to.provider,
+          )
+          if (!targetThread) continue
+
+          if (!this.dispatch.acquireSlot(sessionGroupId, next.to.provider)) continue
+
+          batch.push({ entry: next, threadId: targetThread.id })
         }
 
-        const targetThread = this.sessions.findThreadByGroupAndProvider(
-          sessionGroupId,
-          next.targetProvider,
-        )
-        if (!targetThread) {
-          continue
-        }
+        if (!batch.length) break
 
-        await this.runThreadTurn({
-          threadId: targetThread.id,
-          content: next.content,
-          emit,
-          rootMessageId: next.rootMessageId,
-        })
+        await Promise.allSettled(
+          batch.map(async ({ entry, threadId }) => {
+            try {
+              await this.runThreadTurn({
+                threadId,
+                content: this.buildA2APrompt(entry),
+                emit,
+                rootMessageId: entry.rootMessageId,
+                parentInvocationId: entry.parentInvocationId,
+              })
+
+              // P7 fix: check parallel group join on completion
+              if (entry.parallelGroupId) {
+                const thread = this.dispatch.resolveThread(threadId)
+                const joinResult = this.parallelGroups.markCompleted(
+                  entry.parallelGroupId,
+                  entry.to.provider,
+                  { messageId: "", content: thread?.alias ?? entry.to.agentId },
+                )
+                if (joinResult?.allDone && joinResult.group.joinBehavior === "notify_originator") {
+                  const summaryParts = [...joinResult.group.completedResults.entries()]
+                    .map(([, r]) => r.content)
+                  emit({
+                    type: "status",
+                    payload: {
+                      message: `并行 review 已全部完成（${summaryParts.join("、")}）。`,
+                    },
+                  })
+                  this.parallelGroups.remove(entry.parallelGroupId)
+                }
+              }
+            } finally {
+              this.dispatch.releaseSlot(sessionGroupId, entry.to.provider)
+            }
+          }),
+        )
+        // Loop again: completed turns may have enqueued new mentions
       }
     } finally {
       this.flushingGroups.delete(sessionGroupId)
     }
+  }
+
+  private buildA2APrompt(entry: QueueEntry): string {
+    return [
+      `[A2A 协作请求 from ${entry.from.agentId}]`,
+      ``,
+      `任务: ${entry.taskSnippet}`,
+      ``,
+      `--- 上下文快照 (${entry.contextSnapshot.length} 条消息) ---`,
+      ...entry.contextSnapshot.map((m) => `[${m.agentId}]: ${m.content.slice(0, 300)}`),
+      `---`,
+      ``,
+      `你是 ${entry.to.agentId}。请完成上述任务。`,
+    ].join("\n")
   }
 
   emitThreadSnapshot(sessionGroupId: string, emit: EmitEvent) {
@@ -529,20 +611,30 @@ export class MessageService {
     })
   }
 
+  private captureSnapshot(sessionGroupId: string, triggerMessageId: string): ContextMessage[] {
+    const threads = this.sessions.listGroupThreads(sessionGroupId)
+    const threadMeta = new Map(
+      threads.map((t) => [t.id, { provider: t.provider, alias: t.alias }]),
+    )
+    const allMessages = threads.flatMap((t) => {
+      const msgs = this.sessions.listThreadMessages?.(t.id) ?? []
+      return msgs.map((m: { id: string; role: string; content: string; createdAt: string }) => ({
+        id: m.id,
+        threadId: t.id,
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        createdAt: m.createdAt,
+      }))
+    })
+    return [...buildContextSnapshot(allMessages, threadMeta, { sessionGroupId, triggerMessageId })]
+  }
+
   private getBusyStatus(threadId: string, sessionGroupId: string) {
-    const runningThreadIds = new Set(this.invocations.keys())
-    const runningThread = this.sessions
-      .listGroupThreads(sessionGroupId)
-      .find((candidate) => runningThreadIds.has(candidate.id))
+    const thread = this.dispatch.resolveThread(threadId)
+    if (!thread) return null
 
-    if (runningThread) {
-      return runningThread.id === threadId
-        ? `${runningThread.alias} 已经在运行中。`
-        : `${runningThread.alias} 已在此房间运行。请等待当前轮次结束或先手动停止。`
-    }
-
-    if (this.dispatch.hasQueuedDispatches(sessionGroupId)) {
-      return "此房间仍在处理队列中的跟进任务。请等待当前协作链完成。"
+    if (this.dispatch.isSlotBusy(sessionGroupId, thread.provider)) {
+      return `${thread.alias} 已经在运行中。`
     }
 
     return null

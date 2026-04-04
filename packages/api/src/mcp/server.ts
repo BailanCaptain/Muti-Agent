@@ -168,7 +168,7 @@ function writeError(id: JsonRpcId, message: string, code = -32000) {
   });
 }
 
-function getTools() {
+export function getTools() {
   return [
     {
       name: "post_message",
@@ -196,32 +196,178 @@ function getTools() {
           }
         }
       }
+    },
+    {
+      name: "get_task_status",
+      description: "查询当前协作房间中各 agent 的运行状态。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          agentId: { type: "string", description: "可选：指定查询的 agent 别名" }
+        }
+      }
+    },
+    {
+      name: "create_task",
+      description: "创建一个跟踪任务并分配给指定 agent。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          assignee: { type: "string", description: "要分配任务的 agent 别名" },
+          description: { type: "string", description: "任务描述" },
+          priority: { type: "string", enum: ["low", "medium", "high"], description: "优先级" }
+        },
+        required: ["assignee", "description"]
+      }
+    },
+    {
+      name: "trigger_mention",
+      description: "程序化触发 @mention，无需发送公开消息即可调度另一个 agent。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          targetAgentId: { type: "string", description: "目标 agent 别名" },
+          taskSnippet: { type: "string", description: "要求目标 agent 完成的任务" }
+        },
+        required: ["targetAgentId", "taskSnippet"]
+      }
+    },
+    {
+      name: "get_memory",
+      description: "读取当前会话的记忆条目。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          keyword: { type: "string", description: "可选：用于筛选记忆的关键词" }
+        }
+      }
     }
   ];
 }
 
-async function handleToolCall(name: string, args: Record<string, unknown> | undefined) {
-  if (name === "post_message") {
-    const content = typeof args?.content === "string" ? args.content : "";
-    if (!content.trim()) {
-      return {
-        isError: true,
-        content: [{ type: "text", text: "content is required" }]
-      } satisfies ToolResult;
-    }
-
-    return callPostMessage(content.trim());
+async function callGetTaskStatus(agentId?: string): Promise<ToolResult> {
+  const identity = getCallbackIdentity();
+  const url = new URL(`${identity.apiUrl}/api/callbacks/task-status`);
+  url.searchParams.set("invocationId", identity.invocationId);
+  url.searchParams.set("callbackToken", identity.callbackToken);
+  if (agentId) {
+    url.searchParams.set("agentId", agentId);
   }
 
-  if (name === "get_thread_context") {
-    const limit = typeof args?.limit === "number" ? args.limit : undefined;
-    return callGetThreadContext(limit);
+  const response = await requestJson(url.toString(), { method: "GET" });
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `get_task_status failed: ${JSON.stringify(response.json)}` }]
+    };
   }
 
   return {
-    isError: true,
-    content: [{ type: "text", text: `unknown tool: ${name}` }]
-  } satisfies ToolResult;
+    content: [{ type: "text", text: JSON.stringify(response.json) }]
+  };
+}
+
+async function callCreateTask(params: { assignee: string; description: string; priority?: string }): Promise<ToolResult> {
+  const identity = getCallbackIdentity();
+  const response = await requestJson(`${identity.apiUrl}/api/callbacks/create-task`, {
+    method: "POST",
+    body: {
+      invocationId: identity.invocationId,
+      callbackToken: identity.callbackToken,
+      assignee: params.assignee,
+      description: params.description,
+      priority: params.priority
+    }
+  });
+
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `create_task failed: ${JSON.stringify(response.json)}` }]
+    };
+  }
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(response.json) }]
+  };
+}
+
+async function callTriggerMention(params: { targetAgentId: string; taskSnippet: string }): Promise<ToolResult> {
+  const identity = getCallbackIdentity();
+  const response = await requestJson(`${identity.apiUrl}/api/callbacks/trigger-mention`, {
+    method: "POST",
+    body: {
+      invocationId: identity.invocationId,
+      callbackToken: identity.callbackToken,
+      targetAgentId: params.targetAgentId,
+      taskSnippet: params.taskSnippet
+    }
+  });
+
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `trigger_mention failed: ${JSON.stringify(response.json)}` }]
+    };
+  }
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(response.json) }]
+  };
+}
+
+async function callGetMemory(keyword?: string): Promise<ToolResult> {
+  const identity = getCallbackIdentity();
+  const url = new URL(`${identity.apiUrl}/api/callbacks/memory`);
+  url.searchParams.set("invocationId", identity.invocationId);
+  url.searchParams.set("callbackToken", identity.callbackToken);
+  if (keyword) {
+    url.searchParams.set("keyword", keyword);
+  }
+
+  const response = await requestJson(url.toString(), { method: "GET" });
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `get_memory failed: ${JSON.stringify(response.json)}` }]
+    };
+  }
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(response.json) }]
+  };
+}
+
+export async function handleToolCall(name: string, args: Record<string, unknown> | undefined) {
+  switch (name) {
+    case "post_message": {
+      const content = typeof args?.content === "string" ? args.content : "";
+      if (!content.trim()) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: "content is required" }]
+        } satisfies ToolResult;
+      }
+      return callPostMessage(content.trim());
+    }
+    case "get_thread_context": {
+      const limit = typeof args?.limit === "number" ? args.limit : undefined;
+      return callGetThreadContext(limit);
+    }
+    case "get_task_status":
+      return callGetTaskStatus(args?.agentId as string | undefined);
+    case "create_task":
+      return callCreateTask(args as { assignee: string; description: string; priority?: string });
+    case "trigger_mention":
+      return callTriggerMention(args as { targetAgentId: string; taskSnippet: string });
+    case "get_memory":
+      return callGetMemory(args?.keyword as string | undefined);
+    default:
+      return {
+        isError: true,
+        content: [{ type: "text", text: `unknown tool: ${name}` }]
+      } satisfies ToolResult;
+  }
 }
 
 async function handleRequest(request: JsonRpcRequest) {

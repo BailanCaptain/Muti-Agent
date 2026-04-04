@@ -13,12 +13,15 @@ export type ProviderThreadRecord = {
   updatedAt: string
 }
 
+export type MessageType = "progress" | "final" | "a2a_handoff"
+
 export type MessageRecord = {
   id: string
   threadId: string
   role: "user" | "assistant"
   content: string
   thinking: string
+  messageType: MessageType
   createdAt: string
 }
 
@@ -41,6 +44,14 @@ export type AgentEventRecord = {
   agentId: string
   eventType: string
   payload: string
+  createdAt: string
+}
+
+export type SessionMemoryRecord = {
+  id: string
+  sessionGroupId: string
+  summary: string
+  keywords: string
   createdAt: string
 }
 
@@ -116,5 +127,35 @@ export class SqliteStore {
     } catch {
       // Older databases may already have this column.
     }
+
+    try {
+      this.db.exec("ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'final';")
+    } catch {
+      // Older databases may already have this column.
+    }
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS session_memories (
+        id TEXT PRIMARY KEY,
+        session_group_id TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        keywords TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+    `)
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        session_group_id TEXT NOT NULL,
+        assignee_agent_id TEXT NOT NULL,
+        description TEXT NOT NULL,
+        priority TEXT NOT NULL DEFAULT 'medium',
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `)
   }
 }

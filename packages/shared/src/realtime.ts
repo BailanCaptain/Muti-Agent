@@ -7,6 +7,7 @@ export type TimelineMessage = {
   role: "user" | "assistant"
   content: string
   thinking?: string
+  messageType: "progress" | "final" | "a2a_handoff"
   inputTokens?: number
   outputTokens?: number
   cachedPercent?: number
@@ -66,13 +67,10 @@ export type ActiveGroupView = {
 export type BlockedDispatchAttempt = {
   sessionGroupId: string
   rootMessageId: string
-  sourceMessageId: string
-  sourceProvider: Provider
-  sourceAlias: string
-  targetProvider: Provider
-  targetAlias: string
-  reason: "group_cancelled"
-  content: string
+  from: { agentId: string; messageId: string; provider: Provider }
+  to: { agentId: string; provider: Provider }
+  reason: "group_cancelled" | "max_hops" | "dedup"
+  taskSnippet: string
 }
 
 export type RealtimeClientEvent =
@@ -89,6 +87,12 @@ export type RealtimeClientEvent =
       type: "stop_thread"
       payload: {
         threadId: string
+      }
+    }
+  | {
+      type: "end_session"
+      payload: {
+        sessionGroupId: string
       }
     }
 

@@ -16,6 +16,7 @@ import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
 import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
 import { awaitRunsToStop } from "./runtime/shutdown"
+import { MemoryService } from "./services/memory-service"
 import { MessageService } from "./services/message-service"
 import { SessionService } from "./services/session-service"
 
@@ -39,6 +40,7 @@ export async function createApiServer(options: {
   >()
   const dispatch = new DispatchOrchestrator(sessions, PROVIDER_ALIASES, invocations)
   const messages = new MessageService(sessions, dispatch, invocations, eventBus, options.apiBaseUrl)
+  const memoryService = new MemoryService(repository)
   const redisSummary = getRedisReservation(options.redisUrl)
 
   eventBus.on("invocation.started", (event) => {
@@ -153,6 +155,43 @@ export async function createApiServer(options: {
     emitThreadSnapshot: (sessionGroupId) =>
       messages.emitThreadSnapshot(sessionGroupId, broadcaster.broadcast),
     onPublicMessage: (options) => messages.handleAgentPublicMessage(options),
+    getTaskStatus: (sessionGroupId, agentId) => {
+      const statuses = dispatch.getAgentStatuses(sessionGroupId)
+      return {
+        agents: agentId
+          ? statuses.filter((s) => s.agentId === agentId)
+          : statuses,
+      }
+    },
+    createTask: (sessionGroupId, params) => {
+      const task = repository.createTask(
+        sessionGroupId,
+        params.assignee,
+        params.description,
+        params.createdBy,
+        params.priority,
+      )
+      return { ok: true as const, taskId: task.id }
+    },
+    triggerMention: async (sessionGroupId, params) => {
+      const thread = sessions.findThreadByGroupAndProvider(sessionGroupId, params.sourceProvider)
+      if (!thread) return
+      const content = `@${params.targetAlias} ${params.taskSnippet}`
+      const persisted = sessions.appendAssistantMessage(thread.id, content, "", "a2a_handoff")
+      await messages.handleAgentPublicMessage({
+        threadId: thread.id,
+        messageId: persisted.id,
+        content,
+        invocationId: params.invocationId,
+        emit: broadcaster.broadcast,
+      })
+    },
+    getMemories: (sessionGroupId, keyword) => {
+      const memories = keyword
+        ? memoryService.searchMemories(keyword).filter((m) => m.sessionGroupId === sessionGroupId)
+        : memoryService.getMemoriesForGroup(sessionGroupId)
+      return { memories }
+    },
   })
   registerWsRoute(app, { messages, broadcaster })
   registerMcpServer(app)

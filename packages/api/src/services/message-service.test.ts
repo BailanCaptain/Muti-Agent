@@ -167,11 +167,13 @@ test("cancelThreadChain revokes callback identities and clears invocation contex
     rootMessageId: "root-1",
     sessionGroupId: "group-1",
     sourceProvider: "codex",
+    parentInvocationId: null,
   })
   dispatch.bindInvocation(geminiIdentity.invocationId, {
     rootMessageId: "root-1",
     sessionGroupId: "group-1",
     sourceProvider: "gemini",
+    parentInvocationId: null,
   })
   const cancelCalls: string[] = []
 
@@ -231,6 +233,7 @@ test("handleAgentPublicMessage emits a dispatch-blocked event when the group bar
     rootMessageId: "root-1",
     sessionGroupId: "group-1",
     sourceProvider: "codex",
+    parentInvocationId: null,
   })
   dispatch.cancelSessionGroup("group-1")
 
@@ -250,15 +253,17 @@ test("handleAgentPublicMessage emits a dispatch-blocked event when the group bar
       (event) =>
         event.type === "dispatch.blocked" &&
         event.payload.attempts.some(
-          (attempt) => attempt.reason === "group_cancelled" && attempt.targetProvider === "gemini",
+          (attempt) => attempt.reason === "group_cancelled" && attempt.to.provider === "gemini",
         ),
     ),
   )
 })
 
-test("handleSendMessage rejects a new root turn while another thread in the same room is already running", () => {
-  const { messageService, invocations } = createMessageService()
+test("handleSendMessage allows sending to a different provider while another is running (per-slot concurrency)", () => {
+  const { dispatch, messageService, invocations } = createMessageService()
 
+  // Simulate codex running by acquiring its slot
+  dispatch.acquireSlot("group-1", "codex")
   const codexIdentity = invocations.createInvocation("thread-codex", "Coder")
   invocations.attachRun("thread-codex", codexIdentity.invocationId, {
     cancel: () => {},
@@ -281,11 +286,39 @@ test("handleSendMessage rejects a new root turn while another thread in the same
     },
   )
 
-  const runningThreads = Array.from(invocations.keys())
-  assert.deepEqual(runningThreads, ["thread-codex"])
+  // Should NOT see a blocking status message since claude slot is free
+  assert.ok(
+    !events.some(
+      (event) => event.type === "status" && event.payload.message.includes("已在此房间运行"),
+    ),
+  )
+})
+
+test("handleSendMessage rejects when the same provider slot is busy", () => {
+  const { dispatch, messageService, invocations } = createMessageService()
+
+  // Simulate claude running by acquiring its slot
+  dispatch.acquireSlot("group-1", "claude")
+
+  const events: RealtimeServerEvent[] = []
+  messageService.handleClientEvent(
+    {
+      type: "send_message",
+      payload: {
+        threadId: "thread-claude",
+        provider: "claude",
+        alias: "Reviewer",
+        content: "Hello Claude",
+      },
+    },
+    (event) => {
+      events.push(event)
+    },
+  )
+
   assert.ok(
     events.some(
-      (event) => event.type === "status" && event.payload.message.includes("已在此房间运行"),
+      (event) => event.type === "status" && event.payload.message.includes("已经在运行中"),
     ),
   )
 })

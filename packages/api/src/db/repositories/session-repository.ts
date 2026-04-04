@@ -5,7 +5,9 @@ import type {
   AgentEventRecord,
   InvocationRecord,
   MessageRecord,
+  MessageType,
   ProviderThreadRecord,
+  SessionMemoryRecord,
   SqliteStore,
 } from "../sqlite"
 
@@ -120,7 +122,7 @@ export class SessionRepository {
   listMessages(threadId: string) {
     return this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, created_at as createdAt
+        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, created_at as createdAt
          FROM messages
          WHERE thread_id = ?
          ORDER BY created_at ASC`,
@@ -131,7 +133,7 @@ export class SessionRepository {
   listRecentMessages(threadId: string, limit: number) {
     return this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, created_at as createdAt
+        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, created_at as createdAt
          FROM messages
          WHERE thread_id = ?
          ORDER BY created_at DESC
@@ -140,20 +142,21 @@ export class SessionRepository {
       .all(threadId, limit) as MessageRecord[]
   }
 
-  appendMessage(threadId: string, role: "user" | "assistant", content: string, thinking = "") {
+  appendMessage(threadId: string, role: "user" | "assistant", content: string, thinking = "", messageType: MessageType = "final") {
     const message: MessageRecord = {
       id: crypto.randomUUID(),
       threadId,
       role,
       content,
       thinking,
+      messageType,
       createdAt: new Date().toISOString(),
     }
 
     this.store.db
       .prepare(
-        `INSERT INTO messages (id, thread_id, role, content, thinking, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -161,6 +164,7 @@ export class SessionRepository {
         message.role,
         message.content,
         message.thinking,
+        message.messageType,
         message.createdAt,
       )
 
@@ -340,6 +344,74 @@ export class SessionRepository {
         .prepare("UPDATE session_groups SET updated_at = ? WHERE id = ?")
         .run(updatedAt, row.sessionGroupId)
     }
+  }
+
+  createMemory(sessionGroupId: string, summary: string, keywords: string): SessionMemoryRecord {
+    const record: SessionMemoryRecord = {
+      id: crypto.randomUUID(),
+      sessionGroupId,
+      summary,
+      keywords,
+      createdAt: new Date().toISOString(),
+    }
+
+    this.store.db
+      .prepare(
+        `INSERT INTO session_memories (id, session_group_id, summary, keywords, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(record.id, record.sessionGroupId, record.summary, record.keywords, record.createdAt)
+
+    return record
+  }
+
+  listMemories(sessionGroupId: string): SessionMemoryRecord[] {
+    return this.store.db
+      .prepare(
+        `SELECT id, session_group_id as sessionGroupId, summary, keywords, created_at as createdAt
+         FROM session_memories
+         WHERE session_group_id = ?
+         ORDER BY created_at DESC`,
+      )
+      .all(sessionGroupId) as SessionMemoryRecord[]
+  }
+
+  searchMemories(keyword: string): SessionMemoryRecord[] {
+    const pattern = `%${keyword}%`
+    return this.store.db
+      .prepare(
+        `SELECT id, session_group_id as sessionGroupId, summary, keywords, created_at as createdAt
+         FROM session_memories
+         WHERE keywords LIKE ? OR summary LIKE ?
+         ORDER BY created_at DESC`,
+      )
+      .all(pattern, pattern) as SessionMemoryRecord[]
+  }
+
+  getLatestMemory(sessionGroupId: string): SessionMemoryRecord | null {
+    const row = this.store.db
+      .prepare(
+        `SELECT id, session_group_id as sessionGroupId, summary, keywords, created_at as createdAt
+         FROM session_memories
+         WHERE session_group_id = ?
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      )
+      .get(sessionGroupId) as SessionMemoryRecord | undefined
+
+    return row ?? null
+  }
+
+  createTask(sessionGroupId: string, assignee: string, description: string, createdBy: string, priority = "medium") {
+    const id = crypto.randomUUID()
+    const now = new Date().toISOString()
+    this.store.db
+      .prepare(
+        `INSERT INTO tasks (id, session_group_id, assignee_agent_id, description, priority, status, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      )
+      .run(id, sessionGroupId, assignee, description, priority, createdBy, now, now)
+    return { id, sessionGroupId, assignee, description, priority, status: "pending" as const, createdBy, createdAt: now }
   }
 
   private getLastMessagePreview(threadId: string) {
