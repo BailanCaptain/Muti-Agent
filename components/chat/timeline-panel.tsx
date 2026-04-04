@@ -1,11 +1,15 @@
 "use client"
 
+import { useApprovalStore } from "@/components/stores/approval-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { useEffect, useRef } from "react"
+import { ApprovalCard } from "./approval-card"
 import { MessageBubble } from "./message-bubble"
 
 export function TimelinePanel() {
   const timeline = useThreadStore((state) => state.timeline)
+  const pendingApprovals = useApprovalStore((state) => state.pending)
+  const respondApproval = useApprovalStore((state) => state.respond)
   const latestMessageId = timeline.at(-1)?.id
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -36,6 +40,13 @@ export function TimelinePanel() {
             />
           ))
         )}
+        {pendingApprovals.map((request) => (
+          <ApprovalCard
+            key={request.requestId}
+            request={request}
+            onRespond={respondApproval}
+          />
+        ))}
       </div>
     </div>
   )

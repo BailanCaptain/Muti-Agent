@@ -7,20 +7,25 @@ import { StatusPanel } from "@/components/chat/status-panel"
 import { TimelinePanel } from "@/components/chat/timeline-panel"
 import { useChatStore } from "@/components/stores/chat-store"
 import { useSettingsStore } from "@/components/stores/settings-store"
+import { useApprovalStore } from "@/components/stores/approval-store"
 import { useThreadStore } from "@/components/stores/thread-store"
+import { PROVIDER_ALIASES, type BlockedDispatchAttempt } from "@multi-agent/shared"
 import { connectRealtime } from "@/components/ws/client"
 import { useEffect } from "react"
 
-function formatBlockedDispatchMessage(attempts: Array<{ targetAlias: string }>) {
+function formatBlockedDispatchMessage(attempts: BlockedDispatchAttempt[]) {
   if (!attempts.length) {
     return "跟进提及被阻止。"
   }
 
+  const getAlias = (attempt: BlockedDispatchAttempt) =>
+    PROVIDER_ALIASES[attempt.to.provider] || attempt.to.provider
+
   if (attempts.length === 1) {
-    return `针对 ${attempts[0].targetAlias} 的跟进提及被阻止，因为当前协作链已被取消。请发送新的用户消息以重新开始。`
+    return `针对 ${getAlias(attempts[0])} 的跟进提及被阻止，因为当前协作链已被取消。请发送新的用户消息以重新开始。`
   }
 
-  const aliases = attempts.map((attempt) => attempt.targetAlias).join(", ")
+  const aliases = attempts.map(getAlias).join(", ")
   return `针对 ${aliases} 的跟进提及被阻止，因为当前协作链已被取消。请发送新的用户消息以重新开始。`
 }
 
@@ -32,6 +37,8 @@ export default function HomePage() {
   const replaceActiveGroup = useThreadStore((state) => state.replaceActiveGroup)
   const setStatus = useChatStore((state) => state.setStatus)
   const setSocketState = useSettingsStore((state) => state.setSocketState)
+  const addApprovalRequest = useApprovalStore((state) => state.addRequest)
+  const removeApprovalRequest = useApprovalStore((state) => state.removeRequest)
 
   useEffect(() => {
     void bootstrap().catch((error) => {
@@ -74,6 +81,16 @@ export default function HomePage() {
           return
         }
 
+        if (event.type === "approval.request") {
+          addApprovalRequest(event.payload)
+          return
+        }
+
+        if (event.type === "approval.resolved") {
+          removeApprovalRequest(event.payload.requestId)
+          return
+        }
+
         if (event.type === "dispatch.blocked") {
           setStatus(formatBlockedDispatchMessage(event.payload.attempts))
           return
@@ -87,17 +104,19 @@ export default function HomePage() {
 
     return disconnect
   }, [
+    addApprovalRequest,
     appendTimelineMessage,
     applyAssistantDelta,
     applyThinkingDelta,
     bootstrap,
+    removeApprovalRequest,
     replaceActiveGroup,
     setSocketState,
     setStatus,
   ])
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(245,208,254,0.35),transparent_35%),radial-gradient(circle_at_top_right,rgba(255,244,214,0.35),transparent_35%),radial-gradient(circle_at_bottom_right,rgba(224,242,254,0.35),transparent_35%),linear-gradient(180deg,#f8fafc_0%,#f6f7fb_100%)]">
+    <div className="flex h-screen w-full overflow-hidden bg-[radial-gradient(circle_at_20%_20%,rgba(245,208,254,0.18),transparent_35%),radial-gradient(circle_at_80%_20%,rgba(255,244,214,0.18),transparent_35%),radial-gradient(circle_at_50%_80%,rgba(224,242,254,0.18),transparent_35%),linear-gradient(180deg,#f8fafc_0%,#f1f5f9_100%)]">
       <SessionSidebar />
       <main className="flex flex-1 flex-col overflow-hidden">
         <ChatHeader />
