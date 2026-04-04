@@ -18,7 +18,12 @@ export type RealtimeBroadcaster = {
 
 export function registerWsRoute(
   app: FastifyInstance,
-  options: { messages: MessageService; broadcaster: RealtimeBroadcaster; approvals?: ApprovalManager }
+  options: {
+    messages: MessageService;
+    broadcaster: RealtimeBroadcaster;
+    approvals?: ApprovalManager;
+    onDecisionRespond?: (requestId: string, selectedIds: string[]) => void;
+  }
 ) {
   const sockets = new Set<SocketLike>();
 
@@ -56,6 +61,11 @@ export function registerWsRoute(
             event.payload.granted,
             event.payload.scope,
           );
+          return;
+        }
+
+        if (event.type === "decision.respond" && options.onDecisionRespond) {
+          options.onDecisionRespond(event.payload.requestId, event.payload.selectedIds);
           return;
         }
 

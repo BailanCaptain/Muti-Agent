@@ -45,6 +45,14 @@ export function registerCallbackRoutes(
     createTask?: (sessionGroupId: string, params: { assignee: string; description: string; priority?: string; createdBy: string }) => { ok: true; taskId: string }
     triggerMention?: (sessionGroupId: string, params: { targetAlias: string; taskSnippet: string; sourceProvider: import("@multi-agent/shared").Provider; invocationId: string }) => Promise<void> | void
     getMemories?: (sessionGroupId: string, keyword?: string) => { memories: Array<{ id: string; summary: string; keywords: string; createdAt: string }> }
+    requestDecision?: (sessionGroupId: string, params: {
+      title: string
+      description?: string
+      options: Array<{ id: string; label: string; description?: string }>
+      multiSelect: boolean
+      sourceProvider: import("@multi-agent/shared").Provider
+      sourceAlias: string
+    }) => Promise<{ selectedIds: string[] }>
     parallelThink?: (sessionGroupId: string, params: {
       targets: string[]
       question: string
@@ -296,6 +304,46 @@ export function registerCallbackRoutes(
     }
 
     return { memories: [] }
+  })
+
+  app.post("/api/callbacks/request-decision", async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as CallbackBody & {
+      title?: string
+      description?: string
+      options?: Array<{ id: string; label: string; description?: string }>
+      multiSelect?: boolean
+    }
+    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
+
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    if (!body.title?.trim() || !body.options?.length) {
+      reply.code(400)
+      return { error: "title and options are required." }
+    }
+
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+
+    if (options.requestDecision) {
+      const result = await options.requestDecision(thread.sessionGroupId, {
+        title: body.title.trim(),
+        description: body.description,
+        options: body.options,
+        multiSelect: body.multiSelect ?? false,
+        sourceProvider: thread.provider,
+        sourceAlias: thread.alias,
+      })
+      return { ok: true, selectedIds: result.selectedIds }
+    }
+
+    return { ok: true, selectedIds: body.options.length > 0 ? [body.options[0].id] : [] }
   })
 
   app.post("/api/callbacks/parallel-think", async (request: FastifyRequest, reply: FastifyReply) => {

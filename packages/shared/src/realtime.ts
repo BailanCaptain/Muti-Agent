@@ -78,6 +78,26 @@ export type ApprovalRequest = {
 
 export type ApprovalScope = "once" | "thread" | "global"
 
+export type DecisionOption = {
+  id: string
+  label: string
+  description?: string
+  provider?: Provider
+}
+
+export type DecisionRequest = {
+  requestId: string
+  kind: "multi_choice" | "fan_in_selector"
+  title: string
+  description?: string
+  options: DecisionOption[]
+  sessionGroupId: string
+  sourceProvider?: Provider
+  sourceAlias?: string
+  multiSelect?: boolean
+  createdAt: string
+}
+
 export type BlockedDispatchAttempt = {
   sessionGroupId: string
   rootMessageId: string
@@ -115,6 +135,13 @@ export type RealtimeClientEvent =
         requestId: string
         granted: boolean
         scope: ApprovalScope
+      }
+    }
+  | {
+      type: "decision.respond"
+      payload: {
+        requestId: string
+        selectedIds: string[]
       }
     }
 
@@ -167,5 +194,16 @@ export type RealtimeServerEvent =
       payload: {
         requestId: string
         granted: boolean
+      }
+    }
+  | {
+      type: "decision.request"
+      payload: DecisionRequest
+    }
+  | {
+      type: "decision.resolved"
+      payload: {
+        requestId: string
+        selectedIds: string[]
       }
     }

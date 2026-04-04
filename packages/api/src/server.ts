@@ -8,6 +8,7 @@ import { SqliteStore } from "./db/sqlite"
 import { AppEventBus } from "./events/event-bus"
 import { registerMcpServer } from "./mcp/server"
 import { ApprovalManager } from "./orchestrator/approval-manager"
+import { DecisionManager } from "./orchestrator/decision-manager"
 import { DispatchOrchestrator } from "./orchestrator/dispatch"
 import { InvocationRegistry } from "./orchestrator/invocation-registry"
 import { registerCallbackRoutes } from "./routes/callbacks"
@@ -50,8 +51,10 @@ export async function createApiServer(options: {
   const manifestPath = new URL("../../../multi-agent-skills/manifest.yaml", import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")
   skillRegistry.loadManifest(manifestPath)
   const sopTracker = new SopTracker()
+  const decisions = new DecisionManager((event) => broadcaster.broadcast(event))
   messages.setSkillRegistry(skillRegistry)
   messages.setSopTracker(sopTracker)
+  messages.setDecisionManager(decisions)
   const redisSummary = getRedisReservation(options.redisUrl)
 
   eventBus.on("invocation.started", (event) => {
@@ -197,6 +200,19 @@ export async function createApiServer(options: {
         emit: broadcaster.broadcast,
       })
     },
+    requestDecision: async (sessionGroupId, params) => {
+      const selectedIds = await messages.requestDecision({
+        kind: "multi_choice",
+        title: params.title,
+        description: params.description,
+        options: params.options,
+        sessionGroupId,
+        sourceProvider: params.sourceProvider,
+        sourceAlias: params.sourceAlias,
+        multiSelect: params.multiSelect,
+      })
+      return { selectedIds }
+    },
     parallelThink: async (sessionGroupId, params) => {
       return messages.handleParallelThink(sessionGroupId, {
         ...params,
@@ -211,7 +227,12 @@ export async function createApiServer(options: {
     },
     requestPermission: (params) => approvals.requestPermission(params),
   })
-  registerWsRoute(app, { messages, broadcaster, approvals })
+  registerWsRoute(app, {
+    messages,
+    broadcaster,
+    approvals,
+    onDecisionRespond: (requestId, selectedIds) => decisions.respond(requestId, selectedIds),
+  })
   registerMcpServer(app)
 
   Object.assign(app, {

@@ -8,6 +8,7 @@ import { TimelinePanel } from "@/components/chat/timeline-panel"
 import { useChatStore } from "@/components/stores/chat-store"
 import { useSettingsStore } from "@/components/stores/settings-store"
 import { useApprovalStore } from "@/components/stores/approval-store"
+import { useDecisionStore } from "@/components/stores/decision-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { PROVIDER_ALIASES, type BlockedDispatchAttempt } from "@multi-agent/shared"
 import { connectRealtime } from "@/components/ws/client"
@@ -39,6 +40,8 @@ export default function HomePage() {
   const setSocketState = useSettingsStore((state) => state.setSocketState)
   const addApprovalRequest = useApprovalStore((state) => state.addRequest)
   const removeApprovalRequest = useApprovalStore((state) => state.removeRequest)
+  const addDecisionRequest = useDecisionStore((state) => state.addRequest)
+  const removeDecisionRequest = useDecisionStore((state) => state.removeRequest)
 
   useEffect(() => {
     void bootstrap().catch((error) => {
@@ -91,6 +94,16 @@ export default function HomePage() {
           return
         }
 
+        if (event.type === "decision.request") {
+          addDecisionRequest(event.payload)
+          return
+        }
+
+        if (event.type === "decision.resolved") {
+          removeDecisionRequest(event.payload.requestId)
+          return
+        }
+
         if (event.type === "dispatch.blocked") {
           setStatus(formatBlockedDispatchMessage(event.payload.attempts))
           return
@@ -105,11 +118,13 @@ export default function HomePage() {
     return disconnect
   }, [
     addApprovalRequest,
+    addDecisionRequest,
     appendTimelineMessage,
     applyAssistantDelta,
     applyThinkingDelta,
     bootstrap,
     removeApprovalRequest,
+    removeDecisionRequest,
     replaceActiveGroup,
     setSocketState,
     setStatus,

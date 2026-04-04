@@ -243,6 +243,32 @@ export function getTools() {
       }
     },
     {
+      name: "request_decision",
+      description: "向用户��示一个选择卡片（多选题或 agent 选择器），等待用户选择后返回结��。用于 brainstorm 中的方案选择、架构选型投票等需要用��决策的场景。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "卡片标题" },
+          description: { type: "string", description: "可选���说明文字" },
+          options: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string", description: "选项唯一标识" },
+                label: { type: "string", description: "选项显示文字" },
+                description: { type: "string", description: "选项说明" }
+              },
+              required: ["id", "label"]
+            },
+            description: "选项列表（2-6 个）"
+          },
+          multiSelect: { type: "boolean", description: "是否允许多选，默认 false" }
+        },
+        required: ["title", "options"]
+      }
+    },
+    {
       name: "parallel_think",
       description: "并行调度多个 agent 独立思考同一问题，收集所有回复后返回综合结果。用于架构选型、方向性讨论等需要多视角的场景。调用前必须提供 searchEvidenceRefs（先搜后问）或 overrideReason。",
       inputSchema: {
@@ -365,6 +391,44 @@ async function callTriggerMention(params: { targetAgentId: string; taskSnippet: 
     return {
       isError: true,
       content: [{ type: "text", text: `trigger_mention failed: ${JSON.stringify(response.json)}` }]
+    };
+  }
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(response.json) }]
+  };
+}
+
+async function callRequestDecision(params: {
+  title: string;
+  description?: string;
+  options: Array<{ id: string; label: string; description?: string }>;
+  multiSelect?: boolean;
+}): Promise<ToolResult> {
+  if (!params.options?.length || params.options.length < 2) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: "至少需要 2 个选项。" }]
+    };
+  }
+
+  const identity = getCallbackIdentity();
+  const response = await requestJson(`${identity.apiUrl}/api/callbacks/request-decision`, {
+    method: "POST",
+    body: {
+      invocationId: identity.invocationId,
+      callbackToken: identity.callbackToken,
+      title: params.title,
+      description: params.description,
+      options: params.options,
+      multiSelect: params.multiSelect ?? false,
+    }
+  });
+
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `request_decision failed: ${JSON.stringify(response.json)}` }]
     };
   }
 
@@ -505,6 +569,13 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
       return callTriggerMention(args as { targetAgentId: string; taskSnippet: string });
     case "get_memory":
       return callGetMemory(args?.keyword as string | undefined);
+    case "request_decision":
+      return callRequestDecision(args as {
+        title: string;
+        description?: string;
+        options: Array<{ id: string; label: string; description?: string }>;
+        multiSelect?: boolean;
+      });
     case "parallel_think":
       return callParallelThink(args as {
         targets: string[];

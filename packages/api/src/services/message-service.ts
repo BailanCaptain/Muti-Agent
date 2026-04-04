@@ -11,6 +11,7 @@ import type {
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
 import { type ParallelGroup, ParallelGroupRegistry } from "../orchestrator/parallel-group"
 import { runTurn } from "../runtime/cli-orchestrator"
+import type { DecisionManager } from "../orchestrator/decision-manager"
 import type { SkillRegistry } from "../skills/registry"
 import type { SopTracker } from "../skills/sop-tracker"
 import type { SessionService } from "./session-service"
@@ -101,6 +102,7 @@ export class MessageService {
   private readonly flushingGroups = new Set<string>()
   private readonly parallelGroups = new ParallelGroupRegistry()
   private approvals: ApprovalManager | null = null
+  private decisions: DecisionManager | null = null
   private skillRegistry: SkillRegistry | null = null
   private sopTracker: SopTracker | null = null
 
@@ -114,6 +116,10 @@ export class MessageService {
 
   setApprovalManager(manager: ApprovalManager) {
     this.approvals = manager
+  }
+
+  setDecisionManager(manager: DecisionManager) {
+    this.decisions = manager
   }
 
   setSkillRegistry(registry: SkillRegistry) {
@@ -778,7 +784,7 @@ export class MessageService {
       this.parallelGroups.handleTimeout(group.id)
       const timedOutGroup = this.parallelGroups.get(group.id)
       if (timedOutGroup) {
-        this.notifyCallbackAgent(sessionGroupId, timedOutGroup, params.emit)
+        void this.selectFanInAndNotify(sessionGroupId, timedOutGroup, params.emit)
       }
     })
 
@@ -807,6 +813,61 @@ export class MessageService {
     }
 
     return { ok: true, groupId: group.id }
+  }
+
+  /**
+   * Present a multi-choice decision card to the user.
+   * Returns the selected option IDs.
+   */
+  async requestDecision(params: {
+    kind: "multi_choice" | "fan_in_selector"
+    title: string
+    description?: string
+    options: Array<{ id: string; label: string; description?: string; provider?: import("@multi-agent/shared").Provider }>
+    sessionGroupId: string
+    sourceProvider?: import("@multi-agent/shared").Provider
+    sourceAlias?: string
+    multiSelect?: boolean
+  }): Promise<string[]> {
+    if (!this.decisions) return []
+    return this.decisions.request(params)
+  }
+
+  /**
+   * Ask the user to pick which agent should synthesize the parallel results,
+   * then route the summary to that agent.
+   */
+  private async selectFanInAndNotify(
+    sessionGroupId: string,
+    group: ParallelGroup,
+    emit: EmitEvent,
+  ): Promise<void> {
+    const { PROVIDER_ALIASES, PROVIDERS } = await import("@multi-agent/shared")
+
+    // Build fan-in options from all available agents
+    const options = PROVIDERS.map((p) => ({
+      id: p,
+      label: PROVIDER_ALIASES[p],
+      description: `由 ${PROVIDER_ALIASES[p]} 综合各方观点`,
+      provider: p,
+    }))
+
+    if (this.decisions) {
+      const selectedIds = await this.decisions.request({
+        kind: "fan_in_selector",
+        title: "选择扇入综合者",
+        description: "并行思考已完成，请选择由哪个 agent 来综合各方观点",
+        options,
+        sessionGroupId,
+        multiSelect: false,
+      })
+
+      if (selectedIds.length > 0) {
+        group.callbackTo = selectedIds[0] as import("@multi-agent/shared").Provider
+      }
+    }
+
+    this.notifyCallbackAgent(sessionGroupId, group, emit)
   }
 
   private notifyCallbackAgent(
