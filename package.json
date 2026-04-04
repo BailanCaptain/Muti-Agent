@@ -14,7 +14,9 @@
     "start": "next start",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "typecheck": "tsc --noEmit && pnpm --filter @multi-agent/shared typecheck && pnpm --filter @multi-agent/api typecheck"
+    "typecheck": "tsc --noEmit && pnpm --filter @multi-agent/shared typecheck && pnpm --filter @multi-agent/api typecheck",
+    "setup:skills": "bash scripts/mount-skills.sh",
+    "check:skills": "npx tsx scripts/check-skills.ts"
   },
   "dependencies": {
     "@multi-agent/shared": "workspace:*",

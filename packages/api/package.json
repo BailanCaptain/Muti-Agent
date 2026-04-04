@@ -10,12 +10,13 @@
     "mcp": "tsc -p tsconfig.json && node dist/mcp/server.js"
   },
   "dependencies": {
-    "@multi-agent/shared": "workspace:*",
     "@fastify/cors": "^10.0.2",
     "@fastify/websocket": "^11.0.2",
+    "@multi-agent/shared": "workspace:*",
     "fastify": "^5.2.1"
   },
   "devDependencies": {
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "yaml": "^2.8.3"
   }
 }

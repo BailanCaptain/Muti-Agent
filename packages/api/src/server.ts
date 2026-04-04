@@ -20,6 +20,8 @@ import { awaitRunsToStop } from "./runtime/shutdown"
 import { MemoryService } from "./services/memory-service"
 import { MessageService } from "./services/message-service"
 import { SessionService } from "./services/session-service"
+import { SkillRegistry } from "./skills/registry"
+import { SopTracker } from "./skills/sop-tracker"
 
 export async function createApiServer(options: {
   apiBaseUrl: string
@@ -44,6 +46,12 @@ export async function createApiServer(options: {
   const memoryService = new MemoryService(repository)
   const approvals = new ApprovalManager((event) => broadcaster.broadcast(event))
   messages.setApprovalManager(approvals)
+  const skillRegistry = new SkillRegistry()
+  const manifestPath = new URL("../../../multi-agent-skills/manifest.yaml", import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")
+  skillRegistry.loadManifest(manifestPath)
+  const sopTracker = new SopTracker()
+  messages.setSkillRegistry(skillRegistry)
+  messages.setSopTracker(sopTracker)
   const redisSummary = getRedisReservation(options.redisUrl)
 
   eventBus.on("invocation.started", (event) => {

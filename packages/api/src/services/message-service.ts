@@ -11,6 +11,8 @@ import type {
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
 import { ParallelGroupRegistry } from "../orchestrator/parallel-group"
 import { runTurn } from "../runtime/cli-orchestrator"
+import type { SkillRegistry } from "../skills/registry"
+import type { SopTracker } from "../skills/sop-tracker"
 import type { SessionService } from "./session-service"
 
 type ActiveRun = ReturnType<typeof runTurn>
@@ -99,6 +101,8 @@ export class MessageService {
   private readonly flushingGroups = new Set<string>()
   private readonly parallelGroups = new ParallelGroupRegistry()
   private approvals: ApprovalManager | null = null
+  private skillRegistry: SkillRegistry | null = null
+  private sopTracker: SopTracker | null = null
 
   constructor(
     private readonly sessions: SessionService,
@@ -110,6 +114,14 @@ export class MessageService {
 
   setApprovalManager(manager: ApprovalManager) {
     this.approvals = manager
+  }
+
+  setSkillRegistry(registry: SkillRegistry) {
+    this.skillRegistry = registry
+  }
+
+  setSopTracker(tracker: SopTracker) {
+    this.sopTracker = tracker
   }
 
   handleClientEvent(event: RealtimeClientEvent, emit: EmitEvent) {
@@ -270,10 +282,13 @@ export class MessageService {
     })
     this.emitBlockedDispatches(enqueueResult, emit)
 
+    // Inject skill hint into the prompt sent to the direct thread's CLI.
+    const effectiveContent = this.prependSkillHint(event.payload.content, thread.provider)
+
     // The user's message was sent to a specific thread — run that thread's turn concurrently with queued dispatches.
     const directTurn = this.runThreadTurn({
       threadId: thread.id,
-      content: event.payload.content,
+      content: effectiveContent,
       emit,
       rootMessageId,
     })
@@ -470,6 +485,9 @@ export class MessageService {
         this.emitBlockedDispatches(enqueueResult, options.emit)
       }
 
+      // SOP advancement: if a skill was active, advance to next stage
+      this.advanceSopIfNeeded(thread.sessionGroupId, options.content, options.emit)
+
       this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
       await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
     } catch (error) {
@@ -584,11 +602,18 @@ export class MessageService {
       ? `[用户请求]`
       : `[A2A 协作请求 from ${entry.from.agentId}]`
 
+    // Match skills against taskSnippet for the target agent's provider
+    const skillHintLine = this.buildSkillHintLine(
+      entry.taskSnippet,
+      entry.to.provider as import("@multi-agent/shared").Provider,
+    )
+
     return [
       header,
       ``,
       `任务: ${entry.taskSnippet}`,
       ``,
+      ...(skillHintLine ? [skillHintLine, ``] : []),
       `--- 上下文快照 (${entry.contextSnapshot.length} 条消息) ---`,
       ...entry.contextSnapshot.map((m) => `[${m.agentId}]: ${m.content.slice(0, 300)}`),
       `---`,
@@ -662,5 +687,59 @@ export class MessageService {
     }
 
     return null
+  }
+
+  // ── Skill hint helpers ──────────────────────────────────────────────
+
+  private prependSkillHint(content: string, provider: import("@multi-agent/shared").Provider): string {
+    if (!this.skillRegistry) return content
+
+    // Slash command takes priority over trigger matching
+    const slashSkill = this.skillRegistry.matchSlashCommand(content)
+    if (slashSkill) {
+      return `⚡ 加载 skill: ${slashSkill.name} — 请按 skill 流程执行。\n\n${content}`
+    }
+
+    const matched = this.skillRegistry.match(content, provider)
+    if (!matched.length) return content
+
+    const names = matched.map((m) => m.skill.name).join(", ")
+    return `⚡ 匹配 skill: ${names} — 请加载并按 skill 流程执行。\n\n${content}`
+  }
+
+  private buildSkillHintLine(
+    content: string,
+    provider: import("@multi-agent/shared").Provider,
+  ): string | null {
+    if (!this.skillRegistry) return null
+
+    const matched = this.skillRegistry.match(content, provider)
+    if (!matched.length) return null
+
+    const names = matched.map((m) => m.skill.name).join(", ")
+    return `⚡ 匹配 skill: ${names} — 请加载并按 skill 流程执行。`
+  }
+
+  private advanceSopIfNeeded(sessionGroupId: string, content: string, emit: EmitEvent): void {
+    if (!this.skillRegistry || !this.sopTracker) return
+
+    // Determine which skill was just active by matching the content
+    const matched = this.skillRegistry.match(content)
+    if (!matched.length) return
+
+    for (const { skill } of matched) {
+      const nextStage = this.sopTracker.advance(sessionGroupId, skill.name, this.skillRegistry)
+      if (nextStage) {
+        const sopInfo = this.skillRegistry.getSopStage(nextStage)
+        const skillSuggestion = sopInfo?.suggestedSkill
+          ? ` 建议加载 skill: ${sopInfo.suggestedSkill}`
+          : ""
+        emit({
+          type: "status",
+          payload: { message: `SOP 推进到 ${nextStage}。${skillSuggestion}` },
+        })
+        break // Only advance once per turn
+      }
+    }
   }
 }

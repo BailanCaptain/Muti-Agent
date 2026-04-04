@@ -1,0 +1,190 @@
+# Multi-Agent Skills Manifest — 路由单一真相源
+# 更新日期：2026-04-05
+
+skills:
+
+  feat-lifecycle:
+    description: 新功能/bugfix/重构的全生命周期管理
+    triggers:
+      - "新功能"
+      - "bugfix"
+      - "重构"
+      - "开发任务"
+      - "feat"
+    not_for:
+      - "纯文档"
+      - "纯讨论"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: ["writing-plans"]
+    sop_step: null
+    slashCommands:
+      - name: "/feat"
+        description: "启动功能生命周期"
+
+  ask-dont-guess:
+    description: 关键前提不确定时强制提问
+    triggers:
+      - "不确定"
+      - "不清楚"
+      - "需要确认"
+      - "我猜"
+    not_for: []
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: []
+    sop_step: null
+    slashCommands: []
+
+  cross-role-handoff:
+    description: 跨角色交接，输出五件套
+    triggers:
+      - "交接"
+      - "传话"
+      - "handoff"
+      - "转交"
+    not_for:
+      - "自己的任务"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: []
+    sop_step: null
+    slashCommands:
+      - name: "/handoff"
+        description: "跨角色交接"
+
+  hardline-review:
+    description: 严格 review，P1/P2/P3 分级
+    triggers:
+      - "review 一下"
+      - "帮我审查"
+      - "代码审查"
+      - "review this"
+      - "执行 review"
+    not_for:
+      - "请 review"
+      - "review 结果"
+      - "review 意见"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: []
+    sop_step: null
+    slashCommands:
+      - name: "/review"
+        description: "执行严格 review"
+
+  requesting-review:
+    description: 请求 reviewer 审查，先自检再提交
+    triggers:
+      - "请 review"
+      - "帮我看看"
+      - "request review"
+      - "准备 review"
+    not_for:
+      - "收到 review"
+      - "review 意见"
+      - "执行 review"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: ["receiving-review"]
+    sop_step: 3
+    slashCommands:
+      - name: "/request-review"
+        description: "请求 review"
+
+  receiving-review:
+    description: 收到 review 反馈，Red→Green 修复
+    triggers:
+      - "review 结果"
+      - "review 意见"
+      - "reviewer 说"
+      - "fix these"
+      - "修复 review"
+    not_for:
+      - "请 review"
+      - "发 review"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: ["merge-approval-gate"]
+    sop_step: 3
+    slashCommands: []
+
+  merge-approval-gate:
+    description: 合入门禁，检查 reviewer 是否放行
+    triggers:
+      - "合入"
+      - "merge"
+      - "准备合入"
+      - "合并 PR"
+    not_for:
+      - "开发中"
+      - "review 未通过"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: []
+    sop_step: [4, 5]
+    slashCommands:
+      - name: "/merge"
+        description: "合入门禁检查"
+
+# SOP 导航牌
+sop_navigation:
+  writing-plans:
+    suggested_skill: null
+    hard_rules:
+      - "计划必须包含 TDD 步骤和检查点"
+    pitfalls:
+      - "没有对齐就直接写代码"
+
+  tdd:
+    suggested_skill: null
+    hard_rules:
+      - "没有失败的测试，就没有实现代码"
+    pitfalls:
+      - "先写实现再补测试"
+
+  quality-gate:
+    suggested_skill: null
+    hard_rules:
+      - "测试全部通过才能进入 review"
+    pitfalls:
+      - "声称完成但没跑全量测试"
+
+  request-review:
+    suggested_skill: requesting-review
+    hard_rules:
+      - "自检报告必须先完成"
+      - "Review 请求必须明确范围和风险点"
+    pitfalls:
+      - "没自检就提 review"
+
+  receive-review:
+    suggested_skill: receiving-review
+    hard_rules:
+      - "P1/P2 必须在当前迭代修完"
+      - "禁止表演性同意"
+    pitfalls:
+      - "收到 P1 修完后没 re-trigger review"
+
+  merge-gate:
+    suggested_skill: merge-approval-gate
+    hard_rules:
+      - "必须有 reviewer 明确放行"
+    pitfalls:
+      - "reviewer 没说 APPROVED 就合入"
+
+# Lint 规则
+lint:
+  rules:
+    - id: has-triggers
+      check: "每个 skill 必须有 triggers 和 not_for"
+    - id: has-description
+      check: "每个 skill 必须有 description"
+    - id: next-exists
+      check: "next 指向的 skill 必须在 manifest 中存在或标注为 planned"
+    - id: has-skill-md
+      check: "每个 skill 必须有对应的 SKILL.md 文件"
+    - id: slash-unique
+      check: "slashCommands.name 全局唯一"
+    - id: agents-valid
+      check: "agents 只能是 claude/codex/gemini"
