@@ -10,7 +10,7 @@ import type {
   QueueEntry,
 } from "../orchestrator/dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
-import { generateAggregatedResult, generatePhase2Result } from "../orchestrator/aggregate-result"
+import { generateAggregatedResult } from "../orchestrator/aggregate-result"
 import { type ParallelGroup, ParallelGroupRegistry } from "../orchestrator/parallel-group"
 import { buildPhase1Header } from "../orchestrator/phase1-header"
 import { buildPhase2Turn } from "../orchestrator/phase2-header"
@@ -913,11 +913,8 @@ export class MessageService {
   /**
    * Parallel group terminal handler (allDone / timeout).
    *
-   * 1. Render aggregate markdown from completedResults.
-   * 2. Append ConnectorMessage to originator thread, broadcast message.created.
-   * 3. Split on initiatedBy:
-   *    - user  → pop fan_in_selector card, route aggregate to chosen provider
-   *    - agent → route aggregate directly to group.callbackTo (set by parallel_think)
+   * - user  → compact Phase 2 header, run serial discussion, pop fan-in card
+   * - agent → emit Phase 1 aggregate bubble, route to group.callbackTo
    */
   private async handleParallelGroupAllDone(
     sessionGroupId: string,
@@ -935,50 +932,43 @@ export class MessageService {
       sessionGroupId,
       group.originatorProvider,
     )
-    if (originatorThread) {
-      const connectorSource: ConnectorSource = {
-        kind: "multi_mention_result",
-        label: "并行思考结果",
-        initiator: group.initiatedBy === "agent" ? group.originatorProvider : undefined,
-        targets: group.participantProviders,
-      }
-      const connectorMessage = this.sessions.appendConnectorMessage(
-        originatorThread.id,
-        aggregate,
-        connectorSource,
-      )
-      const timelineMessage = this.sessions.toTimelineMessage(
-        originatorThread.id,
-        connectorMessage.id,
-      )
-      if (timelineMessage) {
-        emit({
-          type: "message.created",
-          payload: { threadId: originatorThread.id, message: timelineMessage },
-        })
-      }
-    }
 
     if (group.initiatedBy === "user") {
-      // Always run Phase 2 serial discussion (2-3 rounds, may end early on
-      // consensus). Only then ask the user for next-step input.
+      // User-initiated: don't emit the Phase 1 aggregate bubble (it duplicates
+      // each agent's individual reply already visible in the timeline). Just
+      // drop a compact Phase 2 header before the serial discussion starts.
+      await this.emitPhase2HeaderConnector(originatorThread, group, emit)
       await this.runPhase2SerialDiscussion(sessionGroupId, group, aggregate, emit)
-      await this.emitPhase2ConnectorMessage(sessionGroupId, group, emit)
-      const synthesizerInput = this.buildSynthesizerInput(group, aggregate)
-      await this.selectFanInAndNotify(sessionGroupId, group, synthesizerInput, emit)
+      await this.selectFanInAndNotify(sessionGroupId, group, emit)
     } else {
+      // Agent-initiated (parallel_think tool): the callback agent did NOT
+      // participate, so it has no context in its CLI session. It still needs
+      // the full aggregate, and the bubble helps the user follow along.
+      if (originatorThread) {
+        const connectorSource: ConnectorSource = {
+          kind: "multi_mention_result",
+          label: "并行思考结果",
+          initiator: group.originatorProvider,
+          targets: group.participantProviders,
+        }
+        const connectorMessage = this.sessions.appendConnectorMessage(
+          originatorThread.id,
+          aggregate,
+          connectorSource,
+        )
+        const timelineMessage = this.sessions.toTimelineMessage(
+          originatorThread.id,
+          connectorMessage.id,
+        )
+        if (timelineMessage) {
+          emit({
+            type: "message.created",
+            payload: { threadId: originatorThread.id, message: timelineMessage },
+          })
+        }
+      }
       this.notifyCallbackAgent(sessionGroupId, group, aggregate, emit)
     }
-  }
-
-  /**
-   * Combine Phase 1 aggregate with Phase 2 replies (if any) for the
-   * synthesizer. The synthesizer needs both signals: independent positions
-   * AND the discussion that followed.
-   */
-  private buildSynthesizerInput(group: ParallelGroup, phase1Aggregate: string): string {
-    if (group.phase2Replies.length === 0) return phase1Aggregate
-    return `${phase1Aggregate}\n\n${generatePhase2Result(group.phase2Replies, PROVIDER_ALIASES)}`
   }
 
   /**
@@ -1074,32 +1064,28 @@ export class MessageService {
   }
 
   /**
-   * Emit the Phase 2 discussion summary as a connector message in the
-   * originator's thread, matching the Phase 1 connector placement.
+   * Compact Phase 2 header bubble placed in the timeline BEFORE the serial
+   * discussion starts. It's a visual marker/separator — no transcript. The
+   * individual agent replies stream in naturally as regular bubbles under it.
    */
-  private async emitPhase2ConnectorMessage(
-    sessionGroupId: string,
+  private async emitPhase2HeaderConnector(
+    originatorThread: { id: string } | null,
     group: ParallelGroup,
     emit: EmitEvent,
   ): Promise<void> {
-    if (group.phase2Replies.length === 0) return
-
-    const originatorThread = this.sessions.findThreadByGroupAndProvider(
-      sessionGroupId,
-      group.originatorProvider,
-    )
     if (!originatorThread) return
 
-    const phase2Aggregate = generatePhase2Result(group.phase2Replies, PROVIDER_ALIASES)
+    // Header-only marker: the bubble header (label + participant avatars)
+    // already conveys the info. No body content — the individual agent
+    // replies appear below as normal bubbles in the timeline.
     const connectorSource: ConnectorSource = {
       kind: "multi_mention_result",
-      label: "串行讨论记录",
-      initiator: group.initiatedBy === "agent" ? group.originatorProvider : undefined,
+      label: "串行讨论",
       targets: group.participantProviders,
     }
     const connectorMessage = this.sessions.appendConnectorMessage(
       originatorThread.id,
-      phase2Aggregate,
+      "",
       connectorSource,
     )
     const timelineMessage = this.sessions.toTimelineMessage(
@@ -1126,7 +1112,6 @@ export class MessageService {
   private async selectFanInAndNotify(
     sessionGroupId: string,
     group: ParallelGroup,
-    aggregate: string,
     emit: EmitEvent,
   ): Promise<void> {
     // Options scoped to this group's participants only — not all providers,
@@ -1160,7 +1145,7 @@ export class MessageService {
 
     if (selectedProvider) {
       group.callbackTo = selectedProvider
-      this.runSynthesizerTurn(sessionGroupId, group, aggregate, userInput, emit)
+      this.runSynthesizerTurn(sessionGroupId, group, userInput, emit)
       return
     }
 
@@ -1178,13 +1163,13 @@ export class MessageService {
   }
 
   /**
-   * Run the chosen synthesizer on the aggregate, optionally merging the
-   * user's additional instruction into the prompt.
+   * Run the chosen synthesizer with a MINIMAL prompt. The synthesizer is one
+   * of the parallel participants — its CLI native session already contains
+   * Phase 1 + all Phase 2 prompts/replies, so we don't re-dump the aggregate.
    */
   private runSynthesizerTurn(
     sessionGroupId: string,
     group: ParallelGroup,
-    aggregate: string,
     userInstruction: string,
     emit: EmitEvent,
   ): void {
@@ -1196,10 +1181,9 @@ export class MessageService {
     )
     if (!callbackThread) return
 
-    const instruction = userInstruction
-      ? `村长补充：${userInstruction}\n\n请按村长的要求综合以下讨论。`
-      : `请综合以上各方观点，整理共识、分歧和行动项。`
-    const prompt = `${aggregate}\n${instruction}`
+    const prompt = userInstruction
+      ? `${userInstruction}\n\n（请基于刚才并行+串行讨论的上下文回答；你已经看到过所有人的观点）`
+      : `请综合刚才并行+串行讨论的各方观点，整理共识、分歧和行动项。你已经看到过所有人的观点。`
     const rootMessage = this.sessions.appendUserMessage(callbackThread.id, prompt)
 
     this.runThreadTurn({
