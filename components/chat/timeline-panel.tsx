@@ -5,6 +5,7 @@ import { useDecisionStore } from "@/components/stores/decision-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { useEffect, useRef } from "react"
 import { ApprovalCard } from "./approval-card"
+import { ConnectorBubble } from "./connector-bubble"
 import { DecisionCard } from "./decision-card"
 import { MessageBubble } from "./message-bubble"
 
@@ -36,13 +37,17 @@ export function TimelinePanel() {
             </div>
           </div>
         ) : (
-          timeline.map((message) => (
-            <MessageBubble
-              key={message.id}
-              message={message}
-              onCopy={(content) => navigator.clipboard.writeText(content)}
-            />
-          ))
+          timeline.map((message) =>
+            message.messageType === "connector" ? (
+              <ConnectorBubble key={message.id} message={message} />
+            ) : (
+              <MessageBubble
+                key={message.id}
+                message={message}
+                onCopy={(content) => navigator.clipboard.writeText(content)}
+              />
+            ),
+          )
         )}
         {pendingDecisions.map((request) => (
           <DecisionCard key={request.requestId} request={request} onRespond={respondDecision} />
