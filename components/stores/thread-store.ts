@@ -174,14 +174,21 @@ function normalizeContentForBackend(input: string, tokens: MentionToken[]): stri
     })
   }
 
-  // Normalize English provider aliases to Chinese names so the backend mention-router matches.
+  // Normalize English provider aliases to Chinese names, and drop duplicate mentions of the same
+  // provider (keeping only the first occurrence). Deduping matters because @所有人 expands into
+  // all three names, which would collide with any explicit @name the user already typed.
+  const seenProviders = new Set<Provider>()
   expanded = expanded.replace(MENTION_SCAN_REGEX, (raw, alias: string) => {
     if (alias === EVERYONE_TOKEN) return raw
     const provider = resolveAliasToProvider(alias.toLowerCase())
     if (!provider) return raw
-    const canonical = `@${PROVIDER_ALIASES[provider]}`
-    return canonical
+    if (seenProviders.has(provider)) return ""
+    seenProviders.add(provider)
+    return `@${PROVIDER_ALIASES[provider]}`
   })
+
+  // Collapse double spaces left behind by dropped duplicates.
+  expanded = expanded.replace(/ {2,}/g, " ")
 
   return expanded
 }

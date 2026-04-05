@@ -44,7 +44,7 @@ export class CodexRuntime extends BaseCliRuntime {
   parseActivityLine(event: Record<string, unknown>): string | null {
     try {
       const type = event.type as string | undefined;
-      const item = event.item as { type?: string; command?: string; output?: string; path?: string } | undefined;
+      const item = event.item as { type?: string; command?: string; output?: string; path?: string; text?: string } | undefined;
 
       if (!type || !item) {
         return null;
@@ -58,6 +58,18 @@ export class CodexRuntime extends BaseCliRuntime {
 
       if (type === "turn.completed") {
         return null;
+      }
+
+      // Reasoning models (gpt-5/5.4) silently think for seconds before first output token.
+      // Surfacing the started marker + the final reasoning text into the thinking bubble
+      // gives the user visible feedback during what would otherwise be a dead-air gap.
+      if (type === "item.started" && itemType === "reasoning") {
+        return "🧠 正在推理...";
+      }
+
+      if (type === "item.completed" && itemType === "reasoning") {
+        const text = (item.text ?? "").trim();
+        return text ? text : null;
       }
 
       if ((type === "item.started") && itemType === "command_execution") {
@@ -86,6 +98,13 @@ export class CodexRuntime extends BaseCliRuntime {
 
   parseAssistantDelta(event: Record<string, unknown>) {
     const item = event.item as { type?: string; text?: string } | undefined;
+
+    // Reasoning items are surfaced via parseActivityLine into the thinking bubble,
+    // so they must not leak into the assistant's visible text output.
+    if (item?.type === "reasoning") {
+      return "";
+    }
+
     const delta =
       typeof event.delta === "string"
         ? event.delta
