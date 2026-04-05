@@ -1,8 +1,13 @@
 import type { DecisionRequest, Provider, RealtimeServerEvent } from "@multi-agent/shared"
 
+export type DecisionResponse = {
+  selectedIds: string[]
+  userInput: string
+}
+
 type PendingDecision = {
   request: DecisionRequest
-  resolve: (selectedIds: string[]) => void
+  resolve: (response: DecisionResponse) => void
   timer: ReturnType<typeof setTimeout>
 }
 
@@ -17,7 +22,7 @@ export class DecisionManager {
 
   /**
    * Send a decision request to the frontend and wait for the response.
-   * Returns the selected option IDs.
+   * Returns the user's selections and (optional) free-text input.
    */
   request(params: {
     kind: DecisionRequest["kind"]
@@ -28,8 +33,10 @@ export class DecisionManager {
     sourceProvider?: Provider
     sourceAlias?: string
     multiSelect?: boolean
+    allowTextInput?: boolean
+    textInputPlaceholder?: string
     timeoutMs?: number
-  }): Promise<string[]> {
+  }): Promise<DecisionResponse> {
     const requestId = crypto.randomUUID()
     const request: DecisionRequest = {
       requestId,
@@ -41,21 +48,21 @@ export class DecisionManager {
       sourceProvider: params.sourceProvider,
       sourceAlias: params.sourceAlias,
       multiSelect: params.multiSelect,
+      allowTextInput: params.allowTextInput,
+      textInputPlaceholder: params.textInputPlaceholder,
       createdAt: new Date().toISOString(),
     }
 
-    return new Promise<string[]>((resolve) => {
+    return new Promise<DecisionResponse>((resolve) => {
       const timeoutMs = params.timeoutMs ?? 5 * 60 * 1000
       const timer = setTimeout(() => {
         this.pending.delete(requestId)
         // Default to first option on timeout
-        resolve(request.options.length > 0 ? [request.options[0].id] : [])
+        const fallbackIds = request.options.length > 0 ? [request.options[0].id] : []
+        resolve({ selectedIds: fallbackIds, userInput: "" })
         this.emit({
           type: "decision.resolved",
-          payload: {
-            requestId,
-            selectedIds: request.options.length > 0 ? [request.options[0].id] : [],
-          },
+          payload: { requestId, selectedIds: fallbackIds },
         })
       }, timeoutMs)
 
@@ -64,17 +71,21 @@ export class DecisionManager {
     })
   }
 
-  respond(requestId: string, selectedIds: string[]): void {
+  respond(requestId: string, selectedIds: string[], userInput?: string): void {
     const entry = this.pending.get(requestId)
     if (!entry) return
 
     clearTimeout(entry.timer)
     this.pending.delete(requestId)
-    entry.resolve(selectedIds)
+    entry.resolve({ selectedIds, userInput: userInput ?? "" })
 
     this.emit({
       type: "decision.resolved",
-      payload: { requestId, selectedIds },
+      payload: {
+        requestId,
+        selectedIds,
+        ...(userInput ? { userInput } : {}),
+      },
     })
   }
 }

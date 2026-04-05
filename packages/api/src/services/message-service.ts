@@ -1,4 +1,5 @@
 import type { ConnectorSource, RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared"
+import { PROVIDER_ALIASES } from "@multi-agent/shared"
 import type { AppEventBus } from "../events/event-bus"
 import type { ApprovalManager } from "../orchestrator/approval-manager"
 import type { ContextMessage } from "../orchestrator/context-snapshot"
@@ -9,9 +10,10 @@ import type {
   QueueEntry,
 } from "../orchestrator/dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
-import { generateAggregatedResult } from "../orchestrator/aggregate-result"
+import { generateAggregatedResult, generatePhase2Result } from "../orchestrator/aggregate-result"
 import { type ParallelGroup, ParallelGroupRegistry } from "../orchestrator/parallel-group"
 import { buildPhase1Header } from "../orchestrator/phase1-header"
+import { buildPhase2Turn } from "../orchestrator/phase2-header"
 import { runTurn } from "../runtime/cli-orchestrator"
 import type { DecisionManager } from "../orchestrator/decision-manager"
 import type { SkillRegistry } from "../skills/registry"
@@ -298,6 +300,19 @@ export class MessageService {
     })
     this.emitBlockedDispatches(enqueueResult, emit)
 
+    // If the panel thread's provider joined the parallel group (user @'d 2+ agents including
+    // this one), skip directTurn — queueFlush will dispatch it as part of the fan-out,
+    // ensuring it's a real participant of the parallel group. Otherwise directTurn would
+    // run outside the group and fan-in would fire early with one agent still thinking.
+    const sourceInQueue = enqueueResult.queued.some(
+      (entry) => entry.to.provider === thread.provider,
+    )
+
+    if (sourceInQueue) {
+      await this.flushDispatchQueue(thread.sessionGroupId, emit)
+      return
+    }
+
     // Inject skill hint into the prompt sent to the direct thread's CLI.
     const effectiveContent = this.prependSkillHint(event.payload.content, thread.provider)
 
@@ -318,6 +333,12 @@ export class MessageService {
     emit: EmitEvent
     rootMessageId: string
     parentInvocationId?: string | null
+    /**
+     * When true, skip processing @-mentions in the reply. Used for terminal
+     * turns (synthesizer, Phase 2) where further fan-out would cascade
+     * unintended agent runs. Default false.
+     */
+    suppressOutboundDispatch?: boolean
   }): Promise<{ messageId: string; content: string } | null> {
     const thread = this.dispatch.resolveThread(options.threadId)
     if (!thread) {
@@ -485,7 +506,7 @@ export class MessageService {
         createdAt: new Date().toISOString(),
       })
 
-      if (!promptRequestedByCli && result.content.trim()) {
+      if (!promptRequestedByCli && result.content.trim() && !options.suppressOutboundDispatch) {
         const enqueueResult = this.dispatch.enqueuePublicMentions({
           messageId: assistant.id,
           sessionGroupId: thread.sessionGroupId,
@@ -572,6 +593,7 @@ export class MessageService {
 
         await Promise.allSettled(
           batch.map(async ({ entry, threadId }) => {
+            let slotReleased = false
             try {
               const turnResult = await this.runThreadTurn({
                 threadId,
@@ -592,6 +614,12 @@ export class MessageService {
                   },
                 )
                 if (joinResult?.allDone) {
+                  // Release slot BEFORE Phase 2 / fan-in — those call
+                  // runThreadTurn on THIS same provider (the last to complete)
+                  // and user-followup paths use getBusyStatus which checks
+                  // the slot. Holding it here would deadlock both.
+                  this.dispatch.releaseSlot(sessionGroupId, entry.to.provider)
+                  slotReleased = true
                   await this.handleParallelGroupAllDone(
                     sessionGroupId,
                     joinResult.group,
@@ -601,7 +629,9 @@ export class MessageService {
                 }
               }
             } finally {
-              this.dispatch.releaseSlot(sessionGroupId, entry.to.provider)
+              if (!slotReleased) {
+                this.dispatch.releaseSlot(sessionGroupId, entry.to.provider)
+              }
             }
           }),
         )
@@ -876,7 +906,8 @@ export class MessageService {
     multiSelect?: boolean
   }): Promise<string[]> {
     if (!this.decisions) return []
-    return this.decisions.request(params)
+    const response = await this.decisions.request(params)
+    return response.selectedIds
   }
 
   /**
@@ -929,15 +960,168 @@ export class MessageService {
     }
 
     if (group.initiatedBy === "user") {
-      await this.selectFanInAndNotify(sessionGroupId, group, aggregate, emit)
+      // Always run Phase 2 serial discussion (2-3 rounds, may end early on
+      // consensus). Only then ask the user for next-step input.
+      await this.runPhase2SerialDiscussion(sessionGroupId, group, aggregate, emit)
+      await this.emitPhase2ConnectorMessage(sessionGroupId, group, emit)
+      const synthesizerInput = this.buildSynthesizerInput(group, aggregate)
+      await this.selectFanInAndNotify(sessionGroupId, group, synthesizerInput, emit)
     } else {
       this.notifyCallbackAgent(sessionGroupId, group, aggregate, emit)
     }
   }
 
   /**
-   * Ask the user to pick which agent should synthesize the parallel results,
-   * then route the aggregate to that agent.
+   * Combine Phase 1 aggregate with Phase 2 replies (if any) for the
+   * synthesizer. The synthesizer needs both signals: independent positions
+   * AND the discussion that followed.
+   */
+  private buildSynthesizerInput(group: ParallelGroup, phase1Aggregate: string): string {
+    if (group.phase2Replies.length === 0) return phase1Aggregate
+    return `${phase1Aggregate}\n\n${generatePhase2Result(group.phase2Replies, PROVIDER_ALIASES)}`
+  }
+
+  /**
+   * Run Phase 2 serial discussion: PHASE2_ROUNDS rounds × N agents, in
+   * participantProviders order. If an agent fails or returns empty, it's
+   * skipped in later rounds and the discussion continues with the rest.
+   */
+  private async runPhase2SerialDiscussion(
+    sessionGroupId: string,
+    group: ParallelGroup,
+    phase1Aggregate: string,
+    emit: EmitEvent,
+  ): Promise<void> {
+    // SKILL says 2-3 rounds. Default to 3 so agents get one round to react
+    // to others' reactions. If everyone's signaled [consensus], we stop early.
+    const PHASE2_ROUNDS = 3
+    const skipped = new Set<import("@multi-agent/shared").Provider>()
+    const consensusSignaled = new Set<import("@multi-agent/shared").Provider>()
+
+    emit({
+      type: "status",
+      payload: { message: `开始串行讨论（${PHASE2_ROUNDS} 轮）` },
+    })
+
+    for (let round = 1; round <= PHASE2_ROUNDS; round++) {
+      for (const provider of group.participantProviders) {
+        if (skipped.has(provider)) continue
+
+        const thread = this.sessions.findThreadByGroupAndProvider(sessionGroupId, provider)
+        if (!thread) {
+          skipped.add(provider)
+          continue
+        }
+
+        const prompt = buildPhase2Turn({
+          agentAlias: thread.alias,
+          round,
+          totalRounds: PHASE2_ROUNDS,
+          phase1Aggregate,
+          priorReplies: group.phase2Replies,
+          aliases: PROVIDER_ALIASES,
+        })
+
+        let turnResult: { messageId: string; content: string } | null = null
+        try {
+          turnResult = await this.runThreadTurn({
+            threadId: thread.id,
+            content: prompt,
+            emit,
+            rootMessageId: group.parentMessageId,
+            suppressOutboundDispatch: true,
+          })
+        } catch {
+          turnResult = null
+        }
+
+        if (!turnResult || !turnResult.content.trim()) {
+          skipped.add(provider)
+          continue
+        }
+
+        this.parallelGroups.addPhase2Reply(group.id, {
+          round,
+          provider,
+          messageId: turnResult.messageId,
+          content: turnResult.content,
+        })
+
+        // Track per-round consensus signal. Reset next round so the signal
+        // has to be repeated — prevents a stale signal ending the discussion
+        // after someone else raises a new point.
+        if (/\[consensus\]\s*$/i.test(turnResult.content.trim())) {
+          consensusSignaled.add(provider)
+        }
+      }
+
+      // Early termination: from round 2 onward, if every still-active agent
+      // signaled consensus THIS round, the discussion has converged.
+      if (round >= 2) {
+        const activeProviders = group.participantProviders.filter((p) => !skipped.has(p))
+        const allConsensus =
+          activeProviders.length > 0 && activeProviders.every((p) => consensusSignaled.has(p))
+        if (allConsensus) {
+          emit({
+            type: "status",
+            payload: { message: `串行讨论已在第 ${round} 轮达成共识，提前结束` },
+          })
+          break
+        }
+      }
+      consensusSignaled.clear()
+    }
+  }
+
+  /**
+   * Emit the Phase 2 discussion summary as a connector message in the
+   * originator's thread, matching the Phase 1 connector placement.
+   */
+  private async emitPhase2ConnectorMessage(
+    sessionGroupId: string,
+    group: ParallelGroup,
+    emit: EmitEvent,
+  ): Promise<void> {
+    if (group.phase2Replies.length === 0) return
+
+    const originatorThread = this.sessions.findThreadByGroupAndProvider(
+      sessionGroupId,
+      group.originatorProvider,
+    )
+    if (!originatorThread) return
+
+    const phase2Aggregate = generatePhase2Result(group.phase2Replies, PROVIDER_ALIASES)
+    const connectorSource: ConnectorSource = {
+      kind: "multi_mention_result",
+      label: "串行讨论记录",
+      initiator: group.initiatedBy === "agent" ? group.originatorProvider : undefined,
+      targets: group.participantProviders,
+    }
+    const connectorMessage = this.sessions.appendConnectorMessage(
+      originatorThread.id,
+      phase2Aggregate,
+      connectorSource,
+    )
+    const timelineMessage = this.sessions.toTimelineMessage(
+      originatorThread.id,
+      connectorMessage.id,
+    )
+    if (timelineMessage) {
+      emit({
+        type: "message.created",
+        payload: { threadId: originatorThread.id, message: timelineMessage },
+      })
+    }
+  }
+
+  /**
+   * Post-discussion user-input card. Lets the user pick a synthesizer,
+   * type a follow-up instruction, or both. Routing:
+   *   - option + text    → synthesizer runs with aggregate + user's instruction
+   *   - option only      → synthesizer runs with default synthesis prompt
+   *   - text only        → user's text becomes a new user message in the
+   *                        originator thread; normal @-routing takes over
+   *   - neither          → no-op (status only)
    */
   private async selectFanInAndNotify(
     sessionGroupId: string,
@@ -945,11 +1129,8 @@ export class MessageService {
     aggregate: string,
     emit: EmitEvent,
   ): Promise<void> {
-    const { PROVIDER_ALIASES } = await import("@multi-agent/shared")
-
     // Options scoped to this group's participants only — not all providers,
-    // and not 村长 (no self-synthesis option). User picks whose voice becomes
-    // the synthesizer.
+    // and not 村长 (no self-synthesis option).
     const options = group.participantProviders.map((p) => ({
       id: p,
       label: PROVIDER_ALIASES[p],
@@ -957,22 +1138,107 @@ export class MessageService {
       provider: p,
     }))
 
-    if (this.decisions) {
-      const selectedIds = await this.decisions.request({
-        kind: "fan_in_selector",
-        title: "选择扇入综合者",
-        description: "并行思考已完成，请选择由哪个 agent 来综合各方观点",
-        options,
-        sessionGroupId,
-        multiSelect: false,
-      })
+    if (!this.decisions) return
 
-      if (selectedIds.length > 0) {
-        group.callbackTo = selectedIds[0] as import("@multi-agent/shared").Provider
-      }
+    const response = await this.decisions.request({
+      kind: "fan_in_selector",
+      title: "下一步",
+      description:
+        "讨论已完成。选一个 agent 综合各方观点，或直接输入你的想法/下一步指令（两者可以都填）。",
+      options,
+      sessionGroupId,
+      multiSelect: false,
+      allowTextInput: true,
+      textInputPlaceholder: "想让谁做什么？或留给选定的综合者的额外指令…",
+      timeoutMs: 10 * 60 * 1000,
+    })
+
+    const selectedProvider = response.selectedIds[0] as
+      | import("@multi-agent/shared").Provider
+      | undefined
+    const userInput = response.userInput.trim()
+
+    if (selectedProvider) {
+      group.callbackTo = selectedProvider
+      this.runSynthesizerTurn(sessionGroupId, group, aggregate, userInput, emit)
+      return
     }
 
-    this.notifyCallbackAgent(sessionGroupId, group, aggregate, emit)
+    if (userInput) {
+      // No synthesizer picked — user just wants to steer. Route their text
+      // through the normal chat path so @-mentions and panel routing apply.
+      await this.injectUserFollowUp(sessionGroupId, group, userInput, emit)
+      return
+    }
+
+    emit({
+      type: "status",
+      payload: { message: "未选择综合者，讨论结果已归档" },
+    })
+  }
+
+  /**
+   * Run the chosen synthesizer on the aggregate, optionally merging the
+   * user's additional instruction into the prompt.
+   */
+  private runSynthesizerTurn(
+    sessionGroupId: string,
+    group: ParallelGroup,
+    aggregate: string,
+    userInstruction: string,
+    emit: EmitEvent,
+  ): void {
+    if (!group.callbackTo) return
+
+    const callbackThread = this.sessions.findThreadByGroupAndProvider(
+      sessionGroupId,
+      group.callbackTo,
+    )
+    if (!callbackThread) return
+
+    const instruction = userInstruction
+      ? `村长补充：${userInstruction}\n\n请按村长的要求综合以下讨论。`
+      : `请综合以上各方观点，整理共识、分歧和行动项。`
+    const prompt = `${aggregate}\n${instruction}`
+    const rootMessage = this.sessions.appendUserMessage(callbackThread.id, prompt)
+
+    this.runThreadTurn({
+      threadId: callbackThread.id,
+      content: prompt,
+      emit,
+      rootMessageId: rootMessage.id,
+      suppressOutboundDispatch: true,
+    })
+  }
+
+  /**
+   * User typed free text without picking a synthesizer. Post it as a user
+   * message in the originator thread and let normal @-routing handle it.
+   */
+  private async injectUserFollowUp(
+    sessionGroupId: string,
+    group: ParallelGroup,
+    userInput: string,
+    emit: EmitEvent,
+  ): Promise<void> {
+    const originatorThread = this.sessions.findThreadByGroupAndProvider(
+      sessionGroupId,
+      group.originatorProvider,
+    )
+    if (!originatorThread) return
+
+    await this.handleSendMessage(
+      {
+        type: "send_message",
+        payload: {
+          threadId: originatorThread.id,
+          provider: originatorThread.provider,
+          content: userInput,
+          alias: originatorThread.alias,
+        },
+      },
+      emit,
+    )
   }
 
   private notifyCallbackAgent(
@@ -997,6 +1263,7 @@ export class MessageService {
       content: prompt,
       emit,
       rootMessageId: rootMessage.id,
+      suppressOutboundDispatch: true,
     })
   }
 

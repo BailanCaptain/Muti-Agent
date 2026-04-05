@@ -8,7 +8,7 @@ type DecisionStore = {
   pending: DecisionRequest[]
   addRequest: (request: DecisionRequest) => void
   removeRequest: (requestId: string) => void
-  respond: (requestId: string, selectedIds: string[]) => void
+  respond: (requestId: string, selectedIds: string[], userInput?: string) => void
 }
 
 export const useDecisionStore = create<DecisionStore>((set) => ({
@@ -23,10 +23,14 @@ export const useDecisionStore = create<DecisionStore>((set) => ({
     set((state) => ({
       pending: state.pending.filter((r) => r.requestId !== requestId),
     })),
-  respond: (requestId, selectedIds) => {
+  respond: (requestId, selectedIds, userInput) => {
     socketClient.send({
       type: "decision.respond",
-      payload: { requestId, selectedIds },
+      payload: {
+        requestId,
+        selectedIds,
+        ...(userInput ? { userInput } : {}),
+      },
     })
     set((state) => ({
       pending: state.pending.filter((r) => r.requestId !== requestId),

@@ -7,13 +7,15 @@ import { ProviderAvatar } from "./provider-avatar"
 
 interface DecisionCardProps {
   request: DecisionRequest
-  onRespond: (requestId: string, selectedIds: string[]) => void
+  onRespond: (requestId: string, selectedIds: string[], userInput?: string) => void
 }
 
 export function DecisionCard({ request, onRespond }: DecisionCardProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [text, setText] = useState("")
   const isFanIn = request.kind === "fan_in_selector"
   const isMulti = request.multiSelect ?? false
+  const allowText = request.allowTextInput ?? false
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -27,6 +29,9 @@ export function DecisionCard({ request, onRespond }: DecisionCardProps) {
       return next
     })
   }
+
+  const trimmedText = text.trim()
+  const canSubmit = selected.size > 0 || (allowText && trimmedText.length > 0)
 
   const borderColor = isFanIn ? "border-blue-200" : "border-violet-200"
   const bgGradient = isFanIn
@@ -106,21 +111,38 @@ export function DecisionCard({ request, onRespond }: DecisionCardProps) {
         })}
       </div>
 
+      {/* Free-text input (optional) */}
+      {allowText && (
+        <div className="mt-3">
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={request.textInputPlaceholder ?? "输入你的想法或指令…"}
+            rows={2}
+            className={`w-full resize-y rounded-xl border bg-white/80 px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 ${
+              isFanIn
+                ? "border-blue-200/80 focus:border-blue-300 focus:ring-blue-200/60"
+                : "border-violet-200/80 focus:border-violet-300 focus:ring-violet-200/60"
+            }`}
+          />
+        </div>
+      )}
+
       {/* Submit */}
       <div className="mt-3 flex justify-end">
         <button
           type="button"
-          disabled={selected.size === 0}
+          disabled={!canSubmit}
           className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium shadow-sm transition-colors ${
-            selected.size > 0
+            canSubmit
               ? isFanIn
                 ? "bg-blue-500 text-white hover:bg-blue-600"
                 : "bg-violet-500 text-white hover:bg-violet-600"
               : "bg-slate-100 text-slate-400 cursor-not-allowed"
           }`}
           onClick={() => {
-            if (selected.size > 0) {
-              onRespond(request.requestId, [...selected])
+            if (canSubmit) {
+              onRespond(request.requestId, [...selected], trimmedText || undefined)
             }
           }}
         >

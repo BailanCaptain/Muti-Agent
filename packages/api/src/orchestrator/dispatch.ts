@@ -184,10 +184,11 @@ export class DispatchOrchestrator {
     const extractSnippet = options.extractSnippet ?? ((c: string, _alias: string) => c.slice(0, 200))
 
     if (this.cancelledSessionGroups.has(options.sessionGroupId)) {
+      const userInitiatedFanOut = options.sourceAlias === "user" && mentions.length >= 2
       return {
         queued: [],
         blocked: mentions
-          .filter((mention) => mention.provider !== options.sourceProvider)
+          .filter((mention) => userInitiatedFanOut || mention.provider !== options.sourceProvider)
           .map((mention) => ({
             sessionGroupId: options.sessionGroupId,
             rootMessageId: options.rootMessageId,
@@ -220,12 +221,18 @@ export class DispatchOrchestrator {
     const buildSnapshot = options.buildSnapshot ?? (() => [])
     const parentInvocationId = options.parentInvocationId ?? null
 
+    // User-initiated multi-mention: if user @s the panel agent among 2+ targets,
+    // enqueue the panel agent too so it joins the parallel group. The caller
+    // must then skip directTurn for that provider (queueFlush handles it).
+    // Agent-initiated or user single-@: keep skipping sourceProvider.
+    const userInitiatedFanOut = options.sourceAlias === "user" && mentions.length >= 2
+
     for (const mention of mentions) {
       if (queued.length >= remainingHops) {
         break
       }
 
-      if (mention.provider === options.sourceProvider) {
+      if (mention.provider === options.sourceProvider && !userInitiatedFanOut) {
         continue
       }
 

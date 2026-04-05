@@ -28,6 +28,13 @@ export function isValidTransition(from: ParallelGroupStatus, to: ParallelGroupSt
 
 export type ParallelGroupInitiator = "user" | "agent"
 
+export type Phase2Reply = {
+  round: number
+  provider: Provider
+  messageId: string
+  content: string
+}
+
 export type ParallelGroup = {
   id: string
   parentMessageId: string
@@ -39,6 +46,12 @@ export type ParallelGroup = {
   participantProviders: Provider[]
   pendingProviders: Set<Provider>
   completedResults: Map<Provider, { messageId: string; content: string }>
+  /**
+   * Phase 2 (serial discussion) replies, appended in chronological order.
+   * Order in participantProviders defines the per-round speaking order.
+   * Agents that failed in a prior round are skipped in later rounds.
+   */
+  phase2Replies: Phase2Reply[]
   joinBehavior: "notify_originator" | "silent"
   status: ParallelGroupStatus
   timeoutMinutes: number
@@ -85,6 +98,7 @@ export class ParallelGroupRegistry {
       participantProviders: [...options.targetProviders],
       pendingProviders: new Set(options.targetProviders),
       completedResults: new Map(),
+      phase2Replies: [],
       joinBehavior: options.joinBehavior,
       status: "pending",
       timeoutMinutes: options.timeoutMinutes ?? 8,
@@ -133,6 +147,21 @@ export class ParallelGroupRegistry {
     }
 
     return { allDone: group.pendingProviders.size === 0, group }
+  }
+
+  /**
+   * Append a Phase 2 (serial discussion) reply. Phase 2 runs AFTER the group
+   * reaches terminal state (done/timeout), so this intentionally does not
+   * touch the status machine — it's pure data accumulation.
+   */
+  addPhase2Reply(
+    groupId: string,
+    reply: Phase2Reply,
+  ): ParallelGroup | null {
+    const group = this.groups.get(groupId)
+    if (!group) return null
+    group.phase2Replies.push(reply)
+    return group
   }
 
   handleTimeout(groupId: string): void {

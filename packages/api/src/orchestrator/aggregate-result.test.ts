@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { Provider } from "@multi-agent/shared"
-import { generateAggregatedResult } from "./aggregate-result"
+import { generateAggregatedResult, generatePhase2Result } from "./aggregate-result"
 
 const ALIASES: Record<Provider, string> = {
   codex: "Coder",
@@ -57,6 +57,29 @@ test("generateAggregatedResult renders empty body for missing content", () => {
   )
   assert.ok(markdown.includes("### Reviewer"))
   assert.ok(markdown.includes("(空回答)"))
+})
+
+test("generatePhase2Result groups replies by round with section headers", () => {
+  const markdown = generatePhase2Result(
+    [
+      { round: 1, provider: "claude", messageId: "m1", content: "同意拆分" },
+      { round: 1, provider: "gemini", messageId: "m2", content: "reconsidering" },
+      { round: 2, provider: "claude", messageId: "m3", content: "保留意见" },
+    ],
+    ALIASES,
+  )
+  assert.ok(markdown.includes("## 串行讨论记录（Phase 2）"))
+  assert.ok(markdown.includes("### 第 1 轮"))
+  assert.ok(markdown.includes("### 第 2 轮"))
+  assert.ok(markdown.includes("**Reviewer**"))
+  assert.ok(markdown.includes("同意拆分"))
+  assert.ok(markdown.includes("reconsidering"))
+  assert.ok(markdown.includes("保留意见"))
+})
+
+test("generatePhase2Result handles empty replies gracefully", () => {
+  const markdown = generatePhase2Result([], ALIASES)
+  assert.ok(markdown.includes("(无讨论记录)"))
 })
 
 test("generateAggregatedResult preserves timeout placeholder content", () => {

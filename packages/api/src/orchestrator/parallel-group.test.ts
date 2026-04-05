@@ -363,6 +363,76 @@ test("create with different idempotencyKey returns new group", () => {
   assert.notEqual(group1.id, group2.id)
 })
 
+// ── Phase 2 (serial discussion) ──────────────────────────────────────
+
+test("phase2Replies starts empty", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Villager",
+    originatorProvider: "codex",
+    targetProviders: ["claude", "gemini"],
+    joinBehavior: "notify_originator",
+  })
+  assert.deepEqual(group.phase2Replies, [])
+})
+
+test("addPhase2Reply appends replies in order", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Villager",
+    originatorProvider: "codex",
+    targetProviders: ["claude", "gemini"],
+    joinBehavior: "notify_originator",
+  })
+
+  registry.addPhase2Reply(group.id, { round: 1, provider: "claude", messageId: "m1", content: "A" })
+  registry.addPhase2Reply(group.id, { round: 1, provider: "gemini", messageId: "m2", content: "B" })
+  registry.addPhase2Reply(group.id, { round: 2, provider: "claude", messageId: "m3", content: "C" })
+
+  assert.equal(group.phase2Replies.length, 3)
+  assert.equal(group.phase2Replies[0].content, "A")
+  assert.equal(group.phase2Replies[1].provider, "gemini")
+  assert.equal(group.phase2Replies[2].round, 2)
+})
+
+test("addPhase2Reply works after group reaches terminal state", () => {
+  // Phase 2 runs after Phase 1 done — the status machine is locked but
+  // Phase 2 data accumulation must keep working.
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Villager",
+    originatorProvider: "codex",
+    targetProviders: ["claude"],
+    joinBehavior: "silent",
+  })
+  registry.start(group.id)
+  registry.markCompleted(group.id, "claude", { messageId: "m0", content: "phase1" })
+  assert.equal(group.status, "done")
+
+  const result = registry.addPhase2Reply(group.id, {
+    round: 1,
+    provider: "claude",
+    messageId: "m1",
+    content: "phase2 reply",
+  })
+  assert.ok(result)
+  assert.equal(group.phase2Replies.length, 1)
+})
+
+test("addPhase2Reply returns null for unknown groupId", () => {
+  const registry = new ParallelGroupRegistry()
+  const result = registry.addPhase2Reply("nonexistent", {
+    round: 1,
+    provider: "claude",
+    messageId: "m1",
+    content: "X",
+  })
+  assert.equal(result, null)
+})
+
 // ── remove ───────────────────────────────────────────────────────────
 
 test("remove deletes the group and cleans idempotency index", () => {

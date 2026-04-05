@@ -568,3 +568,76 @@ test("invocation-scoped dedup: same provider in same invocation chain is blocked
   assert.equal(result1.queued.length, 1)
   assert.equal(result2.queued.length, 0, "Same invocation chain should block duplicate provider")
 })
+
+test("user-initiated multi-mention includes panel provider in queue", () => {
+  // Regression: user @s 3 agents from claude panel. Old logic skipped sourceProvider=claude,
+  // so parallel group only had 2 targets. claude ran as directTurn outside the group, and
+  // fan-in fired after 2/3 completed while the 3rd was still thinking. Fix: when user
+  // initiates with 2+ mentions, include sourceProvider in the queue so it joins the group.
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+  dispatch.registerUserRoot("root-1", "group-1")
+
+  const result = dispatch.enqueuePublicMentions({
+    messageId: "user-msg",
+    sessionGroupId: "group-1",
+    sourceProvider: "claude", // panel thread is claude/黄仁勋
+    sourceAlias: "user",
+    rootMessageId: "root-1",
+    content: "@黄仁勋 @范德彪 @桂芬 一起想",
+    matchMode: "anywhere",
+    parentInvocationId: null,
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+
+  assert.equal(result.queued.length, 3, "all 3 mentioned providers should queue")
+  const queuedProviders = result.queued.map((e) => e.to.provider).sort()
+  assert.deepEqual(queuedProviders, ["claude", "codex", "gemini"])
+})
+
+test("user-initiated single-mention still skips sourceProvider", () => {
+  // Single-@ case: user sends from claude panel to @范德彪 only. sourceProvider (claude)
+  // is not mentioned, so nothing to skip. Just verifying the fan-out carve-out doesn't
+  // break single-mention routing.
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+  dispatch.registerUserRoot("root-1", "group-1")
+
+  const result = dispatch.enqueuePublicMentions({
+    messageId: "user-msg",
+    sessionGroupId: "group-1",
+    sourceProvider: "claude",
+    sourceAlias: "user",
+    rootMessageId: "root-1",
+    content: "@范德彪 帮个忙",
+    matchMode: "anywhere",
+    parentInvocationId: null,
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+
+  assert.equal(result.queued.length, 1)
+  assert.equal(result.queued[0].to.provider, "codex")
+})
+
+test("agent-initiated multi-mention still skips sourceProvider", () => {
+  // Agent fan-out should not loop back to itself — keep existing skip behavior.
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+  dispatch.registerUserRoot("root-1", "group-1")
+
+  const result = dispatch.enqueuePublicMentions({
+    messageId: "agent-msg",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    sourceAlias: "范德彪",
+    rootMessageId: "root-1",
+    content: "@范德彪 @黄仁勋 @桂芬",
+    matchMode: "anywhere",
+    parentInvocationId: "inv-A",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+
+  assert.equal(result.queued.length, 2, "agent should not self-dispatch")
+  const queuedProviders = result.queued.map((e) => e.to.provider).sort()
+  assert.deepEqual(queuedProviders, ["claude", "gemini"])
+})

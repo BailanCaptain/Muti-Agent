@@ -231,7 +231,8 @@ export async function createApiServer(options: {
     messages,
     broadcaster,
     approvals,
-    onDecisionRespond: (requestId, selectedIds) => decisions.respond(requestId, selectedIds),
+    onDecisionRespond: (requestId, selectedIds, userInput) =>
+      decisions.respond(requestId, selectedIds, userInput),
   })
   registerMcpServer(app)
 

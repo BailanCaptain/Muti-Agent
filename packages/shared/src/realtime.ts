@@ -103,6 +103,12 @@ export type DecisionRequest = {
   sourceProvider?: Provider
   sourceAlias?: string
   multiSelect?: boolean
+  /**
+   * When true, the card renders a free-text input alongside the option list.
+   * User can submit text without selecting an option, or combine both.
+   */
+  allowTextInput?: boolean
+  textInputPlaceholder?: string
   createdAt: string
 }
 
@@ -150,6 +156,7 @@ export type RealtimeClientEvent =
       payload: {
         requestId: string
         selectedIds: string[]
+        userInput?: string
       }
     }
 
@@ -213,5 +220,6 @@ export type RealtimeServerEvent =
       payload: {
         requestId: string
         selectedIds: string[]
+        userInput?: string
       }
     }
