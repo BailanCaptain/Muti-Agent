@@ -6,6 +6,7 @@ import { formatTokenCount } from "@/lib/format"
 import type { Provider } from "@multi-agent/shared"
 import { Info, MessageSquare } from "lucide-react"
 import { useState } from "react"
+import { FoldControls } from "./fold-controls"
 import { ProviderAvatar } from "./provider-avatar"
 
 const panelClassName =
@@ -208,6 +209,10 @@ export function StatusPanel() {
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="mb-5">
+        <FoldControls />
       </div>
 
       <div className={`${panelClassName} mb-5`}>

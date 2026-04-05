@@ -155,7 +155,7 @@ export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps)
             <span>{formatClock(message.createdAt)}</span>
             {foldable ? (
               <button
-                className="flex items-center rounded-full p-0.5 text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500"
+                className="flex items-center gap-1 rounded-full border border-slate-200/80 bg-slate-50/80 px-2 py-0.5 text-[10px] font-medium text-slate-500 transition-colors hover:border-slate-300 hover:bg-slate-100 hover:text-slate-800"
                 onClick={() => toggleMessage(message.id, message.provider)}
                 title={isFolded ? "展开消息" : "折叠消息"}
                 type="button"
@@ -165,6 +165,7 @@ export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps)
                 ) : (
                   <ChevronDown className="h-3 w-3" />
                 )}
+                <span>{isFolded ? "展开" : "折叠"}</span>
               </button>
             ) : null}
           </div>
