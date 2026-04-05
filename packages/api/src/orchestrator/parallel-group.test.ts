@@ -59,6 +59,57 @@ test("create returns a ParallelGroup with correct fields", () => {
   assert.ok(group.createdAt)
 })
 
+test("create defaults initiatedBy to user when not provided", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Villager",
+    originatorProvider: "codex",
+    targetProviders: ["claude", "gemini"],
+    joinBehavior: "notify_originator",
+  })
+  assert.equal(group.initiatedBy, "user")
+})
+
+test("create respects explicit initiatedBy=agent", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude", "gemini"],
+    joinBehavior: "silent",
+    initiatedBy: "agent",
+  })
+  assert.equal(group.initiatedBy, "agent")
+})
+
+test("create stores participantProviders matching targetProviders", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Villager",
+    originatorProvider: "codex",
+    targetProviders: ["claude", "gemini"],
+    joinBehavior: "notify_originator",
+  })
+  assert.deepEqual(group.participantProviders, ["claude", "gemini"])
+})
+
+test("participantProviders are frozen — do not mutate as providers complete", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Villager",
+    originatorProvider: "codex",
+    targetProviders: ["claude", "gemini"],
+    joinBehavior: "notify_originator",
+  })
+  registry.start(group.id)
+  registry.markCompleted(group.id, "claude", { messageId: "m1", content: "done" })
+  assert.deepEqual(group.participantProviders, ["claude", "gemini"])
+})
+
 test("start transitions from pending to running", () => {
   const registry = new ParallelGroupRegistry()
   const group = registry.create({

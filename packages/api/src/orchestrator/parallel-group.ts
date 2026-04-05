@@ -26,6 +26,8 @@ export function isValidTransition(from: ParallelGroupStatus, to: ParallelGroupSt
 
 // ── Types ────────────────────────────────────────────────────────────
 
+export type ParallelGroupInitiator = "user" | "agent"
+
 export type ParallelGroup = {
   id: string
   parentMessageId: string
@@ -33,6 +35,8 @@ export type ParallelGroup = {
   originatorProvider: Provider
   callbackTo: Provider | null
   question: string | null
+  initiatedBy: ParallelGroupInitiator
+  participantProviders: Provider[]
   pendingProviders: Set<Provider>
   completedResults: Map<Provider, { messageId: string; content: string }>
   joinBehavior: "notify_originator" | "silent"
@@ -59,6 +63,7 @@ export class ParallelGroupRegistry {
     question?: string
     timeoutMinutes?: number
     idempotencyKey?: string
+    initiatedBy?: ParallelGroupInitiator
   }): ParallelGroup {
     if (options.idempotencyKey) {
       const existing = this.idempotencyIndex.get(options.idempotencyKey)
@@ -76,6 +81,8 @@ export class ParallelGroupRegistry {
       originatorProvider: options.originatorProvider,
       callbackTo: options.callbackTo ?? null,
       question: options.question ?? null,
+      initiatedBy: options.initiatedBy ?? "user",
+      participantProviders: [...options.targetProviders],
       pendingProviders: new Set(options.targetProviders),
       completedResults: new Map(),
       joinBehavior: options.joinBehavior,

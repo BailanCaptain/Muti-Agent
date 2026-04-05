@@ -219,6 +219,7 @@ export class MessageService {
           originatorProvider: thread.provider,
           targetProviders,
           joinBehavior: "notify_originator",
+          initiatedBy: "agent",
         }),
     })
     this.emitBlockedDispatches(enqueueResult, options.emit)
@@ -284,6 +285,7 @@ export class MessageService {
           originatorProvider: thread.provider,
           targetProviders,
           joinBehavior: "notify_originator",
+          initiatedBy: "user",
         }),
     })
     this.emitBlockedDispatches(enqueueResult, emit)
@@ -775,6 +777,7 @@ export class MessageService {
       question: params.question,
       timeoutMinutes: params.timeoutMinutes,
       idempotencyKey: params.idempotencyKey,
+      initiatedBy: "agent",
     })
 
     this.parallelGroups.start(group.id)
