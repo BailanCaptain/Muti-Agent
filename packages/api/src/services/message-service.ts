@@ -1,4 +1,4 @@
-import type { RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared"
+import type { ConnectorSource, RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared"
 import type { AppEventBus } from "../events/event-bus"
 import type { ApprovalManager } from "../orchestrator/approval-manager"
 import type { ContextMessage } from "../orchestrator/context-snapshot"
@@ -9,6 +9,7 @@ import type {
   QueueEntry,
 } from "../orchestrator/dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
+import { generateAggregatedResult } from "../orchestrator/aggregate-result"
 import { type ParallelGroup, ParallelGroupRegistry } from "../orchestrator/parallel-group"
 import { buildPhase1Header } from "../orchestrator/phase1-header"
 import { runTurn } from "../runtime/cli-orchestrator"
@@ -311,14 +312,14 @@ export class MessageService {
     emit: EmitEvent
     rootMessageId: string
     parentInvocationId?: string | null
-  }) {
+  }): Promise<{ messageId: string; content: string } | null> {
     const thread = this.dispatch.resolveThread(options.threadId)
     if (!thread) {
       options.emit({
         type: "status",
         payload: { message: "未找到相关线程。" },
       })
-      return
+      return null
     }
 
     if (this.invocations.has(thread.id)) {
@@ -326,7 +327,7 @@ export class MessageService {
         type: "status",
         payload: { message: `${thread.alias} 已经在运行中。` },
       })
-      return
+      return null
     }
 
     const assistant = this.sessions.appendAssistantMessage(thread.id, "")
@@ -499,6 +500,7 @@ export class MessageService {
 
       this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
       await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
+      return { messageId: assistant.id, content: result.content || "" }
     } catch (error) {
       this.invocations.detachRun(thread.id)
       this.releaseInvocation(identity.invocationId, dispatchCleanupTimer)
@@ -527,6 +529,7 @@ export class MessageService {
       })
       this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
       await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
+      return null
     }
   }
 
@@ -564,7 +567,7 @@ export class MessageService {
         await Promise.allSettled(
           batch.map(async ({ entry, threadId }) => {
             try {
-              await this.runThreadTurn({
+              const turnResult = await this.runThreadTurn({
                 threadId,
                 content: this.buildA2APrompt(entry),
                 emit,
@@ -572,24 +575,22 @@ export class MessageService {
                 parentInvocationId: entry.parentInvocationId,
               })
 
-              // P7 fix: check parallel group join on completion
+              // Parallel group join: mark this provider done with its real reply.
               if (entry.parallelGroupId) {
-                const thread = this.dispatch.resolveThread(threadId)
                 const joinResult = this.parallelGroups.markCompleted(
                   entry.parallelGroupId,
                   entry.to.provider,
-                  { messageId: "", content: thread?.alias ?? entry.to.agentId },
+                  {
+                    messageId: turnResult?.messageId ?? "",
+                    content: turnResult?.content ?? "",
+                  },
                 )
-                if (joinResult?.allDone && joinResult.group.joinBehavior === "notify_originator") {
-                  const summaryParts = [...joinResult.group.completedResults.entries()].map(
-                    ([, r]) => r.content,
+                if (joinResult?.allDone) {
+                  await this.handleParallelGroupAllDone(
+                    sessionGroupId,
+                    joinResult.group,
+                    emit,
                   )
-                  emit({
-                    type: "status",
-                    payload: {
-                      message: `并行 review 已全部完成（${summaryParts.join("、")}）。`,
-                    },
-                  })
                   this.parallelGroups.remove(entry.parallelGroupId)
                 }
               }
@@ -797,12 +798,15 @@ export class MessageService {
 
     this.parallelGroups.start(group.id)
 
-    // Start timeout
+    // Start timeout: on expiry, fill placeholders and run allDone handler
+    // (agent-initiated → aggregate delivered directly to callbackTo).
     this.parallelGroups.startTimeout(group.id, () => {
       this.parallelGroups.handleTimeout(group.id)
       const timedOutGroup = this.parallelGroups.get(group.id)
       if (timedOutGroup) {
-        void this.selectFanInAndNotify(sessionGroupId, timedOutGroup, params.emit)
+        void this.handleParallelGroupAllDone(sessionGroupId, timedOutGroup, params.emit).finally(
+          () => this.parallelGroups.remove(group.id),
+        )
       }
     })
 
@@ -852,12 +856,69 @@ export class MessageService {
   }
 
   /**
+   * Parallel group terminal handler (allDone / timeout).
+   *
+   * 1. Render aggregate markdown from completedResults.
+   * 2. Append ConnectorMessage to originator thread, broadcast message.created.
+   * 3. Split on initiatedBy:
+   *    - user  → pop fan_in_selector card, route aggregate to chosen provider
+   *    - agent → route aggregate directly to group.callbackTo (set by parallel_think)
+   */
+  private async handleParallelGroupAllDone(
+    sessionGroupId: string,
+    group: ParallelGroup,
+    emit: EmitEvent,
+  ): Promise<void> {
+    const { PROVIDER_ALIASES } = await import("@multi-agent/shared")
+
+    const aggregate = generateAggregatedResult(
+      { question: group.question, completedResults: group.completedResults },
+      PROVIDER_ALIASES,
+    )
+
+    const originatorThread = this.sessions.findThreadByGroupAndProvider(
+      sessionGroupId,
+      group.originatorProvider,
+    )
+    if (originatorThread) {
+      const connectorSource: ConnectorSource = {
+        kind: "multi_mention_result",
+        label: "并行思考结果",
+        initiator: group.initiatedBy === "agent" ? group.originatorProvider : undefined,
+        targets: group.participantProviders,
+      }
+      const connectorMessage = this.sessions.appendConnectorMessage(
+        originatorThread.id,
+        aggregate,
+        connectorSource,
+      )
+      const timelineMessage = this.sessions.toTimelineMessage(
+        originatorThread.id,
+        connectorMessage.id,
+      )
+      if (timelineMessage) {
+        emit({
+          type: "message.created",
+          payload: { threadId: originatorThread.id, message: timelineMessage },
+        })
+      }
+    }
+
+    if (group.initiatedBy === "user") {
+      await this.selectFanInAndNotify(sessionGroupId, group, aggregate, emit)
+    } else {
+      this.notifyCallbackAgent(sessionGroupId, group, aggregate, emit)
+    }
+  }
+
+  /**
    * Ask the user to pick which agent should synthesize the parallel results,
-   * then route the summary to that agent.
+   * then route the aggregate to that agent.
    */
   private async selectFanInAndNotify(
     sessionGroupId: string,
     group: ParallelGroup,
+    aggregate: string,
     emit: EmitEvent,
   ): Promise<void> {
     const { PROVIDER_ALIASES, PROVIDERS } = await import("@multi-agent/shared")
@@ -885,12 +946,13 @@ export class MessageService {
       }
     }
 
-    this.notifyCallbackAgent(sessionGroupId, group, emit)
+    this.notifyCallbackAgent(sessionGroupId, group, aggregate, emit)
   }
 
   private notifyCallbackAgent(
     sessionGroupId: string,
     group: ParallelGroup,
+    aggregate: string,
     emit: EmitEvent,
   ): void {
     if (!group.callbackTo) return
@@ -901,24 +963,12 @@ export class MessageService {
     )
     if (!callbackThread) return
 
-    // Build summary of all responses
-    const lines: string[] = ["[并行思考结果汇总]", ""]
-    if (group.question) {
-      lines.push(`**问题**: ${group.question}`, "")
-    }
-
-    for (const [provider, result] of group.completedResults) {
-      lines.push(`### ${provider}`, result.content, "")
-    }
-
-    lines.push("请综合以上各方观点，整理共识、分歧和行动项。")
-    const summary = lines.join("\n")
-
-    const rootMessage = this.sessions.appendUserMessage(callbackThread.id, summary)
+    const prompt = `${aggregate}\n请综合以上各方观点，整理共识、分歧和行动项。`
+    const rootMessage = this.sessions.appendUserMessage(callbackThread.id, prompt)
 
     this.runThreadTurn({
       threadId: callbackThread.id,
-      content: summary,
+      content: prompt,
       emit,
       rootMessageId: rootMessage.id,
     })
