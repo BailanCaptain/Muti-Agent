@@ -13,7 +13,14 @@ export type ProviderThreadRecord = {
   updatedAt: string
 }
 
-export type MessageType = "progress" | "final" | "a2a_handoff"
+export type MessageType = "progress" | "final" | "a2a_handoff" | "connector"
+
+export type ConnectorSourceRecord = {
+  kind: "multi_mention_result"
+  label: string
+  initiator?: Provider
+  targets: Provider[]
+}
 
 export type MessageRecord = {
   id: string
@@ -22,6 +29,7 @@ export type MessageRecord = {
   content: string
   thinking: string
   messageType: MessageType
+  connectorSource: ConnectorSourceRecord | null
   createdAt: string
 }
 
@@ -130,6 +138,12 @@ export class SqliteStore {
 
     try {
       this.db.exec("ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'final';")
+    } catch {
+      // Older databases may already have this column.
+    }
+
+    try {
+      this.db.exec("ALTER TABLE messages ADD COLUMN connector_source TEXT;")
     } catch {
       // Older databases may already have this column.
     }

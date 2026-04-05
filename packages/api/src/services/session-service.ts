@@ -1,5 +1,6 @@
 import type {
   ActiveGroupView,
+  ConnectorSource,
   Provider,
   ProviderCatalog,
   SessionGroupSummary,
@@ -114,6 +115,7 @@ export class SessionService {
               message.thinking,
               message.createdAt,
               message.messageType,
+              message.connectorSource ?? undefined,
             ),
           ),
       )
@@ -158,6 +160,10 @@ export class SessionService {
     return this.repository.appendMessage(threadId, "assistant", content, thinking, messageType)
   }
 
+  appendConnectorMessage(threadId: string, content: string, connectorSource: ConnectorSource) {
+    return this.repository.appendMessage(threadId, "assistant", content, "", "connector", connectorSource)
+  }
+
   overwriteMessage(messageId: string, updates: { content?: string; thinking?: string }) {
     this.repository.overwriteMessage(messageId, updates)
   }
@@ -181,6 +187,7 @@ export class SessionService {
       message.thinking,
       message.createdAt,
       message.messageType,
+      message.connectorSource ?? undefined,
     )
   }
 
@@ -198,8 +205,10 @@ export class SessionService {
     content: string,
     thinking: string,
     createdAt: string,
-    messageType: "progress" | "final" | "a2a_handoff" = "final",
+    messageType: "progress" | "final" | "a2a_handoff" | "connector" = "final",
+    connectorSource?: ConnectorSource,
   ): TimelineMessage {
+    const isConnector = messageType === "connector"
     return {
       id,
       provider: thread.provider,
@@ -211,8 +220,9 @@ export class SessionService {
             ? content
             : `@${thread.alias} ${content}`
           : content,
-      thinking: role === "assistant" && thinking ? thinking : undefined,
+      thinking: role === "assistant" && thinking && !isConnector ? thinking : undefined,
       messageType,
+      connectorSource: isConnector ? connectorSource : undefined,
       model: role === "user" ? null : thread.currentModel,
       createdAt,
     }

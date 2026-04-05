@@ -3,6 +3,7 @@ import type { Provider } from "@multi-agent/shared"
 import { PROVIDERS, PROVIDER_ALIASES } from "@multi-agent/shared"
 import type {
   AgentEventRecord,
+  ConnectorSourceRecord,
   InvocationRecord,
   MessageRecord,
   MessageType,
@@ -10,6 +11,24 @@ import type {
   SessionMemoryRecord,
   SqliteStore,
 } from "../sqlite"
+
+type MessageRow = {
+  id: string
+  threadId: string
+  role: "user" | "assistant"
+  content: string
+  thinking: string
+  messageType: MessageType
+  connectorSource: string | null
+  createdAt: string
+}
+
+function hydrateMessage(row: MessageRow): MessageRecord {
+  return {
+    ...row,
+    connectorSource: row.connectorSource ? (JSON.parse(row.connectorSource) as ConnectorSourceRecord) : null,
+  }
+}
 
 type SessionGroupRow = {
   id: string
@@ -120,29 +139,38 @@ export class SessionRepository {
   }
 
   listMessages(threadId: string) {
-    return this.store.db
+    const rows = this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, created_at as createdAt
+        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, created_at as createdAt
          FROM messages
          WHERE thread_id = ?
          ORDER BY created_at ASC`,
       )
-      .all(threadId) as MessageRecord[]
+      .all(threadId) as MessageRow[]
+    return rows.map(hydrateMessage)
   }
 
   listRecentMessages(threadId: string, limit: number) {
-    return this.store.db
+    const rows = this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, created_at as createdAt
+        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, created_at as createdAt
          FROM messages
          WHERE thread_id = ?
          ORDER BY created_at DESC
          LIMIT ?`,
       )
-      .all(threadId, limit) as MessageRecord[]
+      .all(threadId, limit) as MessageRow[]
+    return rows.map(hydrateMessage)
   }
 
-  appendMessage(threadId: string, role: "user" | "assistant", content: string, thinking = "", messageType: MessageType = "final") {
+  appendMessage(
+    threadId: string,
+    role: "user" | "assistant",
+    content: string,
+    thinking = "",
+    messageType: MessageType = "final",
+    connectorSource: ConnectorSourceRecord | null = null,
+  ) {
     const message: MessageRecord = {
       id: crypto.randomUUID(),
       threadId,
@@ -150,13 +178,14 @@ export class SessionRepository {
       content,
       thinking,
       messageType,
+      connectorSource,
       createdAt: new Date().toISOString(),
     }
 
     this.store.db
       .prepare(
-        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -165,6 +194,7 @@ export class SessionRepository {
         message.content,
         message.thinking,
         message.messageType,
+        connectorSource ? JSON.stringify(connectorSource) : null,
         message.createdAt,
       )
 

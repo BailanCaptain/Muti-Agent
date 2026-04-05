@@ -1,5 +1,12 @@
 import type { Provider } from "./constants"
 
+export type ConnectorSource = {
+  kind: "multi_mention_result"
+  label: string
+  initiator?: Provider
+  targets: Provider[]
+}
+
 export type TimelineMessage = {
   id: string
   provider: Provider
@@ -7,7 +14,8 @@ export type TimelineMessage = {
   role: "user" | "assistant"
   content: string
   thinking?: string
-  messageType: "progress" | "final" | "a2a_handoff"
+  messageType: "progress" | "final" | "a2a_handoff" | "connector"
+  connectorSource?: ConnectorSource
   inputTokens?: number
   outputTokens?: number
   cachedPercent?: number

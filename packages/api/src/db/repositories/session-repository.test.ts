@@ -22,6 +22,57 @@ function createRepository() {
   }
 }
 
+test("connector messages persist connectorSource JSON round-trip", () => {
+  const { repository, cleanup } = createRepository()
+
+  try {
+    const groupId = repository.createSessionGroup("Test Room")
+    repository.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const thread = repository.listThreadsByGroup(groupId).find((item) => item.provider === "codex")
+    assert.ok(thread)
+
+    const msg = repository.appendMessage(
+      thread.id,
+      "assistant",
+      "## 并行思考结果汇总\n\n### Claude\nA\n\n### Gemini\nB",
+      "",
+      "connector",
+      {
+        kind: "multi_mention_result",
+        label: "并行思考结果",
+        targets: ["claude", "gemini"],
+      },
+    )
+
+    const restored = repository.listMessages(thread.id).find((m) => m.id === msg.id)
+    assert.equal(restored?.messageType, "connector")
+    assert.ok(restored?.connectorSource)
+    assert.equal(restored?.connectorSource?.kind, "multi_mention_result")
+    assert.deepEqual(restored?.connectorSource?.targets, ["claude", "gemini"])
+    assert.equal(restored?.connectorSource?.label, "并行思考结果")
+  } finally {
+    cleanup()
+  }
+})
+
+test("non-connector messages have connectorSource=null", () => {
+  const { repository, cleanup } = createRepository()
+
+  try {
+    const groupId = repository.createSessionGroup("Test Room")
+    repository.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const thread = repository.listThreadsByGroup(groupId).find((item) => item.provider === "codex")
+    assert.ok(thread)
+
+    const msg = repository.appendMessage(thread.id, "assistant", "regular reply")
+    const restored = repository.listMessages(thread.id).find((m) => m.id === msg.id)
+    assert.equal(restored?.messageType, "final")
+    assert.equal(restored?.connectorSource ?? null, null)
+  } finally {
+    cleanup()
+  }
+})
+
 test("assistant thinking is persisted with the message and restored on reload", () => {
   const { repository, cleanup } = createRepository()
 
