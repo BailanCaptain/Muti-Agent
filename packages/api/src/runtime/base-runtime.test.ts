@@ -10,8 +10,27 @@ import {
   BaseCliRuntime,
   resolveNodeScript,
   type AgentRunInput,
-  type RuntimeCommand
+  type RuntimeCommand,
+  type RuntimeDependencies
 } from "./base-runtime";
+import { ProcessLivenessProbe } from "./liveness-probe";
+
+function createFakeProbeFactory(opts: { alive?: boolean } = {}): RuntimeDependencies["createLivenessProbe"] {
+  const alive = opts.alive ?? true;
+  return (pid, config) =>
+    new ProcessLivenessProbe(
+      pid,
+      config,
+      {
+        platform: "linux",
+        isPidAlive: () => alive,
+        sampleCpuTime: async () => 0,
+        // Replace timers with no-ops so the probe never schedules async work during tests.
+        setInterval: (() => ({ unref: () => undefined })) as unknown as typeof globalThis.setInterval,
+        clearInterval: (() => undefined) as unknown as typeof globalThis.clearInterval
+      }
+    );
+}
 
 class FakeChildProcess extends EventEmitter {
   readonly stdout = new PassThrough();
@@ -64,7 +83,8 @@ test("runStream rejects when the child stays inactive past the heartbeat timeout
     forceKillProcessTree: (pid) => {
       forcedPid = pid;
       child.close(null);
-    }
+    },
+    createLivenessProbe: createFakeProbeFactory()
   });
 
   const handle = runtime.runStream(
@@ -89,7 +109,8 @@ test("cancel starts a graceful stop and escalates if the child does not exit", a
     forceKillProcessTree: (pid) => {
       forcedPid = pid;
       child.close(0);
-    }
+    },
+    createLivenessProbe: createFakeProbeFactory()
   });
 
   const handle = runtime.runStream(
@@ -112,7 +133,8 @@ test("cancel escalates from SIGTERM to SIGKILL on linux when the child does not 
   const child = new FakeChildProcess();
   const runtime = new TestRuntime({
     spawn: () => child as never,
-    platform: "linux"
+    platform: "linux",
+    createLivenessProbe: createFakeProbeFactory()
   });
 
   const handle = runtime.runStream(
@@ -132,28 +154,169 @@ test("cancel escalates from SIGTERM to SIGKILL on linux when the child does not 
   assert.equal(result.exitCode, 0);
 });
 
-test("stdout and stderr activity keep the heartbeat alive until the process closes", async () => {
+test("stdout activity keeps the heartbeat alive until the process closes", async () => {
   const child = new FakeChildProcess();
   const runtime = new TestRuntime({
-    spawn: () => child as never
+    spawn: () => child as never,
+    createLivenessProbe: createFakeProbeFactory()
   });
 
   const handle = runtime.runStream(
     createInput({
       heartbeatIntervalMs: 10,
       inactivityTimeoutMs: 25,
-      shutdownGracePeriodMs: 5
+      shutdownGracePeriodMs: 5,
+      livenessStallWarningMs: 10_000
     })
   );
 
   child.stdout.write("{\"type\":\"message\"}\n");
   await delay(12);
-  child.stderr.write("thinking...\n");
+  child.stdout.write("{\"type\":\"message\"}\n");
   await delay(12);
   child.close(0);
 
   const result = await handle.promise;
   assert.equal(result.exitCode, 0);
+});
+
+test("linux probe fast-path kills on idle-silent stall before inactivityTimeoutMs", async () => {
+  const child = new FakeChildProcess();
+  // Probe with real timers and a flat CPU reading — simulates a process that's alive but sleeping.
+  const probeFactory: RuntimeDependencies["createLivenessProbe"] = (pid, config) =>
+    new ProcessLivenessProbe(pid, config, {
+      platform: "linux",
+      isPidAlive: () => true,
+      sampleCpuTime: async () => 42 // flat across samples → cpuGrowing = false
+    });
+
+  const runtime = new TestRuntime({
+    spawn: () => child as never,
+    // Win32 runtime path routes kills through forceKillProcessTree (which we override to close the
+    // fake child). The probe itself is still in linux mode so its fast-path stall detection runs.
+    platform: "win32",
+    createLivenessProbe: probeFactory,
+    forceKillProcessTree: () => child.close(null)
+  });
+
+  const handle = runtime.runStream(
+    createInput({
+      heartbeatIntervalMs: 5,
+      inactivityTimeoutMs: 60_000, // deliberately large so only the stall path can fire
+      shutdownGracePeriodMs: 5,
+      livenessSampleIntervalMs: 5,
+      livenessStallWarningMs: 30,
+      livenessSoftWarningMs: 15
+    })
+  );
+
+  await assert.rejects(handle.promise, /卡住/);
+});
+
+test("stderr activity does NOT keep the heartbeat alive (retry-spam protection)", async () => {
+  const child = new FakeChildProcess();
+  let forcedPid: number | null = null;
+  const runtime = new TestRuntime({
+    spawn: () => child as never,
+    platform: "win32",
+    forceKillProcessTree: (pid) => {
+      forcedPid = pid;
+      child.close(null);
+    },
+    createLivenessProbe: createFakeProbeFactory()
+  });
+
+  const handle = runtime.runStream(
+    createInput({
+      heartbeatIntervalMs: 10,
+      inactivityTimeoutMs: 25,
+      shutdownGracePeriodMs: 5,
+      livenessStallWarningMs: 10_000
+    })
+  );
+
+  // Spam stderr continuously — this should NOT reset the inactivity timer.
+  const spammer = setInterval(() => child.stderr.write("retrying...\n"), 5);
+  await assert.rejects(handle.promise, /睡着了|卡住|异常退出/);
+  clearInterval(spammer);
+  assert.equal(forcedPid, child.pid);
+});
+
+test("stderr fast-fail pattern kills the child immediately (Gemini 429 case)", async () => {
+  // Subclass that recognises one sentinel pattern — simulates GeminiRuntime's 429 matcher.
+  class FastFailRuntime extends BaseCliRuntime {
+    readonly agentId = "fast-fail";
+    protected buildCommand(): RuntimeCommand {
+      return { command: "x", args: [], shell: false };
+    }
+    classifyStderrChunk(chunk: string): { reason: string } | null {
+      return /RESOURCE_EXHAUSTED/i.test(chunk) ? { reason: "test-rate-limit" } : null;
+    }
+  }
+
+  const child = new FakeChildProcess();
+  let forcedPid: number | null = null;
+  const runtime = new FastFailRuntime({
+    spawn: () => child as never,
+    platform: "win32",
+    forceKillProcessTree: (pid) => {
+      forcedPid = pid;
+      child.close(null);
+    },
+    createLivenessProbe: createFakeProbeFactory()
+  });
+
+  const handle = runtime.runStream(
+    createInput({
+      // Long timeouts — if fast-fail wasn't working, this test would hang for seconds.
+      heartbeatIntervalMs: 1000,
+      inactivityTimeoutMs: 60_000,
+      shutdownGracePeriodMs: 5
+    })
+  );
+
+  // Simulate Gemini CLI printing the quota error to stderr.
+  child.stderr.write("[Error: RESOURCE_EXHAUSTED] You exceeded your current quota.\n");
+
+  await assert.rejects(handle.promise, /test-rate-limit|致命错误/);
+  assert.equal(forcedPid, child.pid, "fast-fail must force-kill the process tree");
+  assert.deepEqual(child.killCalls, ["SIGTERM"]);
+});
+
+test("stderr without fast-fail pattern does not trigger early termination", async () => {
+  class FastFailRuntime extends BaseCliRuntime {
+    readonly agentId = "fast-fail";
+    protected buildCommand(): RuntimeCommand {
+      return { command: "x", args: [], shell: false };
+    }
+    classifyStderrChunk(chunk: string): { reason: string } | null {
+      return /RESOURCE_EXHAUSTED/i.test(chunk) ? { reason: "rl" } : null;
+    }
+  }
+
+  const child = new FakeChildProcess();
+  const runtime = new FastFailRuntime({
+    spawn: () => child as never,
+    platform: "linux",
+    createLivenessProbe: createFakeProbeFactory()
+  });
+
+  const handle = runtime.runStream(
+    createInput({
+      heartbeatIntervalMs: 1000,
+      inactivityTimeoutMs: 60_000,
+      shutdownGracePeriodMs: 5
+    })
+  );
+
+  // Non-matching stderr — should be forwarded but should NOT kill the process.
+  child.stderr.write("Loaded cached credentials.\n");
+  child.stderr.write("Tip: press /help for commands.\n");
+  await delay(10);
+  child.close(0);
+
+  const result = await handle.promise;
+  assert.equal(result.exitCode, 0, "process should exit normally when no fatal stderr pattern matches");
 });
 
 test("resolveNodeScript selects the first existing script from multiple candidate paths", () => {

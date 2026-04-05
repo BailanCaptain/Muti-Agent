@@ -15,6 +15,7 @@ import { type ParallelGroup, ParallelGroupRegistry } from "../orchestrator/paral
 import { buildPhase1Header } from "../orchestrator/phase1-header"
 import { buildPhase2Turn } from "../orchestrator/phase2-header"
 import { runTurn } from "../runtime/cli-orchestrator"
+import { classifyFailure } from "../runtime/failure-classifier"
 import type { DecisionManager } from "../orchestrator/decision-manager"
 import type { SkillRegistry } from "../skills/registry"
 import type { SopTracker } from "../skills/sop-tracker"
@@ -428,6 +429,20 @@ export class MessageService {
           payload: { messageId: assistant.id, delta: `${line}\n` },
         })
       },
+      onLivenessWarning: (warning) => {
+        // Surface liveness issues as status messages so the user sees *why* a turn is dragging on
+        // before (or after) we force-kill. Soft warnings are informational; suspected_stall is a
+        // heads-up that we're about to terminate the process.
+        const seconds = Math.round(warning.silenceDurationMs / 1000)
+        const isStall = warning.level === "suspected_stall"
+        const label = isStall
+          ? `${thread.alias} 已沉默 ${seconds}s（${warning.state}），判定为卡住，即将强制终止`
+          : `${thread.alias} 已沉默 ${seconds}s（${warning.state}），持续观察中`
+        options.emit({
+          type: "status",
+          payload: { message: label },
+        })
+      },
       onActivity: (activity) => {
         this.events.emit({
           type: "invocation.activity",
@@ -484,10 +499,57 @@ export class MessageService {
       const result = await run.promise
       this.invocations.detachRun(thread.id)
       this.releaseInvocation(identity.invocationId, dispatchCleanupTimer)
-      const effectiveSessionId =
+      let effectiveSessionId =
         !result.content.trim() && result.nativeSessionId === thread.nativeSessionId
           ? null
           : result.nativeSessionId
+
+      // Reactive self-heal: the CLI may exit 0 while its stderr tells the real story
+      // (e.g. Gemini gives up after 10 retries and prints the 429 reason, Claude exits
+      // on an unrecoverable `--resume` failure). Classify the exit so we reset only the
+      // state that's actually broken, and so the user gets a targeted hint instead of
+      // a silent "[empty response]".
+      const turnLooksFailed =
+        (result.exitCode !== null && result.exitCode !== 0) ||
+        (!result.content.trim() && !promptRequestedByCli)
+      if (turnLooksFailed) {
+        const classification = classifyFailure(result.rawStderr, "")
+        if (classification.shouldClearSession) {
+          effectiveSessionId = null
+        }
+        options.emit({
+          type: "status",
+          payload: {
+            message: `${thread.alias}：${classification.userMessage}`,
+          },
+        })
+      }
+
+      // Preventive session seal: when the CLI's context window is close to full we drop
+      // native_session_id so the next turn starts a fresh session. Prevents Gemini from
+      // retrying into its 429 MODEL_CAPACITY_EXHAUSTED spiral and protects Codex/Claude
+      // from silent context exhaustion. `warn` is informational only — surface to the user
+      // but keep the session going.
+      if (result.sealDecision) {
+        const pct = Math.round(result.sealDecision.fillRatio * 100)
+        if (result.sealDecision.shouldSeal) {
+          effectiveSessionId = null
+          options.emit({
+            type: "status",
+            payload: {
+              message: `${thread.alias} 上下文已用 ${pct}%，自动封存，下一轮开新 session。`,
+            },
+          })
+        } else if (result.sealDecision.reason === "warn") {
+          options.emit({
+            type: "status",
+            payload: {
+              message: `${thread.alias} 上下文已用 ${pct}%，接近上限，准备换房间。`,
+            },
+          })
+        }
+      }
+
       this.sessions.updateThread(thread.id, result.currentModel, effectiveSessionId)
       if (!promptRequestedByCli) {
         this.sessions.overwriteMessage(assistant.id, {
@@ -536,8 +598,13 @@ export class MessageService {
         content: `Error: ${message}`,
         thinking,
       })
-      // Clear native session so next run starts fresh instead of retrying a broken session.
-      this.sessions.updateThread(thread.id, thread.currentModel, null)
+      // Reactive self-heal: match the error message against known failure signatures so
+      // we clear session only when doing so actually helps, and give the user a concrete
+      // hint (wait/retry/re-auth) instead of just dumping the raw exception.
+      const classification = classifyFailure("", message)
+      if (classification.shouldClearSession) {
+        this.sessions.updateThread(thread.id, thread.currentModel, null)
+      }
 
       this.events.emit({
         type: "invocation.failed",
@@ -552,7 +619,7 @@ export class MessageService {
 
       options.emit({
         type: "status",
-        payload: { message },
+        payload: { message: `${thread.alias}：${classification.userMessage}` },
       })
       this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
       await this.flushDispatchQueue(thread.sessionGroupId, options.emit)

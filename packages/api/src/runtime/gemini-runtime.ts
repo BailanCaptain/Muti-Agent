@@ -38,8 +38,31 @@ function formatGeminiParams(toolName: string, params: Record<string, unknown>): 
   }
 }
 
+// Gemini CLI enters a 10-attempt backoff loop (5-30s between tries, ~4 minutes total)
+// when the API returns 429 RESOURCE_EXHAUSTED. The liveness probe will eventually kill
+// it on CPU-idle stall, but we can do better: the very first stderr line carries the
+// exhausted-quota reason, so we can abort on sight and hand control back to the user.
+//
+// Patterns cover the common variants we've seen: Google API error envelope, Gemini
+// CLI's own retry log line, and the short-form RESOURCE_EXHAUSTED token.
+const GEMINI_FAST_FAIL_PATTERNS: Array<{ regex: RegExp; reason: string }> = [
+  { regex: /RESOURCE_EXHAUSTED/i, reason: "Google API RESOURCE_EXHAUSTED（配额/容量耗尽）" },
+  { regex: /MODEL_CAPACITY_EXHAUSTED/i, reason: "模型容量已打满（MODEL_CAPACITY_EXHAUSTED）" },
+  { regex: /quota exceeded for quota metric/i, reason: "配额已超上限（quota exceeded）" },
+  { regex: /429 Too Many Requests/i, reason: "上游 429 限流（Too Many Requests）" }
+];
+
 export class GeminiRuntime extends BaseCliRuntime {
   readonly agentId = "gemini";
+
+  classifyStderrChunk(chunk: string): { reason: string } | null {
+    for (const { regex, reason } of GEMINI_FAST_FAIL_PATTERNS) {
+      if (regex.test(chunk)) {
+        return { reason };
+      }
+    }
+    return null;
+  }
 
   protected buildCommand(input: AgentRunInput): RuntimeCommand {
     const runtime = resolveNodeScript(
@@ -95,6 +118,29 @@ export class GeminiRuntime extends BaseCliRuntime {
     } catch {
       return null;
     }
+  }
+
+  parseUsage(event: Record<string, unknown>): { totalTokens: number; contextWindow: number | null } | null {
+    // Gemini CLI emits a final `{ type: "result", status: "success", stats: {...} }` event
+    // at turn close. `stats.total_tokens` is the cumulative usage; `stats.context_window`
+    // (when present) is the model's window — use it verbatim because it reflects the
+    // exact model variant the CLI routed to, not our guess.
+    if (event.type !== "result" || event.status !== "success") {
+      return null;
+    }
+    const stats = event.stats as Record<string, unknown> | undefined;
+    if (!stats) {
+      return null;
+    }
+    const total = typeof stats.total_tokens === "number" ? stats.total_tokens : null;
+    if (total == null || total <= 0) {
+      return null;
+    }
+    const windowRaw =
+      (typeof stats.context_window === "number" ? stats.context_window : undefined) ??
+      (typeof stats.contextWindow === "number" ? stats.contextWindow : undefined);
+    const contextWindow = typeof windowRaw === "number" && windowRaw > 0 ? windowRaw : null;
+    return { totalTokens: total, contextWindow };
   }
 
   parseAssistantDelta(event: Record<string, unknown>) {

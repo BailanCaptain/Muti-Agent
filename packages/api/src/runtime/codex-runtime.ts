@@ -96,6 +96,27 @@ export class CodexRuntime extends BaseCliRuntime {
     }
   }
 
+  parseUsage(event: Record<string, unknown>): { totalTokens: number; contextWindow: number | null } | null {
+    // Codex exec --json emits `{ type: "turn.completed", usage: {...} }` per turn.
+    // Total context fill ≈ input_tokens + cached_input_tokens (Codex's `input_tokens` is
+    // the *new* input only; cached inputs are billed separately but still occupy the window).
+    // No context_window field is emitted — orchestrator will fall back to the model lookup.
+    if (event.type !== "turn.completed") {
+      return null;
+    }
+    const usage = event.usage as Record<string, unknown> | undefined;
+    if (!usage) {
+      return null;
+    }
+    const input = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
+    const cached = typeof usage.cached_input_tokens === "number" ? usage.cached_input_tokens : 0;
+    const total = input + cached;
+    if (total <= 0) {
+      return null;
+    }
+    return { totalTokens: total, contextWindow: null };
+  }
+
   parseAssistantDelta(event: Record<string, unknown>) {
     const item = event.item as { type?: string; text?: string } | undefined;
 

@@ -51,7 +51,14 @@
       "Bash(cmd.exe /c \"where tsx 2>&1\")",
       "Bash(cmd.exe /c \"tsx --version 2>&1\")",
       "Edit(*)",
-      "Write(*)"
+      "Write(*)",
+      "Bash(git reset:*)",
+      "Bash(pnpm tsx:*)",
+      "Bash(pnpm --filter @multi-agent/api typecheck)",
+      "Bash(pnpm install:*)",
+      "Bash(pnpm --filter @multi-agent/shared build)",
+      "Bash(pnpm --filter @multi-agent/api test)",
+      "Bash(ls src/runtime/*.test.ts)"
     ]
   }
 }

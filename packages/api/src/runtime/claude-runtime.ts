@@ -153,6 +153,45 @@ export class ClaudeRuntime extends BaseCliRuntime {
     }
   }
 
+  parseUsage(event: Record<string, unknown>): { totalTokens: number; contextWindow: number | null } | null {
+    // Claude Code emits usage on `message_start`, `message_delta`, and `result` events.
+    // The Anthropic API convention is: input_tokens = new tokens only; cache_read_input_tokens
+    // and cache_creation_input_tokens are subsets that still occupy the context window.
+    // Sum them to get the real context fill.
+    const readUsage = (raw: unknown) => {
+      if (!raw || typeof raw !== "object") {
+        return null;
+      }
+      const usage = raw as Record<string, unknown>;
+      const input = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
+      const cacheRead =
+        typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0;
+      const cacheCreate =
+        typeof usage.cache_creation_input_tokens === "number"
+          ? usage.cache_creation_input_tokens
+          : 0;
+      const total = input + cacheRead + cacheCreate;
+      return total > 0 ? total : null;
+    };
+
+    // `message_start` / `message_delta`: nested usage under `message.usage` / `usage`.
+    if (event.type === "message_start") {
+      const message = event.message as { usage?: unknown } | undefined;
+      const total = readUsage(message?.usage);
+      return total != null ? { totalTokens: total, contextWindow: null } : null;
+    }
+    if (event.type === "message_delta") {
+      const total = readUsage((event as { usage?: unknown }).usage);
+      return total != null ? { totalTokens: total, contextWindow: null } : null;
+    }
+    // Final `result` event at turn close.
+    if (event.type === "result") {
+      const total = readUsage((event as { usage?: unknown }).usage);
+      return total != null ? { totalTokens: total, contextWindow: null } : null;
+    }
+    return null;
+  }
+
   parseAssistantDelta(event: Record<string, unknown>) {
     if (event.type === "content_block_delta") {
       const delta = event.delta as { type?: string; text?: string } | undefined;

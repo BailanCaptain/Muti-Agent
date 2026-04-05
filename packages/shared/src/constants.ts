@@ -76,3 +76,58 @@ export const PROVIDER_ALIASES: Record<Provider, string> = {
   claude: AGENT_PROFILES.claude.name,
   gemini: AGENT_PROFILES.gemini.name
 };
+
+/**
+ * 预防性 session seal 阈值。
+ * 当一个 turn 结束时 usedTokens / contextWindow >= action，我们把 native_session_id
+ * 清空，下一轮让 CLI 开新 session。可以避免 Gemini 撞上 429 MODEL_CAPACITY_EXHAUSTED
+ * 之后陷入 10 次 5-30s 的重试循环；同样也能在 Codex/Claude 侧阻止 context 窗口静默打满。
+ *
+ * 阈值参考 clowder-ai 的 per-provider 调参：Gemini 上下文窗口虽大，但接近极限时性能退化更早，
+ * 所以阈值更激进；Codex/Claude 上下文表现线性，阈值更靠近满值。
+ */
+export const SEAL_THRESHOLDS_BY_PROVIDER: Record<Provider, { warn: number; action: number }> = {
+  gemini: { warn: 0.55, action: 0.65 },
+  codex: { warn: 0.75, action: 0.85 },
+  claude: { warn: 0.80, action: 0.90 }
+};
+
+/**
+ * CLI 不一定在事件里回显 contextWindowSize（尤其是 Codex 的 turn.completed 只给 usage）。
+ * 这里按 model 名字前缀做兜底。查不到就返回 null —— 让上游跳过预防性 seal，不要瞎猜。
+ */
+const CONTEXT_WINDOW_FALLBACKS: ReadonlyArray<{ match: RegExp; window: number }> = [
+  // Gemini 2.x 家族：1M tokens
+  { match: /^gemini-(2\.5|2\.0|1\.5)/i, window: 1_048_576 },
+  // Claude 4.x 家族：200k
+  { match: /^claude-(opus|sonnet|haiku)-4/i, window: 200_000 },
+  { match: /^claude-/i, window: 200_000 },
+  // OpenAI reasoning 家族
+  { match: /^gpt-5/i, window: 400_000 },
+  { match: /^gpt-4/i, window: 128_000 },
+  { match: /^o3/i, window: 200_000 }
+];
+
+export function getContextWindowForModel(model: string | null | undefined): number | null {
+  if (!model) {
+    return null;
+  }
+  for (const { match, window } of CONTEXT_WINDOW_FALLBACKS) {
+    if (match.test(model)) {
+      return window;
+    }
+  }
+  return null;
+}
+
+/**
+ * 单轮结束时汇总的 token 使用情况，用于决定是否 seal session。
+ * usedTokens 是 CLI 报告的已用上下文（通常是 input_tokens + cached + ...）；
+ * windowTokens 是上下文窗口大小；
+ * source=exact 表示 windowTokens 来自 CLI 自己的事件，approx 表示来自 model 兜底表。
+ */
+export type TokenUsageSnapshot = {
+  usedTokens: number;
+  windowTokens: number;
+  source: "exact" | "approx";
+};

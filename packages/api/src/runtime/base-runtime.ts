@@ -2,11 +2,21 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import {
+  ProcessLivenessProbe,
+  type LivenessProbeConfig,
+  type LivenessWarning,
+  type ProcessLivenessProbeDependencies
+} from "./liveness-probe";
 
 export type RuntimeLifecycleConfig = {
   heartbeatIntervalMs: number;
   inactivityTimeoutMs: number;
   shutdownGracePeriodMs: number;
+  livenessSampleIntervalMs: number;
+  livenessSoftWarningMs: number;
+  livenessStallWarningMs: number;
+  livenessBoundedExtensionFactor: number;
 };
 
 export type AgentRunInput = {
@@ -41,6 +51,7 @@ export type RuntimeStreamHooks = {
   onStdoutLine?: (line: string) => void;
   onStderrChunk?: (chunk: string) => void;
   onActivity?: (activity: { stream: "stdout" | "stderr"; at: string; chunk: string }) => void;
+  onLivenessWarning?: (warning: LivenessWarning) => void;
 };
 
 export type RuntimeExecutionHandle = {
@@ -63,12 +74,17 @@ export type RuntimeDependencies = {
   clearInterval?: typeof globalThis.clearInterval;
   platform?: NodeJS.Platform;
   forceKillProcessTree?: (pid: number) => void;
+  createLivenessProbe?: (pid: number, config: LivenessProbeConfig) => ProcessLivenessProbe;
 };
 
 const DEFAULT_RUNTIME_LIFECYCLE: RuntimeLifecycleConfig = {
   heartbeatIntervalMs: 30_000,
   inactivityTimeoutMs: 5 * 60_000,
-  shutdownGracePeriodMs: 5_000
+  shutdownGracePeriodMs: 5_000,
+  livenessSampleIntervalMs: 30_000,
+  livenessSoftWarningMs: 90_000,
+  livenessStallWarningMs: 180_000,
+  livenessBoundedExtensionFactor: 2.0
 };
 
 function readMs(preferred: number | undefined, fallback: string | undefined, defaultValue: number) {
@@ -84,10 +100,24 @@ function readMs(preferred: number | undefined, fallback: string | undefined, def
   return defaultValue;
 }
 
-function formatRuntimeTimeoutMessage(inactivityTimeoutMs: number, lastActivityAt: string) {
+function formatRuntimeTimeoutMessage(
+  inactivityTimeoutMs: number,
+  lastActivityAt: string,
+  reason: "timeout" | "stall" | "dead" = "timeout"
+) {
   const seconds = Math.round(inactivityTimeoutMs / 1000);
   const minutes = inactivityTimeoutMs >= 60_000 ? `（约 ${Math.round(inactivityTimeoutMs / 60_000)} 分钟）` : "";
+  if (reason === "stall") {
+    return `Agent 进程看起来已卡住（CPU 空转，无新输出 ≥ ${seconds} 秒${minutes}）。最后一次活动时间：${lastActivityAt}。已强制终止，请重试一次。`;
+  }
+  if (reason === "dead") {
+    return `Agent 进程已异常退出。最后一次活动时间：${lastActivityAt}。请重试一次。`;
+  }
   return `Agent 好像睡着了，已经有 ${seconds} 秒${minutes} 没有新活动。最后一次活动时间：${lastActivityAt}。请检查它的状态或重试一次。`;
+}
+
+function formatFastFailMessage(reason: string) {
+  return `Agent CLI 触发已知的致命错误（${reason}），已提前终止避免陷入长时间重试循环。请重试一次。`;
 }
 
 function defaultForceKillProcessTree(pid: number) {
@@ -105,6 +135,15 @@ export function resolveRuntimeLifecycleConfig(
   runtime?: Partial<RuntimeLifecycleConfig>,
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
 ): RuntimeLifecycleConfig {
+  const factorRaw = Number(env.MULTI_AGENT_LIVENESS_BOUNDED_EXTENSION_FACTOR);
+  const factor =
+    typeof runtime?.livenessBoundedExtensionFactor === "number" &&
+    Number.isFinite(runtime.livenessBoundedExtensionFactor) &&
+    runtime.livenessBoundedExtensionFactor > 0
+      ? runtime.livenessBoundedExtensionFactor
+      : Number.isFinite(factorRaw) && factorRaw > 0
+        ? factorRaw
+        : DEFAULT_RUNTIME_LIFECYCLE.livenessBoundedExtensionFactor;
   return {
     heartbeatIntervalMs: readMs(
       runtime?.heartbeatIntervalMs,
@@ -120,7 +159,23 @@ export function resolveRuntimeLifecycleConfig(
       runtime?.shutdownGracePeriodMs,
       env.MULTI_AGENT_SHUTDOWN_GRACE_PERIOD_MS,
       DEFAULT_RUNTIME_LIFECYCLE.shutdownGracePeriodMs
-    )
+    ),
+    livenessSampleIntervalMs: readMs(
+      runtime?.livenessSampleIntervalMs,
+      env.MULTI_AGENT_LIVENESS_SAMPLE_INTERVAL_MS,
+      DEFAULT_RUNTIME_LIFECYCLE.livenessSampleIntervalMs
+    ),
+    livenessSoftWarningMs: readMs(
+      runtime?.livenessSoftWarningMs,
+      env.MULTI_AGENT_LIVENESS_SOFT_WARNING_MS,
+      DEFAULT_RUNTIME_LIFECYCLE.livenessSoftWarningMs
+    ),
+    livenessStallWarningMs: readMs(
+      runtime?.livenessStallWarningMs,
+      env.MULTI_AGENT_LIVENESS_STALL_WARNING_MS,
+      DEFAULT_RUNTIME_LIFECYCLE.livenessStallWarningMs
+    ),
+    livenessBoundedExtensionFactor: factor
   };
 }
 
@@ -148,6 +203,17 @@ export abstract class BaseCliRuntime implements AgentRuntime {
     const clearIntervalImpl = this.dependencies.clearInterval ?? globalThis.clearInterval;
     const platform = this.dependencies.platform ?? process.platform;
     const forceKillProcessTree = this.dependencies.forceKillProcessTree ?? defaultForceKillProcessTree;
+    const createLivenessProbe: (pid: number, config: LivenessProbeConfig) => ProcessLivenessProbe =
+      this.dependencies.createLivenessProbe ??
+      ((pid, config) => {
+        const probeDeps: ProcessLivenessProbeDependencies = {
+          now,
+          setInterval: setIntervalImpl,
+          clearInterval: clearIntervalImpl,
+          platform
+        };
+        return new ProcessLivenessProbe(pid, config, probeDeps);
+      });
     const child = spawnProcess(command.command, command.args, {
       cwd: input.cwd,
       env,
@@ -159,12 +225,26 @@ export abstract class BaseCliRuntime implements AgentRuntime {
     let rawStderr = "";
     let cancelled = false;
     let timedOut = false;
+    let stalled = false;
+    let deadProcess = false;
+    let fastFailed = false;
+    let fastFailReason: string | null = null;
     let settled = false;
     let terminationStarted = false;
     let lastActivityMs = now();
     let lastActivityAt = new Date(lastActivityMs).toISOString();
     let heartbeatTimer: ReturnType<typeof globalThis.setInterval> | undefined;
     let forceKillTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+
+    const probe =
+      typeof child.pid === "number"
+        ? createLivenessProbe(child.pid, {
+            sampleIntervalMs: lifecycle.livenessSampleIntervalMs,
+            softWarningMs: lifecycle.livenessSoftWarningMs,
+            stallWarningMs: lifecycle.livenessStallWarningMs,
+            boundedExtensionFactor: lifecycle.livenessBoundedExtensionFactor
+          })
+        : null;
 
     const clearTimers = () => {
       if (heartbeatTimer) {
@@ -176,12 +256,38 @@ export abstract class BaseCliRuntime implements AgentRuntime {
         clearTimeoutImpl(forceKillTimer);
         forceKillTimer = undefined;
       }
+
+      probe?.stop();
     };
 
-    const recordActivity = (stream: "stdout" | "stderr", chunk: string) => {
+    // stdout = real activity (the CLI is producing output we can parse).
+    // stderr = diagnostic noise; we forward it via hooks but don't treat it as activity,
+    // because providers like Gemini spam stderr during 429 retry loops while effectively asleep.
+    // The probe is what distinguishes "busy but silent" (extend timeout) from "idle and silent" (kill).
+    const recordStdoutActivity = (chunk: string) => {
       lastActivityMs = now();
       lastActivityAt = new Date(lastActivityMs).toISOString();
-      hooks.onActivity?.({ stream, at: lastActivityAt, chunk });
+      probe?.notifyActivity();
+      hooks.onActivity?.({ stream: "stdout", at: lastActivityAt, chunk });
+    };
+
+    const forwardStderr = (chunk: string) => {
+      // Deliberately NOT touching lastActivityMs here.
+      hooks.onActivity?.({ stream: "stderr", at: new Date(now()).toISOString(), chunk });
+
+      // Fast-fail: some providers (notably Gemini on 429 RESOURCE_EXHAUSTED) enter a
+      // long backoff loop and print the fatal reason to stderr before retrying. If the
+      // runtime recognises a terminal pattern, kill immediately instead of waiting the
+      // ~4 minute probe stall window.
+      if (!fastFailed && !terminationStarted) {
+        const fastFail = this.classifyStderrChunk(chunk);
+        if (fastFail) {
+          fastFailed = true;
+          fastFailReason = fastFail.reason;
+          rawStderr = `${rawStderr.trimEnd() ? `${rawStderr.trimEnd()}\n` : ""}[runtime] ${formatFastFailMessage(fastFail.reason)}\n`;
+          requestTermination();
+        }
+      }
     };
 
     const forceKill = () => {
@@ -248,14 +354,14 @@ export abstract class BaseCliRuntime implements AgentRuntime {
       lines.on("line", (line) => {
         rawStdout += `${line}\n`;
         hooks.onStdoutLine?.(line);
-        recordActivity("stdout", line);
+        recordStdoutActivity(line);
       });
 
       child.stderr.on("data", (chunk) => {
         const text = chunk.toString();
         rawStderr += text;
         hooks.onStderrChunk?.(text);
-        recordActivity("stderr", text);
+        forwardStderr(text);
       });
 
       child.on("error", (error) => {
@@ -264,8 +370,15 @@ export abstract class BaseCliRuntime implements AgentRuntime {
 
       child.on("close", (code) => {
         settle(() => {
-          if (timedOut) {
-            reject(new Error(formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt)));
+          if (fastFailed) {
+            reject(new Error(formatFastFailMessage(fastFailReason ?? "unknown")));
+            return;
+          }
+          if (timedOut || stalled || deadProcess) {
+            const reason = stalled ? "stall" : deadProcess ? "dead" : "timeout";
+            reject(
+              new Error(formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt, reason))
+            );
             return;
           }
 
@@ -278,13 +391,56 @@ export abstract class BaseCliRuntime implements AgentRuntime {
         });
       });
 
+      probe?.start();
+
       if (lifecycle.heartbeatIntervalMs > 0 && lifecycle.inactivityTimeoutMs > 0) {
         heartbeatTimer = setIntervalImpl(() => {
           if (terminationStarted) {
             return;
           }
 
-          if (now() - lastActivityMs < lifecycle.inactivityTimeoutMs) {
+          // Forward any liveness warnings the probe has queued since the last tick.
+          if (probe) {
+            for (const warning of probe.drainWarnings()) {
+              hooks.onLivenessWarning?.(warning);
+            }
+
+            if (probe.getState() === "dead") {
+              deadProcess = true;
+              rawStderr = `${rawStderr.trimEnd() ? `${rawStderr.trimEnd()}\n` : ""}[runtime] ${formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt, "dead")}\n`;
+              requestTermination();
+              return;
+            }
+          }
+
+          const elapsed = now() - lastActivityMs;
+
+          // Fast-path: probe says the process is idle-silent long enough to be considered stuck.
+          // Kill even if inactivityTimeoutMs hasn't elapsed yet — the CPU-flat signal is strong.
+          // Windows path can only do PID-existence checks, so we can't trust its idle-silent
+          // signal to differentiate "thinking" from "stuck" — leave the fast-path disabled there.
+          if (
+            probe &&
+            probe.canClassifySilentState() &&
+            elapsed >= lifecycle.livenessStallWarningMs &&
+            probe.getState() === "idle-silent"
+          ) {
+            stalled = true;
+            rawStderr = `${rawStderr.trimEnd() ? `${rawStderr.trimEnd()}\n` : ""}[runtime] ${formatRuntimeTimeoutMessage(lifecycle.livenessStallWarningMs, lastActivityAt, "stall")}\n`;
+            requestTermination();
+            return;
+          }
+
+          if (elapsed < lifecycle.inactivityTimeoutMs) {
+            return;
+          }
+
+          // Busy-silent: CPU is growing, model is probably thinking. Extend up to the hard cap.
+          if (
+            probe &&
+            probe.shouldExtendTimeout() &&
+            !probe.isHardCapExceeded(elapsed, lifecycle.inactivityTimeoutMs)
+          ) {
             return;
           }
 
@@ -309,6 +465,33 @@ export abstract class BaseCliRuntime implements AgentRuntime {
   protected abstract buildCommand(input: AgentRunInput): RuntimeCommand;
 
   parseActivityLine(_event: Record<string, unknown>): string | null {
+    return null;
+  }
+
+  /**
+   * Provider-specific stderr scanner for "abort immediately" signatures. Return a reason
+   * to force-kill the child; return null to let the process continue. Called on every
+   * stderr chunk — match on keywords that indicate a terminal error the CLI is about to
+   * waste multiple minutes retrying (Gemini 429 RESOURCE_EXHAUSTED retry loop).
+   *
+   * Public (not protected) so the message-service/test harness can drive it directly
+   * when asserting per-provider patterns.
+   */
+  classifyStderrChunk(_chunk: string): { reason: string } | null {
+    return null;
+  }
+
+  /**
+   * Extract token usage from a single stream-json event.
+   * Return `{ totalTokens, contextWindow }` whenever this event carries a usage summary.
+   * Return null when the event is unrelated — the orchestrator will keep the last known
+   * snapshot until a new one arrives.
+   *
+   * `contextWindow` is optional: when the CLI echoes it (Gemini's `stats.context_window`),
+   * use it verbatim; when it doesn't (Codex/Claude typically don't), return null and let
+   * the orchestrator fall back to the model-keyed lookup table.
+   */
+  parseUsage(_event: Record<string, unknown>): { totalTokens: number; contextWindow: number | null } | null {
     return null;
   }
 
