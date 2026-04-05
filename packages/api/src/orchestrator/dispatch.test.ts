@@ -211,7 +211,7 @@ test("enforces MAX_HOPS and blocks the 16th mention", () => {
   }
   const aliases: any = {}
   for (let i = 0; i < 20; i++) {
-    aliases[`p${i}`] = `Provider ${i}`
+    aliases[`p${i}`] = `@p${i}`
   }
 
   const dispatch = new DispatchOrchestrator(sessions as any, aliases)
@@ -288,7 +288,7 @@ test("hopIndex increments per chain depth", () => {
     findThreadByGroupAndProvider: (_group: string, _provider: string) => ({ id: "target" }),
     listGroupThreads: () => [],
   }
-  const aliases: any = { root: "Root", p0: "Agent0", p1: "Agent1", p2: "Agent2" }
+  const aliases: any = { root: "@root", p0: "@p0", p1: "@p1", p2: "@p2" }
 
   const dispatch = new DispatchOrchestrator(sessions as any, aliases)
   dispatch.registerUserRoot("root-1", "group-1")

@@ -2,7 +2,12 @@ import crypto from "node:crypto"
 import type { Provider } from "@multi-agent/shared"
 import type { ContextMessage } from "./context-snapshot"
 import type { SessionService } from "../services/session-service"
-import { type MentionMatchMode, resolveMention, resolveMentions } from "./mention-router"
+import {
+  type MentionMatchMode,
+  type ProviderAliases,
+  resolveMention,
+  resolveMentions,
+} from "./mention-router"
 
 export type { ContextMessage } from "./context-snapshot"
 
@@ -65,7 +70,7 @@ export class DispatchOrchestrator {
 
   constructor(
     private readonly sessions: SessionService,
-    private readonly aliases: Record<Provider, string>,
+    private readonly aliases: ProviderAliases,
     private readonly registry?: InvocationCanceller,
   ) {}
 
@@ -145,12 +150,17 @@ export class DispatchOrchestrator {
       queueCounts.set(entry.to.provider, (queueCounts.get(entry.to.provider) ?? 0) + 1)
     }
 
-    return (Object.entries(this.aliases) as Array<[Provider, string]>).map(([provider, alias]) => ({
-      agentId: alias,
-      provider,
-      running: this.isSlotBusy(sessionGroupId, provider),
-      queueDepth: queueCounts.get(provider) ?? 0,
-    }))
+    return (Object.entries(this.aliases) as Array<[Provider, string]>).map(
+      ([provider, alias]) => {
+        const agentId = alias.startsWith("@") ? alias.slice(1) : alias
+        return {
+          agentId,
+          provider,
+          running: this.isSlotBusy(sessionGroupId, provider),
+          queueDepth: queueCounts.get(provider) ?? 0,
+        }
+      },
+    )
   }
 
   enqueuePublicMentions(options: {

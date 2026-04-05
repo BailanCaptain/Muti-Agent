@@ -12,18 +12,19 @@ export type MentionMatch = {
 
 export type MentionMatchMode = "line-start" | "anywhere"
 
-export function resolveMention(content: string, aliases: Record<Provider, string>) {
-  const trimmed = content.trim()
+/**
+ * Provider → @mention 别名（单名严格匹配）。
+ * 只有这一个名字能路由，不接受 provider 代号作为 fallback。
+ */
+export type ProviderAliases = Record<Provider, string>
+
+export function resolveMention(content: string, aliases: ProviderAliases) {
+  const trimmed = content.trim().toLowerCase()
 
   for (const provider of Object.keys(aliases) as Provider[]) {
     const alias = aliases[provider]
-    const patterns = [
-      `@${alias}`,
-      `@${provider}`,
-      `@${provider[0].toUpperCase()}${provider.slice(1)}`,
-    ]
-
-    if (patterns.some((pattern) => trimmed.toLowerCase().startsWith(pattern.toLowerCase()))) {
+    const pattern = alias.startsWith("@") ? alias : `@${alias}`
+    if (trimmed.startsWith(pattern.toLowerCase())) {
       return { provider } satisfies MentionRouteResult
     }
   }
@@ -40,7 +41,9 @@ function escapeRegex(value: string) {
 const MENTION_TERMINATOR = String.raw`(?=$|[\s*_~:,.!?;()\[\]{}<>\uff0c\u3002\uff01\uff1f\uff1b\uff1a\u201c\u201d\u2018\u2019\u3001])`
 
 function buildMentionPattern(candidate: string, mode: MentionMatchMode) {
-  const escaped = escapeRegex(candidate)
+  // Candidates may or may not already start with "@" — strip it for regex assembly.
+  const bare = candidate.startsWith("@") ? candidate.slice(1) : candidate
+  const escaped = escapeRegex(bare)
 
   if (mode === "anywhere") {
     // User text may mention agents mid-sentence; avoid matching inside email/domain-like strings.
@@ -54,25 +57,22 @@ function buildMentionPattern(candidate: string, mode: MentionMatchMode) {
 
 export function resolveMentions(
   content: string,
-  aliases: Record<Provider, string>,
+  aliases: ProviderAliases,
   mode: MentionMatchMode = "line-start",
 ) {
   const matches: MentionMatch[] = []
 
   for (const provider of Object.keys(aliases) as Provider[]) {
     const alias = aliases[provider]
-    const patterns = [alias, provider, `${provider[0].toUpperCase()}${provider.slice(1)}`]
+    const bare = alias.startsWith("@") ? alias.slice(1) : alias
+    const pattern = buildMentionPattern(alias, mode)
 
-    for (const candidate of patterns) {
-      const pattern = buildMentionPattern(candidate, mode)
-
-      for (const match of content.matchAll(pattern)) {
-        matches.push({
-          provider,
-          alias,
-          index: match.index ?? -1,
-        })
-      }
+    for (const match of content.matchAll(pattern)) {
+      matches.push({
+        provider,
+        alias: bare,
+        index: match.index ?? -1,
+      })
     }
   }
 
