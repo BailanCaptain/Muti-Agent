@@ -820,18 +820,31 @@ export class MessageService {
       ? this.sessions.appendUserMessage(sourceThread.id, prompt).id
       : crypto.randomUUID()
 
+    // Fan out in parallel; each provider's reply feeds markCompleted.
+    // When all participants are done, run the shared allDone handler
+    // (agent-initiated → aggregate goes directly to group.callbackTo).
     for (const provider of targetProviders) {
       const thread = this.sessions.findThreadByGroupAndProvider(sessionGroupId, provider)
       if (!thread) continue
 
       const enrichedPrompt = this.prependSkillHint(prompt, provider)
-      this.runThreadTurn({
-        threadId: thread.id,
-        content: enrichedPrompt,
-        emit: params.emit,
-        rootMessageId,
-        parentInvocationId: params.invocationId,
-      })
+      void (async () => {
+        const turnResult = await this.runThreadTurn({
+          threadId: thread.id,
+          content: enrichedPrompt,
+          emit: params.emit,
+          rootMessageId,
+          parentInvocationId: params.invocationId,
+        })
+        const joinResult = this.parallelGroups.markCompleted(group.id, provider, {
+          messageId: turnResult?.messageId ?? "",
+          content: turnResult?.content ?? "",
+        })
+        if (joinResult?.allDone) {
+          await this.handleParallelGroupAllDone(sessionGroupId, joinResult.group, params.emit)
+          this.parallelGroups.remove(group.id)
+        }
+      })()
     }
 
     return { ok: true, groupId: group.id }
