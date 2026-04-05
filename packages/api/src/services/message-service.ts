@@ -10,6 +10,7 @@ import type {
 } from "../orchestrator/dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
 import { type ParallelGroup, ParallelGroupRegistry } from "../orchestrator/parallel-group"
+import { buildPhase1Header } from "../orchestrator/phase1-header"
 import { runTurn } from "../runtime/cli-orchestrator"
 import type { DecisionManager } from "../orchestrator/decision-manager"
 import type { SkillRegistry } from "../skills/registry"
@@ -610,17 +611,31 @@ export class MessageService {
       ? `[用户请求]`
       : `[A2A 协作请求 from ${entry.from.agentId}]`
 
-    // Match skills against taskSnippet for the target agent's provider
-    const skillHintLine = this.buildSkillHintLine(
-      entry.taskSnippet,
-      entry.to.provider as import("@multi-agent/shared").Provider,
-    )
+    // Mode B (parallel group): inject Phase 1 hard-rule header instead of skillHint,
+    // so agents don't race to load full SKILL.md and play synthesizer prematurely.
+    // Structural guarantee of independent thinking (complements thread-per-provider
+    // + snapshot-freeze isolation).
+    const modeBGroup = entry.parallelGroupId
+      ? this.parallelGroups.get(entry.parallelGroupId)
+      : undefined
+    const modeBHeader = modeBGroup
+      ? buildPhase1Header(modeBGroup.participantProviders.length)
+      : null
+
+    // Match skills against taskSnippet for the target agent's provider (only when not Mode B)
+    const skillHintLine = modeBHeader
+      ? null
+      : this.buildSkillHintLine(
+          entry.taskSnippet,
+          entry.to.provider as import("@multi-agent/shared").Provider,
+        )
 
     return [
       header,
       ``,
       `任务: ${entry.taskSnippet}`,
       ``,
+      ...(modeBHeader ? [modeBHeader, ``] : []),
       ...(skillHintLine ? [skillHintLine, ``] : []),
       `--- 上下文快照 (${entry.contextSnapshot.length} 条消息) ---`,
       ...entry.contextSnapshot.map((m) => `[${m.agentId}]: ${m.content.slice(0, 300)}`),
