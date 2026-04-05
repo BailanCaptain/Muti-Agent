@@ -23,7 +23,7 @@ export const useChatStore = create<ChatStore>((set) => ({
   sendMessage: async (input) => {
     const payload = useThreadStore.getState().buildSendPayload(input)
     if (!payload) {
-      set({ status: "Start the prompt with @codex, @claude, or @gemini." })
+      set({ status: "请用 @ 指定智能体：@黄仁勋 / @范德彪 / @桂芬 / @所有人" })
       return
     }
 

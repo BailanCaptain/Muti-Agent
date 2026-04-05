@@ -106,28 +106,84 @@ function normalizeSessionGroups(groups: SessionGroupSummary[]): SessionListItem[
   }))
 }
 
-function parseMention(input: string): Provider | null {
-  const match = input.trim().match(/@([^\s]+)/)
-  if (!match) {
-    return null
-  }
+const EVERYONE_TOKEN = "所有人"
 
-  const alias = match[1].toLowerCase()
-  if (alias === PROVIDER_ALIASES.codex.toLowerCase() || alias === "codex") {
+type MentionToken =
+  | { kind: "provider"; provider: Provider; raw: string; index: number }
+  | { kind: "everyone"; raw: string; index: number }
+
+// Match @ followed by CJK chars / ASCII letters / digits / underscore.
+// Scans the whole string so every mention gets surfaced, not just the first.
+const MENTION_SCAN_REGEX = /@([\p{L}\p{N}_]+)/gu
+
+function resolveAliasToProvider(aliasLower: string): Provider | null {
+  if (aliasLower === PROVIDER_ALIASES.codex.toLowerCase() || aliasLower === "codex") {
     return "codex"
   }
   if (
-    alias === PROVIDER_ALIASES.claude.toLowerCase() ||
-    alias === "claude" ||
-    alias === "claudecode"
+    aliasLower === PROVIDER_ALIASES.claude.toLowerCase() ||
+    aliasLower === "claude" ||
+    aliasLower === "claudecode"
   ) {
     return "claude"
   }
-  if (alias === PROVIDER_ALIASES.gemini.toLowerCase() || alias === "gemini") {
+  if (aliasLower === PROVIDER_ALIASES.gemini.toLowerCase() || aliasLower === "gemini") {
     return "gemini"
   }
-
   return null
+}
+
+function parseMentions(input: string): MentionToken[] {
+  const tokens: MentionToken[] = []
+  for (const match of input.matchAll(MENTION_SCAN_REGEX)) {
+    const alias = match[1]
+    const raw = match[0]
+    const index = match.index ?? -1
+    if (alias === EVERYONE_TOKEN) {
+      tokens.push({ kind: "everyone", raw, index })
+      continue
+    }
+    const provider = resolveAliasToProvider(alias.toLowerCase())
+    if (provider) {
+      tokens.push({ kind: "provider", provider, raw, index })
+    }
+  }
+  return tokens
+}
+
+/**
+ * 将用户输入归一化成后端能识别的形式：
+ * - @所有人 展开为三个规范中文名
+ * - 英文 provider 名（@claude 等）替换成对应中文人名
+ * - 其他 @xxx 原样保留（可能是 @所有人 之外的普通文本）
+ */
+function normalizeContentForBackend(input: string, tokens: MentionToken[]): string {
+  // Replace the @所有人 token with the three canonical names; only the first occurrence gets expanded
+  // to keep the content readable, the rest are simply dropped.
+  let expanded = input
+  const everyoneTokens = tokens.filter((t) => t.kind === "everyone")
+  if (everyoneTokens.length > 0) {
+    const all = `@${PROVIDER_ALIASES.claude} @${PROVIDER_ALIASES.codex} @${PROVIDER_ALIASES.gemini}`
+    let replaced = false
+    expanded = expanded.replace(new RegExp(`@${EVERYONE_TOKEN}`, "g"), () => {
+      if (!replaced) {
+        replaced = true
+        return all
+      }
+      return ""
+    })
+  }
+
+  // Normalize English provider aliases to Chinese names so the backend mention-router matches.
+  expanded = expanded.replace(MENTION_SCAN_REGEX, (raw, alias: string) => {
+    if (alias === EVERYONE_TOKEN) return raw
+    const provider = resolveAliasToProvider(alias.toLowerCase())
+    if (!provider) return raw
+    const canonical = `@${PROVIDER_ALIASES[provider]}`
+    return canonical
+  })
+
+  return expanded
 }
 
 function mergeTimeline(existing: TimelineMessage[], incoming: TimelineMessage[]) {
@@ -300,25 +356,43 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
   buildSendPayload: (input) => {
     // The frontend sends the resolved provider/thread pair so the backend ws route can stay transport-focused.
-    const provider = parseMention(input)
-    if (!provider) {
+    // Multi-mention handling: resolve *all* mentions, pick the first concrete provider as the direct-turn
+    // target, then hand the full (normalized) content to the backend — `enqueuePublicMentions` will
+    // dispatch the others (and skip the source provider to avoid double-running the direct thread).
+    const tokens = parseMentions(input)
+    if (tokens.length === 0) {
       return null
     }
 
-    const content = input.replace(/@([^\s]+)/, "").trim()
-    if (!content) {
+    // @所有人 expands to all three providers; pick the first available thread as the direct target.
+    const hasEveryone = tokens.some((t) => t.kind === "everyone")
+    const providerTokens = tokens.filter(
+      (t): t is Extract<MentionToken, { kind: "provider" }> => t.kind === "provider",
+    )
+
+    const providers = get().providers
+    let targetProvider: Provider | null = providerTokens[0]?.provider ?? null
+    if (!targetProvider && hasEveryone) {
+      targetProvider = PROVIDERS.find((p) => providers[p].threadId) ?? null
+    }
+    if (!targetProvider) {
       return null
     }
 
-    const thread = get().providers[provider]
+    const thread = providers[targetProvider]
     if (!thread.threadId) {
+      return null
+    }
+
+    const normalizedContent = normalizeContentForBackend(input, tokens).trim()
+    if (!normalizedContent) {
       return null
     }
 
     return {
       threadId: thread.threadId,
-      provider,
-      content,
+      provider: targetProvider,
+      content: normalizedContent,
       alias: thread.alias,
     }
   },
