@@ -17,6 +17,7 @@ export function buildPhase1Header(totalParticipants: number): string {
     "- 标注不确定性（区分确信结论和猜测）",
     "- 回复格式：证据 → 分析 → 结论 → 置信度",
     "- 只回答本问题，不要规划后续阶段，不要替村长做综合决策",
+    "- 如果有需要村长拍板的选项/取舍，单独一行以 `[拍板]` 开头列出该问题；每条一行，保持简短",
     "",
     "参考 skill: collaborative-thinking（不要加载全文，按本 header 执行）",
   ].join("\n")

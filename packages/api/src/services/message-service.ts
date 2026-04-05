@@ -10,7 +10,7 @@ import type {
   QueueEntry,
 } from "../orchestrator/dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
-import { generateAggregatedResult } from "../orchestrator/aggregate-result"
+import { extractDecisionItems, generateAggregatedResult } from "../orchestrator/aggregate-result"
 import { type ParallelGroup, ParallelGroupRegistry } from "../orchestrator/parallel-group"
 import { buildPhase1Header } from "../orchestrator/phase1-header"
 import { buildPhase2Turn } from "../orchestrator/phase2-header"
@@ -1125,16 +1125,28 @@ export class MessageService {
 
     if (!this.decisions) return
 
+    // Surface [拍板] items raised by agents in Phase 1 / Phase 2 so they
+    // don't disappear into the transcript. User sees them in the card.
+    const pendingItems = this.collectPendingDecisionItems(group)
+    const baseDescription =
+      "讨论已完成。选一个 agent 综合各方观点，或直接输入你的想法/下一步指令（两者可以都填）。"
+    const description =
+      pendingItems.length > 0
+        ? `${baseDescription}\n\n待村长拍板：\n${pendingItems.map((i) => `- ${i}`).join("\n")}`
+        : baseDescription
+
     const response = await this.decisions.request({
       kind: "fan_in_selector",
       title: "下一步",
-      description:
-        "讨论已完成。选一个 agent 综合各方观点，或直接输入你的想法/下一步指令（两者可以都填）。",
+      description,
       options,
       sessionGroupId,
       multiSelect: false,
       allowTextInput: true,
-      textInputPlaceholder: "想让谁做什么？或留给选定的综合者的额外指令…",
+      textInputPlaceholder:
+        pendingItems.length > 0
+          ? "回应上面的拍板项，或给综合者的指令…"
+          : "想让谁做什么？或留给选定的综合者的额外指令…",
       timeoutMs: 10 * 60 * 1000,
     })
 
@@ -1160,6 +1172,33 @@ export class MessageService {
       type: "status",
       payload: { message: "未选择综合者，讨论结果已归档" },
     })
+  }
+
+  /**
+   * Collect `[拍板]` items from Phase 1 results + Phase 2 replies, deduped
+   * by text. Order: Phase 1 first (by participant order), then Phase 2
+   * (chronological). Agents are instructed to flag user-decision items
+   * with `[拍板]` in their replies so they don't get lost in the transcript.
+   */
+  private collectPendingDecisionItems(group: ParallelGroup): string[] {
+    const seen = new Set<string>()
+    const items: string[] = []
+    const push = (candidates: string[]) => {
+      for (const c of candidates) {
+        if (!seen.has(c)) {
+          seen.add(c)
+          items.push(c)
+        }
+      }
+    }
+    for (const provider of group.participantProviders) {
+      const reply = group.completedResults.get(provider)
+      if (reply) push(extractDecisionItems(reply.content))
+    }
+    for (const reply of group.phase2Replies) {
+      push(extractDecisionItems(reply.content))
+    }
+    return items
   }
 
   /**

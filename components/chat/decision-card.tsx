@@ -57,7 +57,9 @@ export function DecisionCard({ request, onRespond }: DecisionCardProps) {
             <span className="font-semibold text-sm text-slate-800">{request.title}</span>
           </div>
           {request.description && (
-            <p className="mt-0.5 text-xs text-slate-500 leading-relaxed">{request.description}</p>
+            <p className="mt-0.5 whitespace-pre-line text-xs text-slate-500 leading-relaxed">
+              {request.description}
+            </p>
           )}
         </div>
       </div>
