@@ -214,15 +214,18 @@ export class MessageService {
       parentInvocationId: options.invocationId,
       buildSnapshot: () => this.captureSnapshot(thread.sessionGroupId, options.messageId),
       extractSnippet: (c, alias) => extractTaskSnippet(c, alias),
-      createParallelGroup: (targetProviders) =>
-        this.parallelGroups.create({
+      createParallelGroup: (targetProviders) => {
+        const group = this.parallelGroups.create({
           parentMessageId: options.messageId,
           originatorAgentId: thread.alias,
           originatorProvider: thread.provider,
           targetProviders,
           joinBehavior: "notify_originator",
           initiatedBy: "agent",
-        }),
+        })
+        this.parallelGroups.start(group.id)
+        return group
+      },
     })
     this.emitBlockedDispatches(enqueueResult, options.emit)
 
@@ -280,15 +283,18 @@ export class MessageService {
       parentInvocationId: null,
       buildSnapshot: () => this.captureSnapshot(thread.sessionGroupId, userMessage.id),
       extractSnippet: (c, alias) => extractTaskSnippet(c, alias),
-      createParallelGroup: (targetProviders) =>
-        this.parallelGroups.create({
+      createParallelGroup: (targetProviders) => {
+        const group = this.parallelGroups.create({
           parentMessageId: userMessage.id,
           originatorAgentId: thread.alias,
           originatorProvider: thread.provider,
           targetProviders,
           joinBehavior: "notify_originator",
           initiatedBy: "user",
-        }),
+        })
+        this.parallelGroups.start(group.id)
+        return group
+      },
     })
     this.emitBlockedDispatches(enqueueResult, emit)
 
@@ -810,9 +816,12 @@ export class MessageService {
       }
     })
 
-    // Build prompt with context
+    // Build prompt with context. Reuse buildPhase1Header so agent-initiated
+    // parallel_think shares the same Phase 1 independence rules as the
+    // user-mention fan-out path (message-service:619-625).
     const contextLine = params.context ? `\n\n背景信息：${params.context}` : ""
-    const prompt = `[并行思考请求] 请独立思考以下问题，给出你的分析和观点。不要预测其他 agent 的回答。\n\n${params.question}${contextLine}`
+    const phase1Header = buildPhase1Header(targetProviders.length)
+    const prompt = `${phase1Header}\n\n问题：${params.question}${contextLine}`
 
     // Use source thread to create a root message for dispatch tracking
     const sourceThread = this.sessions.findThreadByGroupAndProvider(sessionGroupId, params.sourceProvider)
@@ -823,15 +832,17 @@ export class MessageService {
     // Fan out in parallel; each provider's reply feeds markCompleted.
     // When all participants are done, run the shared allDone handler
     // (agent-initiated → aggregate goes directly to group.callbackTo).
+    // Don't prependSkillHint: Phase 1 header already says "参考 skill:
+    // collaborative-thinking（不要加载全文，按本 header 执行）" — a ⚡ 加载 skill
+    // line on top would contradict that and make agents load the full SKILL.md.
     for (const provider of targetProviders) {
       const thread = this.sessions.findThreadByGroupAndProvider(sessionGroupId, provider)
       if (!thread) continue
 
-      const enrichedPrompt = this.prependSkillHint(prompt, provider)
       void (async () => {
         const turnResult = await this.runThreadTurn({
           threadId: thread.id,
-          content: enrichedPrompt,
+          content: prompt,
           emit: params.emit,
           rootMessageId,
           parentInvocationId: params.invocationId,

@@ -184,6 +184,28 @@ test("markCompleted returns null for unknown groupId", () => {
   assert.equal(result, null)
 })
 
+test("markCompleted on unstarted group throws when reaching terminal state", () => {
+  // Regression: user-mention fan-out once created groups without calling start(),
+  // which left status=pending. The last markCompleted then tried pending→done,
+  // an illegal transition, and threw inside Promise.allSettled — silently
+  // skipping the ConnectorBubble + fan-in selector. Test locks the contract:
+  // if you forget to start(), the failure must be loud, not swallowed.
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "msg-1",
+    originatorAgentId: "Villager",
+    originatorProvider: "claude",
+    targetProviders: ["codex", "gemini"],
+    joinBehavior: "notify_originator",
+  })
+
+  registry.markCompleted(group.id, "codex", { messageId: "r1", content: "done" })
+  assert.throws(
+    () => registry.markCompleted(group.id, "gemini", { messageId: "r2", content: "done" }),
+    /Invalid transition: pending → done/,
+  )
+})
+
 test("markCompleted ignores duplicate from same provider", () => {
   const registry = new ParallelGroupRegistry()
   const group = registry.create({

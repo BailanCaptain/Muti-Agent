@@ -216,7 +216,7 @@ export class SessionService {
       role,
       content:
         role === "user"
-          ? content.startsWith("You were mentioned by")
+          ? content.includes(`@${thread.alias}`)
             ? content
             : `@${thread.alias} ${content}`
           : content,
