@@ -934,10 +934,12 @@ export class MessageService {
     aggregate: string,
     emit: EmitEvent,
   ): Promise<void> {
-    const { PROVIDER_ALIASES, PROVIDERS } = await import("@multi-agent/shared")
+    const { PROVIDER_ALIASES } = await import("@multi-agent/shared")
 
-    // Build fan-in options from all available agents
-    const options = PROVIDERS.map((p) => ({
+    // Options scoped to this group's participants only — not all providers,
+    // and not 村长 (no self-synthesis option). User picks whose voice becomes
+    // the synthesizer.
+    const options = group.participantProviders.map((p) => ({
       id: p,
       label: PROVIDER_ALIASES[p],
       description: `由 ${PROVIDER_ALIASES[p]} 综合各方观点`,
