@@ -65,6 +65,7 @@ export class ClaudeRuntime extends BaseCliRuntime {
   protected buildCommand(input: AgentRunInput): RuntimeCommand {
     const runtime = resolveClaudeCommand();
     const model = input.env?.MULTI_AGENT_MODEL;
+    const effort = input.env?.MULTI_AGENT_EFFORT;
     const sessionId = input.env?.MULTI_AGENT_NATIVE_SESSION_ID;
     // 会话已恢复时不重复附加 system prompt，避免冗余 token。
     const args = ["--output-format", "stream-json", "--verbose"];
@@ -92,6 +93,9 @@ export class ClaudeRuntime extends BaseCliRuntime {
 
     if (model) {
       args.push("--model", model);
+    }
+    if (effort) {
+      args.push("--effort", effort);
     }
     if (sessionId) {
       args.push("--resume", sessionId);

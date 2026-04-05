@@ -8,6 +8,7 @@ data/*.sqlite-*
 .env.local
 .env
 multi-agent.sqlite
+multi-agent.runtime-config.json
 .npm-cache/_update-notifier-last-checked
 .npm-cache/_cacache/content-v2/sha512/a7/06/938f0e89ac1456b6563eab4edf1d1faf3368d1191fc5c59790e96dc918e4456ab2e67d613de1043d2e8c81f87303e6b40d4ffeca9df15ef1ad567348f2be
 .npm-cache/_cacache/content-v2/sha512/ed/44/76b3cd9c924168baeb8b51ed0f936113378377272f8cb35061a8a96aa1c55f3ac3456418444f3651757e6fcc768184fcd26f46f4fd403c53b8972905280e

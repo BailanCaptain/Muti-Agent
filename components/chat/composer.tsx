@@ -1,5 +1,6 @@
 "use client"
 
+import { AgentConfigBar } from "@/components/chat/agent-config-bar"
 import { useChatStore } from "@/components/stores/chat-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { AGENT_PROFILES, PROVIDERS, PROVIDER_ALIASES, type Provider } from "@multi-agent/shared"
@@ -202,6 +203,8 @@ export function Composer() {
           <span className="text-[11px] text-slate-400">继续输入，消息将自动排队。</span>
         </div>
       )}
+
+      <AgentConfigBar />
 
       <div className="flex flex-wrap gap-2 px-2">
         {PROVIDERS.map((provider) => {

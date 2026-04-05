@@ -20,6 +20,7 @@ export class CodexRuntime extends BaseCliRuntime {
   protected buildCommand(input: AgentRunInput): RuntimeCommand {
     const runtime = resolveCodexCommand();
     const model = input.env?.MULTI_AGENT_MODEL;
+    const effort = input.env?.MULTI_AGENT_EFFORT;
     const sessionId = input.env?.MULTI_AGENT_NATIVE_SESSION_ID;
     // 会话已恢复时模型已有指令，不重复附加，减少每轮 ~500 token 的额外开销。
     const prompt = sessionId
@@ -27,6 +28,7 @@ export class CodexRuntime extends BaseCliRuntime {
       : wrapPromptWithInstructions(AGENT_SYSTEM_PROMPTS.codex, input.prompt);
     const topLevelArgs = [
       ...(model ? ["-m", model] : []),
+      ...(effort ? ["--config", `model_reasoning_effort="${effort}"`] : []),
       "--config", 'approval_policy="on-request"',
       "--sandbox", "workspace-write",
     ];

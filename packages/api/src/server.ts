@@ -13,6 +13,7 @@ import { DispatchOrchestrator } from "./orchestrator/dispatch"
 import { InvocationRegistry } from "./orchestrator/invocation-registry"
 import { registerCallbackRoutes } from "./routes/callbacks"
 import { registerMessageRoutes } from "./routes/messages"
+import { registerRuntimeConfigRoutes } from "./routes/runtime-config"
 import { registerThreadRoutes } from "./routes/threads"
 import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
 import { listProviderProfiles } from "./runtime/provider-profiles"
@@ -159,6 +160,7 @@ export async function createApiServer(options: {
     }),
   })
   registerMessageRoutes(app)
+  registerRuntimeConfigRoutes(app)
   registerCallbackRoutes(app, {
     repository,
     sessions,

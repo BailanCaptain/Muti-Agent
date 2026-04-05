@@ -16,6 +16,7 @@ import { buildPhase1Header } from "../orchestrator/phase1-header"
 import { buildPhase2Turn } from "../orchestrator/phase2-header"
 import { runTurn } from "../runtime/cli-orchestrator"
 import { classifyFailure } from "../runtime/failure-classifier"
+import { loadRuntimeConfig } from "../runtime/runtime-config"
 import type { DecisionManager } from "../orchestrator/decision-manager"
 import type { SkillRegistry } from "../skills/registry"
 import type { SopTracker } from "../skills/sop-tracker"
@@ -404,6 +405,10 @@ export class MessageService {
       payload: { message: `正在运行 ${thread.alias}` },
     })
 
+    // Per-provider model/effort override from runtime-config.json.
+    // Falls back to thread.currentModel (legacy per-thread selector) when unset.
+    const runtimeOverride = loadRuntimeConfig()[thread.provider]
+
     run = runTurn({
       invocationId: identity.invocationId,
       threadId: thread.id,
@@ -411,7 +416,8 @@ export class MessageService {
       agentId: thread.alias,
       apiBaseUrl: this.apiBaseUrl,
       callbackToken: identity.callbackToken,
-      model: thread.currentModel,
+      model: runtimeOverride?.model ?? thread.currentModel,
+      effort: runtimeOverride?.effort ?? null,
       nativeSessionId: thread.nativeSessionId,
       userMessage: options.content,
       onAssistantDelta: (delta: string) => {
