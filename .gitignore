@@ -25,3 +25,5 @@ multi-agent.runtime-config.json
 .gemini/skills/
 .agents/skills/
 .claude/settings.local.json
+.runtime/api.log
+.runtime/web.log

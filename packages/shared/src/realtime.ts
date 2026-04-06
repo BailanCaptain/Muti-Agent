@@ -5,6 +5,8 @@ export type ConnectorSource = {
   label: string
   initiator?: Provider
   targets: Provider[]
+  fromAlias?: string
+  toAlias?: string
 }
 
 // ── Inline Confirmation ─────────────────────────────────────────────
@@ -64,6 +66,8 @@ export type TimelineMessage = {
   connectorSource?: ConnectorSource
   /** Inline confirmation cards embedded in this message bubble */
   inlineConfirmations?: InlineConfirmation[]
+  groupId?: string
+  groupRole?: "header" | "member" | "convergence"
   inputTokens?: number
   outputTokens?: number
   cachedPercent?: number

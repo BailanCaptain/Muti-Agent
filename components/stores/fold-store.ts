@@ -11,8 +11,11 @@ type FoldStore = {
   messageFolds: Record<string, boolean>
   // Per-provider default fold state.
   providerFolds: ProviderFoldMap
+  // Group-level fold state: groupId → folded (true = collapsed). Groups default to folded.
+  groupFolds: Record<string, boolean>
   toggleMessage: (messageId: string, provider: Provider) => void
   toggleProvider: (provider: Provider) => void
+  toggleGroup: (groupId: string) => void
   foldAll: () => void
   unfoldAll: () => void
 }
@@ -24,6 +27,7 @@ function makeProviderFolds(value: boolean): ProviderFoldMap {
 export const useFoldStore = create<FoldStore>((set) => ({
   messageFolds: {},
   providerFolds: makeProviderFolds(false),
+  groupFolds: {},
   toggleMessage: (messageId, provider) => {
     set((state) => {
       const explicit = state.messageFolds[messageId]
@@ -38,6 +42,15 @@ export const useFoldStore = create<FoldStore>((set) => ({
     set((state) => ({
       providerFolds: { ...state.providerFolds, [provider]: !state.providerFolds[provider] },
     }))
+  },
+  toggleGroup: (groupId) => {
+    set((state) => {
+      // Default is folded (true) when groupId absent from map
+      const current = state.groupFolds[groupId] ?? true
+      return {
+        groupFolds: { ...state.groupFolds, [groupId]: !current },
+      }
+    })
   },
   foldAll: () => {
     // Clear per-message overrides so the new provider default wins uniformly.
@@ -54,4 +67,9 @@ export function useIsMessageFolded(messageId: string, provider: Provider): boole
     if (typeof override === "boolean") return override
     return Boolean(state.providerFolds[provider])
   })
+}
+
+/** Groups default to folded (true) when not explicitly set. */
+export function useIsGroupFolded(groupId: string): boolean {
+  return useFoldStore((state) => state.groupFolds[groupId] ?? true)
 }

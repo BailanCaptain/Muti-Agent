@@ -245,6 +245,40 @@ export class MessageService {
     })
     this.emitBlockedDispatches(enqueueResult, options.emit)
 
+    // A2A single dispatch: emit "A2A 协助" header connector for each
+    // agent-initiated single-target dispatch (no parallelGroupId).
+    for (const entry of enqueueResult.queued) {
+      if (!entry.parallelGroupId) {
+        const targetThread = this.sessions.findThreadByGroupAndProvider(
+          thread.sessionGroupId,
+          entry.to.provider,
+        )
+        if (targetThread) {
+          const a2aConnectorSource: ConnectorSource = {
+            kind: "multi_mention_result",
+            label: "A2A 协助",
+            fromAlias: thread.alias,
+            toAlias: entry.to.agentId,
+            targets: [entry.to.provider],
+          }
+          const a2aConnector = this.sessions.appendConnectorMessage(
+            targetThread.id,
+            "",
+            a2aConnectorSource,
+            entry.id,
+            "header",
+          )
+          const a2aTimeline = this.sessions.toTimelineMessage(targetThread.id, a2aConnector.id)
+          if (a2aTimeline) {
+            options.emit({
+              type: "message.created",
+              payload: { threadId: targetThread.id, message: a2aTimeline },
+            })
+          }
+        }
+      }
+    }
+
     await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
   }
 
@@ -309,6 +343,28 @@ export class MessageService {
           initiatedBy: "user",
         })
         this.parallelGroups.start(group.id)
+
+        // Emit Phase 1 header connector at the START of the parallel group
+        const phase1ConnectorSource: ConnectorSource = {
+          kind: "multi_mention_result",
+          label: "并行独立思考",
+          targets: targetProviders,
+        }
+        const phase1Connector = this.sessions.appendConnectorMessage(
+          thread.id,
+          "",
+          phase1ConnectorSource,
+          group.id,
+          "header",
+        )
+        const phase1Timeline = this.sessions.toTimelineMessage(thread.id, phase1Connector.id)
+        if (phase1Timeline) {
+          emit({
+            type: "message.created",
+            payload: { threadId: thread.id, message: phase1Timeline },
+          })
+        }
+
         return group
       },
     })
@@ -355,6 +411,10 @@ export class MessageService {
      * unintended agent runs. Default false.
      */
     suppressOutboundDispatch?: boolean
+    /** Collapsible group ID for the resulting message */
+    groupId?: string | null
+    /** Role within the collapsible group */
+    groupRole?: "header" | "member" | "convergence" | null
   }): Promise<{ messageId: string; content: string } | null> {
     const thread = this.dispatch.resolveThread(options.threadId)
     if (!thread) {
@@ -373,7 +433,14 @@ export class MessageService {
       return null
     }
 
-    const assistant = this.sessions.appendAssistantMessage(thread.id, "")
+    const assistant = this.sessions.appendAssistantMessage(
+      thread.id,
+      "",
+      "",
+      "final",
+      options.groupId ?? null,
+      options.groupRole ?? null,
+    )
     this.dispatch.attachMessageToRoot(assistant.id, options.rootMessageId)
     const assistantTimeline = this.sessions.toTimelineMessage(thread.id, assistant.id)
     if (assistantTimeline) {
@@ -732,6 +799,12 @@ export class MessageService {
                 skillHint,
               }, this.memoryService)
 
+              // Determine groupId/groupRole for collapsible groups:
+              // - Phase 1 parallel group → member of that group
+              // - A2A single dispatch (no parallelGroupId) → member of the dispatch entry's A2A group
+              const dispatchGroupId = entry.parallelGroupId ?? entry.id
+              const dispatchGroupRole: "member" = "member"
+
               const turnResult = await this.runThreadTurn({
                 threadId,
                 content: assembled.content,
@@ -740,6 +813,8 @@ export class MessageService {
                 rootMessageId: entry.rootMessageId,
                 parentInvocationId: entry.parentInvocationId,
                 suppressOutboundDispatch: !!entry.parallelGroupId,
+                groupId: dispatchGroupId,
+                groupRole: dispatchGroupRole,
               })
 
               // Parallel group join: mark this provider done with its real reply.
@@ -972,6 +1047,30 @@ export class MessageService {
 
     this.parallelGroups.start(group.id)
 
+    // Emit Phase 1 header connector for agent-initiated parallel think
+    const agentSourceThread = this.sessions.findThreadByGroupAndProvider(sessionGroupId, params.sourceProvider)
+    if (agentSourceThread) {
+      const phase1ConnectorSource: ConnectorSource = {
+        kind: "multi_mention_result",
+        label: "并行独立思考",
+        targets: targetProviders,
+      }
+      const phase1Connector = this.sessions.appendConnectorMessage(
+        agentSourceThread.id,
+        "",
+        phase1ConnectorSource,
+        group.id,
+        "header",
+      )
+      const phase1Timeline = this.sessions.toTimelineMessage(agentSourceThread.id, phase1Connector.id)
+      if (phase1Timeline) {
+        params.emit({
+          type: "message.created",
+          payload: { threadId: agentSourceThread.id, message: phase1Timeline },
+        })
+      }
+    }
+
     // Start timeout: on expiry, fill placeholders and run allDone handler
     // (agent-initiated → aggregate delivered directly to callbackTo).
     this.parallelGroups.startTimeout(group.id, () => {
@@ -1014,6 +1113,8 @@ export class MessageService {
           emit: params.emit,
           rootMessageId,
           parentInvocationId: params.invocationId,
+          groupId: group.id,
+          groupRole: "member",
         })
         const joinResult = this.parallelGroups.markCompleted(group.id, provider, {
           messageId: turnResult?.messageId ?? "",
@@ -1152,6 +1253,7 @@ export class MessageService {
           aliases: PROVIDER_ALIASES,
         })
 
+        const phase2GroupId = `${group.id}_phase2`
         let turnResult: { messageId: string; content: string } | null = null
         try {
           turnResult = await this.runThreadTurn({
@@ -1160,6 +1262,8 @@ export class MessageService {
             emit,
             rootMessageId: group.parentMessageId,
             suppressOutboundDispatch: true,
+            groupId: phase2GroupId,
+            groupRole: "member",
           })
         } catch {
           turnResult = null
@@ -1223,10 +1327,13 @@ export class MessageService {
       label: "串行讨论",
       targets: group.participantProviders,
     }
+    const phase2GroupId = `${group.id}_phase2`
     const connectorMessage = this.sessions.appendConnectorMessage(
       originatorThread.id,
       "",
       connectorSource,
+      phase2GroupId,
+      "header",
     )
     const timelineMessage = this.sessions.toTimelineMessage(
       originatorThread.id,

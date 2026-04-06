@@ -116,6 +116,8 @@ export class SessionService {
               message.createdAt,
               message.messageType,
               message.connectorSource ?? undefined,
+              message.groupId,
+              message.groupRole,
             ),
           ),
       )
@@ -156,12 +158,25 @@ export class SessionService {
     return this.repository.appendMessage(threadId, "user", content, "", "final")
   }
 
-  appendAssistantMessage(threadId: string, content: string, thinking = "", messageType: "progress" | "final" | "a2a_handoff" = "final") {
-    return this.repository.appendMessage(threadId, "assistant", content, thinking, messageType)
+  appendAssistantMessage(
+    threadId: string,
+    content: string,
+    thinking = "",
+    messageType: "progress" | "final" | "a2a_handoff" = "final",
+    groupId: string | null = null,
+    groupRole: "header" | "member" | "convergence" | null = null,
+  ) {
+    return this.repository.appendMessage(threadId, "assistant", content, thinking, messageType, null, groupId, groupRole)
   }
 
-  appendConnectorMessage(threadId: string, content: string, connectorSource: ConnectorSource) {
-    return this.repository.appendMessage(threadId, "assistant", content, "", "connector", connectorSource)
+  appendConnectorMessage(
+    threadId: string,
+    content: string,
+    connectorSource: ConnectorSource,
+    groupId: string | null = null,
+    groupRole: "header" | "member" | "convergence" | null = null,
+  ) {
+    return this.repository.appendMessage(threadId, "assistant", content, "", "connector", connectorSource, groupId, groupRole)
   }
 
   overwriteMessage(messageId: string, updates: { content?: string; thinking?: string }) {
@@ -188,6 +203,8 @@ export class SessionService {
       message.createdAt,
       message.messageType,
       message.connectorSource ?? undefined,
+      message.groupId,
+      message.groupRole,
     )
   }
 
@@ -207,6 +224,8 @@ export class SessionService {
     createdAt: string,
     messageType: "progress" | "final" | "a2a_handoff" | "connector" = "final",
     connectorSource?: ConnectorSource,
+    groupId?: string | null,
+    groupRole?: "header" | "member" | "convergence" | null,
   ): TimelineMessage {
     const isConnector = messageType === "connector"
     return {
@@ -223,6 +242,8 @@ export class SessionService {
       thinking: role === "assistant" && thinking && !isConnector ? thinking : undefined,
       messageType,
       connectorSource: isConnector ? connectorSource : undefined,
+      groupId: groupId ?? undefined,
+      groupRole: groupRole ?? undefined,
       model: role === "user" ? null : thread.currentModel,
       createdAt,
     }

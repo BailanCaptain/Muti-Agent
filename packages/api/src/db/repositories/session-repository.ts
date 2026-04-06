@@ -20,6 +20,8 @@ type MessageRow = {
   thinking: string
   messageType: MessageType
   connectorSource: string | null
+  groupId: string | null
+  groupRole: string | null
   createdAt: string
 }
 
@@ -27,6 +29,8 @@ function hydrateMessage(row: MessageRow): MessageRecord {
   return {
     ...row,
     connectorSource: row.connectorSource ? (JSON.parse(row.connectorSource) as ConnectorSourceRecord) : null,
+    groupId: row.groupId ?? null,
+    groupRole: (row.groupRole as MessageRecord["groupRole"]) ?? null,
   }
 }
 
@@ -141,7 +145,7 @@ export class SessionRepository {
   listMessages(threadId: string) {
     const rows = this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, created_at as createdAt
+        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, created_at as createdAt
          FROM messages
          WHERE thread_id = ?
          ORDER BY created_at ASC`,
@@ -153,7 +157,7 @@ export class SessionRepository {
   listRecentMessages(threadId: string, limit: number) {
     const rows = this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, created_at as createdAt
+        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, created_at as createdAt
          FROM messages
          WHERE thread_id = ?
          ORDER BY created_at DESC
@@ -170,6 +174,8 @@ export class SessionRepository {
     thinking = "",
     messageType: MessageType = "final",
     connectorSource: ConnectorSourceRecord | null = null,
+    groupId: string | null = null,
+    groupRole: MessageRecord["groupRole"] = null,
   ) {
     const message: MessageRecord = {
       id: crypto.randomUUID(),
@@ -179,13 +185,15 @@ export class SessionRepository {
       thinking,
       messageType,
       connectorSource,
+      groupId,
+      groupRole,
       createdAt: new Date().toISOString(),
     }
 
     this.store.db
       .prepare(
-        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, group_id, group_role, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -195,6 +203,8 @@ export class SessionRepository {
         message.thinking,
         message.messageType,
         connectorSource ? JSON.stringify(connectorSource) : null,
+        message.groupId,
+        message.groupRole,
         message.createdAt,
       )
 

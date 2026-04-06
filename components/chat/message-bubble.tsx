@@ -28,7 +28,7 @@ function formatClock(value: string) {
   })
 }
 
-function buildFoldedPreview(content: string): string {
+export function buildFoldedPreview(content: string): string {
   const plain = content
     .replace(/```[\s\S]*?```/g, "[代码块]")
     .replace(/`([^`]+)`/g, "$1")

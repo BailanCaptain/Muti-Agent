@@ -20,6 +20,8 @@ export type ConnectorSourceRecord = {
   label: string
   initiator?: Provider
   targets: Provider[]
+  fromAlias?: string
+  toAlias?: string
 }
 
 export type MessageRecord = {
@@ -30,6 +32,8 @@ export type MessageRecord = {
   thinking: string
   messageType: MessageType
   connectorSource: ConnectorSourceRecord | null
+  groupId: string | null
+  groupRole: "header" | "member" | "convergence" | null
   createdAt: string
 }
 
@@ -144,6 +148,18 @@ export class SqliteStore {
 
     try {
       this.db.exec("ALTER TABLE messages ADD COLUMN connector_source TEXT;")
+    } catch {
+      // Older databases may already have this column.
+    }
+
+    try {
+      this.db.exec("ALTER TABLE messages ADD COLUMN group_id TEXT;")
+    } catch {
+      // Older databases may already have this column.
+    }
+
+    try {
+      this.db.exec("ALTER TABLE messages ADD COLUMN group_role TEXT;")
     } catch {
       // Older databases may already have this column.
     }
