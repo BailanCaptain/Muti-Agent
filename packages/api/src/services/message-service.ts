@@ -10,7 +10,7 @@ import type {
   QueueEntry,
 } from "../orchestrator/dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
-import { extractDecisionItems, generateAggregatedResult } from "../orchestrator/aggregate-result"
+import { type DecisionItemParsed, extractDecisionItems, generateAggregatedResult } from "../orchestrator/aggregate-result"
 import { type ParallelGroup, ParallelGroupRegistry } from "../orchestrator/parallel-group"
 import { buildPhase1Header } from "../orchestrator/phase1-header"
 import { buildPhase2Turn } from "../orchestrator/phase2-header"
@@ -869,30 +869,34 @@ export class MessageService {
     const items = extractDecisionItems(content)
     if (!items.length) return
 
-    const options = items.map((item, i) => ({
-      id: `paiboard_${i}`,
-      label: item,
-    }))
+    // Each [拍板] item becomes one decision card anchored to the agent's
+    // message bubble.  If the agent provided [A]/[B]/… options the card
+    // renders as a selection list; otherwise it shows a free-text input.
+    for (const item of items) {
+      const options = item.options.map((opt, i) => ({
+        id: `opt_${i}`,
+        label: opt,
+      }))
 
-    // Emit inline confirmation card anchored to the agent's message bubble.
-    // This is fire-and-forget (non-blocking) — the card is informational
-    // during normal flow and Phase 1. Results are collected as pending items.
-    emit({
-      type: "decision.request",
-      payload: {
-        requestId: crypto.randomUUID(),
-        kind: "inline_confirmation",
-        title: "需要确认",
-        description: `${thread.alias} 提出了以下需要你拍板的问题：`,
-        options,
-        sessionGroupId: thread.sessionGroupId,
-        sourceProvider: thread.provider,
-        sourceAlias: thread.alias,
-        multiSelect: true,
-        anchorMessageId: messageId,
-        createdAt: new Date().toISOString(),
-      },
-    })
+      emit({
+        type: "decision.request",
+        payload: {
+          requestId: crypto.randomUUID(),
+          kind: "inline_confirmation",
+          title: item.question,
+          description: `${thread.alias} 提出了需要你拍板的问题`,
+          options,
+          sessionGroupId: thread.sessionGroupId,
+          sourceProvider: thread.provider,
+          sourceAlias: thread.alias,
+          multiSelect: false,
+          allowTextInput: true,
+          textInputPlaceholder: "以上都不选？说说你的想法…",
+          anchorMessageId: messageId,
+          createdAt: new Date().toISOString(),
+        },
+      })
+    }
   }
 
   emitThreadSnapshot(sessionGroupId: string, emit: EmitEvent) {
@@ -1423,19 +1427,18 @@ export class MessageService {
   }
 
   /**
-   * Collect `[拍板]` items from Phase 1 results + Phase 2 replies, deduped
-   * by text. Order: Phase 1 first (by participant order), then Phase 2
-   * (chronological). Agents are instructed to flag user-decision items
-   * with `[拍板]` in their replies so they don't get lost in the transcript.
+   * Collect `[拍板]` questions from Phase 1 results + Phase 2 replies, deduped
+   * by question text. Order: Phase 1 first (by participant order), then Phase 2
+   * (chronological). Returns the question strings for display in the fan-in card.
    */
   private collectPendingDecisionItems(group: ParallelGroup): string[] {
     const seen = new Set<string>()
-    const items: string[] = []
-    const push = (candidates: string[]) => {
+    const questions: string[] = []
+    const push = (candidates: DecisionItemParsed[]) => {
       for (const c of candidates) {
-        if (!seen.has(c)) {
-          seen.add(c)
-          items.push(c)
+        if (!seen.has(c.question)) {
+          seen.add(c.question)
+          questions.push(c.question)
         }
       }
     }
@@ -1446,7 +1449,7 @@ export class MessageService {
     for (const reply of group.phase2Replies) {
       push(extractDecisionItems(reply.content))
     }
-    return items
+    return questions
   }
 
   /**

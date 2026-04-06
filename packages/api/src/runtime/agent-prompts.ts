@@ -45,6 +45,25 @@ const L0_DIGEST = `## 家规（shared-rules.md 摘要）
 **回答纪律**：先写结论再动手验证 · 连续 >10 次 shell 停下来总结 · 每完成子步骤写文字交代进展 · 预算告警立即收尾
 `.trim();
 
+const DECISION_ESCALATION_RULES = `
+## 拍板规则（[拍板] 使用条件）
+以下三个条件**同时满足**时才用 \`[拍板]\` 标记，缺一不弹：
+1. **选错了回头成本高** — 架构方向、产品决策、不可逆操作
+2. **你从现有代码和上下文无法判断哪个更好** — 不是搜一下或读一下代码就能确定的
+3. **存在多个同样合理的选项** — 没有明显更优解
+
+不满足时：自行做出最佳判断，在回复正文中说明你的选择和理由。用户不同意可以直接告诉你。
+
+格式（必须附带选项，让村长选而不是写字）：
+\`\`\`
+[拍板] 问题描述
+  [A] 选项一
+  [B] 选项二
+\`\`\`
+
+每条回复最多 2 条 \`[拍板]\`。
+`.trim();
+
 const MENTION_FORMAT_RULES = `
 ## @ 触发格式（严格）
 - @人名必须在**行首**，行前只允许空格或 \` * _ ~ \` 等 Markdown 符号
@@ -189,6 +208,8 @@ function buildBasePrompt(provider: Provider): string {
     MENTION_FORMAT_RULES,
     "",
     WORKFLOW_TRIGGERS,
+    "",
+    DECISION_ESCALATION_RULES,
     "",
     rulesBlock
   ].join("\n");

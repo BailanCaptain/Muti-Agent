@@ -79,7 +79,7 @@ export function CollapsibleGroup({
 
   return (
     <div className="mb-6 flex w-full flex-col items-stretch">
-      <div className="mx-auto w-full max-w-[780px] overflow-hidden rounded-[28px] border border-indigo-200/70 bg-gradient-to-br from-indigo-50/70 via-white to-violet-50/50 shadow-[0_18px_40px_rgba(79,70,229,0.08)]">
+      <div className="mx-auto w-full max-w-[980px] overflow-hidden rounded-[28px] border border-indigo-200/70 bg-gradient-to-br from-indigo-50/70 via-white to-violet-50/50 shadow-[0_18px_40px_rgba(79,70,229,0.08)]">
         {/* ── Header row (always visible) ── */}
         <button
           className="flex w-full cursor-pointer select-none items-center gap-3 px-6 py-3.5 text-left transition-colors hover:bg-indigo-50/40"
