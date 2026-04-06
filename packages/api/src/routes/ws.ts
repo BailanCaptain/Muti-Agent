@@ -22,7 +22,7 @@ export function registerWsRoute(
     messages: MessageService;
     broadcaster: RealtimeBroadcaster;
     approvals?: ApprovalManager;
-    onDecisionRespond?: (requestId: string, selectedIds: string[], userInput?: string) => void;
+    onDecisionRespond?: (requestId: string, decisions: Array<{optionId: string; verdict: string; modification?: string}>, userInput?: string) => void;
   }
 ) {
   const sockets = new Set<SocketLike>();
@@ -67,7 +67,7 @@ export function registerWsRoute(
         if (event.type === "decision.respond" && options.onDecisionRespond) {
           options.onDecisionRespond(
             event.payload.requestId,
-            event.payload.selectedIds,
+            event.payload.decisions,
             event.payload.userInput,
           );
           return;

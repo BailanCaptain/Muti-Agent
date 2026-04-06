@@ -53,7 +53,7 @@ export async function createApiServer(options: {
   const manifestPath = path.resolve(__dirname, "../../../multi-agent-skills/manifest.yaml")
   skillRegistry.loadManifest(manifestPath)
   const sopTracker = new SopTracker()
-  const decisions = new DecisionManager((event) => broadcaster.broadcast(event))
+  const decisions = new DecisionManager((event) => broadcaster.broadcast(event), repository)
   messages.setMemoryService(memoryService)
   messages.setSkillRegistry(skillRegistry)
   messages.setSopTracker(sopTracker)
@@ -239,8 +239,8 @@ export async function createApiServer(options: {
     messages,
     broadcaster,
     approvals,
-    onDecisionRespond: (requestId, selectedIds, userInput) =>
-      decisions.respond(requestId, selectedIds, userInput),
+    onDecisionRespond: (requestId, decisions_payload, userInput) =>
+      decisions.respond(requestId, decisions_payload, userInput),
   })
   registerMcpServer(app)
 

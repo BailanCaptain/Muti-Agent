@@ -2,14 +2,21 @@
 
 import { useFoldStore, useIsMessageFolded } from "@/components/stores/fold-store"
 import { formatTokenCount } from "@/lib/format"
-import type { Provider, TimelineMessage } from "@multi-agent/shared"
+import type { DecisionRequest, Provider, TimelineMessage } from "@multi-agent/shared"
 import { ChevronDown, ChevronRight, Copy, Trash2 } from "lucide-react"
 import { useState } from "react"
+import { DecisionCard } from "./decision-card"
 import { MarkdownMessage } from "./markdown-message"
 import { ProviderAvatar } from "./provider-avatar"
 
 interface MessageBubbleProps {
   message: TimelineMessage
+  inlineDecisions?: DecisionRequest[]
+  onDecisionRespond?: (
+    requestId: string,
+    decisions: Array<{ optionId: string; verdict: "approved" | "rejected" | "modified"; modification?: string }>,
+    userInput?: string,
+  ) => void
   onDelete?: (id: string) => void
   onCopy?: (content: string) => void
 }
@@ -120,7 +127,7 @@ function MessageMeta({ message }: { message: TimelineMessage }) {
   )
 }
 
-export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps) {
+export function MessageBubble({ message, inlineDecisions, onDecisionRespond, onDelete, onCopy }: MessageBubbleProps) {
   const [isThinkingOpen, setIsThinkingOpen] = useState(true)
   const isUser = message.role === "user"
   const avatarIdentity = isUser ? "user" : message.provider
@@ -229,6 +236,14 @@ export function MessageBubble({ message, onDelete, onCopy }: MessageBubbleProps)
                 ) : null}
 
                 <MarkdownMessage content={message.content} />
+
+                {inlineDecisions && inlineDecisions.length > 0 && onDecisionRespond && (
+                  <div className="mt-3 space-y-2 border-t border-slate-200/60 pt-3">
+                    {inlineDecisions.map((req) => (
+                      <DecisionCard key={req.requestId} request={req} onRespond={onDecisionRespond} />
+                    ))}
+                  </div>
+                )}
 
                 {!isUser ? <MessageMeta message={message} /> : null}
               </div>

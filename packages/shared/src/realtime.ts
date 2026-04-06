@@ -166,6 +166,14 @@ export type DecisionRequest = {
   createdAt: string
 }
 
+export type OptionVerdict = "approved" | "rejected" | "modified"
+
+export type DecisionVerdict = {
+  optionId: string
+  verdict: OptionVerdict
+  modification?: string
+}
+
 export type BlockedDispatchAttempt = {
   sessionGroupId: string
   rootMessageId: string
@@ -209,7 +217,7 @@ export type RealtimeClientEvent =
       type: "decision.respond"
       payload: {
         requestId: string
-        selectedIds: string[]
+        decisions: DecisionVerdict[]
         userInput?: string
       }
     }
@@ -273,7 +281,7 @@ export type RealtimeServerEvent =
       type: "decision.resolved"
       payload: {
         requestId: string
-        selectedIds: string[]
+        decisions: DecisionVerdict[]
         userInput?: string
       }
     }

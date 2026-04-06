@@ -1045,7 +1045,9 @@ export class MessageService {
   }): Promise<string[]> {
     if (!this.decisions) return []
     const response = await this.decisions.request(params)
-    return response.selectedIds
+    return response.decisions
+      .filter(d => d.verdict === "approved" || d.verdict === "modified")
+      .map(d => d.optionId)
   }
 
   /**
@@ -1288,7 +1290,8 @@ export class MessageService {
       timeoutMs: 10 * 60 * 1000,
     })
 
-    const selectedProvider = response.selectedIds[0] as
+    const approvedDecision = response.decisions.find(d => d.verdict === "approved" || d.verdict === "modified")
+    const selectedProvider = (approvedDecision?.optionId) as
       | import("@multi-agent/shared").Provider
       | undefined
     const userInput = response.userInput.trim()

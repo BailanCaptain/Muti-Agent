@@ -1,7 +1,7 @@
 import type { DecisionRequest, Provider, RealtimeServerEvent } from "@multi-agent/shared"
 
 export type DecisionResponse = {
-  selectedIds: string[]
+  decisions: Array<{ optionId: string; verdict: string; modification?: string }>
   userInput: string
 }
 
@@ -18,7 +18,13 @@ type PendingDecision = {
 export class DecisionManager {
   private readonly pending = new Map<string, PendingDecision>()
 
-  constructor(private readonly emit: (event: RealtimeServerEvent) => void) {}
+  constructor(
+    private readonly emit: (event: RealtimeServerEvent) => void,
+    private readonly repository?: {
+      listThreadsByGroup: (sessionGroupId: string) => Array<{ id: string; provider: string }>;
+      appendMessage: (threadId: string, role: "user" | "assistant", content: string) => unknown;
+    },
+  ) {}
 
   /**
    * Send a decision request to the frontend and wait for the response.
@@ -59,12 +65,12 @@ export class DecisionManager {
       const timeoutMs = params.timeoutMs ?? 5 * 60 * 1000
       const timer = setTimeout(() => {
         this.pending.delete(requestId)
-        // Default to first option on timeout
-        const fallbackIds = request.options.length > 0 ? [request.options[0].id] : []
-        resolve({ selectedIds: fallbackIds, userInput: "" })
+        // Default to approving all options on timeout
+        const fallbackDecisions = request.options.map(o => ({ optionId: o.id, verdict: "approved" as const }))
+        resolve({ decisions: fallbackDecisions, userInput: "" })
         this.emit({
           type: "decision.resolved",
-          payload: { requestId, selectedIds: fallbackIds },
+          payload: { requestId, decisions: fallbackDecisions },
         })
       }, timeoutMs)
 
@@ -73,21 +79,57 @@ export class DecisionManager {
     })
   }
 
-  respond(requestId: string, selectedIds: string[], userInput?: string): void {
+  respond(requestId: string, decisions: Array<{optionId: string; verdict: string; modification?: string}>, userInput?: string): void {
     const entry = this.pending.get(requestId)
     if (!entry) return
 
     clearTimeout(entry.timer)
     this.pending.delete(requestId)
-    entry.resolve({ selectedIds, userInput: userInput ?? "" })
+    entry.resolve({ decisions, userInput: userInput ?? "" })
+
+    // Write decision result to source agent's thread
+    if (this.repository && entry.request.sessionGroupId && entry.request.sourceProvider) {
+      this.writeDecisionToThread(entry.request, decisions, userInput)
+    }
 
     this.emit({
       type: "decision.resolved",
       payload: {
         requestId,
-        selectedIds,
+        decisions,
         ...(userInput ? { userInput } : {}),
       },
     })
+  }
+
+  private writeDecisionToThread(
+    request: DecisionRequest,
+    decisions: Array<{optionId: string; verdict: string; modification?: string}>,
+    userInput?: string,
+  ): void {
+    if (!this.repository) return
+
+    const threads = this.repository.listThreadsByGroup(request.sessionGroupId)
+    const thread = threads.find(t => t.provider === request.sourceProvider)
+    if (!thread) return
+
+    // Build a readable summary of the decisions
+    const lines: string[] = [`你提出的决策已确认：`]
+    for (const d of decisions) {
+      const option = request.options.find(o => o.id === d.optionId)
+      const label = option?.label ?? d.optionId
+      if (d.verdict === "approved") {
+        lines.push(`✅ ${label}`)
+      } else if (d.verdict === "rejected") {
+        lines.push(`❌ ${label}（已否决）`)
+      } else if (d.verdict === "modified") {
+        lines.push(`✏️ ${label}（修改：${d.modification ?? ""})`)
+      }
+    }
+    if (userInput) {
+      lines.push(`\n补充说明：${userInput}`)
+    }
+
+    this.repository.appendMessage(thread.id, "user", lines.join("\n"))
   }
 }

@@ -1,14 +1,18 @@
 "use client"
 
 import { socketClient } from "@/components/ws/client"
-import type { DecisionRequest } from "@multi-agent/shared"
+import type { DecisionRequest, DecisionVerdict } from "@multi-agent/shared"
 import { create } from "zustand"
 
 type DecisionStore = {
   pending: DecisionRequest[]
   addRequest: (request: DecisionRequest) => void
   removeRequest: (requestId: string) => void
-  respond: (requestId: string, selectedIds: string[], userInput?: string) => void
+  respond: (
+    requestId: string,
+    decisions: DecisionVerdict[],
+    userInput?: string,
+  ) => void
 }
 
 export const useDecisionStore = create<DecisionStore>((set) => ({
@@ -23,12 +27,12 @@ export const useDecisionStore = create<DecisionStore>((set) => ({
     set((state) => ({
       pending: state.pending.filter((r) => r.requestId !== requestId),
     })),
-  respond: (requestId, selectedIds, userInput) => {
+  respond: (requestId, decisions, userInput) => {
     socketClient.send({
       type: "decision.respond",
       payload: {
         requestId,
-        selectedIds,
+        decisions,
         ...(userInput ? { userInput } : {}),
       },
     })

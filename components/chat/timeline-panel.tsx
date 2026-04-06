@@ -3,7 +3,7 @@
 import { useApprovalStore } from "@/components/stores/approval-store"
 import { useDecisionStore } from "@/components/stores/decision-store"
 import { useThreadStore } from "@/components/stores/thread-store"
-import { useEffect, useRef } from "react"
+import { useEffect, useMemo, useRef } from "react"
 import { ApprovalCard } from "./approval-card"
 import { ConnectorBubble } from "./connector-bubble"
 import { DecisionCard } from "./decision-card"
@@ -11,12 +11,33 @@ import { MessageBubble } from "./message-bubble"
 
 export function TimelinePanel() {
   const timeline = useThreadStore((state) => state.timeline)
+  const activeGroupId = useThreadStore((state) => state.activeGroupId)
   const pendingApprovals = useApprovalStore((state) => state.pending)
   const respondApproval = useApprovalStore((state) => state.respond)
-  const pendingDecisions = useDecisionStore((state) => state.pending)
+  const allPendingDecisions = useDecisionStore((state) => state.pending)
   const respondDecision = useDecisionStore((state) => state.respond)
   const latestMessageId = timeline.at(-1)?.id
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  const sessionDecisions = useMemo(
+    () => allPendingDecisions.filter((r) => r.sessionGroupId === activeGroupId),
+    [allPendingDecisions, activeGroupId],
+  )
+
+  const { inlineDecisionsByMsgId, standAloneDecisions } = useMemo(() => {
+    const byMsg = new Map<string, typeof sessionDecisions>()
+    const standalone: typeof sessionDecisions = []
+    for (const d of sessionDecisions) {
+      if (d.anchorMessageId) {
+        const list = byMsg.get(d.anchorMessageId)
+        if (list) list.push(d)
+        else byMsg.set(d.anchorMessageId, [d])
+      } else {
+        standalone.push(d)
+      }
+    }
+    return { inlineDecisionsByMsgId: byMsg, standAloneDecisions: standalone }
+  }, [sessionDecisions])
 
   useEffect(() => {
     if (scrollRef.current && latestMessageId) {
@@ -44,12 +65,14 @@ export function TimelinePanel() {
               <MessageBubble
                 key={message.id}
                 message={message}
+                inlineDecisions={inlineDecisionsByMsgId.get(message.id)}
+                onDecisionRespond={respondDecision}
                 onCopy={(content) => navigator.clipboard.writeText(content)}
               />
             ),
           )
         )}
-        {pendingDecisions.map((request) => (
+        {standAloneDecisions.map((request) => (
           <DecisionCard key={request.requestId} request={request} onRespond={respondDecision} />
         ))}
         {pendingApprovals.map((request) => (
