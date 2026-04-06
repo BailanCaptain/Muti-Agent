@@ -1,4 +1,4 @@
-import type { Provider } from "@multi-agent/shared"
+import type { PendingConfirmationItem, Provider } from "@multi-agent/shared"
 
 // ── State machine ────────────────────────────────────────────────────
 
@@ -56,6 +56,8 @@ export type ParallelGroup = {
   status: ParallelGroupStatus
   timeoutMinutes: number
   timeoutTimer: ReturnType<typeof setTimeout> | null
+  /** Unresolved confirmation items raised by agents across phases */
+  pendingConfirmations: PendingConfirmationItem[]
   idempotencyKey: string | null
   createdAt: string
 }
@@ -99,6 +101,7 @@ export class ParallelGroupRegistry {
       pendingProviders: new Set(options.targetProviders),
       completedResults: new Map(),
       phase2Replies: [],
+      pendingConfirmations: [],
       joinBehavior: options.joinBehavior,
       status: "pending",
       timeoutMinutes: options.timeoutMinutes ?? 8,
@@ -218,6 +221,51 @@ export class ParallelGroupRegistry {
       this.idempotencyIndex.delete(group.idempotencyKey)
     }
     this.groups.delete(groupId)
+  }
+
+  /**
+   * Track a new pending confirmation item raised by an agent.
+   */
+  addPendingConfirmation(
+    groupId: string,
+    item: Omit<PendingConfirmationItem, "id" | "createdAt">,
+  ): PendingConfirmationItem | null {
+    const group = this.groups.get(groupId)
+    if (!group) return null
+    const full: PendingConfirmationItem = {
+      ...item,
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+    }
+    group.pendingConfirmations.push(full)
+    return full
+  }
+
+  /**
+   * Resolve a pending confirmation (user selected or team consensus).
+   */
+  resolvePendingConfirmation(
+    groupId: string,
+    confirmationId: string,
+    resolution: { resolvedBy: "user" | "consensus"; resolution: string; selectedIds?: string[] },
+  ): boolean {
+    const group = this.groups.get(groupId)
+    if (!group) return false
+    const item = group.pendingConfirmations.find(c => c.id === confirmationId)
+    if (!item || item.status !== "pending") return false
+    item.status = "resolved"
+    item.resolvedBy = resolution.resolvedBy
+    item.resolution = resolution.resolution
+    return true
+  }
+
+  /**
+   * Get all unresolved confirmations for a group.
+   */
+  getUnresolvedConfirmations(groupId: string): PendingConfirmationItem[] {
+    const group = this.groups.get(groupId)
+    if (!group) return []
+    return group.pendingConfirmations.filter(c => c.status === "pending")
   }
 
   private clearTimeout(groupId: string): void {

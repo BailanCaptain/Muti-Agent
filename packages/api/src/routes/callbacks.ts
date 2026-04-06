@@ -52,6 +52,7 @@ export function registerCallbackRoutes(
       multiSelect: boolean
       sourceProvider: import("@multi-agent/shared").Provider
       sourceAlias: string
+      anchorMessageId?: string
     }) => Promise<{ selectedIds: string[] }>
     parallelThink?: (sessionGroupId: string, params: {
       targets: string[]
@@ -312,6 +313,7 @@ export function registerCallbackRoutes(
       description?: string
       options?: Array<{ id: string; label: string; description?: string }>
       multiSelect?: boolean
+      anchorMessageId?: string
     }
     const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
 
@@ -339,6 +341,7 @@ export function registerCallbackRoutes(
         multiSelect: body.multiSelect ?? false,
         sourceProvider: thread.provider,
         sourceAlias: thread.alias,
+        anchorMessageId: body.anchorMessageId,
       })
       return { ok: true, selectedIds: result.selectedIds }
     }

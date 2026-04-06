@@ -263,7 +263,11 @@ export function getTools() {
             },
             description: "选项列表（2-6 个）"
           },
-          multiSelect: { type: "boolean", description: "是否允许多选，默认 false" }
+          multiSelect: { type: "boolean", description: "是否允许多选，默认 false" },
+          anchorMessageId: {
+            type: "string",
+            description: "可选：将决策卡片嵌入到指定消息气泡中（inline card）。如果不提供，卡片作为独立系统卡片显示。"
+          }
         },
         required: ["title", "options"]
       }
@@ -404,6 +408,7 @@ async function callRequestDecision(params: {
   description?: string;
   options: Array<{ id: string; label: string; description?: string }>;
   multiSelect?: boolean;
+  anchorMessageId?: string;
 }): Promise<ToolResult> {
   if (!params.options?.length || params.options.length < 2) {
     return {
@@ -422,6 +427,7 @@ async function callRequestDecision(params: {
       description: params.description,
       options: params.options,
       multiSelect: params.multiSelect ?? false,
+      anchorMessageId: params.anchorMessageId,
     }
   });
 
@@ -575,6 +581,7 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
         description?: string;
         options: Array<{ id: string; label: string; description?: string }>;
         multiSelect?: boolean;
+        anchorMessageId?: string;
       });
     case "parallel_think":
       return callParallelThink(args as {

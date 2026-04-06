@@ -36,6 +36,7 @@ export class DecisionManager {
     allowTextInput?: boolean
     textInputPlaceholder?: string
     timeoutMs?: number
+    anchorMessageId?: string
   }): Promise<DecisionResponse> {
     const requestId = crypto.randomUUID()
     const request: DecisionRequest = {
@@ -50,6 +51,7 @@ export class DecisionManager {
       multiSelect: params.multiSelect,
       allowTextInput: params.allowTextInput,
       textInputPlaceholder: params.textInputPlaceholder,
+      anchorMessageId: params.anchorMessageId,
       createdAt: new Date().toISOString(),
     }
 
