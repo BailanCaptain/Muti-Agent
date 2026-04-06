@@ -13,6 +13,7 @@ export function buildPhase1Header(totalParticipants: number): string {
     "",
     "规则：",
     "- 独立给出你自己的观点，不预测其他 agent 会怎么说",
+    "- 禁止在回复中使用行首 @（不允许 @任何队友），你的任务是独立思考",
     "- 展示推理链（不只结论）",
     "- 标注不确定性（区分确信结论和猜测）",
     "- 回复格式：证据 → 分析 → 结论 → 置信度",

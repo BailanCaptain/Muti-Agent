@@ -104,6 +104,14 @@ function extractPromptFromActivityChunk(chunk: string) {
   return promptLikeLines.join("\n").slice(0, 1200)
 }
 
+function truncateForA2A(content: string, maxLength: number): string {
+  if (content.length <= maxLength) return content
+  const headLen = Math.floor(maxLength * 0.6)
+  const tailLen = Math.floor(maxLength * 0.3)
+  const omitted = content.length - headLen - tailLen
+  return `${content.slice(0, headLen)}\n...(省略 ${omitted} 字)...\n${content.slice(-tailLen)}`
+}
+
 export class MessageService {
   private readonly flushingGroups = new Set<string>()
   private readonly parallelGroups = new ParallelGroupRegistry()
@@ -568,6 +576,16 @@ export class MessageService {
         })
       }
 
+      // Detect [拍板] items and emit inline confirmation cards
+      if (!promptRequestedByCli && result.content.trim()) {
+        this.detectAndEmitInlineConfirmations(
+          thread,
+          assistant.id,
+          result.content,
+          options.emit,
+        )
+      }
+
       this.events.emit({
         type: "invocation.finished",
         invocationId: identity.invocationId,
@@ -678,6 +696,7 @@ export class MessageService {
                 emit,
                 rootMessageId: entry.rootMessageId,
                 parentInvocationId: entry.parentInvocationId,
+                suppressOutboundDispatch: !!entry.parallelGroupId,
               })
 
               // Parallel group join: mark this provider done with its real reply.
@@ -744,19 +763,95 @@ export class MessageService {
           entry.to.provider as import("@multi-agent/shared").Provider,
         )
 
-    return [
+    // Build tiered context sections from the flat snapshot
+    const selfMessages = entry.contextSnapshot.filter(m => m.agentId === entry.to.agentId)
+    const otherMessages = entry.contextSnapshot.filter(m => m.agentId !== entry.to.agentId)
+
+    // Self history: last 5 of this agent's messages, full text
+    const selfHistory = selfMessages.slice(-5)
+    // Recent global: last 10 other messages, head+tail truncated
+    const recentGlobal = otherMessages.slice(-10)
+
+    const sections: string[] = [
       header,
       ``,
       `任务: ${entry.taskSnippet}`,
       ``,
-      ...(modeBHeader ? [modeBHeader, ``] : []),
-      ...(skillHintLine ? [skillHintLine, ``] : []),
-      `--- 上下文快照 (${entry.contextSnapshot.length} 条消息) ---`,
-      ...entry.contextSnapshot.map((m) => `[${m.agentId}]: ${m.content.slice(0, 300)}`),
-      `---`,
+    ]
+
+    if (modeBHeader) {
+      sections.push(modeBHeader, ``)
+    }
+    if (skillHintLine) {
+      sections.push(skillHintLine, ``)
+    }
+
+    // Section 1: Self history (agent's own recent messages)
+    if (selfHistory.length > 0) {
+      sections.push(`--- 你之前的发言 (${selfHistory.length} 条) ---`)
+      for (const m of selfHistory) {
+        sections.push(`[${m.role === "user" ? "收到" : "你"}]: ${m.content}`)
+      }
+      sections.push(`---`, ``)
+    }
+
+    // Section 2: Recent global conversation
+    if (recentGlobal.length > 0) {
+      sections.push(`--- 近期对话 (${recentGlobal.length} 条) ---`)
+      for (const m of recentGlobal) {
+        const truncated = truncateForA2A(m.content, 500)
+        sections.push(`[${m.agentId}]: ${truncated}`)
+      }
+      sections.push(`---`, ``)
+    }
+
+    // Section 3: Rolling summary hint
+    sections.push(
+      `如需更早的上下文，可调用 MCP get_thread_context 工具获取。`,
       ``,
       `你是 ${entry.to.agentId}。请完成上述任务。`,
-    ].join("\n")
+    )
+
+    return sections.join("\n")
+  }
+
+  /**
+   * Parse [拍板] markers from agent reply and emit inline confirmation
+   * cards embedded in the agent's message bubble.
+   */
+  private detectAndEmitInlineConfirmations(
+    thread: { id: string; provider: import("@multi-agent/shared").Provider; alias: string; sessionGroupId: string },
+    messageId: string,
+    content: string,
+    emit: EmitEvent,
+  ): void {
+    const items = extractDecisionItems(content)
+    if (!items.length) return
+
+    const options = items.map((item, i) => ({
+      id: `paiboard_${i}`,
+      label: item,
+    }))
+
+    // Emit inline confirmation card anchored to the agent's message bubble.
+    // This is fire-and-forget (non-blocking) — the card is informational
+    // during normal flow and Phase 1. Results are collected as pending items.
+    emit({
+      type: "decision.request",
+      payload: {
+        requestId: crypto.randomUUID(),
+        kind: "inline_confirmation",
+        title: "需要确认",
+        description: `${thread.alias} 提出了以下需要你拍板的问题：`,
+        options,
+        sessionGroupId: thread.sessionGroupId,
+        sourceProvider: thread.provider,
+        sourceAlias: thread.alias,
+        multiSelect: true,
+        anchorMessageId: messageId,
+        createdAt: new Date().toISOString(),
+      },
+    })
   }
 
   emitThreadSnapshot(sessionGroupId: string, emit: EmitEvent) {
@@ -812,7 +907,7 @@ export class MessageService {
         createdAt: m.createdAt,
       }))
     })
-    return [...buildContextSnapshot(allMessages, threadMeta, { sessionGroupId, triggerMessageId })]
+    return [...buildContextSnapshot(allMessages, threadMeta, { sessionGroupId, triggerMessageId, maxMessages: 40 })]
   }
 
   private getBusyStatus(threadId: string, sessionGroupId: string) {
