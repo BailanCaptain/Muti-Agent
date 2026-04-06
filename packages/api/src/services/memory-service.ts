@@ -42,6 +42,150 @@ export class MemoryService {
     return this.repository.createMemory(sessionGroupId, summary, keywords)
   }
 
+  /**
+   * Generate a rolling summary using Gemini API for compression.
+   * Falls back to extractive-only summary if no API key or on failure.
+   */
+  async generateRollingSummary(sessionGroupId: string): Promise<string> {
+    // 1. Get all messages for the session group (from all threads)
+    const threads = this.repository.listThreadsByGroup(sessionGroupId)
+    const allMessages: Array<{ role: string; content: string; alias: string; createdAt: string }> =
+      []
+
+    for (const thread of threads) {
+      const messages = this.repository.listMessages(thread.id)
+      for (const msg of messages) {
+        allMessages.push({
+          role: msg.role,
+          content: msg.content,
+          alias: thread.alias,
+          createdAt: msg.createdAt,
+        })
+      }
+    }
+
+    // Sort by time
+    allMessages.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+
+    // 2. Build extractive summary first (key decisions, [拍板] items, topic keywords)
+    const extractive = buildExtractiveSummary(allMessages)
+
+    // 3. Attempt Gemini API call for abstractive compression
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ""
+    if (!apiKey) {
+      // No API key, persist and return extractive summary
+      const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
+      this.repository.createMemory(sessionGroupId, extractive, keywords)
+      return extractive
+    }
+
+    try {
+      const model = "gemini-2.5-flash-preview"
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+
+      const prompt = `你是一个会话摘要生成器。请根据以下对话记录，生成一份 500-1000 字的结构化摘要。
+
+格式要求：
+## 话题
+（列出讨论的主要话题）
+
+## 关键决策
+（列出已做出的关键决策，特别注意标记了 [拍板] 的内容）
+
+## 待办
+（列出尚未完成的任务和行动项）
+
+## 共识与分歧
+（列出团队达成的共识和仍有分歧的点）
+
+以下是提取式摘要：
+${extractive}
+
+以下是完整对话记录（按时间排序）：
+${allMessages.slice(-50).map((m) => {
+  const speaker = m.role === "user" ? "用户" : m.alias
+  return `[${speaker} ${m.createdAt}]: ${m.content.slice(0, 500)}`
+}).join("\n")}`
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`Gemini API returned ${response.status}`)
+      }
+
+      const data = (await response.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+      }
+      const summary = data.candidates?.[0]?.content?.parts?.[0]?.text
+
+      if (!summary) {
+        throw new Error("Empty response from Gemini API")
+      }
+
+      // 5. Persist via repository
+      const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
+      this.repository.createMemory(sessionGroupId, summary, keywords)
+
+      // 6. Return the summary string
+      return summary
+    } catch {
+      // Fall back to extractive-only summary
+      const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
+      this.repository.createMemory(sessionGroupId, extractive, keywords)
+      return extractive
+    }
+  }
+
+  /**
+   * Check for existing summary first, only generate if stale
+   * (>10 user messages since last summary).
+   */
+  async getOrCreateSummary(sessionGroupId: string): Promise<string | null> {
+    // Check for existing summary
+    const existing = this.repository.getLatestMemory(sessionGroupId)
+
+    if (existing) {
+      // Count user messages since the summary was created
+      const threads = this.repository.listThreadsByGroup(sessionGroupId)
+      let userMessagesSinceSummary = 0
+
+      for (const thread of threads) {
+        const messages = this.repository.listMessages(thread.id)
+        for (const msg of messages) {
+          if (msg.role === "user" && msg.createdAt > existing.createdAt) {
+            userMessagesSinceSummary++
+          }
+        }
+      }
+
+      // If fewer than 10 user messages since last summary, return existing
+      if (userMessagesSinceSummary <= 10) {
+        return existing.summary
+      }
+    }
+
+    // No existing summary or it's stale — check if there are any messages at all
+    const threads = this.repository.listThreadsByGroup(sessionGroupId)
+    let totalMessages = 0
+    for (const thread of threads) {
+      const messages = this.repository.listMessages(thread.id)
+      totalMessages += messages.length
+    }
+
+    if (totalMessages === 0) {
+      return null
+    }
+
+    // Generate a new rolling summary
+    return this.generateRollingSummary(sessionGroupId)
+  }
+
   getLastSummary(sessionGroupId: string): string | null {
     const record = this.repository.getLatestMemory(sessionGroupId)
     return record?.summary ?? null
@@ -54,6 +198,44 @@ export class MemoryService {
   getMemoriesForGroup(sessionGroupId: string): SessionMemoryRecord[] {
     return this.repository.listMemories(sessionGroupId)
   }
+}
+
+/**
+ * Build an extractive summary highlighting key decisions, [拍板] items, and topic keywords.
+ */
+function buildExtractiveSummary(
+  allMessages: Array<{ role: string; content: string; alias: string; createdAt: string }>,
+): string {
+  const sections: string[] = []
+
+  // Extract [拍板] items
+  const paibanItems: string[] = []
+  for (const msg of allMessages) {
+    if (msg.content.includes("[拍板]") || msg.content.includes("【拍板】")) {
+      const speaker = msg.role === "user" ? "用户" : msg.alias
+      paibanItems.push(`[${speaker}]: ${msg.content.slice(0, 300)}`)
+    }
+  }
+  if (paibanItems.length > 0) {
+    sections.push("### 关键决策（[拍板]）\n" + paibanItems.join("\n"))
+  }
+
+  // Extract topic keywords
+  const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
+  if (keywords) {
+    sections.push("### 话题关键词\n" + keywords)
+  }
+
+  // Recent conversation highlights (last 20 messages, truncated)
+  const recent = allMessages.slice(-20)
+  const summaryLines = recent.map((m) => {
+    const speaker = m.role === "user" ? "用户" : m.alias
+    const content = m.content.length > 200 ? m.content.slice(0, 200) + "..." : m.content
+    return `[${speaker}]: ${content}`
+  })
+  sections.push("### 近期对话\n" + summaryLines.join("\n"))
+
+  return sections.join("\n\n")
 }
 
 function extractKeywords(text: string): string {

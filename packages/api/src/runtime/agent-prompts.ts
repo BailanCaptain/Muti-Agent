@@ -1,9 +1,12 @@
+import fs from "node:fs";
+import path from "node:path";
 import {
   AGENT_PROFILES,
   HUMAN_OWNER,
   PROVIDERS,
   type Provider
 } from "@multi-agent/shared";
+import type { MemoryService } from "../services/memory-service";
 
 const PROVIDER_LABELS: Record<Provider, string> = {
   claude: "Anthropic",
@@ -93,6 +96,36 @@ node -e "const b=process.env.MULTI_AGENT_API_URL,i=process.env.MULTI_AGENT_INVOC
 调用会阻塞直到审批，approved 后再执行，denied 则跳过。
 `.trim();
 
+// ── Shared Rules File Cache ─────────────────────────────────────────
+
+let _sharedRulesCache: string | null = null;
+let _sharedRulesCacheTime = 0;
+const SHARED_RULES_CACHE_TTL_MS = 60_000; // 60 seconds
+
+/**
+ * Load shared-rules.md at runtime with a file cache that refreshes every 60 seconds.
+ * Returns empty string if file doesn't exist.
+ */
+export function loadSharedRules(): string {
+  const now = Date.now();
+  if (_sharedRulesCache !== null && now - _sharedRulesCacheTime < SHARED_RULES_CACHE_TTL_MS) {
+    return _sharedRulesCache;
+  }
+
+  const rulesPath = path.resolve(__dirname, "../../../../multi-agent-skills/refs/shared-rules.md");
+  try {
+    _sharedRulesCache = fs.readFileSync(rulesPath, "utf-8");
+    _sharedRulesCacheTime = now;
+    return _sharedRulesCache;
+  } catch {
+    _sharedRulesCache = "";
+    _sharedRulesCacheTime = now;
+    return "";
+  }
+}
+
+// ── Prompt Builders ─────────────────────────────────────────────────
+
 function buildTeammateRoster(current: Provider): string {
   const teammates = PROVIDERS.filter((p) => p !== current);
   const rows = teammates.map((p) => {
@@ -127,6 +160,12 @@ function buildBasePrompt(provider: Provider): string {
   const me = AGENT_PROFILES[provider];
   const providerLabel = PROVIDER_LABELS[provider];
 
+  // Use runtime shared-rules.md when available, fall back to L0_DIGEST
+  const sharedRules = loadSharedRules();
+  const rulesBlock = sharedRules
+    ? `## 家规（shared-rules.md 运行时加载）\n\n${sharedRules}`
+    : L0_DIGEST;
+
   return [
     "# Multi-Agent SystemPrompt",
     "",
@@ -151,7 +190,7 @@ function buildBasePrompt(provider: Provider): string {
     "",
     WORKFLOW_TRIGGERS,
     "",
-    L0_DIGEST
+    rulesBlock
   ].join("\n");
 }
 
@@ -179,4 +218,20 @@ export function buildSystemPrompt(
   ].join("\n");
 
   return base + "\n" + memoryBlock;
+}
+
+/**
+ * Get the system prompt for a turn, including rolling summary if available.
+ * This is the primary entry point for runtimes to get their system prompt.
+ */
+export async function getSystemPromptForTurn(
+  provider: Provider,
+  sessionGroupId: string,
+  memoryService: MemoryService | null
+): Promise<string> {
+  // 1. Get the latest summary via memoryService
+  const summary = await memoryService?.getOrCreateSummary(sessionGroupId) ?? null;
+
+  // 2. Build the system prompt with summary
+  return buildSystemPrompt(provider, summary);
 }

@@ -18,6 +18,7 @@ export type RunTurnOptions = {
   effort: string | null;
   nativeSessionId: string | null;
   userMessage: string;
+  systemPrompt?: string;
   onAssistantDelta: (delta: string) => void;
   onSession: (nativeSessionId: string) => void;
   onModel: (model: string) => void;
@@ -69,7 +70,8 @@ export function runTurn(options: RunTurnOptions) {
       MULTI_AGENT_CALLBACK_TOKEN: options.callbackToken ?? "",
       MULTI_AGENT_MODEL: options.model ?? "",
       MULTI_AGENT_EFFORT: options.effort ?? "",
-      MULTI_AGENT_NATIVE_SESSION_ID: options.nativeSessionId ?? ""
+      MULTI_AGENT_NATIVE_SESSION_ID: options.nativeSessionId ?? "",
+      MULTI_AGENT_SYSTEM_PROMPT: options.systemPrompt ?? ""
     }
   };
 

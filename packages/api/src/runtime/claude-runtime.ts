@@ -70,7 +70,8 @@ export class ClaudeRuntime extends BaseCliRuntime {
     // 会话已恢复时不重复附加 system prompt，避免冗余 token。
     const args = ["--output-format", "stream-json", "--verbose"];
     if (!sessionId) {
-      args.push("--append-system-prompt", AGENT_SYSTEM_PROMPTS.claude);
+      const systemPrompt = input.env?.MULTI_AGENT_SYSTEM_PROMPT || AGENT_SYSTEM_PROMPTS.claude;
+      args.push("--append-system-prompt", systemPrompt);
     }
     args.unshift("-p", input.prompt);
     const mcpServerPath = path.join(__dirname, "..", "mcp", "server.js");

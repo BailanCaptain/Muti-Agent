@@ -72,9 +72,10 @@ export class GeminiRuntime extends BaseCliRuntime {
     );
     const sessionId = input.env?.MULTI_AGENT_NATIVE_SESSION_ID;
     // 会话已恢复时模型已有指令，不重复附加，减少每轮 ~500 token 的额外开销。
+    const systemPrompt = input.env?.MULTI_AGENT_SYSTEM_PROMPT || AGENT_SYSTEM_PROMPTS.gemini;
     const prompt = sessionId
       ? input.prompt
-      : wrapPromptWithInstructions(AGENT_SYSTEM_PROMPTS.gemini, input.prompt);
+      : wrapPromptWithInstructions(systemPrompt, input.prompt);
     const args = ["-p", prompt, "--output-format", "stream-json", "--approval-mode", "yolo"];
     const model = input.env?.MULTI_AGENT_MODEL;
 
