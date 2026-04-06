@@ -122,9 +122,9 @@ async function callPostMessage(content: string): Promise<ToolResult> {
   };
 }
 
-async function callGetThreadContext(limit?: number): Promise<ToolResult> {
+async function callGetRoomContext(limit?: number): Promise<ToolResult> {
   const identity = getCallbackIdentity();
-  const url = new URL(`${identity.apiUrl}/api/callbacks/thread-context`);
+  const url = new URL(`${identity.apiUrl}/api/callbacks/room-context`);
   url.searchParams.set("invocationId", identity.invocationId);
   url.searchParams.set("callbackToken", identity.callbackToken);
   if (typeof limit === "number") {
@@ -135,7 +135,46 @@ async function callGetThreadContext(limit?: number): Promise<ToolResult> {
   if (response.statusCode >= 400) {
     return {
       isError: true,
-      content: [{ type: "text", text: `get_thread_context failed: ${JSON.stringify(response.json)}` }]
+      content: [{ type: "text", text: `get_room_context failed: ${JSON.stringify(response.json)}` }]
+    };
+  }
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(response.json) }]
+  };
+}
+
+async function callGetRoomSummary(): Promise<ToolResult> {
+  const identity = getCallbackIdentity();
+  const url = new URL(`${identity.apiUrl}/api/callbacks/room-summary`);
+  url.searchParams.set("invocationId", identity.invocationId);
+  url.searchParams.set("callbackToken", identity.callbackToken);
+
+  const response = await requestJson(url.toString(), { method: "GET" });
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `get_room_summary failed: ${JSON.stringify(response.json)}` }]
+    };
+  }
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(response.json) }]
+  };
+}
+
+async function callSearchRoomMemories(keyword: string): Promise<ToolResult> {
+  const identity = getCallbackIdentity();
+  const url = new URL(`${identity.apiUrl}/api/callbacks/search-memories`);
+  url.searchParams.set("invocationId", identity.invocationId);
+  url.searchParams.set("callbackToken", identity.callbackToken);
+  url.searchParams.set("keyword", keyword);
+
+  const response = await requestJson(url.toString(), { method: "GET" });
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `search_room_memories failed: ${JSON.stringify(response.json)}` }]
     };
   }
 
@@ -185,16 +224,38 @@ export function getTools() {
       }
     },
     {
-      name: "get_thread_context",
-      description: "Get recent thread context for the current invocation.",
+      name: "get_room_context",
+      description: "获取当前协作房间的近期对话上下文（跨所有 agent 线程聚合）。",
       inputSchema: {
         type: "object",
         properties: {
           limit: {
             type: "number",
-            description: "Optional max number of recent messages."
+            description: "返回的最大消息数量，默认 20，最大 200。"
           }
         }
+      }
+    },
+    {
+      name: "get_room_summary",
+      description: "获取当前协作房间的滚动摘要（压缩版上下文，适用于上下文窗口紧张时）。",
+      inputSchema: {
+        type: "object",
+        properties: {}
+      }
+    },
+    {
+      name: "search_room_memories",
+      description: "按关键词搜索当前房间的历史记忆条目。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          keyword: {
+            type: "string",
+            description: "搜索关键词"
+          }
+        },
+        required: ["keyword"]
       }
     },
     {
@@ -563,9 +624,18 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
       }
       return callPostMessage(content.trim());
     }
-    case "get_thread_context": {
+    case "get_room_context": {
       const limit = typeof args?.limit === "number" ? args.limit : undefined;
-      return callGetThreadContext(limit);
+      return callGetRoomContext(limit);
+    }
+    case "get_room_summary":
+      return callGetRoomSummary();
+    case "search_room_memories": {
+      const keyword = typeof args?.keyword === "string" ? args.keyword : "";
+      if (!keyword.trim()) {
+        return { isError: true, content: [{ type: "text", text: "keyword is required" }] };
+      }
+      return callSearchRoomMemories(keyword.trim());
     }
     case "get_task_status":
       return callGetTaskStatus(args?.agentId as string | undefined);

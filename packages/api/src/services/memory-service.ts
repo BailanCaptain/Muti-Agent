@@ -1,4 +1,3 @@
-import crypto from "node:crypto"
 import type { SessionRepository } from "../db/repositories/session-repository"
 import type { SessionMemoryRecord } from "../db/sqlite"
 
@@ -71,13 +70,66 @@ export class MemoryService {
     const extractive = buildExtractiveSummary(allMessages)
 
     // 3. Attempt Gemini API call for abstractive compression
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ""
-    if (!apiKey) {
-      // No API key, persist and return extractive summary
-      const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
-      this.repository.createMemory(sessionGroupId, extractive, keywords)
-      return extractive
+    const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
+    const summary = await this.callGeminiSummarizer(extractive, allMessages)
+    this.repository.createMemory(sessionGroupId, summary, keywords)
+    return summary
+  }
+
+  /**
+   * Check for existing summary first, only generate if stale
+   * (>10 user messages since last summary).
+   */
+  async getOrCreateSummary(sessionGroupId: string): Promise<string | null> {
+    // Check for existing summary
+    const existing = this.repository.getLatestMemory(sessionGroupId)
+
+    if (existing) {
+      // Count user messages since the summary was created
+      const threads = this.repository.listThreadsByGroup(sessionGroupId)
+      let userMessagesSinceSummary = 0
+
+      for (const thread of threads) {
+        const messages = this.repository.listMessages(thread.id)
+        for (const msg of messages) {
+          if (msg.role === "user" && msg.createdAt > existing.createdAt) {
+            userMessagesSinceSummary++
+          }
+        }
+      }
+
+      // If fewer than 10 user messages since last summary, return existing
+      if (userMessagesSinceSummary <= 10) {
+        return existing.summary
+      }
     }
+
+    // No existing summary or it's stale — check if there are any messages at all
+    const threads = this.repository.listThreadsByGroup(sessionGroupId)
+    let totalMessages = 0
+    for (const thread of threads) {
+      const messages = this.repository.listMessages(thread.id)
+      totalMessages += messages.length
+    }
+
+    if (totalMessages === 0) {
+      return null
+    }
+
+    // Generate a new rolling summary
+    return this.generateRollingSummary(sessionGroupId)
+  }
+
+  /**
+   * Shared Gemini API call for abstractive summarization.
+   * Falls back to extractive summary if no API key or on failure.
+   */
+  private async callGeminiSummarizer(
+    extractive: string,
+    allMessages: Array<{ role: string; content: string; alias: string; createdAt: string }>,
+  ): Promise<string> {
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ""
+    if (!apiKey) return extractive
 
     try {
       const model = "gemini-2.5-flash-preview"
@@ -123,67 +175,11 @@ ${allMessages.slice(-50).map((m) => {
         candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
       }
       const summary = data.candidates?.[0]?.content?.parts?.[0]?.text
-
-      if (!summary) {
-        throw new Error("Empty response from Gemini API")
-      }
-
-      // 5. Persist via repository
-      const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
-      this.repository.createMemory(sessionGroupId, summary, keywords)
-
-      // 6. Return the summary string
+      if (!summary) throw new Error("Empty response from Gemini API")
       return summary
     } catch {
-      // Fall back to extractive-only summary
-      const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
-      this.repository.createMemory(sessionGroupId, extractive, keywords)
       return extractive
     }
-  }
-
-  /**
-   * Check for existing summary first, only generate if stale
-   * (>10 user messages since last summary).
-   */
-  async getOrCreateSummary(sessionGroupId: string): Promise<string | null> {
-    // Check for existing summary
-    const existing = this.repository.getLatestMemory(sessionGroupId)
-
-    if (existing) {
-      // Count user messages since the summary was created
-      const threads = this.repository.listThreadsByGroup(sessionGroupId)
-      let userMessagesSinceSummary = 0
-
-      for (const thread of threads) {
-        const messages = this.repository.listMessages(thread.id)
-        for (const msg of messages) {
-          if (msg.role === "user" && msg.createdAt > existing.createdAt) {
-            userMessagesSinceSummary++
-          }
-        }
-      }
-
-      // If fewer than 10 user messages since last summary, return existing
-      if (userMessagesSinceSummary <= 10) {
-        return existing.summary
-      }
-    }
-
-    // No existing summary or it's stale — check if there are any messages at all
-    const threads = this.repository.listThreadsByGroup(sessionGroupId)
-    let totalMessages = 0
-    for (const thread of threads) {
-      const messages = this.repository.listMessages(thread.id)
-      totalMessages += messages.length
-    }
-
-    if (totalMessages === 0) {
-      return null
-    }
-
-    // Generate a new rolling summary
-    return this.generateRollingSummary(sessionGroupId)
   }
 
   getLastSummary(sessionGroupId: string): string | null {

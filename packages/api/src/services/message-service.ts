@@ -15,11 +15,14 @@ import { type ParallelGroup, ParallelGroupRegistry } from "../orchestrator/paral
 import { buildPhase1Header } from "../orchestrator/phase1-header"
 import { buildPhase2Turn } from "../orchestrator/phase2-header"
 import { runTurn } from "../runtime/cli-orchestrator"
+import { assemblePrompt, assembleDirectTurnPrompt } from "../orchestrator/context-assembler"
+import { POLICY_FULL, POLICY_INDEPENDENT } from "../orchestrator/context-policy"
 import { classifyFailure } from "../runtime/failure-classifier"
 import { loadRuntimeConfig } from "../runtime/runtime-config"
 import type { DecisionManager } from "../orchestrator/decision-manager"
 import type { SkillRegistry } from "../skills/registry"
 import type { SopTracker } from "../skills/sop-tracker"
+import type { MemoryService } from "./memory-service"
 import type { SessionService } from "./session-service"
 
 type ActiveRun = ReturnType<typeof runTurn>
@@ -104,14 +107,6 @@ function extractPromptFromActivityChunk(chunk: string) {
   return promptLikeLines.join("\n").slice(0, 1200)
 }
 
-function truncateForA2A(content: string, maxLength: number): string {
-  if (content.length <= maxLength) return content
-  const headLen = Math.floor(maxLength * 0.6)
-  const tailLen = Math.floor(maxLength * 0.3)
-  const omitted = content.length - headLen - tailLen
-  return `${content.slice(0, headLen)}\n...(省略 ${omitted} 字)...\n${content.slice(-tailLen)}`
-}
-
 export class MessageService {
   private readonly flushingGroups = new Set<string>()
   private readonly parallelGroups = new ParallelGroupRegistry()
@@ -119,6 +114,7 @@ export class MessageService {
   private decisions: DecisionManager | null = null
   private skillRegistry: SkillRegistry | null = null
   private sopTracker: SopTracker | null = null
+  private memoryService: MemoryService | null = null
 
   constructor(
     private readonly sessions: SessionService,
@@ -142,6 +138,10 @@ export class MessageService {
 
   setSopTracker(tracker: SopTracker) {
     this.sopTracker = tracker
+  }
+
+  setMemoryService(service: MemoryService) {
+    this.memoryService = service
   }
 
   handleClientEvent(event: RealtimeClientEvent, emit: EmitEvent) {
@@ -347,6 +347,8 @@ export class MessageService {
     emit: EmitEvent
     rootMessageId: string
     parentInvocationId?: string | null
+    /** Pre-computed system prompt (from assemblePrompt). When omitted, assembleDirectTurnPrompt is used. */
+    systemPrompt?: string
     /**
      * When true, skip processing @-mentions in the reply. Used for terminal
      * turns (synthesizer, Phase 2) where further fan-out would cascade
@@ -421,7 +423,18 @@ export class MessageService {
     // Falls back to thread.currentModel (legacy per-thread selector) when unset.
     const runtimeOverride = loadRuntimeConfig()[thread.provider]
 
+    // System prompt: use pre-computed (from assemblePrompt for A2A) or compute on the fly (direct turn).
+    const systemPrompt = options.systemPrompt
+      ?? await assembleDirectTurnPrompt(
+        thread.provider,
+        thread.id,
+        thread.sessionGroupId,
+        thread.nativeSessionId,
+        this.memoryService,
+      )
+
     run = runTurn({
+      systemPrompt,
       invocationId: identity.invocationId,
       threadId: thread.id,
       provider: thread.provider,
@@ -690,9 +703,39 @@ export class MessageService {
           batch.map(async ({ entry, threadId }) => {
             let slotReleased = false
             try {
+              // Determine policy: Phase 1 parallel group → INDEPENDENT, else FULL
+              const modeBGroup = entry.parallelGroupId
+                ? this.parallelGroups.get(entry.parallelGroupId)
+                : undefined
+              const phase1HeaderText = modeBGroup
+                ? buildPhase1Header(modeBGroup.participantProviders.length)
+                : undefined
+              const skillHint = phase1HeaderText
+                ? null
+                : this.buildSkillHintLine(
+                    entry.taskSnippet,
+                    entry.to.provider as import("@multi-agent/shared").Provider,
+                  )
+
+              const targetThread = this.dispatch.resolveThread(threadId)
+              const assembled = await assemblePrompt({
+                provider: entry.to.provider as import("@multi-agent/shared").Provider,
+                threadId,
+                sessionGroupId,
+                nativeSessionId: targetThread?.nativeSessionId ?? null,
+                policy: entry.parallelGroupId ? POLICY_INDEPENDENT : POLICY_FULL,
+                task: entry.taskSnippet,
+                roomSnapshot: entry.contextSnapshot,
+                sourceAlias: entry.from.agentId,
+                targetAlias: entry.to.agentId,
+                phase1HeaderText,
+                skillHint,
+              }, this.memoryService)
+
               const turnResult = await this.runThreadTurn({
                 threadId,
-                content: this.buildA2APrompt(entry),
+                content: assembled.content,
+                systemPrompt: assembled.systemPrompt,
                 emit,
                 rootMessageId: entry.rootMessageId,
                 parentInvocationId: entry.parentInvocationId,
@@ -736,83 +779,6 @@ export class MessageService {
     } finally {
       this.flushingGroups.delete(sessionGroupId)
     }
-  }
-
-  private buildA2APrompt(entry: QueueEntry): string {
-    const isUserInitiated = entry.from.agentId === "user"
-    const header = isUserInitiated
-      ? `[用户请求]`
-      : `[A2A 协作请求 from ${entry.from.agentId}]`
-
-    // Mode B (parallel group): inject Phase 1 hard-rule header instead of skillHint,
-    // so agents don't race to load full SKILL.md and play synthesizer prematurely.
-    // Structural guarantee of independent thinking (complements thread-per-provider
-    // + snapshot-freeze isolation).
-    const modeBGroup = entry.parallelGroupId
-      ? this.parallelGroups.get(entry.parallelGroupId)
-      : undefined
-    const modeBHeader = modeBGroup
-      ? buildPhase1Header(modeBGroup.participantProviders.length)
-      : null
-
-    // Match skills against taskSnippet for the target agent's provider (only when not Mode B)
-    const skillHintLine = modeBHeader
-      ? null
-      : this.buildSkillHintLine(
-          entry.taskSnippet,
-          entry.to.provider as import("@multi-agent/shared").Provider,
-        )
-
-    // Build tiered context sections from the flat snapshot
-    const selfMessages = entry.contextSnapshot.filter(m => m.agentId === entry.to.agentId)
-    const otherMessages = entry.contextSnapshot.filter(m => m.agentId !== entry.to.agentId)
-
-    // Self history: last 5 of this agent's messages, full text
-    const selfHistory = selfMessages.slice(-5)
-    // Recent global: last 10 other messages, head+tail truncated
-    const recentGlobal = otherMessages.slice(-10)
-
-    const sections: string[] = [
-      header,
-      ``,
-      `任务: ${entry.taskSnippet}`,
-      ``,
-    ]
-
-    if (modeBHeader) {
-      sections.push(modeBHeader, ``)
-    }
-    if (skillHintLine) {
-      sections.push(skillHintLine, ``)
-    }
-
-    // Section 1: Self history (agent's own recent messages)
-    if (selfHistory.length > 0) {
-      sections.push(`--- 你之前的发言 (${selfHistory.length} 条) ---`)
-      for (const m of selfHistory) {
-        sections.push(`[${m.role === "user" ? "收到" : "你"}]: ${m.content}`)
-      }
-      sections.push(`---`, ``)
-    }
-
-    // Section 2: Recent global conversation
-    if (recentGlobal.length > 0) {
-      sections.push(`--- 近期对话 (${recentGlobal.length} 条) ---`)
-      for (const m of recentGlobal) {
-        const truncated = truncateForA2A(m.content, 500)
-        sections.push(`[${m.agentId}]: ${truncated}`)
-      }
-      sections.push(`---`, ``)
-    }
-
-    // Section 3: Rolling summary hint
-    sections.push(
-      `如需更早的上下文，可调用 MCP get_thread_context 工具获取。`,
-      ``,
-      `你是 ${entry.to.agentId}。请完成上述任务。`,
-    )
-
-    return sections.join("\n")
   }
 
   /**

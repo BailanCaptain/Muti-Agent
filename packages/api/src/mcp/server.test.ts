@@ -6,17 +6,21 @@ import { getTools, handleToolCall } from "./server.js"
 // getTools tests
 // ---------------------------------------------------------------------------
 
-test("getTools returns 7 tools", () => {
+test("getTools returns 11 tools", () => {
   const tools = getTools()
-  assert.equal(tools.length, 7, `Expected 7 tools, got ${tools.length}`)
+  assert.equal(tools.length, 11, `Expected 11 tools, got ${tools.length}`)
   const names = tools.map((t) => t.name).sort()
   assert.deepEqual(names, [
     "create_task",
     "get_memory",
+    "get_room_context",
+    "get_room_summary",
     "get_task_status",
-    "get_thread_context",
+    "parallel_think",
     "post_message",
+    "request_decision",
     "request_permission",
+    "search_room_memories",
     "trigger_mention",
   ])
 })
@@ -108,6 +112,50 @@ test("handleToolCall dispatches get_memory", async () => {
       return true
     },
   )
+})
+
+test("handleToolCall dispatches get_room_context", async () => {
+  await assert.rejects(
+    () => handleToolCall("get_room_context", { limit: 10 }),
+    (err: Error) => {
+      assert.ok(err.message.includes("ECONNREFUSED"), `Expected ECONNREFUSED, got: ${err.message}`)
+      return true
+    },
+  )
+})
+
+test("handleToolCall dispatches get_room_summary", async () => {
+  await assert.rejects(
+    () => handleToolCall("get_room_summary", {}),
+    (err: Error) => {
+      assert.ok(err.message.includes("ECONNREFUSED"), `Expected ECONNREFUSED, got: ${err.message}`)
+      return true
+    },
+  )
+})
+
+test("handleToolCall dispatches search_room_memories", async () => {
+  await assert.rejects(
+    () => handleToolCall("search_room_memories", { keyword: "architecture" }),
+    (err: Error) => {
+      assert.ok(err.message.includes("ECONNREFUSED"), `Expected ECONNREFUSED, got: ${err.message}`)
+      return true
+    },
+  )
+})
+
+test("handleToolCall search_room_memories rejects empty keyword", async () => {
+  const result = await handleToolCall("search_room_memories", { keyword: "" })
+  assert.ok(result, "Should return a result")
+  assert.equal(result.isError, true)
+  assert.ok(result.content[0]?.text.includes("keyword is required"))
+})
+
+test("handleToolCall search_room_memories rejects missing keyword", async () => {
+  const result = await handleToolCall("search_room_memories", {})
+  assert.ok(result, "Should return a result")
+  assert.equal(result.isError, true)
+  assert.ok(result.content[0]?.text.includes("keyword is required"))
 })
 
 test("handleToolCall returns unknown tool error for invalid tool", async () => {

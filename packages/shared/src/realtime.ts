@@ -53,26 +53,6 @@ export type PendingConfirmationItem = {
   createdAt: string
 }
 
-// ── Enhanced Context Snapshot ────────────────────────────────────────
-
-/**
- * Tiered context passed in A2A prompts. Replaces the old flat 20-message
- * snapshot with a structured, budget-aware representation.
- */
-export type TieredContextSnapshot = {
-  /** L1 rolling summary of the conversation so far (~1K tokens) */
-  rollingSummary: string | null
-  /** The target agent's own recent messages, full text (~2K tokens) */
-  selfHistory: Array<{ role: "user" | "assistant"; content: string; createdAt: string }>
-  /** Recent cross-agent messages with head+tail truncation (~3K tokens) */
-  recentGlobal: Array<{
-    agentId: string
-    role: "user" | "assistant"
-    content: string
-    createdAt: string
-  }>
-}
-
 export type TimelineMessage = {
   id: string
   provider: Provider

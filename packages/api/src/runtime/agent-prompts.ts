@@ -6,8 +6,6 @@ import {
   PROVIDERS,
   type Provider
 } from "@multi-agent/shared";
-import type { MemoryService } from "../services/memory-service";
-
 const PROVIDER_LABELS: Record<Provider, string> = {
   claude: "Anthropic",
   codex: "OpenAI",
@@ -78,12 +76,14 @@ const CALLBACK_API_PROMPT = `
 
 可用接口：
 - POST /api/callbacks/post-message —— 向公共房间发消息
-- GET  /api/callbacks/thread-context —— 读取当前 thread 上下文
+- GET  /api/callbacks/room-context —— 获取房间上下文（跨所有 agent 线程聚合）
+- GET  /api/callbacks/room-summary —— 获取房间滚动摘要
+- GET  /api/callbacks/search-memories —— 搜索房间记忆（需传 keyword 参数）
 
 通过 node -e 调用示例：
 
-获取上下文：
-node -e "const b=process.env.MULTI_AGENT_API_URL,i=process.env.MULTI_AGENT_INVOCATION_ID,t=process.env.MULTI_AGENT_CALLBACK_TOKEN;fetch(b+'/api/callbacks/thread-context?invocationId='+encodeURIComponent(i)+'&callbackToken='+encodeURIComponent(t)).then(r=>r.text()).then(console.log)"
+获取房间上下文：
+node -e "const b=process.env.MULTI_AGENT_API_URL,i=process.env.MULTI_AGENT_INVOCATION_ID,t=process.env.MULTI_AGENT_CALLBACK_TOKEN;fetch(b+'/api/callbacks/room-context?invocationId='+encodeURIComponent(i)+'&callbackToken='+encodeURIComponent(t)).then(r=>r.text()).then(console.log)"
 
 发送公共消息：
 node -e "const b=process.env.MULTI_AGENT_API_URL,i=process.env.MULTI_AGENT_INVOCATION_ID,t=process.env.MULTI_AGENT_CALLBACK_TOKEN;fetch(b+'/api/callbacks/post-message',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({invocationId:i,callbackToken:t,content:process.argv[1]})}).then(r=>r.text()).then(console.log)" "你的消息"
@@ -202,36 +202,3 @@ export const AGENT_SYSTEM_PROMPTS: Record<Provider, string> = {
   codex: [buildBasePrompt("codex"), CALLBACK_API_PROMPT].join("\n\n"),
   gemini: [buildBasePrompt("gemini"), CALLBACK_API_PROMPT].join("\n\n")
 };
-
-export function buildSystemPrompt(
-  provider: Provider,
-  previousSummary: string | null
-): string {
-  const base = AGENT_SYSTEM_PROMPTS[provider];
-  if (!previousSummary) return base;
-
-  const memoryBlock = [
-    "",
-    "## 上一轮会话摘要",
-    previousSummary,
-    "请参考上述背景信息继续协作。"
-  ].join("\n");
-
-  return base + "\n" + memoryBlock;
-}
-
-/**
- * Get the system prompt for a turn, including rolling summary if available.
- * This is the primary entry point for runtimes to get their system prompt.
- */
-export async function getSystemPromptForTurn(
-  provider: Provider,
-  sessionGroupId: string,
-  memoryService: MemoryService | null
-): Promise<string> {
-  // 1. Get the latest summary via memoryService
-  const summary = await memoryService?.getOrCreateSummary(sessionGroupId) ?? null;
-
-  // 2. Build the system prompt with summary
-  return buildSystemPrompt(provider, summary);
-}

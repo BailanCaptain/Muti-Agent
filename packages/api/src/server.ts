@@ -54,6 +54,7 @@ export async function createApiServer(options: {
   skillRegistry.loadManifest(manifestPath)
   const sopTracker = new SopTracker()
   const decisions = new DecisionManager((event) => broadcaster.broadcast(event))
+  messages.setMemoryService(memoryService)
   messages.setSkillRegistry(skillRegistry)
   messages.setSopTracker(sopTracker)
   messages.setDecisionManager(decisions)
@@ -172,6 +173,10 @@ export async function createApiServer(options: {
     emitThreadSnapshot: (sessionGroupId) =>
       messages.emitThreadSnapshot(sessionGroupId, broadcaster.broadcast),
     onPublicMessage: (options) => messages.handleAgentPublicMessage(options),
+    getRoomSummary: (sessionGroupId) => {
+      const summary = memoryService.getLastSummary(sessionGroupId)
+      return { summary }
+    },
     getTaskStatus: (sessionGroupId, agentId) => {
       const statuses = dispatch.getAgentStatuses(sessionGroupId)
       return {

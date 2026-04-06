@@ -41,6 +41,7 @@ export function registerCallbackRoutes(
       invocationId: string
       emit: (event: RealtimeServerEvent) => void
     }) => Promise<void> | void
+    getRoomSummary?: (sessionGroupId: string) => { summary: string | null }
     getTaskStatus?: (sessionGroupId: string, agentId?: string) => { agents: Array<{ agentId: string; running: boolean; queueDepth: number }> }
     createTask?: (sessionGroupId: string, params: { assignee: string; description: string; priority?: string; createdBy: string }) => { ok: true; taskId: string }
     triggerMention?: (sessionGroupId: string, params: { targetAlias: string; taskSnippet: string; sourceProvider: import("@multi-agent/shared").Provider; invocationId: string }) => Promise<void> | void
@@ -147,7 +148,7 @@ export function registerCallbackRoutes(
     }
   })
 
-  app.get("/api/callbacks/thread-context", async (request: FastifyRequest, reply: FastifyReply) => {
+  app.get("/api/callbacks/room-context", async (request: FastifyRequest, reply: FastifyReply) => {
     const query = request.query as { invocationId?: string; callbackToken?: string; limit?: string }
     const invocation = assertInvocation(
       options.invocations,
@@ -166,7 +167,7 @@ export function registerCallbackRoutes(
       return { error: "Thread not found." }
     }
 
-    const limit = Math.max(1, Math.min(Number(query.limit ?? 40) || 40, 100))
+    const limit = Math.max(1, Math.min(Number(query.limit ?? 20) || 20, 200))
     const threads = options.repository.listThreadsByGroup(thread.sessionGroupId)
     const messages = threads
       .flatMap((t) =>
@@ -187,6 +188,55 @@ export function registerCallbackRoutes(
       expiresAt: invocation.expiresAt,
       messages,
     }
+  })
+
+  app.get("/api/callbacks/room-summary", async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = request.query as { invocationId?: string; callbackToken?: string }
+    const invocation = assertInvocation(options.invocations, query.invocationId, query.callbackToken)
+
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+
+    if (options.getRoomSummary) {
+      return options.getRoomSummary(thread.sessionGroupId)
+    }
+
+    return { summary: null }
+  })
+
+  app.get("/api/callbacks/search-memories", async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = request.query as { invocationId?: string; callbackToken?: string; keyword?: string }
+    const invocation = assertInvocation(options.invocations, query.invocationId, query.callbackToken)
+
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    if (!query.keyword?.trim()) {
+      reply.code(400)
+      return { error: "keyword is required." }
+    }
+
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+
+    if (options.getMemories) {
+      return options.getMemories(thread.sessionGroupId, query.keyword.trim())
+    }
+
+    return { memories: [] }
   })
 
   // --- New A2A callback routes ---
