@@ -7,6 +7,72 @@ export type ConnectorSource = {
   targets: Provider[]
 }
 
+// ── Inline Confirmation ─────────────────────────────────────────────
+
+/**
+ * A confirmation card embedded inside an agent's message bubble.
+ * The agent raises a question that requires user decision; the card
+ * renders inline (not as a standalone system card).
+ */
+export type InlineConfirmation = {
+  /** Unique ID for this confirmation request */
+  confirmationId: string
+  /** Which agent raised this */
+  raisedBy: Provider
+  /** The question / decision point */
+  question: string
+  /** Selectable options (at least 2) */
+  options: Array<{ id: string; label: string; description?: string }>
+  /** Allow multiple selections */
+  multiSelect?: boolean
+  /** Current status */
+  status: "pending" | "resolved" | "expired"
+  /** How it was resolved */
+  resolvedBy?: "user" | "consensus"
+  /** The selected option IDs */
+  selectedIds?: string[]
+  /** Free-text user input */
+  userInput?: string
+}
+
+/**
+ * A pending confirmation item that must be resolved before proceeding.
+ * Tracked per session-group across phases.
+ */
+export type PendingConfirmationItem = {
+  id: string
+  raisedBy: Provider
+  raisedInPhase: "phase1" | "phase2" | "normal"
+  question: string
+  options?: string[]
+  status: "pending" | "resolved" | "deferred"
+  resolvedBy?: "user" | "consensus"
+  resolution?: string
+  /** The message ID where this confirmation card is embedded */
+  messageId: string
+  createdAt: string
+}
+
+// ── Enhanced Context Snapshot ────────────────────────────────────────
+
+/**
+ * Tiered context passed in A2A prompts. Replaces the old flat 20-message
+ * snapshot with a structured, budget-aware representation.
+ */
+export type TieredContextSnapshot = {
+  /** L1 rolling summary of the conversation so far (~1K tokens) */
+  rollingSummary: string | null
+  /** The target agent's own recent messages, full text (~2K tokens) */
+  selfHistory: Array<{ role: "user" | "assistant"; content: string; createdAt: string }>
+  /** Recent cross-agent messages with head+tail truncation (~3K tokens) */
+  recentGlobal: Array<{
+    agentId: string
+    role: "user" | "assistant"
+    content: string
+    createdAt: string
+  }>
+}
+
 export type TimelineMessage = {
   id: string
   provider: Provider
@@ -16,6 +82,8 @@ export type TimelineMessage = {
   thinking?: string
   messageType: "progress" | "final" | "a2a_handoff" | "connector"
   connectorSource?: ConnectorSource
+  /** Inline confirmation cards embedded in this message bubble */
+  inlineConfirmations?: InlineConfirmation[]
   inputTokens?: number
   outputTokens?: number
   cachedPercent?: number
@@ -95,7 +163,7 @@ export type DecisionOption = {
 
 export type DecisionRequest = {
   requestId: string
-  kind: "multi_choice" | "fan_in_selector"
+  kind: "multi_choice" | "fan_in_selector" | "inline_confirmation"
   title: string
   description?: string
   options: DecisionOption[]
@@ -109,6 +177,12 @@ export type DecisionRequest = {
    */
   allowTextInput?: boolean
   textInputPlaceholder?: string
+  /**
+   * The message ID this decision card is attached to.
+   * When set, the frontend renders the card inline inside the agent's
+   * message bubble instead of as a standalone system card.
+   */
+  anchorMessageId?: string
   createdAt: string
 }
 
