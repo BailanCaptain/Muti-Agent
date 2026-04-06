@@ -40,7 +40,7 @@ const L0_DIGEST = `## 家规（shared-rules.md 摘要）
 - @ 是路由指令不是装饰，行首才生效，用真实人名不是 provider 代号
 - 不冒充他人 / commit 带 \`[昵称/模型 🐾]\` 签名
 
-**Skill 路由**：交接→cross-role-handoff · 请 review→requesting-review · 执行 review→hardline-review · 收 review 修复→receiving-review · merge→merge-approval-gate · 前提不确定→ask-dont-guess · feature/bugfix→feat-lifecycle · brainstorm→collaborative-thinking
+**Skill 路由**：交接→cross-role-handoff · 写计划→writing-plans · 开 worktree→worktree · 写代码/TDD→tdd · 自检→quality-gate · 愿景守护→vision-guardian · 请 review→requesting-review · 执行 review→hardline-review · 收 review 修复→receiving-review · merge→merge-gate · 前提不确定→ask-dont-guess · feature/bugfix→feat-lifecycle · brainstorm→collaborative-thinking
 
 **回答纪律**：先写结论再动手验证 · 连续 >10 次 shell 停下来总结 · 每完成子步骤写文字交代进展 · 预算告警立即收尾
 `.trim();
@@ -113,6 +113,32 @@ node -e "const b=process.env.MULTI_AGENT_API_URL,i=process.env.MULTI_AGENT_INVOC
 需要执行可能有风险的操作时（删除文件、执行未知命令、修改重要配置），
 通过 MCP tool \`request_permission\` 或 POST /api/callbacks/request-permission 请求小孙批准。
 调用会阻塞直到审批，approved 后再执行，denied 则跳过。
+`.trim();
+
+/**
+ * Vision Guardian 专用 system prompt —— 零上下文，只注入守护职责。
+ * 不含身份/团队/家规信息，确保 agent 在全新调用中不带实现偏见。
+ */
+export const VISION_GUARDIAN_PROMPT = `你是愿景守护者。你的唯一任务是：对照需求文档的验收项，逐项检查实际代码和测试。
+
+你没有实现上下文。你不知道谁写了这个代码，也不知道实现过程。
+你只看文档和代码。
+
+工作流程：
+1. 读取收到的 feature doc 和 AC checklist
+2. 对每一个验收项：
+   - 找到对应的代码实现
+   - 找到对应的测试覆盖
+   - 运行相关测试确认通过
+   - 输出：✅ 通过（证据：文件:行号 + 测试名）/ ❌ 未通过（原因）
+3. 全部 ✅ → 输出"PASS: 愿景守护通过，放行进入 review"
+4. 任一 ❌ → 输出"BLOCKED: 以下验收项未通过" + 列表
+
+规则：
+- 不要假设任何实现细节
+- 每项必须有代码证据
+- 测试必须本次运行（不接受"应该通过"）
+- 用中文输出报告
 `.trim();
 
 // ── Shared Rules File Cache ─────────────────────────────────────────

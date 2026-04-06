@@ -1,16 +1,25 @@
 # Multi-Agent Skills Manifest — 路由单一真相源
-# 更新日期：2026-04-05
+# 更新日期：2026-04-07
+
+# ─── 开发流程链 ─────────────────────────────────────────
+# feat-lifecycle → Design Gate → writing-plans → worktree → tdd
+#     → quality-gate → vision-guardian → requesting-review → receiving-review
+#     → merge-gate → feat-lifecycle(completion)
 
 skills:
 
+  # ── 功能生命周期 ──
   feat-lifecycle:
-    description: 新功能/bugfix/重构的全生命周期管理
+    description: Feature 立项、讨论、完成的全生命周期管理
     triggers:
       - "新功能"
       - "bugfix"
       - "重构"
       - "开发任务"
       - "feat"
+      - "立项"
+      - "feature 完成"
+      - "验收通过"
     not_for:
       - "纯文档"
       - "纯讨论"
@@ -22,6 +31,7 @@ skills:
       - name: "/feat"
         description: "启动功能生命周期"
 
+  # ── 协作思考 ──
   collaborative-thinking:
     description: 单人或多 agent 的创意探索、独立思考、讨论收敛
     triggers:
@@ -43,6 +53,7 @@ skills:
       - name: "/think"
         description: "启动协作思考"
 
+  # ── 关键前提确认 ──
   ask-dont-guess:
     description: 关键前提不确定时强制提问
     triggers:
@@ -57,6 +68,7 @@ skills:
     sop_step: null
     slashCommands: []
 
+  # ── 跨角色交接 ──
   cross-role-handoff:
     description: 跨角色交接，输出五件套
     triggers:
@@ -74,6 +86,99 @@ skills:
       - name: "/handoff"
         description: "跨角色交接"
 
+  # ── 计划编写 ──
+  writing-plans:
+    description: 将 spec/需求拆分为可执行的分步实施计划
+    triggers:
+      - "写计划"
+      - "implementation plan"
+      - "拆分步骤"
+      - "实施计划"
+    not_for:
+      - "trivial 改动"
+      - "已有计划"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: ["worktree"]
+    sop_step: null
+    slashCommands:
+      - name: "/plan"
+        description: "编写实施计划"
+
+  # ── Worktree 隔离 ──
+  worktree:
+    description: 创建 Git worktree 隔离开发环境
+    triggers:
+      - "开始开发"
+      - "新 worktree"
+      - "开 worktree"
+    not_for:
+      - "纯文档"
+      - "不涉及代码"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: ["tdd"]
+    sop_step: 1
+    slashCommands: []
+
+  # ── TDD ──
+  tdd:
+    description: Red-Green-Refactor 测试驱动开发纪律
+    triggers:
+      - "写代码"
+      - "test first"
+      - "TDD"
+      - "红绿重构"
+      - "实现"
+    not_for:
+      - "纯文档"
+      - "纯调研"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: ["quality-gate"]
+    sop_step: 1
+    slashCommands:
+      - name: "/tdd"
+        description: "测试驱动开发"
+
+  # ── 质量门禁 ──
+  quality-gate:
+    description: 开发完成后的自检门禁，愿景对照 + spec 合规 + 验证
+    triggers:
+      - "开发完了"
+      - "自检"
+      - "声称完成"
+      - "准备提 review"
+    not_for:
+      - "收到 review 反馈"
+      - "merge"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: ["vision-guardian"]
+    sop_step: 2
+    slashCommands:
+      - name: "/gate"
+        description: "质量门禁自检"
+
+  # ── 愿景守护 ──
+  vision-guardian:
+    description: 零上下文愿景守护，专用 agent 逐项验收 AC
+    triggers:
+      - "愿景守护"
+      - "vision guardian"
+      - "逐项验收"
+    not_for:
+      - "自检"
+      - "review"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: ["requesting-review"]
+    sop_step: 2
+    slashCommands:
+      - name: "/guardian"
+        description: "愿景守护验收"
+
+  # ── 严格 Review ──
   hardline-review:
     description: 严格 review，P1/P2/P3 分级
     triggers:
@@ -94,6 +199,7 @@ skills:
       - name: "/review"
         description: "执行严格 review"
 
+  # ── 请求 Review ──
   requesting-review:
     description: 请求 reviewer 审查，先自检再提交
     triggers:
@@ -113,6 +219,7 @@ skills:
       - name: "/request-review"
         description: "请求 review"
 
+  # ── 接收 Review ──
   receiving-review:
     description: 收到 review 反馈，Red→Green 修复
     triggers:
@@ -126,23 +233,25 @@ skills:
       - "发 review"
     agents: [claude, codex, gemini]
     requires_mcp: []
-    next: ["merge-approval-gate"]
+    next: ["merge-gate"]
     sop_step: 3
     slashCommands: []
 
-  merge-approval-gate:
-    description: 合入门禁，检查 reviewer 是否放行
+  # ── 合入门禁 ──
+  merge-gate:
+    description: 合入 main 的完整流程：门禁检查 → PR → squash merge → 清理
     triggers:
       - "合入"
       - "merge"
       - "准备合入"
       - "合并 PR"
+      - "开 PR"
     not_for:
       - "开发中"
       - "review 未通过"
     agents: [claude, codex, gemini]
     requires_mcp: []
-    next: []
+    next: ["feat-lifecycle"]
     sop_step: [4, 5]
     slashCommands:
       - name: "/merge"
@@ -151,25 +260,40 @@ skills:
 # SOP 导航牌
 sop_navigation:
   writing-plans:
-    suggested_skill: null
+    suggested_skill: writing-plans
     hard_rules:
       - "计划必须包含 TDD 步骤和检查点"
     pitfalls:
       - "没有对齐就直接写代码"
 
+  worktree:
+    suggested_skill: worktree
+    hard_rules:
+      - "worktree 开之前必须 main 双向同步 (ahead=0 behind=0)"
+    pitfalls:
+      - "不同步就开 worktree"
+
   tdd:
-    suggested_skill: null
+    suggested_skill: tdd
     hard_rules:
       - "没有失败的测试，就没有实现代码"
     pitfalls:
       - "先写实现再补测试"
 
   quality-gate:
-    suggested_skill: null
+    suggested_skill: quality-gate
     hard_rules:
       - "测试全部通过才能进入 review"
     pitfalls:
       - "声称完成但没跑全量测试"
+
+  vision-guardian:
+    suggested_skill: vision-guardian
+    hard_rules:
+      - "实现者不能自己做愿景守护"
+      - "守护 agent 必须零上下文"
+    pitfalls:
+      - "跳过守护直接提 review"
 
   request-review:
     suggested_skill: requesting-review
@@ -188,7 +312,7 @@ sop_navigation:
       - "收到 P1 修完后没 re-trigger review"
 
   merge-gate:
-    suggested_skill: merge-approval-gate
+    suggested_skill: merge-gate
     hard_rules:
       - "必须有 reviewer 明确放行"
     pitfalls:
@@ -202,7 +326,7 @@ lint:
     - id: has-description
       check: "每个 skill 必须有 description"
     - id: next-exists
-      check: "next 指向的 skill 必须在 manifest 中存在或标注为 planned"
+      check: "next 指向的 skill 必须在 manifest 中存在"
     - id: has-skill-md
       check: "每个 skill 必须有对应的 SKILL.md 文件"
     - id: slash-unique

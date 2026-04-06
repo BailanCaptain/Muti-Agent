@@ -58,7 +58,15 @@
       "Bash(pnpm install:*)",
       "Bash(pnpm --filter @multi-agent/shared build)",
       "Bash(pnpm --filter @multi-agent/api test)",
-      "Bash(ls src/runtime/*.test.ts)"
+      "Bash(ls src/runtime/*.test.ts)",
+      "Bash(npx vitest:*)",
+      "Bash(xargs -I {} sh -c 'echo \"=== {} ===\"; ls -la \"{}\"')",
+      "Bash(git:*)",
+      "Bash(pnpm:*)",
+      "Bash(mkdir:*)",
+      "Bash(ln:*)",
+      "Bash(mv:*)",
+      "Bash(cp:*)"
     ]
   }
 }

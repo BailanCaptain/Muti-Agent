@@ -68,10 +68,15 @@
 | 意图 | Skill |
 |------|-------|
 | 交接 / handoff / 转交 | `cross-role-handoff` |
+| 写计划 / 拆分步骤 | `writing-plans` |
+| 开 worktree / 隔离开发 | `worktree` |
+| 写代码 / TDD / 实现 | `tdd` |
+| 开发完了 / 自检 | `quality-gate` |
+| 愿景守护 / 逐项验收 | `vision-guardian` |
 | 请求 review | `requesting-review` |
 | 执行 review | `hardline-review` |
 | 收到 review 并修复 | `receiving-review` |
-| 准备 merge | `merge-approval-gate` |
+| 准备 merge | `merge-gate` |
 | 关键前提不确定 | `ask-dont-guess` |
 | feature / bugfix / refactor 任务 | `feat-lifecycle` |
 | 多人独立思考 / brainstorm | `collaborative-thinking` |

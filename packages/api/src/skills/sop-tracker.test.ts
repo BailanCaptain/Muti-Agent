@@ -40,7 +40,7 @@ test("advance returns null when skill has no next", () => {
   assert.equal(tracker.getStage("group-1"), "ask-dont-guess")
 })
 
-test("advance chains: requesting-review → receiving-review → merge-approval-gate", () => {
+test("advance chains: requesting-review → receiving-review → merge-gate", () => {
   const { registry, tracker } = setup()
 
   tracker.setStage("group-1", "requesting-review")
@@ -48,9 +48,9 @@ test("advance chains: requesting-review → receiving-review → merge-approval-
   assert.equal(step1, "receiving-review")
 
   const step2 = tracker.advance("group-1", "receiving-review", registry)
-  assert.equal(step2, "merge-approval-gate")
+  assert.equal(step2, "merge-gate")
 
-  assert.equal(tracker.getStage("group-1"), "merge-approval-gate")
+  assert.equal(tracker.getStage("group-1"), "merge-gate")
 })
 
 test("clear removes stage", () => {

@@ -14,15 +14,19 @@ function loadedRegistry(): SkillRegistry {
 
 // ── loadManifest ─────────────────────────────────────────────────────
 
-test("loadManifest loads all 8 skills", () => {
+test("loadManifest loads all 13 skills", () => {
   const registry = loadedRegistry()
-  assert.equal(registry.allSkills().length, 8)
+  assert.equal(registry.allSkills().length, 13)
 })
 
 test("loadManifest loads sop_navigation stages", () => {
   const registry = loadedRegistry()
   assert.ok(registry.getSopStage("merge-gate"), "merge-gate stage should exist")
   assert.ok(registry.getSopStage("tdd"), "tdd stage should exist")
+  assert.ok(registry.getSopStage("quality-gate"), "quality-gate stage should exist")
+  assert.ok(registry.getSopStage("vision-guardian"), "vision-guardian stage should exist")
+  assert.ok(registry.getSopStage("writing-plans"), "writing-plans stage should exist")
+  assert.ok(registry.getSopStage("worktree"), "worktree stage should exist")
 })
 
 // ── match — trigger 匹配 ────────────────────────────────────────────
@@ -41,11 +45,46 @@ test("match finds requesting-review for '请 review'", () => {
   assert.ok(names.includes("requesting-review"), `Expected requesting-review, got: ${names}`)
 })
 
-test("match finds merge-approval-gate for '准备合入'", () => {
+test("match finds merge-gate for '准备合入'", () => {
   const registry = loadedRegistry()
   const results = registry.match("代码改好了，准备合入")
   const names = results.map((r) => r.skill.name)
-  assert.ok(names.includes("merge-approval-gate"), `Expected merge-approval-gate, got: ${names}`)
+  assert.ok(names.includes("merge-gate"), `Expected merge-gate, got: ${names}`)
+})
+
+test("match finds writing-plans for '写计划'", () => {
+  const registry = loadedRegistry()
+  const results = registry.match("帮我写计划")
+  const names = results.map((r) => r.skill.name)
+  assert.ok(names.includes("writing-plans"), `Expected writing-plans, got: ${names}`)
+})
+
+test("match finds tdd for 'TDD'", () => {
+  const registry = loadedRegistry()
+  const results = registry.match("用 TDD 方式来做")
+  const names = results.map((r) => r.skill.name)
+  assert.ok(names.includes("tdd"), `Expected tdd, got: ${names}`)
+})
+
+test("match finds quality-gate for '开发完了'", () => {
+  const registry = loadedRegistry()
+  const results = registry.match("开发完了，准备检查")
+  const names = results.map((r) => r.skill.name)
+  assert.ok(names.includes("quality-gate"), `Expected quality-gate, got: ${names}`)
+})
+
+test("match finds vision-guardian for '愿景守护'", () => {
+  const registry = loadedRegistry()
+  const results = registry.match("触发愿景守护")
+  const names = results.map((r) => r.skill.name)
+  assert.ok(names.includes("vision-guardian"), `Expected vision-guardian, got: ${names}`)
+})
+
+test("match finds worktree for '新 worktree'", () => {
+  const registry = loadedRegistry()
+  const results = registry.match("开个新 worktree")
+  const names = results.map((r) => r.skill.name)
+  assert.ok(names.includes("worktree"), `Expected worktree, got: ${names}`)
 })
 
 // ── match — not_for 排除 ────────────────────────────────────────────
@@ -92,7 +131,7 @@ test("matchSlashCommand matches /merge", () => {
   const registry = loadedRegistry()
   const skill = registry.matchSlashCommand("/merge")
   assert.ok(skill, "Should match /merge")
-  assert.equal(skill.name, "merge-approval-gate")
+  assert.equal(skill.name, "merge-gate")
 })
 
 test("matchSlashCommand matches /feat", () => {
@@ -100,6 +139,34 @@ test("matchSlashCommand matches /feat", () => {
   const skill = registry.matchSlashCommand("/feat kickoff")
   assert.ok(skill, "Should match /feat")
   assert.equal(skill.name, "feat-lifecycle")
+})
+
+test("matchSlashCommand matches /plan", () => {
+  const registry = loadedRegistry()
+  const skill = registry.matchSlashCommand("/plan")
+  assert.ok(skill, "Should match /plan")
+  assert.equal(skill.name, "writing-plans")
+})
+
+test("matchSlashCommand matches /tdd", () => {
+  const registry = loadedRegistry()
+  const skill = registry.matchSlashCommand("/tdd")
+  assert.ok(skill, "Should match /tdd")
+  assert.equal(skill.name, "tdd")
+})
+
+test("matchSlashCommand matches /gate", () => {
+  const registry = loadedRegistry()
+  const skill = registry.matchSlashCommand("/gate")
+  assert.ok(skill, "Should match /gate")
+  assert.equal(skill.name, "quality-gate")
+})
+
+test("matchSlashCommand matches /guardian", () => {
+  const registry = loadedRegistry()
+  const skill = registry.matchSlashCommand("/guardian")
+  assert.ok(skill, "Should match /guardian")
+  assert.equal(skill.name, "vision-guardian")
 })
 
 test("matchSlashCommand returns null for unknown command", () => {
@@ -114,7 +181,7 @@ test("matchSlashCommand returns null for non-slash content", () => {
   assert.equal(skill, null)
 })
 
-// ── getNext ──────────────────────────────────────────────────────────
+// ── getNext — workflow chain ────────────────────────────────────────
 
 test("getNext returns next skills for requesting-review", () => {
   const registry = loadedRegistry()
@@ -126,6 +193,29 @@ test("getNext returns empty for ask-dont-guess", () => {
   const registry = loadedRegistry()
   const next = registry.getNext("ask-dont-guess")
   assert.deepEqual(next, [])
+})
+
+test("complete workflow chain: feat-lifecycle → ... → merge-gate → feat-lifecycle", () => {
+  const registry = loadedRegistry()
+
+  // feat-lifecycle → writing-plans
+  assert.deepEqual(registry.getNext("feat-lifecycle"), ["writing-plans"])
+  // writing-plans → worktree
+  assert.deepEqual(registry.getNext("writing-plans"), ["worktree"])
+  // worktree → tdd
+  assert.deepEqual(registry.getNext("worktree"), ["tdd"])
+  // tdd → quality-gate
+  assert.deepEqual(registry.getNext("tdd"), ["quality-gate"])
+  // quality-gate → vision-guardian
+  assert.deepEqual(registry.getNext("quality-gate"), ["vision-guardian"])
+  // vision-guardian → requesting-review
+  assert.deepEqual(registry.getNext("vision-guardian"), ["requesting-review"])
+  // requesting-review → receiving-review
+  assert.deepEqual(registry.getNext("requesting-review"), ["receiving-review"])
+  // receiving-review → merge-gate
+  assert.deepEqual(registry.getNext("receiving-review"), ["merge-gate"])
+  // merge-gate → feat-lifecycle (loop back)
+  assert.deepEqual(registry.getNext("merge-gate"), ["feat-lifecycle"])
 })
 
 // ── getSopStage ──────────────────────────────────────────────────────
@@ -145,17 +235,8 @@ test("getSopStage returns null for unknown stage", () => {
 
 // ── validate ─────────────────────────────────────────────────────────
 
-test("validate passes for current manifest + skills dir", () => {
+test("validate passes with zero errors for current manifest + skills dir", () => {
   const registry = loadedRegistry()
   const errors = registry.validate(SKILLS_DIR)
-  // next references like "writing-plans" don't exist in manifest → expected errors
-  const nonNextErrors = errors.filter((e) => e.ruleId !== "next-exists")
-  assert.equal(nonNextErrors.length, 0, `Unexpected lint errors: ${JSON.stringify(nonNextErrors)}`)
-})
-
-test("validate catches next-exists for unresolved references", () => {
-  const registry = loadedRegistry()
-  const errors = registry.validate(SKILLS_DIR)
-  const nextErrors = errors.filter((e) => e.ruleId === "next-exists")
-  assert.ok(nextErrors.length > 0, "Should flag unresolved next references like 'writing-plans'")
+  assert.equal(errors.length, 0, `Unexpected lint errors: ${JSON.stringify(errors)}`)
 })
