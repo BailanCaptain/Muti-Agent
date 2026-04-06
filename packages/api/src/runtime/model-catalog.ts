@@ -37,8 +37,8 @@ export const MODEL_CATALOG: ModelCatalog = {
   },
   gemini: {
     models: [
-      { name: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-      { name: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+      { name: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
+      { name: "gemini-3-flash", label: "Gemini 3 Flash" },
     ],
     // Gemini CLI 无 reasoning/effort flag
     efforts: [],

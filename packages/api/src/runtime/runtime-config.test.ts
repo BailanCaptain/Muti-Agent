@@ -26,7 +26,7 @@ test("saveRuntimeConfig → loadRuntimeConfig round-trips three agents", () => {
       {
         claude: { model: "claude-opus-4-6", effort: "high" },
         codex: { model: "gpt-5.4", effort: "medium" },
-        gemini: { model: "gemini-2.5-pro" },
+        gemini: { model: "gemini-3.1-pro" },
       },
       configPath,
     )
@@ -34,7 +34,7 @@ test("saveRuntimeConfig → loadRuntimeConfig round-trips three agents", () => {
     assert.deepEqual(loaded, {
       claude: { model: "claude-opus-4-6", effort: "high" },
       codex: { model: "gpt-5.4", effort: "medium" },
-      gemini: { model: "gemini-2.5-pro" },
+      gemini: { model: "gemini-3.1-pro" },
     })
   } finally {
     rmSync(dir, { recursive: true, force: true })

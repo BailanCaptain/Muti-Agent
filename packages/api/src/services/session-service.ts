@@ -42,7 +42,7 @@ export class SessionService {
           null,
       },
       gemini: {
-        from: ["gemini-2.5-pro", "gemini-2.5-flash"],
+        from: ["gemini-3.1-pro", "gemini-3-flash"],
         to:
           this.providerProfiles.find((profile) => profile.provider === "gemini")?.currentModel ??
           null,

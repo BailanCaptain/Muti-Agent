@@ -85,7 +85,7 @@ test("codex-runtime keeps approval_policy and sandbox configs unchanged", () => 
 test("gemini-runtime ignores MULTI_AGENT_EFFORT (CLI has no effort flag)", () => {
   const runtime = new InspectableGemini()
   const { args } = runtime.inspect(
-    makeInput({ MULTI_AGENT_MODEL: "gemini-2.5-pro", MULTI_AGENT_EFFORT: "high" }),
+    makeInput({ MULTI_AGENT_MODEL: "gemini-3.1-pro", MULTI_AGENT_EFFORT: "high" }),
   )
   assert.equal(args.indexOf("--effort"), -1)
   assert.equal(args.indexOf("--reasoning"), -1)
@@ -94,5 +94,5 @@ test("gemini-runtime ignores MULTI_AGENT_EFFORT (CLI has no effort flag)", () =>
   // But --model should still be injected
   const modelIdx = args.indexOf("--model")
   assert.ok(modelIdx >= 0)
-  assert.equal(args[modelIdx + 1], "gemini-2.5-pro")
+  assert.equal(args[modelIdx + 1], "gemini-3.1-pro")
 })

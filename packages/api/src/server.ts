@@ -1,4 +1,5 @@
 import crypto from "node:crypto"
+import path from "node:path"
 import cors from "@fastify/cors"
 import websocket from "@fastify/websocket"
 import { PROVIDER_ALIASES } from "@multi-agent/shared"
@@ -49,7 +50,7 @@ export async function createApiServer(options: {
   const approvals = new ApprovalManager((event) => broadcaster.broadcast(event))
   messages.setApprovalManager(approvals)
   const skillRegistry = new SkillRegistry()
-  const manifestPath = new URL("../../../multi-agent-skills/manifest.yaml", import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")
+  const manifestPath = path.resolve(__dirname, "../../../multi-agent-skills/manifest.yaml")
   skillRegistry.loadManifest(manifestPath)
   const sopTracker = new SopTracker()
   const decisions = new DecisionManager((event) => broadcaster.broadcast(event))

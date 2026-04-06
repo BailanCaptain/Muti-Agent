@@ -98,8 +98,8 @@ test("claude parseUsage ignores assistant deltas and tool results", () => {
 // ── getContextWindowForModel ───────────────────────────────────────────────
 
 test("getContextWindowForModel matches known model prefixes", () => {
-  assert.equal(getContextWindowForModel("gemini-2.5-pro"), 1_048_576);
-  assert.equal(getContextWindowForModel("gemini-2.0-flash"), 1_048_576);
+  assert.equal(getContextWindowForModel("gemini-3.1-pro"), 1_048_576);
+  assert.equal(getContextWindowForModel("gemini-3-flash"), 1_048_576);
   assert.equal(getContextWindowForModel("claude-opus-4-6"), 200_000);
   assert.equal(getContextWindowForModel("claude-sonnet-4-5-20250929"), 200_000);
   assert.equal(getContextWindowForModel("gpt-5-codex"), 400_000);

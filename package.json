@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "pnpm run dev:web",
     "dev:web": "next dev",
-    "dev:api": "bash scripts/mount-skills.sh && tsx packages/api/src/index.ts",
+    "dev:api": "bash scripts/mount-skills.sh && tsc -p packages/shared/tsconfig.json && tsc -p packages/api/tsconfig.json && node packages/api/dist/index.js",
     "build": "tsc -p packages/shared/tsconfig.json && next build && tsc -p packages/api/tsconfig.json",
     "start": "next start",
     "lint": "biome check .",
@@ -34,6 +34,7 @@
     "autoprefixer": "^10.4.20",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.2"
   }
 }

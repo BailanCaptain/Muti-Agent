@@ -147,6 +147,10 @@ export class MessageService {
       return
     }
 
+    if (event.type !== "send_message") {
+      return
+    }
+
     void this.handleSendMessage(event, emit)
   }
 
