@@ -97,8 +97,8 @@ export const SEAL_THRESHOLDS_BY_PROVIDER: Record<Provider, { warn: number; actio
  * 这里按 model 名字前缀做兜底。查不到就返回 null —— 让上游跳过预防性 seal，不要瞎猜。
  */
 const CONTEXT_WINDOW_FALLBACKS: ReadonlyArray<{ match: RegExp; window: number }> = [
-  // Gemini 2.x 家族：1M tokens
-  { match: /^gemini-(2\.5|2\.0|1\.5)/i, window: 1_048_576 },
+  // Gemini 3.x 家族：1M tokens
+  { match: /^gemini-3/i, window: 1_048_576 },
   // Claude 4.x 家族：200k
   { match: /^claude-(opus|sonnet|haiku)-4/i, window: 200_000 },
   { match: /^claude-/i, window: 200_000 },
