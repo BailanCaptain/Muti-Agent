@@ -1,11 +1,12 @@
 "use client"
 
+import { useRuntimeConfigStore } from "@/components/stores/runtime-config-store"
 import { useSettingsStore } from "@/components/stores/settings-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { formatTokenCount } from "@/lib/format"
 import type { Provider } from "@multi-agent/shared"
-import { Info, MessageSquare } from "lucide-react"
-import { useState } from "react"
+import { ChevronDown, ChevronRight, Info, MessageSquare } from "lucide-react"
+import { useEffect, useState } from "react"
 import { FoldControls } from "./fold-controls"
 import { ProviderAvatar } from "./provider-avatar"
 
@@ -95,6 +96,17 @@ export function StatusPanel() {
   const timeline = useThreadStore((state) => state.timeline)
   const invocationStats = useThreadStore((state) => state.invocationStats)
   const [draftModels, setDraftModels] = useState<Record<string, string>>({})
+  const [expandedDefaults, setExpandedDefaults] = useState<Record<string, boolean>>({})
+
+  const runtimeLoaded = useRuntimeConfigStore((state) => state.loaded)
+  const runtimeLoad = useRuntimeConfigStore((state) => state.load)
+  const catalog = useRuntimeConfigStore((state) => state.catalog)
+  const runtimeConfig = useRuntimeConfigStore((state) => state.config)
+  const setAgentOverride = useRuntimeConfigStore((state) => state.setAgentOverride)
+
+  useEffect(() => {
+    if (!runtimeLoaded) void runtimeLoad()
+  }, [runtimeLoaded, runtimeLoad])
 
   const providerEntries = Object.entries(providers) as Array<
     [Provider, (typeof providers)[Provider]]
@@ -251,6 +263,9 @@ export function StatusPanel() {
                   </div>
                 </div>
 
+                <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-400">
+                  当前会话
+                </div>
                 <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-slate-400">
                   <span>模型</span>
                   <span className="font-mono text-slate-500">{card.currentModel ?? "未设置"}</span>
@@ -301,6 +316,48 @@ export function StatusPanel() {
                       保存
                     </button>
                   ) : null}
+                </div>
+
+                {/* 全局默认配置（折叠） */}
+                <div className="mt-3 border-t border-slate-200/60 pt-2">
+                  <button
+                    className="flex w-full items-center gap-1.5 text-[11px] font-medium text-slate-500 transition hover:text-slate-700"
+                    onClick={() => setExpandedDefaults(prev => ({ ...prev, [provider]: !prev[provider] }))}
+                    type="button"
+                  >
+                    {expandedDefaults[provider] ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                    默认配置
+                  </button>
+
+                  {expandedDefaults[provider] && catalog && (
+                    <div className="mt-2 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="w-12 text-[10px] text-slate-400">模型</span>
+                        <input
+                          className={`min-w-0 flex-1 rounded-2xl border border-white/80 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none transition focus:ring-4 ${theme.focus}`}
+                          list={`default-model-${provider}`}
+                          value={runtimeConfig[provider]?.model ?? ""}
+                          onChange={(e) => void setAgentOverride(provider, { ...runtimeConfig[provider], model: e.target.value })}
+                          placeholder="使用系统默认"
+                        />
+                        <datalist id={`default-model-${provider}`}>
+                          {catalog[provider]?.models.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}
+                        </datalist>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="w-12 text-[10px] text-slate-400">强度</span>
+                        <select
+                          className="min-w-0 flex-1 rounded-2xl border border-white/80 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none transition focus:ring-4 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                          disabled={!catalog[provider]?.efforts.length}
+                          value={runtimeConfig[provider]?.effort ?? ""}
+                          onChange={(e) => void setAgentOverride(provider, { ...runtimeConfig[provider], effort: e.target.value })}
+                        >
+                          <option value="">默认</option>
+                          {catalog[provider]?.efforts.map((e) => <option key={e} value={e}>{e}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )

@@ -2,9 +2,11 @@
 
 import { useFoldStore, useIsMessageFolded } from "@/components/stores/fold-store"
 import { formatTokenCount } from "@/lib/format"
+import { normalizeMessageToBlocks } from "@/lib/blocks"
 import type { DecisionRequest, Provider, TimelineMessage } from "@multi-agent/shared"
 import { ChevronDown, ChevronRight, Copy, Trash2 } from "lucide-react"
 import { useState } from "react"
+import { BlockRenderer } from "./block-renderer"
 import { DecisionCard } from "./decision-card"
 import { MarkdownMessage } from "./markdown-message"
 import { ProviderAvatar } from "./provider-avatar"
@@ -93,6 +95,13 @@ const thinkingTheme: Record<
     content: "text-slate-600 [&_blockquote]:border-sky-200 [&_code]:bg-sky-100/50",
     icon: "text-sky-500/80",
   },
+}
+
+/** AC7: Per-provider bubble visual differentiation */
+const bubbleTheme: Record<Provider, string> = {
+  codex: "border-amber-200/70 bg-amber-50/30",
+  claude: "border-violet-200/70 bg-violet-50/30",
+  gemini: "border-sky-200/70 bg-sky-50/30",
 }
 
 function MessageMeta({ message }: { message: TimelineMessage }) {
@@ -193,7 +202,7 @@ export function MessageBubble({ message, inlineDecisions, onDecisionRespond, onD
                 className={`rounded-[26px] border px-5 py-4 shadow-[0_18px_40px_rgba(15,23,42,0.07)] ${
                   isUser
                     ? "border-orange-200/70 bg-gradient-to-br from-rose-50 via-orange-50 to-amber-50 text-slate-700"
-                    : "border-slate-200/80 bg-white/95 text-slate-700"
+                    : `${bubbleTheme[message.provider]} text-slate-700`
                 }`}
               >
                 {!isUser && message.thinking && theme ? (
@@ -235,7 +244,10 @@ export function MessageBubble({ message, inlineDecisions, onDecisionRespond, onD
                   </div>
                 ) : null}
 
-                <MarkdownMessage content={message.content} />
+                <BlockRenderer
+                  blocks={normalizeMessageToBlocks(message).filter(b => b.kind !== "thinking")}
+                  provider={message.provider}
+                />
 
                 {inlineDecisions && inlineDecisions.length > 0 && onDecisionRespond && (
                   <div className="mt-3 space-y-2 border-t border-slate-200/60 pt-3">
