@@ -57,3 +57,15 @@ export const POLICY_DOCUMENT_ONLY: ContextPolicy = {
   phase1Header: false,
   injectPreamble: true,
 }
+
+/** Vision Guardian: zero context, only the task message (feature doc + AC embedded in task) */
+export const POLICY_GUARDIAN: ContextPolicy = {
+  injectRollingSummary: false,
+  injectSelfHistory: false,
+  injectSharedHistory: false,
+  sharedHistoryLimit: 0,
+  selfHistoryLimit: 0,
+  maxContentLength: 0,
+  phase1Header: false,
+  injectPreamble: false,
+}

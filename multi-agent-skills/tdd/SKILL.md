@@ -46,9 +46,10 @@ REFACTOR → 消除重复、改善命名
 
 ### Bug Fix 模式
 
-Bug 修复和新功能一样，必须先写失败测试。
+Bug 修复和新功能一样，必须先写失败测试。**入口动作：先填诊断胶囊**（如启用 `debugging` skill）。
 
 ```bash
+# 0. 填诊断胶囊（现象/证据/假设/诊断策略）— 见 debugging skill
 # 1. 写一个复现 bug 的测试（此时必须红）
 # 2. 确认测试以"预期的理由"失败
 # 3. 修复代码
@@ -96,8 +97,8 @@ pnpm --filter @multi-agent/api test  # API 包单独测试
 
 - "应该能过"、"大概没问题"、"先快速实现一下"
 - "测试我写完功能再补"、"这个太简单了不用测"
-- "我已经手工验证过了"
-- "这个情况不一样，因为……"
+- "我已经手工验证过了"、"精神一致就够了，不用走形式"
+- "这个情况不一样，因为……"、"留着参考，写测试时再删"
 
 **所有这些都是理由化（Rationalization）。没有例外。**
 
@@ -114,6 +115,7 @@ pnpm --filter @multi-agent/api test  # API 包单独测试
 
 ## 和其他 skill 的区别
 
+- **vs `debugging`**：TDD 是**预防性**的（写代码前）；debugging 是**修复性**的（bug 出现后）。交叉点：debugging 发现 bug 后，Phase 4 必须先写失败测试再修（切换回 TDD 模式）
 - **vs `quality-gate`**：TDD 是开发过程中的纪律；quality-gate 是提交前的验收检查
 - **vs `vision-guardian`**：TDD 确保单元级正确性；vision-guardian 确保需求级完整性
 

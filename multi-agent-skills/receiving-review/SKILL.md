@@ -1,62 +1,162 @@
 ---
 name: receiving-review
-description: 当收到 reviewer 的反馈，需要修复问题或回应 review 意见时触发。禁止表演性同意，必须先证明理解，再行动。
+description: >
+  处理 reviewer 反馈：VERIFY 三道门 + Red→Green 修复（禁止表演性同意）。
+  Use when: 收到 review 结果、reviewer 提了 P1/P2、需要处理反馈。
+  Not for: 发 review 请求（用 requesting-review）、自检（用 quality-gate）。
+  Output: 逐项修复确认 + reviewer 放行。
+triggers:
+  - "review 结果"
+  - "review 意见"
+  - "reviewer 说"
+  - "fix these"
+  - "修复 review"
 ---
-# Core Principle
 
-收到 review 后，最重要的不是礼貌回应，而是证明自己理解了问题。
-行动、复述、澄清，比“感谢反馈”更有价值。
+> **SOP 位置**: `requesting-review` → **本 skill** → `merge-gate`
 
-## 检查流程
+# Receive Review
 
-AFTER 收到 review:
-1. CHECK: 是否真正理解 reviewer 指出的技术问题
-2. CHECK: 是否能复述问题的机制、影响和修复方向
-3. CHECK: 如果不确定，是否主动提出澄清问题
-4. BLOCK: 禁止表演性同意
-   - “You're absolutely right!”
-   - “Great point!”
-   - “Excellent feedback!”
-   - “Thanks for catching that!”
-   - “我马上改”
-5. PASS: 只有在“复述问题 / 提问澄清 / 给出修复方案”之一成立时，才算有效回应
+处理 reviewer 反馈的完整流程。核心原则：**技术正确性 > 社交舒适，验证后再实现，禁止表演性同意。**
 
-## 响应格式
+## 核心知识
 
-### Review Response
-- Understanding:
-- Fix Plan:
-- Questions:
-- Status:
+### 两类反馈，处理方式不同
 
-## 修复后的回传格式
+| 类型 | 特征 | 处理 |
+|------|------|------|
+| **代码级** | bug / edge case / 性能 / 命名 | Red→Green 修复流程 |
+| **愿景级** | "这不是小孙要的" / "缺了核心功能" / "UI 不可用" | STOP → 回读原始需求 → 和小孙确认 |
 
-### Fix Update
-- What Changed:
-- Why This Fix Addresses It:
-- Remaining Risk:
-- Request:
-  请 reviewer 复核并明确放行 / 不放行
+> **愿景级反馈不能用代码 patch 修补设计问题。** 先对照小孙原话验证 reviewer 说得对吗；如确实偏离，升级小孙确认偏差范围，再重新设计。
 
-## 通过场景
+### 禁止的响应（表演性同意）
 
-### 正例
-### Review Response
-- Understanding:
-  范德彪指出的是 `saveConversation()` 这段仍然存在 lost update。虽然我加了本地锁，但锁只在单实例内有效，多个 worker 仍可能并发写同一份状态。
-- Fix Plan:
-  我会把这段改成版本校验写入，并补一个冲突重试测试。
-- Questions:
-  如果版本冲突超过重试上限，你更倾向返回错误还是降级成队列串行化？
-- Status:
-  正在修复
+```
+❌ "You're absolutely right!"    ❌ "Great point!"
+❌ "Excellent feedback!"         ❌ "Thanks for catching that!"
+❌ "让我现在就改"（验证之前）    ❌ "我马上改"
+```
 
-### Fix Update
-- What Changed:
-  我把 `saveConversation()` 改成 `load(version) -> compareAndSet -> retry`，并新增了 2 个测试覆盖冲突重试和重试失败。
-- Why This Fix Addresses It:
-  之前的问题是多 worker 并发写没有全局版本保护。现在每次写都校验版本，冲突时不会静默覆盖旧值。
-- Remaining Risk:
-  重试策略还是固定次数，没有退避。
-- Request:
-  请范德彪复核这次修复，并明确回复是否可以放行。
+行动说明一切——直接修复，代码本身证明你听到了反馈。
+
+### Push Back 标准
+
+当以下情况时**必须** push back，用技术论证，不是防御性反应：
+
+- 建议会破坏现有功能
+- Reviewer 缺少完整上下文
+- 违反 YAGNI（过度设计）
+- 与架构决策/小孙要求冲突
+- 建议会让实现**更偏离**小孙原始需求
+
+如果你 push back 了但你错了：陈述事实然后继续，不要长篇道歉。
+
+**Review 有零分歧 = 走过场。** 真正的 review 需要技术争论。
+
+## 流程
+
+```
+WHEN 收到 review 反馈:
+
+1. READ     — 完整读完，不要边读边反应
+2. CLASSIFY — 区分愿景级 vs 代码级；按 P1/P2/P3 分优先级
+3. CLARIFY  — 有不清晰的问题先全部问清，再动手
+4. VERIFY   — reviewer 说的问题真的存在吗？（见下方三道门）
+5. FIX      — 通过验证的问题 Red→Green 逐个修复
+6. CONFIRM  — 修完回给 reviewer 确认，不能自判"改对了"
+```
+
+### VERIFY 三道门（少一道不准照改）
+
+对每条 review 意见，**改代码之前**必须过三道门：
+
+1. **Spec Gate** — 这条意见和现有 AC/需求冲突吗？
+   - 冲突 → pushback，附 AC 原文
+   - 不冲突 → 进下一道
+
+2. **Mechanism Gate** — reviewer 说"这不行"的证据是什么？
+   - 有失败用例 / 真实平台限制 → 进下一道
+   - 只是"不优雅"/"理论上不安全"但拿不出失败路径 → 当假设处理，pushback 要求证据
+
+3. **Feature Gate** — 按建议改完后，核心用户路径还活着吗？
+   - 改完跑一遍最关键的用户路径（不是只跑测试）
+   - 功能死了 → 回滚，review 建议作废，不管它理论上多优雅
+
+**修复顺序**：P1（blocking）→ P2（必须修）→ P3（讨论后当场修或放下）
+
+**澄清原则**：有任何问题不清晰，先 STOP，全部问清再动手。部分理解 = 错误实现。
+
+## Red→Green 修复流程
+
+对每个 P1/P2 问题：
+
+```
+1. 理解问题（复述给自己听）
+2. 写失败测试（Red）
+3. 运行测试，确认红灯
+4. 修复代码
+5. 运行测试，确认绿灯（Green）
+6. 运行完整测试套件，确认无 regression
+```
+
+**例外**：如果无法稳定自动化复现，提供最小手工复现步骤 + 说明原因，但不能跳过验证。
+
+## 修复后确认（硬规则）
+
+**修复完成 ≠ 可以合入。必须回给 reviewer 确认。**
+
+```
+❌ 错误：修复 → 自己判断"改对了" → 合入 main
+✅ 正确：修复 → 回给 reviewer → reviewer 确认 → 进 merge-gate
+```
+
+确认信格式：
+
+```markdown
+## 修复确认请求
+
+| # | 问题 | 状态 | Red→Green |
+|---|------|------|-----------|
+| P1-1 | {描述} | ✅ | {test file}: FAIL → PASS |
+| P2-1 | {描述} | ✅ | {test file}: FAIL → PASS |
+
+测试结果：pnpm test → {X} passed, 0 failed
+Commit: {sha} — {message}
+
+请确认修复，确认后执行合入。
+```
+
+## TAKEOVER 降级
+
+Reviewer 发现 author 触发以下任一条件，可直接发起 TAKEOVER：
+
+1. 连续 3 轮无有效证据增量
+2. 连续 2 次假绿（声明 fixed 但复验失败）
+3. 同一验收点重复验证 2 次
+
+**触发后**：在消息中显式宣布 TAKEOVER → 原 author 停止试错 → 另一位 agent 接手修复。接管 agent 不得自审，需由第三方 review。
+
+## Common Mistakes
+
+| 错误 | 正确做法 |
+|------|----------|
+| 边读边改，没读完 | 读完整反馈，分类后再动手 |
+| 有不清晰的问题但先改清晰的 | 全部澄清后再统一动手 |
+| 没写 Red 测试直接改代码 | 先写失败测试，确认红灯，再修 |
+| 修完自判"对了"直接合入 | 必须回给 reviewer 确认 |
+| 全盘接受，零 push back | 有技术理由必须说出来（VERIFY 三道门） |
+| 愿景级问题用代码 patch | STOP，升级小孙，不要硬修 |
+
+## 和其他 skill 的区别
+
+| Skill | 关注点 | 时机 |
+|-------|--------|------|
+| `quality-gate` | 自己检查自己 | 提 review 之前 |
+| `requesting-review` | 发出 review 请求 | 自检通过之后 |
+| **receiving-review（本 skill）** | 处理 reviewer 的反馈 | 收到 review 之后 |
+| `merge-gate` | 合入前门禁 + PR | reviewer 放行之后 |
+
+## 下一步
+
+Reviewer 放行（"LGTM"/"通过"/"可以合入"/"Approved"）→ **直接进入 `merge-gate`**。不要停下来问小孙。

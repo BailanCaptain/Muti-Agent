@@ -178,26 +178,46 @@ skills:
       - name: "/guardian"
         description: "愿景守护验收"
 
-  # ── 严格 Review ──
-  hardline-review:
-    description: 严格 review，P1/P2/P3 分级
+  # ── 调试 ──
+  debugging:
+    description: 系统化 bug 定位：根因调查 → 模式分析 → 假设验证 → 修复
     triggers:
-      - "review 一下"
-      - "帮我审查"
-      - "代码审查"
-      - "review this"
-      - "执行 review"
+      - "bug"
+      - "报错"
+      - "test failure"
+      - "unexpected behavior"
+      - "调试"
     not_for:
-      - "请 review"
-      - "review 结果"
-      - "review 意见"
+      - "新功能开发"
+      - "重构"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: ["quality-gate"]
+    sop_step: null
+    slashCommands:
+      - name: "/debug"
+        description: "系统化调试"
+
+  # ── 自我进化 ──
+  self-evolution:
+    description: Scope Guard + Process Evolution + Knowledge Evolution
+    triggers:
+      - "scope 偏了"
+      - "又犯了"
+      - "重复错误"
+      - "流程改进"
+      - "值得记住"
+      - "self-evolution"
+    not_for:
+      - "日常 SOP 推进"
+      - "一次性 bug fix"
     agents: [claude, codex, gemini]
     requires_mcp: []
     next: []
     sop_step: null
     slashCommands:
-      - name: "/review"
-        description: "执行严格 review"
+      - name: "/evolve"
+        description: "触发自我进化"
 
   # ── 请求 Review ──
   requesting-review:

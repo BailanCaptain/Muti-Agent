@@ -3,7 +3,7 @@ name: vision-guardian
 description: >
   零上下文愿景守护：专用 agent 逐项验收 AC，消除确认偏差。
   Use when: quality-gate 通过后、进入 review 前，需要独立验收。
-  Not for: 自检（用 quality-gate）、代码审查（用 hardline-review）。
+  Not for: 自检（用 quality-gate）、代码审查（用 requesting-review）。
   Output: 逐项验收报告（✅/❌） + PASS/BLOCKED 判定。
 ---
 

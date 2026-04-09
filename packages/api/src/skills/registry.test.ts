@@ -14,9 +14,9 @@ function loadedRegistry(): SkillRegistry {
 
 // ── loadManifest ─────────────────────────────────────────────────────
 
-test("loadManifest loads all 13 skills", () => {
+test("loadManifest loads all 14 skills", () => {
   const registry = loadedRegistry()
-  assert.equal(registry.allSkills().length, 13)
+  assert.equal(registry.allSkills().length, 14)
 })
 
 test("loadManifest loads sop_navigation stages", () => {
@@ -31,11 +31,18 @@ test("loadManifest loads sop_navigation stages", () => {
 
 // ── match — trigger 匹配 ────────────────────────────────────────────
 
-test("match finds hardline-review for '帮我 review 一下这段代码'", () => {
+test("match finds debugging for '遇到一个 bug'", () => {
   const registry = loadedRegistry()
-  const results = registry.match("帮我 review 一下这段代码")
+  const results = registry.match("遇到一个 bug 需要修复")
   const names = results.map((r) => r.skill.name)
-  assert.ok(names.includes("hardline-review"), `Expected hardline-review, got: ${names}`)
+  assert.ok(names.includes("debugging"), `Expected debugging, got: ${names}`)
+})
+
+test("match finds self-evolution for '又犯了同样的错'", () => {
+  const registry = loadedRegistry()
+  const results = registry.match("又犯了同样的错误")
+  const names = results.map((r) => r.skill.name)
+  assert.ok(names.includes("self-evolution"), `Expected self-evolution, got: ${names}`)
 })
 
 test("match finds requesting-review for '请 review'", () => {
@@ -89,11 +96,11 @@ test("match finds worktree for '新 worktree'", () => {
 
 // ── match — not_for 排除 ────────────────────────────────────────────
 
-test("match excludes hardline-review when content contains '请 review'", () => {
+test("match excludes debugging when content contains '新功能开发'", () => {
   const registry = loadedRegistry()
-  const results = registry.match("请 review 一下我的代码")
+  const results = registry.match("新功能开发")
   const names = results.map((r) => r.skill.name)
-  assert.ok(!names.includes("hardline-review"), `hardline-review should be excluded by not_for, got: ${names}`)
+  assert.ok(!names.includes("debugging"), `debugging should be excluded by not_for, got: ${names}`)
 })
 
 test("match excludes requesting-review when content contains 'review 意见'", () => {
@@ -120,11 +127,18 @@ test("match returns empty for non-matching content", () => {
 
 // ── matchSlashCommand ────────────────────────────────────────────────
 
-test("matchSlashCommand matches /review", () => {
+test("matchSlashCommand matches /debug", () => {
   const registry = loadedRegistry()
-  const skill = registry.matchSlashCommand("/review 这段代码")
-  assert.ok(skill, "Should match /review")
-  assert.equal(skill.name, "hardline-review")
+  const skill = registry.matchSlashCommand("/debug 这个错误")
+  assert.ok(skill, "Should match /debug")
+  assert.equal(skill.name, "debugging")
+})
+
+test("matchSlashCommand matches /evolve", () => {
+  const registry = loadedRegistry()
+  const skill = registry.matchSlashCommand("/evolve")
+  assert.ok(skill, "Should match /evolve")
+  assert.equal(skill.name, "self-evolution")
 })
 
 test("matchSlashCommand matches /merge", () => {

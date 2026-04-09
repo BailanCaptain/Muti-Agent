@@ -46,7 +46,7 @@ const VALID_PROVIDERS: Provider[] = ["claude", "codex", "gemini"]
 export class SkillRegistry {
   private readonly skills = new Map<string, SkillMeta>()
   private readonly sopNavigation = new Map<string, SopStage>()
-  private readonly slashIndex = new Map<string, string>() // "/review" → "hardline-review"
+  private readonly slashIndex = new Map<string, string>() // "/merge" → "merge-gate"
 
   loadManifest(manifestPath: string): void {
     const raw = readFileSync(manifestPath, "utf-8")

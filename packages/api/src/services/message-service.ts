@@ -16,7 +16,7 @@ import { buildPhase1Header } from "../orchestrator/phase1-header"
 import { buildPhase2Turn } from "../orchestrator/phase2-header"
 import { runTurn } from "../runtime/cli-orchestrator"
 import { assemblePrompt, assembleDirectTurnPrompt } from "../orchestrator/context-assembler"
-import { POLICY_FULL, POLICY_INDEPENDENT } from "../orchestrator/context-policy"
+import { POLICY_FULL, POLICY_GUARDIAN, POLICY_INDEPENDENT } from "../orchestrator/context-policy"
 import { classifyFailure } from "../runtime/failure-classifier"
 import { loadRuntimeConfig } from "../runtime/runtime-config"
 import type { DecisionManager } from "../orchestrator/decision-manager"
@@ -784,19 +784,28 @@ export class MessageService {
                     entry.to.provider as import("@multi-agent/shared").Provider,
                   )
 
+              // Vision Guardian detection: when skill match includes vision-guardian,
+              // activate zero-context mode with custom system prompt.
+              const isGuardianMode = !!(
+                skillHint && skillHint.includes("vision-guardian")
+              )
+
               const targetThread = this.dispatch.resolveThread(threadId)
               const assembled = await assemblePrompt({
                 provider: entry.to.provider as import("@multi-agent/shared").Provider,
                 threadId,
                 sessionGroupId,
                 nativeSessionId: targetThread?.nativeSessionId ?? null,
-                policy: entry.parallelGroupId ? POLICY_INDEPENDENT : POLICY_FULL,
+                policy: isGuardianMode
+                  ? POLICY_GUARDIAN
+                  : entry.parallelGroupId ? POLICY_INDEPENDENT : POLICY_FULL,
                 task: entry.taskSnippet,
                 roomSnapshot: entry.contextSnapshot,
                 sourceAlias: entry.from.agentId,
                 targetAlias: entry.to.agentId,
                 phase1HeaderText,
-                skillHint,
+                skillHint: isGuardianMode ? null : skillHint,
+                visionGuardianMode: isGuardianMode,
               }, this.memoryService)
 
               // Determine groupId/groupRole for collapsible groups:
