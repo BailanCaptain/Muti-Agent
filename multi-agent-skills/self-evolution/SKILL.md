@@ -64,15 +64,9 @@ argument-hint: "[mode: scope-guard|process|knowledge] [主题]"
 
 ### 提案流程
 
-1. **写提案**（5 槽模板）：
+1. **写提案**：用 `docs/evolution-proposals/TEMPLATE.md` 创建 `EP-XXX.md`
 
-| # | 槽位 | 说明 |
-|---|------|------|
-| 1 | **Trigger** | 什么触发了这个提案 |
-| 2 | **Evidence** | 至少 2 个来源的证据 |
-| 3 | **Root Cause** | 为什么会反复出现 |
-| 4 | **Lever** | 最小杠杆改动（见下方排序） |
-| 5 | **Verify** | 怎么验证改进有效 |
+   5 槽：Trigger / Evidence(≥2 源) / Root Cause / Lever(最小杠杆) / Verify
 
 2. **审批**：影响单 agent → 直接提小孙；影响全团队 → 先 1 agent sanity check → 小孙拍板
 3. **落地闭环**：accepted → 必须关联 commit/PR，不能停在"提了"
@@ -112,9 +106,10 @@ argument-hint: "[mode: scope-guard|process|knowledge] [主题]"
 
 ### 沉淀方式
 
-| 条件 | 沉淀成 | 位置 |
+| 条件 | 沉淀成 | 模板 |
 |------|--------|------|
-| 高风险/跨领域分析框架 | Method Card | `docs/methods/` |
+| 高价值协作事件 | Episode Card | `docs/episodes/TEMPLATE.md` |
+| 高风险/跨领域分析框架 | Method Card | `docs/methods/TEMPLATE.md` |
 | 重复步骤稳定的流程型任务 | Skill Draft | 走 `writing-plans` 拆分 |
 | 轻量知识点 | Memory file | `.claude/` memory 系统 |
 
