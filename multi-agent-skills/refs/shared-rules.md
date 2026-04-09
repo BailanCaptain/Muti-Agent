@@ -49,7 +49,7 @@
 4. **网络边界** — 禁止访问不属于本服务的 localhost 端口。
 
 ### 开发纪律（Dev Discipline）
-5. **不确定必问** — 不确定关键前提时必须提问，不能硬猜。匹配 `ask-dont-guess` skill 场景直接进入。
+5. **不确定必问** — 任务依赖关键前提，但该前提不确定、未验证或信息冲突时，强制停止硬猜，优先提问。
 6. **Skill 强制触发** — 一旦匹配 skill 场景，按 skill 的检查流程执行，没有选择。
 7. **Review 先红后绿** — Review 代码必须 **Read → Green**：先写失败测试复现问题，再提具体修复意见。
 8. **P1/P2 不留存** — P1 / P2 必须在当前迭代修完，不许留到下一个迭代。
@@ -76,7 +76,6 @@
 | 请求 review | `requesting-review` |
 | 收到 review 并修复 | `receiving-review` |
 | 准备 merge | `merge-gate` |
-| 关键前提不确定 | `ask-dont-guess` |
 | feature / bugfix / refactor 任务 | `feat-lifecycle` |
 | 多人独立思考 / brainstorm | `collaborative-thinking` |
 | bug / 报错 / 调试 | `debugging` |

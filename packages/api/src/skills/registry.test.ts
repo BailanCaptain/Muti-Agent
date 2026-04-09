@@ -14,9 +14,9 @@ function loadedRegistry(): SkillRegistry {
 
 // ── loadManifest ─────────────────────────────────────────────────────
 
-test("loadManifest loads all 14 skills", () => {
+test("loadManifest loads all 13 skills", () => {
   const registry = loadedRegistry()
-  assert.equal(registry.allSkills().length, 14)
+  assert.equal(registry.allSkills().length, 13)
 })
 
 test("loadManifest loads sop_navigation stages", () => {
@@ -203,9 +203,9 @@ test("getNext returns next skills for requesting-review", () => {
   assert.deepEqual(next, ["receiving-review"])
 })
 
-test("getNext returns empty for ask-dont-guess", () => {
+test("getNext returns empty for self-evolution", () => {
   const registry = loadedRegistry()
-  const next = registry.getNext("ask-dont-guess")
+  const next = registry.getNext("self-evolution")
   assert.deepEqual(next, [])
 })
 

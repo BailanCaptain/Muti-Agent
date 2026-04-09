@@ -53,21 +53,6 @@ skills:
       - name: "/think"
         description: "启动协作思考"
 
-  # ── 关键前提确认 ──
-  ask-dont-guess:
-    description: 关键前提不确定时强制提问
-    triggers:
-      - "不确定"
-      - "不清楚"
-      - "需要确认"
-      - "我猜"
-    not_for: []
-    agents: [claude, codex, gemini]
-    requires_mcp: []
-    next: []
-    sop_step: null
-    slashCommands: []
-
   # ── 跨角色交接 ──
   cross-role-handoff:
     description: 跨角色交接，输出五件套

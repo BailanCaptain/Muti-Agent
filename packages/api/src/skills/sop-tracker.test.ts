@@ -34,10 +34,10 @@ test("advance moves to next stage based on skill next chain", () => {
 
 test("advance returns null when skill has no next", () => {
   const { registry, tracker } = setup()
-  tracker.setStage("group-1", "ask-dont-guess")
-  const next = tracker.advance("group-1", "ask-dont-guess", registry)
+  tracker.setStage("group-1", "self-evolution")
+  const next = tracker.advance("group-1", "self-evolution", registry)
   assert.equal(next, null)
-  assert.equal(tracker.getStage("group-1"), "ask-dont-guess")
+  assert.equal(tracker.getStage("group-1"), "self-evolution")
 })
 
 test("advance chains: requesting-review → receiving-review → merge-gate", () => {

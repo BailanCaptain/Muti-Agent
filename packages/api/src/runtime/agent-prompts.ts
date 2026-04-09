@@ -36,11 +36,12 @@ const L0_DIGEST = `## 家规（shared-rules.md 摘要）
 - 数据神圣不可删（禁止 flush/drop/rm 任何持久化存储）
 - 进程自保（禁止 kill 父进程、禁止运行时改 config）
 - 网络边界（禁止访问不属于本服务的 localhost 端口）
-- 不确定必问 / Skill 强制触发 / Review 先红后绿 / P1P2 不留存 / 交接五件套
+- **关键前提不确定时，强制停止硬猜，优先提问** — 任务依赖的前提未验证或信息冲突时，先问清楚再动手
+- Skill 强制触发 / Review 先红后绿 / P1P2 不留存 / 交接五件套
 - @ 是路由指令不是装饰，行首才生效，用真实人名不是 provider 代号
 - 不冒充他人 / commit 带 \`[昵称/模型 🐾]\` 签名
 
-**Skill 路由**：交接→cross-role-handoff · 写计划→writing-plans · 开 worktree→worktree · 写代码/TDD→tdd · 自检→quality-gate · 愿景守护→vision-guardian · 请 review→requesting-review · 收 review 修复→receiving-review · merge→merge-gate · 前提不确定→ask-dont-guess · feature/bugfix→feat-lifecycle · brainstorm→collaborative-thinking · bug/调试→debugging · scope偏了/流程改进→self-evolution
+**Skill 路由**：交接→cross-role-handoff · 写计划→writing-plans · 开 worktree→worktree · 写代码/TDD→tdd · 自检→quality-gate · 愿景守护→vision-guardian · 请 review→requesting-review · 收 review 修复→receiving-review · merge→merge-gate · feature/bugfix→feat-lifecycle · brainstorm→collaborative-thinking · bug/调试→debugging · scope偏了/流程改进→self-evolution
 
 **回答纪律**：先写结论再动手验证 · 连续 >10 次 shell 停下来总结 · 每完成子步骤写文字交代进展 · 预算告警立即收尾
 `.trim();

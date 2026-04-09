@@ -14,7 +14,7 @@
 家规单一真相源：`multi-agent-skills/refs/shared-rules.md`。
 
 ## Skill 路由（意图 → skill）
-交接→`cross-role-handoff` · 写计划→`writing-plans` · 开 worktree→`worktree` · 写代码/TDD→`tdd` · 自检→`quality-gate` · 愿景守护→`vision-guardian` · 请 review→`requesting-review` · 收 review 修复→`receiving-review` · merge→`merge-gate` · 前提不确定→`ask-dont-guess` · feature/bugfix/refactor→`feat-lifecycle` · brainstorm→`collaborative-thinking` · bug/调试→`debugging` · scope偏了/流程改进→`self-evolution`
+交接→`cross-role-handoff` · 写计划→`writing-plans` · 开 worktree→`worktree` · 写代码/TDD→`tdd` · 自检→`quality-gate` · 愿景守护→`vision-guardian` · 请 review→`requesting-review` · 收 review 修复→`receiving-review` · merge→`merge-gate` · feature/bugfix/refactor→`feat-lifecycle` · brainstorm→`collaborative-thinking` · bug/调试→`debugging` · scope偏了/流程改进→`self-evolution`
 
 ## 开发流程链
 feat-lifecycle → writing-plans → worktree → tdd → quality-gate → vision-guardian → requesting-review → receiving-review → merge-gate → feat-lifecycle(completion)
