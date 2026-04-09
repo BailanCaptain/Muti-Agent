@@ -7,6 +7,7 @@
 
 | ID | 名称 | 状态 | Owner | Source | Spec |
 |----|------|------|-------|--------|------|
+| F001 | UI 焕新：配置入口统一 + 消息渲染升级 | spec | 黄仁勋 | internal | [F001](features/F001-ui-refresh.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features
