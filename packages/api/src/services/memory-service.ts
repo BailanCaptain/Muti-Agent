@@ -132,7 +132,7 @@ export class MemoryService {
     if (!apiKey) return extractive
 
     try {
-      const model = "gemini-2.5-flash-preview"
+      const model = "gemini-3.1-pro-preview"
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
 
       const prompt = `你是一个会话摘要生成器。请根据以下对话记录，生成一份 500-1000 字的结构化摘要。

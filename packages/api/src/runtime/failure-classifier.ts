@@ -48,10 +48,16 @@ const PATTERNS: Array<{ match: RegExp; cls: FailureClass }> = [
     match: /\[runtime\][^\n]*(卡住|睡着|异常退出)/,
     cls: "stall_killed"
   },
+  // Capacity / quota / context — checked BEFORE rate_limited on purpose: when the raw
+  // stderr carries BOTH "429 too many requests" and "RESOURCE_EXHAUSTED", capacity wins
+  // because clearing session is strictly safer (fixes context-driven cases and is a
+  // free no-op on account-level quota). B002.
+  // Intentionally no naked "429" here — it's ambiguous; plain RPS 429s fall through to
+  // rate_limited below.
   {
     match:
-      /(429|resource[_ ]exhausted|model[_ ]capacity[_ ]exhausted|rate[_ ]?limit|quota[_ ]exceeded|too many requests|rpm.{0,10}exceeded)/i,
-    cls: "rate_limited"
+      /(resource[_ ]exhausted|model[_ ]capacity[_ ]exhausted|capacity[_ ]exhausted|quota[_ ](exceeded|exhausted)|context[_ ](window|length)[^\n]{0,40}(exceed|limit|full|too)|token[_ ]limit[^\n]{0,20}exceed|prompt is too long)/i,
+    cls: "context_exhausted"
   },
   {
     match:
@@ -63,9 +69,11 @@ const PATTERNS: Array<{ match: RegExp; cls: FailureClass }> = [
       /session[^\n]{0,40}(not found|expired|corrupt|invalid|cannot resume|could not resume|does not exist)/i,
     cls: "session_corrupt"
   },
+  // True account-level RPS: session-agnostic, clearing wouldn't help.
+  // Runs AFTER context_exhausted so capacity/quota wording is caught first.
   {
-    match: /(context[_ ](window|length)[^\n]{0,40}(exceed|limit|full|too)|token[_ ]limit[^\n]{0,20}exceed|prompt is too long)/i,
-    cls: "context_exhausted"
+    match: /(too many requests|rpm.{0,10}exceeded|rate[_ ]?limit(?!.*exhausted))/i,
+    cls: "rate_limited"
   }
 ];
 
@@ -105,7 +113,7 @@ function resolve(cls: FailureClass): FailureClassification {
         class: cls,
         shouldClearSession: true,
         safeToRetry: true,
-        userMessage: "上下文窗口已满，已自动封存 session，下一轮开新房间继续。"
+        userMessage: "上游报告容量/配额耗尽（可能是 session 上下文过长，也可能是 Gemini 日配额）。已清空 session，下一轮开新房间带摘要继续；如果仍然失败，通常是日配额，次日恢复。"
       };
     case "stall_killed":
       return {
