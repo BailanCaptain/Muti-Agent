@@ -11,6 +11,28 @@ description: >
 
 合入 main 的完整流程：门禁检查 → PR → squash merge → 清理。
 
+## 铁律：1 feature = 1 commit 🔴
+
+合入目标分支后，一个 feature（kickoff / design / plan / 实现 / 完工 docs 全部）
+在 git log 里**只是一个 commit**。TDD per-green-step commit 是开发期间的安全网，
+合入前必须整合。独立目的的改动（如夹带的 bug fix）分开保留。
+
+**gh 不可用时的本地 squash**：
+
+```bash
+git checkout {feature}
+git reset --soft {base}      # base = feature 第一个 commit 的父
+git commit -m "feat(Fxxx): …"
+git checkout {target}
+git merge --ff-only {feature}
+```
+
+`git merge --ff-only` 单独用是错的，必须配 soft reset。
+
+**已经误推的 atomic 历史**：`reset --hard` 丢掉顶层要保留的 commit → `reset --soft`
+回到 base → 单 commit → `cherry-pick` 顶层 commit 回来 → `git push --force-with-lease`。
+只在自己主导的 feature/dev 分支做，main/release 永远不碰。
+
 ## 核心知识
 
 ### 门禁 5 硬条件（全部满足才能开 PR）
@@ -63,7 +85,7 @@ gh pr create --title "feat(Fxxx): {description}" --body "$(cat <<'EOF'
 EOF
 )"
 
-# 3. Squash merge（GitHub 处理，禁止本地 squash！）
+# 3. Squash merge（GitHub 处理）
 gh pr merge {PR_NUMBER} --squash --delete-branch
 
 # 4. Phase 文档同步（见下方）
@@ -111,12 +133,13 @@ git worktree prune
 | 错误 | 正确 |
 |------|------|
 | 没有 reviewer 放行就合入 | 必须有明确放行信号 |
-| 本地 `git rebase -i` 手动 squash | 用 `gh pr merge --squash` |
+| `git merge --ff-only` 当 squash 用 | FF 会原样带入 atomic 历史，必须配 soft reset |
+| 一个 feature 在 dev 留下 N 个 atomic commit | 合入前 squash 成 1 个（含 kickoff/design/plan docs） |
 | 本地 merge 后 `gh pr close` | `close` = 放弃，`merge` = 合入 |
 | Merge 后不更新 feature doc | Phase 文档同步每次 merge 必做 |
 | Merge 后不清理 worktree | 必须 remove + prune |
 | 修了 P1 不通知 reviewer | 修完后 @ reviewer 确认 |
-| 旧 base SHA 上跑的测试就够了 | 必须 rebase 到最新 main 后重跑 |
+| 历史重写用 `git push --force` | 用 `--force-with-lease`；只在自己主导的分支上做 |
 
 ## 和其他 skill 的区别
 
