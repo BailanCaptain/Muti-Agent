@@ -152,7 +152,7 @@ export function StatusPanel() {
   })
 
   return (
-    <aside className="flex h-screen w-[340px] flex-col border-l border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(255,255,255,0.86))] px-5 py-6 shadow-[-18px_0_48px_rgba(15,23,42,0.04)] backdrop-blur-xl">
+    <aside className="flex h-screen w-[340px] flex-col overflow-y-auto overflow-x-hidden border-l border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(255,255,255,0.86))] px-5 py-6 shadow-[-18px_0_48px_rgba(15,23,42,0.04)] backdrop-blur-xl">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-400">
@@ -365,7 +365,7 @@ export function StatusPanel() {
         </div>
       </div>
 
-      <div className={`${panelClassName} min-h-0 flex-1`}>
+      <div className={panelClassName}>
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-slate-800">会话链</h3>
           <span className="font-mono text-[11px] text-slate-400">
@@ -373,7 +373,7 @@ export function StatusPanel() {
           </span>
         </div>
 
-        <div className="space-y-3 overflow-y-auto pr-1">
+        <div className="space-y-3">
           {sortedInvocationStats.length === 0 ? (
             <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50/80 px-4 py-5 text-sm text-slate-400">
               尚无会话遥测数据。
