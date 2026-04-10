@@ -9,10 +9,14 @@ import { SqliteStore } from "./db/sqlite"
 import { AppEventBus } from "./events/event-bus"
 import { registerMcpServer } from "./mcp/server"
 import { ApprovalManager } from "./orchestrator/approval-manager"
+import { ChainStarterResolver } from "./orchestrator/chain-starter-resolver"
+import { DecisionBoard } from "./orchestrator/decision-board"
 import { DecisionManager } from "./orchestrator/decision-manager"
 import { DispatchOrchestrator } from "./orchestrator/dispatch"
 import { InvocationRegistry } from "./orchestrator/invocation-registry"
+import { SettlementDetector } from "./orchestrator/settlement-detector"
 import { registerCallbackRoutes } from "./routes/callbacks"
+import { registerDecisionBoardRoutes } from "./routes/decision-board"
 import { registerMessageRoutes } from "./routes/messages"
 import { registerRuntimeConfigRoutes } from "./routes/runtime-config"
 import { registerThreadRoutes } from "./routes/threads"
@@ -58,6 +62,52 @@ export async function createApiServer(options: {
   messages.setSkillRegistry(skillRegistry)
   messages.setSopTracker(sopTracker)
   messages.setDecisionManager(decisions)
+
+  // F002: Decision Board + settle → flush → single dispatch pipeline.
+  // The board holds [拍板] items across raisers (dedupe by normalized
+  // question hash). SettlementDetector arms a 2s debounce after each
+  // state change and, on fire, verifies the A2A discussion has truly
+  // settled (no active parallel group / queued dispatches / running
+  // turns) before asking MessageService to flush the board as one
+  // decision.board_flush broadcast.
+  const decisionBoard = new DecisionBoard()
+  const settlementDetector = new SettlementDetector({
+    hasActiveParallelGroup: (sg) => messages.hasActiveParallelGroupInSession(sg),
+    hasQueuedDispatches: (sg) => dispatch.hasQueuedDispatches(sg),
+    hasRunningTurn: (sg) => messages.hasRunningTurn(sg),
+  })
+  const chainStarterResolver = new ChainStarterResolver({
+    listThreadsByGroup: (sessionGroupId) =>
+      repository.listThreadsByGroup(sessionGroupId).map((t) => ({
+        id: t.id,
+        provider: t.provider,
+        alias: t.alias,
+        sessionGroupId: t.sessionGroupId,
+      })),
+    listMessages: (threadId) =>
+      repository.listMessages(threadId).map((m) => ({
+        id: m.id,
+        role: m.role,
+        createdAt: m.createdAt,
+        threadId: m.threadId,
+      })),
+    getThread: (threadId) => {
+      const t = repository.getThreadById(threadId)
+      return t ? { id: t.id, provider: t.provider, alias: t.alias } : null
+    },
+  })
+  messages.setDecisionBoard(decisionBoard)
+  messages.setSettlementDetector(settlementDetector)
+  messages.setChainStarterResolver(chainStarterResolver)
+  messages.setBroadcaster((event) => broadcaster.broadcast(event))
+
+  settlementDetector.on("settle", (payload: { sessionGroupId: string }) => {
+    if (!messages.hasPendingBoardEntries(payload.sessionGroupId)) return
+    messages.flushDecisionBoard(payload.sessionGroupId)
+  })
+  app.addHook("onClose", async () => {
+    settlementDetector.dispose()
+  })
   const redisSummary = getRedisReservation(options.redisUrl)
 
   eventBus.on("invocation.started", (event) => {
@@ -163,6 +213,7 @@ export async function createApiServer(options: {
   })
   registerMessageRoutes(app)
   registerRuntimeConfigRoutes(app)
+  registerDecisionBoardRoutes(app, { messageService: messages })
   registerCallbackRoutes(app, {
     repository,
     sessions,

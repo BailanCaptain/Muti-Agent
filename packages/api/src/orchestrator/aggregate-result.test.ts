@@ -1,7 +1,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { Provider } from "@multi-agent/shared"
-import { extractDecisionItems, generateAggregatedResult, generatePhase2Result } from "./aggregate-result"
+import {
+  extractDecisionItems,
+  extractWithdrawals,
+  generateAggregatedResult,
+  generatePhase2Result,
+} from "./aggregate-result"
 
 const ALIASES: Record<Provider, string> = {
   codex: "Coder",
@@ -149,4 +154,22 @@ test("extractDecisionItems: multiple items each with options", () => {
 test("extractDecisionItems: returns empty for content without markers", () => {
   const items = extractDecisionItems("普通内容，没有拍板标记")
   assert.equal(items.length, 0)
+})
+
+// ── extractWithdrawals ──────────────────────────────────────────────
+
+test("extractWithdrawals parses single withdrawal marker", () => {
+  const content = "我们讨论后发现\n[撤销拍板] 数据库选型\n这个问题已经有答案了"
+  const result = extractWithdrawals(content)
+  assert.deepEqual(result, ["数据库选型"])
+})
+
+test("extractWithdrawals returns multiple withdrawals in order", () => {
+  const content = "[撤销拍板] 问题A\n中间文字\n[撤销拍板] 问题B"
+  assert.deepEqual(extractWithdrawals(content), ["问题A", "问题B"])
+})
+
+test("extractWithdrawals ignores malformed markers", () => {
+  const content = "[撤销拍板]\n空白行没有问题文本"
+  assert.deepEqual(extractWithdrawals(content), [])
 })

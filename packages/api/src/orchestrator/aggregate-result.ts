@@ -94,6 +94,23 @@ export function extractDecisionItems(content: string): DecisionItemParsed[] {
 }
 
 /**
+ * Extract `[撤销拍板]` markers. Each line of the form
+ * `[撤销拍板] <substring>` yields one withdrawal substring. Lines with
+ * no text after the marker are ignored.
+ */
+export function extractWithdrawals(content: string): string[] {
+  const results: string[] = []
+  const lines = content.split(/\r?\n/)
+  for (const line of lines) {
+    const match = line.trim().match(/^\[撤销拍板\]\s*(.+)$/)
+    if (match && match[1].trim()) {
+      results.push(match[1].trim())
+    }
+  }
+  return results
+}
+
+/**
  * Render Phase 2 serial discussion replies into a markdown bubble.
  * Grouped by round, each showing the agent's reply in speaking order.
  * Fed into a separate ConnectorMessage so Phase 1 and Phase 2 stay distinct.

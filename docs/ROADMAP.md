@@ -14,4 +14,5 @@
 
 | ID | 名称 | 完成日期 | Spec |
 |----|------|---------|------|
+| F002 | Decision Board — 讨论级拍板收敛 | 2026-04-11 | [F002](features/F002-decision-board.md) |
 <!-- 完成的 Feature 从活跃表移到此处 -->

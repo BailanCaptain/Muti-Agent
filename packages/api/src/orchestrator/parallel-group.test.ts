@@ -461,3 +461,48 @@ test("remove deletes the group and cleans idempotency index", () => {
   })
   assert.notEqual(group.id, group2.id)
 })
+
+// ── hasAnyActiveInSession ────────────────────────────────────────────
+
+test("hasAnyActiveInSession returns true when a group is running in that session", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "m1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude"],
+    joinBehavior: "notify_originator",
+    sessionGroupId: "sg1",
+  })
+  registry.start(group.id)
+  assert.equal(registry.hasAnyActiveInSession("sg1"), true)
+  assert.equal(registry.hasAnyActiveInSession("sg2"), false)
+})
+
+test("hasAnyActiveInSession is false after group reaches terminal state", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "m1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude"],
+    joinBehavior: "notify_originator",
+    sessionGroupId: "sg1",
+  })
+  registry.start(group.id)
+  registry.markCompleted(group.id, "claude", { messageId: "r1", content: "ok" })
+  assert.equal(registry.hasAnyActiveInSession("sg1"), false)
+})
+
+test("hasAnyActiveInSession treats pending groups as active", () => {
+  const registry = new ParallelGroupRegistry()
+  registry.create({
+    parentMessageId: "m1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude"],
+    joinBehavior: "notify_originator",
+    sessionGroupId: "sg1",
+  })
+  assert.equal(registry.hasAnyActiveInSession("sg1"), true)
+})

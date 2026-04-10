@@ -10,7 +10,15 @@ import type {
   QueueEntry,
 } from "../orchestrator/dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
-import { type DecisionItemParsed, extractDecisionItems, generateAggregatedResult } from "../orchestrator/aggregate-result"
+import {
+  type DecisionItemParsed,
+  extractDecisionItems,
+  extractWithdrawals,
+  generateAggregatedResult,
+} from "../orchestrator/aggregate-result"
+import type { DecisionBoard, DecisionBoardEntry } from "../orchestrator/decision-board"
+import type { SettlementDetector } from "../orchestrator/settlement-detector"
+import type { ChainStarterResolver } from "../orchestrator/chain-starter-resolver"
 import { type ParallelGroup, ParallelGroupRegistry } from "../orchestrator/parallel-group"
 import { buildPhase1Header } from "../orchestrator/phase1-header"
 import { buildPhase2Turn } from "../orchestrator/phase2-header"
@@ -115,6 +123,11 @@ export class MessageService {
   private skillRegistry: SkillRegistry | null = null
   private sopTracker: SopTracker | null = null
   private memoryService: MemoryService | null = null
+  private decisionBoard: DecisionBoard | null = null
+  private settlementDetector: SettlementDetector | null = null
+  private chainStarterResolver: ChainStarterResolver | null = null
+  private broadcast: EmitEvent | null = null
+  private readonly pendingBoardFlushes = new Map<string, DecisionBoardEntry[]>()
 
   constructor(
     private readonly sessions: SessionService,
@@ -142,6 +155,216 @@ export class MessageService {
 
   setMemoryService(service: MemoryService) {
     this.memoryService = service
+  }
+
+  setDecisionBoard(board: DecisionBoard) {
+    this.decisionBoard = board
+  }
+
+  setSettlementDetector(detector: SettlementDetector) {
+    this.settlementDetector = detector
+  }
+
+  setChainStarterResolver(resolver: ChainStarterResolver) {
+    this.chainStarterResolver = resolver
+  }
+
+  /**
+   * Broadcast channel for asynchronous events with no handler context —
+   * specifically, the settle-triggered `decision.board_flush` fan-out that
+   * fires from a SettlementDetector timer callback. Wired once by the server
+   * startup to the websocket broadcaster.
+   */
+  setBroadcaster(broadcast: EmitEvent) {
+    this.broadcast = broadcast
+  }
+
+  /**
+   * F002: Drain the Decision Board for a session and broadcast a single
+   * `decision.board_flush` event carrying all pending entries. Called by
+   * SettlementDetector after the 2s debounce when the A2A discussion has
+   * truly settled. Stashes drained entries in `pendingBoardFlushes` so the
+   * later `/decision-board/respond` handler (P2.T4) can look them up and
+   * build the summary for the single-dispatch payload.
+   *
+   * No-op when the board has no pending entries (idempotent re-entry from
+   * stacked settle events is safe).
+   */
+  flushDecisionBoard(sessionGroupId: string): void {
+    const board = this.decisionBoard
+    if (!board) return
+    if (!board.hasPending(sessionGroupId)) return
+
+    const entries = board.drain(sessionGroupId)
+    if (entries.length === 0) return
+
+    this.pendingBoardFlushes.set(sessionGroupId, entries)
+
+    const broadcast = this.broadcast
+    if (!broadcast) return
+
+    broadcast({
+      type: "decision.board_flush",
+      payload: {
+        sessionGroupId,
+        flushedAt: new Date().toISOString(),
+        items: entries.map((entry) => ({
+          id: entry.id,
+          question: entry.question,
+          options: entry.options,
+          raisers: entry.raisers.map((r) => ({ alias: r.alias, provider: r.provider })),
+          firstRaisedAt: entry.firstRaisedAt,
+        })),
+      },
+    })
+  }
+
+  /**
+   * Look up the stashed entries from the most recent flush for a session.
+   * Used by the `/decision-board/respond` handler (P2.T4) to build the
+   * single-dispatch summary. Returns `undefined` when no flush is pending.
+   */
+  getPendingFlushEntries(sessionGroupId: string): DecisionBoardEntry[] | undefined {
+    return this.pendingBoardFlushes.get(sessionGroupId)
+  }
+
+  /**
+   * F002 P2.T4: Handle the user's response to a decision.board_flush. This
+   * writes a single summary message (as user role) to the chain-starter
+   * thread — the earliest assistant after the most recent user message —
+   * and triggers ONE runThreadTurn on that thread. Unlike the old direct-
+   * emit decision.request path, this is a single dispatch regardless of how
+   * many [拍板] items were held on the board.
+   *
+   * `skipped=true` records a "produce暂未作出决定" summary and still
+   * dispatches, giving the agents a prompt to continue on their own.
+   */
+  async handleDecisionBoardRespond(payload: {
+    sessionGroupId: string
+    decisions: Array<{
+      itemId: string
+      choice:
+        | { kind: "option"; optionId: string }
+        | { kind: "custom"; text: string }
+    }>
+    skipped?: boolean
+  }): Promise<void> {
+    const entries = this.pendingBoardFlushes.get(payload.sessionGroupId)
+    if (!entries || entries.length === 0) return
+
+    const resolver = this.chainStarterResolver
+    if (!resolver) return
+    const target = resolver.resolve({
+      sessionGroupId: payload.sessionGroupId,
+      boardEntries: entries,
+    })
+    if (!target) return
+
+    this.pendingBoardFlushes.delete(payload.sessionGroupId)
+
+    const summary = payload.skipped
+      ? this.buildSkippedSummary(entries)
+      : this.buildDecisionSummary(entries, payload.decisions)
+
+    const broadcast = this.broadcast
+    const emit: EmitEvent = (event) => broadcast?.(event)
+
+    const userMessage = this.sessions.appendUserMessage(target.threadId, summary)
+    const rootMessageId = this.dispatch.registerUserRoot(
+      userMessage.id,
+      payload.sessionGroupId,
+    )
+    const userTimeline = this.sessions.toTimelineMessage(target.threadId, userMessage.id)
+    if (userTimeline) {
+      emit({
+        type: "message.created",
+        payload: { threadId: target.threadId, message: userTimeline },
+      })
+    }
+
+    for (const entry of entries) {
+      emit({
+        type: "decision.board_item_resolved",
+        payload: { sessionGroupId: payload.sessionGroupId, itemId: entry.id },
+      })
+    }
+
+    this.emitThreadSnapshot(payload.sessionGroupId, emit)
+
+    await this.runThreadTurn({
+      threadId: target.threadId,
+      content: summary,
+      emit,
+      rootMessageId,
+    })
+  }
+
+  buildDecisionSummary(
+    entries: DecisionBoardEntry[],
+    decisions: Array<{
+      itemId: string
+      choice:
+        | { kind: "option"; optionId: string }
+        | { kind: "custom"; text: string }
+    }>,
+  ): string {
+    const lines = ["产品已就以下问题作出决定："]
+    for (const entry of entries) {
+      const d = decisions.find((x) => x.itemId === entry.id)
+      if (!d) {
+        lines.push(`- ${entry.question} → (未决定)`)
+      } else {
+        const choice = d.choice
+        if (choice.kind === "option") {
+          const opt = entry.options.find((o) => o.id === choice.optionId)
+          lines.push(`- ${entry.question} → ${opt?.label ?? choice.optionId}`)
+        } else {
+          lines.push(`- ${entry.question} → 自定义答复："${choice.text}"`)
+        }
+      }
+      if (entry.raisers.length > 1) {
+        lines.push(`  (由 ${entry.raisers.map((r) => r.alias).join("、")} 共同提出)`)
+      }
+    }
+    return lines.join("\n")
+  }
+
+  buildSkippedSummary(entries: DecisionBoardEntry[]): string {
+    const lines = ["产品暂未就以下问题作出决定："]
+    for (const entry of entries) {
+      const who = entry.raisers.map((r) => r.alias).join("、")
+      lines.push(`- [${entry.question}] ${who} 提出`)
+    }
+    lines.push("\n你可以基于当前讨论继续推进，必要时再次 [拍板] 提问。")
+    return lines.join("\n")
+  }
+
+  /**
+   * True iff the Decision Board has any pending entries for this session
+   * group. SettlementDetector consults this alongside dispatch state to
+   * decide whether a flush is due.
+   */
+  hasPendingBoardEntries(sessionGroupId: string): boolean {
+    return this.decisionBoard?.hasPending(sessionGroupId) ?? false
+  }
+
+  /**
+   * SettlementDetector signal: is any CLI turn currently running for this
+   * session group? Reads dispatch slot state (source of truth for which
+   * provider is executing a turn).
+   */
+  hasRunningTurn(sessionGroupId: string): boolean {
+    return this.dispatch
+      .getAgentStatuses(sessionGroupId)
+      .some((status) => status.running)
+  }
+
+  /**
+   * SettlementDetector signal: is any parallel group (Phase 1 fan-out or
+   * its Phase 2 serial discussion) still active for this session group?
+   */
+  hasActiveParallelGroupInSession(sessionGroupId: string): boolean {
+    return this.parallelGroups.hasAnyActiveInSession(sessionGroupId)
   }
 
   handleClientEvent(event: RealtimeClientEvent, emit: EmitEvent) {
@@ -238,6 +461,7 @@ export class MessageService {
           targetProviders,
           joinBehavior: "notify_originator",
           initiatedBy: "agent",
+          sessionGroupId: thread.sessionGroupId,
         })
         this.parallelGroups.start(group.id)
         return group
@@ -341,6 +565,7 @@ export class MessageService {
           targetProviders,
           joinBehavior: "notify_originator",
           initiatedBy: "user",
+          sessionGroupId: thread.sessionGroupId,
         })
         this.parallelGroups.start(group.id)
 
@@ -656,9 +881,11 @@ export class MessageService {
         })
       }
 
-      // Detect [拍板] items and emit inline confirmation cards
+      // F002: route [拍板] / [撤销拍板] markers into the Decision Board
+      // instead of emitting decision.request directly. SettlementDetector
+      // will flush the board once the discussion settles.
       if (!promptRequestedByCli && result.content.trim()) {
-        this.detectAndEmitInlineConfirmations(
+        this.collectDecisionsIntoBoard(
           thread,
           assistant.id,
           result.content,
@@ -697,6 +924,7 @@ export class MessageService {
 
       this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
       await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
+      this.settlementDetector?.notifyStateChange(thread.sessionGroupId)
       return { messageId: assistant.id, content: result.content || "" }
     } catch (error) {
       this.invocations.detachRun(thread.id)
@@ -731,6 +959,7 @@ export class MessageService {
       })
       this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
       await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
+      this.settlementDetector?.notifyStateChange(thread.sessionGroupId)
       return null
     }
   }
@@ -866,45 +1095,56 @@ export class MessageService {
   }
 
   /**
-   * Parse [拍板] markers from agent reply and emit inline confirmation
-   * cards embedded in the agent's message bubble.
+   * F002: Route `[拍板]` / `[撤销拍板]` markers from an agent reply into
+   * the Decision Board instead of emitting `decision.request` events
+   * directly. SettlementDetector is notified so it can decide whether the
+   * board is ready to flush. When no DecisionBoard has been attached
+   * (e.g. unit tests that don't wire the full pipeline) this is a no-op —
+   * the old direct-emit path is intentionally removed (AC3).
+   *
+   * `emit` is retained for future use (per-entry ack events) and to keep
+   * the call signature forward-compatible.
    */
-  private detectAndEmitInlineConfirmations(
-    thread: { id: string; provider: import("@multi-agent/shared").Provider; alias: string; sessionGroupId: string },
-    messageId: string,
+  collectDecisionsIntoBoard(
+    thread: {
+      id: string
+      provider: import("@multi-agent/shared").Provider
+      alias: string
+      sessionGroupId: string
+    },
+    _messageId: string,
     content: string,
-    emit: EmitEvent,
+    _emit: EmitEvent,
   ): void {
-    const items = extractDecisionItems(content)
-    if (!items.length) return
+    const board = this.decisionBoard
+    if (!board) return
 
-    // Each [拍板] item becomes one decision card anchored to the agent's
-    // message bubble.  If the agent provided [A]/[B]/… options the card
-    // renders as a selection list; otherwise it shows a free-text input.
+    const items = extractDecisionItems(content)
     for (const item of items) {
       const options = item.options.map((opt, i) => ({
         id: `opt_${i}`,
         label: opt,
       }))
-
-      emit({
-        type: "decision.request",
-        payload: {
-          requestId: crypto.randomUUID(),
-          kind: "inline_confirmation",
-          title: item.question,
-          description: `${thread.alias} 提出了需要你拍板的问题`,
-          options,
-          sessionGroupId: thread.sessionGroupId,
-          sourceProvider: thread.provider,
-          sourceAlias: thread.alias,
-          multiSelect: false,
-          allowTextInput: true,
-          textInputPlaceholder: "以上都不选？说说你的想法…",
-          anchorMessageId: messageId,
-          createdAt: new Date().toISOString(),
+      board.add({
+        sessionGroupId: thread.sessionGroupId,
+        raiser: {
+          threadId: thread.id,
+          provider: thread.provider,
+          alias: thread.alias,
+          raisedAt: new Date().toISOString(),
         },
+        question: item.question,
+        options,
       })
+    }
+
+    const withdrawals = extractWithdrawals(content)
+    for (const substring of withdrawals) {
+      board.withdraw(thread.sessionGroupId, thread.id, substring)
+    }
+
+    if (items.length > 0 || withdrawals.length > 0) {
+      this.settlementDetector?.notifyStateChange(thread.sessionGroupId)
     }
   }
 
@@ -1056,6 +1296,7 @@ export class MessageService {
       timeoutMinutes: params.timeoutMinutes,
       idempotencyKey: params.idempotencyKey,
       initiatedBy: "agent",
+      sessionGroupId,
     })
 
     this.parallelGroups.start(group.id)

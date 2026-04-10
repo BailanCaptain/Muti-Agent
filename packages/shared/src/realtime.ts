@@ -289,3 +289,32 @@ export type RealtimeServerEvent =
         userInput?: string
       }
     }
+  | {
+      type: "decision.board_flush"
+      payload: {
+        sessionGroupId: string
+        items: DecisionBoardItem[]
+        flushedAt: string
+      }
+    }
+  | {
+      type: "decision.board_item_resolved"
+      payload: {
+        sessionGroupId: string
+        itemId: string
+      }
+    }
+
+/**
+ * F002: A single question held by the Decision Board, sent to the frontend
+ * when SettlementDetector decides the discussion has settled. Same shape
+ * as DecisionBoardEntry on the backend but strips the internal questionHash
+ * and exposes only display-safe fields for raisers.
+ */
+export type DecisionBoardItem = {
+  id: string
+  question: string
+  options: { id: string; label: string }[]
+  raisers: { alias: string; provider: Provider }[]
+  firstRaisedAt: string
+}

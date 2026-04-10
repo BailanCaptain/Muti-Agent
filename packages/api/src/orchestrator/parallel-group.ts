@@ -40,6 +40,12 @@ export type ParallelGroup = {
   parentMessageId: string
   originatorAgentId: string
   originatorProvider: Provider
+  /**
+   * Session group this parallel group belongs to. Optional for older
+   * call sites; populated by all production call sites in message-service
+   * so SettlementDetector can scope "any active group" checks per session.
+   */
+  sessionGroupId: string
   callbackTo: Provider | null
   question: string | null
   initiatedBy: ParallelGroupInitiator
@@ -79,6 +85,7 @@ export class ParallelGroupRegistry {
     timeoutMinutes?: number
     idempotencyKey?: string
     initiatedBy?: ParallelGroupInitiator
+    sessionGroupId?: string
   }): ParallelGroup {
     if (options.idempotencyKey) {
       const existing = this.idempotencyIndex.get(options.idempotencyKey)
@@ -94,6 +101,7 @@ export class ParallelGroupRegistry {
       parentMessageId: options.parentMessageId,
       originatorAgentId: options.originatorAgentId,
       originatorProvider: options.originatorProvider,
+      sessionGroupId: options.sessionGroupId ?? "",
       callbackTo: options.callbackTo ?? null,
       question: options.question ?? null,
       initiatedBy: options.initiatedBy ?? "user",
@@ -188,6 +196,19 @@ export class ParallelGroupRegistry {
     if (isTerminal(group.status)) return
     this.transition(groupId, "failed")
     this.clearTimeout(groupId)
+  }
+
+  /**
+   * True if any group scoped to the given sessionGroupId is still active
+   * (pending, running, or partial). Used by SettlementDetector to decide
+   * whether to arm the Decision Board flush timer.
+   */
+  hasAnyActiveInSession(sessionGroupId: string): boolean {
+    for (const group of this.groups.values()) {
+      if (group.sessionGroupId !== sessionGroupId) continue
+      if (!isTerminal(group.status)) return true
+    }
+    return false
   }
 
   /**

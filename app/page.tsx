@@ -2,12 +2,14 @@
 
 import { ChatHeader } from "@/components/chat/chat-header"
 import { Composer } from "@/components/chat/composer"
+import { DecisionBoardModal } from "@/components/chat/decision-board-modal"
 import { SessionSidebar } from "@/components/chat/session-sidebar"
 import { StatusPanel } from "@/components/chat/status-panel"
 import { TimelinePanel } from "@/components/chat/timeline-panel"
 import { useChatStore } from "@/components/stores/chat-store"
 import { useSettingsStore } from "@/components/stores/settings-store"
 import { useApprovalStore } from "@/components/stores/approval-store"
+import { useDecisionBoardStore } from "@/components/stores/decision-board-store"
 import { useDecisionStore } from "@/components/stores/decision-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { PROVIDER_ALIASES, type BlockedDispatchAttempt } from "@multi-agent/shared"
@@ -43,6 +45,8 @@ export default function HomePage() {
   const removeApprovalRequest = useApprovalStore((state) => state.removeRequest)
   const addDecisionRequest = useDecisionStore((state) => state.addRequest)
   const removeDecisionRequest = useDecisionStore((state) => state.removeRequest)
+  const receiveBoardFlush = useDecisionBoardStore((state) => state.receiveFlush)
+  const removeBoardItem = useDecisionBoardStore((state) => state.removeItem)
 
   useEffect(() => {
     void bootstrap().catch((error) => {
@@ -113,6 +117,16 @@ export default function HomePage() {
           return
         }
 
+        if (event.type === "decision.board_flush") {
+          receiveBoardFlush(event.payload)
+          return
+        }
+
+        if (event.type === "decision.board_item_resolved") {
+          removeBoardItem(event.payload.itemId)
+          return
+        }
+
         if (event.type === "dispatch.blocked") {
           setStatus(formatBlockedDispatchMessage(event.payload.attempts))
           return
@@ -132,7 +146,9 @@ export default function HomePage() {
     applyAssistantDelta,
     applyThinkingDelta,
     bootstrap,
+    receiveBoardFlush,
     removeApprovalRequest,
+    removeBoardItem,
     removeDecisionRequest,
     replaceActiveGroup,
     selectSessionGroup,
@@ -155,6 +171,7 @@ export default function HomePage() {
         </div>
       </main>
       <StatusPanel />
+      <DecisionBoardModal />
     </div>
   )
 }
