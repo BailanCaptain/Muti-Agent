@@ -1,15 +1,17 @@
 ---
 id: F001
 title: UI 焕新 — 配置入口统一 + 消息渲染升级
-status: spec
+status: done
 owner: 黄仁勋
 created: 2026-04-10
+completed: 2026-04-10
 ---
 
 # F001 — UI 焕新：配置入口统一 + 消息渲染升级
 
-**Status**: spec
+**Status**: done
 **Created**: 2026-04-10
+**Completed**: 2026-04-10（commit `43c7eda`）
 
 ## Why
 
@@ -30,16 +32,16 @@ created: 2026-04-10
 
 ## Acceptance Criteria
 
-- [ ] AC1: Composer 区域无任何模型/配置控件，`AgentConfigBar` 组件已删除
-- [ ] AC2: StatusPanel 智能体卡片支持当前会话模型配置（常显）+ 全局默认配置（折叠）
-- [ ] AC3: 两处配置统一走 `PUT /api/runtime-config` API，消除双写
-- [ ] AC4: 消息正文使用 react-markdown + remark-gfm 渲染，禁用 rehype-raw
-- [ ] AC5: 代码块带语法高亮样式 + 右上角复制按钮
-- [ ] AC6: 前端 `normalizeMessageToBlocks()` 适配层统一 content/thinking/inlineConfirmations 渲染路径
-- [ ] AC7: Per-provider 气泡视觉差异化（专属边框色/背景色）
-- [ ] AC8: CardBlock 渲染组件（标题/正文/字段列表/动作按钮）
-- [ ] AC9: DiffBlock 渲染组件（inline diff 展示）
-- [ ] AC10: 现有消息向后兼容（无 blocks 字段时降级为单个 markdown block）
+- [x] AC1: Composer 区域无任何模型/配置控件，`AgentConfigBar` 组件已删除
+- [x] AC2: StatusPanel 智能体卡片支持当前会话模型配置（常显）+ 全局默认配置（折叠）
+- [x] AC3: 两处配置统一走 `PUT /api/runtime-config` API，消除双写
+- [x] AC4: 消息正文使用 react-markdown + remark-gfm 渲染，禁用 rehype-raw
+- [x] AC5: 代码块带语法高亮样式 + 右上角复制按钮
+- [x] AC6: 前端 `normalizeMessageToBlocks()` 适配层统一 content/thinking/inlineConfirmations 渲染路径
+- [x] AC7: Per-provider 气泡视觉差异化（专属边框色/背景色）
+- [x] AC8: CardBlock 渲染组件（标题/正文/字段列表/动作按钮）
+- [x] AC9: DiffBlock 渲染组件（inline diff 展示）
+- [x] AC10: 现有消息向后兼容（无 blocks 字段时降级为单个 markdown block）
 
 ## Dependencies
 
@@ -64,6 +66,8 @@ created: 2026-04-10
 | 2026-04-10 | 协作讨论（桂芬/黄仁勋/范德彪三人串行收敛） |
 | 2026-04-10 | 小孙拍板：全局配置折叠(B) + 顺手做Card+Diff(B) |
 | 2026-04-10 | Kickoff |
+| 2026-04-10 | Design Gate 通过（小孙放行，前端 UI/UX 类） |
+| 2026-04-10 | AC1-AC10 全部交付并 merge（commit `43c7eda`），Status → done |
 
 ## Links
 

@@ -7,12 +7,12 @@
 
 | ID | 名称 | 状态 | Owner | Source | Spec |
 |----|------|------|-------|--------|------|
-| F001 | UI 焕新：配置入口统一 + 消息渲染升级 | spec | 黄仁勋 | internal | [F001](features/F001-ui-refresh.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features
 
 | ID | 名称 | 完成日期 | Spec |
 |----|------|---------|------|
+| F001 | UI 焕新：配置入口统一 + 消息渲染升级 | 2026-04-10 | [F001](features/F001-ui-refresh.md) |
 | F002 | Decision Board — 讨论级拍板收敛 | 2026-04-11 | [F002](features/F002-decision-board.md) |
 <!-- 完成的 Feature 从活跃表移到此处 -->
