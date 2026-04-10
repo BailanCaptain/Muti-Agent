@@ -19,6 +19,6 @@
 家规单一真相源：`multi-agent-skills/refs/shared-rules.md`。
 
 ## Skill 路由（意图 → skill）
-交接→`cross-role-handoff` · 写计划→`writing-plans` · 开 worktree→`worktree` · 写代码/TDD→`tdd` · 自检→`quality-gate` · 愿景守护→`vision-guardian` · 请 review→`requesting-review` · 收 review 修复→`receiving-review` · merge→`merge-gate` · feature/bugfix/refactor→`feat-lifecycle` · brainstorm→`collaborative-thinking` · bug/调试→`debugging` · scope偏了/流程改进→`self-evolution`
+交接→`cross-role-handoff` · 写计划→`writing-plans` · 开 worktree→`worktree` · 写代码/TDD→`tdd` · 自检→`quality-gate` · 愿景守护→`vision-guardian` · 请 review→`requesting-review` · 收 review 修复→`receiving-review` · merge→`merge-gate` · feature→`feat-lifecycle` · brainstorm→`collaborative-thinking` · bug/调试→`debugging` · scope偏了/流程改进→`self-evolution`
 
-For any feature/bugfix/refactor task, first enter `feat-lifecycle`. Do not jump directly into coding, review, or merge.
+For any feature task, first enter `feat-lifecycle`. Do not jump directly into coding, review, or merge.

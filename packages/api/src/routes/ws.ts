@@ -8,8 +8,24 @@ type SocketLike = {
   on: (event: string, listener: (...args: unknown[]) => void) => void;
 };
 
-function sendSocketEvent(socket: SocketLike, event: RealtimeServerEvent) {
-  socket.send(JSON.stringify(event));
+/**
+ * Sends a realtime event to a single socket. Returns `true` on success and `false`
+ * when the underlying `socket.send()` threw (typical when the WebSocket is in a
+ * closed/half-open state). The function NEVER propagates the exception — long-lived
+ * emit closures held by the message-service processing chain rely on this guarantee
+ * so that a dead client cannot interrupt `overwriteMessage` → `detachRun` →
+ * `emitThreadSnapshot` (the B001 "agent stuck as working" bug).
+ *
+ * Callers that track the socket (e.g. the broadcaster's `sockets` Set) should treat
+ * a `false` return as a signal to remove the socket.
+ */
+export function sendSocketEvent(socket: SocketLike, event: RealtimeServerEvent): boolean {
+  try {
+    socket.send(JSON.stringify(event));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export type RealtimeBroadcaster = {
@@ -29,10 +45,10 @@ export function registerWsRoute(
 
   options.broadcaster.broadcast = (event) => {
     // Broadcasts are room-wide fan-out events: snapshots, public callback messages and shared status updates.
+    // sendSocketEvent now swallows exceptions internally and reports success via its return value,
+    // so we no longer need the outer try/catch — we just drop any socket that failed to deliver.
     for (const socket of sockets) {
-      try {
-        sendSocketEvent(socket, event);
-      } catch {
+      if (!sendSocketEvent(socket, event)) {
         sockets.delete(socket);
       }
     }
@@ -73,7 +89,16 @@ export function registerWsRoute(
           return;
         }
 
-        options.messages.handleClientEvent(event, (payload) => sendSocketEvent(socket as SocketLike, payload));
+        // Direct per-turn emit: bound to a single socket for the whole agent turn.
+        // If the WebSocket silently drops mid-turn (TCP timeout, proxy reset), sendSocketEvent
+        // returns false; we evict the socket so later broadcasts skip it, and swallow the result
+        // so the message-service processing chain continues even when the client is gone.
+        options.messages.handleClientEvent(event, (payload) => {
+          const sock = socket as SocketLike;
+          if (!sendSocketEvent(sock, payload)) {
+            sockets.delete(sock);
+          }
+        });
       });
     }
   });

@@ -76,7 +76,7 @@
 | 请求 review | `requesting-review` |
 | 收到 review 并修复 | `receiving-review` |
 | 准备 merge | `merge-gate` |
-| feature / bugfix / refactor 任务 | `feat-lifecycle` |
+| feature 任务 | `feat-lifecycle` |
 | 多人独立思考 / brainstorm | `collaborative-thinking` |
 | bug / 报错 / 调试 | `debugging` |
 | scope 偏了 / 重复错误 / 流程改进 | `self-evolution` |

@@ -32,6 +32,7 @@ function formatBlockedDispatchMessage(attempts: BlockedDispatchAttempt[]) {
 
 export default function HomePage() {
   const bootstrap = useThreadStore((state) => state.bootstrap)
+  const selectSessionGroup = useThreadStore((state) => state.selectSessionGroup)
   const applyAssistantDelta = useThreadStore((state) => state.applyAssistantDelta)
   const applyThinkingDelta = useThreadStore((state) => state.applyThinkingDelta)
   const appendTimelineMessage = useThreadStore((state) => state.appendTimelineMessage)
@@ -56,11 +57,19 @@ export default function HomePage() {
       },
       onClose: () => {
         setSocketState("disconnected")
-        setStatus("实时连接断开")
+        setStatus("连接中断，正在重连…")
       },
       onError: () => {
         setSocketState("error")
-        setStatus("实时连接失败")
+        setStatus("实时连接失败，正在重连…")
+      },
+      onReconnect: () => {
+        // B001 Fix 2: frames may have been lost while the socket was down — re-sync from server.
+        const groupId = useThreadStore.getState().activeGroupId
+        const resync = groupId ? selectSessionGroup(groupId) : bootstrap()
+        void resync.catch((error) => {
+          setStatus(error instanceof Error ? `重连恢复失败：${error.message}` : "重连恢复失败")
+        })
       },
       onMessage: (event) => {
         // The page only routes normalized event envelopes; store-specific merge logic lives downstream.
@@ -126,6 +135,7 @@ export default function HomePage() {
     removeApprovalRequest,
     removeDecisionRequest,
     replaceActiveGroup,
+    selectSessionGroup,
     setSocketState,
     setStatus,
   ])
