@@ -36,6 +36,34 @@ import type { SessionService } from "./session-service"
 type ActiveRun = ReturnType<typeof runTurn>
 type EmitEvent = (event: RealtimeServerEvent) => void
 
+// B003: skills in the linear development chain (feat-lifecycle → writing-plans
+// → worktree → tdd → quality-gate → vision-guardian → requesting-review →
+// receiving-review → merge-gate) must NOT re-enter via naive `.includes()`
+// keyword matching on user messages. A mid-flow message like "这个 bugfix 我先
+// TDD 一下" would otherwise make the agent reload feat-lifecycle / tdd from the
+// top, because SkillRegistry.match() has no session-stage awareness.
+//
+// Linear-flow skills advance only via (a) explicit slash command or (b)
+// SopTracker.advance() following the `next` chain. Keyword matching is kept
+// for orthogonal skills meant to interrupt mid-flow: debugging /
+// self-evolution / collaborative-thinking / cross-role-handoff.
+//
+// clowder-ai (the upstream we copied skills from) has no equivalent of
+// prependSkillHint at all — it relies on Claude CLI native skill discovery
+// plus a bulletin-board `sopStageHint`. Our naive keyword-inject layer is
+// the unique-to-us regression that causes double-entry.
+export const LINEAR_FLOW_SKILLS: ReadonlySet<string> = new Set([
+  "feat-lifecycle",
+  "writing-plans",
+  "worktree",
+  "tdd",
+  "quality-gate",
+  "vision-guardian",
+  "requesting-review",
+  "receiving-review",
+  "merge-gate",
+])
+
 const STDERR_NOISE_PATTERNS = [
   /^YOLO mode is enabled/i,
   /^All tool calls will be automatically approved/i,
@@ -1217,33 +1245,39 @@ export class MessageService {
 
   // ── Skill hint helpers ──────────────────────────────────────────────
 
+  private matchOrthogonalSkills(
+    content: string,
+    provider: import("@multi-agent/shared").Provider,
+  ): string[] {
+    if (!this.skillRegistry) return []
+    return this.skillRegistry
+      .match(content, provider)
+      .map((m) => m.skill.name)
+      .filter((name) => !LINEAR_FLOW_SKILLS.has(name))
+  }
+
   private prependSkillHint(content: string, provider: import("@multi-agent/shared").Provider): string {
     if (!this.skillRegistry) return content
 
-    // Slash command takes priority over trigger matching
+    // Slash command takes priority and is always allowed (explicit user intent).
     const slashSkill = this.skillRegistry.matchSlashCommand(content)
     if (slashSkill) {
       return `⚡ 加载 skill: ${slashSkill.name} — 请按 skill 流程执行。\n\n${content}`
     }
 
-    const matched = this.skillRegistry.match(content, provider)
-    if (!matched.length) return content
+    const names = this.matchOrthogonalSkills(content, provider)
+    if (!names.length) return content
 
-    const names = matched.map((m) => m.skill.name).join(", ")
-    return `⚡ 匹配 skill: ${names} — 请加载并按 skill 流程执行。\n\n${content}`
+    return `⚡ 匹配 skill: ${names.join(", ")} — 请加载并按 skill 流程执行。\n\n${content}`
   }
 
   private buildSkillHintLine(
     content: string,
     provider: import("@multi-agent/shared").Provider,
   ): string | null {
-    if (!this.skillRegistry) return null
-
-    const matched = this.skillRegistry.match(content, provider)
-    if (!matched.length) return null
-
-    const names = matched.map((m) => m.skill.name).join(", ")
-    return `⚡ 匹配 skill: ${names} — 请加载并按 skill 流程执行。`
+    const names = this.matchOrthogonalSkills(content, provider)
+    if (!names.length) return null
+    return `⚡ 匹配 skill: ${names.join(", ")} — 请加载并按 skill 流程执行。`
   }
 
   /**
