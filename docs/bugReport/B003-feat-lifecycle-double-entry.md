@@ -127,7 +127,7 @@ private prependSkillHint(content: string, provider: Provider): string {
 | 2 | `"重构这段代码"` | ✖ feat-lifecycle |
 | 3 | `"这个 feat 快做好了"` | ✖ feat-lifecycle |
 | 4 | `"我现在开始开发这个模块"` | ✖ worktree |
-| 5 | `"改完了准备合入主干"` | ✖ merge-gate |
+| 5 | `"改完了准备合入 dev"` | ✖ merge-gate |
 | 6 | `"遇到一个 bug 需要修复"` | ✔ debugging（正交必须保留）|
 | 7 | `"我又犯了同样的错误"` | ✔ self-evolution |
 | 8 | `"我们一起讨论一下架构"` | ✔ collaborative-thinking |

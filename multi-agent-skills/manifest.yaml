@@ -244,7 +244,7 @@ skills:
 
   # ── 合入门禁 ──
   merge-gate:
-    description: 合入 main 的完整流程：门禁检查 → PR → squash merge → 清理
+    description: 合入 dev 的完整流程：门禁检查 → PR → squash merge → 清理
     triggers:
       - "合入"
       - "merge"
@@ -274,7 +274,7 @@ sop_navigation:
   worktree:
     suggested_skill: worktree
     hard_rules:
-      - "worktree 开之前必须 main 双向同步 (ahead=0 behind=0)"
+      - "worktree 开之前必须 dev 双向同步 (ahead=0 behind=0)"
     pitfalls:
       - "不同步就开 worktree"
 

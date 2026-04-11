@@ -107,7 +107,7 @@ WHEN 收到 review 反馈:
 **修复完成 ≠ 可以合入。必须回给 reviewer 确认。**
 
 ```
-❌ 错误：修复 → 自己判断"改对了" → 合入 main
+❌ 错误：修复 → 自己判断"改对了" → 合入 dev
 ✅ 正确：修复 → 回给 reviewer → reviewer 确认 → 进 merge-gate
 ```
 
