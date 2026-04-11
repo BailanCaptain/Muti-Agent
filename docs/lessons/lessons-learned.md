@@ -99,3 +99,26 @@
   - 错误 commit 79468a0（已 soft-reset）/ 正确 commit caf43fd
 - 原理（可选）：调试的最小单位是"动作 → 执行者"，不是"文件"或"配置"。被动定义文件只在被运行时代码读取时才参与 bug；从症状名直接跳到同名文件是把名字巧合当因果关系。
 - 关联：`docs/bugReport/B003-feat-lifecycle-double-entry.md`, `multi-agent-skills/debugging/SKILL.md`, `multi-agent-skills/tdd/SKILL.md`
+
+### LL-004: 同类症状在同一层反复打补丁仍复发 → 根因一定在上一层
+- 状态：validated
+- 更新时间：2026-04-11
+
+- 坑：F003 之前对"A2A 不收敛 / 流程不推进 / 会话截断"反复在 skill 文本、prompt 模板、settlement 状态机三个层面打补丁，每次都看起来"修好了"但症状总复发。真相是 A2A 管线本质是 pull-based 的文本扫描（靠正则扫 CLI stdout 里的行首 `@alias`），三个症状都是这个模型的必然失效——无论上层 skill / prompt 写得多完备都无法掩盖底层表达力不足。
+- 根因：在错误的层修 bug，会每次都"看起来修好了"一阵子——因为具体 case 的文本能对上。但同类 case 换个表述/时机就复发。把"这次能过"当成"根因找到了"。skill/prompt 是被动配置；真正决定流程走向的执行代码在 runtime 层。
+- 触发条件：
+  1. 同一类症状报告过 ≥2 次，每次修的都是描述层面（文案/参数/阈值）。
+  2. 修复 PR diff 主要集中在 `multi-agent-skills/`、prompt 字符串、或单一 switch 分支。
+  3. Reviewer 看代码说不出"这次和上次修的本质区别是什么"。
+- 修复：把问题上抛一层——`A2A 不收敛 → dispatch.ts 没有消费 parentInvocationId → 新增 A2AChainRegistry + 回程派发`、`流程不推进 → SopTracker 只 setState 不派发 → SopAdvancement 承载 nextDispatch + planForcedDispatch`、`会话截断 → extractFinalText 只看 exitCode 不看 stop_reason → 三 runtime parseStopReason + 续写循环`。F003 的 4 个 Phase 都是"上抛一层"的具体化。
+- 防护：
+  1. 同一症状族第 2 次打补丁前，先开 discussion 问"我在哪一层修？上一层是什么？"——一句话答不上来 = 还没找根因。
+  2. 报告模板新增槽位"过去修复历史"：累计 ≥2 次未根治 → 强制上抛一层讨论。
+  3. 每个 bug fix commit message 必须写"这次修的 layer"（runtime / orchestrator / skill / prompt），方便后续 grep 同层反复。
+  4. Architecture-level 改动必须引用**至少一个 reference implementation**（F003 引了 clowder-ai 的 WorklistRegistry），防止在真空中设计。
+- 来源锚点：
+  - `docs/features/F003-a2a-convergence.md#根因（架构级，一句话）`
+  - commit `1a018d4 feat(F003): A2A 运行时闭环 ...`
+  - 历史补丁对比：B003（feat-lifecycle 双重进入）/ B004（settlement premature）都曾被当成"另一个独立 bug"修，实际是同一根因的外层表现
+- 原理（可选）：每个抽象层都有一个"表达力上限"——超出就靠下层表达力硬撑。反复在同一层修同类问题，等于在该层的表达力上限处打补丁。打补丁的次数是根因距离的度量：第 3 次打补丁意味着至少要上抛 1 层。
+- 关联：`docs/features/F003-a2a-convergence.md`, `docs/bugReport/B001-B004`（同一 A2A 症状族的历次补丁）, `multi-agent-skills/self-evolution/SKILL.md`
