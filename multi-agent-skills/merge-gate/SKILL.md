@@ -1,7 +1,7 @@
 ---
 name: merge-gate
 description: >
-  合入 main 的完整流程：门禁检查 → PR → squash merge → Phase 文档同步 → 清理。
+  合入 dev 的完整流程：门禁检查 → PR → squash merge → Phase 文档同步 → 清理。
   Use when: reviewer 放行后准备合入、开 PR、准备 merge。
   Not for: 开发中、review 未通过、自检未完成。
   Output: PR merged + worktree cleaned。
@@ -9,7 +9,7 @@ description: >
 
 # Merge Gate
 
-合入 main 的完整流程：门禁检查 → PR → squash merge → 清理。
+合入 dev 的完整流程：门禁检查 → PR → squash merge → 清理。
 
 ## 铁律：1 feature = 1 commit 🔴
 
@@ -31,7 +31,7 @@ git merge --ff-only {feature}
 
 **已经误推的 atomic 历史**：`reset --hard` 丢掉顶层要保留的 commit → `reset --soft`
 回到 base → 单 commit → `cherry-pick` 顶层 commit 回来 → `git push --force-with-lease`。
-只在自己主导的 feature/dev 分支做，main/release 永远不碰。
+只在自己主导的 feature/dev 分支做，dev/release 永远不碰。
 
 ## 核心知识
 
@@ -41,14 +41,14 @@ git merge --ff-only {feature}
 2. **所有 P1/P2** 已修复且经 reviewer 确认
 3. Review 针对**当前分支/当前工作**（不是历史 review）
 4. Feature doc 涉及的 AC 已打勾
-5. **全量测试绿灯**（基于最新 `origin/main` rebase 后）
+5. **全量测试绿灯**（基于最新 `origin/dev` rebase 后）
 
 ### 合入前全量验证
 
 ```bash
-# 1. 同步 main
+# 1. 同步 dev
 git fetch origin
-git rebase origin/main
+git rebase origin/dev
 
 # 2. 全量验证
 pnpm test                              # 全部通过
@@ -58,7 +58,7 @@ pnpm --filter @multi-agent/api build    # API 包构建
 # 全绿才能继续。任一步骤失败 → 修复后重跑
 ```
 
-**为什么需要这一步**：quality-gate 和 review 跑的测试基于旧 base SHA。并行开发中，其他人的 PR 合入 main 后可能改变共享契约，导致你的代码在新 main 上 break。
+**为什么需要这一步**：quality-gate 和 review 跑的测试基于旧 base SHA。并行开发中，其他人的 PR 合入 dev 后可能改变共享契约，导致你的代码在新 dev 上 break。
 
 ### 合入方式（唯一正确做法）
 
@@ -91,7 +91,7 @@ gh pr merge {PR_NUMBER} --squash --delete-branch
 # 4. Phase 文档同步（见下方）
 
 # 5. 更新本地 + 清理
-git checkout main && git pull origin main
+git checkout dev && git pull origin dev
 git worktree remove ../multi-agent-{feature}  # 如果用了 worktree
 git branch -d feat/{feature-name}
 git worktree prune

@@ -149,30 +149,44 @@ test("markCompleted decrements pendingProviders and transitions to partial", () 
   assert.equal(result.group.status, "partial")
 })
 
-test("markCompleted returns allDone=true and transitions to done", () => {
+test("markCompleted returns allDone=true — agent-initiated → done, user-initiated → aggregating", () => {
   const registry = new ParallelGroupRegistry()
-  const group = registry.create({
+  const agentGroup = registry.create({
     parentMessageId: "msg-1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude"],
+    joinBehavior: "silent",
+    initiatedBy: "agent",
+  })
+  registry.start(agentGroup.id)
+  const r1 = registry.markCompleted(agentGroup.id, "claude", {
+    messageId: "reply-1",
+    content: "Done",
+  })
+  assert.ok(r1)
+  assert.equal(r1.allDone, true)
+  assert.equal(r1.group.status, "done")
+
+  const userGroup = registry.create({
+    parentMessageId: "msg-2",
     originatorAgentId: "Coder",
     originatorProvider: "codex",
     targetProviders: ["claude", "gemini"],
     joinBehavior: "silent",
   })
-  registry.start(group.id)
-
-  registry.markCompleted(group.id, "claude", {
-    messageId: "reply-1",
+  registry.start(userGroup.id)
+  registry.markCompleted(userGroup.id, "claude", {
+    messageId: "reply-2",
     content: "Done from claude",
   })
-
-  const result = registry.markCompleted(group.id, "gemini", {
-    messageId: "reply-2",
+  const r2 = registry.markCompleted(userGroup.id, "gemini", {
+    messageId: "reply-3",
     content: "Done from gemini",
   })
-
-  assert.ok(result)
-  assert.equal(result.allDone, true)
-  assert.equal(result.group.status, "done")
+  assert.ok(r2)
+  assert.equal(r2.allDone, true)
+  assert.equal(r2.group.status, "aggregating")
 })
 
 test("markCompleted returns null for unknown groupId", () => {
@@ -186,10 +200,11 @@ test("markCompleted returns null for unknown groupId", () => {
 
 test("markCompleted on unstarted group throws when reaching terminal state", () => {
   // Regression: user-mention fan-out once created groups without calling start(),
-  // which left status=pending. The last markCompleted then tried pending→done,
-  // an illegal transition, and threw inside Promise.allSettled — silently
-  // skipping the ConnectorBubble + fan-in selector. Test locks the contract:
-  // if you forget to start(), the failure must be loud, not swallowed.
+  // which left status=pending. The last markCompleted then tried pending→done
+  // (or pending→aggregating for user-initiated), an illegal transition, and
+  // threw inside Promise.allSettled — silently skipping the ConnectorBubble +
+  // fan-in selector. Test locks the contract: if you forget to start(), the
+  // failure must be loud, not swallowed.
   const registry = new ParallelGroupRegistry()
   const group = registry.create({
     parentMessageId: "msg-1",
@@ -202,7 +217,7 @@ test("markCompleted on unstarted group throws when reaching terminal state", () 
   registry.markCompleted(group.id, "codex", { messageId: "r1", content: "done" })
   assert.throws(
     () => registry.markCompleted(group.id, "gemini", { messageId: "r2", content: "done" }),
-    /Invalid transition: pending → done/,
+    /Invalid transition: pending → aggregating/,
   )
 })
 
@@ -255,6 +270,7 @@ test("handleTimeout is noop on terminal state", () => {
     originatorProvider: "codex",
     targetProviders: ["claude"],
     joinBehavior: "silent",
+    initiatedBy: "agent",
   })
   registry.start(group.id)
   registry.markCompleted(group.id, "claude", { messageId: "reply-1", content: "Done" })
@@ -397,9 +413,9 @@ test("addPhase2Reply appends replies in order", () => {
   assert.equal(group.phase2Replies[2].round, 2)
 })
 
-test("addPhase2Reply works after group reaches terminal state", () => {
-  // Phase 2 runs after Phase 1 done — the status machine is locked but
-  // Phase 2 data accumulation must keep working.
+test("addPhase2Reply works after Phase 1 completes (aggregating state)", () => {
+  // Phase 2 runs after Phase 1 completes — user-initiated groups enter
+  // "aggregating" (non-terminal) so Phase 2 data accumulation works.
   const registry = new ParallelGroupRegistry()
   const group = registry.create({
     parentMessageId: "msg-1",
@@ -410,7 +426,7 @@ test("addPhase2Reply works after group reaches terminal state", () => {
   })
   registry.start(group.id)
   registry.markCompleted(group.id, "claude", { messageId: "m0", content: "phase1" })
-  assert.equal(group.status, "done")
+  assert.equal(group.status, "aggregating")
 
   const result = registry.addPhase2Reply(group.id, {
     round: 1,
@@ -479,7 +495,7 @@ test("hasAnyActiveInSession returns true when a group is running in that session
   assert.equal(registry.hasAnyActiveInSession("sg2"), false)
 })
 
-test("hasAnyActiveInSession is false after group reaches terminal state", () => {
+test("hasAnyActiveInSession stays true during aggregating (user-initiated)", () => {
   const registry = new ParallelGroupRegistry()
   const group = registry.create({
     parentMessageId: "m1",
@@ -491,6 +507,28 @@ test("hasAnyActiveInSession is false after group reaches terminal state", () => 
   })
   registry.start(group.id)
   registry.markCompleted(group.id, "claude", { messageId: "r1", content: "ok" })
+  assert.equal(group.status, "aggregating")
+  assert.equal(registry.hasAnyActiveInSession("sg1"), true)
+
+  registry.markAggregationDone(group.id)
+  assert.equal(group.status, "done")
+  assert.equal(registry.hasAnyActiveInSession("sg1"), false)
+})
+
+test("hasAnyActiveInSession is false after agent-initiated group completes", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "m1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude"],
+    joinBehavior: "notify_originator",
+    sessionGroupId: "sg1",
+    initiatedBy: "agent",
+  })
+  registry.start(group.id)
+  registry.markCompleted(group.id, "claude", { messageId: "r1", content: "ok" })
+  assert.equal(group.status, "done")
   assert.equal(registry.hasAnyActiveInSession("sg1"), false)
 })
 
@@ -505,4 +543,76 @@ test("hasAnyActiveInSession treats pending groups as active", () => {
     sessionGroupId: "sg1",
   })
   assert.equal(registry.hasAnyActiveInSession("sg1"), true)
+})
+
+// ── aggregating state (B004 fix) ────────────────────────────────────
+
+test("user-initiated group enters aggregating (not done) when Phase 1 completes", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "m1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude", "gemini"],
+    joinBehavior: "notify_originator",
+    sessionGroupId: "sg1",
+  })
+  registry.start(group.id)
+  registry.markCompleted(group.id, "claude", { messageId: "r1", content: "ok" })
+  assert.equal(group.status, "partial")
+
+  registry.markCompleted(group.id, "gemini", { messageId: "r2", content: "ok" })
+  assert.equal(group.status, "aggregating")
+})
+
+test("agent-initiated group enters done (not aggregating) when Phase 1 completes", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "m1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude"],
+    joinBehavior: "notify_originator",
+    sessionGroupId: "sg1",
+    initiatedBy: "agent",
+  })
+  registry.start(group.id)
+  registry.markCompleted(group.id, "claude", { messageId: "r1", content: "ok" })
+  assert.equal(group.status, "done")
+})
+
+test("markAggregationDone transitions aggregating → done", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "m1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude"],
+    joinBehavior: "notify_originator",
+    sessionGroupId: "sg1",
+  })
+  registry.start(group.id)
+  registry.markCompleted(group.id, "claude", { messageId: "r1", content: "ok" })
+  assert.equal(group.status, "aggregating")
+
+  registry.markAggregationDone(group.id)
+  assert.equal(group.status, "done")
+})
+
+test("markAggregationDone is noop when already done", () => {
+  const registry = new ParallelGroupRegistry()
+  const group = registry.create({
+    parentMessageId: "m1",
+    originatorAgentId: "Coder",
+    originatorProvider: "codex",
+    targetProviders: ["claude"],
+    joinBehavior: "notify_originator",
+    initiatedBy: "agent",
+  })
+  registry.start(group.id)
+  registry.markCompleted(group.id, "claude", { messageId: "r1", content: "ok" })
+  assert.equal(group.status, "done")
+
+  registry.markAggregationDone(group.id)
+  assert.equal(group.status, "done")
 })

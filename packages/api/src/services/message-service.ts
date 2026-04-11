@@ -1105,7 +1105,9 @@ export class MessageService {
                     joinResult.group,
                     emit,
                   )
+                  this.parallelGroups.markAggregationDone(entry.parallelGroupId)
                   this.parallelGroups.remove(entry.parallelGroupId)
+                  this.settlementDetector?.notifyStateChange(sessionGroupId)
                 }
               }
             } finally {
@@ -1410,6 +1412,7 @@ export class MessageService {
         })
         if (joinResult?.allDone) {
           await this.handleParallelGroupAllDone(sessionGroupId, joinResult.group, params.emit)
+          this.parallelGroups.markAggregationDone(group.id)
           this.parallelGroups.remove(group.id)
         }
       })()
@@ -1693,7 +1696,7 @@ export class MessageService {
 
     if (selectedProvider) {
       group.callbackTo = selectedProvider
-      this.runSynthesizerTurn(sessionGroupId, group, userInput, emit)
+      await this.runSynthesizerTurn(sessionGroupId, group, userInput, emit)
       return
     }
 
@@ -1741,12 +1744,12 @@ export class MessageService {
    * of the parallel participants — its CLI native session already contains
    * Phase 1 + all Phase 2 prompts/replies, so we don't re-dump the aggregate.
    */
-  private runSynthesizerTurn(
+  private async runSynthesizerTurn(
     sessionGroupId: string,
     group: ParallelGroup,
     userInstruction: string,
     emit: EmitEvent,
-  ): void {
+  ): Promise<void> {
     if (!group.callbackTo) return
 
     const callbackThread = this.sessions.findThreadByGroupAndProvider(
@@ -1760,7 +1763,7 @@ export class MessageService {
       : `请综合刚才并行+串行讨论的各方观点，整理共识、分歧和行动项。你已经看到过所有人的观点。`
     const rootMessage = this.sessions.appendUserMessage(callbackThread.id, prompt)
 
-    this.runThreadTurn({
+    await this.runThreadTurn({
       threadId: callbackThread.id,
       content: prompt,
       emit,

@@ -2,15 +2,16 @@ import type { PendingConfirmationItem, Provider } from "@multi-agent/shared"
 
 // ── State machine ────────────────────────────────────────────────────
 
-export type ParallelGroupStatus = "pending" | "running" | "partial" | "done" | "timeout" | "failed"
+export type ParallelGroupStatus = "pending" | "running" | "partial" | "aggregating" | "done" | "timeout" | "failed"
 
 const TERMINAL_STATES = new Set<ParallelGroupStatus>(["done", "timeout", "failed"])
 
 const VALID_TRANSITIONS: ReadonlyMap<ParallelGroupStatus, ReadonlySet<ParallelGroupStatus>> =
   new Map([
     ["pending", new Set<ParallelGroupStatus>(["running", "failed"])],
-    ["running", new Set<ParallelGroupStatus>(["partial", "done", "timeout", "failed"])],
-    ["partial", new Set<ParallelGroupStatus>(["done", "timeout"])],
+    ["running", new Set<ParallelGroupStatus>(["partial", "aggregating", "done", "timeout", "failed"])],
+    ["partial", new Set<ParallelGroupStatus>(["aggregating", "done", "timeout"])],
+    ["aggregating", new Set<ParallelGroupStatus>(["done", "failed"])],
     ["done", new Set<ParallelGroupStatus>()],
     ["timeout", new Set<ParallelGroupStatus>()],
     ["failed", new Set<ParallelGroupStatus>()],
@@ -151,7 +152,7 @@ export class ParallelGroupRegistry {
     group.pendingProviders.delete(provider)
 
     if (group.pendingProviders.size === 0) {
-      this.transition(groupId, "done")
+      this.transition(groupId, group.initiatedBy === "user" ? "aggregating" : "done")
       this.clearTimeout(groupId)
     } else if (group.status === "running") {
       this.transition(groupId, "partial")
@@ -173,6 +174,14 @@ export class ParallelGroupRegistry {
     if (!group) return null
     group.phase2Replies.push(reply)
     return group
+  }
+
+  markAggregationDone(groupId: string): void {
+    const group = this.groups.get(groupId)
+    if (!group) return
+    if (group.status === "aggregating") {
+      this.transition(groupId, "done")
+    }
   }
 
   handleTimeout(groupId: string): void {
@@ -200,8 +209,8 @@ export class ParallelGroupRegistry {
 
   /**
    * True if any group scoped to the given sessionGroupId is still active
-   * (pending, running, or partial). Used by SettlementDetector to decide
-   * whether to arm the Decision Board flush timer.
+   * (pending, running, partial, or aggregating). Used by SettlementDetector
+   * to decide whether to arm the Decision Board flush timer.
    */
   hasAnyActiveInSession(sessionGroupId: string): boolean {
     for (const group of this.groups.values()) {
