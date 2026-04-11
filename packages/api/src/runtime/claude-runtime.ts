@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { BaseCliRuntime, resolveNpmRoot, type AgentRunInput, type RuntimeCommand } from "./base-runtime";
+import { BaseCliRuntime, resolveNpmRoot, type AgentRunInput, type RuntimeCommand, type StopReason } from "./base-runtime";
 import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts";
 
 function resolveClaudeCommand() {
@@ -195,6 +195,36 @@ export class ClaudeRuntime extends BaseCliRuntime {
       return total != null ? { totalTokens: total, contextWindow: null } : null;
     }
     return null;
+  }
+
+  parseStopReason(event: Record<string, unknown>): StopReason | null {
+    // `result` event at turn close carries stop_reason at top level.
+    if (event.type === "result") {
+      return this.mapClaudeStopReason(event.stop_reason);
+    }
+    // Streaming close also emits message_delta with nested delta.stop_reason.
+    if (event.type === "message_delta") {
+      const delta = event.delta as { stop_reason?: unknown } | undefined;
+      return this.mapClaudeStopReason(delta?.stop_reason);
+    }
+    return null;
+  }
+
+  private mapClaudeStopReason(raw: unknown): StopReason | null {
+    if (typeof raw !== "string") return null;
+    switch (raw) {
+      case "end_turn":
+      case "stop_sequence":
+        return "complete";
+      case "max_tokens":
+        return "truncated";
+      case "refusal":
+        return "refused";
+      case "tool_use":
+        return "tool_wait";
+      default:
+        return null;
+    }
   }
 
   parseAssistantDelta(event: Record<string, unknown>) {

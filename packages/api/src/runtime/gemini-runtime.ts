@@ -1,4 +1,4 @@
-import { BaseCliRuntime, resolveNodeScript, wrapPromptWithInstructions, type AgentRunInput, type RuntimeCommand } from "./base-runtime";
+import { BaseCliRuntime, resolveNodeScript, wrapPromptWithInstructions, type AgentRunInput, type RuntimeCommand, type StopReason } from "./base-runtime";
 import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts";
 
 function formatGeminiParams(toolName: string, params: Record<string, unknown>): string {
@@ -142,6 +142,29 @@ export class GeminiRuntime extends BaseCliRuntime {
       (typeof stats.contextWindow === "number" ? stats.contextWindow : undefined);
     const contextWindow = typeof windowRaw === "number" && windowRaw > 0 ? windowRaw : null;
     return { totalTokens: total, contextWindow };
+  }
+
+  parseStopReason(event: Record<string, unknown>): StopReason | null {
+    if (event.type !== "result") return null;
+    const topLevel =
+      typeof event.finishReason === "string" ? (event.finishReason as string) : null;
+    const stats = event.stats as Record<string, unknown> | undefined;
+    const nested =
+      typeof stats?.finishReason === "string" ? (stats.finishReason as string) : null;
+    const raw = topLevel ?? nested;
+    if (!raw) return null;
+    switch (raw.toUpperCase()) {
+      case "STOP":
+      case "END_TURN":
+        return "complete";
+      case "MAX_TOKENS":
+        return "truncated";
+      case "SAFETY":
+      case "RECITATION":
+        return "refused";
+      default:
+        return null;
+    }
   }
 
   parseAssistantDelta(event: Record<string, unknown>) {

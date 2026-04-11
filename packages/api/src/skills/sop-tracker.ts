@@ -1,4 +1,9 @@
-import type { SkillRegistry } from "./registry.js"
+import type { NextDispatch, SkillRegistry } from "./registry.js"
+
+export type SopAdvancement = {
+  nextStage: string
+  nextDispatch: NextDispatch | null
+}
 
 export class SopTracker {
   private readonly stages = new Map<string, string>()
@@ -13,19 +18,23 @@ export class SopTracker {
 
   /**
    * Advance to the next SOP stage based on the completed skill's `next` chain.
-   * Returns the new stage name, or null if no advancement occurred.
+   * Returns the advancement (next stage + optional forced dispatch), or null
+   * if no advancement occurred.
    */
   advance(
     sessionGroupId: string,
     completedSkill: string,
     registry: SkillRegistry,
-  ): string | null {
+  ): SopAdvancement | null {
     const nextSkills = registry.getNext(completedSkill)
     if (!nextSkills.length) return null
 
     const nextStage = nextSkills[0]
     this.stages.set(sessionGroupId, nextStage)
-    return nextStage
+    return {
+      nextStage,
+      nextDispatch: registry.getNextDispatch(completedSkill),
+    }
   }
 
   clear(sessionGroupId: string): void {

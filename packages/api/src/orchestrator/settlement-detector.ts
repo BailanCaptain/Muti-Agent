@@ -12,6 +12,7 @@ export type SettlementDetectorOptions = {
 
 export class SettlementDetector extends EventEmitter {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly continuationInFlight = new Map<string, Set<string>>()
   private readonly debounceMs: number
 
   constructor(
@@ -20,6 +21,25 @@ export class SettlementDetector extends EventEmitter {
   ) {
     super()
     this.debounceMs = options.debounceMs ?? 2000
+  }
+
+  markContinuationInFlight(sessionGroupId: string, invocationId: string): void {
+    const set = this.continuationInFlight.get(sessionGroupId) ?? new Set<string>()
+    set.add(invocationId)
+    this.continuationInFlight.set(sessionGroupId, set)
+  }
+
+  clearContinuationInFlight(sessionGroupId: string, invocationId: string): void {
+    const set = this.continuationInFlight.get(sessionGroupId)
+    if (!set) return
+    set.delete(invocationId)
+    if (set.size === 0) {
+      this.continuationInFlight.delete(sessionGroupId)
+    }
+  }
+
+  hasContinuationInFlight(sessionGroupId: string): boolean {
+    return (this.continuationInFlight.get(sessionGroupId)?.size ?? 0) > 0
   }
 
   notifyStateChange(sessionGroupId: string): void {
@@ -43,7 +63,8 @@ export class SettlementDetector extends EventEmitter {
     return (
       !this.signals.hasActiveParallelGroup(sessionGroupId) &&
       !this.signals.hasQueuedDispatches(sessionGroupId) &&
-      !this.signals.hasRunningTurn(sessionGroupId)
+      !this.signals.hasRunningTurn(sessionGroupId) &&
+      !this.hasContinuationInFlight(sessionGroupId)
     )
   }
 
@@ -60,6 +81,7 @@ export class SettlementDetector extends EventEmitter {
       clearTimeout(timer)
     }
     this.timers.clear()
+    this.continuationInFlight.clear()
     this.removeAllListeners()
   }
 }

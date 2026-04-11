@@ -1,4 +1,9 @@
-import type { ConnectorSource, RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared"
+import type {
+  ConnectorSource,
+  Provider,
+  RealtimeClientEvent,
+  RealtimeServerEvent,
+} from "@multi-agent/shared"
 import { PROVIDER_ALIASES } from "@multi-agent/shared"
 import type { AppEventBus } from "../events/event-bus"
 import type { ApprovalManager } from "../orchestrator/approval-manager"
@@ -23,6 +28,10 @@ import { type ParallelGroup, ParallelGroupRegistry } from "../orchestrator/paral
 import { buildPhase1Header } from "../orchestrator/phase1-header"
 import { buildPhase2Turn } from "../orchestrator/phase2-header"
 import { runTurn } from "../runtime/cli-orchestrator"
+import { runContinuationLoop } from "../runtime/continuation-loop"
+import { A2AChainRegistry } from "../orchestrator/a2a-chain"
+import { planReturnPathDispatch } from "../orchestrator/return-path"
+import { planForcedDispatch } from "../orchestrator/forced-dispatch"
 import { assemblePrompt, assembleDirectTurnPrompt } from "../orchestrator/context-assembler"
 import { POLICY_FULL, POLICY_GUARDIAN, POLICY_INDEPENDENT } from "../orchestrator/context-policy"
 import { classifyFailure } from "../runtime/failure-classifier"
@@ -155,6 +164,7 @@ export class MessageService {
   private settlementDetector: SettlementDetector | null = null
   private chainStarterResolver: ChainStarterResolver | null = null
   private broadcast: EmitEvent | null = null
+  private readonly chainRegistry = new A2AChainRegistry()
   private readonly pendingBoardFlushes = new Map<string, DecisionBoardEntry[]>()
 
   constructor(
@@ -718,6 +728,16 @@ export class MessageService {
       sourceProvider: thread.provider,
       parentInvocationId: options.parentInvocationId ?? null,
     })
+    this.chainRegistry.register({
+      invocationId: identity.invocationId,
+      threadId: thread.id,
+      provider: thread.provider,
+      alias: thread.alias,
+      parentInvocationId: options.parentInvocationId ?? null,
+      rootMessageId: options.rootMessageId,
+      sessionGroupId: thread.sessionGroupId,
+      createdAt: Date.now(),
+    })
 
     const startedAt = new Date().toISOString()
     let promptRequestedByCli: string | null = null
@@ -753,7 +773,7 @@ export class MessageService {
         this.memoryService,
       )
 
-    run = runTurn({
+    const createRun = (userMessage: string) => runTurn({
       systemPrompt,
       invocationId: identity.invocationId,
       threadId: thread.id,
@@ -764,7 +784,7 @@ export class MessageService {
       model: runtimeOverride?.model ?? thread.currentModel,
       effort: runtimeOverride?.effort ?? null,
       nativeSessionId: thread.nativeSessionId,
-      userMessage: options.content,
+      userMessage,
       onAssistantDelta: (delta: string) => {
         options.emit({
           type: "assistant_delta",
@@ -843,15 +863,46 @@ export class MessageService {
       },
     })
 
-    this.invocations.attachRun(thread.id, identity.invocationId, run)
+    // F003/P2: mark the session group as having a continuation in flight so
+    // SettlementDetector does not prematurely declare "settled" between two
+    // continuation turns. Cleared in `finally`.
+    this.settlementDetector?.markContinuationInFlight(
+      thread.sessionGroupId,
+      identity.invocationId,
+    )
+
     this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
 
     try {
-      const result = await run.promise
+      const loopResult = await runContinuationLoop({
+        initialUserMessage: options.content,
+        createRun,
+        onRunCreated: (handle) => {
+          run = handle as ActiveRun
+          this.invocations.attachRun(thread.id, identity.invocationId, run)
+        },
+        emitStatus: (message) => {
+          options.emit({
+            type: "status",
+            payload: { message: `${thread.alias}：${message}` },
+          })
+        },
+        onIterationContent: (accumulated) => {
+          if (!promptRequestedByCli) {
+            this.sessions.overwriteMessage(assistant.id, {
+              content: accumulated || "[empty response]",
+              thinking,
+            })
+          }
+        },
+      })
+      const result = loopResult.lastResult
+      const accumulatedContent = loopResult.accumulatedContent
+
       this.invocations.detachRun(thread.id)
       this.releaseInvocation(identity.invocationId, dispatchCleanupTimer)
       let effectiveSessionId =
-        !result.content.trim() && result.nativeSessionId === thread.nativeSessionId
+        !accumulatedContent.trim() && result.nativeSessionId === thread.nativeSessionId
           ? null
           : result.nativeSessionId
 
@@ -862,7 +913,7 @@ export class MessageService {
       // a silent "[empty response]".
       const turnLooksFailed =
         (result.exitCode !== null && result.exitCode !== 0) ||
-        (!result.content.trim() && !promptRequestedByCli)
+        (!accumulatedContent.trim() && !promptRequestedByCli)
       if (turnLooksFailed) {
         const classification = classifyFailure(result.rawStderr, "")
         if (classification.shouldClearSession) {
@@ -904,7 +955,7 @@ export class MessageService {
       this.sessions.updateThread(thread.id, result.currentModel, effectiveSessionId)
       if (!promptRequestedByCli) {
         this.sessions.overwriteMessage(assistant.id, {
-          content: result.content || "[empty response]",
+          content: accumulatedContent || "[empty response]",
           thinking,
         })
       }
@@ -912,11 +963,11 @@ export class MessageService {
       // F002: route [拍板] / [撤销拍板] markers into the Decision Board
       // instead of emitting decision.request directly. SettlementDetector
       // will flush the board once the discussion settles.
-      if (!promptRequestedByCli && result.content.trim()) {
+      if (!promptRequestedByCli && accumulatedContent.trim()) {
         this.collectDecisionsIntoBoard(
           thread,
           assistant.id,
-          result.content,
+          accumulatedContent,
           options.emit,
         )
       }
@@ -931,29 +982,86 @@ export class MessageService {
         createdAt: new Date().toISOString(),
       })
 
-      if (!promptRequestedByCli && result.content.trim() && !options.suppressOutboundDispatch) {
+      let enqueueResultForReturnPath: EnqueueMentionsResult | null = null
+      if (!promptRequestedByCli && accumulatedContent.trim() && !options.suppressOutboundDispatch) {
         const enqueueResult = this.dispatch.enqueuePublicMentions({
           messageId: assistant.id,
           sessionGroupId: thread.sessionGroupId,
           sourceProvider: thread.provider,
           sourceAlias: thread.alias,
           rootMessageId: options.rootMessageId,
-          content: result.content,
+          content: accumulatedContent,
           matchMode: "line-start",
           parentInvocationId: identity.invocationId,
           buildSnapshot: () => this.captureSnapshot(thread.sessionGroupId, assistant.id),
           extractSnippet: (c, alias) => extractTaskSnippet(c, alias),
         })
         this.emitBlockedDispatches(enqueueResult, options.emit)
+        enqueueResultForReturnPath = enqueueResult
+      }
+
+      // F003/P3: if the child reply has no outbound mention but we can still
+      // see the parent in the chain registry on the same root, synthesize a
+      // return-path dispatch so the parent continues its flow without waiting
+      // on the user to manually @ it back.
+      if (
+        !promptRequestedByCli &&
+        accumulatedContent.trim() &&
+        !options.suppressOutboundDispatch
+      ) {
+        const activeSkillName =
+          this.skillRegistry?.match(accumulatedContent)[0]?.skill.name ?? null
+        const returnPlan = planReturnPathDispatch({
+          chainRegistry: this.chainRegistry,
+          childInvocationId: identity.invocationId,
+          childContent: accumulatedContent,
+          queuedOutboundMentionCount: enqueueResultForReturnPath?.queued.length ?? 0,
+          currentRootMessageId: options.rootMessageId,
+          activeSkillName,
+        })
+        if (returnPlan) {
+          options.emit({
+            type: "status",
+            payload: {
+              message: `A2A 回程 — ${returnPlan.childAlias} → ${returnPlan.parentAlias}`,
+            },
+          })
+          // Fire-and-forget: runThreadTurn resolves on its own thread lifecycle.
+          void this.runThreadTurn({
+            threadId: returnPlan.parentThreadId,
+            content: returnPlan.prompt,
+            emit: options.emit,
+            rootMessageId: options.rootMessageId,
+            parentInvocationId: null,
+          })
+        }
       }
 
       // SOP advancement: if a skill was active, advance to next stage
-      this.advanceSopIfNeeded(thread.sessionGroupId, options.content, options.emit)
+      // (and force-dispatch to the next target when nextDispatch is defined).
+      this.advanceSopIfNeeded({
+        sessionGroupId: thread.sessionGroupId,
+        userContent: options.content,
+        llmContent: accumulatedContent,
+        sourceThread: {
+          id: thread.id,
+          provider: thread.provider,
+          alias: thread.alias,
+        },
+        assistantMessageId: assistant.id,
+        rootMessageId: options.rootMessageId,
+        parentInvocationId: identity.invocationId,
+        emit: options.emit,
+      })
 
       this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
       await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
+      this.settlementDetector?.clearContinuationInFlight(
+        thread.sessionGroupId,
+        identity.invocationId,
+      )
       this.settlementDetector?.notifyStateChange(thread.sessionGroupId)
-      return { messageId: assistant.id, content: result.content || "" }
+      return { messageId: assistant.id, content: accumulatedContent || "" }
     } catch (error) {
       this.invocations.detachRun(thread.id)
       this.releaseInvocation(identity.invocationId, dispatchCleanupTimer)
@@ -987,6 +1095,10 @@ export class MessageService {
       })
       this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
       await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
+      this.settlementDetector?.clearContinuationInFlight(
+        thread.sessionGroupId,
+        identity.invocationId,
+      )
       this.settlementDetector?.notifyStateChange(thread.sessionGroupId)
       return null
     }
@@ -1203,6 +1315,11 @@ export class MessageService {
     }
     this.invocations.revokeInvocation(invocationId)
     this.dispatch.releaseInvocation(invocationId)
+    // Keep chainRegistry entry alive past the immediate release so that a
+    // just-completed child can still resolve its parent for return-path
+    // dispatch. The entry is cleaned by a short setTimeout to avoid leaking.
+    const chainTtl = 2 * 60 * 1000
+    globalThis.setTimeout(() => this.chainRegistry.release(invocationId), chainTtl).unref?.()
   }
 
   private emitBlockedDispatches(result: EnqueueMentionsResult, emit: EmitEvent) {
@@ -1828,26 +1945,86 @@ export class MessageService {
     })
   }
 
-  private advanceSopIfNeeded(sessionGroupId: string, content: string, emit: EmitEvent): void {
+  private advanceSopIfNeeded(input: {
+    sessionGroupId: string
+    userContent: string
+    llmContent: string
+    sourceThread: {
+      id: string
+      provider: Provider
+      alias: string
+    }
+    assistantMessageId: string
+    rootMessageId: string
+    parentInvocationId: string
+    emit: EmitEvent
+  }): void {
     if (!this.skillRegistry || !this.sopTracker) return
 
-    // Determine which skill was just active by matching the content
-    const matched = this.skillRegistry.match(content)
+    // Determine which skill was just active by matching the user content that
+    // triggered this turn (that's where the skill hint comes from).
+    const matched = this.skillRegistry.match(input.userContent)
     if (!matched.length) return
 
     for (const { skill } of matched) {
-      const nextStage = this.sopTracker.advance(sessionGroupId, skill.name, this.skillRegistry)
-      if (nextStage) {
-        const sopInfo = this.skillRegistry.getSopStage(nextStage)
-        const skillSuggestion = sopInfo?.suggestedSkill
-          ? ` 建议加载 skill: ${sopInfo.suggestedSkill}`
-          : ""
-        emit({
-          type: "status",
-          payload: { message: `SOP 推进到 ${nextStage}。${skillSuggestion}` },
+      const advancement = this.sopTracker.advance(
+        input.sessionGroupId,
+        skill.name,
+        this.skillRegistry,
+      )
+      if (!advancement) continue
+
+      const sopInfo = this.skillRegistry.getSopStage(advancement.nextStage)
+      const skillSuggestion = sopInfo?.suggestedSkill
+        ? ` 建议加载 skill: ${sopInfo.suggestedSkill}`
+        : ""
+      input.emit({
+        type: "status",
+        payload: { message: `SOP 推进到 ${advancement.nextStage}。${skillSuggestion}` },
+      })
+
+      // F003/P4-3: if the skill declared a next_dispatch and the LLM's reply
+      // did not already @-mention the target on a line-start, synthesize a
+      // forced dispatch so the SOP chain keeps rolling without human nudges.
+      if (advancement.nextDispatch) {
+        const plan = planForcedDispatch({
+          nextDispatch: advancement.nextDispatch,
+          sourceProvider: input.sourceThread.provider,
+          sourceAlias: input.sourceThread.alias,
+          llmContent: input.llmContent,
+          resolveTargetAlias: (targetProvider) => {
+            const targetThread = this.sessions.findThreadByGroupAndProvider(
+              input.sessionGroupId,
+              targetProvider,
+            )
+            return targetThread?.alias ?? null
+          },
         })
-        break // Only advance once per turn
+        if (plan) {
+          input.emit({
+            type: "status",
+            payload: {
+              message: `SOP 自动交接 — ${input.sourceThread.alias} → ${plan.targetAlias}`,
+            },
+          })
+          const enqueueResult = this.dispatch.enqueuePublicMentions({
+            messageId: input.assistantMessageId,
+            sessionGroupId: input.sessionGroupId,
+            sourceProvider: input.sourceThread.provider,
+            sourceAlias: input.sourceThread.alias,
+            rootMessageId: input.rootMessageId,
+            content: plan.syntheticContent,
+            matchMode: "line-start",
+            parentInvocationId: input.parentInvocationId,
+            buildSnapshot: () =>
+              this.captureSnapshot(input.sessionGroupId, input.assistantMessageId),
+            extractSnippet: (c, alias) => extractTaskSnippet(c, alias),
+          })
+          this.emitBlockedDispatches(enqueueResult, input.emit)
+        }
       }
+
+      break // Only advance once per turn
     }
   }
 }

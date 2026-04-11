@@ -101,3 +101,55 @@ test("SettlementDetector cancel clears pending timer", async () => {
   assert.equal(events.length, 0)
   detector.dispose()
 })
+
+test("SettlementDetector does not settle while a continuation is in flight", async () => {
+  const signals = makeFakeSignals({})
+  const detector = new SettlementDetector(signals, { debounceMs: 30 })
+  const events: string[] = []
+  detector.on("settle", (p: { sessionGroupId: string }) => events.push(p.sessionGroupId))
+
+  detector.markContinuationInFlight("g1", "inv1")
+  assert.equal(detector.isSettledNow("g1"), false)
+  detector.notifyStateChange("g1")
+  await new Promise((r) => setTimeout(r, 60))
+  assert.equal(events.length, 0)
+  detector.dispose()
+})
+
+test("SettlementDetector settles after continuation is cleared", async () => {
+  const signals = makeFakeSignals({})
+  const detector = new SettlementDetector(signals, { debounceMs: 30 })
+  const events: string[] = []
+  detector.on("settle", (p: { sessionGroupId: string }) => events.push(p.sessionGroupId))
+
+  detector.markContinuationInFlight("g1", "inv1")
+  detector.notifyStateChange("g1")
+  detector.clearContinuationInFlight("g1", "inv1")
+  detector.notifyStateChange("g1")
+  await new Promise((r) => setTimeout(r, 60))
+  assert.deepEqual(events, ["g1"])
+  detector.dispose()
+})
+
+test("SettlementDetector supports multiple concurrent continuations", () => {
+  const signals = makeFakeSignals({})
+  const detector = new SettlementDetector(signals, { debounceMs: 30 })
+
+  detector.markContinuationInFlight("g1", "inv1")
+  detector.markContinuationInFlight("g1", "inv2")
+  assert.equal(detector.hasContinuationInFlight("g1"), true)
+  detector.clearContinuationInFlight("g1", "inv1")
+  assert.equal(detector.hasContinuationInFlight("g1"), true)
+  detector.clearContinuationInFlight("g1", "inv2")
+  assert.equal(detector.hasContinuationInFlight("g1"), false)
+  assert.equal(detector.isSettledNow("g1"), true)
+  detector.dispose()
+})
+
+test("SettlementDetector clearing unknown invocation is a no-op", () => {
+  const signals = makeFakeSignals({})
+  const detector = new SettlementDetector(signals)
+  detector.clearContinuationInFlight("g1", "nope")
+  assert.equal(detector.hasContinuationInFlight("g1"), false)
+  detector.dispose()
+})

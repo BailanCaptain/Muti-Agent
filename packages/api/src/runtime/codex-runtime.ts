@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { BaseCliRuntime, resolveNpmRoot, wrapPromptWithInstructions, type AgentRunInput, type RuntimeCommand } from "./base-runtime";
+import { BaseCliRuntime, resolveNpmRoot, wrapPromptWithInstructions, type AgentRunInput, type RuntimeCommand, type StopReason } from "./base-runtime";
 import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts";
 
 function resolveCodexCommand() {
@@ -118,6 +118,23 @@ export class CodexRuntime extends BaseCliRuntime {
       return null;
     }
     return { totalTokens: total, contextWindow: null };
+  }
+
+  parseStopReason(event: Record<string, unknown>): StopReason | null {
+    if (event.type === "turn.completed") {
+      return "complete";
+    }
+    if (event.type === "turn.failed") {
+      const error = event.error as { type?: string } | undefined;
+      if (
+        error?.type === "context_length_exceeded" ||
+        error?.type === "max_output_tokens"
+      ) {
+        return "truncated";
+      }
+      return "aborted";
+    }
+    return null;
   }
 
   parseAssistantDelta(event: Record<string, unknown>) {

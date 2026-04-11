@@ -219,6 +219,13 @@ skills:
     agents: [claude, codex, gemini]
     requires_mcp: []
     next: ["receiving-review"]
+    # F003: if the author finishes requesting-review but forgets to @ the
+    # reviewer, force an automatic hand-off so the SOP chain doesn't stall
+    # waiting for a manual prod. Dedupes against line-start @mentions the
+    # LLM already produced.
+    next_dispatch:
+      target: "reviewer"
+      prompt_template: "@%TARGET% 我刚完成 requesting-review，上下文见这条消息里的 PR 链接/diff，请 review。"
     sop_step: 3
     slashCommands:
       - name: "/request-review"

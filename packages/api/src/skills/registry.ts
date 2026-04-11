@@ -10,6 +10,11 @@ export type SlashCommand = {
   description: string
 }
 
+export type NextDispatch = {
+  target: string
+  promptTemplate: string
+}
+
 export type SkillMeta = {
   name: string
   description: string
@@ -18,6 +23,7 @@ export type SkillMeta = {
   agents: Provider[]
   requiresMcp: string[]
   next: string[]
+  nextDispatch: NextDispatch | null
   sopStep: number | number[] | null
   slashCommands: SlashCommand[]
 }
@@ -57,6 +63,13 @@ export class SkillRegistry {
 
     if (doc.skills) {
       for (const [name, entry] of Object.entries(doc.skills)) {
+        const nextDispatch: NextDispatch | null =
+          entry.next_dispatch && entry.next_dispatch.target && entry.next_dispatch.prompt_template
+            ? {
+                target: entry.next_dispatch.target,
+                promptTemplate: entry.next_dispatch.prompt_template,
+              }
+            : null
         const skill: SkillMeta = {
           name,
           description: entry.description ?? "",
@@ -65,6 +78,7 @@ export class SkillRegistry {
           agents: (entry.agents ?? VALID_PROVIDERS) as Provider[],
           requiresMcp: entry.requires_mcp ?? [],
           next: entry.next ?? [],
+          nextDispatch,
           sopStep: entry.sop_step ?? null,
           slashCommands: (entry.slashCommands ?? []).map((cmd) => ({
             name: cmd.name,
@@ -131,6 +145,10 @@ export class SkillRegistry {
 
   getNext(skillName: string): string[] {
     return this.skills.get(skillName)?.next ?? []
+  }
+
+  getNextDispatch(skillName: string): NextDispatch | null {
+    return this.skills.get(skillName)?.nextDispatch ?? null
   }
 
   getSopStage(stage: string): SopStage | null {
@@ -207,6 +225,7 @@ type RawSkillEntry = {
   agents?: string[]
   requires_mcp?: string[]
   next?: string[]
+  next_dispatch?: { target?: string; prompt_template?: string } | null
   sop_step?: number | number[] | null
   slashCommands?: Array<{ name: string; description?: string }>
 }

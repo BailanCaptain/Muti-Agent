@@ -29,11 +29,19 @@ export type AgentRunInput = {
   runtime?: Partial<RuntimeLifecycleConfig>;
 };
 
+export type StopReason =
+  | "complete"
+  | "truncated"
+  | "refused"
+  | "tool_wait"
+  | "aborted";
+
 export type AgentRunOutput = {
   finalText?: string;
   rawStdout: string;
   rawStderr: string;
   exitCode: number | null;
+  stopReason: StopReason | null;
 };
 
 export interface AgentRuntime {
@@ -386,7 +394,8 @@ export abstract class BaseCliRuntime implements AgentRuntime {
             finalText: this.extractFinalText(rawStdout),
             rawStdout,
             rawStderr,
-            exitCode: cancelled && code === null ? 0 : code
+            exitCode: cancelled && code === null ? 0 : code,
+            stopReason: null
           });
         });
       });
@@ -493,6 +502,27 @@ export abstract class BaseCliRuntime implements AgentRuntime {
    */
   parseUsage(_event: Record<string, unknown>): { totalTokens: number; contextWindow: number | null } | null {
     return null;
+  }
+
+  /**
+   * Parse a terminal stop reason from a single stream-json event.
+   * Return null when the event doesn't carry terminal info — cli-orchestrator keeps
+   * the last non-null value seen during the turn. A turn that ends without any
+   * terminal event (or a runtime that doesn't implement this) leaves the final
+   * stopReason as null; downstream continuation logic treats null + exit0 + content
+   * as "complete", and null + anything else as "aborted".
+   */
+  parseStopReason(_event: Record<string, unknown>): StopReason | null {
+    return null;
+  }
+
+  /**
+   * Extract the assistant's text delta from a single stream-json event.
+   * Each runtime has its own event shape; returning "" means "not an assistant
+   * text event" and is accumulated as no-op by the orchestrator.
+   */
+  parseAssistantDelta(_event: Record<string, unknown>): string {
+    return "";
   }
 
   protected extractFinalText(rawStdout: string) {

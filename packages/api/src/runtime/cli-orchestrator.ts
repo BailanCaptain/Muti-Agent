@@ -1,7 +1,14 @@
 import crypto from "node:crypto";
 import type { Provider, TokenUsageSnapshot } from "@multi-agent/shared";
 import { SEAL_THRESHOLDS_BY_PROVIDER, getContextWindowForModel } from "@multi-agent/shared";
-import { findSessionId, parseEventModel, type AgentRunInput } from "./base-runtime";
+import {
+  findSessionId,
+  parseEventModel,
+  type AgentRunInput,
+  type BaseCliRuntime,
+  type RuntimeLifecycleConfig,
+  type StopReason,
+} from "./base-runtime";
 import type { LivenessWarning } from "./liveness-probe";
 import { claudeRuntime } from "./claude-runtime";
 import { codexRuntime } from "./codex-runtime";
@@ -26,6 +33,17 @@ export type RunTurnOptions = {
   onToolActivity?: (line: string) => void;
   onLivenessWarning?: (warning: LivenessWarning) => void;
   onUsageSnapshot?: (snapshot: TokenUsageSnapshot) => void;
+  /**
+   * Test hook: override the provider-keyed runtime adapter with a specific
+   * instance. Production callers should omit this — the provider field selects
+   * the singleton adapter by default.
+   */
+  runtime?: BaseCliRuntime;
+  /**
+   * Test hook: override the default 5-minute inactivity lifecycle so tests
+   * don't hang waiting for the heartbeat timer.
+   */
+  lifecycle?: Partial<RuntimeLifecycleConfig>;
 };
 
 export type SealDecision = {
@@ -45,6 +63,7 @@ export type RunTurnResult = {
   exitCode: number | null;
   usage: TokenUsageSnapshot | null;
   sealDecision: SealDecision | null;
+  stopReason: StopReason | null;
 };
 
 const runtimeAdapters = {
@@ -56,7 +75,7 @@ const runtimeAdapters = {
 export function runTurn(options: RunTurnOptions) {
   const prompt = options.userMessage;
 
-  const runtime = runtimeAdapters[options.provider];
+  const runtime = options.runtime ?? runtimeAdapters[options.provider];
 
   const input: AgentRunInput = {
     invocationId: options.invocationId ?? crypto.randomUUID(),
@@ -80,6 +99,7 @@ export function runTurn(options: RunTurnOptions) {
   let currentModel = options.model;
   let currentSessionId = options.nativeSessionId;
   let latestUsage: TokenUsageSnapshot | null = null;
+  let latestStopReason: StopReason | null = null;
 
   const handle = runtime.runStream(input, {
     onStdoutLine(line) {
@@ -97,6 +117,10 @@ export function runTurn(options: RunTurnOptions) {
         const sessionId = findSessionId(event);
         const eventModel = parseEventModel(event);
         const usageRaw = runtime.parseUsage(event);
+        const stopReason = runtime.parseStopReason(event);
+        if (stopReason !== null) {
+          latestStopReason = stopReason;
+        }
 
         if (delta) {
           content += delta;
@@ -154,7 +178,8 @@ export function runTurn(options: RunTurnOptions) {
       rawStderr: output.rawStderr,
       exitCode: output.exitCode,
       usage: latestUsage,
-      sealDecision: computeSealDecision(options.provider, latestUsage)
+      sealDecision: computeSealDecision(options.provider, latestUsage),
+      stopReason: latestStopReason ?? output.stopReason
     }))
   };
 }
