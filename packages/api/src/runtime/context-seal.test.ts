@@ -124,25 +124,25 @@ test("computeSealDecision returns null when usage is absent", () => {
   assert.equal(computeSealDecision("gemini", null), null);
 });
 
-test("computeSealDecision: gemini seals at 65%", () => {
+test("computeSealDecision: gemini seals at action threshold (F004: 80%)", () => {
   const { action } = SEAL_THRESHOLDS_BY_PROVIDER.gemini;
-  // 700k / 1M = 0.7 > 0.65 action threshold → seal
-  const decision = computeSealDecision("gemini", snapshot(700_000, 1_000_000));
+  // 850k / 1M = 0.85 > 0.80 action threshold → seal
+  const decision = computeSealDecision("gemini", snapshot(850_000, 1_000_000));
   assert.equal(decision?.shouldSeal, true);
   assert.equal(decision?.reason, "threshold");
   assert.ok((decision?.fillRatio ?? 0) >= action);
 });
 
-test("computeSealDecision: gemini warns at 55-65%", () => {
-  // 600k / 1M = 0.6, between warn=0.55 and action=0.65
-  const decision = computeSealDecision("gemini", snapshot(600_000, 1_000_000));
+test("computeSealDecision: gemini warns between warn/action (F004: 70-80%)", () => {
+  // 750k / 1M = 0.75, between warn=0.70 and action=0.80
+  const decision = computeSealDecision("gemini", snapshot(750_000, 1_000_000));
   assert.equal(decision?.shouldSeal, false);
   assert.equal(decision?.reason, "warn");
 });
 
-test("computeSealDecision: gemini stays silent below warn threshold", () => {
-  // 400k / 1M = 0.4, below warn=0.55
-  const decision = computeSealDecision("gemini", snapshot(400_000, 1_000_000));
+test("computeSealDecision: gemini stays silent below warn threshold (F004: <70%)", () => {
+  // 600k / 1M = 0.6, below warn=0.70
+  const decision = computeSealDecision("gemini", snapshot(600_000, 1_000_000));
   assert.equal(decision?.shouldSeal, false);
   assert.equal(decision?.reason, null);
 });

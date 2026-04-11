@@ -32,7 +32,11 @@ import { runContinuationLoop } from "../runtime/continuation-loop"
 import { A2AChainRegistry } from "../orchestrator/a2a-chain"
 import { planReturnPathDispatch } from "../orchestrator/return-path"
 import { planForcedDispatch } from "../orchestrator/forced-dispatch"
-import { assemblePrompt, assembleDirectTurnPrompt } from "../orchestrator/context-assembler"
+import {
+  assemblePrompt,
+  assembleDirectTurnPrompt,
+  type AssemblePromptResult,
+} from "../orchestrator/context-assembler"
 import { POLICY_FULL, POLICY_GUARDIAN, POLICY_INDEPENDENT } from "../orchestrator/context-policy"
 import { classifyFailure } from "../runtime/failure-classifier"
 import { loadRuntimeConfig } from "../runtime/runtime-config"
@@ -763,15 +767,36 @@ export class MessageService {
     // Falls back to thread.currentModel (legacy per-thread selector) when unset.
     const runtimeOverride = loadRuntimeConfig()[thread.provider]
 
-    // System prompt: use pre-computed (from assemblePrompt for A2A) or compute on the fly (direct turn).
-    const systemPrompt = options.systemPrompt
-      ?? await assembleDirectTurnPrompt(
-        thread.provider,
-        thread.id,
+    // System prompt + content: use pre-computed (from assemblePrompt for A2A)
+    // or compute on the fly (direct turn). F004: direct-turn assembly now
+    // returns both systemPrompt AND a content envelope with real history
+    // baked in — the API is the authoritative history source.
+    let assembledDirectTurn: AssemblePromptResult | null = null
+    if (!options.systemPrompt) {
+      const roomSnapshot = this.captureSnapshot(
         thread.sessionGroupId,
-        thread.nativeSessionId,
+        options.rootMessageId,
+      )
+      assembledDirectTurn = await assembleDirectTurnPrompt(
+        {
+          provider: thread.provider,
+          threadId: thread.id,
+          sessionGroupId: thread.sessionGroupId,
+          nativeSessionId: thread.nativeSessionId,
+          task: options.content,
+          sourceAlias: "user",
+          targetAlias: thread.alias,
+          roomSnapshot,
+        },
         this.memoryService,
       )
+    }
+    const systemPrompt = options.systemPrompt ?? assembledDirectTurn!.systemPrompt
+    // When direct turn assembled its own envelope, send that envelope as the
+    // user message (it contains history + skill hint + wrapped task). When
+    // options.systemPrompt was supplied externally (A2A path), the caller
+    // already rendered the content, so we pass options.content through.
+    const effectiveUserMessage = assembledDirectTurn?.content ?? options.content
 
     const createRun = (userMessage: string) => runTurn({
       systemPrompt,
@@ -875,7 +900,7 @@ export class MessageService {
 
     try {
       const loopResult = await runContinuationLoop({
-        initialUserMessage: options.content,
+        initialUserMessage: effectiveUserMessage,
         createRun,
         onRunCreated: (handle) => {
           run = handle as ActiveRun
@@ -901,10 +926,17 @@ export class MessageService {
 
       this.invocations.detachRun(thread.id)
       this.releaseInvocation(identity.invocationId, dispatchCleanupTimer)
-      let effectiveSessionId =
-        !accumulatedContent.trim() && result.nativeSessionId === thread.nativeSessionId
-          ? null
-          : result.nativeSessionId
+      // F004: only clear the native session when the CLI actually failed (exitCode !== 0).
+      // Pre-F004 any empty response with an unchanged session id nuked the session —
+      // which meant a normal-exit empty turn (e.g. CLI printed nothing but didn't crash)
+      // would wipe history. Direct-turn now injects history from SQLite, so we only
+      // clear on genuinely abnormal exits.
+      const emptyAndAbnormal =
+        !accumulatedContent.trim() &&
+        result.exitCode !== null &&
+        result.exitCode !== 0 &&
+        result.nativeSessionId === thread.nativeSessionId
+      let effectiveSessionId = emptyAndAbnormal ? null : result.nativeSessionId
 
       // Reactive self-heal: the CLI may exit 0 while its stderr tells the real story
       // (e.g. Gemini gives up after 10 retries and prints the 429 reason, Claude exits

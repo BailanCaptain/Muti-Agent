@@ -122,3 +122,51 @@
   - 历史补丁对比：B003（feat-lifecycle 双重进入）/ B004（settlement premature）都曾被当成"另一个独立 bug"修，实际是同一根因的外层表现
 - 原理（可选）：每个抽象层都有一个"表达力上限"——超出就靠下层表达力硬撑。反复在同一层修同类问题，等于在该层的表达力上限处打补丁。打补丁的次数是根因距离的度量：第 3 次打补丁意味着至少要上抛 1 层。
 - 关联：`docs/features/F003-a2a-convergence.md`, `docs/bugReport/B001-B004`（同一 A2A 症状族的历次补丁）, `multi-agent-skills/self-evolution/SKILL.md`
+
+### LL-005: 清状态前必须审查"兜底"是否真的能兜
+- 状态：validated
+- 更新时间：2026-04-11
+
+- 坑：B002 修 Gemini 429 时把错误重分类到 `context_exhausted`，新增一条清 `nativeSessionId` 路径。commit message 自信地说"handoff 通路和 clowder-ai 逐字对照后确认同构 —— 清 session 后 wrapPromptWithInstructions 会把 context-assembler 注入的'## 本房间摘要'传给新 CLI 进程"。但漏审 rolling summary 的两个死穴：(1) 要 >10 条 user 消息才生成，冷启动空窗；(2) 是压缩文本不含真实消息细节。结果 B002 的代码自洽、测试全绿，但把"清 session"的实际代价放大了 —— direct-turn 路径下 rolling summary 是**唯一**记忆通道，兜底不住。小孙随后报"超级超级超级大 bug：黄仁勋跟失忆了一样"，追因到 F004 发现是架构级失误（ca87c9d refactor 把 direct-turn 的真实历史注入路径删了，B002 在已经脆弱的地基上又加了一道清 session 闸门）。
+- 根因：代码里存在 `if (fallback) use(fallback)` 不代表 fallback 在真实使用时段能兜住。把"代码存在 fallback 分支"和"fallback 实际可用"混为一谈。
+- 触发条件：
+  1. commit / PR 里出现任何"清 X / 重置 Y / 回退到 Z"字样
+  2. 清状态的理由是"fallback 会兜住"
+  3. 没有在 PR description 里逐条回答"冷启动时 Z 能用吗？并发时 Z 能用吗？Z 的信息密度够吗？Z 依赖的服务可靠吗？"
+- 修复：F004 AC1-4 架构级重构 —— direct-turn 从 DB 注入真实历史，rolling summary 从"唯一通道"降级为"长历史压缩层"。同时 AC4 把 unknown case 的 `shouldClearSession` 从 `true` 改回 `false`（"不知道怎么办时保留现状比清空安全"）。
+- 防护：
+  1. **清状态四问**：任何涉及清状态的 PR 必须在 description 里回答 (a) fallback 在冷启动窗口能用吗？(b) fallback 的信息密度能支撑业务吗？(c) fallback 依赖的服务/资源可靠吗？(d) 没有 fallback 时用户体验是什么？— 答不出来 = 不能合入。
+  2. Reviewer checklist 新增一条"清状态兜底审查"，和已有的"测试覆盖"同等权重。
+  3. `failure-classifier` 等"安全网"代码改动必须配套集成测试，验证清状态后的下一轮对话在 direct-turn / A2A / 冷启动三种场景都能跑通。
+- 来源锚点：
+  - commit `ca87c9d refactor(context) unified Context Policy` — 真正把 direct-turn 变成"只赌 --resume + rolling summary"的 refactor
+  - commit `74d64e0 fix(B002) context_exhausted 清 session` — 在已经脆弱的基础上加闸门
+  - `docs/features/F004-context-memory-authoritative.md#根因（架构级）`
+  - `docs/bugReport/B005-direct-turn-amnesia.md`
+- 原理（可选）：分布式/异步系统中"fallback"的有效性是一个乘法：实际可用性 = (代码存在) × (数据充分) × (服务可靠) × (时机正确)。任一项趋近于 0，整个 fallback 就失效。只看代码存在而忽略其它三项 = 把乘法当加法。
+- 关联：`docs/features/F004-context-memory-authoritative.md`, `docs/bugReport/B002-gemini-429-handoff.md`, `docs/bugReport/B005-direct-turn-amnesia.md`, `docs/bugReport/B006-gemini-startup-429.md`
+
+### LL-006: 我们的"优化"和外部工具的"自恢复"在抢同一个语义时，删掉我们的
+- 状态：validated
+- 更新时间：2026-04-11
+
+- 坑：B002 加 Gemini fast-fail 本意是"看到 stderr 里的 RESOURCE_EXHAUSTED 立刻砍进程，省用户 4 分钟 retry 等待"，基于"RESOURCE_EXHAUSTED 不可恢复"的假设。F004 实施期小孙手动验证 v1 (threshold=1) 立刻 @ 桂芬就崩；黄仁勋在**同一层**改成 v2 (threshold=2)，小孙再验证 **2 次 @ 仍然都崩**。直到 Codex 被请来独立在 PowerShell 裸跑 `gemini -p "只回复 OK" --model gemini-3.1-pro-preview` 6 次 → 6/6 最终成功，其中**第 4 次连续 2 次 Attempt failed with status 429 之后仍然恢复返回 OK** —— 决定性反例。真相：Gemini CLI 内置 `retryWithBackoff` 循环（10 次 × 5-30s ≈ 4 分钟）可以跨越 2+ 次连续 429 自行恢复；我们的 fast-fail 和 CLI 的 retry 在抢同一个语义，任何有限 threshold 都会把本可恢复的请求提前砍掉。v3 修复 = 删除 fast-fail 这条启发式本身。
+- 根因：把"外部工具的慢"当成了"外部工具的坏"。Gemini CLI 的 retry 循环不是 bug 是 feature —— Google 官方设计成这样就是因为 transient 429 会自恢复。我们"帮用户省时间"的优化实际是在和 CLI 的正常恢复流程对抗。**当两个系统对同一信号有相反动作（CLI: retry / 我们: kill），我们这边一定是错的那个**，除非有决定性证据证明 CLI 的行为本身是 bug。LL-004 说过"同类症状同层反复打补丁 → 根因在上一层"；LL-006 是 LL-004 的一个具体展开：**上一层不一定是"更底层的代码"，也可能是"我们根本不该存在于这一层"**。
+- 触发条件：
+  1. 我们写的代码正在**拦截/截断/加速**某个外部工具的内建流程（retry / backoff / heartbeat / auth refresh 等）
+  2. 症状报告里出现"工具的正常行为被我们砍掉了"的描述（例如"CLI 自己能 retry 的 / tool 自己能 recover 的"）
+  3. 我们的拦截逻辑里有"N 次/N 秒/N 字节"这种 magic number —— 通常意味着在猜测外部工具的行为边界
+- 修复：删除 `GEMINI_FAST_FAIL_PATTERNS` + `classifyStderrChunk` 覆写 + `getFastFailMatchThreshold` 虚方法整条逻辑；由 `ProcessLivenessProbe` 的 stall window 兜底真正卡死（B002 原始症状）的场景。framework 层（`classifyStderrChunk` 的虚方法本身）保留，供未来真正需要的 runtime 按需启用。
+- 防护：
+  1. **"同语义双动作"审查**：任何截断/加速/拦截外部工具的代码，PR description 必须回答 (a) 外部工具对这个信号的内建处理是什么？(b) 为什么我们认为它的处理不够好？(c) 有没有独立实测证据证明外部工具的内建处理确实不够好？— 答不出 = 不能合入
+  2. **外部工具裸跑实测**：任何 fast-fail / early-abort 类的启发式，立项前必须有独立实测证据（最简单：在非 Multi-Agent 环境裸跑工具收集 ≥10 次样本观察实际恢复率）。不能只靠读 stderr / 读代码推演
+  3. **同层补丁计数器**：同一段 fast-fail / 拦截逻辑被修 ≥2 次还不对 → 强制考虑"这段逻辑是不是根本不该存在"，而不是继续调参。LL-004 的"上抛一层"在这里的具体形态是"删除这一层"
+  4. Commit message 规范：涉及外部工具行为的修改，必须写清"外部工具的内建行为 = X，我们选择 = Y，选择理由 = Z"，方便后续 grep 反省
+- 来源锚点：
+  - `packages/api/src/runtime/gemini-runtime.ts` (F004 AC5 v3: 删除整段 fast-fail 覆写)
+  - `packages/api/src/runtime/base-runtime.ts:284-307` (framework 保留的 fast-fail 入口)
+  - `docs/bugReport/B006-gemini-startup-429.md#根因分析` (三版演进)
+  - `docs/features/F004-context-memory-authoritative.md#AC5` (v1→v2→v3 决策轨迹)
+  - Codex 2026-04-11 手动实测 6/6 日志（决定性反例）
+- 原理（可选）：外部工具（CLI / SDK / daemon）的内建行为是**时间浸泡过的设计决策**——即使某些看起来不合理（"为什么要等 4 分钟"），也往往背后有我们不知道的权衡（transient rate / 多租户 fairness / 服务端负载均衡）。在没有决定性证据之前，假设外部工具是对的，我们是错的；这比假设自己永远是对的优化带来的事故要少得多。LL-004 讲的是"垂直"上抛（上一层代码），LL-006 讲的是"横向"删除（我们不该参与这个决策）。
+- 关联：`docs/features/F004-context-memory-authoritative.md`, `docs/bugReport/B002-gemini-429-handoff.md`, `docs/bugReport/B006-gemini-startup-429.md`, `docs/lessons/lessons-learned.md#LL-004`

@@ -16,4 +16,5 @@
 | F001 | UI 焕新：配置入口统一 + 消息渲染升级 | 2026-04-10 | [F001](features/F001-ui-refresh.md) |
 | F002 | Decision Board — 讨论级拍板收敛 | 2026-04-11 | [F002](features/F002-decision-board.md) |
 | F003 | A2A 运行时闭环 — 回程派发 + Stop Reason 续写 + SOP 派发 | 2026-04-11 | [F003](features/F003-a2a-convergence.md) |
+| F004 | 上下文记忆权威化 — 历史从 API 注入 + 删除 Gemini fast-fail | 2026-04-11 | [F004](features/F004-context-memory-authoritative.md) |
 <!-- 完成的 Feature 从活跃表移到此处 -->

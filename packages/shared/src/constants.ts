@@ -87,7 +87,12 @@ export const PROVIDER_ALIASES: Record<Provider, string> = {
  * 所以阈值更激进；Codex/Claude 上下文表现线性，阈值更靠近满值。
  */
 export const SEAL_THRESHOLDS_BY_PROVIDER: Record<Provider, { warn: number; action: number }> = {
-  gemini: { warn: 0.55, action: 0.65 },
+  // F004: relax Gemini's preventive seal. 0.55/0.65 on a 1M-token window was overly
+  // aggressive — it sealed sessions at ~650k tokens for no real benefit, and each seal
+  // threw away the native session id. Direct-turn history injection now makes seals
+  // cheaper (history survives via prompt), but we'd rather avoid unnecessary seals
+  // entirely since Gemini's 1M window has plenty of headroom before real degradation.
+  gemini: { warn: 0.70, action: 0.80 },
   codex: { warn: 0.75, action: 0.85 },
   claude: { warn: 0.80, action: 0.90 }
 };

@@ -130,11 +130,15 @@ function resolve(cls: FailureClass): FailureClassification {
         userMessage: "CLI 认证失败（token 过期或无效），请手动重新登录后再试；清 session 也救不了。"
       };
     case "unknown":
+      // F004: preserve session on unrecognized errors. Pre-F004 this cleared the
+      // native session "just in case", which wiped the only memory channel whenever
+      // any transient blip didn't match a known pattern. Post-F004 history is injected
+      // from SQLite, so the session id is cheap to keep and expensive to throw away.
       return {
         class: cls,
-        shouldClearSession: true,
+        shouldClearSession: false,
         safeToRetry: true,
-        userMessage: "这一轮出错了，已清空 session 以防连锁失败，可以直接重试。"
+        userMessage: "这一轮出错了，可以直接重试（session 已保留，不会失忆）。"
       };
   }
 }

@@ -283,16 +283,16 @@ export abstract class BaseCliRuntime implements AgentRuntime {
       // Deliberately NOT touching lastActivityMs here.
       hooks.onActivity?.({ stream: "stderr", at: new Date(now()).toISOString(), chunk });
 
-      // Fast-fail: some providers (notably Gemini on 429 RESOURCE_EXHAUSTED) enter a
-      // long backoff loop and print the fatal reason to stderr before retrying. If the
-      // runtime recognises a terminal pattern, kill immediately instead of waiting the
-      // ~4 minute probe stall window.
+      // Fast-fail 框架：runtime 通过覆写 classifyStderrChunk() 返回非 null 的
+      // { reason } 即视为终止信号，立即 requestTermination。框架本身是通用能力，
+      // 但 GeminiRuntime 已不再使用（F004/B006 第三版：retry 循环可自恢复，详见
+      // gemini-runtime.ts 顶部注释）。如需新 runtime 启用，在子类覆写 classifyStderrChunk。
       if (!fastFailed && !terminationStarted) {
         const fastFail = this.classifyStderrChunk(chunk);
         if (fastFail) {
           fastFailed = true;
           fastFailReason = fastFail.reason;
-          rawStderr = `${rawStderr.trimEnd() ? `${rawStderr.trimEnd()}\n` : ""}[runtime] ${formatFastFailMessage(fastFail.reason)}\n`;
+          rawStderr = `${rawStderr.trimEnd() ? `${rawStderr.trimEnd()}\n` : ""}[runtime] ${formatFastFailMessage(fastFailReason)}\n`;
           requestTermination();
         }
       }

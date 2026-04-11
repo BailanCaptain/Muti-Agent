@@ -38,31 +38,19 @@ function formatGeminiParams(toolName: string, params: Record<string, unknown>): 
   }
 }
 
-// Gemini CLI enters a 10-attempt backoff loop (5-30s between tries, ~4 minutes total)
-// when the API returns 429 RESOURCE_EXHAUSTED. The liveness probe will eventually kill
-// it on CPU-idle stall, but we can do better: the very first stderr line carries the
-// exhausted-quota reason, so we can abort on sight and hand control back to the user.
+// F004/B006 第三版：不再对 Gemini stderr 做 RESOURCE_EXHAUSTED fast-fail。
+// 历史：B002 时基于"RESOURCE_EXHAUSTED 不可恢复"的假设加了 match-once-kill；
+//       F004 第二版把 threshold 放宽到 2 想救 transient 抖动；
+//       实测（Codex 2026-04-11 6/6 PowerShell 直跑）发现 Gemini CLI 内置 retry
+//       循环（10 次 × 5-30s）可以跨越 2 次甚至 3 次连续 429 自行恢复。
+//       我们的 fast-fail 和 CLI 的 retry 在抢同一个语义，任何有限 threshold 都会
+//       把本可恢复的请求提前砍掉。上一层的修复是相信 CLI 的 retry 循环，由
+//       liveness probe 兜底真正卡死（B002 原始症状）的场景。
 //
-// Patterns cover the common variants we've seen: Google API error envelope, Gemini
-// CLI's own retry log line, and the short-form RESOURCE_EXHAUSTED token.
-const GEMINI_FAST_FAIL_PATTERNS: Array<{ regex: RegExp; reason: string }> = [
-  { regex: /RESOURCE_EXHAUSTED/i, reason: "Google API RESOURCE_EXHAUSTED（配额/容量耗尽）" },
-  { regex: /MODEL_CAPACITY_EXHAUSTED/i, reason: "模型容量已打满（MODEL_CAPACITY_EXHAUSTED）" },
-  { regex: /quota exceeded for quota metric/i, reason: "配额已超上限（quota exceeded）" },
-  { regex: /429 Too Many Requests/i, reason: "上游 429 限流（Too Many Requests）" }
-];
+// GeminiRuntime 因此不覆写 classifyStderrChunk —— 继承 base 的 return null。
 
 export class GeminiRuntime extends BaseCliRuntime {
   readonly agentId = "gemini";
-
-  classifyStderrChunk(chunk: string): { reason: string } | null {
-    for (const { regex, reason } of GEMINI_FAST_FAIL_PATTERNS) {
-      if (regex.test(chunk)) {
-        return { reason };
-      }
-    }
-    return null;
-  }
 
   protected buildCommand(input: AgentRunInput): RuntimeCommand {
     const runtime = resolveNodeScript(

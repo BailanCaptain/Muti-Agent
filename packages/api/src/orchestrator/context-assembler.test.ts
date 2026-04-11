@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { assemblePrompt } from "./context-assembler"
+import { assembleDirectTurnPrompt, assemblePrompt } from "./context-assembler"
+import type { ContextMessage } from "./context-snapshot"
 import { POLICY_FULL, POLICY_GUARDIAN } from "./context-policy"
 import { VISION_GUARDIAN_PROMPT } from "../runtime/agent-prompts"
 
@@ -98,4 +99,57 @@ test("POLICY_GUARDIAN has all context injection disabled", () => {
   assert.equal(POLICY_GUARDIAN.injectSharedHistory, false)
   assert.equal(POLICY_GUARDIAN.injectPreamble, false)
   assert.equal(POLICY_GUARDIAN.phase1Header, false)
+})
+
+// ── F004 / B005 regression: direct turn must inject room history ───────
+//
+// Before F004, assembleDirectTurnPrompt returned only a systemPrompt string
+// and never embedded roomSnapshot — so when the user sent a direct @-mention
+// turn with a non-null nativeSessionId, the agent went into "amnesia" because
+// the whole room history was skipped (the runtime trusted CLI --resume to
+// recover memory, which proved unreliable). This regression test locks in
+// the new contract: assembleDirectTurnPrompt accepts a single input object
+// (mirroring assemblePrompt) with roomSnapshot, and returns a {systemPrompt,
+// content} pair whose content embeds the real history verbatim even when
+// nativeSessionId is non-null.
+test("B005 regression — assembleDirectTurnPrompt injects roomSnapshot into content even with non-null nativeSessionId", async () => {
+  const roomSnapshot: ContextMessage[] = [
+    {
+      id: "msg-0",
+      role: "user",
+      agentId: "user",
+      content: "我们要推进 F004，请先看一下 reference-code 里的最佳实践。",
+      createdAt: "2026-04-11T00:00:00.000Z",
+    },
+    {
+      id: "msg-1",
+      role: "assistant",
+      agentId: "黄仁勋",
+      content: "收到，我已经读过 reference-code/ 下三份参考实现，准备开工。",
+      createdAt: "2026-04-11T00:00:01.000Z",
+    },
+    {
+      id: "msg-2",
+      role: "user",
+      agentId: "user",
+      content: "好，继续推进 F004 的 TDD red phase。",
+      createdAt: "2026-04-11T00:00:02.000Z",
+    },
+  ]
+
+  const result = await assembleDirectTurnPrompt({
+    provider: "claude",
+    threadId: "t-f004",
+    sessionGroupId: "sg-f004",
+    nativeSessionId: "sess-abc",
+    task: "继续推进",
+    sourceAlias: "user",
+    targetAlias: "黄仁勋",
+    roomSnapshot,
+  }, null)
+
+  // Content must embed real history — no more skip-trap on non-null nativeSessionId.
+  assert.match(result.content, /F004/)
+  assert.match(result.content, /reference-code/)
+  assert.match(result.content, /继续推进/)
 })

@@ -27,9 +27,12 @@ export const POLICY_FULL: ContextPolicy = {
   injectRollingSummary: true,
   injectSelfHistory: true,
   injectSharedHistory: true,
-  sharedHistoryLimit: 10,
-  selfHistoryLimit: 5,
-  maxContentLength: 500,
+  // F004: budget widened so API-injected history is actually useful for
+  // multi-turn direct conversations (30×2000 ≈ 30k tokens, well under any
+  // CLI window). Was 10 / 5 / 500 which caused truncation after ~5 turns.
+  sharedHistoryLimit: 30,
+  selfHistoryLimit: 15,
+  maxContentLength: 2000,
   phase1Header: false,
   injectPreamble: false,
 }
@@ -40,8 +43,9 @@ export const POLICY_INDEPENDENT: ContextPolicy = {
   injectSelfHistory: true,
   injectSharedHistory: false,
   sharedHistoryLimit: 0,
-  selfHistoryLimit: 5,
-  maxContentLength: 500,
+  // F004: match POLICY_FULL budget for self history.
+  selfHistoryLimit: 15,
+  maxContentLength: 2000,
   phase1Header: true,
   injectPreamble: false,
 }

@@ -61,7 +61,19 @@ test("classifyFailure detects auth failure — fresh session cannot help", () =>
 test("classifyFailure falls through to 'unknown' for unrecognized errors", () => {
   const result = classifyFailure("generic network glitch", "");
   assert.equal(result.class, "unknown");
-  assert.equal(result.shouldClearSession, true, "unknown defaults to safe session reset");
+  assert.equal(result.shouldClearSession, false, "F004: unknown must preserve session — clearing throws away history");
+  assert.equal(result.safeToRetry, true);
+});
+
+test("unknown failures no longer clear session (F004/AC4)", () => {
+  // F004 reversal of B002-era behavior: any error that doesn't match a known pattern
+  // used to clear native_session_id "just in case". That turned every unrecognized
+  // transient network blip into an amnesia event, because direct-turn prompts relied
+  // on --resume as the only memory channel. Post-F004, direct-turn injects history
+  // from SQLite, so clearing session on 'unknown' throws away history for no gain.
+  const result = classifyFailure("some random gibberish that matches nothing", "");
+  assert.equal(result.class, "unknown");
+  assert.equal(result.shouldClearSession, false, "unknown errors must preserve session");
   assert.equal(result.safeToRetry, true);
 });
 

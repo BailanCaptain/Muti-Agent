@@ -1,5 +1,6 @@
 import type { Provider } from "@multi-agent/shared"
 import type { ContextPolicy } from "./context-policy"
+import { POLICY_FULL } from "./context-policy"
 import type { ContextMessage } from "./context-snapshot"
 import { truncateHeadTail } from "./context-snapshot"
 import { AGENT_SYSTEM_PROMPTS, VISION_GUARDIAN_PROMPT } from "../runtime/agent-prompts"
@@ -107,8 +108,11 @@ export async function assemblePrompt(
     contentSections.push("")
   }
 
-  // Self history: skip if CLI can resume (nativeSessionId is set)
-  const shouldInjectSelfHistory = policy.injectSelfHistory && !input.nativeSessionId
+  // Self history: F004 — always inject when policy allows. Previously skipped
+  // when nativeSessionId was set (trusting CLI --resume), but that proved
+  // unreliable and caused direct-turn amnesia (B005). The API is now the
+  // authoritative history source; CLI --resume is a performance optimization.
+  const shouldInjectSelfHistory = policy.injectSelfHistory
   if (shouldInjectSelfHistory) {
     const selfMessages = roomSnapshot.filter((m) => m.agentId === targetAlias)
     const recent = selfMessages.slice(-policy.selfHistoryLimit)
@@ -149,29 +153,47 @@ export async function assemblePrompt(
 }
 
 /**
- * Simplified assemblePrompt for direct user → single agent turns.
- * Uses POLICY_FULL, sourceAlias="user", no phase1 header.
+ * Direct user → single agent turn prompt assembly.
+ *
+ * F004: promoted from "systemPrompt only" to full {systemPrompt, content}
+ * assembly so direct-turn history is injected by the API (authoritative),
+ * not left to CLI --resume (unreliable). Internally delegates to
+ * `assemblePrompt` with POLICY_FULL, sourceAlias="user", no phase1 header,
+ * no preamble, non-guardian mode.
  */
+export type AssembleDirectTurnInput = {
+  provider: Provider
+  threadId: string
+  sessionGroupId: string
+  /** Only used by downstream runtime for CLI --resume; no longer gates history injection. */
+  nativeSessionId: string | null
+  task: string
+  sourceAlias: "user"
+  targetAlias: string
+  roomSnapshot: readonly ContextMessage[]
+  skillHint?: string | null
+}
+
 export async function assembleDirectTurnPrompt(
-  provider: Provider,
-  threadId: string,
-  sessionGroupId: string,
-  nativeSessionId: string | null,
+  input: AssembleDirectTurnInput,
   memoryService: MemoryService | null,
-): Promise<string> {
-  // For direct turns, we only need the system prompt with rolling summary.
-  // The content is the user's raw message (no A2A wrapping needed).
-  const systemParts: string[] = [AGENT_SYSTEM_PROMPTS[provider]]
-
-  if (memoryService) {
-    const summary = await memoryService.getOrCreateSummary(sessionGroupId)
-    if (summary) {
-      systemParts.push("")
-      systemParts.push("## 本房间摘要")
-      systemParts.push(summary)
-      systemParts.push("请参考上述背景信息继续协作。")
-    }
-  }
-
-  return systemParts.join("\n")
+): Promise<AssemblePromptResult> {
+  return assemblePrompt(
+    {
+      provider: input.provider,
+      threadId: input.threadId,
+      sessionGroupId: input.sessionGroupId,
+      nativeSessionId: input.nativeSessionId,
+      policy: POLICY_FULL,
+      task: input.task,
+      preamble: undefined,
+      roomSnapshot: input.roomSnapshot,
+      sourceAlias: input.sourceAlias,
+      targetAlias: input.targetAlias,
+      phase1HeaderText: undefined,
+      skillHint: input.skillHint ?? null,
+      visionGuardianMode: false,
+    },
+    memoryService,
+  )
 }
