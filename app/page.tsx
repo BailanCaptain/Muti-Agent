@@ -2,7 +2,7 @@
 
 import { ChatHeader } from "@/components/chat/chat-header"
 import { Composer } from "@/components/chat/composer"
-import { DecisionBoardModal } from "@/components/chat/decision-board-modal"
+// B007: DecisionBoardModal moved into TimelinePanel as inline card
 import { SessionSidebar } from "@/components/chat/session-sidebar"
 import { StatusPanel } from "@/components/chat/status-panel"
 import { TimelinePanel } from "@/components/chat/timeline-panel"
@@ -171,7 +171,6 @@ export default function HomePage() {
         </div>
       </main>
       <StatusPanel />
-      <DecisionBoardModal />
     </div>
   )
 }

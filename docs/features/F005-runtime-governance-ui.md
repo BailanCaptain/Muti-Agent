@@ -1,14 +1,14 @@
 ---
 id: F005
 title: 运行时治理 UI — 权限系统 + 面板重构 + 侧边栏重做
-status: spec
+status: plan
 owner: 黄仁勋
 created: 2026-04-11
 ---
 
 # F005 — 运行时治理 UI：权限系统 + 面板重构 + 侧边栏重做
 
-**Status**: spec
+**Status**: plan
 **Created**: 2026-04-11
 
 ## Why
@@ -91,12 +91,13 @@ created: 2026-04-11
 | 2026-04-11 | 三人协作讨论（Phase 1 独立思考 + Phase 2 串行收敛） |
 | 2026-04-11 | 小孙拍板全部决策项 |
 | 2026-04-11 | Kickoff |
+| 2026-04-11 | Plan — 18 Tasks, 4 Phases, 21 AC 全覆盖 |
 
 ## Links
 
 - Discussion: 2026-04-11 协作讨论（collaborative-thinking，权限/面板/侧边栏优化）
 - Reference: `reference-code/clowder-ai/`（AuthorizationCard / useAuthorization / ThreadSidebar / RightStatusPanel）
-- Plan: `docs/plans/F005-runtime-governance-ui-plan.md`（待创建）
+- Plan: `docs/plans/F005-runtime-governance-ui-plan.md`
 - Related: F001（UI 焕新，前序）
 
 ## Evolution

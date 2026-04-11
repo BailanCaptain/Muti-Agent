@@ -18,6 +18,7 @@ export type DecisionBoardEntry = {
   raisers: DecisionRaiser[]
   sessionGroupId: string
   firstRaisedAt: string
+  converged: boolean
 }
 
 export type AddEntryInput = {
@@ -65,6 +66,7 @@ export class DecisionBoard {
       if (!alreadyRaised) {
         existing.raisers.push(input.raiser)
       }
+      existing.converged = false
       return { kind: "merged", entry: existing }
     }
 
@@ -76,6 +78,7 @@ export class DecisionBoard {
       raisers: [input.raiser],
       sessionGroupId: input.sessionGroupId,
       firstRaisedAt: input.raiser.raisedAt,
+      converged: false,
     }
     sessionMap.set(questionHash, entry)
     return { kind: "added", entry }
@@ -121,6 +124,14 @@ export class DecisionBoard {
     const entries = this.getPending(sessionGroupId)
     this.bySession.delete(sessionGroupId)
     return entries
+  }
+
+  markAllConverged(sessionGroupId: string): void {
+    const sessionMap = this.bySession.get(sessionGroupId)
+    if (!sessionMap) return
+    for (const entry of sessionMap.values()) {
+      entry.converged = true
+    }
   }
 
   hasPending(sessionGroupId: string): boolean {

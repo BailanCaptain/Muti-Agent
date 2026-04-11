@@ -142,7 +142,7 @@ export class MemoryService {
 （列出讨论的主要话题）
 
 ## 关键决策
-（列出已做出的关键决策，特别注意标记了 [拍板] 的内容）
+（列出已做出的关键决策，特别注意标记了 [分歧点] 的内容）
 
 ## 待办
 （列出尚未完成的任务和行动项）
@@ -204,16 +204,16 @@ function buildExtractiveSummary(
 ): string {
   const sections: string[] = []
 
-  // Extract [拍板] items
-  const paibanItems: string[] = []
+  // Extract [分歧点] / [拍板] items (both accepted for backward compat)
+  const divergenceItems: string[] = []
   for (const msg of allMessages) {
-    if (msg.content.includes("[拍板]") || msg.content.includes("【拍板】")) {
+    if (msg.content.includes("[分歧点]") || msg.content.includes("[拍板]") || msg.content.includes("【拍板】")) {
       const speaker = msg.role === "user" ? "用户" : msg.alias
-      paibanItems.push(`[${speaker}]: ${msg.content.slice(0, 300)}`)
+      divergenceItems.push(`[${speaker}]: ${msg.content.slice(0, 300)}`)
     }
   }
-  if (paibanItems.length > 0) {
-    sections.push("### 关键决策（[拍板]）\n" + paibanItems.join("\n"))
+  if (divergenceItems.length > 0) {
+    sections.push("### 关键决策（分歧点）\n" + divergenceItems.join("\n"))
   }
 
   // Extract topic keywords

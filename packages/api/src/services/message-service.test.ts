@@ -509,6 +509,7 @@ function makeEntry(
     ],
     sessionGroupId: overrides.sessionGroupId ?? "group-1",
     firstRaisedAt: overrides.firstRaisedAt ?? "2026-04-10T10:00:00Z",
+    converged: overrides.converged ?? false,
   }
 }
 
@@ -789,4 +790,29 @@ test("hasRunningTurn reflects dispatch slot state", () => {
   assert.equal(messageService.hasRunningTurn("group-2"), false)
   dispatch.releaseSlot("group-1", "codex")
   assert.equal(messageService.hasRunningTurn("group-1"), false)
+})
+
+test("buildDecisionSummary writes converged items as '已收敛' not '未决定'", () => {
+  const { messageService } = createMessageService()
+  const entries: DecisionBoardEntry[] = [
+    makeEntry({ id: "e-conv", question: "数据库选型？", converged: true }),
+    makeEntry({
+      id: "e-div",
+      question: "需要 Redis 吗？",
+      options: [{ id: "A", label: "是" }, { id: "B", label: "否" }],
+      converged: false,
+    }),
+  ]
+  const summary = messageService.buildDecisionSummary(entries, [
+    { itemId: "e-div", choice: { kind: "option", optionId: "A" } },
+  ])
+  assert.ok(
+    summary.includes("已收敛"),
+    "converged item must be labeled 已收敛",
+  )
+  assert.ok(
+    !summary.includes("未决定"),
+    "converged item must NOT be labeled 未决定",
+  )
+  assert.ok(summary.includes("是"), "divergent item decision must appear")
 })

@@ -256,6 +256,7 @@ export class MessageService {
           options: entry.options,
           raisers: entry.raisers.map((r) => ({ alias: r.alias, provider: r.provider })),
           firstRaisedAt: entry.firstRaisedAt,
+          converged: entry.converged,
         })),
       },
     })
@@ -352,6 +353,10 @@ export class MessageService {
   ): string {
     const lines = ["产品已就以下问题作出决定："]
     for (const entry of entries) {
+      if (entry.converged) {
+        lines.push(`- ${entry.question} → (团队已收敛，无需决定)`)
+        continue
+      }
       const d = decisions.find((x) => x.itemId === entry.id)
       if (!d) {
         lines.push(`- ${entry.question} → (未决定)`)
@@ -377,7 +382,7 @@ export class MessageService {
       const who = entry.raisers.map((r) => r.alias).join("、")
       lines.push(`- [${entry.question}] ${who} 提出`)
     }
-    lines.push("\n你可以基于当前讨论继续推进，必要时再次 [拍板] 提问。")
+    lines.push("\n你可以基于当前讨论继续推进，必要时再次 [分歧点] 提问。")
     return lines.join("\n")
   }
 
@@ -1736,6 +1741,7 @@ export class MessageService {
         const allConsensus =
           activeProviders.length > 0 && activeProviders.every((p) => consensusSignaled.has(p))
         if (allConsensus) {
+          this.decisionBoard?.markAllConverged(sessionGroupId)
           emit({
             type: "status",
             payload: { message: `串行讨论已在第 ${round} 轮达成共识，提前结束` },
@@ -1812,15 +1818,24 @@ export class MessageService {
 
     if (!this.decisions) return
 
-    // Surface [拍板] items raised by agents in Phase 1 / Phase 2 so they
-    // don't disappear into the transcript. User sees them in the card.
-    const pendingItems = this.collectPendingDecisionItems(group)
-    const baseDescription =
-      "讨论已完成。选一个 agent 综合各方观点，或直接输入你的想法/下一步指令（两者可以都填）。"
-    const description =
-      pendingItems.length > 0
-        ? `${baseDescription}\n\n待村长拍板：\n${pendingItems.map((i) => `- ${i}`).join("\n")}`
-        : baseDescription
+    const boardEntries = this.decisionBoard?.getPending(sessionGroupId) ?? []
+    const convergedItems = boardEntries.filter((e) => e.converged)
+    const divergentItems = boardEntries.filter((e) => !e.converged)
+
+    const descParts: string[] = [
+      "讨论已完成。选一个 agent 综合各方观点，或直接输入你的想法/下一步指令（两者可以都填）。",
+    ]
+    if (convergedItems.length > 0) {
+      descParts.push(
+        `\n\n✅ 团队已收敛观点：\n${convergedItems.map((i) => `- ${i.question}`).join("\n")}`,
+      )
+    }
+    if (divergentItems.length > 0) {
+      descParts.push(
+        `\n\n⚠️ 未收敛分歧点（需要你决定）：\n${divergentItems.map((i) => `- ${i.question}`).join("\n")}`,
+      )
+    }
+    const description = descParts.join("")
 
     const response = await this.decisions.request({
       kind: "fan_in_selector",
@@ -1831,8 +1846,8 @@ export class MessageService {
       multiSelect: false,
       allowTextInput: true,
       textInputPlaceholder:
-        pendingItems.length > 0
-          ? "回应上面的拍板项，或给综合者的指令…"
+        divergentItems.length > 0
+          ? "回应上面的分歧点，或给综合者的指令…"
           : "想让谁做什么？或留给选定的综合者的额外指令…",
       timeoutMs: 10 * 60 * 1000,
     })
@@ -1864,20 +1879,38 @@ export class MessageService {
 
   /**
    * Collect `[拍板]` questions from Phase 1 results + Phase 2 replies, deduped
-   * by question text. Order: Phase 1 first (by participant order), then Phase 2
-   * (chronological). Returns the question strings for display in the fan-in card.
+   * by question text, minus any `[撤销拍板]` withdrawals. Returns only items
+   * that are still unresolved after the full discussion.
    */
   private collectPendingDecisionItems(group: ParallelGroup): string[] {
     const seen = new Set<string>()
     const questions: string[] = []
-    const push = (candidates: DecisionItemParsed[]) => {
-      for (const c of candidates) {
-        if (!seen.has(c.question)) {
-          seen.add(c.question)
-          questions.push(c.question)
-        }
+    const withdrawn = new Set<string>()
+
+    const collectWithdrawals = (content: string) => {
+      for (const w of extractWithdrawals(content)) {
+        withdrawn.add(w)
       }
     }
+
+    for (const provider of group.participantProviders) {
+      const reply = group.completedResults.get(provider)
+      if (reply) collectWithdrawals(reply.content)
+    }
+    for (const reply of group.phase2Replies) {
+      collectWithdrawals(reply.content)
+    }
+
+    const push = (candidates: DecisionItemParsed[]) => {
+      for (const c of candidates) {
+        if (seen.has(c.question)) continue
+        const isWithdrawn = [...withdrawn].some((w) => c.question.includes(w))
+        if (isWithdrawn) continue
+        seen.add(c.question)
+        questions.push(c.question)
+      }
+    }
+
     for (const provider of group.participantProviders) {
       const reply = group.completedResults.get(provider)
       if (reply) push(extractDecisionItems(reply.content))

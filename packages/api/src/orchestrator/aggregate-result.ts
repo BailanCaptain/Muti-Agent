@@ -56,7 +56,7 @@ export function extractDecisionItems(content: string): DecisionItemParsed[] {
 
   while (i < lines.length) {
     const line = lines[i].trim()
-    const paibanMatch = line.match(/^\[拍板\]\s*(.+)$/)
+    const paibanMatch = line.match(/^\[(?:拍板|分歧点)\]\s*(.+)$/)
 
     if (!paibanMatch) {
       i++
@@ -102,7 +102,7 @@ export function extractWithdrawals(content: string): string[] {
   const results: string[] = []
   const lines = content.split(/\r?\n/)
   for (const line of lines) {
-    const match = line.trim().match(/^\[撤销拍板\]\s*(.+)$/)
+    const match = line.trim().match(/^\[(?:撤销拍板|撤销分歧点)\]\s*(.+)$/)
     if (match && match[1].trim()) {
       results.push(match[1].trim())
     }

@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef } from "react"
 import { ApprovalCard } from "./approval-card"
 import { CollapsibleGroup } from "./collapsible-group"
 import { ConnectorBubble } from "./connector-bubble"
+import { InlineDecisionBoard } from "./decision-board-modal"
 import { DecisionCard } from "./decision-card"
 import { MessageBubble } from "./message-bubble"
 
@@ -150,6 +151,7 @@ export function TimelinePanel() {
         {standAloneDecisions.map((request) => (
           <DecisionCard key={request.requestId} request={request} onRespond={respondDecision} />
         ))}
+        <InlineDecisionBoard />
         {pendingApprovals.map((request) => (
           <ApprovalCard key={request.requestId} request={request} onRespond={respondApproval} />
         ))}

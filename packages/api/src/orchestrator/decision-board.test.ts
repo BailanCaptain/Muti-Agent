@@ -132,3 +132,24 @@ test("DecisionBoard.drain is scoped to one session", () => {
   board.drain("g1")
   assert.equal(board.getPending("g2").length, 1)
 })
+
+test("DecisionBoard.add resets converged when same question is re-raised after markAllConverged", () => {
+  const board = new DecisionBoard()
+  board.add({
+    sessionGroupId: "g1",
+    raiser: baseRaiser,
+    question: "数据库选型",
+    options: [{ id: "A", label: "PG" }],
+  })
+  board.markAllConverged("g1")
+  assert.equal(board.getPending("g1")[0].converged, true)
+
+  const result = board.add({
+    sessionGroupId: "g1",
+    raiser: { ...baseRaiser, threadId: "t-codex", provider: "codex" as const, alias: "范德彪" },
+    question: "数据库选型",
+    options: [{ id: "A", label: "PG" }],
+  })
+  assert.equal(result.kind, "merged")
+  assert.equal(result.entry.converged, false, "re-raised question must reset converged to false")
+})

@@ -317,4 +317,6 @@ export type DecisionBoardItem = {
   options: { id: string; label: string }[]
   raisers: { alias: string; provider: Provider }[]
   firstRaisedAt: string
+  /** True when team reached consensus during Phase 2 discussion. */
+  converged?: boolean
 }
