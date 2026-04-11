@@ -9,7 +9,7 @@ completed: 2026-04-11
 
 # F003 — A2A 运行时闭环
 
-**Status**: done（代码 AC1-AC4 全部达成，AC5 前端手动验证由小孙合入后现场 demo）
+**Status**: done（AC1-AC4 代码层完成，AC5 由小孙授权归档 — 后续复现转 bug）
 **Created**: 2026-04-11
 **Completed**: 2026-04-11
 
@@ -103,9 +103,12 @@ completed: 2026-04-11
 - [ ] 手动验证：quality-gate 结束后无需小孙手动推，requesting-review 自动启动
 
 ### AC5 — 愿景对照（Completion 时必做）
-- [ ] 三个症状全部**前端可见地**消失：无截断、无手动推流程、无人肉 router
-- [ ] 小孙在一条新会话里按 feat-lifecycle 跑一个小 feature 从 kickoff 到 merge，全链路**零手动干预 A2A**
-- [ ] 证物：完整会话截图 / sqlite 轨迹 + `git log --grep F003` PR 列表
+- [~] 三个症状全部**前端可见地**消失：无截断、无手动推流程、无人肉 router
+- [~] 小孙在一条新会话里按 feat-lifecycle 跑一个小 feature 从 kickoff 到 merge，全链路**零手动干预 A2A**
+- [~] 证物：完整会话截图 / sqlite 轨迹 + `git log --grep F003` PR 列表
+
+> **归档说明（2026-04-11）**：小孙授权直接归档，AC5 的前端手动验证不再作为收尾条件。
+> 后续真实使用中若任一症状复现，作为 bug（B 级）单独立项而非重开 F003。
 
 ## Dependencies
 
