@@ -34,13 +34,14 @@ export class CodexRuntime extends BaseCliRuntime {
       "--sandbox", "workspace-write",
     ];
     const baseArgs = sessionId
-      ? ["exec", "resume", "--skip-git-repo-check", "--json", sessionId, prompt]
-      : ["exec", "--skip-git-repo-check", "--json", prompt];
+      ? ["exec", "resume", "--skip-git-repo-check", "--json", sessionId]
+      : ["exec", "--skip-git-repo-check", "--json"];
 
     return {
       command: runtime.command,
       args: [...runtime.prefixArgs, ...topLevelArgs, ...baseArgs],
-      shell: runtime.shell
+      shell: runtime.shell,
+      stdinContent: prompt,
     };
   }
 

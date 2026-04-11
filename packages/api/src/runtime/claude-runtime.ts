@@ -73,7 +73,6 @@ export class ClaudeRuntime extends BaseCliRuntime {
       const systemPrompt = input.env?.MULTI_AGENT_SYSTEM_PROMPT || AGENT_SYSTEM_PROMPTS.claude;
       args.push("--append-system-prompt", systemPrompt);
     }
-    args.unshift("-p", input.prompt);
     const mcpServerPath = path.join(__dirname, "..", "mcp", "server.js");
 
     // 直接把 MCP 配置作为 JSON 字符串内联传入，省去临时文件的创建与清理。
@@ -105,7 +104,8 @@ export class ClaudeRuntime extends BaseCliRuntime {
     return {
       command: runtime.command,
       args: [...runtime.prefixArgs, ...args],
-      shell: runtime.shell
+      shell: runtime.shell,
+      stdinContent: input.prompt,
     };
   }
 

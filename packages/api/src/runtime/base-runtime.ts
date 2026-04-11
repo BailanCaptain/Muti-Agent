@@ -53,6 +53,19 @@ export type RuntimeCommand = {
   args: string[];
   shell: boolean;
   cleanup?: () => void | Promise<void>;
+  /**
+   * When set, the prompt (or any large payload) is written to the child's stdin
+   * instead of being passed on the command line. This avoids the Windows
+   * CreateProcess 32 767-character limit (`spawn ENAMETOOLONG`).
+   *
+   * The base runtime will:
+   *  1. Set stdio[0] to "pipe" instead of "ignore".
+   *  2. Call child.stdin.end(stdinContent, "utf-8") immediately after spawn.
+   *
+   * Each concrete runtime's buildCommand() is responsible for populating this
+   * field and omitting the prompt from args when the payload is large.
+   */
+  stdinContent?: string;
 };
 
 export type RuntimeStreamHooks = {
@@ -222,12 +235,20 @@ export abstract class BaseCliRuntime implements AgentRuntime {
         };
         return new ProcessLivenessProbe(pid, config, probeDeps);
       });
+    // stdio[0] is "pipe" when we need to write stdinContent, "ignore" otherwise.
+    // The union type ("pipe" | "ignore") for the tuple's first element confuses TypeScript's
+    // spawn overload resolution, so we cast to keep ChildProcessWithoutNullStreams.
+    // stdout and stderr are always "pipe", so the streams are guaranteed non-null.
     const child = spawnProcess(command.command, command.args, {
       cwd: input.cwd,
       env,
       shell: command.shell,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
+      stdio: [command.stdinContent !== undefined ? "pipe" : "ignore", "pipe", "pipe"]
+    } as never) as ChildProcessWithoutNullStreams;
+
+    if (command.stdinContent !== undefined && child.stdin) {
+      child.stdin.end(command.stdinContent, "utf-8");
+    }
 
     let rawStdout = "";
     let rawStderr = "";

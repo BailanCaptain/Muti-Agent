@@ -319,6 +319,78 @@ test("stderr without fast-fail pattern does not trigger early termination", asyn
   assert.equal(result.exitCode, 0, "process should exit normally when no fatal stderr pattern matches");
 });
 
+test("stdinContent: spawn receives stdio[0]='pipe' and stdin.end is called with the content", async () => {
+  // TDD Red: verifies that when buildCommand returns stdinContent,
+  // the spawn call uses stdio[0]="pipe" and child.stdin.end is called.
+
+  class StdinRuntime extends BaseCliRuntime {
+    readonly agentId = "stdin-test";
+    protected buildCommand(_input: AgentRunInput): RuntimeCommand {
+      return {
+        command: "test-cli",
+        args: [],
+        shell: false,
+        stdinContent: "hello from stdin"
+      };
+    }
+  }
+
+  let capturedStdioOption: unknown = null;
+  const stdinEndCalls: string[] = [];
+
+  const child = new FakeChildProcess();
+  // Attach a writable stdin mock with an end() recorder
+  const stdinMock = {
+    end: (content: string, encoding: string) => {
+      stdinEndCalls.push(`${content}|${encoding}`);
+    }
+  };
+  (child as never as Record<string, unknown>).stdin = stdinMock;
+
+  const runtime = new StdinRuntime({
+    spawn: (cmd, args, opts) => {
+      capturedStdioOption = (opts as { stdio?: unknown }).stdio;
+      return child as never;
+    },
+    createLivenessProbe: createFakeProbeFactory()
+  });
+
+  const handle = runtime.runStream(createInput());
+
+  // Let the child finish immediately.
+  child.close(0);
+
+  await handle.promise;
+
+  // stdio[0] must be "pipe" when stdinContent is set
+  assert.ok(Array.isArray(capturedStdioOption), "stdio must be an array");
+  assert.equal((capturedStdioOption as string[])[0], "pipe", "stdio[0] must be 'pipe' when stdinContent is provided");
+
+  // stdin.end must have been called with the content and utf-8 encoding
+  assert.equal(stdinEndCalls.length, 1, "stdin.end must be called exactly once");
+  assert.equal(stdinEndCalls[0], "hello from stdin|utf-8");
+});
+
+test("stdinContent absent: spawn keeps stdio[0]='ignore' (no regression)", async () => {
+  let capturedStdioOption: unknown = null;
+
+  const child = new FakeChildProcess();
+  const runtime = new TestRuntime({
+    spawn: (cmd, args, opts) => {
+      capturedStdioOption = (opts as { stdio?: unknown }).stdio;
+      return child as never;
+    },
+    createLivenessProbe: createFakeProbeFactory()
+  });
+
+  const handle = runtime.runStream(createInput());
+  child.close(0);
+  await handle.promise;
+
+  assert.ok(Array.isArray(capturedStdioOption), "stdio must be an array");
+  assert.equal((capturedStdioOption as string[])[0], "ignore", "stdio[0] must remain 'ignore' when stdinContent is absent");
+});
+
 test("resolveNodeScript selects the first existing script from multiple candidate paths", () => {
   const originalAppData = process.env.APPDATA;
   const originalUserProfile = process.env.USERPROFILE;

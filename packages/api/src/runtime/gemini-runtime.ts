@@ -64,7 +64,7 @@ export class GeminiRuntime extends BaseCliRuntime {
     const prompt = sessionId
       ? input.prompt
       : wrapPromptWithInstructions(systemPrompt, input.prompt);
-    const args = ["-p", prompt, "--output-format", "stream-json", "--approval-mode", "yolo"];
+    const args = ["--output-format", "stream-json", "--approval-mode", "yolo"];
     const model = input.env?.MULTI_AGENT_MODEL;
 
     if (model) {
@@ -77,7 +77,8 @@ export class GeminiRuntime extends BaseCliRuntime {
     return {
       command: runtime.command,
       args: [...runtime.prefixArgs, ...args],
-      shell: runtime.shell
+      shell: runtime.shell,
+      stdinContent: prompt,
     };
   }
 
