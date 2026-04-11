@@ -7,6 +7,7 @@
 
 | ID | 名称 | 状态 | Owner | Source | Spec |
 |----|------|------|-------|--------|------|
+| F005 | 运行时治理 UI：权限系统 + 面板重构 + 侧边栏重做 | spec | 黄仁勋 | internal | [F005](features/F005-runtime-governance-ui.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features

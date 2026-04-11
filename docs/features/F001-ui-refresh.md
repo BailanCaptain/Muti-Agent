@@ -79,4 +79,4 @@ completed: 2026-04-10
 
 - **Evolved from**: 无（首个 Feature）
 - **Blocks**: 无
-- **Related**: 无
+- **Related**: F005（运行时治理 UI — 本 Feature 的自然演进）
