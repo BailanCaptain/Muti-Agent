@@ -257,6 +257,7 @@ export abstract class BaseCliRuntime implements AgentRuntime {
     let stalled = false;
     let deadProcess = false;
     let fastFailed = false;
+    let turnCompleted = false;
     let fastFailReason: string | null = null;
     let settled = false;
     let terminationStarted = false;
@@ -384,6 +385,20 @@ export abstract class BaseCliRuntime implements AgentRuntime {
         rawStdout += `${line}\n`;
         hooks.onStdoutLine?.(line);
         recordStdoutActivity(line);
+
+        // B009-B: detect turn.completed to protect against post-turn crashes.
+        // If the agent already finished its turn, a later process death should
+        // resolve (preserving the response) instead of rejecting.
+        if (!turnCompleted) {
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed && parsed.type === "turn.completed") {
+              turnCompleted = true;
+            }
+          } catch {
+            // Not JSON — ignore
+          }
+        }
       });
 
       child.stderr.on("data", (chunk) => {
@@ -404,6 +419,18 @@ export abstract class BaseCliRuntime implements AgentRuntime {
             return;
           }
           if (timedOut || stalled || deadProcess) {
+            // B009-B: if the turn already completed successfully, the agent's work
+            // is done — resolve with whatever we have instead of discarding it.
+            if (deadProcess && turnCompleted) {
+              resolve({
+                finalText: this.extractFinalText(rawStdout),
+                rawStdout,
+                rawStderr,
+                exitCode: code,
+                stopReason: "complete" as StopReason
+              });
+              return;
+            }
             const reason = stalled ? "stall" : deadProcess ? "dead" : "timeout";
             reject(
               new Error(formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt, reason))
