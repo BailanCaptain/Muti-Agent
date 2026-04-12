@@ -118,6 +118,7 @@ export function registerCallbackRoutes(
         type: "message.created",
         payload: {
           threadId: thread.id,
+          sessionGroupId: thread.sessionGroupId,
           message: timelineMessage,
         },
       }

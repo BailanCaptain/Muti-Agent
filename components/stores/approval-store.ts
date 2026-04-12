@@ -9,6 +9,7 @@ type ApprovalStore = {
   addRequest: (request: ApprovalRequest) => void
   removeRequest: (requestId: string) => void
   respond: (requestId: string, granted: boolean, scope: ApprovalScope) => void
+  fetchPending: (sessionGroupId: string) => Promise<void>
 }
 
 export const useApprovalStore = create<ApprovalStore>((set) => ({
@@ -29,5 +30,18 @@ export const useApprovalStore = create<ApprovalStore>((set) => ({
     set((state) => ({
       pending: state.pending.filter((r) => r.requestId !== requestId),
     }))
+  },
+  fetchPending: async (sessionGroupId) => {
+    const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+    try {
+      const res = await fetch(
+        `${baseUrl}/api/authorization/pending?sessionGroupId=${encodeURIComponent(sessionGroupId)}`,
+      )
+      if (!res.ok) return
+      const data = (await res.json()) as { pending: ApprovalRequest[] }
+      set({ pending: data.pending })
+    } catch {
+      // Network error during fetch — keep current state
+    }
   },
 }))

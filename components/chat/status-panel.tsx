@@ -1,14 +1,18 @@
 "use client"
 
+import { useApprovalStore } from "@/components/stores/approval-store"
 import { useRuntimeConfigStore } from "@/components/stores/runtime-config-store"
+import { useSettingsModalStore } from "@/components/stores/settings-modal-store"
 import { useSettingsStore } from "@/components/stores/settings-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { formatTokenCount } from "@/lib/format"
-import type { Provider } from "@multi-agent/shared"
-import { ChevronDown, ChevronRight, Info, MessageSquare } from "lucide-react"
-import { useEffect, useState } from "react"
+import type { AuthorizationRule, Provider } from "@multi-agent/shared"
+import { Info, MessageSquare, Settings, Shield } from "lucide-react"
+import { useCallback, useEffect, useState } from "react"
 import { FoldControls } from "./fold-controls"
 import { ProviderAvatar } from "./provider-avatar"
+
+type StatusTab = "session" | "defaults" | "approval"
 
 const panelClassName =
   "rounded-[28px] border border-slate-200/70 bg-white/85 p-4 shadow-[0_18px_42px_rgba(15,23,42,0.06)]"
@@ -88,7 +92,11 @@ function formatCachePercent(cachedTokens: number, inputTokens: number) {
   return Math.round((cachedTokens / inputTokens) * 100)
 }
 
-export function StatusPanel() {
+const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+
+/* ────────── Session Tab ────────── */
+
+function SessionTabContent() {
   const socketState = useSettingsStore((state) => state.socketState)
   const providers = useThreadStore((state) => state.providers)
   const catalogs = useThreadStore((state) => state.catalogs)
@@ -96,33 +104,12 @@ export function StatusPanel() {
   const timeline = useThreadStore((state) => state.timeline)
   const invocationStats = useThreadStore((state) => state.invocationStats)
   const [draftModels, setDraftModels] = useState<Record<string, string>>({})
-  const [expandedDefaults, setExpandedDefaults] = useState<Record<string, boolean>>({})
-
-  const runtimeLoaded = useRuntimeConfigStore((state) => state.loaded)
-  const runtimeLoad = useRuntimeConfigStore((state) => state.load)
-  const catalog = useRuntimeConfigStore((state) => state.catalog)
-  const runtimeConfig = useRuntimeConfigStore((state) => state.config)
-  const setAgentOverride = useRuntimeConfigStore((state) => state.setAgentOverride)
-
-  useEffect(() => {
-    if (!runtimeLoaded) void runtimeLoad()
-  }, [runtimeLoaded, runtimeLoad])
 
   const providerEntries = Object.entries(providers) as Array<
     [Provider, (typeof providers)[Provider]]
   >
   const isAnyRunning = providerEntries.some(([, provider]) => provider.running)
 
-  const modeLabel =
-    socketState === "connected"
-      ? isAnyRunning
-        ? "运行中"
-        : "就绪"
-      : socketState === "error"
-        ? "连接错误"
-        : "离线"
-
-  // Heuristic counters keep the stats card informative until richer backend analytics land.
   const stats = {
     total: timeline.length,
     agents: timeline.filter((message) => message.role === "assistant" && message.alias !== "System")
@@ -152,17 +139,8 @@ export function StatusPanel() {
   })
 
   return (
-    <aside className="flex h-screen w-[340px] flex-col overflow-y-auto overflow-x-hidden border-l border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(255,255,255,0.86))] px-5 py-6 shadow-[-18px_0_48px_rgba(15,23,42,0.04)] backdrop-blur-xl">
-      <div className="mb-6 flex items-start justify-between gap-4">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-400">
-            控制面板
-          </p>
-          <h2 className="mt-2 text-xl font-semibold tracking-[0.01em] text-slate-900">状态看板</h2>
-          <p className="mt-1 text-xs text-slate-400">当前模式: {modeLabel}</p>
-        </div>
-      </div>
-
+    <>
+      {/* Room Health */}
       <div className={`${panelClassName} mb-5`}>
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
@@ -200,6 +178,7 @@ export function StatusPanel() {
         </div>
       </div>
 
+      {/* Message Stats */}
       <div className={`${panelClassName} mb-5`}>
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-slate-800">消息统计</h3>
@@ -223,10 +202,12 @@ export function StatusPanel() {
         </div>
       </div>
 
+      {/* Fold Controls */}
       <div className="mb-5">
         <FoldControls />
       </div>
 
+      {/* Agent Config — session only (no default fold) */}
       <div className={`${panelClassName} mb-5`}>
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-slate-800">智能体配置</h3>
@@ -317,54 +298,13 @@ export function StatusPanel() {
                     </button>
                   ) : null}
                 </div>
-
-                {/* 全局默认配置（折叠） */}
-                <div className="mt-3 border-t border-slate-200/60 pt-2">
-                  <button
-                    className="flex w-full items-center gap-1.5 text-[11px] font-medium text-slate-500 transition hover:text-slate-700"
-                    onClick={() => setExpandedDefaults(prev => ({ ...prev, [provider]: !prev[provider] }))}
-                    type="button"
-                  >
-                    {expandedDefaults[provider] ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                    默认配置
-                  </button>
-
-                  {expandedDefaults[provider] && catalog && (
-                    <div className="mt-2 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <span className="w-12 text-[10px] text-slate-400">模型</span>
-                        <input
-                          className={`min-w-0 flex-1 rounded-2xl border border-white/80 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none transition focus:ring-4 ${theme.focus}`}
-                          list={`default-model-${provider}`}
-                          value={runtimeConfig[provider]?.model ?? ""}
-                          onChange={(e) => void setAgentOverride(provider, { ...runtimeConfig[provider], model: e.target.value })}
-                          placeholder="使用系统默认"
-                        />
-                        <datalist id={`default-model-${provider}`}>
-                          {catalog[provider]?.models.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}
-                        </datalist>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="w-12 text-[10px] text-slate-400">强度</span>
-                        <select
-                          className="min-w-0 flex-1 rounded-2xl border border-white/80 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none transition focus:ring-4 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-                          disabled={!catalog[provider]?.efforts.length}
-                          value={runtimeConfig[provider]?.effort ?? ""}
-                          onChange={(e) => void setAgentOverride(provider, { ...runtimeConfig[provider], effort: e.target.value })}
-                        >
-                          <option value="">默认</option>
-                          {catalog[provider]?.efforts.map((e) => <option key={e} value={e}>{e}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                  )}
-                </div>
               </div>
             )
           })}
         </div>
       </div>
 
+      {/* Invocation Chain */}
       <div className={panelClassName}>
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-slate-800">会话链</h3>
@@ -470,6 +410,304 @@ export function StatusPanel() {
           )}
         </div>
       </div>
+    </>
+  )
+}
+
+/* ────────── Defaults Tab ────────── */
+
+function DefaultsTabContent() {
+  const providers = useThreadStore((state) => state.providers)
+  const runtimeLoaded = useRuntimeConfigStore((state) => state.loaded)
+  const runtimeLoad = useRuntimeConfigStore((state) => state.load)
+  const catalog = useRuntimeConfigStore((state) => state.catalog)
+  const runtimeConfig = useRuntimeConfigStore((state) => state.config)
+  const setAgentOverride = useRuntimeConfigStore((state) => state.setAgentOverride)
+
+  useEffect(() => {
+    if (!runtimeLoaded) void runtimeLoad()
+  }, [runtimeLoaded, runtimeLoad])
+
+  const providerEntries = Object.entries(providers) as Array<
+    [Provider, (typeof providers)[Provider]]
+  >
+
+  return (
+    <div className="space-y-4">
+      {providerEntries.map(([provider, card]) => {
+        const theme = providerTheme[provider]
+
+        return (
+          <div className={`${panelClassName} !bg-slate-50/60`} key={provider}>
+            <div className="mb-3 flex items-start gap-3">
+              <ProviderAvatar identity={provider} size="sm" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <div className="truncate text-sm font-semibold text-slate-800">
+                    {card.alias}
+                  </div>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${theme.badge}`}
+                  >
+                    {provider}
+                  </span>
+                </div>
+                <div className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-400">
+                  默认配置
+                </div>
+              </div>
+            </div>
+
+            {catalog ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-12 text-[10px] text-slate-400">模型</span>
+                  <input
+                    className={`min-w-0 flex-1 rounded-2xl border border-white/80 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none transition focus:ring-4 ${theme.focus}`}
+                    list={`default-model-${provider}`}
+                    value={runtimeConfig[provider]?.model ?? ""}
+                    onChange={(e) =>
+                      void setAgentOverride(provider, {
+                        ...runtimeConfig[provider],
+                        model: e.target.value,
+                      })
+                    }
+                    placeholder="使用系统默认"
+                  />
+                  <datalist id={`default-model-${provider}`}>
+                    {catalog[provider]?.models.map((m) => (
+                      <option key={m.name} value={m.name}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </datalist>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-12 text-[10px] text-slate-400">强度</span>
+                  <select
+                    className="min-w-0 flex-1 rounded-2xl border border-white/80 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none transition focus:ring-4 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                    disabled={!catalog[provider]?.efforts.length}
+                    value={runtimeConfig[provider]?.effort ?? ""}
+                    onChange={(e) =>
+                      void setAgentOverride(provider, {
+                        ...runtimeConfig[provider],
+                        effort: e.target.value,
+                      })
+                    }
+                  >
+                    <option value="">默认</option>
+                    {catalog[provider]?.efforts.map((e) => (
+                      <option key={e} value={e}>
+                        {e}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-slate-400">加载配置中...</div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/* ────────── Approval Rules Tab ────────── */
+
+function ApprovalTabContent() {
+  const pending = useApprovalStore((state) => state.pending)
+  const [rules, setRules] = useState<AuthorizationRule[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const fetchRules = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`${baseUrl}/api/authorization/rules`)
+      if (res.ok) {
+        const data = (await res.json()) as { rules: AuthorizationRule[] }
+        setRules(data.rules)
+      }
+    } catch {
+      // Network error
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void fetchRules()
+  }, [fetchRules])
+
+  return (
+    <div className="space-y-5">
+      {/* Pending Approvals */}
+      <div className={panelClassName}>
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-800">待审批</h3>
+          <span className="font-mono text-[11px] text-slate-400">
+            {pending.length} 条
+          </span>
+        </div>
+
+        {pending.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-4 text-center text-sm text-slate-400">
+            暂无待审批请求
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {pending.map((req) => (
+              <div
+                className="rounded-2xl border border-amber-200/80 bg-amber-50/40 px-3 py-2.5"
+                key={req.requestId}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+                  <span className="text-xs font-semibold text-slate-700">{req.action}</span>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500 ring-1 ring-slate-200/80">
+                    {req.provider}
+                  </span>
+                </div>
+                <div className="mt-1 truncate text-[11px] text-slate-400">{req.reason}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Authorization Rules */}
+      <div className={panelClassName}>
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-800">授权规则</h3>
+          <Shield className="h-4 w-4 text-slate-400" />
+        </div>
+
+        {loading ? (
+          <div className="py-4 text-center text-xs text-slate-400">加载中...</div>
+        ) : rules.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-4 text-center text-sm text-slate-400">
+            暂无授权规则
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {rules.map((rule) => (
+              <div
+                className="rounded-2xl border border-slate-200/70 bg-slate-50/80 px-3 py-2.5"
+                key={rule.id}
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${
+                      rule.decision === "allow"
+                        ? "bg-emerald-50 text-emerald-700 ring-emerald-200/80"
+                        : "bg-rose-50 text-rose-700 ring-rose-200/80"
+                    }`}
+                  >
+                    {rule.decision === "allow" ? "允许" : "拒绝"}
+                  </span>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200/80">
+                    {rule.provider}
+                  </span>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200/80">
+                    {rule.scope}
+                  </span>
+                </div>
+                <div className="mt-1 truncate text-xs text-slate-600">{rule.action}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ────────── Main StatusPanel ────────── */
+
+export function StatusPanel() {
+  const socketState = useSettingsStore((state) => state.socketState)
+  const providers = useThreadStore((state) => state.providers)
+  const [activeTab, setActiveTab] = useState<StatusTab>("session")
+  const openSettings = useSettingsModalStore((s) => s.open)
+
+  const runtimeLoaded = useRuntimeConfigStore((state) => state.loaded)
+  const runtimeLoad = useRuntimeConfigStore((state) => state.load)
+
+  useEffect(() => {
+    if (!runtimeLoaded) void runtimeLoad()
+  }, [runtimeLoaded, runtimeLoad])
+
+  const providerEntries = Object.entries(providers) as Array<
+    [Provider, (typeof providers)[Provider]]
+  >
+  const isAnyRunning = providerEntries.some(([, provider]) => provider.running)
+
+  const modeLabel =
+    socketState === "connected"
+      ? isAnyRunning
+        ? "运行中"
+        : "就绪"
+      : socketState === "error"
+        ? "连接错误"
+        : "离线"
+
+  const tabs: { key: StatusTab; label: string }[] = [
+    { key: "session", label: "会话" },
+    { key: "defaults", label: "默认" },
+    { key: "approval", label: "审批规则" },
+  ]
+
+  return (
+    <aside className="flex h-screen w-[340px] flex-col overflow-y-auto overflow-x-hidden border-l border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(255,255,255,0.86))] px-5 py-6 shadow-[-18px_0_48px_rgba(15,23,42,0.04)] backdrop-blur-xl">
+      {/* Header with settings gear */}
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-400">
+            控制面板
+          </p>
+          <h2 className="mt-2 text-xl font-semibold tracking-[0.01em] text-slate-900">状态看板</h2>
+          <p className="mt-1 text-xs text-slate-400">当前模式: {modeLabel}</p>
+        </div>
+        <button
+          className="mt-1 rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+          onClick={openSettings}
+          title="打开设置"
+          type="button"
+        >
+          <Settings className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* Tab Bar */}
+      <div className="mb-5 flex border-b border-slate-200/70">
+        {tabs.map((t) => (
+          <button
+            className={`relative flex-1 px-2 py-2.5 text-center text-xs font-medium transition ${
+              activeTab === t.key
+                ? "text-amber-600"
+                : "text-slate-400 hover:text-slate-600"
+            }`}
+            key={t.key}
+            onClick={() => setActiveTab(t.key)}
+            type="button"
+          >
+            {t.label}
+            {activeTab === t.key && (
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-amber-500" />
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === "session" && <SessionTabContent />}
+      {activeTab === "defaults" && (
+        <div className="rounded-[28px] bg-slate-50/50 p-2">
+          <DefaultsTabContent />
+        </div>
+      )}
+      {activeTab === "approval" && <ApprovalTabContent />}
     </aside>
   )
 }

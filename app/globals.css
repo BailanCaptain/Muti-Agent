@@ -56,4 +56,13 @@ pre,
   .animate-breathe {
     animation: breathe 4s ease-in-out infinite;
   }
+
+  @keyframes approval-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+    50% { box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15); }
+  }
+
+  .approval-pulse {
+    animation: approval-pulse 3s ease-in-out infinite;
+  }
 }

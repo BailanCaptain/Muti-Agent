@@ -321,7 +321,7 @@ export class MessageService {
     if (userTimeline) {
       emit({
         type: "message.created",
-        payload: { threadId: target.threadId, message: userTimeline },
+        payload: { threadId: target.threadId, sessionGroupId: payload.sessionGroupId, message: userTimeline },
       })
     }
 
@@ -543,7 +543,7 @@ export class MessageService {
           if (a2aTimeline) {
             options.emit({
               type: "message.created",
-              payload: { threadId: targetThread.id, message: a2aTimeline },
+              payload: { threadId: targetThread.id, sessionGroupId: thread.sessionGroupId, message: a2aTimeline },
             })
           }
         }
@@ -584,6 +584,7 @@ export class MessageService {
         type: "message.created",
         payload: {
           threadId: thread.id,
+          sessionGroupId: thread.sessionGroupId,
           message: userTimeline,
         },
       })
@@ -633,7 +634,7 @@ export class MessageService {
         if (phase1Timeline) {
           emit({
             type: "message.created",
-            payload: { threadId: thread.id, message: phase1Timeline },
+            payload: { threadId: thread.id, sessionGroupId: thread.sessionGroupId, message: phase1Timeline },
           })
         }
 
@@ -720,6 +721,7 @@ export class MessageService {
         type: "message.created",
         payload: {
           threadId: thread.id,
+          sessionGroupId: thread.sessionGroupId,
           message: assistantTimeline,
         },
       })
@@ -1513,7 +1515,7 @@ export class MessageService {
       if (phase1Timeline) {
         params.emit({
           type: "message.created",
-          payload: { threadId: agentSourceThread.id, message: phase1Timeline },
+          payload: { threadId: agentSourceThread.id, sessionGroupId, message: phase1Timeline },
         })
       }
     }
@@ -1652,7 +1654,7 @@ export class MessageService {
         if (timelineMessage) {
           emit({
             type: "message.created",
-            payload: { threadId: originatorThread.id, message: timelineMessage },
+            payload: { threadId: originatorThread.id, sessionGroupId, message: timelineMessage },
           })
         }
       }
@@ -1791,7 +1793,7 @@ export class MessageService {
     if (timelineMessage) {
       emit({
         type: "message.created",
-        payload: { threadId: originatorThread.id, message: timelineMessage },
+        payload: { threadId: originatorThread.id, sessionGroupId: group.sessionGroupId, message: timelineMessage },
       })
     }
   }

@@ -187,5 +187,41 @@ export class SqliteStore {
         updated_at TEXT NOT NULL
       );
     `)
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS authorization_rules (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        action TEXT NOT NULL,
+        scope TEXT NOT NULL CHECK (scope IN ('thread', 'global')),
+        decision TEXT NOT NULL CHECK (decision IN ('allow', 'deny')),
+        thread_id TEXT,
+        session_group_id TEXT,
+        created_at TEXT NOT NULL,
+        created_by TEXT NOT NULL DEFAULT 'user',
+        reason TEXT
+      );
+    `)
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS authorization_audit (
+        id TEXT PRIMARY KEY,
+        request_id TEXT,
+        provider TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        decision TEXT NOT NULL CHECK (decision IN ('allow', 'deny', 'pending')),
+        scope TEXT,
+        matched_rule_id TEXT,
+        created_at TEXT NOT NULL
+      );
+    `)
+
+    try {
+      this.db.exec("ALTER TABLE session_groups ADD COLUMN project_tag TEXT;")
+    } catch {
+      // Column may already exist
+    }
   }
 }

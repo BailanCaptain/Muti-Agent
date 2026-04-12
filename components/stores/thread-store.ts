@@ -34,6 +34,9 @@ type SessionListItem = {
   id: string
   title: string
   updatedAtLabel: string
+  projectTag?: string
+  pinned?: boolean
+  unreadCount?: number
   previews: Array<{ provider: Provider; alias: string; text: string }>
 }
 
@@ -58,6 +61,7 @@ type ThreadStore = {
   } | null
   timeline: TimelineMessage[]
   invocationStats: InvocationStats[]
+  unreadCounts: Record<string, number>
   bootstrap: () => Promise<void>
   createSessionGroup: () => Promise<void>
   selectSessionGroup: (groupId: string) => Promise<void>
@@ -69,6 +73,8 @@ type ThreadStore = {
   applyThinkingDelta: (messageId: string, delta: string) => void
   appendTimelineMessage: (message: TimelineMessage) => void
   buildSendPayload: (input: string) => SendPayload | null
+  incrementUnread: (groupId: string) => void
+  resetUnread: (groupId: string) => void
 }
 
 const emptyProviders = Object.fromEntries(
@@ -102,6 +108,7 @@ function normalizeSessionGroups(groups: SessionGroupSummary[]): SessionListItem[
     id: group.id,
     title: group.title,
     updatedAtLabel: group.updatedAtLabel,
+    projectTag: group.projectTag,
     previews: group.previews,
   }))
 }
@@ -250,6 +257,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   activeGroup: null,
   timeline: [],
   invocationStats: [],
+  unreadCounts: {},
   bootstrap: async () => {
     // Bootstrap stitches together the static provider catalog and the latest session list before selecting a room.
     const [groupsPayload, providersPayload] = await Promise.all([
@@ -287,6 +295,10 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     )
     set({ activeGroupId: groupId })
     get().replaceActiveGroup(payload.activeGroup)
+    get().resetUnread(groupId)
+
+    const { fetchPending } = await import("./approval-store").then((m) => m.useApprovalStore.getState())
+    void fetchPending(groupId)
   },
   updateModel: async (provider, model) => {
     const thread = get().providers[provider]
@@ -360,6 +372,20 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           : message,
       ),
     }))
+  },
+  incrementUnread: (groupId) => {
+    set((state) => ({
+      unreadCounts: {
+        ...state.unreadCounts,
+        [groupId]: (state.unreadCounts[groupId] ?? 0) + 1,
+      },
+    }))
+  },
+  resetUnread: (groupId) => {
+    set((state) => {
+      const { [groupId]: _, ...rest } = state.unreadCounts
+      return { unreadCounts: rest }
+    })
   },
   buildSendPayload: (input) => {
     // The frontend sends the resolved provider/thread pair so the backend ws route can stay transport-focused.

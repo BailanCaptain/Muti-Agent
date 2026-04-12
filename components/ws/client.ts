@@ -21,6 +21,7 @@ class SocketClient {
   private reconnectAttempt = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private hasOpenedOnce = false;
+  private messageQueue: RealtimeClientEvent[] = [];
 
   connect(callbacks: ConnectCallbacks) {
     this.closedByUser = false;
@@ -39,8 +40,18 @@ class SocketClient {
   }
 
   send(event: RealtimeClientEvent) {
-    // Outgoing chat actions reuse the same event contract as the server-side ws route.
-    this.socket?.send(JSON.stringify(event));
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify(event));
+    } else {
+      this.messageQueue.push(event);
+    }
+  }
+
+  private drainQueue() {
+    while (this.messageQueue.length > 0 && this.socket?.readyState === WebSocket.OPEN) {
+      const event = this.messageQueue.shift()!;
+      this.socket.send(JSON.stringify(event));
+    }
   }
 
   private openSocket(callbacks: ConnectCallbacks) {
@@ -54,6 +65,7 @@ class SocketClient {
       this.hasOpenedOnce = true;
       this.reconnectAttempt = 0;
       callbacks.onOpen();
+      this.drainQueue();
       if (wasReconnect) {
         // B001 Fix 2: after dropped frames during the outage, re-sync state from the server.
         callbacks.onReconnect?.();

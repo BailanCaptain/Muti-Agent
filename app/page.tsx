@@ -2,11 +2,14 @@
 
 import { ChatHeader } from "@/components/chat/chat-header"
 import { Composer } from "@/components/chat/composer"
-// B007: DecisionBoardModal moved into TimelinePanel as inline card
+import { SettingsModal } from "@/components/chat/settings-modal"
+import { ExecutionBar } from "@/components/chat/execution-bar"
 import { SessionSidebar } from "@/components/chat/session-sidebar"
 import { StatusPanel } from "@/components/chat/status-panel"
 import { TimelinePanel } from "@/components/chat/timeline-panel"
+import { useApprovalNotification } from "@/components/hooks/use-approval-notification"
 import { useChatStore } from "@/components/stores/chat-store"
+import { useLayoutStore } from "@/components/stores/layout-store"
 import { useSettingsStore } from "@/components/stores/settings-store"
 import { useApprovalStore } from "@/components/stores/approval-store"
 import { useDecisionBoardStore } from "@/components/stores/decision-board-store"
@@ -14,6 +17,7 @@ import { useDecisionStore } from "@/components/stores/decision-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { PROVIDER_ALIASES, type BlockedDispatchAttempt } from "@multi-agent/shared"
 import { connectRealtime } from "@/components/ws/client"
+import { PanelLeft, PanelLeftClose, PanelRight, PanelRightClose } from "lucide-react"
 import { useEffect } from "react"
 
 function formatBlockedDispatchMessage(attempts: BlockedDispatchAttempt[]) {
@@ -33,6 +37,8 @@ function formatBlockedDispatchMessage(attempts: BlockedDispatchAttempt[]) {
 }
 
 export default function HomePage() {
+  useApprovalNotification()
+
   const bootstrap = useThreadStore((state) => state.bootstrap)
   const selectSessionGroup = useThreadStore((state) => state.selectSessionGroup)
   const applyAssistantDelta = useThreadStore((state) => state.applyAssistantDelta)
@@ -41,6 +47,7 @@ export default function HomePage() {
   const replaceActiveGroup = useThreadStore((state) => state.replaceActiveGroup)
   const setStatus = useChatStore((state) => state.setStatus)
   const setSocketState = useSettingsStore((state) => state.setSocketState)
+  const incrementUnread = useThreadStore((state) => state.incrementUnread)
   const addApprovalRequest = useApprovalStore((state) => state.addRequest)
   const removeApprovalRequest = useApprovalStore((state) => state.removeRequest)
   const addDecisionRequest = useDecisionStore((state) => state.addRequest)
@@ -88,7 +95,12 @@ export default function HomePage() {
         }
 
         if (event.type === "message.created") {
-          appendTimelineMessage(event.payload.message)
+          const activeId = useThreadStore.getState().activeGroupId
+          if (event.payload.sessionGroupId && event.payload.sessionGroupId !== activeId) {
+            incrementUnread(event.payload.sessionGroupId)
+          } else {
+            appendTimelineMessage(event.payload.message)
+          }
           return
         }
 
@@ -104,6 +116,11 @@ export default function HomePage() {
 
         if (event.type === "approval.resolved") {
           removeApprovalRequest(event.payload.requestId)
+          return
+        }
+
+        if (event.type === "approval.auto_granted") {
+          setStatus(`${event.payload.action} — 已自动放行 (规则匹配)`)
           return
         }
 
@@ -143,6 +160,7 @@ export default function HomePage() {
     addApprovalRequest,
     addDecisionRequest,
     appendTimelineMessage,
+    incrementUnread,
     applyAssistantDelta,
     applyThinkingDelta,
     bootstrap,
@@ -156,13 +174,53 @@ export default function HomePage() {
     setStatus,
   ])
 
+  const sidebarCollapsed = useLayoutStore((state) => state.sidebarCollapsed)
+  const statusPanelCollapsed = useLayoutStore((state) => state.statusPanelCollapsed)
+  const toggleSidebar = useLayoutStore((state) => state.toggleSidebar)
+  const toggleStatusPanel = useLayoutStore((state) => state.toggleStatusPanel)
+
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[radial-gradient(circle_at_20%_20%,rgba(245,208,254,0.18),transparent_35%),radial-gradient(circle_at_80%_20%,rgba(255,244,214,0.18),transparent_35%),radial-gradient(circle_at_50%_80%,rgba(224,242,254,0.18),transparent_35%),linear-gradient(180deg,#f8fafc_0%,#f1f5f9_100%)]">
-      <SessionSidebar />
+      {sidebarCollapsed ? (
+        <div className="flex h-screen w-12 shrink-0 flex-col items-center border-r border-slate-200/70 bg-[linear-gradient(180deg,#fcf9f4_0%,#f7f8fb_100%)] py-4">
+          <button
+            className="rounded-lg p-2 text-slate-400 transition hover:bg-white/70 hover:text-slate-600"
+            onClick={toggleSidebar}
+            title="展开侧边栏"
+            type="button"
+          >
+            <PanelLeft className="h-5 w-5" />
+          </button>
+        </div>
+      ) : (
+        <SessionSidebar />
+      )}
       <main className="flex flex-1 flex-col overflow-hidden">
-        <ChatHeader />
+        <ChatHeader>
+          {!sidebarCollapsed && (
+            <button
+              className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+              onClick={toggleSidebar}
+              title="折叠侧边栏"
+              type="button"
+            >
+              <PanelLeftClose className="h-4 w-4" />
+            </button>
+          )}
+          {!statusPanelCollapsed && (
+            <button
+              className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+              onClick={toggleStatusPanel}
+              title="折叠状态面板"
+              type="button"
+            >
+              <PanelRightClose className="h-4 w-4" />
+            </button>
+          )}
+        </ChatHeader>
         <div className="flex flex-1 flex-col overflow-hidden bg-white/45 backdrop-blur-sm">
           <TimelinePanel />
+          <ExecutionBar />
           <div className="p-6">
             <div className="mx-auto max-w-4xl">
               <Composer />
@@ -170,7 +228,21 @@ export default function HomePage() {
           </div>
         </div>
       </main>
-      <StatusPanel />
+      {statusPanelCollapsed ? (
+        <div className="flex h-screen w-12 shrink-0 flex-col items-center border-l border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(255,255,255,0.86))] py-4">
+          <button
+            className="rounded-lg p-2 text-slate-400 transition hover:bg-white/70 hover:text-slate-600"
+            onClick={toggleStatusPanel}
+            title="展开状态面板"
+            type="button"
+          >
+            <PanelRight className="h-5 w-5" />
+          </button>
+        </div>
+      ) : (
+        <StatusPanel />
+      )}
+      <SettingsModal />
     </div>
   )
 }

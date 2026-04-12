@@ -1,107 +1,380 @@
 "use client"
 
+import { useApprovalStore } from "@/components/stores/approval-store"
 import { useThreadStore } from "@/components/stores/thread-store"
-import { ChevronDown, Plus, Search, Star } from "lucide-react"
-import { useState } from "react"
+import {
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  Search,
+  Pin,
+} from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { ProviderAvatar } from "./provider-avatar"
+import { SessionContextMenu } from "./session-context-menu"
+
+/* ── localStorage helpers for pinned sessions ── */
+
+const PINNED_KEY = "multi-agent:pinned-sessions"
+
+function loadPinned(): Set<string> {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(PINNED_KEY) : null
+    return raw ? new Set(JSON.parse(raw) as string[]) : new Set()
+  } catch {
+    return new Set()
+  }
+}
+
+function savePinned(pinned: Set<string>) {
+  try {
+    localStorage.setItem(PINNED_KEY, JSON.stringify([...pinned]))
+  } catch {
+    // localStorage may be unavailable
+  }
+}
+
+/* ── Types ── */
+
+type ProjectGroup = {
+  tag: string
+  label: string
+  items: Array<{
+    id: string
+    title: string
+    updatedAtLabel: string
+    projectTag?: string
+    pinned: boolean
+    unreadCount: number
+    previews: Array<{ provider: string; alias: string; text: string }>
+  }>
+}
+
+/* ── Component ── */
 
 export function SessionSidebar() {
   const sessionGroups = useThreadStore((state) => state.sessionGroups)
   const activeGroupId = useThreadStore((state) => state.activeGroupId)
   const createGroup = useThreadStore((state) => state.createSessionGroup)
   const selectGroup = useThreadStore((state) => state.selectSessionGroup)
-  const [search, setSearch] = useState("")
+  const unreadCounts = useThreadStore((state) => state.unreadCounts)
+  const providers = useThreadStore((state) => state.providers)
+  const pending = useApprovalStore((s) => s.pending)
 
-  const filteredGroups = sessionGroups.filter(
-    (group) =>
-      group.title.toLowerCase().includes(search.toLowerCase()) ||
-      group.previews.some((preview) => preview.text.toLowerCase().includes(search.toLowerCase())),
+  const [search, setSearch] = useState("")
+  const [pinned, setPinned] = useState<Set<string>>(new Set())
+  const [collapsedTags, setCollapsedTags] = useState<Set<string>>(new Set())
+
+  // Context menu
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    groupId: string
+    isPinned: boolean
+  } | null>(null)
+
+  // Load pinned from localStorage on mount
+  useEffect(() => {
+    setPinned(loadPinned())
+  }, [])
+
+  const togglePin = useCallback(
+    (groupId: string) => {
+      setPinned((prev) => {
+        const next = new Set(prev)
+        if (next.has(groupId)) {
+          next.delete(groupId)
+        } else {
+          next.add(groupId)
+        }
+        savePinned(next)
+        return next
+      })
+    },
+    [],
   )
 
+  const toggleCollapse = useCallback((tag: string) => {
+    setCollapsedTags((prev) => {
+      const next = new Set(prev)
+      if (next.has(tag)) {
+        next.delete(tag)
+      } else {
+        next.add(tag)
+      }
+      return next
+    })
+  }, [])
+
+  const runningGroupIds = useMemo(() => {
+    const running = new Set<string>()
+    const anyRunning = Object.values(providers).some((p) => p.running)
+    if (anyRunning && activeGroupId) {
+      running.add(activeGroupId)
+    }
+    return running
+  }, [providers, activeGroupId])
+
+  const waitingApprovalGroupIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const req of pending) {
+      ids.add(req.sessionGroupId)
+    }
+    return ids
+  }, [pending])
+
+  // Filter by search
+  const filtered = useMemo(() => {
+    const query = search.toLowerCase()
+    if (!query) return sessionGroups
+    return sessionGroups.filter(
+      (group) =>
+        group.title.toLowerCase().includes(query) ||
+        group.previews.some((p) => p.text.toLowerCase().includes(query)),
+    )
+  }, [sessionGroups, search])
+
+  // Enrich items with pinned + unread
+  const enriched = useMemo(
+    () =>
+      filtered.map((group) => ({
+        ...group,
+        pinned: pinned.has(group.id),
+        unreadCount: unreadCounts[group.id] ?? 0,
+      })),
+    [filtered, pinned, unreadCounts],
+  )
+
+  // Split into pinned and project groups
+  const pinnedItems = useMemo(() => enriched.filter((g) => g.pinned), [enriched])
+
+  const projectGroups = useMemo(() => {
+    const unpinned = enriched.filter((g) => !g.pinned)
+    const tagMap = new Map<string, typeof unpinned>()
+    for (const item of unpinned) {
+      const tag = item.projectTag ?? "__ungrouped__"
+      if (!tagMap.has(tag)) tagMap.set(tag, [])
+      tagMap.get(tag)!.push(item)
+    }
+
+    const groups: ProjectGroup[] = []
+    for (const [tag, items] of tagMap) {
+      groups.push({
+        tag,
+        label: tag === "__ungrouped__" ? "未分组" : tag,
+        items,
+      })
+    }
+    // Sort: named groups first (alphabetically), ungrouped last
+    groups.sort((a, b) => {
+      if (a.tag === "__ungrouped__") return 1
+      if (b.tag === "__ungrouped__") return -1
+      return a.label.localeCompare(b.label)
+    })
+    return groups
+  }, [enriched])
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent, groupId: string, isPinned: boolean) => {
+      e.preventDefault()
+      setContextMenu({ x: e.clientX, y: e.clientY, groupId, isPinned })
+    },
+    [],
+  )
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), [])
+
   return (
-    <aside className="flex h-screen w-[288px] shrink-0 flex-col border-r border-slate-200/70 bg-[linear-gradient(180deg,#fcf9f4_0%,#f7f8fb_100%)] px-4 py-5">
-      <div className="mb-5 flex items-center justify-between">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-            房间
-          </p>
-          <h2 className="mt-1 text-xl font-semibold tracking-[0.01em] text-slate-900">会话列表</h2>
-        </div>
+    <aside className="flex h-screen w-[280px] shrink-0 flex-col border-r border-slate-800/20 bg-slate-950 px-3 py-4">
+      {/* Header */}
+      <div className="mb-4 flex items-center justify-between px-1">
+        <h2 className="text-sm font-semibold tracking-wide text-slate-200">
+          会话
+        </h2>
         <button
-          className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_12px_24px_rgba(245,158,11,0.22)] transition hover:bg-amber-600"
+          className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-amber-600"
           onClick={() => void createGroup()}
           type="button"
         >
-          <Plus className="h-3.5 w-3.5" />
+          <Plus className="h-3 w-3" />
           新建
         </button>
       </div>
 
-      <label className="relative mb-6 block">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+      {/* Search */}
+      <label className="relative mb-3 block px-1">
+        <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
         <input
-          className="w-full rounded-2xl border border-slate-200/80 bg-white/80 py-2.5 pl-10 pr-4 text-sm text-slate-700 outline-none transition focus:border-amber-200 focus:bg-white focus:ring-4 focus:ring-amber-100/70"
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="搜索房间或预览..."
+          className="w-full rounded-md border border-slate-800/40 bg-slate-900/80 py-1.5 pl-8 pr-3 text-sm text-slate-300 placeholder-slate-600 outline-none transition focus:border-slate-700 focus:ring-1 focus:ring-slate-700"
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="搜索..."
           type="text"
           value={search}
         />
       </label>
 
+      {/* Scrollable list */}
       <div className="flex-1 overflow-y-auto">
-        <div className="mb-3 flex items-center justify-between px-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-          <span>大厅</span>
-          <span>刚刚</span>
-        </div>
-
-        <div className="mb-3 flex items-center justify-between px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-          <div className="flex items-center gap-1.5">
-            <ChevronDown className="h-3 w-3" />
-            <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
-            <span>已置顶</span>
+        {/* Pinned section */}
+        {pinnedItems.length > 0 && (
+          <div className="mb-2">
+            <div className="mb-1 flex items-center gap-1.5 px-2 py-1">
+              <Pin className="h-3 w-3 text-amber-500" />
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+                已置顶
+              </span>
+              <span className="ml-auto rounded-full bg-amber-500/20 px-1.5 text-[10px] font-mono text-amber-400">
+                {pinnedItems.length}
+              </span>
+            </div>
+            <div className="space-y-0.5">
+              {pinnedItems.map((group) => (
+                <SessionCard
+                  key={group.id}
+                  group={group}
+                  active={activeGroupId === group.id}
+                  running={runningGroupIds.has(group.id)}
+                  waitingApproval={waitingApprovalGroupIds.has(group.id)}
+                  onClick={() => void selectGroup(group.id)}
+                  onContextMenu={(e) =>
+                    handleContextMenu(e, group.id, true)
+                  }
+                />
+              ))}
+            </div>
           </div>
-          <span className="rounded-full bg-amber-100 px-1.5 py-0.5 font-mono text-amber-600">
-            {filteredGroups.length}
-          </span>
-        </div>
+        )}
 
-        <div className="space-y-1.5">
-          {filteredGroups.map((group) => (
+        {/* Project groups */}
+        {projectGroups.map((pg) => (
+          <div key={pg.tag} className="mb-1">
             <button
-              className={`group w-full rounded-[24px] p-3 text-left transition ${
-                activeGroupId === group.id
-                  ? "bg-white shadow-[0_16px_35px_rgba(15,23,42,0.06)] ring-1 ring-amber-100/90"
-                  : "hover:bg-white/70"
-              }`}
-              key={group.id}
-              onClick={() => void selectGroup(group.id)}
+              className="mb-0.5 flex w-full items-center gap-1.5 px-2 py-1 text-left"
+              onClick={() => toggleCollapse(pg.tag)}
               type="button"
             >
-              <div className="mb-2 flex items-start justify-between gap-3">
-                <div className="flex -space-x-2">
-                  {group.previews.map((preview) => (
-                    <ProviderAvatar
-                      className="ring-2 ring-white"
-                      identity={preview.provider}
-                      key={preview.provider}
-                      size="xs"
-                    />
-                  ))}
-                </div>
-                <span className="shrink-0 text-[10px] text-slate-400">{group.updatedAtLabel}</span>
-              </div>
-
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="truncate text-sm font-semibold text-slate-700">{group.title}</h3>
-                <Star className="h-3.5 w-3.5 shrink-0 text-slate-300 transition group-hover:text-amber-300" />
-              </div>
-              <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-400">
-                {group.previews.find((preview) => preview.text)?.text || "尚无消息。"}
-              </p>
+              {collapsedTags.has(pg.tag) ? (
+                <ChevronRight className="h-3 w-3 text-slate-600" />
+              ) : (
+                <ChevronDown className="h-3 w-3 text-slate-600" />
+              )}
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+                {pg.label}
+              </span>
+              <span className="ml-auto rounded-full bg-slate-800 px-1.5 text-[10px] font-mono text-slate-500">
+                {pg.items.length}
+              </span>
             </button>
-          ))}
+            {!collapsedTags.has(pg.tag) && (
+              <div className="space-y-0.5">
+                {pg.items.map((group) => (
+                  <SessionCard
+                    key={group.id}
+                    group={group}
+                    active={activeGroupId === group.id}
+                    running={runningGroupIds.has(group.id)}
+                    waitingApproval={waitingApprovalGroupIds.has(group.id)}
+                    onClick={() => void selectGroup(group.id)}
+                    onContextMenu={(e) =>
+                      handleContextMenu(e, group.id, group.pinned)
+                    }
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Context menu */}
+      {contextMenu && (
+        <SessionContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          groupId={contextMenu.groupId}
+          isPinned={contextMenu.isPinned}
+          onClose={closeContextMenu}
+          onTogglePin={togglePin}
+        />
+      )}
+    </aside>
+  )
+}
+
+/* ── Session Card ── */
+
+type SessionCardProps = {
+  group: {
+    id: string
+    title: string
+    updatedAtLabel: string
+    unreadCount: number
+    previews: Array<{ provider: string; alias: string; text: string }>
+  }
+  active: boolean
+  running: boolean
+  waitingApproval: boolean
+  onClick: () => void
+  onContextMenu: (e: React.MouseEvent) => void
+}
+
+function SessionCard({ group, active, running, waitingApproval, onClick, onContextMenu }: SessionCardProps) {
+  return (
+    <button
+      className={`group relative w-full rounded-md px-2.5 py-2 text-left transition ${
+        active
+          ? "border-l-2 border-amber-500 bg-slate-800/80"
+          : "border-l-2 border-transparent hover:bg-slate-900/50"
+      }`}
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+      type="button"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          {/* Running indicator */}
+          {running && (
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+            </span>
+          )}
+          {/* Waiting approval indicator */}
+          {!running && waitingApproval && (
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+            </span>
+          )}
+          <h3 className="truncate text-sm font-medium text-slate-200">
+            {group.title}
+          </h3>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {group.unreadCount > 0 && (
+            <span className="rounded-full bg-amber-500 px-1.5 text-[10px] font-medium text-white">
+              {group.unreadCount}
+            </span>
+          )}
+          <span className="text-[10px] text-slate-600">{group.updatedAtLabel}</span>
         </div>
       </div>
-    </aside>
+
+      <div className="mt-1.5 flex items-center gap-2">
+        <div className="flex -space-x-1.5">
+          {group.previews.map((preview) => (
+            <ProviderAvatar
+              className="ring-1 ring-slate-950"
+              identity={preview.provider as "claude" | "codex" | "gemini"}
+              key={preview.provider}
+              size="xs"
+            />
+          ))}
+        </div>
+        <p className="min-w-0 flex-1 truncate text-xs text-slate-500">
+          {group.previews.find((p) => p.text)?.text || "尚无消息"}
+        </p>
+      </div>
+    </button>
   )
 }

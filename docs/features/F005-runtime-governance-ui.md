@@ -1,14 +1,14 @@
 ---
 id: F005
 title: 运行时治理 UI — 权限系统 + 面板重构 + 侧边栏重做
-status: plan
+status: merged
 owner: 黄仁勋
 created: 2026-04-11
 ---
 
 # F005 — 运行时治理 UI：权限系统 + 面板重构 + 侧边栏重做
 
-**Status**: plan
+**Status**: merged (dev, commit b623b14)
 **Created**: 2026-04-11
 
 ## Why
@@ -35,35 +35,35 @@ created: 2026-04-11
 ## Acceptance Criteria
 
 ### Phase 1: 权限治理核心（后端 + 协议）
-- [ ] AC1: 审批事件结构化指纹：每个权限请求携带 `{tool, target, risk, provider}` 结构化字段，替换 stderr 文本猜测
-- [ ] AC2: ApprovalManager 支持三级 scope（once / thread / global），`respond()` 方法正确处理 scope 参数
-- [ ] AC3: 权限规则 SQLite 持久化：global 规则跨会话生效，thread 规则随会话结束清除
-- [ ] AC4: 规则匹配支持 glob 通配符（如 `npm *` 匹配 `npm test`、`npm install` 等）
-- [ ] AC5: `GET /api/approval/pending?sessionGroupId=` 接口，支持刷新后恢复 pending 状态
-- [ ] AC6: 规则命中时自动放行，不触发前端审批卡片
+- [x] AC1: 审批事件结构化指纹：每个权限请求携带 `{tool, target, risk, provider}` 结构化字段，替换 stderr 文本猜测
+- [x] AC2: ApprovalManager 支持三级 scope（once / thread / global），`respond()` 方法正确处理 scope 参数
+- [x] AC3: 权限规则 SQLite 持久化：global 规则跨会话生效，thread 规则随会话结束清除
+- [x] AC4: 规则匹配支持 glob 通配符（如 `npm *` 匹配 `npm test`、`npm install` 等）
+- [x] AC5: `GET /api/authorization/pending?sessionGroupId=` 接口，支持刷新后恢复 pending 状态
+- [x] AC6: 规则命中时自动放行，不触发前端审批卡片
 
 ### Phase 2: 前端审批卡片 + 执行条 + 通知
-- [ ] AC7: ApprovalCard 渐进式 scope UI：默认 3 按钮（允许仅此次 / 更多选项▼ / 拒绝），展开后显示会话级/全局级选项
-- [ ] AC8: 执行条（Execution Bar）：输入框上方常驻，显示各 agent 运行状态 + pending 审批计数
-- [ ] AC9: `useApprovalNotification` hook：桌面 Notification（requireInteraction）+ tab title 闪烁 + 去重
-- [ ] AC10: 审批卡片边缘低频黄色呼吸脉冲，方便滚屏时定位
+- [x] AC7: ApprovalCard 渐进式 scope UI：默认 3 按钮（允许仅此次 / 更多选项▼ / 拒绝），展开后显示会话级/全局级选项
+- [x] AC8: 执行条（Execution Bar）：输入框上方常驻，显示各 agent 运行状态 + pending 审批计数
+- [x] AC9: `useApprovalNotification` hook：桌面 Notification（requireInteraction）+ tab title 闪烁 + 去重
+- [x] AC10: 审批卡片边缘低频黄色呼吸脉冲，方便滚屏时定位
 
 ### Phase 3: 右侧面板 Tab 重构 + 独立设置 Modal
-- [ ] AC11: 右侧面板改为 3 Tab：会话态（当前模型/effort/运行状态）/ 全局态（默认配置）/ 审批规则（当前会话 pending + 最近规则）
-- [ ] AC12: 独立设置 Modal：权限规则管理 tab（查看/删除/一键重置） + 预留扩展 tab 位
-- [ ] AC13: 消除模型配置双入口冗余：一个 provider 卡片只有一个模型选择器，通过 toggle 切换"仅此会话" vs "全局默认"
+- [x] AC11: 右侧面板改为 3 Tab：会话态（当前模型/effort/运行状态）/ 全局态（默认配置）/ 审批规则（当前会话 pending + 最近规则）
+- [x] AC12: 独立设置 Modal：权限规则管理 tab（查看/删除/一键重置） + 预留扩展 tab 位
+- [x] AC13: 消除模型配置双入口冗余：一个 provider 卡片只有一个模型选择器，通过 toggle 切换"仅此会话" vs "全局默认"
 
 ### Phase 4: 左侧侧边栏重做
-- [ ] AC14: 会话按项目/工作区分组，支持折叠展开
-- [ ] AC15: 右键上下文菜单：重命名 / 置顶 / 删除 / 归档
-- [ ] AC16: 未读标记：非活跃会话有新消息时显示 unread 计数
-- [ ] AC17: 运行态信号：侧边栏会话项显示 running / waiting approval 状态
-- [ ] AC18: 极简 Linear 视觉风格：黑底白字、极细线条、靠间距体现层次
-- [ ] AC19: 后端 project 数据模型支持（SessionGroup 增加 projectTag 字段）
+- [x] AC14: 会话按项目/工作区分组，支持折叠展开
+- [x] AC15: 右键上下文菜单：重命名 / 置顶 / 删除 / 归档
+- [x] AC16: 未读标记：非活跃会话有新消息时显示 unread 计数
+- [x] AC17: 运行态信号：侧边栏会话项显示 running / waiting approval 状态
+- [x] AC18: 极简 Linear 视觉风格：黑底白字、极细线条、靠间距体现层次
+- [x] AC19: 后端 project 数据模型支持（SessionGroup 增加 projectTag 字段）
 
 ### 贯穿项
-- [ ] AC20: WebSocket 指数退避重连 + 断连消息缓冲
-- [ ] AC21: 三栏布局支持面板折叠/展开（至少），最好支持拖拽调宽 + localStorage 持久化
+- [x] AC20: WebSocket 指数退避重连 + 断连消息缓冲
+- [x] AC21: 三栏布局支持面板折叠/展开（至少），最好支持拖拽调宽 + localStorage 持久化
 
 ## Dependencies
 
@@ -92,6 +92,11 @@ created: 2026-04-11
 | 2026-04-11 | 小孙拍板全部决策项 |
 | 2026-04-11 | Kickoff |
 | 2026-04-11 | Plan — 18 Tasks, 4 Phases, 21 AC 全覆盖 |
+| 2026-04-11 | Phase 1 后端核心完成: 结构化指纹 + glob 匹配 + SQLite 持久化 + 规则自动放行 |
+| 2026-04-11 | Phase 2 前端完成: 三级 scope 卡片 + 执行条 + 桌面通知 + pending 恢复 |
+| 2026-04-12 | Phase 3+4+贯穿项完成 (3 agent 并行) |
+| 2026-04-12 | 范德彪 review: P1/P2a/P2b 修复 + AC17 补修 |
+| 2026-04-12 | 小孙拍板放行，squash merge 到 dev (b623b14) |
 
 ## Links
 

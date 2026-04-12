@@ -1,8 +1,9 @@
 "use client"
 
 import { PawPrint } from "lucide-react"
+import type { ReactNode } from "react"
 
-export function ChatHeader() {
+export function ChatHeader({ children }: { children?: ReactNode }) {
   return (
     <header className="flex items-center justify-between border-b border-slate-200/70 bg-white/70 px-6 py-4 backdrop-blur-xl">
       <div className="flex items-center gap-4">
@@ -16,6 +17,7 @@ export function ChatHeader() {
           </div>
         </div>
       </div>
+      {children && <div className="flex items-center gap-1">{children}</div>}
     </header>
   )
 }

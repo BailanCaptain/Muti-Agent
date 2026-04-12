@@ -55,6 +55,7 @@ export class SessionService {
       id: group.id,
       title: group.title,
       updatedAtLabel: new Date(group.updatedAt).toLocaleString("zh-CN"),
+      projectTag: group.projectTag ?? undefined,
       previews: group.previews,
     }))
   }
@@ -206,6 +207,10 @@ export class SessionService {
       message.groupId,
       message.groupRole,
     )
+  }
+
+  updateSessionGroupProjectTag(groupId: string, tag: string | null) {
+    this.repository.updateSessionGroupProjectTag(groupId, tag)
   }
 
   updateThread(threadId: string, model: string | null, nativeSessionId: string | null) {

@@ -4,17 +4,19 @@ import cors from "@fastify/cors"
 import websocket from "@fastify/websocket"
 import { PROVIDER_ALIASES } from "@multi-agent/shared"
 import Fastify from "fastify"
-import { SessionRepository } from "./db/repositories"
+import { AuthorizationRuleRepository, SessionRepository } from "./db/repositories"
 import { SqliteStore } from "./db/sqlite"
 import { AppEventBus } from "./events/event-bus"
 import { registerMcpServer } from "./mcp/server"
 import { ApprovalManager } from "./orchestrator/approval-manager"
+import { AuthorizationRuleStore } from "./orchestrator/authorization-rule-store"
 import { ChainStarterResolver } from "./orchestrator/chain-starter-resolver"
 import { DecisionBoard } from "./orchestrator/decision-board"
 import { DecisionManager } from "./orchestrator/decision-manager"
 import { DispatchOrchestrator } from "./orchestrator/dispatch"
 import { InvocationRegistry } from "./orchestrator/invocation-registry"
 import { SettlementDetector } from "./orchestrator/settlement-detector"
+import { registerAuthorizationRoutes } from "./routes/authorization"
 import { registerCallbackRoutes } from "./routes/callbacks"
 import { registerDecisionBoardRoutes } from "./routes/decision-board"
 import { registerMessageRoutes } from "./routes/messages"
@@ -51,7 +53,9 @@ export async function createApiServer(options: {
   const dispatch = new DispatchOrchestrator(sessions, PROVIDER_ALIASES, invocations)
   const messages = new MessageService(sessions, dispatch, invocations, eventBus, options.apiBaseUrl)
   const memoryService = new MemoryService(repository)
-  const approvals = new ApprovalManager((event) => broadcaster.broadcast(event))
+  const authRuleRepo = new AuthorizationRuleRepository(sqlite)
+  const ruleStore = new AuthorizationRuleStore(authRuleRepo)
+  const approvals = new ApprovalManager((event) => broadcaster.broadcast(event), ruleStore)
   messages.setApprovalManager(approvals)
   const skillRegistry = new SkillRegistry()
   const manifestPath = path.resolve(__dirname, "../../../multi-agent-skills/manifest.yaml")
@@ -213,6 +217,7 @@ export async function createApiServer(options: {
   })
   registerMessageRoutes(app)
   registerRuntimeConfigRoutes(app)
+  registerAuthorizationRoutes(app, { approvals, ruleStore })
   registerDecisionBoardRoutes(app, { messageService: messages })
   registerCallbackRoutes(app, {
     repository,

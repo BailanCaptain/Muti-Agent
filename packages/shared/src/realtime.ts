@@ -91,6 +91,7 @@ export type SessionGroupSummary = {
   id: string
   title: string
   updatedAtLabel: string
+  projectTag?: string
   previews: Array<{
     provider: Provider
     alias: string
@@ -124,6 +125,12 @@ export type ActiveGroupView = {
   providers: Record<Provider, ProviderThreadView>
 }
 
+export type ApprovalFingerprint = {
+  tool: string
+  target?: string
+  risk: "low" | "medium" | "high"
+}
+
 export type ApprovalRequest = {
   requestId: string
   provider: Provider
@@ -131,12 +138,26 @@ export type ApprovalRequest = {
   threadId: string
   sessionGroupId: string
   action: string
+  fingerprint: ApprovalFingerprint
   reason: string
   context?: string
   createdAt: string
 }
 
 export type ApprovalScope = "once" | "thread" | "global"
+
+export type AuthorizationRule = {
+  id: string
+  provider: Provider | "*"
+  action: string
+  scope: "thread" | "global"
+  decision: "allow" | "deny"
+  threadId?: string
+  sessionGroupId?: string
+  createdAt: string
+  createdBy: string
+  reason?: string
+}
 
 export type DecisionOption = {
   id: string
@@ -245,6 +266,7 @@ export type RealtimeServerEvent =
       type: "message.created"
       payload: {
         threadId: string
+        sessionGroupId?: string
         message: TimelineMessage
       }
     }
@@ -275,6 +297,14 @@ export type RealtimeServerEvent =
       payload: {
         requestId: string
         granted: boolean
+      }
+    }
+  | {
+      type: "approval.auto_granted"
+      payload: {
+        provider: Provider
+        action: string
+        ruleId: string
       }
     }
   | {

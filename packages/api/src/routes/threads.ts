@@ -39,6 +39,19 @@ export function registerThreadRoutes(
     return { groupId };
   });
 
+  app.patch("/api/session-groups/:id", async (request: FastifyRequest, reply: FastifyReply) => {
+    const params = request.params as { id: string };
+    const body = request.body as { projectTag?: string | null };
+
+    if (body.projectTag === undefined) {
+      reply.code(400);
+      return { error: "缺少 projectTag 字段。" };
+    }
+
+    options.sessions.updateSessionGroupProjectTag(params.id, body.projectTag ?? null);
+    return { ok: true };
+  });
+
   app.get("/api/session-groups/:groupId", async (request) => {
     const params = request.params as { groupId: string };
     return {

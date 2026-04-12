@@ -1,7 +1,14 @@
 import crypto from "node:crypto"
-import type { ApprovalRequest, ApprovalScope, Provider, RealtimeServerEvent } from "@multi-agent/shared"
+import type {
+  ApprovalFingerprint,
+  ApprovalRequest,
+  ApprovalScope,
+  Provider,
+  RealtimeServerEvent,
+} from "@multi-agent/shared"
+import type { AuthorizationRuleStore } from "./authorization-rule-store"
 
-type ApprovalResult = { status: "granted" | "denied" | "timeout" }
+export type ApprovalResult = { status: "granted" | "denied" | "timeout" }
 
 type PendingEntry = {
   request: ApprovalRequest
@@ -14,6 +21,7 @@ export class ApprovalManager {
 
   constructor(
     private readonly emit: (event: RealtimeServerEvent) => void,
+    private readonly ruleStore?: AuthorizationRuleStore,
     private readonly timeoutMs = 120_000,
   ) {}
 
@@ -24,9 +32,29 @@ export class ApprovalManager {
     threadId: string
     sessionGroupId: string
     action: string
+    fingerprint?: ApprovalFingerprint
     reason: string
     context?: string
   }): Promise<ApprovalResult> {
+    const fingerprint: ApprovalFingerprint = params.fingerprint ?? {
+      tool: params.action,
+      risk: "medium",
+    }
+
+    if (this.ruleStore) {
+      const rule = this.ruleStore.match(params.provider, params.action, params.threadId)
+      if (rule) {
+        if (rule.decision === "allow") {
+          this.emit({
+            type: "approval.auto_granted",
+            payload: { provider: params.provider, action: params.action, ruleId: rule.id },
+          })
+          return Promise.resolve({ status: "granted" })
+        }
+        return Promise.resolve({ status: "denied" })
+      }
+    }
+
     const requestId = crypto.randomUUID()
     const request: ApprovalRequest = {
       requestId,
@@ -35,6 +63,7 @@ export class ApprovalManager {
       threadId: params.threadId,
       sessionGroupId: params.sessionGroupId,
       action: params.action,
+      fingerprint,
       reason: params.reason,
       context: params.context,
       createdAt: new Date().toISOString(),
@@ -53,15 +82,38 @@ export class ApprovalManager {
     })
   }
 
-  respond(requestId: string, granted: boolean, _scope: ApprovalScope): boolean {
+  respond(requestId: string, granted: boolean, scope: ApprovalScope): boolean {
     const entry = this.pending.get(requestId)
     if (!entry) return false
 
     clearTimeout(entry.timer)
     this.pending.delete(requestId)
+
+    if (scope !== "once" && this.ruleStore) {
+      this.ruleStore.addRule({
+        provider: entry.request.provider,
+        action: entry.request.action,
+        scope,
+        decision: granted ? "allow" : "deny",
+        ...(scope === "thread"
+          ? { threadId: entry.request.threadId, sessionGroupId: entry.request.sessionGroupId }
+          : {}),
+      })
+    }
+
     this.emit({ type: "approval.resolved", payload: { requestId, granted } })
     entry.resolve({ status: granted ? "granted" : "denied" })
     return true
+  }
+
+  getPending(sessionGroupId: string): ApprovalRequest[] {
+    const result: ApprovalRequest[] = []
+    for (const entry of this.pending.values()) {
+      if (entry.request.sessionGroupId === sessionGroupId) {
+        result.push(entry.request)
+      }
+    }
+    return result
   }
 
   cancelAll(sessionGroupId: string): void {

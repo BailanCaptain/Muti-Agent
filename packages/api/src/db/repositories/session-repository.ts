@@ -37,6 +37,7 @@ function hydrateMessage(row: MessageRow): MessageRecord {
 type SessionGroupRow = {
   id: string
   title: string
+  projectTag: string | null
   createdAt: string
   updatedAt: string
 }
@@ -59,7 +60,7 @@ export class SessionRepository {
   listSessionGroups() {
     const groups = this.store.db
       .prepare(
-        `SELECT id, title, created_at as createdAt, updated_at as updatedAt
+        `SELECT id, title, project_tag as projectTag, created_at as createdAt, updated_at as updatedAt
          FROM session_groups
          ORDER BY updated_at DESC`,
       )
@@ -69,6 +70,7 @@ export class SessionRepository {
       const threads = this.listThreadsByGroup(group.id)
       return {
         ...group,
+        projectTag: group.projectTag ?? null,
         previews: threads.map((thread) => ({
           provider: thread.provider,
           alias: thread.alias,
@@ -90,6 +92,12 @@ export class SessionRepository {
       .run(sessionGroupId, title ?? `新会话 ${now.slice(0, 19).replace("T", " ")}`, now, now)
 
     return sessionGroupId
+  }
+
+  updateSessionGroupProjectTag(groupId: string, tag: string | null) {
+    this.store.db
+      .prepare("UPDATE session_groups SET project_tag = ? WHERE id = ?")
+      .run(tag, groupId)
   }
 
   createThread(sessionGroupId: string, provider: Provider, currentModel: string | null) {
