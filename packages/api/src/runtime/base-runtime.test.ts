@@ -461,3 +461,53 @@ test("resolveNodeScript falls back to the executable name when no candidate scri
     }
   }
 });
+
+// B010-fix regression test: stall fast-kill must not fire while stderr (429 retries) is active.
+// Before the fix, Gemini got killed mid-retry-cycle because stderr didn't update lastActivityMs.
+test("stall fast-kill deferred while stderr is active (B010-fix: 429 retry protection)", async () => {
+  const child = new FakeChildProcess();
+  const probeFactory: RuntimeDependencies["createLivenessProbe"] = (pid, config) =>
+    new ProcessLivenessProbe(pid, config, {
+      platform: "linux",
+      isPidAlive: () => true,
+      sampleCpuTime: async () => 42 // flat CPU — Gemini sleeping between retries
+    });
+
+  const runtime = new TestRuntime({
+    spawn: () => child as never,
+    platform: "win32",
+    createLivenessProbe: probeFactory,
+    forceKillProcessTree: () => child.close(null)
+  });
+
+  const handle = runtime.runStream(
+    createInput({
+      heartbeatIntervalMs: 5,
+      inactivityTimeoutMs: 60_000,
+      shutdownGracePeriodMs: 5,
+      livenessSampleIntervalMs: 5,
+      livenessStallWarningMs: 30,  // very short stall threshold
+      livenessSoftWarningMs: 15
+    })
+  );
+
+  // Emit stdout once to start the activity clock, then go silent on stdout.
+  child.stdout.write(JSON.stringify({ type: "message", role: "assistant", content: "working...", delta: false }) + "\n");
+
+  // Keep spamming stderr every 10ms (simulates 429 retries).
+  // With the fix, this should keep the stall clock from firing.
+  const retrySpammer = setInterval(() => {
+    child.stderr.write("Attempt N failed with status 429. Retrying...\n");
+  }, 10);
+
+  // Wait longer than the stall threshold (30ms) — process should NOT be killed.
+  await delay(80);
+  clearInterval(retrySpammer);
+
+  // Now let the process complete normally.
+  child.stdout.write(JSON.stringify({ type: "turn_complete" }) + "\n");
+  child.close(0);
+
+  const result = await handle.promise;
+  assert.equal(result.exitCode, 0, "Gemini should NOT be killed while 429 retries are active on stderr");
+});

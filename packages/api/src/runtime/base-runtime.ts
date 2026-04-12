@@ -263,6 +263,7 @@ export abstract class BaseCliRuntime implements AgentRuntime {
     let terminationStarted = false;
     let lastActivityMs = now();
     let lastActivityAt = new Date(lastActivityMs).toISOString();
+    let lastStderrMs = 0; // B010-fix: tracks stderr separately for stall fast-kill
     let heartbeatTimer: ReturnType<typeof globalThis.setInterval> | undefined;
     let forceKillTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
 
@@ -303,7 +304,8 @@ export abstract class BaseCliRuntime implements AgentRuntime {
 
     const forwardStderr = (chunk: string) => {
       // Deliberately NOT touching lastActivityMs here.
-      hooks.onActivity?.({ stream: "stderr", at: new Date(now()).toISOString(), chunk });
+      lastStderrMs = now(); // B010-fix: update stderr timestamp for stall check
+      hooks.onActivity?.({ stream: "stderr", at: new Date(lastStderrMs).toISOString(), chunk });
 
       // Fast-fail 框架：runtime 通过覆写 classifyStderrChunk() 返回非 null 的
       // { reason } 即视为终止信号，立即 requestTermination。框架本身是通用能力，
@@ -474,12 +476,18 @@ export abstract class BaseCliRuntime implements AgentRuntime {
 
           // Fast-path: probe says the process is idle-silent long enough to be considered stuck.
           // Kill even if inactivityTimeoutMs hasn't elapsed yet — the CPU-flat signal is strong.
-          // Windows path can only do PID-existence checks, so we can't trust its idle-silent
-          // signal to differentiate "thinking" from "stuck" — leave the fast-path disabled there.
+          //
+          // B010-fix: use the later of stdout and stderr as the stall baseline.
+          // If Gemini is actively printing 429 retry messages (stderr), it's in its bounded
+          // retry loop (10 attempts × ≤30s backoff ≈ 300s max) — not stuck. Killing at 180s
+          // would cut the loop short. The regular inactivityTimeoutMs check (below) still
+          // uses stdout-only lastActivityMs so the 5-minute watchdog is unaffected.
+          const lastAnyMs = Math.max(lastActivityMs, lastStderrMs);
+          const stallElapsed = now() - lastAnyMs;
           if (
             probe &&
             probe.canClassifySilentState() &&
-            elapsed >= lifecycle.livenessStallWarningMs &&
+            stallElapsed >= lifecycle.livenessStallWarningMs &&
             probe.getState() === "idle-silent"
           ) {
             stalled = true;

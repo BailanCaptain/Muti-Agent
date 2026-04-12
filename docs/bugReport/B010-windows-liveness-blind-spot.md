@@ -110,3 +110,15 @@ this.sampleCpuTime = deps.sampleCpuTime ??
 **集成验证**：
 - Windows 上跑 Gemini，人为让其长时间静默（例如极大 prompt），
   确认 ~3 分钟内收到 `suspected_stall` 警告并强杀，而不是等满 5 分钟。
+
+---
+
+## 7. 已知回归
+
+**B011**（2026-04-13）：B010 启用 Windows stall 快杀后，Gemini 在 429 重试期间被误杀。
+
+根因：B010 启用了 `canClassifySilentState()=true`，但 `forwardStderr` 故意不更新 `lastActivityMs`。组合结果 = Gemini 在 stderr 打印 429 重试消息时 stall clock 不重置 → 180s 后被杀。
+
+修复：`base-runtime.ts` 新增 `lastStderrMs`，stall 判定用 `Math.max(lastActivityMs, lastStderrMs)`。
+
+详见 `docs/bugReport/B011-stall-kill-mid-retry.md`。

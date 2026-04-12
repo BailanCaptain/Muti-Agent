@@ -120,8 +120,9 @@
   - `docs/features/F003-a2a-convergence.md#根因（架构级，一句话）`
   - commit `1a018d4 feat(F003): A2A 运行时闭环 ...`
   - 历史补丁对比：B003（feat-lifecycle 双重进入）/ B004（settlement premature）都曾被当成"另一个独立 bug"修，实际是同一根因的外层表现
+  - **B002→B006→B010→B011 症状族**：Gemini "停了/卡了"改了四轮（classifier → stderr fast-fail → liveness probe → stall 判定），每轮解决上轮问题、引入新问题。第四轮（B011）才发现根因是组件间假设耦合（stderr 不算 activity + CPU 平算 idle + Windows 启用 stall 快杀），见 LL-008
 - 原理（可选）：每个抽象层都有一个"表达力上限"——超出就靠下层表达力硬撑。反复在同一层修同类问题，等于在该层的表达力上限处打补丁。打补丁的次数是根因距离的度量：第 3 次打补丁意味着至少要上抛 1 层。
-- 关联：`docs/features/F003-a2a-convergence.md`, `docs/bugReport/B001-B004`（同一 A2A 症状族的历次补丁）, `multi-agent-skills/self-evolution/SKILL.md`
+- 关联：`docs/features/F003-a2a-convergence.md`, `docs/bugReport/B001-B004`（A2A 症状族）, `docs/bugReport/B010-B011`（Gemini 停了症状族）, `multi-agent-skills/self-evolution/SKILL.md`
 
 ### LL-005: 清状态前必须审查"兜底"是否真的能兜
 - 状态：validated
@@ -169,7 +170,7 @@
   - `docs/features/F004-context-memory-authoritative.md#AC5` (v1→v2→v3 决策轨迹)
   - Codex 2026-04-11 手动实测 6/6 日志（决定性反例）
 - 原理（可选）：外部工具（CLI / SDK / daemon）的内建行为是**时间浸泡过的设计决策**——即使某些看起来不合理（"为什么要等 4 分钟"），也往往背后有我们不知道的权衡（transient rate / 多租户 fairness / 服务端负载均衡）。在没有决定性证据之前，假设外部工具是对的，我们是错的；这比假设自己永远是对的优化带来的事故要少得多。LL-004 讲的是"垂直"上抛（上一层代码），LL-006 讲的是"横向"删除（我们不该参与这个决策）。
-- 关联：`docs/features/F004-context-memory-authoritative.md`, `docs/bugReport/B002-gemini-429-handoff.md`, `docs/bugReport/B006-gemini-startup-429.md`, `docs/lessons/lessons-learned.md#LL-004`
+- 关联：`docs/features/F004-context-memory-authoritative.md`, `docs/bugReport/B002-gemini-429-handoff.md`, `docs/bugReport/B006-gemini-startup-429.md`, `docs/bugReport/B011-stall-kill-mid-retry.md`, `docs/lessons/lessons-learned.md#LL-004`, `docs/lessons/lessons-learned.md#LL-008`
 
 ---
 
@@ -190,3 +191,27 @@
   - `C:\Users\-\Desktop\Multi-Agent\.gemini\settings.local.json`（`oauth-personal` 配置）
   - `.env.example`（无任何 `*_API_KEY` 条目）
 - 关联：`docs/bugReport/B010-windows-liveness-blind-spot.md`
+
+### LL-008: 改一个组件前，必须端到端走完信号链
+- 状态：validated
+- 更新时间：2026-04-13
+
+- 坑：B010 在 liveness probe 层加了 Windows CPU 采样并启用 `canClassifySilentState()=true`，4 个 probe 单元测试全绿，commit message 自信地说"Windows 和 Unix 走相同的 CPU 分类路径"。但没有走完从 stderr 输入到进程被杀的完整链路。隔天桂芬在 429 重试的第 6 次（距最后 stdout 184 秒）被 stall 快杀误杀。追踪信号链发现：B010 启用了第 ⑥ 跳（`canClassifySilentState=true`），但第 ② 跳（`forwardStderr` 故意不更新 `lastActivityMs`）的假设在新状态下和 ⑥ 冲突——stderr 活跃 + CPU 平 + stall 快杀启用 = 误杀。两个假设各自合理，但**从未被组合验证**。
+- 根因：每个组件有自己的隐含假设（probe: "CPU 平=卡死"；activity timer: "stderr=噪声"）。这些假设在组件独立测试时各自成立，但组合后可能冲突。改一个组件的行为（B010 启用 stall 快杀）等于改变了其他组件假设的前提条件，但修改者只验证了自己那一层。
+- 触发条件：
+  1. 改动启用/禁用了一条控制路径（if 条件从 false 变 true 或反之）
+  2. 这条路径依赖其他组件的输出/状态（例如 stall 判定依赖 activity timer + probe state）
+  3. 改动只测了自己改的组件，没有端到端集成测试
+- 修复：`base-runtime.ts` 新增 `lastStderrMs`，stall 判定用 `Math.max(lastActivityMs, lastStderrMs)`。新增端到端集成测试覆盖"stdout 沉默 + stderr 活跃 → 不被杀"场景。
+- 防护：
+  1. **信号链走查**：任何涉及"启用/禁用控制路径"的改动，PR description 必须画出从输入信号到最终动作的完整链路（每一跳列出：输入 → 判定 → 输出），并标注每一跳的假设。不完整 = 不能合入。
+  2. **假设兼容性检查**：信号链上有 N 个跳，就有 N 个假设。改了其中一个跳的行为后，必须回答"其他 N-1 个假设在新行为下还成立吗？"
+  3. **端到端集成测试**：涉及进程生命周期（spawn / kill / timeout）的改动，必须有至少一个集成测试覆盖"从外部信号输入到进程最终状态"的完整路径。单元测试不够——B010 的 4 个 probe 单元测试全绿但没能发现组合问题。
+  4. **实测验证**：涉及外部 CLI 行为的改动，必须在真实环境跑一遍（不是 mock）。B010 没有在 Windows 上实际跑一遍"Gemini 遇 429 重试 → 观察是否被误杀"。
+- 来源锚点：
+  - `packages/api/src/runtime/base-runtime.ts:264-266,305-308,479-495`（信号链的三个关键跳）
+  - `docs/bugReport/B011-stall-kill-mid-retry.md`（完整信号链追踪）
+  - `docs/bugReport/B010-windows-liveness-blind-spot.md`（引入回归的改动）
+  - `packages/api/src/runtime/base-runtime.test.ts`（B011 新增的端到端测试）
+- 原理（可选）：多组件系统的 bug 往往不在单个组件内部，而在组件间的**假设耦合**处。每个组件维护者都觉得"我这层的假设合理"，但没人负责验证假设的组合。单元测试验证的是"组件内部逻辑对不对"，不是"组件间假设兼不兼容"——后者只有端到端测试或信号链走查才能覆盖。LL-004 讲的是"同一症状修多次 → 上抬一层"，LL-008 讲的是"改一个组件 → 横扫所有耦合假设"。一个是纵向（层级），一个是横向（组件间）。
+- 关联：`docs/bugReport/B010-windows-liveness-blind-spot.md`, `docs/bugReport/B011-stall-kill-mid-retry.md`, `docs/lessons/lessons-learned.md#LL-004`, `docs/lessons/lessons-learned.md#LL-006`
