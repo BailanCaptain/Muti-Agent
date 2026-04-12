@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process"
 import type { SessionRepository } from "../db/repositories/session-repository"
 import type { SessionMemoryRecord } from "../db/sqlite"
 
@@ -121,21 +122,22 @@ export class MemoryService {
   }
 
   /**
-   * Shared Gemini API call for abstractive summarization.
-   * Falls back to extractive summary if no API key or on failure.
+   * Abstractive summarization via Gemini CLI subprocess (OAuth subscription).
+   * Falls back to extractive summary on any error or timeout.
    */
   private async callGeminiSummarizer(
     extractive: string,
     allMessages: Array<{ role: string; content: string; alias: string; createdAt: string }>,
   ): Promise<string> {
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ""
-    if (!apiKey) return extractive
+    const conversationText = allMessages
+      .slice(-50)
+      .map((m) => {
+        const speaker = m.role === "user" ? "用户" : m.alias
+        return `[${speaker} ${m.createdAt}]: ${m.content.slice(0, 500)}`
+      })
+      .join("\n")
 
-    try {
-      const model = "gemini-3.1-pro-preview"
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
-
-      const prompt = `你是一个会话摘要生成器。请根据以下对话记录，生成一份 500-1000 字的结构化摘要。
+    const prompt = `你是一个会话摘要生成器。请根据以下对话记录，生成一份 500-1000 字的结构化摘要。
 
 格式要求：
 ## 话题
@@ -154,32 +156,42 @@ export class MemoryService {
 ${extractive}
 
 以下是完整对话记录（按时间排序）：
-${allMessages.slice(-50).map((m) => {
-  const speaker = m.role === "user" ? "用户" : m.alias
-  return `[${speaker} ${m.createdAt}]: ${m.content.slice(0, 500)}`
-}).join("\n")}`
+${conversationText}`
 
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
+    return new Promise((resolve) => {
+      let settled = false
+      const done = (result: string) => {
+        if (!settled) {
+          settled = true
+          resolve(result)
+        }
+      }
+
+      const child = spawn("gemini", ["-p", prompt], {
+        stdio: ["ignore", "pipe", "pipe"],
+        cwd: process.cwd(),
       })
 
-      if (!response.ok) {
-        throw new Error(`Gemini API returned ${response.status}`)
-      }
+      let stdout = ""
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString()
+      })
 
-      const data = (await response.json()) as {
-        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
-      }
-      const summary = data.candidates?.[0]?.content?.parts?.[0]?.text
-      if (!summary) throw new Error("Empty response from Gemini API")
-      return summary
-    } catch {
-      return extractive
-    }
+      child.on("close", (code) => {
+        const text = stdout.trim()
+        done(code === 0 && text ? text : extractive)
+      })
+
+      child.on("error", () => done(extractive))
+
+      // 60s hard timeout — Gemini CLI 重试可能较慢
+      const timer = setTimeout(() => {
+        child.kill()
+        done(extractive)
+      }, 60_000)
+
+      child.on("close", () => clearTimeout(timer))
+    })
   }
 
   getLastSummary(sessionGroupId: string): string | null {

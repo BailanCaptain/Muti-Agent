@@ -170,3 +170,23 @@
   - Codex 2026-04-11 手动实测 6/6 日志（决定性反例）
 - 原理（可选）：外部工具（CLI / SDK / daemon）的内建行为是**时间浸泡过的设计决策**——即使某些看起来不合理（"为什么要等 4 分钟"），也往往背后有我们不知道的权衡（transient rate / 多租户 fairness / 服务端负载均衡）。在没有决定性证据之前，假设外部工具是对的，我们是错的；这比假设自己永远是对的优化带来的事故要少得多。LL-004 讲的是"垂直"上抛（上一层代码），LL-006 讲的是"横向"删除（我们不该参与这个决策）。
 - 关联：`docs/features/F004-context-memory-authoritative.md`, `docs/bugReport/B002-gemini-429-handoff.md`, `docs/bugReport/B006-gemini-startup-429.md`, `docs/lessons/lessons-learned.md#LL-004`
+
+---
+
+### LL-007: 用 CLI 订阅的项目不要写 REST API Key 路径
+- 状态：validated
+- 更新时间：2026-04-13
+
+- 坑：`memory-service.ts` 的 `callGeminiSummarizer` 用 `GEMINI_API_KEY` 走 REST API 调 Gemini，但项目全程用 OAuth 订阅（`oauth-personal`），`.env` 里根本没有 API Key，导致摘要器永远在 `!apiKey` 处 fallback，50 行代码从未执行过一次。
+- 根因：写代码时没对照实际认证方式。REST API Key 路径和 CLI OAuth 路径是互斥的两套认证，混用等于写死代码。
+- 触发条件：项目用 CLI（`claude` / `gemini` / `codex`）走订阅登录，同时代码里又有"需要 API Key"的 `process.env.XXX_API_KEY` 分支。
+- 修复：删除 REST API 调用路径，改为 `spawn("gemini", ["-p", prompt])` 子进程调用，复用 CLI 的 OAuth session。
+- 防护：
+  1. **新写 LLM 调用前确认认证方式**：项目用 CLI 订阅 → 只能走 CLI 子进程；项目有 API Key → 才能走 SDK / REST。二者不可混写。
+  2. **`process.env.*_API_KEY` 检查点**：凡是出现 `process.env.GEMINI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY`，PR review 必须问"这个 key 在 `.env.example` 里有吗？没有就是死代码"。
+  3. **`.env.example` 是 API 调用的许可清单**：`.env.example` 里没有的 key，代码里不能有对应的 `process.env` 读取分支。
+- 来源锚点：
+  - `packages/api/src/services/memory-service.ts:127-183`（原死代码，2026-04-13 修复）
+  - `C:\Users\-\Desktop\Multi-Agent\.gemini\settings.local.json`（`oauth-personal` 配置）
+  - `.env.example`（无任何 `*_API_KEY` 条目）
+- 关联：`docs/bugReport/B010-windows-liveness-blind-spot.md`
