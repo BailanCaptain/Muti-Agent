@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ProcessLivenessProbe, parseCpuTime } from "./liveness-probe";
+import { ProcessLivenessProbe, parseCpuTime, parseCpuTimeSeconds } from "./liveness-probe";
 
 test("parseCpuTime handles h:mm:ss and mm:ss.SS formats", () => {
   assert.equal(parseCpuTime(""), 0);
@@ -141,10 +141,12 @@ test("dead PID flips state to dead and stops sampling CPU", async () => {
   assert.equal(probe.shouldExtendTimeout(), false);
 });
 
-test("win32 platform treats silence as idle-silent (no CPU sampling)", async () => {
+test("win32 platform uses CPU sampling (growing CPU → busy-silent)", async () => {
   const { probe, clock, sampleOnce } = createProbe({ platform: "win32", cpuSamples: [999, 999] });
+  await sampleOnce();    // prev=0 → curr=999, growing
   clock.tick(150);
-  await sampleOnce();
+  await sampleOnce();    // prev=999 → curr=999, flat (but first sample made it grow)
+  // cpuGrowing reflects the LAST delta: 999→999 = flat → idle-silent
   assert.equal(probe.getState(), "idle-silent");
 });
 
@@ -153,4 +155,36 @@ test("isHardCapExceeded compares elapsed against factor * timeout", () => {
   assert.equal(probe.isHardCapExceeded(100, 100), false);
   assert.equal(probe.isHardCapExceeded(199, 100), false);
   assert.equal(probe.isHardCapExceeded(200, 100), true);
+});
+
+// B010: Windows CPU sampling via PowerShell Get-Process
+test("parseCpuTimeSeconds converts PowerShell float seconds to milliseconds", () => {
+  assert.equal(parseCpuTimeSeconds(""), 0);
+  assert.equal(parseCpuTimeSeconds("1.234"), 1234);
+  assert.equal(parseCpuTimeSeconds("0.5"), 500);
+  assert.equal(parseCpuTimeSeconds("60"), 60_000);
+  assert.equal(parseCpuTimeSeconds("   2.5\n"), 2500);
+});
+
+test("win32 with growing CPU → busy-silent (B010: CPU sampling now works on Windows)", async () => {
+  const { probe, clock, sampleOnce } = createProbe({ platform: "win32", cpuSamples: [100, 250] });
+  await sampleOnce();       // prev=0 → curr=100, growing
+  clock.tick(150);          // past sampleIntervalMs
+  await sampleOnce();       // prev=100 → curr=250, growing
+  assert.equal(probe.getState(), "busy-silent");
+  assert.equal(probe.shouldExtendTimeout(), true);
+});
+
+test("win32 with flat CPU → idle-silent (B010: proper classification)", async () => {
+  const { probe, clock, sampleOnce } = createProbe({ platform: "win32", cpuSamples: [100, 100, 100] });
+  await sampleOnce();       // prev=0 → curr=100, growing
+  clock.tick(150);
+  await sampleOnce();       // prev=100 → curr=100, flat
+  assert.equal(probe.getState(), "idle-silent");
+  assert.equal(probe.shouldExtendTimeout(), false);
+});
+
+test("canClassifySilentState returns true on win32 (B010)", () => {
+  const { probe } = createProbe({ platform: "win32" });
+  assert.equal(probe.canClassifySilentState(), true);
 });

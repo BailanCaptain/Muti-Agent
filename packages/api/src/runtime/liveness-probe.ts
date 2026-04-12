@@ -103,6 +103,41 @@ function defaultSampleCpuTime(pid: number): Promise<number> {
   });
 }
 
+/** Parse PowerShell `Get-Process .CPU` output (float seconds) to milliseconds. */
+export function parseCpuTimeSeconds(raw: string): number {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return 0;
+  }
+  const val = parseFloat(trimmed);
+  return isNaN(val) ? 0 : Math.round(val * 1000);
+}
+
+// B010: Windows CPU sampling via PowerShell Get-Process.
+// `wmic` is deprecated on Windows 11; PowerShell's Get-Process is the supported path.
+function defaultSampleCpuTimeWindows(pid: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "powershell",
+      ["-NoProfile", "-NonInteractive", "-Command",
+        `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).CPU`],
+      (err, stdout) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        const trimmed = stdout.trim();
+        if (!trimmed) {
+          // Empty output means the process was not found.
+          reject(new Error(`pid ${pid} not found`));
+          return;
+        }
+        resolve(parseCpuTimeSeconds(trimmed));
+      }
+    );
+  });
+}
+
 export class ProcessLivenessProbe {
   readonly config: LivenessProbeConfig;
   private readonly pid: number;
@@ -136,7 +171,9 @@ export class ProcessLivenessProbe {
     this.clearIntervalImpl = deps.clearInterval ?? globalThis.clearInterval;
     this.platform = deps.platform ?? process.platform;
     this.isPidAlive = deps.isPidAlive ?? defaultIsPidAlive;
-    this.sampleCpuTime = deps.sampleCpuTime ?? defaultSampleCpuTime;
+    this.sampleCpuTime =
+      deps.sampleCpuTime ??
+      (this.platform === "win32" ? defaultSampleCpuTimeWindows : defaultSampleCpuTime);
     this.lastActivityAt = this.now();
   }
 
@@ -169,7 +206,9 @@ export class ProcessLivenessProbe {
    * flagged as idle-silent and should NOT be used to fast-path kill a process.
    */
   canClassifySilentState(): boolean {
-    return this.platform !== "win32";
+    // B010: Windows now has CPU sampling via PowerShell Get-Process,
+    // so silent-state classification is available on all platforms.
+    return true;
   }
 
   /** True if elapsed time has already passed the bounded extension cap. */
@@ -210,13 +249,6 @@ export class ProcessLivenessProbe {
 
     if (!this.isPidAlive(this.pid)) {
       this.pidAlive = false;
-      return;
-    }
-
-    // Windows: no `ps`. We can only verify PID existence. Treat silence as idle so stall detection still fires.
-    if (this.platform === "win32") {
-      this.cpuGrowing = false;
-      this.emitSilenceWarnings();
       return;
     }
 
