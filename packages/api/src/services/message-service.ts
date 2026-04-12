@@ -50,7 +50,7 @@ type ActiveRun = ReturnType<typeof runTurn>
 type EmitEvent = (event: RealtimeServerEvent) => void
 
 // B003: skills in the linear development chain (feat-lifecycle → writing-plans
-// → worktree → tdd → quality-gate → vision-guardian → requesting-review →
+// → worktree → tdd → quality-gate → acceptance-guardian → requesting-review →
 // receiving-review → merge-gate) must NOT re-enter via naive `.includes()`
 // keyword matching on user messages. A mid-flow message like "这个 bugfix 我先
 // TDD 一下" would otherwise make the agent reload feat-lifecycle / tdd from the
@@ -71,7 +71,7 @@ export const LINEAR_FLOW_SKILLS: ReadonlySet<string> = new Set([
   "worktree",
   "tdd",
   "quality-gate",
-  "vision-guardian",
+  "acceptance-guardian",
   "requesting-review",
   "receiving-review",
   "merge-gate",
@@ -1190,10 +1190,13 @@ export class MessageService {
                     entry.to.provider as import("@multi-agent/shared").Provider,
                   )
 
-              // Vision Guardian detection: when skill match includes vision-guardian,
-              // activate zero-context mode with custom system prompt.
+              // Acceptance Guardian detection: when skill match includes
+              // acceptance-guardian, activate zero-context mode with the
+              // dedicated guardian system prompt.
               const isGuardianMode = !!(
-                skillHint && skillHint.includes("vision-guardian")
+                skillHint &&
+                (skillHint.includes("acceptance-guardian") ||
+                  skillHint.includes("vision-guardian"))
               )
 
               const targetThread = this.dispatch.resolveThread(threadId)
@@ -1211,7 +1214,7 @@ export class MessageService {
                 targetAlias: entry.to.agentId,
                 phase1HeaderText,
                 skillHint: isGuardianMode ? null : skillHint,
-                visionGuardianMode: isGuardianMode,
+                guardianMode: isGuardianMode,
               }, this.memoryService)
 
               // Determine groupId/groupRole for collapsible groups:

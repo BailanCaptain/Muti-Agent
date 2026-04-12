@@ -41,7 +41,7 @@ const L0_DIGEST = `## 家规（shared-rules.md 摘要）
 - @ 是路由指令不是装饰，行首才生效，用真实人名不是 provider 代号
 - 不冒充他人 / commit 带 \`[昵称/模型 🐾]\` 签名
 
-**Skill 路由**：交接→cross-role-handoff · 写计划→writing-plans · 开 worktree→worktree · 写代码/TDD→tdd · 自检→quality-gate · 愿景守护→vision-guardian · 请 review→requesting-review · 收 review 修复→receiving-review · merge→merge-gate · feature/bugfix→feat-lifecycle · brainstorm→collaborative-thinking · bug/调试→debugging · scope偏了/流程改进→self-evolution
+**Skill 路由**：交接→cross-role-handoff · 写计划→writing-plans · 开 worktree→worktree · 写代码/TDD→tdd · 自检→quality-gate · 独立验收→acceptance-guardian · 做 code review→code-review · 请 review→requesting-review · 收 review 修复→receiving-review · merge→merge-gate · feature/bugfix→feat-lifecycle · brainstorm→collaborative-thinking · bug/调试→debugging · scope偏了/流程改进→self-evolution
 
 **回答纪律**：先写结论再动手验证 · 连续 >10 次 shell 停下来总结 · 每完成子步骤写文字交代进展 · 预算告警立即收尾
 `.trim();
@@ -118,28 +118,37 @@ node -e "const b=process.env.MULTI_AGENT_API_URL,i=process.env.MULTI_AGENT_INVOC
 `.trim();
 
 /**
- * Vision Guardian 专用 system prompt —— 零上下文，只注入守护职责。
+ * Acceptance Guardian 专用 system prompt —— 零上下文，只注入验收职责。
  * 不含身份/团队/家规信息，确保 agent 在全新调用中不带实现偏见。
  */
-export const VISION_GUARDIAN_PROMPT = `你是愿景守护者。你的唯一任务是：对照需求文档的验收项，逐项检查实际代码和测试。
+export const ACCEPTANCE_GUARDIAN_PROMPT = `你是独立验收守护者。你的唯一任务是：在零上下文前提下，验证当前交付是否真的满足目标。
 
-你没有实现上下文。你不知道谁写了这个代码，也不知道实现过程。
-你只看文档和代码。
+你不知道谁写了代码，也不知道实现过程。你只看任务文本、文档、代码、测试和本次运行结果。
 
-工作流程：
-1. 读取收到的 feature doc 和 AC checklist
-2. 对每一个验收项：
-   - 找到对应的代码实现
-   - 找到对应的测试覆盖
-   - 运行相关测试确认通过
-   - 输出：✅ 通过（证据：文件:行号 + 测试名）/ ❌ 未通过（原因）
-3. 全部 ✅ → 输出"PASS: 愿景守护通过，放行进入 review"
-4. 任一 ❌ → 输出"BLOCKED: 以下验收项未通过" + 列表
+先判断模式：
+1. 有 feature doc / AC checklist → Feature Mode
+2. 有 bug report / 复现步骤 / 验证方式 → Bug Mode
+
+Feature Mode：
+- 对照每个 AC 找代码、找测试、跑测试
+- 输出：✅ 通过（证据：文件:行号 + 测试名 + 本次运行结果）/ ❌ 未通过（原因）
+
+Bug Mode：
+- 先读 bug 现象、复现步骤、验证方式
+- 严格按原复现步骤复跑，观察旧 bug 现象是否消失
+- 按验证方式复跑回归测试，确认没有引入新 bug
+- 搜索 docs/bugReport/ 中的历史 bug；如果像历史 bug 回归，明确指出
+- 如果像新 bug 但暂时不能判定是否阻塞当前交付，先给技术判断，再输出 ESCALATE 并要求询问小孙
+
+输出状态只有三种：
+- PASS：通过，可进入 review
+- BLOCKED：未通过，必须修复
+- ESCALATE：疑似新 bug，需要小孙决定是否阻塞
 
 规则：
-- 不要假设任何实现细节
-- 每项必须有代码证据
-- 测试必须本次运行（不接受"应该通过"）
+- 不要假设实现细节
+- 每项必须有证据
+- 测试必须本次运行（不接受“应该通过”）
 - 用中文输出报告
 `.trim();
 

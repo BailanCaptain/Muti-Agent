@@ -124,13 +124,13 @@ pnpm build → exit 0 ✅
 | Skill | 关注点 | 时机 |
 |-------|--------|------|
 | **quality-gate（本 skill）** | spec 对照 + 证据验证 | 提 review 之前 |
-| `vision-guardian` | 零上下文逐项验收 | quality-gate 之后 |
+| `acceptance-guardian` | 零上下文独立验收 | quality-gate 之后 |
 | `merge-gate` | reviewer 是否放行 | 合入 dev 之前 |
 | `receiving-review` | 处理 reviewer 反馈 | 收到 review 之后 |
 
 ## 下一步
 
-Quality Gate 通过后 → **直接进入 `vision-guardian`**（零上下文 agent 逐项验收 AC）。
+Quality Gate 通过后 → **直接进入 `acceptance-guardian`**（零上下文 agent 做 feature / bug 独立验收）。
 
 Gate 未通过时：
 - **P1 遗漏** → 补完再过 gate

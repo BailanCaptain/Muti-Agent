@@ -3,29 +3,29 @@ import test from "node:test"
 import { assembleDirectTurnPrompt, assemblePrompt } from "./context-assembler"
 import type { ContextMessage } from "./context-snapshot"
 import { POLICY_FULL, POLICY_GUARDIAN } from "./context-policy"
-import { VISION_GUARDIAN_PROMPT } from "../runtime/agent-prompts"
+import { ACCEPTANCE_GUARDIAN_PROMPT } from "../runtime/agent-prompts"
 
-// ── Vision Guardian mode ────────────────────────────────────────────────
+// ── Guardian mode ───────────────────────────────────────────────────────
 
-test("visionGuardianMode replaces system prompt with VISION_GUARDIAN_PROMPT", async () => {
+test("guardianMode replaces system prompt with ACCEPTANCE_GUARDIAN_PROMPT", async () => {
   const result = await assemblePrompt({
     provider: "claude",
     threadId: "t1",
     sessionGroupId: "sg1",
     nativeSessionId: null,
     policy: POLICY_GUARDIAN,
-    task: "[vision-guardian] 请验收 F001\n\n## AC\n- [ ] 用户能登录",
+    task: "[acceptance-guardian] 请验收 F001\n\n## AC\n- [ ] 用户能登录",
     roomSnapshot: [],
     sourceAlias: "范德彪",
     targetAlias: "黄仁勋",
-    visionGuardianMode: true,
+    guardianMode: true,
   }, null)
 
-  assert.equal(result.systemPrompt, VISION_GUARDIAN_PROMPT)
+  assert.equal(result.systemPrompt, ACCEPTANCE_GUARDIAN_PROMPT)
 })
 
-test("visionGuardianMode passes task as-is without A2A wrapping", async () => {
-  const task = "[vision-guardian] 请验收 F001\n\n## AC\n- [ ] 用户能登录"
+test("guardianMode passes task as-is without A2A wrapping", async () => {
+  const task = "[acceptance-guardian] 请验收 F001\n\n## AC\n- [ ] 用户能登录"
   const result = await assemblePrompt({
     provider: "claude",
     threadId: "t1",
@@ -36,7 +36,7 @@ test("visionGuardianMode passes task as-is without A2A wrapping", async () => {
     roomSnapshot: [],
     sourceAlias: "范德彪",
     targetAlias: "黄仁勋",
-    visionGuardianMode: true,
+    guardianMode: true,
   }, null)
 
   // Content should be the raw task, not wrapped with [A2A 协作请求] headers
@@ -45,7 +45,7 @@ test("visionGuardianMode passes task as-is without A2A wrapping", async () => {
   assert.ok(!result.content.includes("你是 黄仁勋"))
 })
 
-test("visionGuardianMode strips all context injection", async () => {
+test("guardianMode strips all context injection", async () => {
   const result = await assemblePrompt({
     provider: "claude",
     threadId: "t1",
@@ -59,7 +59,7 @@ test("visionGuardianMode strips all context injection", async () => {
     ],
     sourceAlias: "范德彪",
     targetAlias: "黄仁勋",
-    visionGuardianMode: true,
+    guardianMode: true,
   }, null)
 
   // No room context leaks

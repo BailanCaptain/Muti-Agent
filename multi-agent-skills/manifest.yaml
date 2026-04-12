@@ -3,7 +3,7 @@
 
 # ─── 开发流程链 ─────────────────────────────────────────
 # feat-lifecycle → Design Gate → writing-plans → worktree → tdd
-#     → quality-gate → vision-guardian → requesting-review → receiving-review
+#     → quality-gate → acceptance-guardian → requesting-review → receiving-review
 #     → merge-gate → feat-lifecycle(completion)
 
 skills:
@@ -139,18 +139,20 @@ skills:
       - "merge"
     agents: [claude, codex, gemini]
     requires_mcp: []
-    next: ["vision-guardian"]
+    next: ["acceptance-guardian"]
     sop_step: 2
     slashCommands:
       - name: "/gate"
         description: "质量门禁自检"
 
-  # ── 愿景守护 ──
-  vision-guardian:
-    description: 零上下文愿景守护，专用 agent 逐项验收 AC
+  # ── 独立验收守护 ──
+  acceptance-guardian:
+    description: 零上下文独立验收，覆盖 feature AC 验收与 bug 修复复现验收
     triggers:
+      - "独立验收"
+      - "acceptance guardian"
+      - "bug 验收"
       - "愿景守护"
-      - "vision guardian"
       - "逐项验收"
     not_for:
       - "自检"
@@ -161,7 +163,30 @@ skills:
     sop_step: 2
     slashCommands:
       - name: "/guardian"
-        description: "愿景守护验收"
+        description: "独立验收守护"
+
+  # ── Code Review ──
+  code-review:
+    description: 严格代码审查，聚焦 bug、风险、行为回归与缺失测试
+    triggers:
+      - "code review"
+      - "代码审查"
+      - "审查代码"
+      - "review 当前 diff"
+      - "review 这段代码"
+    not_for:
+      - "请别人 review"
+      - "请求 review"
+      - "收到 review"
+      - "review 意见"
+      - "修复 review"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: []
+    sop_step: null
+    slashCommands:
+      - name: "/review"
+        description: "执行代码审查"
 
   # ── 调试 ──
   debugging:
@@ -299,13 +324,13 @@ sop_navigation:
     pitfalls:
       - "声称完成但没跑全量测试"
 
-  vision-guardian:
-    suggested_skill: vision-guardian
+  acceptance-guardian:
+    suggested_skill: acceptance-guardian
     hard_rules:
-      - "实现者不能自己做愿景守护"
+      - "实现者不能自己做独立验收"
       - "守护 agent 必须零上下文"
     pitfalls:
-      - "跳过守护直接提 review"
+      - "跳过独立验收直接提 review"
 
   request-review:
     suggested_skill: requesting-review

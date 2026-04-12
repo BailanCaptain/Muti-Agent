@@ -98,7 +98,7 @@ test("B003: LINEAR_FLOW_SKILLS covers the full development chain", () => {
     "worktree",
     "tdd",
     "quality-gate",
-    "vision-guardian",
+    "acceptance-guardian",
     "requesting-review",
     "receiving-review",
     "merge-gate",
@@ -110,4 +110,9 @@ test("B003: LINEAR_FLOW_SKILLS covers the full development chain", () => {
   for (const name of ["debugging", "self-evolution", "collaborative-thinking", "cross-role-handoff"]) {
     assert.ok(!LINEAR_FLOW_SKILLS.has(name), `${name} must NOT be in LINEAR_FLOW_SKILLS`)
   }
+})
+
+test("B003: explicit code review still routes to code-review (orthogonal)", () => {
+  const names = orthogonalHintNames(loadedRegistry(), "请做一次代码审查")
+  assert.ok(names.includes("code-review"), `got: ${names.join(",")}`)
 })

@@ -72,7 +72,8 @@
 | 开 worktree / 隔离开发 | `worktree` |
 | 写代码 / TDD / 实现 | `tdd` |
 | 开发完了 / 自检 | `quality-gate` |
-| 愿景守护 / 逐项验收 | `vision-guardian` |
+| 独立验收 / feature AC / bug 修复验收 | `acceptance-guardian` |
+| 做 code review / 审查 diff | `code-review` |
 | 请求 review | `requesting-review` |
 | 收到 review 并修复 | `receiving-review` |
 | 准备 merge | `merge-gate` |

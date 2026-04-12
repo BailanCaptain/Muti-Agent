@@ -117,7 +117,7 @@ pnpm --filter @multi-agent/api test  # API 包单独测试
 
 - **vs `debugging`**：TDD 是**预防性**的（写代码前）；debugging 是**修复性**的（bug 出现后）。交叉点：debugging 发现 bug 后，Phase 4 必须先写失败测试再修（切换回 TDD 模式）
 - **vs `quality-gate`**：TDD 是开发过程中的纪律；quality-gate 是提交前的验收检查
-- **vs `vision-guardian`**：TDD 确保单元级正确性；vision-guardian 确保需求级完整性
+- **vs `acceptance-guardian`**：TDD 确保单元级正确性；acceptance-guardian 确保交付结果级完整性
 
 ## 下一步
 

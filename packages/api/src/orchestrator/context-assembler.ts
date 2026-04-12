@@ -3,7 +3,7 @@ import type { ContextPolicy } from "./context-policy"
 import { POLICY_FULL } from "./context-policy"
 import type { ContextMessage } from "./context-snapshot"
 import { truncateHeadTail } from "./context-snapshot"
-import { AGENT_SYSTEM_PROMPTS, VISION_GUARDIAN_PROMPT } from "../runtime/agent-prompts"
+import { AGENT_SYSTEM_PROMPTS, ACCEPTANCE_GUARDIAN_PROMPT } from "../runtime/agent-prompts"
 import type { MemoryService } from "../services/memory-service"
 
 // Note: AGENT_SYSTEM_PROMPTS is Record<Provider, string> containing the base prompt
@@ -31,8 +31,8 @@ export type AssemblePromptInput = {
   phase1HeaderText?: string
   /** Optional skill hint line */
   skillHint?: string | null
-  /** When true, replace system prompt with VISION_GUARDIAN_PROMPT (zero-context mode) */
-  visionGuardianMode?: boolean
+  /** When true, replace system prompt with ACCEPTANCE_GUARDIAN_PROMPT (zero-context mode) */
+  guardianMode?: boolean
 }
 
 export type AssemblePromptResult = {
@@ -54,10 +54,10 @@ export async function assemblePrompt(
   const { provider, policy, roomSnapshot, targetAlias } = input
 
   // ── System Prompt ──────────────────────────────────────────────────
-  // Vision Guardian mode: zero-context custom prompt, no identity/team/rules injection.
-  if (input.visionGuardianMode) {
+  // Guardian mode: zero-context custom prompt, no identity/team/rules injection.
+  if (input.guardianMode) {
     return {
-      systemPrompt: VISION_GUARDIAN_PROMPT,
+      systemPrompt: ACCEPTANCE_GUARDIAN_PROMPT,
       content: input.task,
     }
   }
@@ -192,7 +192,7 @@ export async function assembleDirectTurnPrompt(
       targetAlias: input.targetAlias,
       phase1HeaderText: undefined,
       skillHint: input.skillHint ?? null,
-      visionGuardianMode: false,
+      guardianMode: false,
     },
     memoryService,
   )

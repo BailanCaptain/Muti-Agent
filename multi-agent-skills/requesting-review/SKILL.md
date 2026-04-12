@@ -12,7 +12,7 @@ triggers:
   - "准备 review"
 ---
 
-> **SOP 位置**: vision-guardian 通过后 → **本 skill** → `receiving-review`
+> **SOP 位置**: acceptance-guardian 通过后 → **本 skill** → `receiving-review`
 
 # Request Review
 
@@ -25,7 +25,7 @@ triggers:
 | 条件 | 检查方式 | 未满足时 |
 |------|----------|----------|
 | `quality-gate` 通过 | 有本轮 gate report | BLOCKED — 先跑 quality-gate |
-| `vision-guardian` 通过 | 有 PASS 判定 | BLOCKED — 先跑 vision-guardian |
+| `acceptance-guardian` 通过 | 有 PASS 判定 | BLOCKED — 先跑 acceptance-guardian |
 | 测试全绿 | 附测试命令输出 | BLOCKED — 修到绿灯再发 |
 | 原始需求可引用 | feature doc 路径 + ≤5 行小孙原话 | BLOCKED — reviewer 有权拒绝审查 |
 
@@ -47,7 +47,7 @@ triggers:
 ```
 BEFORE 发 review 请求:
 
-1. 确认 quality-gate + vision-guardian 已通过
+1. 确认 quality-gate + acceptance-guardian 已通过
 2. 确认测试全绿（附这次真实运行的输出）
 3. 找到原始需求文档路径 + 摘录 ≤5 行小孙原话
 4. 匹配 reviewer（非作者优先）
@@ -79,7 +79,7 @@ BEFORE 发 review 请求:
 
 ### Self-Check Evidence
 - quality-gate: ✅ {报告摘要}
-- vision-guardian: ✅ PASS
+- acceptance-guardian: ✅ PASS
 - pnpm test: {N}/{N} pass
 
 ### Known Risks
@@ -137,18 +137,18 @@ Reviewer 不应该是第一个发现测试失败的人。
 | 错误 | 正确做法 |
 |------|----------|
 | "帮我 review 一下" 没有上下文 | 用模板写完整请求 |
-| 没跑 quality-gate 就发请求 | 先自检 + vision-guardian |
+| 没跑 quality-gate 就发请求 | 先自检 + acceptance-guardian |
 | 只附 spec 没附原始需求 | 必须附小孙原话 + 来源 |
 | 自己选自己当 reviewer | 三人不能 review 自己的代码 |
-| 跳过 vision-guardian 直接请 review | 流程是 quality-gate → vision-guardian → requesting-review |
+| 跳过 acceptance-guardian 直接请 review | 流程是 quality-gate → acceptance-guardian → requesting-review |
 
 ## 和其他 skill 的区别
 
 | Skill | 关注点 | 时机 |
 |-------|--------|------|
 | `quality-gate` | 自检（spec 对照 + 证据） | review **之前** |
-| `vision-guardian` | 零上下文逐项验收 | quality-gate **之后** |
-| **requesting-review（本 skill）** | 把改动送到 reviewer 面前 | vision-guardian 通过**之后** |
+| `acceptance-guardian` | 零上下文独立验收 | quality-gate **之后** |
+| **requesting-review（本 skill）** | 把改动送到 reviewer 面前 | acceptance-guardian 通过**之后** |
 | `receiving-review` | 处理 reviewer 的反馈 | 收到 review **之后** |
 
 ## 下一步
