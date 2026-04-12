@@ -208,6 +208,25 @@ skills:
       - name: "/debug"
         description: "系统化调试"
 
+  # ── Skill 编写 ──
+  writing-skills:
+    description: 创建或修改 Multi-Agent skill 的元技能（含 CSO、测试、发布）
+    triggers:
+      - "写 skill"
+      - "新 skill"
+      - "修改 skill"
+      - "SKILL.md"
+      - "multi-agent-skills/"
+    not_for:
+      - "使用 skill"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: ["quality-gate"]
+    sop_step: null
+    slashCommands:
+      - name: "/write-skill"
+        description: "创建或修改 skill"
+
   # ── 自我进化 ──
   self-evolution:
     description: Scope Guard + Process Evolution + Knowledge Evolution
