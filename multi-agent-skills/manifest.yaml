@@ -167,7 +167,7 @@ skills:
 
   # ── Code Review ──
   code-review:
-    description: 严格代码审查，聚焦 bug、风险、行为回归与缺失测试
+    description: 严格代码审查：聚焦 bug、风险、行为回归、边界条件和缺失测试
     triggers:
       - "code review"
       - "代码审查"

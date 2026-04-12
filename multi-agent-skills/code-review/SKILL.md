@@ -5,11 +5,34 @@ description: >
   Use when: 用户要求 review 代码、审查 diff/PR/提交、做 peer review。
   Not for: 请求别人 review（用 requesting-review）、收到 review 反馈后修复（用 receiving-review）、纯自检（用 quality-gate）。
   Output: 按严重度排序的 findings + open questions + residual risk。
+triggers:
+  - "帮他人review"
+  - "收到他人的review请求"
 ---
 
 # Code Review
 
 代码审查的目标不是给建议清单，而是找出**会出事的地方**。
+
+**核心原则：技术正确性优先于社交舒适度。先验证，再标记；先查清楚，再下结论。**
+
+**铁律：你是一个严谨、带有怀疑态度的 reviewer，禁止表演性质、附和性质的 review。**
+**标记问题前必须先验证——看不懂的代码先查清楚，再决定是否是 bug。**
+
+## Review Comment 铁律
+
+写评论时**禁止**：
+
+- `"这段写得不错，但..."` — 不要暖场
+- `"好思路，只是..."` — 不要表演性质的赞美
+- `"建议考虑..."` — 除非有具体风险理由
+
+**正确格式**：直接说问题是什么、为什么有问题、影响是什么。
+
+**无法验证时的标准语**：
+```
+"无法确认 [X] 的行为，需要 [人工核查 / 作者确认 / 补集成测试]。"
+```
 
 ## 审查优先级
 
@@ -26,17 +49,19 @@ description: >
 
 ## 审查流程
 
-1. 先看改动范围：哪些文件、哪些行为被改了
-2. 对照上下文：原实现为什么这样写，当前改动会不会打破它
-3. 优先沿用户路径和失败路径走一遍
-4. 检查测试：
-   - 改动覆盖到了吗
-   - 失败路径和边界情况有吗
-   - 只测 happy path 吗
-5. 输出 findings：
-   - 必须带文件 / 行号
-   - 必须说明为什么是问题
-   - 能说明用户影响就说明用户影响
+1. **看改动范围**：哪些文件、哪些行为被改了
+2. **对照上下文**：原实现为什么这样写，当前改动会不会打破它
+3. **验证后再标记**：
+   - 不确定是否是 bug → 先在 codebase 里查清楚再下结论
+   - 不确定有没有被调用 → grep 实际使用情况（YAGNI 检查）
+   - 无法验证 → 明确说"无法确认，需要人工核查"，不要猜
+4. **沿用户路径和失败路径走一遍**
+5. **检查测试**：改动覆盖了吗？失败路径和边界有吗？只有 happy path 吗？
+6. **输出 findings**：带文件/行号 + 说明原因 + 说明用户影响
+
+## YAGNI 检查
+
+在建议"应该实现 XX"之前先 grep 实际调用：没调用 → 标注"当前未使用，建议保持最简"；有调用 → 正常标记 finding。不要把"专业实现"强加给不需要的地方。
 
 ## 输出格式
 
@@ -51,8 +76,8 @@ description: >
 
 然后再写：
 
-- Open questions
-- Residual risk / testing gaps
+- **Open questions**：无法确认的点，需要作者/人工核查
+- **Residual risk**：没跑到的测试、没验证的平台、遗留不确定性
 
 如果没有发现问题，明确写：
 
@@ -68,6 +93,23 @@ description: >
 - `P2`：边界条件、稳定性、可维护性问题，建议当前迭代修
 - `P3`：非阻塞优化项，可讨论
 
+## 真实示例
+
+**严谨 review（正确）：**
+```
+P2 状态机缺少 error → idle 转换 — `src/agent/state.ts:87`
+为什么有问题：turn.completed 后如果 process 意外退出，状态永远卡在 running，
+              下一次调用会因为 isRunning 检查直接被拒绝。
+影响：用户发消息无响应，需要手动重启会话。
+建议：在 process exit handler 里补 setState('idle')。
+```
+
+**无法验证时（正确）：**
+```
+Open question: `authorizationRuleStore.ts:34` 的 LRU 淘汰策略在并发写入时是否线程安全？
+本地无法复现多实例场景，需要作者确认或补集成测试。
+```
+
 ## Common Mistakes
 
 | 错误 | 正确 |
@@ -77,3 +119,20 @@ description: >
 | 没文件位置 | 每个 finding 都带文件 / 行号 |
 | 没看测试就评审 | 测试覆盖本身就是审查对象 |
 | 没发现问题却硬凑建议 | 明确说无 findings，再写残余风险 |
+| 没验证就标 bug | 先 grep / 读上下文，确认后再标 |
+| 建议实现未使用功能 | YAGNI 检查，当前未调用就不建议加 |
+| 无法确认却给结论 | 写进 open questions，说明无法验证的原因 |
+| 暖场赞美再说问题 | 直接陈述问题，无需铺垫 |
+
+## 和其他 Skill 的区别
+
+- `receiving-review`：**收到别人对你代码的 review** → 验证后修复，不是做 review
+- `requesting-review`：**请别人帮你做 review** → 写 review 请求信
+- `quality-gate`：**开发者自检** → 不是 peer review，不涉及他人代码
+- `acceptance-guardian`：**按 AC 验收功能** → 不是审查代码质量
+
+## 下一步
+
+review 完成后：
+- 如果是审查别人的代码 → 结果直接返回给作者
+- 如果是自己的代码要请别人 review → `requesting-review`
