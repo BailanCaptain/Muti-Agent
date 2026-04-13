@@ -44,7 +44,7 @@ export function microcompact(
     }
     return {
       ...m,
-      content: buildAnchorPlaceholder(m),
+      content: m.content + "\n" + buildAnchorPlaceholder(m),
     }
   })
 }

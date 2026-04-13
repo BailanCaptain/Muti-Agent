@@ -37,8 +37,9 @@ describe("microcompact", () => {
     }
     const result = microcompact(messages, { keepRecent: 5, keepLastFailure: true })
     for (let i = 0; i < 5; i++) {
-      assert.ok(result[i].content.includes("[工具结果已压缩]"), `msg ${i} should be compacted`)
-      assert.ok(result[i].content.includes(`msgId=t${i}`), `msg ${i} should have anchor`)
+      assert.ok(result[i].content.includes("[工具结果已压缩]"), `msg ${i} should have anchor`)
+      assert.ok(result[i].content.includes(`msgId=t${i}`), `msg ${i} should have anchor id`)
+      assert.ok(result[i].content.includes(`edited src/f${i}.ts`), `msg ${i} should preserve original content`)
     }
     for (let i = 5; i < 10; i++) {
       assert.ok(!result[i].content.includes("[工具结果已压缩]"), `msg ${i} should be intact`)
@@ -56,8 +57,10 @@ describe("microcompact", () => {
       makeToolMsg("t6", "edited src/g.ts", "2026-04-13T10:06:00Z"),
     ]
     const result = microcompact(messages, { keepRecent: 5, keepLastFailure: true })
-    assert.ok(!result[0].content.includes("[工具结果已压缩]"), "failure result must be preserved")
-    assert.ok(result[1].content.includes("[工具结果已压缩]"), "non-recent non-failure should compact")
+    assert.ok(!result[0].content.includes("[工具结果已压缩]"), "failure result must be preserved (in keepSet)")
+    assert.ok(result[0].content.includes("edit failed with TypeError"), "failure content must be preserved")
+    assert.ok(result[1].content.includes("[工具结果已压缩]"), "non-recent non-failure should have anchor")
+    assert.ok(result[1].content.includes("edited src/b.ts"), "non-recent should still preserve original text")
   })
 
   it("does not modify non-tool messages (no toolEventsSummary)", () => {
@@ -102,5 +105,25 @@ describe("microcompact", () => {
     const result = microcompact(messages, { keepRecent: 5, keepLastFailure: true })
     assert.equal(result[0].content, "hello")
     assert.equal(result[1].content, "world")
+  })
+
+  // P1-1 Red: assistant content with toolEvents must NOT be entirely replaced
+  it("preserves assistant content text for compacted tool messages (P1-1)", () => {
+    const messages: ContextMessage[] = [
+      makeToolMsg("t0", "我分析了 context-assembler 的注入链路，发现三个问题", "2026-04-13T10:00:00Z"),
+      makeToolMsg("t1", "recent1", "2026-04-13T10:01:00Z"),
+      makeToolMsg("t2", "recent2", "2026-04-13T10:02:00Z"),
+      makeToolMsg("t3", "recent3", "2026-04-13T10:03:00Z"),
+      makeToolMsg("t4", "recent4", "2026-04-13T10:04:00Z"),
+      makeToolMsg("t5", "recent5", "2026-04-13T10:05:00Z"),
+    ]
+    const result = microcompact(messages, { keepRecent: 5, keepLastFailure: false })
+    // t0 is compacted (outside keepRecent), but its original content must be preserved
+    assert.ok(
+      result[0].content.includes("我分析了 context-assembler 的注入链路"),
+      "original assistant text must be preserved even when compacted",
+    )
+    // anchor should also be appended
+    assert.ok(result[0].content.includes("[工具结果已压缩]"), "anchor should be present")
   })
 })

@@ -1354,6 +1354,9 @@ export class MessageService {
               )
 
               const targetThread = this.dispatch.resolveThread(threadId)
+              const a2aBookmark = targetThread?.sopBookmark
+                ? (() => { try { return JSON.parse(targetThread.sopBookmark) } catch { return null } })()
+                : null
               const assembled = await assemblePrompt({
                 provider: entry.to.provider as import("@multi-agent/shared").Provider,
                 threadId,
@@ -1368,6 +1371,8 @@ export class MessageService {
                 targetAlias: entry.to.agentId,
                 phase1HeaderText,
                 skillHint: isGuardianMode ? null : skillHint,
+                sopBookmark: a2aBookmark,
+                lastFillRatio: targetThread?.lastFillRatio ?? undefined,
                 guardianMode: isGuardianMode,
               }, this.memoryService)
 
@@ -1546,10 +1551,19 @@ export class MessageService {
         }
         if (m.toolEvents && m.toolEvents !== "[]") {
           try {
-            const events = JSON.parse(m.toolEvents) as { toolName?: string; status?: string }[]
+            const events = JSON.parse(m.toolEvents) as { toolName?: string; status?: string; toolInput?: string; content?: string }[]
             if (events.length > 0) {
               raw.toolEventsSummary = events
-                .map((e) => `${e.toolName ?? "unknown"}(${e.status ?? "?"})`)
+                .map((e) => {
+                  const base = `${e.toolName ?? "unknown"}(${e.status ?? "?"})`
+                  if (e.status === "error" && e.content) {
+                    return `${base}: ${e.content.slice(0, 200)}`
+                  }
+                  if (e.toolInput) {
+                    return `${base}: ${e.toolInput.slice(0, 100)}`
+                  }
+                  return base
+                })
                 .join(", ")
             }
           } catch { /* malformed JSON — skip */ }
