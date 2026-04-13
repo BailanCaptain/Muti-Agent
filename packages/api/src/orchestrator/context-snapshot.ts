@@ -8,6 +8,7 @@ export type ContextMessage = {
   agentId: string
   content: string
   createdAt: string
+  toolEventsSummary?: string
 }
 
 export type SnapshotOptions = {
@@ -22,6 +23,7 @@ export type RawMessage = {
   role: "user" | "assistant"
   content: string
   createdAt: string
+  toolEventsSummary?: string
 }
 
 export type ThreadMeta = {
@@ -52,13 +54,17 @@ export function buildContextSnapshot(
 
   const result: ContextMessage[] = windowed.map((m) => {
     const meta = threadMeta.get(m.threadId)
-    return {
+    const msg: ContextMessage = {
       id: m.id,
       role: m.role,
       agentId: m.role === "user" ? "user" : (meta?.alias ?? "unknown"),
       content: m.content,
       createdAt: m.createdAt,
     }
+    if (m.toolEventsSummary) {
+      msg.toolEventsSummary = m.toolEventsSummary
+    }
+    return msg
   })
 
   return Object.freeze(result)

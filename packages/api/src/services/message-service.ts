@@ -857,6 +857,7 @@ export class MessageService {
         thread.sessionGroupId,
         options.rootMessageId,
       )
+      const parsedBookmark = thread.sopBookmark ? (() => { try { return JSON.parse(thread.sopBookmark) } catch { return null } })() : null
       assembledDirectTurn = await assembleDirectTurnPrompt(
         {
           provider: thread.provider,
@@ -867,6 +868,8 @@ export class MessageService {
           sourceAlias: "user",
           targetAlias: thread.alias,
           roomSnapshot,
+          sopBookmark: parsedBookmark,
+          lastFillRatio: thread.lastFillRatio ?? undefined,
         },
         this.memoryService,
       )
@@ -1533,13 +1536,26 @@ export class MessageService {
     const threadMeta = new Map(threads.map((t) => [t.id, { provider: t.provider, alias: t.alias }]))
     const allMessages = threads.flatMap((t) => {
       const msgs = this.sessions.listThreadMessages?.(t.id) ?? []
-      return msgs.map((m: { id: string; role: string; content: string; createdAt: string }) => ({
-        id: m.id,
-        threadId: t.id,
-        role: m.role as "user" | "assistant",
-        content: m.content,
-        createdAt: m.createdAt,
-      }))
+      return msgs.map((m: { id: string; role: string; content: string; toolEvents?: string; createdAt: string }) => {
+        const raw: { id: string; threadId: string; role: "user" | "assistant"; content: string; createdAt: string; toolEventsSummary?: string } = {
+          id: m.id,
+          threadId: t.id,
+          role: m.role as "user" | "assistant",
+          content: m.content,
+          createdAt: m.createdAt,
+        }
+        if (m.toolEvents && m.toolEvents !== "[]") {
+          try {
+            const events = JSON.parse(m.toolEvents) as { toolName?: string; status?: string }[]
+            if (events.length > 0) {
+              raw.toolEventsSummary = events
+                .map((e) => `${e.toolName ?? "unknown"}(${e.status ?? "?"})`)
+                .join(", ")
+            }
+          } catch { /* malformed JSON — skip */ }
+        }
+        return raw
+      })
     })
     return [...buildContextSnapshot(allMessages, threadMeta, { sessionGroupId, triggerMessageId, maxMessages: 40 })]
   }

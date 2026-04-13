@@ -349,19 +349,35 @@ export class SessionRepository {
     threadId: string,
     updates: { currentModel?: string | null; nativeSessionId?: string | null; sopBookmark?: string | null; lastFillRatio?: number | null },
   ) {
-    const currentModel = updates.currentModel ?? null
-    const nativeSessionId = updates.nativeSessionId ?? null
-    const sopBookmark = updates.sopBookmark ?? null
-    const lastFillRatio = updates.lastFillRatio ?? null
+    const setClauses: string[] = []
+    const params: unknown[] = []
+
+    if ("currentModel" in updates) {
+      setClauses.push("current_model = ?")
+      params.push(updates.currentModel ?? null)
+    }
+    if ("nativeSessionId" in updates) {
+      setClauses.push("native_session_id = ?")
+      params.push(updates.nativeSessionId ?? null)
+    }
+    if ("sopBookmark" in updates) {
+      setClauses.push("sop_bookmark = ?")
+      params.push(updates.sopBookmark ?? null)
+    }
+    if ("lastFillRatio" in updates) {
+      setClauses.push("last_fill_ratio = ?")
+      params.push(updates.lastFillRatio ?? null)
+    }
+
+    if (setClauses.length === 0) return
+
     const updatedAt = new Date().toISOString()
+    setClauses.push("updated_at = ?")
+    params.push(updatedAt, threadId)
 
     this.store.db
-      .prepare(
-        `UPDATE threads
-         SET current_model = ?, native_session_id = ?, sop_bookmark = ?, last_fill_ratio = ?, updated_at = ?
-         WHERE id = ?`,
-      )
-      .run(currentModel, nativeSessionId, sopBookmark, lastFillRatio, updatedAt, threadId)
+      .prepare(`UPDATE threads SET ${setClauses.join(", ")} WHERE id = ?`)
+      .run(...params)
 
     this.touchThread(threadId, updatedAt)
   }

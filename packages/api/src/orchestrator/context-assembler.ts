@@ -195,6 +195,8 @@ export type AssembleDirectTurnInput = {
   targetAlias: string
   roomSnapshot: readonly ContextMessage[]
   skillHint?: string | null
+  sopBookmark?: SOPBookmark | null
+  lastFillRatio?: number
 }
 
 export async function assembleDirectTurnPrompt(
@@ -215,6 +217,8 @@ export async function assembleDirectTurnPrompt(
       targetAlias: input.targetAlias,
       phase1HeaderText: undefined,
       skillHint: input.skillHint ?? null,
+      sopBookmark: input.sopBookmark,
+      lastFillRatio: input.lastFillRatio,
       guardianMode: false,
     },
     memoryService,
