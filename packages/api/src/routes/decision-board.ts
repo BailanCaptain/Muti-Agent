@@ -1,4 +1,5 @@
-import type { FastifyInstance } from "fastify"
+import type { FastifyInstance, FastifyRequest } from "fastify"
+import type { DecisionManager } from "../orchestrator/decision-manager"
 import type { MessageService } from "../services/message-service"
 
 type DecisionBoardRespondBody = {
@@ -19,8 +20,14 @@ type DecisionBoardRespondBody = {
  */
 export function registerDecisionBoardRoutes(
   app: FastifyInstance,
-  deps: { messageService: MessageService },
+  deps: { messageService: MessageService; decisions: DecisionManager },
 ): void {
+  app.get("/api/decisions/pending", async (request: FastifyRequest) => {
+    const { sessionGroupId } = request.query as { sessionGroupId?: string }
+    if (!sessionGroupId) return { pending: [] }
+    return { pending: deps.decisions.getPendingRequests(sessionGroupId) }
+  })
+
   app.post<{ Body: DecisionBoardRespondBody }>(
     "/decision-board/respond",
     async (request, reply) => {

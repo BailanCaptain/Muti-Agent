@@ -306,8 +306,10 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     get().replaceActiveGroup(payload.activeGroup)
     get().resetUnread(groupId)
 
-    const { fetchPending } = await import("./approval-store").then((m) => m.useApprovalStore.getState())
-    void fetchPending(groupId)
+    const { fetchPending: fetchApprovals } = await import("./approval-store").then((m) => m.useApprovalStore.getState())
+    const { fetchPending: fetchDecisions } = await import("./decision-store").then((m) => m.useDecisionStore.getState())
+    void fetchApprovals(groupId)
+    void fetchDecisions(groupId)
   },
   updateModel: async (provider, model) => {
     const thread = get().providers[provider]

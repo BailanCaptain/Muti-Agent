@@ -796,6 +796,9 @@ export class MessageService {
     let thinking = ""
     let toolEventsJson = "[]"
     let run: ActiveRun | null = null
+    let assistantContent = ""
+    let lastContentFlushAt = Date.now()
+    const CONTENT_FLUSH_INTERVAL_MS = 3000
 
     this.events.emit({
       type: "invocation.started",
@@ -860,10 +863,20 @@ export class MessageService {
       nativeSessionId: thread.nativeSessionId,
       userMessage,
       onAssistantDelta: (delta: string) => {
+        assistantContent += delta
         options.emit({
           type: "assistant_delta",
           payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, delta },
         })
+        const now = Date.now()
+        if (now - lastContentFlushAt >= CONTENT_FLUSH_INTERVAL_MS) {
+          lastContentFlushAt = now
+          this.sessions.overwriteMessage(assistant.id, {
+            content: assistantContent,
+            thinking,
+            toolEvents: toolEventsJson,
+          })
+        }
       },
       onSession: () => {},
       onModel: () => {},

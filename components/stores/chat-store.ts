@@ -18,15 +18,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   drafts: {},
   setStatus: (status) => set({ status }),
   getDraft: (groupId) => {
-    if (!groupId) return ""
-    return get().drafts[groupId] ?? ""
+    return get().drafts[groupId ?? ""] ?? ""
   },
   setDraft: (groupId, draft) => {
-    if (!groupId) return
+    const key = groupId ?? ""
     set((state) => {
-      const current = state.drafts[groupId] ?? ""
+      const current = state.drafts[key] ?? ""
       const next = typeof draft === "function" ? draft(current) : draft
-      return { drafts: { ...state.drafts, [groupId]: next } }
+      return { drafts: { ...state.drafts, [key]: next } }
     })
   },
   sendMessage: async (input) => {

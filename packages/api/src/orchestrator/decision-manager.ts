@@ -79,6 +79,16 @@ export class DecisionManager {
     })
   }
 
+  getPendingRequests(sessionGroupId: string): DecisionRequest[] {
+    const results: DecisionRequest[] = []
+    for (const entry of this.pending.values()) {
+      if (entry.request.sessionGroupId === sessionGroupId) {
+        results.push(entry.request)
+      }
+    }
+    return results
+  }
+
   respond(requestId: string, decisions: Array<{optionId: string; verdict: string; modification?: string}>, userInput?: string): void {
     const entry = this.pending.get(requestId)
     if (!entry) return

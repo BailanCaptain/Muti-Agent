@@ -219,7 +219,7 @@ export async function createApiServer(options: {
   registerMessageRoutes(app)
   registerRuntimeConfigRoutes(app)
   registerAuthorizationRoutes(app, { approvals, ruleStore })
-  registerDecisionBoardRoutes(app, { messageService: messages })
+  registerDecisionBoardRoutes(app, { messageService: messages, decisions })
   registerCallbackRoutes(app, {
     repository,
     sessions,
