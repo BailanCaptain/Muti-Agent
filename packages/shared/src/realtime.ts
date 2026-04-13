@@ -253,6 +253,7 @@ export type RealtimeServerEvent =
   | {
       type: "assistant_delta"
       payload: {
+        sessionGroupId: string
         messageId: string
         delta: string
       }
@@ -260,6 +261,7 @@ export type RealtimeServerEvent =
   | {
       type: "assistant_thinking_delta"
       payload: {
+        sessionGroupId: string
         messageId: string
         delta: string
       }
@@ -275,6 +277,7 @@ export type RealtimeServerEvent =
   | {
       type: "thread_snapshot"
       payload: {
+        sessionGroupId: string
         activeGroup: ActiveGroupView
       }
     }
@@ -297,6 +300,7 @@ export type RealtimeServerEvent =
   | {
       type: "approval.resolved"
       payload: {
+        sessionGroupId: string
         requestId: string
         granted: boolean
       }
@@ -304,6 +308,7 @@ export type RealtimeServerEvent =
   | {
       type: "approval.auto_granted"
       payload: {
+        sessionGroupId: string
         provider: Provider
         action: string
         ruleId: string
@@ -316,6 +321,7 @@ export type RealtimeServerEvent =
   | {
       type: "decision.resolved"
       payload: {
+        sessionGroupId: string
         requestId: string
         decisions: DecisionVerdict[]
         userInput?: string
@@ -339,6 +345,7 @@ export type RealtimeServerEvent =
   | {
       type: "assistant_tool_event"
       payload: {
+        sessionGroupId: string
         messageId: string
         event: ToolEvent
       }

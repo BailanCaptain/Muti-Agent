@@ -70,7 +70,7 @@ export class DecisionManager {
         resolve({ decisions: fallbackDecisions, userInput: "" })
         this.emit({
           type: "decision.resolved",
-          payload: { requestId, decisions: fallbackDecisions },
+          payload: { sessionGroupId: request.sessionGroupId, requestId, decisions: fallbackDecisions },
         })
       }, timeoutMs)
 
@@ -95,6 +95,7 @@ export class DecisionManager {
     this.emit({
       type: "decision.resolved",
       payload: {
+        sessionGroupId: entry.request.sessionGroupId,
         requestId,
         decisions,
         ...(userInput ? { userInput } : {}),

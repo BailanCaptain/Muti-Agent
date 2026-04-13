@@ -862,7 +862,7 @@ export class MessageService {
       onAssistantDelta: (delta: string) => {
         options.emit({
           type: "assistant_delta",
-          payload: { messageId: assistant.id, delta },
+          payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, delta },
         })
       },
       onSession: () => {},
@@ -871,7 +871,7 @@ export class MessageService {
         thinking += `${line}\n`
         options.emit({
           type: "assistant_thinking_delta",
-          payload: { messageId: assistant.id, delta: `${line}\n` },
+          payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, delta: `${line}\n` },
         })
       },
       onToolEvent: (event) => {
@@ -880,7 +880,7 @@ export class MessageService {
         toolEventsJson = JSON.stringify(parsed)
         options.emit({
           type: "assistant_tool_event",
-          payload: { messageId: assistant.id, event },
+          payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, event },
         })
         // Persist toolEvents immediately so reconnecting clients don't lose tool steps
         this.sessions.overwriteMessage(assistant.id, {
@@ -919,7 +919,7 @@ export class MessageService {
             thinking += cleanedChunk
             options.emit({
               type: "assistant_thinking_delta",
-              payload: { messageId: assistant.id, delta: cleanedChunk },
+              payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, delta: cleanedChunk },
             })
           }
         }
@@ -1396,6 +1396,7 @@ export class MessageService {
     emit({
       type: "thread_snapshot",
       payload: {
+        sessionGroupId,
         activeGroup: this.sessions.getActiveGroup(
           sessionGroupId,
           new Set(this.invocations.keys()),
