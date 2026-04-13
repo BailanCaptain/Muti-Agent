@@ -474,7 +474,7 @@ export class MessageService {
 
     emit({
       type: "status",
-      payload: { message: `正在停止 ${thread.alias} 房间内的待执行协作任务。` },
+      payload: { sessionGroupId: thread.sessionGroupId, message: `正在停止 ${thread.alias} 房间内的待执行协作任务。` },
     })
     this.emitThreadSnapshot(thread.sessionGroupId, emit)
     return true
@@ -515,7 +515,7 @@ export class MessageService {
 
     emit({
       type: "status",
-      payload: { message: `已停止 ${targetThread.alias} 的运行。` },
+      payload: { sessionGroupId: thread.sessionGroupId, message: `已停止 ${targetThread.alias} 的运行。` },
     })
     this.emitThreadSnapshot(thread.sessionGroupId, emit)
     return true
@@ -620,7 +620,7 @@ export class MessageService {
     if (groupBusyMessage) {
       emit({
         type: "status",
-        payload: { message: groupBusyMessage },
+        payload: { sessionGroupId: thread.sessionGroupId, message: groupBusyMessage },
       })
       this.emitThreadSnapshot(thread.sessionGroupId, emit)
       return
@@ -751,7 +751,7 @@ export class MessageService {
     if (this.invocations.has(thread.id)) {
       options.emit({
         type: "status",
-        payload: { message: `${thread.alias} 已经在运行中。` },
+        payload: { sessionGroupId: thread.sessionGroupId, message: `${thread.alias} 已经在运行中。` },
       })
       return null
     }
@@ -833,7 +833,7 @@ export class MessageService {
 
     options.emit({
       type: "status",
-      payload: { message: `正在运行 ${thread.alias}` },
+      payload: { sessionGroupId: thread.sessionGroupId, message: `正在运行 ${thread.alias}` },
     })
 
     // Per-provider model/effort override from runtime-config.json.
@@ -932,7 +932,7 @@ export class MessageService {
           : `${thread.alias} 已沉默 ${seconds}s（${warning.state}），持续观察中`
         options.emit({
           type: "status",
-          payload: { message: label },
+          payload: { sessionGroupId: thread.sessionGroupId, message: label },
         })
       },
       onActivity: (activity) => {
@@ -976,6 +976,7 @@ export class MessageService {
         options.emit({
           type: "status",
           payload: {
+            sessionGroupId: thread.sessionGroupId,
             message: `${thread.alias} 需要你的确认。当前运行已暂停，请回复以继续。`,
           },
         })
@@ -1007,7 +1008,7 @@ export class MessageService {
         emitStatus: (message) => {
           options.emit({
             type: "status",
-            payload: { message: `${thread.alias}：${message}` },
+            payload: { sessionGroupId: thread.sessionGroupId, message: `${thread.alias}：${message}` },
           })
         },
         onIterationContent: (accumulated) => {
@@ -1053,6 +1054,7 @@ export class MessageService {
         options.emit({
           type: "status",
           payload: {
+            sessionGroupId: thread.sessionGroupId,
             message: `${thread.alias}：${classification.userMessage}`,
           },
         })
@@ -1070,6 +1072,7 @@ export class MessageService {
           options.emit({
             type: "status",
             payload: {
+              sessionGroupId: thread.sessionGroupId,
               message: `${thread.alias} 上下文已用 ${pct}%，自动封存，下一轮开新 session。`,
             },
           })
@@ -1077,6 +1080,7 @@ export class MessageService {
           options.emit({
             type: "status",
             payload: {
+              sessionGroupId: thread.sessionGroupId,
               message: `${thread.alias} 上下文已用 ${pct}%，接近上限，准备换房间。`,
             },
           })
@@ -1156,6 +1160,7 @@ export class MessageService {
           options.emit({
             type: "status",
             payload: {
+              sessionGroupId: thread.sessionGroupId,
               message: `A2A 回程 — ${returnPlan.childAlias} → ${returnPlan.parentAlias}`,
             },
           })
@@ -1226,7 +1231,7 @@ export class MessageService {
 
       options.emit({
         type: "status",
-        payload: { message: `${thread.alias}：${classification.userMessage}` },
+        payload: { sessionGroupId: thread.sessionGroupId, message: `${thread.alias}：${classification.userMessage}` },
       })
       this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
       await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
@@ -1779,7 +1784,7 @@ export class MessageService {
 
     emit({
       type: "status",
-      payload: { message: `开始串行讨论（${PHASE2_ROUNDS} 轮）` },
+      payload: { sessionGroupId, message: `开始串行讨论（${PHASE2_ROUNDS} 轮）` },
     })
 
     for (let round = 1; round <= PHASE2_ROUNDS; round++) {
@@ -1847,7 +1852,7 @@ export class MessageService {
           this.decisionBoard?.markAllConverged(sessionGroupId)
           emit({
             type: "status",
-            payload: { message: `串行讨论已在第 ${round} 轮达成共识，提前结束` },
+            payload: { sessionGroupId, message: `串行讨论已在第 ${round} 轮达成共识，提前结束` },
           })
           break
         }
@@ -1976,7 +1981,7 @@ export class MessageService {
 
     emit({
       type: "status",
-      payload: { message: "未选择综合者，讨论结果已归档" },
+      payload: { sessionGroupId, message: "未选择综合者，讨论结果已归档" },
     })
   }
 
@@ -2148,7 +2153,7 @@ export class MessageService {
         : ""
       input.emit({
         type: "status",
-        payload: { message: `SOP 推进到 ${advancement.nextStage}。${skillSuggestion}` },
+        payload: { sessionGroupId: input.sessionGroupId, message: `SOP 推进到 ${advancement.nextStage}。${skillSuggestion}` },
       })
 
       // F003/P4-3: if the skill declared a next_dispatch and the LLM's reply
@@ -2172,6 +2177,7 @@ export class MessageService {
           input.emit({
             type: "status",
             payload: {
+              sessionGroupId: input.sessionGroupId,
               message: `SOP 自动交接 — ${input.sourceThread.alias} → ${plan.targetAlias}`,
             },
           })

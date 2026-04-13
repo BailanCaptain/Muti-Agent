@@ -284,6 +284,7 @@ export type RealtimeServerEvent =
   | {
       type: "status"
       payload: {
+        sessionGroupId?: string
         message: string
       }
     }

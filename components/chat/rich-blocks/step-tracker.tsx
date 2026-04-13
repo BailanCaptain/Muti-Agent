@@ -35,7 +35,7 @@ export function StepTracker({
           )}
           <div className="min-w-0 flex-1">
             <span className={`font-medium ${theme.text}`}>
-              {event.toolName || (event.type === "tool_result" ? "Result" : "Tool")}
+              {event.toolName || (event.type === "tool_result" ? "执行结果" : "执行中…")}
             </span>
             {event.toolInput && (
               <span className="ml-1.5 font-mono text-[10px] text-slate-500 truncate">

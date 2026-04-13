@@ -169,6 +169,7 @@ export default function HomePage() {
         }
 
         if (event.type === "status") {
+          if (event.payload.sessionGroupId && !isCurrentSession(event.payload.sessionGroupId)) return
           setStatus(event.payload.message)
         }
       },
