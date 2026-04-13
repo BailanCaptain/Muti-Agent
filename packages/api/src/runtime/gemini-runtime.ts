@@ -209,8 +209,6 @@ export class GeminiRuntime extends BaseCliRuntime {
   }
 
   parseAssistantDelta(event: Record<string, unknown>) {
-    // Thinking items are surfaced via parseActivityLine into the thinking bubble,
-    // so they must not leak into the assistant's visible text output.
     if (event.thought) {
       return "";
     }
@@ -230,10 +228,23 @@ export class GeminiRuntime extends BaseCliRuntime {
     if (
       event.type === "message" &&
       typeof event.content === "object" &&
-      event.content &&
-      typeof (event.content as { text?: string }).text === "string"
+      event.content
     ) {
-      return (event.content as { text: string }).text;
+      const contentObj = event.content as { text?: string; parts?: Array<{ text?: string }> };
+      if (Array.isArray(contentObj.parts)) {
+        return contentObj.parts.map(p => (typeof p.text === "string" ? p.text : "")).join("");
+      }
+      if (typeof contentObj.text === "string") {
+        return contentObj.text;
+      }
+    }
+
+    if (Array.isArray(event.candidates)) {
+      const candidates = event.candidates as Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      const first = candidates[0];
+      if (first?.content?.parts) {
+        return first.content.parts.map(p => (typeof p.text === "string" ? p.text : "")).join("");
+      }
     }
 
     if (
