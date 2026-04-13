@@ -1,7 +1,0 @@
-interface:
-  display_name: "Code Review"
-  short_description: "审查代码改动并输出按严重度排序的问题"
-  default_prompt: "Use $code-review to review the current diff and report bugs, regressions, and missing tests."
-
-policy:
-  allow_implicit_invocation: true
