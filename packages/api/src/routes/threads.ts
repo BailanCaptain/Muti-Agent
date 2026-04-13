@@ -19,6 +19,7 @@ export function registerThreadRoutes(
     stopAgent?: (threadId: string, agentId: string) => boolean;
     redisSummary: unknown;
     getDispatchState?: (groupId: string) => DispatchState;
+    flushActiveStreaming?: (groupId: string) => void;
   }
 ) {
   app.get("/health", async () => ({
@@ -55,6 +56,7 @@ export function registerThreadRoutes(
 
   app.get("/api/session-groups/:groupId", async (request) => {
     const params = request.params as { groupId: string };
+    options.flushActiveStreaming?.(params.groupId)
     return {
       activeGroup: options.sessions.getActiveGroup(
         params.groupId,

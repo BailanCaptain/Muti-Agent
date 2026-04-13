@@ -170,6 +170,7 @@ export class MessageService {
   private broadcast: EmitEvent | null = null
   private readonly chainRegistry = new A2AChainRegistry()
   private readonly pendingBoardFlushes = new Map<string, DecisionBoardEntry[]>()
+  private readonly streamingFlushers = new Map<string, { sessionGroupId: string; flush: () => void }>()
 
   constructor(
     private readonly sessions: SessionService,
@@ -269,6 +270,14 @@ export class MessageService {
    */
   getPendingFlushEntries(sessionGroupId: string): DecisionBoardEntry[] | undefined {
     return this.pendingBoardFlushes.get(sessionGroupId)
+  }
+
+  flushActiveStreaming(sessionGroupId: string): void {
+    for (const entry of this.streamingFlushers.values()) {
+      if (entry.sessionGroupId === sessionGroupId) {
+        entry.flush()
+      }
+    }
   }
 
   /**
@@ -800,6 +809,18 @@ export class MessageService {
     let lastContentFlushAt = Date.now()
     const CONTENT_FLUSH_INTERVAL_MS = 3000
 
+    const flushKey = identity.invocationId
+    this.streamingFlushers.set(flushKey, {
+      sessionGroupId: thread.sessionGroupId,
+      flush: () => {
+        this.sessions.overwriteMessage(assistant.id, {
+          content: assistantContent,
+          thinking,
+          toolEvents: toolEventsJson,
+        })
+      },
+    })
+
     this.events.emit({
       type: "invocation.started",
       invocationId: identity.invocationId,
@@ -1062,6 +1083,7 @@ export class MessageService {
         }
       }
 
+      this.streamingFlushers.delete(flushKey)
       this.sessions.updateThread(thread.id, result.currentModel, effectiveSessionId)
       if (!promptRequestedByCli) {
         this.sessions.overwriteMessage(assistant.id, {
@@ -1174,6 +1196,7 @@ export class MessageService {
       this.settlementDetector?.notifyStateChange(thread.sessionGroupId)
       return { messageId: assistant.id, content: accumulatedContent || "" }
     } catch (error) {
+      this.streamingFlushers.delete(flushKey)
       this.invocations.detachRun(thread.id)
       this.releaseInvocation(identity.invocationId, dispatchCleanupTimer)
       const message = error instanceof Error ? error.message : "Unknown error"
@@ -1406,6 +1429,7 @@ export class MessageService {
   }
 
   emitThreadSnapshot(sessionGroupId: string, emit: EmitEvent) {
+    this.flushActiveStreaming(sessionGroupId)
     emit({
       type: "thread_snapshot",
       payload: {

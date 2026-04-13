@@ -28,6 +28,25 @@ export function registerDecisionBoardRoutes(
     return { pending: deps.decisions.getPendingRequests(sessionGroupId) }
   })
 
+  app.get("/api/decisions/board-pending", async (request: FastifyRequest) => {
+    const { sessionGroupId } = request.query as { sessionGroupId?: string }
+    if (!sessionGroupId) return { items: [] }
+    const entries = deps.messageService.getPendingFlushEntries(sessionGroupId)
+    if (!entries || entries.length === 0) return { items: [] }
+    return {
+      sessionGroupId,
+      flushedAt: new Date().toISOString(),
+      items: entries.map((entry) => ({
+        id: entry.id,
+        question: entry.question,
+        options: entry.options,
+        raisers: entry.raisers.map((r) => ({ alias: r.alias, provider: r.provider })),
+        firstRaisedAt: entry.firstRaisedAt,
+        converged: entry.converged,
+      })),
+    }
+  })
+
   app.post<{ Body: DecisionBoardRespondBody }>(
     "/decision-board/respond",
     async (request, reply) => {
