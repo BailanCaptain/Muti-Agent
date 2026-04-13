@@ -179,10 +179,6 @@ export function Composer() {
     setCursor(event.currentTarget.selectionStart ?? 0)
   }
 
-  function insertAtDraftStart(mention: string) {
-    setDraft((current) => `${mention} ${current}`.trim())
-  }
-
   return (
     <form
       className="flex flex-col gap-3 rounded-[30px] border border-slate-200/80 bg-white/90 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur"
@@ -202,32 +198,6 @@ export function Composer() {
           <span className="text-[11px] text-slate-400">继续输入，消息将自动排队。</span>
         </div>
       )}
-
-      <div className="flex flex-wrap gap-2 px-2">
-        {PROVIDERS.map((provider) => {
-          const name = PROVIDER_ALIASES[provider]
-          const mention = `@${name}`
-
-          return (
-            <button
-              className={`rounded-full border px-3 py-1 text-[10px] font-semibold transition-colors ${mentionTheme[provider]}`}
-              key={mention}
-              onClick={() => insertAtDraftStart(mention)}
-              type="button"
-            >
-              {mention}
-            </button>
-          )
-        })}
-        <button
-          className={`rounded-full border px-3 py-1 text-[10px] font-semibold transition-colors ${everyoneTheme}`}
-          key="@所有人"
-          onClick={() => insertAtDraftStart("@所有人")}
-          type="button"
-        >
-          @所有人
-        </button>
-      </div>
 
       <div className="relative flex items-end gap-2 px-2 pb-2">
         <textarea

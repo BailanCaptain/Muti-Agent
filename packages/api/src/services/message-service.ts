@@ -471,6 +471,47 @@ export class MessageService {
     return true
   }
 
+  cancelSingleAgent(threadId: string, agentId: string, emit: EmitEvent): boolean {
+    const thread = this.dispatch.resolveThread(threadId)
+    if (!thread) {
+      return false
+    }
+
+    const groupThreads = this.sessions.listGroupThreads(thread.sessionGroupId)
+    const targetThread = groupThreads.find((t) => t.provider === agentId)
+    if (!targetThread) {
+      return false
+    }
+
+    let cancelled = false
+    const run = this.invocations.get(targetThread.id)
+    if (run) {
+      run.cancel()
+      cancelled = true
+    }
+    for (const invocationId of this.invocations.findInvocationIdsByThread(targetThread.id)) {
+      this.releaseInvocation(invocationId)
+      cancelled = true
+    }
+
+    const clearedFromQueue = this.dispatch.clearProviderQueue(
+      thread.sessionGroupId,
+      targetThread.provider as Provider,
+    )
+    if (clearedFromQueue > 0) cancelled = true
+
+    if (!cancelled) {
+      return false
+    }
+
+    emit({
+      type: "status",
+      payload: { message: `已停止 ${targetThread.alias} 的运行。` },
+    })
+    this.emitThreadSnapshot(thread.sessionGroupId, emit)
+    return true
+  }
+
   async handleAgentPublicMessage(options: {
     threadId: string
     messageId: string

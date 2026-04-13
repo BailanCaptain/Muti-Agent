@@ -209,6 +209,7 @@ export async function createApiServer(options: {
     sessions,
     getRunningThreadIds: () => new Set(invocations.keys()),
     stopThread: (threadId) => messages.cancelThreadChain(threadId, broadcaster.broadcast),
+    stopAgent: (threadId, agentId) => messages.cancelSingleAgent(threadId, agentId, broadcaster.broadcast),
     redisSummary,
     getDispatchState: (groupId) => ({
       hasPendingDispatches: dispatch.hasQueuedDispatches(groupId),

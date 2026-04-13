@@ -16,6 +16,7 @@ export function registerThreadRoutes(
     sessions: SessionService;
     getRunningThreadIds: () => Set<string>;
     stopThread: (threadId: string) => boolean;
+    stopAgent?: (threadId: string, agentId: string) => boolean;
     redisSummary: unknown;
     getDispatchState?: (groupId: string) => DispatchState;
   }
@@ -96,6 +97,22 @@ export function registerThreadRoutes(
     if (!options.stopThread(params.threadId)) {
       reply.code(409);
       return { error: "当前会话没有运行中的调用。" };
+    }
+
+    return { ok: true };
+  });
+
+  app.post("/api/threads/:threadId/cancel/:agentId", async (request: FastifyRequest, reply: FastifyReply) => {
+    const params = request.params as { threadId: string; agentId: string };
+
+    if (!options.stopAgent) {
+      reply.code(501);
+      return { error: "精准取消未启用。" };
+    }
+
+    if (!options.stopAgent(params.threadId, params.agentId)) {
+      reply.code(409);
+      return { error: "该 agent 没有运行中的调用。" };
     }
 
     return { ok: true };

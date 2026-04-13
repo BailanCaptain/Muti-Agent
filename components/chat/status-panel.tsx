@@ -8,11 +8,11 @@ import { useThreadStore } from "@/components/stores/thread-store"
 import { formatTokenCount } from "@/lib/format"
 import type { AuthorizationRule, Provider } from "@multi-agent/shared"
 import { Info, MessageSquare, Settings, Shield } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { FoldControls } from "./fold-controls"
 import { ProviderAvatar } from "./provider-avatar"
 
-type StatusTab = "session" | "defaults" | "approval"
+type StatusTab = "session" | "approval"
 
 const panelClassName =
   "rounded-[28px] border border-slate-200/70 bg-white/85 p-4 shadow-[0_18px_42px_rgba(15,23,42,0.06)]"
@@ -96,13 +96,20 @@ const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
 
 /* ────────── Session Tab ────────── */
 
-function SessionTabContent() {
+function SessionTabContent({
+  showThinking,
+  setShowThinking,
+}: {
+  showThinking: boolean
+  setShowThinking: (v: boolean) => void
+}) {
   const socketState = useSettingsStore((state) => state.socketState)
   const providers = useThreadStore((state) => state.providers)
   const catalogs = useThreadStore((state) => state.catalogs)
   const updateModel = useThreadStore((state) => state.updateModel)
   const timeline = useThreadStore((state) => state.timeline)
   const invocationStats = useThreadStore((state) => state.invocationStats)
+  const runtimeConfig = useRuntimeConfigStore((state) => state.config)
   const [draftModels, setDraftModels] = useState<Record<string, string>>({})
 
   const providerEntries = Object.entries(providers) as Array<
@@ -110,7 +117,7 @@ function SessionTabContent() {
   >
   const isAnyRunning = providerEntries.some(([, provider]) => provider.running)
 
-  const stats = {
+  const stats = useMemo(() => ({
     total: timeline.length,
     agents: timeline.filter((message) => message.role === "assistant" && message.alias !== "System")
       .length,
@@ -119,7 +126,7 @@ function SessionTabContent() {
       /(https?:\/\/|```|^\s*>|\|.+\|)/m.test(`${message.content}\n${message.thinking ?? ""}`),
     ).length,
     followUp: timeline.filter((message) => message.role === "user").length,
-  }
+  }), [timeline])
 
   const metricCards = [
     { label: "总计", value: stats.total },
@@ -202,9 +209,25 @@ function SessionTabContent() {
         </div>
       </div>
 
-      {/* Fold Controls */}
+      {/* Fold Controls + Thinking Toggle */}
       <div className="mb-5">
         <FoldControls />
+      </div>
+
+      <div className={`${panelClassName} mb-5`}>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <span className="text-sm text-slate-600">心里话模式</span>
+          <div className="relative">
+            <input
+              type="checkbox"
+              className="sr-only peer"
+              checked={showThinking}
+              onChange={() => setShowThinking(!showThinking)}
+            />
+            <div className="w-10 h-5 bg-slate-200 rounded-full peer-checked:bg-violet-500 transition" />
+            <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow transition peer-checked:translate-x-5" />
+          </div>
+        </label>
       </div>
 
       {/* Agent Config — session only (no default fold) */}
@@ -297,6 +320,25 @@ function SessionTabContent() {
                       保存
                     </button>
                   ) : null}
+                </div>
+
+                {/* Default config (from runtime-config) */}
+                <div className="mt-3 border-t border-slate-200/60 pt-2">
+                  <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-400">
+                    默认配置
+                  </div>
+                  <div className="flex items-center justify-between gap-3 text-[11px] text-slate-400">
+                    <span>模型</span>
+                    <span className="font-mono text-slate-500">
+                      {runtimeConfig[provider]?.model ?? "系统默认"}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 flex items-center justify-between gap-3 text-[11px] text-slate-400">
+                    <span>强度</span>
+                    <span className="font-mono text-slate-500">
+                      {runtimeConfig[provider]?.effort ?? "默认"}
+                    </span>
+                  </div>
                 </div>
               </div>
             )
@@ -414,106 +456,6 @@ function SessionTabContent() {
   )
 }
 
-/* ────────── Defaults Tab ────────── */
-
-function DefaultsTabContent() {
-  const providers = useThreadStore((state) => state.providers)
-  const runtimeLoaded = useRuntimeConfigStore((state) => state.loaded)
-  const runtimeLoad = useRuntimeConfigStore((state) => state.load)
-  const catalog = useRuntimeConfigStore((state) => state.catalog)
-  const runtimeConfig = useRuntimeConfigStore((state) => state.config)
-  const setAgentOverride = useRuntimeConfigStore((state) => state.setAgentOverride)
-
-  useEffect(() => {
-    if (!runtimeLoaded) void runtimeLoad()
-  }, [runtimeLoaded, runtimeLoad])
-
-  const providerEntries = Object.entries(providers) as Array<
-    [Provider, (typeof providers)[Provider]]
-  >
-
-  return (
-    <div className="space-y-4">
-      {providerEntries.map(([provider, card]) => {
-        const theme = providerTheme[provider]
-
-        return (
-          <div className={`${panelClassName} !bg-slate-50/60`} key={provider}>
-            <div className="mb-3 flex items-start gap-3">
-              <ProviderAvatar identity={provider} size="sm" />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <div className="truncate text-sm font-semibold text-slate-800">
-                    {card.alias}
-                  </div>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${theme.badge}`}
-                  >
-                    {provider}
-                  </span>
-                </div>
-                <div className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-400">
-                  默认配置
-                </div>
-              </div>
-            </div>
-
-            {catalog ? (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="w-12 text-[10px] text-slate-400">模型</span>
-                  <input
-                    className={`min-w-0 flex-1 rounded-2xl border border-white/80 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none transition focus:ring-4 ${theme.focus}`}
-                    list={`default-model-${provider}`}
-                    value={runtimeConfig[provider]?.model ?? ""}
-                    onChange={(e) =>
-                      void setAgentOverride(provider, {
-                        ...runtimeConfig[provider],
-                        model: e.target.value,
-                      })
-                    }
-                    placeholder="使用系统默认"
-                  />
-                  <datalist id={`default-model-${provider}`}>
-                    {catalog[provider]?.models.map((m) => (
-                      <option key={m.name} value={m.name}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </datalist>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="w-12 text-[10px] text-slate-400">强度</span>
-                  <select
-                    className="min-w-0 flex-1 rounded-2xl border border-white/80 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none transition focus:ring-4 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-                    disabled={!catalog[provider]?.efforts.length}
-                    value={runtimeConfig[provider]?.effort ?? ""}
-                    onChange={(e) =>
-                      void setAgentOverride(provider, {
-                        ...runtimeConfig[provider],
-                        effort: e.target.value,
-                      })
-                    }
-                  >
-                    <option value="">默认</option>
-                    {catalog[provider]?.efforts.map((e) => (
-                      <option key={e} value={e}>
-                        {e}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            ) : (
-              <div className="text-xs text-slate-400">加载配置中...</div>
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
 /* ────────── Approval Rules Tab ────────── */
 
 function ApprovalTabContent() {
@@ -625,10 +567,20 @@ function ApprovalTabContent() {
 
 /* ────────── Main StatusPanel ────────── */
 
+function formatElapsed(seconds: number) {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `${s}s`
+}
+
 export function StatusPanel() {
   const socketState = useSettingsStore((state) => state.socketState)
   const providers = useThreadStore((state) => state.providers)
+  const stopAgent = useThreadStore((state) => state.stopAgent)
   const [activeTab, setActiveTab] = useState<StatusTab>("session")
+  const showThinking = useSettingsStore((state) => state.showThinking)
+  const setShowThinking = useSettingsStore((state) => state.setShowThinking)
+  const [elapsed, setElapsed] = useState<Record<string, number>>({})
   const openSettings = useSettingsModalStore((s) => s.open)
 
   const runtimeLoaded = useRuntimeConfigStore((state) => state.loaded)
@@ -643,6 +595,20 @@ export function StatusPanel() {
   >
   const isAnyRunning = providerEntries.some(([, provider]) => provider.running)
 
+  // Timer for running agents
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const next: Record<string, number> = {}
+      for (const [provider, card] of providerEntries) {
+        if (card.running) {
+          next[provider] = (elapsed[provider] ?? 0) + 1
+        }
+      }
+      setElapsed(next)
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [providerEntries]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const modeLabel =
     socketState === "connected"
       ? isAnyRunning
@@ -653,8 +619,7 @@ export function StatusPanel() {
         : "离线"
 
   const tabs: { key: StatusTab; label: string }[] = [
-    { key: "session", label: "会话" },
-    { key: "defaults", label: "默认" },
+    { key: "session", label: "指挥中心" },
     { key: "approval", label: "审批规则" },
   ]
 
@@ -679,6 +644,40 @@ export function StatusPanel() {
         </button>
       </div>
 
+      {/* Active Agent Chips — above Tab Bar */}
+      {isAnyRunning && (
+        <div className={`${panelClassName} mb-4`}>
+          <div className="flex flex-wrap gap-2">
+            {providerEntries
+              .filter(([, card]) => card.running)
+              .map(([provider, card]) => {
+                const theme = providerTheme[provider]
+                return (
+                  <div
+                    className={`flex items-center gap-2 rounded-full border px-3 py-1.5 ${theme.card}`}
+                    key={provider}
+                  >
+                    <ProviderAvatar identity={provider} size="xs" />
+                    <span className="text-[11px] font-semibold text-slate-700">{card.alias}</span>
+                    <span className="text-[10px] text-slate-400">运行中...</span>
+                    <span className="font-mono text-[10px] text-slate-500">
+                      {formatElapsed(elapsed[provider] ?? 0)}
+                    </span>
+                    <button
+                      className="ml-1 flex items-center gap-0.5 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-600 transition hover:bg-rose-200"
+                      onClick={() => void stopAgent(provider)}
+                      title={`停止 ${card.alias}`}
+                      type="button"
+                    >
+                      停止
+                    </button>
+                  </div>
+                )
+              })}
+          </div>
+        </div>
+      )}
+
       {/* Tab Bar */}
       <div className="mb-5 flex border-b border-slate-200/70">
         {tabs.map((t) => (
@@ -701,11 +700,8 @@ export function StatusPanel() {
       </div>
 
       {/* Tab Content */}
-      {activeTab === "session" && <SessionTabContent />}
-      {activeTab === "defaults" && (
-        <div className="rounded-[28px] bg-slate-50/50 p-2">
-          <DefaultsTabContent />
-        </div>
+      {activeTab === "session" && (
+        <SessionTabContent showThinking={showThinking} setShowThinking={setShowThinking} />
       )}
       {activeTab === "approval" && <ApprovalTabContent />}
     </aside>

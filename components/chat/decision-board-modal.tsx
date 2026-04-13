@@ -4,6 +4,7 @@ import {
   type BoardChoice,
   useDecisionBoardStore,
 } from "@/components/stores/decision-board-store"
+import { useThreadStore } from "@/components/stores/thread-store"
 import type { DecisionBoardItem } from "@multi-agent/shared"
 import { AlertTriangle, Check, CheckCircle2, Scale } from "lucide-react"
 import { useCallback, useState } from "react"
@@ -24,6 +25,7 @@ export function InlineDecisionBoard() {
     customModes,
     close,
   } = useDecisionBoardStore()
+  const activeGroupId = useThreadStore((state) => state.activeGroupId)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -68,7 +70,7 @@ export function InlineDecisionBoard() {
     [choices, close, divergentItems, sessionGroupId, submitting],
   )
 
-  if (!isOpen || items.length === 0) return null
+  if (!isOpen || items.length === 0 || sessionGroupId !== activeGroupId) return null
 
   return (
     <div

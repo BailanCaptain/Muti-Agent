@@ -33,6 +33,7 @@ test("GET /api/session-groups/:groupId includes hasPendingDispatches from dispat
     sessions: makeSessionsStub() as never,
     getRunningThreadIds: () => new Set<string>(),
     stopThread: () => true,
+    stopAgent: () => true,
     redisSummary: null,
     getDispatchState: (_groupId) => ({
       hasPendingDispatches: pendingState,
@@ -54,6 +55,7 @@ test("POST /api/threads/:threadId/model includes hasPendingDispatches from dispa
     sessions: makeSessionsStub() as never,
     getRunningThreadIds: () => new Set<string>(),
     stopThread: () => true,
+    stopAgent: () => true,
     redisSummary: null,
     getDispatchState: (_groupId) => ({
       hasPendingDispatches: true,
@@ -70,4 +72,66 @@ test("POST /api/threads/:threadId/model includes hasPendingDispatches from dispa
 
   assert.equal(response.statusCode, 200)
   assert.equal(response.json().activeGroup.hasPendingDispatches, true)
+})
+
+test("POST /api/threads/:threadId/cancel/:agentId returns 200 when agent is running", async () => {
+  const app = Fastify()
+
+  registerThreadRoutes(app, {
+    sessions: makeSessionsStub() as never,
+    getRunningThreadIds: () => new Set<string>(),
+    stopThread: () => true,
+    stopAgent: (_threadId, _agentId) => true,
+    redisSummary: null,
+  })
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/threads/thread-1/cancel/claude",
+  })
+  await app.close()
+
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(response.json(), { ok: true })
+})
+
+test("POST /api/threads/:threadId/cancel/:agentId returns 409 when agent has no running invocation", async () => {
+  const app = Fastify()
+
+  registerThreadRoutes(app, {
+    sessions: makeSessionsStub() as never,
+    getRunningThreadIds: () => new Set<string>(),
+    stopThread: () => true,
+    stopAgent: (_threadId, _agentId) => false,
+    redisSummary: null,
+  })
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/threads/thread-1/cancel/gemini",
+  })
+  await app.close()
+
+  assert.equal(response.statusCode, 409)
+  assert.equal(response.json().error, "该 agent 没有运行中的调用。")
+})
+
+test("POST /api/threads/:threadId/cancel/:agentId returns 501 when stopAgent is not provided", async () => {
+  const app = Fastify()
+
+  registerThreadRoutes(app, {
+    sessions: makeSessionsStub() as never,
+    getRunningThreadIds: () => new Set<string>(),
+    stopThread: () => true,
+    redisSummary: null,
+  })
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/threads/thread-1/cancel/claude",
+  })
+  await app.close()
+
+  assert.equal(response.statusCode, 501)
+  assert.equal(response.json().error, "精准取消未启用。")
 })

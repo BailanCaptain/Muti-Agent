@@ -19,6 +19,27 @@ type MarkdownMessageProps = {
 /*  @mention highlighting                                              */
 /* ------------------------------------------------------------------ */
 
+const mentionColorMap: Record<string, string> = {
+  // 黄仁勋 / Claude — 紫色
+  '黄仁勋': 'border-violet-200/80 bg-violet-50 text-violet-700',
+  'claude': 'border-violet-200/80 bg-violet-50 text-violet-700',
+  // 范德彪 / Codex — 金色
+  '范德彪': 'border-amber-200/80 bg-amber-50 text-amber-700',
+  'codex': 'border-amber-200/80 bg-amber-50 text-amber-700',
+  // 桂芬 / Gemini — 蓝色
+  '桂芬': 'border-sky-200/80 bg-sky-50 text-sky-700',
+  'gemini': 'border-sky-200/80 bg-sky-50 text-sky-700',
+  // 小孙 — 橙色（用户）
+  '小孙': 'border-orange-200/80 bg-orange-50 text-orange-700',
+  // 所有人
+  '所有人': 'border-slate-200/80 bg-slate-100 text-slate-700',
+}
+
+function getMentionColor(mention: string): string {
+  const name = mention.replace(/^@/, '')
+  return mentionColorMap[name] ?? 'border-emerald-200/80 bg-emerald-50 text-emerald-700'
+}
+
 function highlightMentions(text: string): ReactNode[] {
   const re = /(@[\p{L}\p{N}._-]+)/gu
   const parts: ReactNode[] = []
@@ -29,7 +50,7 @@ function highlightMentions(text: string): ReactNode[] {
     parts.push(
       <span
         key={`m${idx}`}
-        className="inline-flex rounded-full border border-emerald-200/80 bg-emerald-50 px-2 py-0.5 font-mono text-[0.82em] font-medium text-emerald-700"
+        className={`inline-flex rounded-full border px-2 py-0.5 font-mono text-[0.82em] font-medium ${getMentionColor(m[0])}`}
       >
         {m[0]}
       </span>,
@@ -220,6 +241,37 @@ const mdComponents: Components = {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Output Sanitizer (AC6)                                             */
+/* ------------------------------------------------------------------ */
+
+function sanitizeMarkdown(raw: string): string {
+  // Protect fenced code blocks (``` and ~~~) from sanitization
+  const fenceRe = /^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1\s*$/gm
+  const blocks: string[] = []
+  let text = raw.replace(fenceRe, (match) => {
+    blocks.push(match)
+    return `\x00CODEBLOCK_${blocks.length - 1}\x00`
+  })
+
+  text = text.replace(/\r\n/g, '\n')
+  text = text.replace(/\n{3,}/g, '\n\n')
+  text = text.replace(/([^\n])\n([-*+] )/g, '$1\n\n$2')
+  text = text.replace(/([^\n])\n(\d+\. )/g, '$1\n\n$2')
+
+  const backtickCount = (text.match(/`/g) || []).length
+  if (backtickCount % 2 !== 0) {
+    text += '`'
+  }
+
+  text = text.replace(/[ \t]{3,}$/gm, '  ')
+
+  // Restore code blocks
+  text = text.replace(/\x00CODEBLOCK_(\d+)\x00/g, (_, i) => blocks[Number(i)])
+
+  return text
+}
+
+/* ------------------------------------------------------------------ */
 /*  MarkdownMessage                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -247,7 +299,7 @@ export function MarkdownMessage({
       ].join(" ")}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={mdComponents}>
-        {content}
+        {sanitizeMarkdown(content)}
       </ReactMarkdown>
     </div>
   )

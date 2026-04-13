@@ -9,7 +9,7 @@ import {
   Search,
   Pin,
 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { ProviderAvatar } from "./provider-avatar"
 import { SessionContextMenu } from "./session-context-menu"
 
@@ -44,8 +44,6 @@ type ProjectGroup = {
     title: string
     updatedAtLabel: string
     projectTag?: string
-    pinned: boolean
-    unreadCount: number
     previews: Array<{ provider: string; alias: string; text: string }>
   }>
 }
@@ -58,7 +56,9 @@ export function SessionSidebar() {
   const createGroup = useThreadStore((state) => state.createSessionGroup)
   const selectGroup = useThreadStore((state) => state.selectSessionGroup)
   const unreadCounts = useThreadStore((state) => state.unreadCounts)
-  const providers = useThreadStore((state) => state.providers)
+  const anyProviderRunning = useThreadStore((state) =>
+    Object.values(state.providers).some((p) => p.running)
+  )
   const pending = useApprovalStore((s) => s.pending)
 
   const [search, setSearch] = useState("")
@@ -108,12 +108,11 @@ export function SessionSidebar() {
 
   const runningGroupIds = useMemo(() => {
     const running = new Set<string>()
-    const anyRunning = Object.values(providers).some((p) => p.running)
-    if (anyRunning && activeGroupId) {
+    if (anyProviderRunning && activeGroupId) {
       running.add(activeGroupId)
     }
     return running
-  }, [providers, activeGroupId])
+  }, [anyProviderRunning, activeGroupId])
 
   const waitingApprovalGroupIds = useMemo(() => {
     const ids = new Set<string>()
@@ -134,22 +133,12 @@ export function SessionSidebar() {
     )
   }, [sessionGroups, search])
 
-  // Enrich items with pinned + unread
-  const enriched = useMemo(
-    () =>
-      filtered.map((group) => ({
-        ...group,
-        pinned: pinned.has(group.id),
-        unreadCount: unreadCounts[group.id] ?? 0,
-      })),
-    [filtered, pinned, unreadCounts],
-  )
-
-  // Split into pinned and project groups
-  const pinnedItems = useMemo(() => enriched.filter((g) => g.pinned), [enriched])
+  // Split into pinned and project groups directly — no intermediate enriched objects,
+  // so item references stay stable for React.memo
+  const pinnedItems = useMemo(() => filtered.filter((g) => pinned.has(g.id)), [filtered, pinned])
 
   const projectGroups = useMemo(() => {
-    const unpinned = enriched.filter((g) => !g.pinned)
+    const unpinned = filtered.filter((g) => !pinned.has(g.id))
     const tagMap = new Map<string, typeof unpinned>()
     for (const item of unpinned) {
       const tag = item.projectTag ?? "__ungrouped__"
@@ -165,14 +154,13 @@ export function SessionSidebar() {
         items,
       })
     }
-    // Sort: named groups first (alphabetically), ungrouped last
     groups.sort((a, b) => {
       if (a.tag === "__ungrouped__") return 1
       if (b.tag === "__ungrouped__") return -1
       return a.label.localeCompare(b.label)
     })
     return groups
-  }, [enriched])
+  }, [filtered, pinned])
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent, groupId: string, isPinned: boolean) => {
@@ -185,10 +173,10 @@ export function SessionSidebar() {
   const closeContextMenu = useCallback(() => setContextMenu(null), [])
 
   return (
-    <aside className="flex h-screen w-[280px] shrink-0 flex-col border-r border-slate-800/20 bg-slate-950 px-3 py-4">
+    <aside className="flex h-screen w-[280px] shrink-0 flex-col border-r border-slate-200/30 bg-white/70 backdrop-blur-xl px-3 py-4 shadow-[4px_0_24px_rgba(15,23,42,0.04)]">
       {/* Header */}
       <div className="mb-4 flex items-center justify-between px-1">
-        <h2 className="text-sm font-semibold tracking-wide text-slate-200">
+        <h2 className="text-sm font-semibold tracking-wide text-slate-800">
           会话
         </h2>
         <button
@@ -203,9 +191,9 @@ export function SessionSidebar() {
 
       {/* Search */}
       <label className="relative mb-3 block px-1">
-        <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+        <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
         <input
-          className="w-full rounded-md border border-slate-800/40 bg-slate-900/80 py-1.5 pl-8 pr-3 text-sm text-slate-300 placeholder-slate-600 outline-none transition focus:border-slate-700 focus:ring-1 focus:ring-slate-700"
+          className="w-full rounded-md border border-slate-200/60 bg-white/60 py-1.5 pl-8 pr-3 text-sm text-slate-700 placeholder-slate-400 outline-none transition focus:border-slate-300 focus:ring-1 focus:ring-slate-300"
           onChange={(e) => setSearch(e.target.value)}
           placeholder="搜索..."
           type="text"
@@ -223,7 +211,7 @@ export function SessionSidebar() {
               <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
                 已置顶
               </span>
-              <span className="ml-auto rounded-full bg-amber-500/20 px-1.5 text-[10px] font-mono text-amber-400">
+              <span className="ml-auto rounded-full bg-amber-100 px-1.5 text-[10px] font-mono text-amber-600">
                 {pinnedItems.length}
               </span>
             </div>
@@ -231,14 +219,17 @@ export function SessionSidebar() {
               {pinnedItems.map((group) => (
                 <SessionCard
                   key={group.id}
-                  group={group}
+                  groupId={group.id}
+                  title={group.title}
+                  updatedAtLabel={group.updatedAtLabel}
+                  unreadCount={unreadCounts[group.id] ?? 0}
+                  previews={group.previews}
                   active={activeGroupId === group.id}
                   running={runningGroupIds.has(group.id)}
                   waitingApproval={waitingApprovalGroupIds.has(group.id)}
-                  onClick={() => void selectGroup(group.id)}
-                  onContextMenu={(e) =>
-                    handleContextMenu(e, group.id, true)
-                  }
+                  isPinned={true}
+                  onSelect={selectGroup}
+                  onCtxMenu={handleContextMenu}
                 />
               ))}
             </div>
@@ -254,14 +245,14 @@ export function SessionSidebar() {
               type="button"
             >
               {collapsedTags.has(pg.tag) ? (
-                <ChevronRight className="h-3 w-3 text-slate-600" />
+                <ChevronRight className="h-3 w-3 text-slate-400" />
               ) : (
-                <ChevronDown className="h-3 w-3 text-slate-600" />
+                <ChevronDown className="h-3 w-3 text-slate-400" />
               )}
               <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
                 {pg.label}
               </span>
-              <span className="ml-auto rounded-full bg-slate-800 px-1.5 text-[10px] font-mono text-slate-500">
+              <span className="ml-auto rounded-full bg-slate-100 px-1.5 text-[10px] font-mono text-slate-500">
                 {pg.items.length}
               </span>
             </button>
@@ -270,14 +261,17 @@ export function SessionSidebar() {
                 {pg.items.map((group) => (
                   <SessionCard
                     key={group.id}
-                    group={group}
+                    groupId={group.id}
+                    title={group.title}
+                    updatedAtLabel={group.updatedAtLabel}
+                    unreadCount={unreadCounts[group.id] ?? 0}
+                    previews={group.previews}
                     active={activeGroupId === group.id}
                     running={runningGroupIds.has(group.id)}
                     waitingApproval={waitingApprovalGroupIds.has(group.id)}
-                    onClick={() => void selectGroup(group.id)}
-                    onContextMenu={(e) =>
-                      handleContextMenu(e, group.id, group.pinned)
-                    }
+                    isPinned={pinned.has(group.id)}
+                    onSelect={selectGroup}
+                    onCtxMenu={handleContextMenu}
                   />
                 ))}
               </div>
@@ -301,33 +295,79 @@ export function SessionSidebar() {
   )
 }
 
+/* ── Keyword Capsules ── */
+
+type KeywordRule = {
+  en: RegExp
+  cn: string[]
+  label: string
+  color: string
+}
+
+const KEYWORD_RULES: KeywordRule[] = [
+  { en: /\brefactor\b/i, cn: ["重构"], label: "Refactor", color: "bg-violet-100 text-violet-600" },
+  { en: /\b(bugfix|bug|fix)\b/i, cn: ["修复", "修 bug"], label: "BugFix", color: "bg-rose-100 text-rose-600" },
+  { en: /\bUI\b/i, cn: ["界面", "前端", "视觉", "样式"], label: "UI", color: "bg-sky-100 text-sky-600" },
+  { en: /\b(test|TDD)\b/i, cn: ["测试"], label: "Test", color: "bg-emerald-100 text-emerald-600" },
+  { en: /\b(feat|feature)\b/i, cn: ["新功能", "功能"], label: "Feature", color: "bg-amber-100 text-amber-600" },
+  { en: /\b(docs|README)\b/i, cn: ["文档"], label: "Docs", color: "bg-slate-100 text-slate-600" },
+  { en: /\bperf\b/i, cn: ["性能", "优化"], label: "Perf", color: "bg-orange-100 text-orange-600" },
+  { en: /\b(review|code review)\b/i, cn: ["审查"], label: "Review", color: "bg-indigo-100 text-indigo-600" },
+  { en: /\bdeploy\b/i, cn: ["部署", "发布", "上线"], label: "Deploy", color: "bg-teal-100 text-teal-600" },
+]
+
+function extractKeywords(title: string, previews: Array<{ text: string }>): Array<{ label: string; color: string }> {
+  const corpus = [title, ...previews.map((p) => p.text)].join(" ")
+  const found: Array<{ label: string; color: string }> = []
+  for (const { en, cn, label, color } of KEYWORD_RULES) {
+    const hit = en.test(corpus) || cn.some((w) => corpus.includes(w))
+    if (hit) {
+      found.push({ label, color })
+    }
+    if (found.length >= 3) break
+  }
+  return found
+}
+
 /* ── Session Card ── */
 
 type SessionCardProps = {
-  group: {
-    id: string
-    title: string
-    updatedAtLabel: string
-    unreadCount: number
-    previews: Array<{ provider: string; alias: string; text: string }>
-  }
+  groupId: string
+  title: string
+  updatedAtLabel: string
+  unreadCount: number
+  previews: Array<{ provider: string; alias: string; text: string }>
   active: boolean
   running: boolean
   waitingApproval: boolean
-  onClick: () => void
-  onContextMenu: (e: React.MouseEvent) => void
+  isPinned: boolean
+  onSelect: (groupId: string) => void
+  onCtxMenu: (e: React.MouseEvent, groupId: string, isPinned: boolean) => void
 }
 
-function SessionCard({ group, active, running, waitingApproval, onClick, onContextMenu }: SessionCardProps) {
+const SessionCard = memo(function SessionCard({ groupId, title, updatedAtLabel, unreadCount, previews, active, running, waitingApproval, isPinned, onSelect, onCtxMenu }: SessionCardProps) {
+  const handleClick = useCallback(() => {
+    void onSelect(groupId)
+  }, [onSelect, groupId])
+
+  const handleCtxMenu = useCallback((e: React.MouseEvent) => {
+    onCtxMenu(e, groupId, isPinned)
+  }, [onCtxMenu, groupId, isPinned])
+
+  const keywords = useMemo(
+    () => extractKeywords(title, previews),
+    [title, previews],
+  )
+
   return (
     <button
       className={`group relative w-full rounded-md px-2.5 py-2 text-left transition ${
         active
-          ? "border-l-2 border-amber-500 bg-slate-800/80"
-          : "border-l-2 border-transparent hover:bg-slate-900/50"
+          ? "border-l-2 border-amber-500 bg-white/80 shadow-sm"
+          : "border-l-2 border-transparent hover:bg-white/50"
       }`}
-      onClick={onClick}
-      onContextMenu={onContextMenu}
+      onClick={handleClick}
+      onContextMenu={handleCtxMenu}
       type="button"
     >
       <div className="flex items-start justify-between gap-2">
@@ -346,25 +386,39 @@ function SessionCard({ group, active, running, waitingApproval, onClick, onConte
               <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
             </span>
           )}
-          <h3 className="truncate text-sm font-medium text-slate-200">
-            {group.title}
+          <h3 className="truncate text-sm font-medium text-slate-800">
+            {title}
           </h3>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          {group.unreadCount > 0 && (
+          {unreadCount > 0 && (
             <span className="rounded-full bg-amber-500 px-1.5 text-[10px] font-medium text-white">
-              {group.unreadCount}
+              {unreadCount}
             </span>
           )}
-          <span className="text-[10px] text-slate-600">{group.updatedAtLabel}</span>
+          <span className="text-[10px] text-slate-400">{updatedAtLabel}</span>
         </div>
       </div>
 
+      {/* Keyword capsules */}
+      {keywords.length > 0 && (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {keywords.map((kw) => (
+            <span
+              key={kw.label}
+              className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${kw.color}`}
+            >
+              {kw.label}
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="mt-1.5 flex items-center gap-2">
         <div className="flex -space-x-1.5">
-          {group.previews.map((preview) => (
+          {previews.map((preview) => (
             <ProviderAvatar
-              className="ring-1 ring-slate-950"
+              className="ring-1 ring-white/80"
               identity={preview.provider as "claude" | "codex" | "gemini"}
               key={preview.provider}
               size="xs"
@@ -372,9 +426,9 @@ function SessionCard({ group, active, running, waitingApproval, onClick, onConte
           ))}
         </div>
         <p className="min-w-0 flex-1 truncate text-xs text-slate-500">
-          {group.previews.find((p) => p.text)?.text || "尚无消息"}
+          {previews.find((p) => p.text)?.text || "尚无消息"}
         </p>
       </div>
     </button>
   )
-}
+})

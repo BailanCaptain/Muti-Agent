@@ -1,6 +1,7 @@
 "use client"
 
 import { useFoldStore, useIsMessageFolded } from "@/components/stores/fold-store"
+import { useSettingsStore } from "@/components/stores/settings-store"
 import { formatTokenCount } from "@/lib/format"
 import { normalizeMessageToBlocks } from "@/lib/blocks"
 import type { DecisionRequest, Provider, TimelineMessage } from "@multi-agent/shared"
@@ -10,6 +11,7 @@ import { BlockRenderer } from "./block-renderer"
 import { DecisionCard } from "./decision-card"
 import { MarkdownMessage } from "./markdown-message"
 import { ProviderAvatar } from "./provider-avatar"
+import { StepTracker } from "./rich-blocks/step-tracker"
 
 interface MessageBubbleProps {
   message: TimelineMessage
@@ -138,6 +140,7 @@ function MessageMeta({ message }: { message: TimelineMessage }) {
 
 export function MessageBubble({ message, inlineDecisions, onDecisionRespond, onDelete, onCopy }: MessageBubbleProps) {
   const [isThinkingOpen, setIsThinkingOpen] = useState(true)
+  const showThinking = useSettingsStore((state) => state.showThinking)
   const isUser = message.role === "user"
   const avatarIdentity = isUser ? "user" : message.provider
   const displayAlias = isUser ? "你" : message.alias
@@ -205,7 +208,7 @@ export function MessageBubble({ message, inlineDecisions, onDecisionRespond, onD
                     : `${bubbleTheme[message.provider]} text-slate-700`
                 }`}
               >
-                {!isUser && message.thinking && theme ? (
+                {!isUser && message.thinking && theme && showThinking ? (
                   <div
                     className={`mb-4 overflow-hidden rounded-2xl border p-4 shadow-inner ${theme.container}`}
                   >
@@ -234,6 +237,7 @@ export function MessageBubble({ message, inlineDecisions, onDecisionRespond, onD
                     >
                       <div className="overflow-hidden">
                         <div className="max-h-60 overflow-y-auto border-t border-slate-200/60 pt-3 pr-1">
+                          <StepTracker thinking={message.thinking} provider={message.provider} />
                           <MarkdownMessage
                             className={`text-[12px] leading-relaxed ${theme.content}`}
                             content={message.thinking}

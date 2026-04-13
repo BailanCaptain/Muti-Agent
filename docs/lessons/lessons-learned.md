@@ -215,3 +215,26 @@
   - `packages/api/src/runtime/base-runtime.test.ts`（B011 新增的端到端测试）
 - 原理（可选）：多组件系统的 bug 往往不在单个组件内部，而在组件间的**假设耦合**处。每个组件维护者都觉得"我这层的假设合理"，但没人负责验证假设的组合。单元测试验证的是"组件内部逻辑对不对"，不是"组件间假设兼不兼容"——后者只有端到端测试或信号链走查才能覆盖。LL-004 讲的是"同一症状修多次 → 上抬一层"，LL-008 讲的是"改一个组件 → 横扫所有耦合假设"。一个是纵向（层级），一个是横向（组件间）。
 - 关联：`docs/bugReport/B010-windows-liveness-blind-spot.md`, `docs/bugReport/B011-stall-kill-mid-retry.md`, `docs/lessons/lessons-learned.md#LL-004`, `docs/lessons/lessons-learned.md#LL-006`
+
+### LL-009: 同一隔离缺陷修了一条路径，漏了并行路径
+- 状态：validated
+- 更新时间：2026-04-13
+
+- 坑：`05618ac` 修"Decision Board 收敛泄漏"时，在 `DecisionStore`（inline decision cards）的渲染处（`timeline-panel.tsx:82`）加了 `sessionGroupId === activeGroupId` 过滤。但 F002 后来引入的 `DecisionBoardStore`（board flush 整体弹窗）走的是另一条渲染路径（`decision-board-modal.tsx:71`），从未加过 session 校验。结果串行讨论的 board 卡片仍然跨房间泄漏——修了 Store A 漏了 Store B。
+- 根因：修 bug 时只追踪了**当前症状的调用链**（`DecisionStore → timeline-panel`），没有 grep "同一概念的所有消费者"。`DecisionStore` 和 `DecisionBoardStore` 是同一个领域概念（decision）的两个并行实现，共享同一类隔离需求，但修复者只知道其中一个。
+- 触发条件：
+  1. 同一领域概念有 2+ 个 store / 组件 / 路径（例如 `decision-store` vs `decision-board-store`）
+  2. 修隔离/过滤/权限类 bug 时只改了其中一个路径
+  3. Grep `sessionGroupId` 或领域关键词时会命中多个 store / 组件
+- 修复：`decision-board-modal.tsx` 添加 `useThreadStore` → `activeGroupId`，early return 条件加 `sessionGroupId !== activeGroupId`。
+- 防护：
+  1. **同概念全路径扫描**：修隔离/过滤/安全类 bug 时，先 grep 领域关键词（例如 `decision`、`sessionGroupId`），列出**所有**消费该概念的 store / 组件，逐一确认是否存在同类缺陷。
+  2. **PR checklist 新增"并行路径"项**：凡涉及 session 隔离的修复，必须列出"该概念的所有 store / 渲染路径"并标注哪些已修、哪些不受影响。
+  3. **命名约定**：同领域的多个 store 名字应有共同前缀（`decision-store` / `decision-board-store` 可以发现），修一个时 grep 前缀。
+- 来源锚点：
+  - `components/chat/decision-board-modal.tsx:71`（漏修的路径）
+  - `components/chat/timeline-panel.tsx:82`（已修的路径）
+  - `components/stores/decision-board-store.ts`（F002 引入的并行 store）
+  - commit `05618ac`（只修了一条路径的原始修复）
+- 原理（可选）：隔离缺陷是**概念级**的，不是**组件级**的。修一个组件等于修了一条路径，但同一概念可能流经 N 条路径。"修完 grep 一下"的成本 ≤ 5 分钟，"漏了等用户报 bug"的成本 ≥ 1 天。
+- 关联：`docs/bugReport/B007-decision-board-convergence-leak.md`, `docs/features/F002-decision-board.md`

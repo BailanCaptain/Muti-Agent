@@ -316,6 +316,19 @@ export class DispatchOrchestrator {
     }
   }
 
+  clearProviderQueue(sessionGroupId: string, provider: Provider): number {
+    const queue = this.queues.get(sessionGroupId)
+    if (!queue) return 0
+    const before = queue.length
+    const filtered = queue.filter((e) => e.to.provider !== provider)
+    if (filtered.length === 0) {
+      this.queues.delete(sessionGroupId)
+    } else {
+      this.queues.set(sessionGroupId, filtered)
+    }
+    return before - filtered.length
+  }
+
   hasQueuedDispatches(sessionGroupId: string) {
     return (this.queues.get(sessionGroupId)?.length ?? 0) > 0
   }

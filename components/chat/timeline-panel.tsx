@@ -4,7 +4,8 @@ import { useApprovalStore } from "@/components/stores/approval-store"
 import { useDecisionStore } from "@/components/stores/decision-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import type { TimelineMessage } from "@multi-agent/shared"
-import { useEffect, useMemo, useRef } from "react"
+import { useVirtualizer } from "@tanstack/react-virtual"
+import { useCallback, useEffect, useMemo, useRef } from "react"
 import { ApprovalCard } from "./approval-card"
 import { CollapsibleGroup } from "./collapsible-group"
 import { ConnectorBubble } from "./connector-bubble"
@@ -101,11 +102,43 @@ export function TimelinePanel() {
 
   const groupedItems = useMemo(() => groupTimeline(timeline), [timeline])
 
-  useEffect(() => {
-    if (scrollRef.current && latestMessageId) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+  type RenderItem =
+    | { kind: "grouped"; data: GroupedItem }
+    | { kind: "decision"; data: (typeof standAloneDecisions)[number] }
+
+  const renderItems: RenderItem[] = useMemo(() => {
+    const items: RenderItem[] = []
+    for (const gi of groupedItems) {
+      items.push({ kind: "grouped", data: gi })
     }
+    for (const d of standAloneDecisions) {
+      items.push({ kind: "decision", data: d })
+    }
+    return items
+  }, [groupedItems, standAloneDecisions])
+
+  const virtualizer = useVirtualizer({
+    count: renderItems.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => {
+      const item = renderItems[index]
+      if (item?.kind === "grouped" && item.data.type === "group") return 300
+      return 200
+    },
+    overscan: 5,
+  })
+
+  // Auto-scroll when new messages arrive
+  useEffect(() => {
+    if (latestMessageId && renderItems.length > 0) {
+      virtualizer.scrollToIndex(renderItems.length - 1, { align: "end" })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestMessageId])
+
+  const handleCopy = useCallback((content: string) => {
+    navigator.clipboard.writeText(content)
+  }, [])
 
   return (
     <div
@@ -113,44 +146,65 @@ export function TimelinePanel() {
       ref={scrollRef}
     >
       <div className="mx-auto w-full max-w-[980px]">
-        {groupedItems.length === 0 ? (
+        {renderItems.length === 0 ? (
           <div className="flex min-h-[40vh] items-center justify-center text-slate-400">
             <div className="rounded-[28px] border border-dashed border-slate-200 bg-white/70 px-8 py-6 text-center shadow-[0_12px_30px_rgba(15,23,42,0.04)]">
               <p className="text-sm italic">尚无消息。</p>
             </div>
           </div>
         ) : (
-          groupedItems.map((item) => {
-            if (item.type === "group") {
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: "100%",
+              position: "relative",
+            }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const item = renderItems[virtualRow.index]
               return (
-                <CollapsibleGroup
-                  key={item.header.id}
-                  header={item.header}
-                  members={item.members}
-                  inlineDecisionsByMsgId={inlineDecisionsByMsgId}
-                  onDecisionRespond={respondDecision}
-                  onCopy={(content) => navigator.clipboard.writeText(content)}
-                />
+                <div
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  {item.kind === "decision" ? (
+                    <DecisionCard
+                      request={item.data}
+                      onRespond={respondDecision}
+                    />
+                  ) : item.data.type === "group" ? (
+                    <CollapsibleGroup
+                      header={item.data.header}
+                      members={item.data.members}
+                      inlineDecisionsByMsgId={inlineDecisionsByMsgId}
+                      onDecisionRespond={respondDecision}
+                      onCopy={handleCopy}
+                    />
+                  ) : item.data.message.messageType === "connector" ? (
+                    <ConnectorBubble message={item.data.message} />
+                  ) : (
+                    <MessageBubble
+                      message={item.data.message}
+                      inlineDecisions={inlineDecisionsByMsgId.get(
+                        item.data.message.id,
+                      )}
+                      onDecisionRespond={respondDecision}
+                      onCopy={handleCopy}
+                    />
+                  )}
+                </div>
               )
-            }
-
-            const message = item.message
-            return message.messageType === "connector" ? (
-              <ConnectorBubble key={message.id} message={message} />
-            ) : (
-              <MessageBubble
-                key={message.id}
-                message={message}
-                inlineDecisions={inlineDecisionsByMsgId.get(message.id)}
-                onDecisionRespond={respondDecision}
-                onCopy={(content) => navigator.clipboard.writeText(content)}
-              />
-            )
-          })
+            })}
+          </div>
         )}
-        {standAloneDecisions.map((request) => (
-          <DecisionCard key={request.requestId} request={request} onRespond={respondDecision} />
-        ))}
         <InlineDecisionBoard />
         {pendingApprovals.map((request) => (
           <ApprovalCard key={request.requestId} request={request} onRespond={respondApproval} />

@@ -67,6 +67,7 @@ type ThreadStore = {
   selectSessionGroup: (groupId: string) => Promise<void>
   updateModel: (provider: Provider, model: string) => Promise<void>
   stopThread: (provider: Provider) => Promise<void>
+  stopAgent: (provider: Provider) => Promise<void>
   replaceSessionGroups: (groups: SessionGroupSummary[]) => void
   replaceActiveGroup: (group: ActiveGroupPayload) => void
   applyAssistantDelta: (messageId: string, delta: string) => void
@@ -327,6 +328,16 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       method: "POST",
     })
   },
+  stopAgent: async (provider) => {
+    const thread = get().providers[provider]
+    if (!thread.threadId) {
+      return
+    }
+
+    await fetchJson(`/api/threads/${thread.threadId}/cancel/${provider}`, {
+      method: "POST",
+    })
+  },
   replaceSessionGroups: (groups) => {
     set({ sessionGroups: normalizeSessionGroups(groups) })
   },
@@ -383,6 +394,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
   resetUnread: (groupId) => {
     set((state) => {
+      if (!(groupId in state.unreadCounts)) return state
       const { [groupId]: _, ...rest } = state.unreadCounts
       return { unreadCounts: rest }
     })

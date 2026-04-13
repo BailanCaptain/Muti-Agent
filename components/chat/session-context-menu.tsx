@@ -32,8 +32,6 @@ export function SessionContextMenu({
   const menuRef = useRef<HTMLDivElement>(null)
   const [showTagInput, setShowTagInput] = useState(false)
   const [tagValue, setTagValue] = useState("")
-  const [showRenameInput, setShowRenameInput] = useState(false)
-  const [renameValue, setRenameValue] = useState("")
   const replaceSessionGroups = useThreadStore((s) => s.replaceSessionGroups)
 
   // Close on outside click or Escape
@@ -85,25 +83,10 @@ export function SessionContextMenu({
     onClose()
   }, [groupId, tagValue, onClose, replaceSessionGroups])
 
-  const handleRename = useCallback(async () => {
-    // For now, rename is a placeholder since we don't have a rename endpoint yet
-    // A rename feature requires a backend PATCH for title — skip for now
-    onClose()
-  }, [onClose])
-
-  const handleArchive = useCallback(() => {
-    // Archive is a placeholder — future feature
-    onClose()
-  }, [onClose])
-
-  const handleDelete = useCallback(() => {
-    // Delete is a placeholder — future feature (Iron Law: data is sacred)
-    onClose()
-  }, [onClose])
 
   return (
     <div ref={menuRef} style={style}>
-      <div className="min-w-[180px] rounded-lg border border-slate-700 bg-slate-900 py-1 shadow-xl">
+      <div className="min-w-[180px] rounded-lg border border-slate-200/30 bg-white/90 backdrop-blur-lg py-1 shadow-xl">
         {/* Pin / Unpin */}
         <MenuItem
           icon={<Pin className="h-3.5 w-3.5" />}
@@ -111,35 +94,20 @@ export function SessionContextMenu({
           onClick={handlePin}
         />
 
-        {/* Rename */}
-        {showRenameInput ? (
-          <div className="px-2 py-1.5">
-            <input
-              autoFocus
-              className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 outline-none focus:border-amber-500"
-              onChange={(e) => setRenameValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void handleRename()
-                if (e.key === "Escape") setShowRenameInput(false)
-              }}
-              placeholder="新名称..."
-              value={renameValue}
-            />
-          </div>
-        ) : (
-          <MenuItem
-            icon={<Pencil className="h-3.5 w-3.5" />}
-            label="重命名"
-            onClick={() => setShowRenameInput(true)}
-          />
-        )}
+        {/* Rename — not yet implemented */}
+        <MenuItem
+          icon={<Pencil className="h-3.5 w-3.5" />}
+          label="重命名（即将推出）"
+          disabled
+          onClick={onClose}
+        />
 
         {/* Set project tag */}
         {showTagInput ? (
           <div className="px-2 py-1.5">
             <input
               autoFocus
-              className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 outline-none focus:border-amber-500"
+              className="w-full rounded border border-slate-200/60 bg-white/60 px-2 py-1 text-xs text-slate-700 outline-none focus:border-amber-500"
               onChange={(e) => setTagValue(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void handleSetTag()
@@ -158,21 +126,23 @@ export function SessionContextMenu({
         )}
 
         {/* Divider */}
-        <div className="my-1 border-t border-slate-800" />
+        <div className="my-1 border-t border-slate-200/40" />
 
-        {/* Archive */}
+        {/* Archive — not yet implemented */}
         <MenuItem
           icon={<Archive className="h-3.5 w-3.5" />}
-          label="归档"
-          onClick={handleArchive}
+          label="归档（即将推出）"
+          disabled
+          onClick={onClose}
         />
 
-        {/* Delete */}
+        {/* Delete — not yet implemented (Iron Law: data is sacred) */}
         <MenuItem
           icon={<Trash2 className="h-3.5 w-3.5" />}
-          label="删除"
+          label="删除（即将推出）"
           danger
-          onClick={handleDelete}
+          disabled
+          onClick={onClose}
         />
       </div>
     </div>
@@ -185,21 +155,26 @@ function MenuItem({
   icon,
   label,
   danger = false,
+  disabled = false,
   onClick,
 }: {
   icon: React.ReactNode
   label: string
   danger?: boolean
+  disabled?: boolean
   onClick: () => void
 }) {
   return (
     <button
       className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition ${
-        danger
-          ? "text-red-400 hover:bg-red-900/30"
-          : "text-slate-300 hover:bg-slate-800"
+        disabled
+          ? "cursor-not-allowed text-slate-300"
+          : danger
+            ? "text-red-500 hover:bg-red-50"
+            : "text-slate-600 hover:bg-slate-100/80"
       }`}
-      onClick={onClick}
+      disabled={disabled}
+      onClick={disabled ? undefined : onClick}
       type="button"
     >
       {icon}

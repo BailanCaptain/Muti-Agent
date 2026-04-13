@@ -1,14 +1,14 @@
 ---
 id: F006
 title: UI/UX 深度重塑与运行时治理 V2
-status: kickoff
+status: in-progress
 owner: 桂芬
 created: 2026-04-13
 ---
 
 # F006 — UI/UX 深度重塑与运行时治理 V2
 
-**Status**: design-confirmed
+**Status**: in-progress
 **Created**: 2026-04-13
 
 ## Why
@@ -38,22 +38,29 @@ F005 虽然合入了，但用户（小孙）反馈极差，存在严重的视觉
 ## Acceptance Criteria
 
 ### Phase 1: 视觉基调与侧边栏 (Designer's Soul)
-- [ ] AC1: 侧边栏改为毛玻璃透明质感（bg-white/80 + blur），边框采用极细浅色描边。
-- [ ] AC2: 侧边栏支持右键菜单（置顶、重命名、删除）。
+- [x] AC1: 侧边栏改为毛玻璃透明质感（bg-white/80 + blur），边框采用极细浅色描边。
+- [x] AC2: 侧边栏支持右键菜单（置顶、重命名、删除）。
 
 ### Phase 2: 右侧指挥中心合体 (Unified Control)
-- [ ] AC3: 实现 Status Panel 置顶的活跃 Agent 控制区，支持单点停止。
-- [ ] AC4: 整合 Agent 与 Model 配置，移除冗余 Tab。
-- [ ] AC5: 增加「心里话模式」拨杆，控制 Thinking 区域全局显隐。
+- [x] AC3: 实现 Status Panel 置顶的活跃 Agent 控制区，支持单点停止。
+- [x] AC4: 整合 Agent 与 Model 配置，移除冗余 Tab。
+- [x] AC5: 增加「心里话模式」拨杆，控制 Thinking 区域全局显隐。
 
 ### Phase 3: 输出规范与步进器 (The Mirror)
-- [ ] AC6: 实现前端「输出清洗器」，强行修正换行符（\n）和不规范的 Markdown 符号。
-- [ ] AC7: Thinking 区域升级为「步进器」组件，支持显示工具调用参数（args）。
-- [ ] AC8: 实现不同身份的 @mention 高亮（老黄-紫，德彪-金，桂芬-蓝）。
+- [x] AC6: 实现前端「输出清洗器」，强行修正换行符（\n）和不规范的 Markdown 符号。
+- [x] AC7: Thinking 区域升级为「步进器」组件，支持显示工具调用参数（args）。
+- [x] AC8: 实现不同身份的 @mention 高亮（老黄-紫，德彪-金，桂芬-蓝）。
 
 ### Phase 4: 后端补全与联调 (Final Polish)
-- [ ] AC9: 后端路由支持 `/api/threads/:threadId/cancel/:agentId`。
-- [ ] AC10: 全量 UI 走查，确保毛玻璃主题在亮/暗模式下均无死角。
+- [x] AC9: 后端路由支持 `/api/threads/:threadId/cancel/:agentId`。
+- [x] AC10: 全量 UI 走查，确保毛玻璃主题在亮/暗模式下均无死角。
+
+### Phase 5: Bug 修复与性能优化 (Stability & Performance)
+- [x] AC11: 串行讨论 DecisionBoard 跨会话泄漏修复 — `InlineDecisionBoard` 加 `sessionGroupId !== activeGroupId` 校验。
+- [x] AC12: Timeline 消息列表虚拟化（`@tanstack/react-virtual`），只渲染可视区域内的消息。
+- [x] AC13: SessionCard 用 `React.memo` 包裹，避免无关状态变化触发全卡片重渲染。
+- [x] AC14: StatusPanel 消息统计用 `useMemo` 缓存，避免每次渲染重复 `.filter()` 计算。
+- [x] AC15: 侧边栏 `providers` 订阅细粒度化（从全对象 → `anyRunning` 布尔派生），减少不必要的重渲染。
 
 ## Dependencies
 

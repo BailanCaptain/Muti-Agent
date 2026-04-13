@@ -35,6 +35,10 @@ pre,
 }
 
 @layer components {
+  .glass-surface {
+    @apply bg-white/70 backdrop-blur-xl border border-slate-200/30 shadow-[0_8px_32px_rgba(15,23,42,0.04)];
+  }
+
   .shadow-soft {
     @apply shadow-[0_8px_30px_rgb(0,0,0,0.04)];
   }
