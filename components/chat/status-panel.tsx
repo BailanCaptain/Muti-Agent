@@ -94,6 +94,73 @@ function formatCachePercent(cachedTokens: number, inputTokens: number) {
 
 const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
 
+/* ────────── Default Config (interactive) ────────── */
+
+function DefaultConfigSection({
+  provider,
+  theme,
+}: {
+  provider: Provider
+  theme: (typeof providerTheme)[Provider]
+}) {
+  const catalog = useRuntimeConfigStore((state) => state.catalog)
+  const runtimeConfig = useRuntimeConfigStore((state) => state.config)
+  const setAgentOverride = useRuntimeConfigStore((state) => state.setAgentOverride)
+
+  return (
+    <div className="mt-3 border-t border-slate-200/60 pt-2">
+      <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-400">
+        默认配置
+      </div>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="w-12 text-[10px] text-slate-400">模型</span>
+          <input
+            className={`min-w-0 flex-1 rounded-2xl border border-white/80 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none transition focus:ring-4 ${theme.focus}`}
+            list={`default-model-${provider}`}
+            value={runtimeConfig[provider]?.model ?? ""}
+            onChange={(e) =>
+              void setAgentOverride(provider, {
+                ...runtimeConfig[provider],
+                model: e.target.value,
+              })
+            }
+            placeholder="使用系统默认"
+          />
+          <datalist id={`default-model-${provider}`}>
+            {catalog?.[provider]?.models.map((m) => (
+              <option key={m.name} value={m.name}>
+                {m.label}
+              </option>
+            ))}
+          </datalist>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="w-12 text-[10px] text-slate-400">强度</span>
+          <select
+            className="min-w-0 flex-1 rounded-2xl border border-white/80 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none transition focus:ring-4 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+            disabled={!catalog?.[provider]?.efforts.length}
+            value={runtimeConfig[provider]?.effort ?? ""}
+            onChange={(e) =>
+              void setAgentOverride(provider, {
+                ...runtimeConfig[provider],
+                effort: e.target.value,
+              })
+            }
+          >
+            <option value="">默认</option>
+            {catalog?.[provider]?.efforts.map((e) => (
+              <option key={e} value={e}>
+                {e}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /* ────────── Session Tab ────────── */
 
 function SessionTabContent({
@@ -323,23 +390,7 @@ function SessionTabContent({
                 </div>
 
                 {/* Default config (from runtime-config) */}
-                <div className="mt-3 border-t border-slate-200/60 pt-2">
-                  <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-400">
-                    默认配置
-                  </div>
-                  <div className="flex items-center justify-between gap-3 text-[11px] text-slate-400">
-                    <span>模型</span>
-                    <span className="font-mono text-slate-500">
-                      {runtimeConfig[provider]?.model ?? "系统默认"}
-                    </span>
-                  </div>
-                  <div className="mt-0.5 flex items-center justify-between gap-3 text-[11px] text-slate-400">
-                    <span>强度</span>
-                    <span className="font-mono text-slate-500">
-                      {runtimeConfig[provider]?.effort ?? "默认"}
-                    </span>
-                  </div>
-                </div>
+                <DefaultConfigSection provider={provider} theme={theme} />
               </div>
             )
           })}

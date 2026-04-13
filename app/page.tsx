@@ -3,7 +3,6 @@
 import { ChatHeader } from "@/components/chat/chat-header"
 import { Composer } from "@/components/chat/composer"
 import { SettingsModal } from "@/components/chat/settings-modal"
-import { ExecutionBar } from "@/components/chat/execution-bar"
 import { SessionSidebar } from "@/components/chat/session-sidebar"
 import { StatusPanel } from "@/components/chat/status-panel"
 import { TimelinePanel } from "@/components/chat/timeline-panel"
@@ -220,7 +219,6 @@ export default function HomePage() {
         </ChatHeader>
         <div className="flex flex-1 flex-col overflow-hidden bg-white/45 backdrop-blur-sm">
           <TimelinePanel />
-          <ExecutionBar />
           <div className="p-6">
             <div className="mx-auto max-w-4xl">
               <Composer />
