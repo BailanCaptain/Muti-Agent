@@ -9,6 +9,7 @@
 |----|------|------|-------|--------|------|
 | F006 | UI/UX 深度重塑与运行时治理 V2 | kickoff | 桂芬 | internal | [F006](features/F006-ui-ux-refinement-and-runtime-governance-v2.md) |
 | F005 | 运行时治理 UI：权限系统 + 面板重构 + 侧边栏重做 | spec | 黄仁勋 | internal | [F005](features/F005-runtime-governance-ui.md) |
+| F007 | 上下文压缩优化：Microcompact + SOP书签 + 自动续接 + 动态预算 + 语义检索 | spec | 黄仁勋 | internal | [F007](features/F007-context-compression-optimization.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features

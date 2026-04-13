@@ -166,4 +166,5 @@ ca87c9d 是**真正把"赌 --resume"变成唯一通道**的 commit。B002 不是
 
 - **Evolved from**: 无
 - **Blocks**: 无
+- **Evolved into**: F007（上下文压缩优化 — 在 F004 建立的 DB 历史权威源基础上优化压缩质量）
 - **Related**: B002（本 Feature 把 B002 修复依赖的"rolling summary 兜底"这个假设纠正了）
