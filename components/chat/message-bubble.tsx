@@ -208,6 +208,10 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
                     : `${bubbleTheme[message.provider]} text-slate-700`
                 }`}
               >
+                {!isUser && message.toolEvents && message.toolEvents.length > 0 && (
+                  <StepTracker toolEvents={message.toolEvents} provider={message.provider} />
+                )}
+
                 {!isUser && message.thinking && theme && showThinking ? (
                   <div
                     className={`mb-4 overflow-hidden rounded-2xl border p-4 shadow-inner ${theme.container}`}
@@ -237,7 +241,6 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
                     >
                       <div className="overflow-hidden">
                         <div className="max-h-60 overflow-y-auto border-t border-slate-200/60 pt-3 pr-1">
-                          <StepTracker toolEvents={message.toolEvents ?? []} provider={message.provider} />
                           <MarkdownMessage
                             className={`text-[12px] leading-relaxed ${theme.content}`}
                             content={message.thinking}

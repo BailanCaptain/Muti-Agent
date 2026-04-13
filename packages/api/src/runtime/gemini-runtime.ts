@@ -83,8 +83,51 @@ export class GeminiRuntime extends BaseCliRuntime {
     };
   }
 
-  parseActivityLine(_event: Record<string, unknown>): string | null {
-    return null;
+  parseActivityLine(event: Record<string, unknown>): string | null {
+    try {
+      // Gemini CLI stream-json emits thinking content with `thought: true`.
+      // Covers several event shapes the CLI may produce:
+      //   { delta: "...", thought: true }
+      //   { type: "content", value: "...", thought: true }
+      //   { type: "message", content: "...", thought: true }
+      //   { type: "message", delta: { text: "..." }, thought: true }
+      //   { type: "message", content: { text: "..." }, thought: true }
+      if (!event.thought) return null;
+
+      if (typeof event.delta === "string") {
+        return event.delta;
+      }
+
+      if (event.type === "content" && typeof event.value === "string") {
+        return event.value;
+      }
+
+      if (event.type === "message" && typeof event.content === "string") {
+        return event.content;
+      }
+
+      if (
+        event.type === "message" &&
+        typeof event.content === "object" &&
+        event.content &&
+        typeof (event.content as { text?: string }).text === "string"
+      ) {
+        return (event.content as { text: string }).text;
+      }
+
+      if (
+        event.type === "message" &&
+        typeof event.delta === "object" &&
+        event.delta &&
+        typeof (event.delta as { text?: string }).text === "string"
+      ) {
+        return (event.delta as { text: string }).text;
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   transformToolEvent(event: Record<string, unknown>): ToolEvent | null {
@@ -166,6 +209,12 @@ export class GeminiRuntime extends BaseCliRuntime {
   }
 
   parseAssistantDelta(event: Record<string, unknown>) {
+    // Thinking items are surfaced via parseActivityLine into the thinking bubble,
+    // so they must not leak into the assistant's visible text output.
+    if (event.thought) {
+      return "";
+    }
+
     if (typeof event.delta === "string") {
       return event.delta;
     }

@@ -882,6 +882,10 @@ export class MessageService {
           type: "assistant_tool_event",
           payload: { messageId: assistant.id, event },
         })
+        // Persist toolEvents immediately so reconnecting clients don't lose tool steps
+        this.sessions.overwriteMessage(assistant.id, {
+          toolEvents: toolEventsJson,
+        })
       },
       onLivenessWarning: (warning) => {
         // Surface liveness issues as status messages so the user sees *why* a turn is dragging on
