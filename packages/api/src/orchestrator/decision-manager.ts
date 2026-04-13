@@ -70,13 +70,23 @@ export class DecisionManager {
         resolve({ decisions: fallbackDecisions, userInput: "" })
         this.emit({
           type: "decision.resolved",
-          payload: { requestId, decisions: fallbackDecisions },
+          payload: { sessionGroupId: request.sessionGroupId, requestId, decisions: fallbackDecisions },
         })
       }, timeoutMs)
 
       this.pending.set(requestId, { request, resolve, timer })
       this.emit({ type: "decision.request", payload: request })
     })
+  }
+
+  getPendingRequests(sessionGroupId: string): DecisionRequest[] {
+    const results: DecisionRequest[] = []
+    for (const entry of this.pending.values()) {
+      if (entry.request.sessionGroupId === sessionGroupId) {
+        results.push(entry.request)
+      }
+    }
+    return results
   }
 
   respond(requestId: string, decisions: Array<{optionId: string; verdict: string; modification?: string}>, userInput?: string): void {
@@ -95,6 +105,7 @@ export class DecisionManager {
     this.emit({
       type: "decision.resolved",
       payload: {
+        sessionGroupId: entry.request.sessionGroupId,
         requestId,
         decisions,
         ...(userInput ? { userInput } : {}),

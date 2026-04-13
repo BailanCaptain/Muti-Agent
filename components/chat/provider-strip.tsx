@@ -41,7 +41,9 @@ function ProviderCard({
   const catalog = useThreadStore((state) => state.catalogs[provider])
   const updateModel = useThreadStore((state) => state.updateModel)
   const stopThread = useThreadStore((state) => state.stopThread)
-  const setDraft = useChatStore((state) => state.setDraft)
+  const setDraftRaw = useChatStore((state) => state.setDraft)
+  const activeGroupId = useThreadStore((state) => state.activeGroupId)
+  const setDraft = (draft: string | ((current: string) => string)) => setDraftRaw(activeGroupId, draft)
   const [draftModel, setDraftModel] = useState(card.currentModel ?? "")
   const meta = providerMeta[provider]
 

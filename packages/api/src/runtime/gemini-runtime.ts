@@ -1,3 +1,4 @@
+import type { ToolEvent } from "@multi-agent/shared";
 import { BaseCliRuntime, resolveNodeScript, wrapPromptWithInstructions, type AgentRunInput, type RuntimeCommand, type StopReason } from "./base-runtime";
 import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts";
 
@@ -84,24 +85,75 @@ export class GeminiRuntime extends BaseCliRuntime {
 
   parseActivityLine(event: Record<string, unknown>): string | null {
     try {
+      // Gemini CLI stream-json emits thinking content with `thought: true`.
+      // Covers several event shapes the CLI may produce:
+      //   { delta: "...", thought: true }
+      //   { type: "content", value: "...", thought: true }
+      //   { type: "message", content: "...", thought: true }
+      //   { type: "message", delta: { text: "..." }, thought: true }
+      //   { type: "message", content: { text: "..." }, thought: true }
+      if (!event.thought) return null;
+
+      if (typeof event.delta === "string") {
+        return event.delta;
+      }
+
+      if (event.type === "content" && typeof event.value === "string") {
+        return event.value;
+      }
+
+      if (event.type === "message" && typeof event.content === "string") {
+        return event.content;
+      }
+
+      if (
+        event.type === "message" &&
+        typeof event.content === "object" &&
+        event.content &&
+        typeof (event.content as { text?: string }).text === "string"
+      ) {
+        return (event.content as { text: string }).text;
+      }
+
+      if (
+        event.type === "message" &&
+        typeof event.delta === "object" &&
+        event.delta &&
+        typeof (event.delta as { text?: string }).text === "string"
+      ) {
+        return (event.delta as { text: string }).text;
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  transformToolEvent(event: Record<string, unknown>): ToolEvent | null {
+    try {
       if (event.type === "tool_use") {
         const toolName = String(event.tool_name ?? "");
         const params = (event.parameters ?? {}) as Record<string, unknown>;
-        const summary = formatGeminiParams(toolName, params);
-        return `⚡ ${toolName} ${summary}`.trimEnd();
+        return {
+          type: "tool_use",
+          toolName,
+          toolInput: formatGeminiParams(toolName, params),
+          status: "started",
+          timestamp: new Date().toISOString(),
+        };
       }
 
       if (event.type === "tool_result") {
         const status = event.status as string | undefined;
         const output = event.output as string | undefined;
-        if (status === "error") {
-          const firstLine = (output ?? "").split("\n")[0].slice(0, 100);
-          return `✗ ${firstLine}`;
-        }
-        if (output && output.trim()) {
-          return `✓ ${output.split("\n")[0].slice(0, 100)}`;
-        }
-        return "✓ done";
+        return {
+          type: "tool_result",
+          toolName: "",
+          content: (output ?? "").split("\n")[0].slice(0, 200) || "done",
+          status: status === "error" ? "error" : "completed",
+          timestamp: new Date().toISOString(),
+        };
       }
 
       return null;
@@ -157,6 +209,10 @@ export class GeminiRuntime extends BaseCliRuntime {
   }
 
   parseAssistantDelta(event: Record<string, unknown>) {
+    if (event.thought) {
+      return "";
+    }
+
     if (typeof event.delta === "string") {
       return event.delta;
     }
@@ -172,10 +228,23 @@ export class GeminiRuntime extends BaseCliRuntime {
     if (
       event.type === "message" &&
       typeof event.content === "object" &&
-      event.content &&
-      typeof (event.content as { text?: string }).text === "string"
+      event.content
     ) {
-      return (event.content as { text: string }).text;
+      const contentObj = event.content as { text?: string; parts?: Array<{ text?: string }> };
+      if (Array.isArray(contentObj.parts)) {
+        return contentObj.parts.map(p => (typeof p.text === "string" ? p.text : "")).join("");
+      }
+      if (typeof contentObj.text === "string") {
+        return contentObj.text;
+      }
+    }
+
+    if (Array.isArray(event.candidates)) {
+      const candidates = event.candidates as Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      const first = candidates[0];
+      if (first?.content?.parts) {
+        return first.content.parts.map(p => (typeof p.text === "string" ? p.text : "")).join("");
+      }
     }
 
     if (

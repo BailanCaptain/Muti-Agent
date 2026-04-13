@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import type { ToolEvent } from "@multi-agent/shared";
 import { BaseCliRuntime, resolveNpmRoot, type AgentRunInput, type RuntimeCommand, type StopReason } from "./base-runtime";
 import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts";
 
@@ -111,43 +112,58 @@ export class ClaudeRuntime extends BaseCliRuntime {
 
   parseActivityLine(event: Record<string, unknown>): string | null {
     try {
-      // Claude extended thinking
       if (event.type === "content_block_delta") {
         const delta = event.delta as { type?: string; thinking?: string } | undefined;
         if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") {
           return delta.thinking;
         }
       }
+      return null;
+    } catch {
+      return null;
+    }
+  }
 
+  transformToolEvent(event: Record<string, unknown>): ToolEvent | null {
+    try {
       if (event.type === "assistant") {
         const message = event.message as { content?: Array<{ type?: string; name?: string; input?: Record<string, unknown> }> } | undefined;
         const toolUse = message?.content?.find((item) => item.type === "tool_use");
-        if (toolUse && toolUse.name) {
-          const summary = formatClaudeToolInput(toolUse.name, toolUse.input ?? {});
-          return `⚡ ${toolUse.name} ${summary}`.trimEnd();
+        if (toolUse?.name) {
+          return {
+            type: "tool_use",
+            toolName: toolUse.name,
+            toolInput: formatClaudeToolInput(toolUse.name, toolUse.input ?? {}),
+            status: "started",
+            timestamp: new Date().toISOString(),
+          };
         }
         return null;
       }
 
       if (event.type === "user") {
-        const message = event.message as { content?: Array<{ type?: string; content?: unknown }> } | undefined;
+        const message = event.message as { content?: Array<{ type?: string; content?: unknown; is_error?: boolean }> } | undefined;
         const toolResult = message?.content?.find((item) => item.type === "tool_result");
         if (toolResult) {
-          const content = toolResult.content;
-          if (typeof content === "string" && content.trim()) {
-            return `↩ ${content.split("\n")[0].slice(0, 100)}`;
-          }
-          if (Array.isArray(content)) {
-            for (const part of content) {
+          const resultContent = toolResult.content;
+          let text = "";
+          if (typeof resultContent === "string") {
+            text = resultContent.split("\n")[0].slice(0, 200);
+          } else if (Array.isArray(resultContent)) {
+            for (const part of resultContent) {
               if (typeof part === "object" && part && typeof (part as { text?: string }).text === "string") {
-                const text = (part as { text: string }).text.trim();
-                if (text) {
-                  return `↩ ${text.split("\n")[0].slice(0, 100)}`;
-                }
+                text = (part as { text: string }).text.split("\n")[0].slice(0, 200);
+                break;
               }
             }
           }
-          return "↩ done";
+          return {
+            type: "tool_result",
+            toolName: "",
+            content: text || "done",
+            status: toolResult.is_error ? "error" : "completed",
+            timestamp: new Date().toISOString(),
+          };
         }
         return null;
       }

@@ -6,22 +6,31 @@ import { useThreadStore } from "./thread-store"
 
 type ChatStore = {
   status: string
-  draft: string
+  drafts: Record<string, string>
   setStatus: (status: string) => void
-  setDraft: (draft: string | ((current: string) => string)) => void
+  getDraft: (groupId: string | null) => string
+  setDraft: (groupId: string | null, draft: string | ((current: string) => string)) => void
   sendMessage: (input: string) => Promise<void>
 }
 
-export const useChatStore = create<ChatStore>((set) => ({
+export const useChatStore = create<ChatStore>((set, get) => ({
   status: "Connecting to realtime...",
-  draft: "",
+  drafts: {},
   setStatus: (status) => set({ status }),
-  setDraft: (draft) =>
-    set((state) => ({
-      draft: typeof draft === "function" ? draft(state.draft) : draft,
-    })),
+  getDraft: (groupId) => {
+    return get().drafts[groupId ?? ""] ?? ""
+  },
+  setDraft: (groupId, draft) => {
+    const key = groupId ?? ""
+    set((state) => {
+      const current = state.drafts[key] ?? ""
+      const next = typeof draft === "function" ? draft(current) : draft
+      return { drafts: { ...state.drafts, [key]: next } }
+    })
+  },
   sendMessage: async (input) => {
-    const payload = useThreadStore.getState().buildSendPayload(input)
+    const threadState = useThreadStore.getState()
+    const payload = threadState.buildSendPayload(input)
     if (!payload) {
       set({ status: "请用 @ 指定智能体：@黄仁勋 / @范德彪 / @桂芬 / @所有人" })
       return
@@ -32,7 +41,10 @@ export const useChatStore = create<ChatStore>((set) => ({
       payload,
     })
 
-    set({ draft: "" })
+    const groupId = threadState.activeGroupId
+    if (groupId) {
+      set((state) => ({ drafts: { ...state.drafts, [groupId]: "" } }))
+    }
     set({ status: `Sent to ${payload.alias}` })
   },
 }))

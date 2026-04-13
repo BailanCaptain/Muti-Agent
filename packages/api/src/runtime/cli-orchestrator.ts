@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { Provider, TokenUsageSnapshot } from "@multi-agent/shared";
+import type { Provider, TokenUsageSnapshot, ToolEvent } from "@multi-agent/shared";
 import { SEAL_THRESHOLDS_BY_PROVIDER, getContextWindowForModel } from "@multi-agent/shared";
 import {
   findSessionId,
@@ -31,6 +31,7 @@ export type RunTurnOptions = {
   onModel: (model: string) => void;
   onActivity?: (activity: { stream: "stdout" | "stderr"; at: string; chunk: string }) => void;
   onToolActivity?: (line: string) => void;
+  onToolEvent?: (event: ToolEvent) => void;
   onLivenessWarning?: (warning: LivenessWarning) => void;
   onUsageSnapshot?: (snapshot: TokenUsageSnapshot) => void;
   /**
@@ -66,6 +67,7 @@ export type RunTurnResult = {
   stopReason: StopReason | null;
   /** Set by message-service when CLI self-compression detected (F-BLOAT) */
   fBloatDetected?: boolean;
+  toolEvents: ToolEvent[];
 };
 
 const runtimeAdapters = {
@@ -102,6 +104,7 @@ export function runTurn(options: RunTurnOptions) {
   let currentSessionId = options.nativeSessionId;
   let latestUsage: TokenUsageSnapshot | null = null;
   let latestStopReason: StopReason | null = null;
+  const toolEvents: ToolEvent[] = [];
 
   const handle = runtime.runStream(input, {
     onStdoutLine(line) {
@@ -115,6 +118,11 @@ export function runTurn(options: RunTurnOptions) {
         const activityLine = runtime.parseActivityLine(event);
         if (activityLine) {
           options.onToolActivity?.(activityLine);
+        }
+        const toolEvent = runtime.transformToolEvent(event);
+        if (toolEvent) {
+          toolEvents.push(toolEvent);
+          options.onToolEvent?.(toolEvent);
         }
         const sessionId = findSessionId(event);
         const eventModel = parseEventModel(event);
@@ -181,7 +189,8 @@ export function runTurn(options: RunTurnOptions) {
       exitCode: output.exitCode,
       usage: latestUsage,
       sealDecision: computeSealDecision(options.provider, latestUsage),
-      stopReason: latestStopReason ?? output.stopReason
+      stopReason: latestStopReason ?? output.stopReason,
+      toolEvents
     }))
   };
 }

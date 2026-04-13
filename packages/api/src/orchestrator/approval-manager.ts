@@ -47,7 +47,7 @@ export class ApprovalManager {
         if (rule.decision === "allow") {
           this.emit({
             type: "approval.auto_granted",
-            payload: { provider: params.provider, action: params.action, ruleId: rule.id },
+            payload: { sessionGroupId: params.sessionGroupId, provider: params.provider, action: params.action, ruleId: rule.id },
           })
           return Promise.resolve({ status: "granted" })
         }
@@ -74,7 +74,7 @@ export class ApprovalManager {
     return new Promise<ApprovalResult>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId)
-        this.emit({ type: "approval.resolved", payload: { requestId, granted: false } })
+        this.emit({ type: "approval.resolved", payload: { sessionGroupId: request.sessionGroupId, requestId, granted: false } })
         resolve({ status: "timeout" })
       }, this.timeoutMs)
 
@@ -101,7 +101,7 @@ export class ApprovalManager {
       })
     }
 
-    this.emit({ type: "approval.resolved", payload: { requestId, granted } })
+    this.emit({ type: "approval.resolved", payload: { sessionGroupId: entry.request.sessionGroupId, requestId, granted } })
     entry.resolve({ status: granted ? "granted" : "denied" })
     return true
   }
@@ -121,7 +121,7 @@ export class ApprovalManager {
       if (entry.request.sessionGroupId === sessionGroupId) {
         clearTimeout(entry.timer)
         this.pending.delete(requestId)
-        this.emit({ type: "approval.resolved", payload: { requestId, granted: false } })
+        this.emit({ type: "approval.resolved", payload: { sessionGroupId, requestId, granted: false } })
         entry.resolve({ status: "denied" })
       }
     }

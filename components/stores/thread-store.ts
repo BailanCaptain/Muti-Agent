@@ -8,6 +8,7 @@ import {
   type ProviderCatalog,
   type SessionGroupSummary,
   type TimelineMessage,
+  type ToolEvent,
 } from "@multi-agent/shared"
 import { create } from "zustand"
 
@@ -76,6 +77,7 @@ type ThreadStore = {
   replaceActiveGroup: (group: ActiveGroupPayload) => void
   applyAssistantDelta: (messageId: string, delta: string) => void
   applyThinkingDelta: (messageId: string, delta: string) => void
+  applyToolEvent: (messageId: string, event: ToolEvent) => void
   appendTimelineMessage: (message: TimelineMessage) => void
   buildSendPayload: (input: string) => SendPayload | null
   incrementUnread: (groupId: string) => void
@@ -234,10 +236,16 @@ function mergeTimeline(existing: TimelineMessage[], incoming: TimelineMessage[])
           ? current.thinking
           : message.thinking
 
+      const currentEvents = current.toolEvents ?? []
+      const incomingEvents = message.toolEvents ?? []
+      const toolEvents =
+        currentEvents.length > incomingEvents.length ? current.toolEvents : message.toolEvents
+
       return {
         ...message,
         content,
         thinking,
+        toolEvents,
       }
     })
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
@@ -302,8 +310,12 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     get().replaceActiveGroup(payload.activeGroup)
     get().resetUnread(groupId)
 
-    const { fetchPending } = await import("./approval-store").then((m) => m.useApprovalStore.getState())
-    void fetchPending(groupId)
+    const { fetchPending: fetchApprovals } = await import("./approval-store").then((m) => m.useApprovalStore.getState())
+    const { fetchPending: fetchDecisions } = await import("./decision-store").then((m) => m.useDecisionStore.getState())
+    const { fetchPendingFlush } = await import("./decision-board-store").then((m) => m.useDecisionBoardStore.getState())
+    void fetchApprovals(groupId)
+    void fetchDecisions(groupId)
+    void fetchPendingFlush(groupId)
   },
   updateModel: async (provider, model) => {
     const thread = get().providers[provider]
@@ -384,6 +396,15 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       timeline: state.timeline.map((message) =>
         message.id === messageId
           ? { ...message, thinking: `${message.thinking ?? ""}${delta}` }
+          : message,
+      ),
+    }))
+  },
+  applyToolEvent: (messageId, event) => {
+    set((state) => ({
+      timeline: state.timeline.map((message) =>
+        message.id === messageId
+          ? { ...message, toolEvents: [...(message.toolEvents ?? []), event] }
           : message,
       ),
     }))

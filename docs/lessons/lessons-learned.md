@@ -238,3 +238,71 @@
   - commit `05618ac`（只修了一条路径的原始修复）
 - 原理（可选）：隔离缺陷是**概念级**的，不是**组件级**的。修一个组件等于修了一条路径，但同一概念可能流经 N 条路径。"修完 grep 一下"的成本 ≤ 5 分钟，"漏了等用户报 bug"的成本 ≥ 1 天。
 - 关联：`docs/bugReport/B007-decision-board-convergence-leak.md`, `docs/features/F002-decision-board.md`
+
+### LL-010: 前端不要用正则从非结构化文本猜结构——结构化应在数据源头完成
+- 状态：validated
+- 更新时间：2026-04-14
+
+- 坑：F006 的 StepTracker 用正则从 agent stdout 文本中提取工具调用（`/^(✅|⏳)\s+(\w+)\s*(\{.*\})?/`），被德彪 review 打回 4 轮——误删正文 ↔ 漏匹配工具调用交替出现，每修一个 case 就破另一个 case。根本原因：agent CLI 输出是非结构化文本，同一行既可能是工具调用也可能是正文，正则无法可靠区分。
+- 根因：把"展示层解析"当成了架构问题的解法。agent 输出本来就有结构化信息（NDJSON 事件流），但我们跳过了后端结构化这一步，直接在前端用正则猜。这等于用 O(N) 的 patch 去修一个 O(1) 的架构缺失。
+- 触发条件：
+  1. 数据源有结构化格式但系统没有消费它
+  2. 展示层用字符串匹配 / 正则从非结构化文本中"猜"结构
+  3. 补丁数 > 3 且每个补丁修一个 case 破另一个 case
+- 修复：实现 Event Transformer 架构——后端 `transformToolEvent()` 在 NDJSON 层提取结构化 `ToolEvent`，前端 `StepTracker` 只消费 `ToolEvent[]`，零正则。三个 runtime（Claude/Codex/Gemini）各自实现事件格式到统一类型的映射。
+- 防护：
+  1. **"补丁数 > 3 就停"规则**（家规 P3）：正则补丁来回打补丁 > 3 次时，强制停下来审视是不是在错误的层解决问题。
+  2. **数据流审计**：在展示层做解析前，先问"数据源有没有已有的结构化格式？"如果有（NDJSON、protobuf、typed events），在数据源头提取，不要到前端再猜。
+  3. **参照物验证**：clowder-ai 在后端就把 NDJSON 分好类（`transformEvent()`），前端只消费结构化数据。我们参照后确认了方向正确性。
+- 来源锚点：
+  - `packages/api/src/runtime/base-runtime.ts`（`transformToolEvent()` 虚方法）
+  - `packages/api/src/runtime/claude-runtime.ts`、`codex-runtime.ts`、`gemini-runtime.ts`（三个实现）
+  - `components/chat/rich-blocks/step-tracker.tsx`（重写后零正则的消费端）
+  - commit `04a0764`（Event Transformer 完整架构）
+- 原理（可选）：信息论视角——结构化信息在传递过程中只能丢失不能增加。NDJSON 事件流中"这是 tool_use 还是 text"是确定性信息，丢弃后在 stdout 文本里用正则恢复是有损还原，准确率永远 < 100%。正确做法是在信息最丰富的层（数据源头）提取并传递结构化字段。
+- 关联：`docs/features/F006-ui-ux-refinement-and-runtime-governance-v2.md`
+
+### LL-011: WebSocket 事件广播必须从第一天就有会话级过滤（Room 概念）
+- 状态：validated
+- 更新时间：2026-04-14
+
+- 坑：WebSocket `broadcast()` 向所有连接的 socket 全量广播事件，没有 Room / Channel 概念。13 种事件类型中只有 `message.created` 做了 `sessionGroupId` 过滤（因为它最早写，当时顺手加了），其他 12 种全是盲发。结果：用户在 A 会话时，B 会话的 `assistant_delta` / `thread_snapshot` / `status` 直接推过来——轻则状态闪烁，重则 `thread_snapshot` 覆盖当前会话的 timeline 状态。
+- 根因：最早实现 WebSocket 时只有一个会话，"全量广播"没有问题。多会话上线后没人回头给 broadcast 加隔离，成了温水煮青蛙——每个新事件类型的开发者都复制了 `broadcast` 模式，没有质疑"这个事件需要所有 socket 都收到吗？"
+- 触发条件：
+  1. 多会话并发（用户在 A 聊天，B 有 agent 在跑）
+  2. 新增 WebSocket 事件类型时复制了已有的 `broadcast` 调用模式
+  3. 前端 handler 不检查事件归属就直接更新状态
+- 修复：三层闭环——① 共享类型给所有会话级事件加 `sessionGroupId` 字段 ② 服务端所有 emit 点带上 `thread.sessionGroupId` ③ 前端每个 handler 用 `isCurrentSession()` 过滤。覆盖全部 13 种事件类型 + `status` 事件 18 个发射点。
+- 防护：
+  1. **新事件类型必须声明隔离级别**：在 `realtime.ts` 添加新事件类型时，必须回答"这个事件是全局的还是会话级的？"会话级必须带 `sessionGroupId`。
+  2. **前端 handler 必须有过滤**：`page.tsx` WebSocket handler 中，每个新事件的 handler 必须包含 `isCurrentSession()` 检查（或注释说明为什么是全局事件不需要过滤）。
+  3. **LL-009 的"同概念全路径扫描"同样适用**：新增隔离相关修改时，grep `broadcast` 和 `emit` 确认所有发射点都已覆盖。
+- 来源锚点：
+  - `packages/shared/src/realtime.ts`（7 种事件 payload 加 `sessionGroupId`）
+  - `packages/api/src/services/message-service.ts`（`emitThreadSnapshot` + `assistant_delta` + `assistant_tool_event` 等发射点）
+  - `app/page.tsx`（前端 `isCurrentSession()` 过滤）
+  - commit `524322c`（会话隔离初始修复）、`27ca113`（status 事件补全）
+- 原理（可选）：多租户系统的隔离不是"后面加"的特性，而是"第一天就必须有"的基础设施。每推迟一天，新代码就多复制一次无隔离的模式。修复成本 = 事件类型数 × 发射点数 × 消费点数，随系统演进呈 O(N²) 增长。
+- 关联：`docs/lessons/lessons-learned.md#LL-009`, `docs/features/F006-ui-ux-refinement-and-runtime-governance-v2.md`
+
+### LL-012: 流式数据的中间状态必须有持久化策略，不能只靠最终落盘
+- 状态：validated
+- 更新时间：2026-04-14
+
+- 坑：`assistant_delta` 事件只推 WebSocket，从不写 DB。assistant 消息初始 content 为空字符串。`toolEvents` 也只在 `overwriteMessage`（run 完成后）才落盘。用户在流式输出期间切走再切回——前端 store 被替换，`selectSessionGroup` 从 DB 读 → 拿到空字符串 → 消息框空白、步进器消失。
+- 根因：把"最终一致性"当成了实时系统的持久化策略。流式系统有两类消费者：① 实时 socket 连接 ② 后来恢复的连接。只服务第一类等于假设"用户永远在线"。
+- 触发条件：
+  1. 数据只通过 WebSocket 推送，中间不落盘
+  2. 用户可以断连 / 切换视图 / 刷新页面
+  3. 恢复时从 DB 读取的是初始空值而非最新累积值
+- 修复：实现 `streamingFlushers` 机制——注册 flusher 捕获 content/thinking/toolEvents 的闭包引用。两条消费路径主动 flush：① `emitThreadSnapshot()` 前调用 `flushActiveStreaming()` ② `GET /api/session-groups/:groupId` 前调用 `flushActiveStreaming()`。用户切会话时 API 先 flush 再读 DB，保证数据完整。
+- 防护：
+  1. **新增流式数据字段时必须回答"断连恢复怎么办"**：如果答案是"等 run 完才写 DB"，必须在 flusher 中注册该字段。
+  2. **flusher 生命周期管理**：success path 和 error path 都要清理（`streamingFlushers.delete()`），避免孤儿 flusher 内存泄漏。
+  3. **测试覆盖**：流式数据的"写入-断连-恢复-读取"路径需要集成测试覆盖。
+- 来源锚点：
+  - `packages/api/src/services/message-service.ts`（`streamingFlushers` Map + `flushActiveStreaming()`）
+  - `packages/api/src/routes/threads.ts`（`GET /api/session-groups/:groupId` 前 flush）
+  - commit `a90edfd`（初始 3s flush）、`e4e3573`（切会话即时 flush + 生命周期管理）
+- 原理（可选）：流式系统 = 实时推送 + 断连恢复。只做推送不做恢复 = 只服务"永远在线"的用户，这在 Web 应用中是不成立的假设。持久化策略应该在数据累积开始时就设计，而不是"run 完再说"。
+- 关联：`docs/features/F006-ui-ux-refinement-and-runtime-governance-v2.md`

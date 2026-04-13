@@ -175,6 +175,7 @@ export class MessageService {
   private broadcast: EmitEvent | null = null
   private readonly chainRegistry = new A2AChainRegistry()
   private readonly pendingBoardFlushes = new Map<string, DecisionBoardEntry[]>()
+  private readonly streamingFlushers = new Map<string, { sessionGroupId: string; flush: () => void }>()
 
   constructor(
     private readonly sessions: SessionService,
@@ -274,6 +275,14 @@ export class MessageService {
    */
   getPendingFlushEntries(sessionGroupId: string): DecisionBoardEntry[] | undefined {
     return this.pendingBoardFlushes.get(sessionGroupId)
+  }
+
+  flushActiveStreaming(sessionGroupId: string): void {
+    for (const entry of this.streamingFlushers.values()) {
+      if (entry.sessionGroupId === sessionGroupId) {
+        entry.flush()
+      }
+    }
   }
 
   /**
@@ -470,7 +479,7 @@ export class MessageService {
 
     emit({
       type: "status",
-      payload: { message: `正在停止 ${thread.alias} 房间内的待执行协作任务。` },
+      payload: { sessionGroupId: thread.sessionGroupId, message: `正在停止 ${thread.alias} 房间内的待执行协作任务。` },
     })
     this.emitThreadSnapshot(thread.sessionGroupId, emit)
     return true
@@ -511,7 +520,7 @@ export class MessageService {
 
     emit({
       type: "status",
-      payload: { message: `已停止 ${targetThread.alias} 的运行。` },
+      payload: { sessionGroupId: thread.sessionGroupId, message: `已停止 ${targetThread.alias} 的运行。` },
     })
     this.emitThreadSnapshot(thread.sessionGroupId, emit)
     return true
@@ -616,7 +625,7 @@ export class MessageService {
     if (groupBusyMessage) {
       emit({
         type: "status",
-        payload: { message: groupBusyMessage },
+        payload: { sessionGroupId: thread.sessionGroupId, message: groupBusyMessage },
       })
       this.emitThreadSnapshot(thread.sessionGroupId, emit)
       return
@@ -749,7 +758,7 @@ export class MessageService {
     if (this.invocations.has(thread.id)) {
       options.emit({
         type: "status",
-        payload: { message: `${thread.alias} 已经在运行中。` },
+        payload: { sessionGroupId: thread.sessionGroupId, message: `${thread.alias} 已经在运行中。` },
       })
       return null
     }
@@ -801,7 +810,23 @@ export class MessageService {
     const startedAt = new Date().toISOString()
     let promptRequestedByCli: string | null = null
     let thinking = ""
+    let toolEventsJson = "[]"
     let run: ActiveRun | null = null
+    let assistantContent = ""
+    let lastContentFlushAt = Date.now()
+    const CONTENT_FLUSH_INTERVAL_MS = 3000
+
+    const flushKey = identity.invocationId
+    this.streamingFlushers.set(flushKey, {
+      sessionGroupId: thread.sessionGroupId,
+      flush: () => {
+        this.sessions.overwriteMessage(assistant.id, {
+          content: assistantContent,
+          thinking,
+          toolEvents: toolEventsJson,
+        })
+      },
+    })
 
     this.events.emit({
       type: "invocation.started",
@@ -815,7 +840,7 @@ export class MessageService {
 
     options.emit({
       type: "status",
-      payload: { message: `正在运行 ${thread.alias}` },
+      payload: { sessionGroupId: thread.sessionGroupId, message: `正在运行 ${thread.alias}` },
     })
 
     // Per-provider model/effort override from runtime-config.json.
@@ -866,10 +891,20 @@ export class MessageService {
       nativeSessionId: thread.nativeSessionId,
       userMessage,
       onAssistantDelta: (delta: string) => {
+        assistantContent += delta
         options.emit({
           type: "assistant_delta",
-          payload: { messageId: assistant.id, delta },
+          payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, delta },
         })
+        const now = Date.now()
+        if (now - lastContentFlushAt >= CONTENT_FLUSH_INTERVAL_MS) {
+          lastContentFlushAt = now
+          this.sessions.overwriteMessage(assistant.id, {
+            content: assistantContent,
+            thinking,
+            toolEvents: toolEventsJson,
+          })
+        }
       },
       onSession: () => {},
       onModel: () => {},
@@ -877,7 +912,20 @@ export class MessageService {
         thinking += `${line}\n`
         options.emit({
           type: "assistant_thinking_delta",
-          payload: { messageId: assistant.id, delta: `${line}\n` },
+          payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, delta: `${line}\n` },
+        })
+      },
+      onToolEvent: (event) => {
+        const parsed = JSON.parse(toolEventsJson) as unknown[]
+        parsed.push(event)
+        toolEventsJson = JSON.stringify(parsed)
+        options.emit({
+          type: "assistant_tool_event",
+          payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, event },
+        })
+        // Persist toolEvents immediately so reconnecting clients don't lose tool steps
+        this.sessions.overwriteMessage(assistant.id, {
+          toolEvents: toolEventsJson,
         })
       },
       onLivenessWarning: (warning) => {
@@ -891,7 +939,7 @@ export class MessageService {
           : `${thread.alias} 已沉默 ${seconds}s（${warning.state}），持续观察中`
         options.emit({
           type: "status",
-          payload: { message: label },
+          payload: { sessionGroupId: thread.sessionGroupId, message: label },
         })
       },
       onActivity: (activity) => {
@@ -912,7 +960,7 @@ export class MessageService {
             thinking += cleanedChunk
             options.emit({
               type: "assistant_thinking_delta",
-              payload: { messageId: assistant.id, delta: cleanedChunk },
+              payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, delta: cleanedChunk },
             })
           }
         }
@@ -930,10 +978,12 @@ export class MessageService {
         this.sessions.overwriteMessage(assistant.id, {
           content: prompt,
           thinking,
+          toolEvents: toolEventsJson,
         })
         options.emit({
           type: "status",
           payload: {
+            sessionGroupId: thread.sessionGroupId,
             message: `${thread.alias} 需要你的确认。当前运行已暂停，请回复以继续。`,
           },
         })
@@ -960,11 +1010,12 @@ export class MessageService {
         onRunCreated: (handle) => {
           run = handle as ActiveRun
           this.invocations.attachRun(thread.id, identity.invocationId, run)
+          this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
         },
         emitStatus: (message) => {
           options.emit({
             type: "status",
-            payload: { message: `${thread.alias}：${message}` },
+            payload: { sessionGroupId: thread.sessionGroupId, message: `${thread.alias}：${message}` },
           })
         },
         onIterationContent: (accumulated) => {
@@ -972,6 +1023,7 @@ export class MessageService {
             this.sessions.overwriteMessage(assistant.id, {
               content: accumulated || "[empty response]",
               thinking,
+              toolEvents: toolEventsJson,
             })
           }
         },
@@ -1009,6 +1061,7 @@ export class MessageService {
         options.emit({
           type: "status",
           payload: {
+            sessionGroupId: thread.sessionGroupId,
             message: `${thread.alias}：${classification.userMessage}`,
           },
         })
@@ -1026,6 +1079,7 @@ export class MessageService {
           options.emit({
             type: "status",
             payload: {
+              sessionGroupId: thread.sessionGroupId,
               message: `${thread.alias} 上下文已用 ${pct}%，自动封存，下一轮开新 session。`,
             },
           })
@@ -1033,6 +1087,7 @@ export class MessageService {
           options.emit({
             type: "status",
             payload: {
+              sessionGroupId: thread.sessionGroupId,
               message: `${thread.alias} 上下文已用 ${pct}%，接近上限，准备换房间。`,
             },
           })
@@ -1053,6 +1108,7 @@ export class MessageService {
         this.prevUsedTokens.set(thread.id, result.usage.usedTokens)
       }
 
+      this.streamingFlushers.delete(flushKey)
       const sopStage = this.sopTracker?.getStage(thread.sessionGroupId) ?? null
       const bookmark = extractSOPBookmark(accumulatedContent, sopStage)
       const bookmarkJson = bookmark.skill ? JSON.stringify(bookmark) : null
@@ -1062,6 +1118,7 @@ export class MessageService {
         this.sessions.overwriteMessage(assistant.id, {
           content: accumulatedContent || "[empty response]",
           thinking,
+          toolEvents: toolEventsJson,
         })
       }
 
@@ -1128,6 +1185,7 @@ export class MessageService {
           options.emit({
             type: "status",
             payload: {
+              sessionGroupId: thread.sessionGroupId,
               message: `A2A 回程 — ${returnPlan.childAlias} → ${returnPlan.parentAlias}`,
             },
           })
@@ -1191,12 +1249,14 @@ export class MessageService {
 
       return { messageId: assistant.id, content: accumulatedContent || "" }
     } catch (error) {
+      this.streamingFlushers.delete(flushKey)
       this.invocations.detachRun(thread.id)
       this.releaseInvocation(identity.invocationId, dispatchCleanupTimer)
       const message = error instanceof Error ? error.message : "Unknown error"
       this.sessions.overwriteMessage(assistant.id, {
         content: `Error: ${message}`,
         thinking,
+        toolEvents: toolEventsJson,
       })
       // Reactive self-heal: match the error message against known failure signatures so
       // we clear session only when doing so actually helps, and give the user a concrete
@@ -1219,7 +1279,7 @@ export class MessageService {
 
       options.emit({
         type: "status",
-        payload: { message: `${thread.alias}：${classification.userMessage}` },
+        payload: { sessionGroupId: thread.sessionGroupId, message: `${thread.alias}：${classification.userMessage}` },
       })
       this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
       await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
@@ -1422,9 +1482,11 @@ export class MessageService {
   }
 
   emitThreadSnapshot(sessionGroupId: string, emit: EmitEvent) {
+    this.flushActiveStreaming(sessionGroupId)
     emit({
       type: "thread_snapshot",
       payload: {
+        sessionGroupId,
         activeGroup: this.sessions.getActiveGroup(
           sessionGroupId,
           new Set(this.invocations.keys()),
@@ -1770,7 +1832,7 @@ export class MessageService {
 
     emit({
       type: "status",
-      payload: { message: `开始串行讨论（${PHASE2_ROUNDS} 轮）` },
+      payload: { sessionGroupId, message: `开始串行讨论（${PHASE2_ROUNDS} 轮）` },
     })
 
     for (let round = 1; round <= PHASE2_ROUNDS; round++) {
@@ -1838,7 +1900,7 @@ export class MessageService {
           this.decisionBoard?.markAllConverged(sessionGroupId)
           emit({
             type: "status",
-            payload: { message: `串行讨论已在第 ${round} 轮达成共识，提前结束` },
+            payload: { sessionGroupId, message: `串行讨论已在第 ${round} 轮达成共识，提前结束` },
           })
           break
         }
@@ -1967,7 +2029,7 @@ export class MessageService {
 
     emit({
       type: "status",
-      payload: { message: "未选择综合者，讨论结果已归档" },
+      payload: { sessionGroupId, message: "未选择综合者，讨论结果已归档" },
     })
   }
 
@@ -2139,7 +2201,7 @@ export class MessageService {
         : ""
       input.emit({
         type: "status",
-        payload: { message: `SOP 推进到 ${advancement.nextStage}。${skillSuggestion}` },
+        payload: { sessionGroupId: input.sessionGroupId, message: `SOP 推进到 ${advancement.nextStage}。${skillSuggestion}` },
       })
 
       // F003/P4-3: if the skill declared a next_dispatch and the LLM's reply
@@ -2163,6 +2225,7 @@ export class MessageService {
           input.emit({
             type: "status",
             payload: {
+              sessionGroupId: input.sessionGroupId,
               message: `SOP 自动交接 — ${input.sourceThread.alias} → ${plan.targetAlias}`,
             },
           })

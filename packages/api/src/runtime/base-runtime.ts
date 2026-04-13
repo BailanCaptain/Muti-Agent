@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import type { ToolEvent } from "@multi-agent/shared";
 import {
   ProcessLivenessProbe,
   type LivenessProbeConfig,
@@ -213,6 +214,9 @@ export abstract class BaseCliRuntime implements AgentRuntime {
     const command = this.buildCommand(input);
     const env = {
       ...process.env,
+      PYTHONIOENCODING: "utf-8",
+      LANG: "en_US.UTF-8",
+      CHCP: "65001",
       ...input.env
     };
     const lifecycle = resolveRuntimeLifecycleConfig(input.runtime, env);
@@ -404,7 +408,7 @@ export abstract class BaseCliRuntime implements AgentRuntime {
       });
 
       child.stderr.on("data", (chunk) => {
-        const text = chunk.toString();
+        const text = chunk.toString("utf-8");
         rawStderr += text;
         hooks.onStderrChunk?.(text);
         forwardStderr(text);
@@ -530,6 +534,10 @@ export abstract class BaseCliRuntime implements AgentRuntime {
   protected abstract buildCommand(input: AgentRunInput): RuntimeCommand;
 
   parseActivityLine(_event: Record<string, unknown>): string | null {
+    return null;
+  }
+
+  transformToolEvent(_event: Record<string, unknown>): ToolEvent | null {
     return null;
   }
 

@@ -31,6 +31,7 @@ type DecisionBoardState = {
    * decision.board_item_resolved arrives (e.g. agents converged during the
    * 2s debounce). When the last item is removed, closes the modal. */
   removeItem: (itemId: string) => void
+  fetchPendingFlush: (sessionGroupId: string) => Promise<void>
   close: () => void
 }
 
@@ -86,6 +87,28 @@ export const useDecisionBoardStore = create<DecisionBoardState>((set) => ({
       const { [itemId]: _removedMode, ...restModes } = state.customModes
       return { items: nextItems, choices: restChoices, customModes: restModes }
     }),
+
+  fetchPendingFlush: async (sessionGroupId) => {
+    const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+    try {
+      const res = await fetch(
+        `${baseUrl}/api/decisions/board-pending?sessionGroupId=${encodeURIComponent(sessionGroupId)}`,
+      )
+      if (!res.ok) return
+      const data = (await res.json()) as { items?: unknown[]; sessionGroupId?: string; flushedAt?: string }
+      if (data.items && data.items.length > 0 && data.sessionGroupId && data.flushedAt) {
+        set({
+          isOpen: true,
+          sessionGroupId: data.sessionGroupId,
+          items: data.items as DecisionBoardItem[],
+          choices: {},
+          customModes: {},
+        })
+      }
+    } catch {
+      // Network error — keep current state
+    }
+  },
 
   close: () => set(initialState),
 }))

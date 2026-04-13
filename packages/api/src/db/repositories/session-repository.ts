@@ -22,6 +22,7 @@ type MessageRow = {
   connectorSource: string | null
   groupId: string | null
   groupRole: string | null
+  toolEvents: string
   createdAt: string
 }
 
@@ -31,6 +32,7 @@ function hydrateMessage(row: MessageRow): MessageRecord {
     connectorSource: row.connectorSource ? (JSON.parse(row.connectorSource) as ConnectorSourceRecord) : null,
     groupId: row.groupId ?? null,
     groupRole: (row.groupRole as MessageRecord["groupRole"]) ?? null,
+    toolEvents: row.toolEvents ?? "[]",
   }
 }
 
@@ -155,7 +157,7 @@ export class SessionRepository {
   listMessages(threadId: string) {
     const rows = this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, created_at as createdAt
+        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, created_at as createdAt
          FROM messages
          WHERE thread_id = ?
          ORDER BY created_at ASC`,
@@ -167,7 +169,7 @@ export class SessionRepository {
   listRecentMessages(threadId: string, limit: number) {
     const rows = this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, created_at as createdAt
+        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, created_at as createdAt
          FROM messages
          WHERE thread_id = ?
          ORDER BY created_at DESC
@@ -186,6 +188,7 @@ export class SessionRepository {
     connectorSource: ConnectorSourceRecord | null = null,
     groupId: string | null = null,
     groupRole: MessageRecord["groupRole"] = null,
+    toolEvents = "[]",
   ) {
     const message: MessageRecord = {
       id: crypto.randomUUID(),
@@ -197,13 +200,14 @@ export class SessionRepository {
       connectorSource,
       groupId,
       groupRole,
+      toolEvents,
       createdAt: new Date().toISOString(),
     }
 
     this.store.db
       .prepare(
-        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, group_id, group_role, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, group_id, group_role, tool_events, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -215,6 +219,7 @@ export class SessionRepository {
         connectorSource ? JSON.stringify(connectorSource) : null,
         message.groupId,
         message.groupRole,
+        message.toolEvents,
         message.createdAt,
       )
 
@@ -222,18 +227,18 @@ export class SessionRepository {
     return message
   }
 
-  overwriteMessage(messageId: string, updates: { content?: string; thinking?: string }) {
+  overwriteMessage(messageId: string, updates: { content?: string; thinking?: string; toolEvents?: string }) {
     const current = this.store.db
-      .prepare("SELECT content, thinking FROM messages WHERE id = ? LIMIT 1")
-      .get(messageId) as { content: string; thinking: string } | undefined
+      .prepare("SELECT content, thinking, tool_events as toolEvents FROM messages WHERE id = ? LIMIT 1")
+      .get(messageId) as { content: string; thinking: string; toolEvents: string } | undefined
 
     if (!current) {
       return
     }
 
     this.store.db
-      .prepare("UPDATE messages SET content = ?, thinking = ? WHERE id = ?")
-      .run(updates.content ?? current.content, updates.thinking ?? current.thinking, messageId)
+      .prepare("UPDATE messages SET content = ?, thinking = ?, tool_events = ? WHERE id = ?")
+      .run(updates.content ?? current.content, updates.thinking ?? current.thinking, updates.toolEvents ?? current.toolEvents, messageId)
   }
 
   createInvocation(record: InvocationRecord) {

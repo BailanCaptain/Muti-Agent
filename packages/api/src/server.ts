@@ -215,11 +215,12 @@ export async function createApiServer(options: {
       hasPendingDispatches: dispatch.hasQueuedDispatches(groupId),
       dispatchBarrierActive: dispatch.isSessionGroupCancelled(groupId),
     }),
+    flushActiveStreaming: (groupId) => messages.flushActiveStreaming(groupId),
   })
   registerMessageRoutes(app)
   registerRuntimeConfigRoutes(app)
   registerAuthorizationRoutes(app, { approvals, ruleStore })
-  registerDecisionBoardRoutes(app, { messageService: messages })
+  registerDecisionBoardRoutes(app, { messageService: messages, decisions })
   registerCallbackRoutes(app, {
     repository,
     sessions,

@@ -1,14 +1,15 @@
 ---
 id: F006
 title: UI/UX 深度重塑与运行时治理 V2
-status: in-progress
+status: completed
 owner: 桂芬
 created: 2026-04-13
+completed: 2026-04-14
 ---
 
 # F006 — UI/UX 深度重塑与运行时治理 V2
 
-**Status**: in-progress
+**Status**: completed
 **Created**: 2026-04-13
 
 ## Why
@@ -61,6 +62,30 @@ F005 虽然合入了，但用户（小孙）反馈极差，存在严重的视觉
 - [x] AC13: SessionCard 用 `React.memo` 包裹，避免无关状态变化触发全卡片重渲染。
 - [x] AC14: StatusPanel 消息统计用 `useMemo` 缓存，避免每次渲染重复 `.filter()` 计算。
 - [x] AC15: 侧边栏 `providers` 订阅细粒度化（从全对象 → `anyRunning` 布尔派生），减少不必要的重渲染。
+
+### Phase 6: Event Transformer 架构（输出结构化 + 编码修复）
+- [x] AC16: 三个 runtime（Claude/Codex/Gemini）各有 `transformToolEvent()` 方法，返回结构化 `ToolEvent { type, toolName, toolInput, content, status, timestamp }`
+- [x] AC17: messages 表新增 `tool_events` TEXT 列（JSON 数组），存储结构化工具事件
+- [x] AC18: WebSocket 新增 `assistant_tool_event` 事件类型，实时推送工具调用
+- [x] AC19: `TimelineMessage` 新增 `toolEvents` 字段，前端直接消费结构化数据
+- [x] AC20: StepTracker 从 `toolEvents[]` 渲染，**删除所有正则解析逻辑**（parseThinkingToSteps、cleanThinkingText 等）
+- [x] AC21: `thinking` 字段只含纯推理文本，不含工具调用噪音
+- [x] AC22: 子进程编码固定为 UTF-8，德彪中文输出不再乱码
+- [x] AC23: 删除所有因 event transformer 而变冗余的代码（正则解析、formatClaudeToolInput、formatGeminiParams、parseActivityLine 工具部分等）
+- [x] AC24: 所有现有测试通过，无回归
+
+### Phase 6.1: 会话隔离 + 流式稳定性（Review 驱动修复）
+- [x] AC25: WebSocket 全部 13 种事件类型带 `sessionGroupId`，前端按 `activeGroupId` 过滤
+- [x] AC26: 输入框草稿按会话隔离（`drafts: Record<string, string>`）
+- [x] AC27: 流式输出内容周期性落盘（`streamingFlushers`），切会话再切回不丢数据
+- [x] AC28: `decision.request` + `decision.board_flush` 切会话后可恢复（REST + fetchPending）
+- [x] AC29: `status` 事件 18 个发射点补 `sessionGroupId`，前端过滤
+
+### 不做什么（后续 Feature）
+- **不做 clowder 级别的 progress/final 消息分类** — clowder 用 `isFinal` 标志区分"中间进度消息"和"最终答复"（由 `route-serial.ts` 中 `index === worklist.length - 1` 决定），这是更上层的消息分级改造，不在 F006 范围内
+- 不做 MCP 工具集扩展
+- 虚拟化 `estimateSize` 初值微调（P3，后续按实际数据调优）
+- Agent Chip 过渡动画（P3，后续加 framer-motion）
 
 ## Dependencies
 

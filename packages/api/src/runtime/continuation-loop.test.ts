@@ -28,6 +28,7 @@ function makeResult(step: ScriptedStep): RunTurnResult {
       ? { shouldSeal: true, reason: "threshold", fillRatio: 0.99, usage: usage! }
       : null,
     stopReason: step.stopReason,
+    toolEvents: [],
   };
 }
 

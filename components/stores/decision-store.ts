@@ -13,6 +13,7 @@ type DecisionStore = {
     decisions: DecisionVerdict[],
     userInput?: string,
   ) => void
+  fetchPending: (sessionGroupId: string) => Promise<void>
 }
 
 export const useDecisionStore = create<DecisionStore>((set) => ({
@@ -39,5 +40,18 @@ export const useDecisionStore = create<DecisionStore>((set) => ({
     set((state) => ({
       pending: state.pending.filter((r) => r.requestId !== requestId),
     }))
+  },
+  fetchPending: async (sessionGroupId) => {
+    const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+    try {
+      const res = await fetch(
+        `${baseUrl}/api/decisions/pending?sessionGroupId=${encodeURIComponent(sessionGroupId)}`,
+      )
+      if (!res.ok) return
+      const data = (await res.json()) as { pending: DecisionRequest[] }
+      set({ pending: data.pending })
+    } catch {
+      // Network error — keep current state
+    }
   },
 }))

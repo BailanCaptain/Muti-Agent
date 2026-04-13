@@ -42,6 +42,7 @@ export default function HomePage() {
   const selectSessionGroup = useThreadStore((state) => state.selectSessionGroup)
   const applyAssistantDelta = useThreadStore((state) => state.applyAssistantDelta)
   const applyThinkingDelta = useThreadStore((state) => state.applyThinkingDelta)
+  const applyToolEvent = useThreadStore((state) => state.applyToolEvent)
   const appendTimelineMessage = useThreadStore((state) => state.appendTimelineMessage)
   const replaceActiveGroup = useThreadStore((state) => state.replaceActiveGroup)
   const setStatus = useChatStore((state) => state.setStatus)
@@ -82,20 +83,29 @@ export default function HomePage() {
         })
       },
       onMessage: (event) => {
-        // The page only routes normalized event envelopes; store-specific merge logic lives downstream.
+        const activeId = () => useThreadStore.getState().activeGroupId
+        const isCurrentSession = (groupId: string) => groupId === activeId()
+
         if (event.type === "assistant_delta") {
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
           applyAssistantDelta(event.payload.messageId, event.payload.delta)
           return
         }
 
         if (event.type === "assistant_thinking_delta") {
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
           applyThinkingDelta(event.payload.messageId, event.payload.delta)
           return
         }
 
+        if (event.type === "assistant_tool_event") {
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
+          applyToolEvent(event.payload.messageId, event.payload.event)
+          return
+        }
+
         if (event.type === "message.created") {
-          const activeId = useThreadStore.getState().activeGroupId
-          if (event.payload.sessionGroupId && event.payload.sessionGroupId !== activeId) {
+          if (event.payload.sessionGroupId && !isCurrentSession(event.payload.sessionGroupId)) {
             incrementUnread(event.payload.sessionGroupId)
           } else {
             appendTimelineMessage(event.payload.message)
@@ -104,51 +114,62 @@ export default function HomePage() {
         }
 
         if (event.type === "thread_snapshot") {
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
           replaceActiveGroup(event.payload.activeGroup)
           return
         }
 
         if (event.type === "approval.request") {
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
           addApprovalRequest(event.payload)
           return
         }
 
         if (event.type === "approval.resolved") {
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
           removeApprovalRequest(event.payload.requestId)
           return
         }
 
         if (event.type === "approval.auto_granted") {
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
           setStatus(`${event.payload.action} — 已自动放行 (规则匹配)`)
           return
         }
 
         if (event.type === "decision.request") {
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
           addDecisionRequest(event.payload)
           return
         }
 
         if (event.type === "decision.resolved") {
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
           removeDecisionRequest(event.payload.requestId)
           return
         }
 
         if (event.type === "decision.board_flush") {
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
           receiveBoardFlush(event.payload)
           return
         }
 
         if (event.type === "decision.board_item_resolved") {
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
           removeBoardItem(event.payload.itemId)
           return
         }
 
         if (event.type === "dispatch.blocked") {
+          const groupId = event.payload.attempts[0]?.sessionGroupId
+          if (groupId && !isCurrentSession(groupId)) return
           setStatus(formatBlockedDispatchMessage(event.payload.attempts))
           return
         }
 
         if (event.type === "status") {
+          if (event.payload.sessionGroupId && !isCurrentSession(event.payload.sessionGroupId)) return
           setStatus(event.payload.message)
         }
       },

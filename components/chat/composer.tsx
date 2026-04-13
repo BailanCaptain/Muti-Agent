@@ -68,8 +68,10 @@ function filterSuggestions(query: string): Suggestion[] {
 }
 
 export function Composer() {
-  const value = useChatStore((state) => state.draft)
-  const setDraft = useChatStore((state) => state.setDraft)
+  const activeGroupId = useThreadStore((state) => state.activeGroupId)
+  const value = useChatStore((state) => state.drafts[activeGroupId ?? ""] ?? "")
+  const setDraftRaw = useChatStore((state) => state.setDraft)
+  const setDraft = (draft: string | ((current: string) => string)) => setDraftRaw(activeGroupId, draft)
   const send = useChatStore((state) => state.sendMessage)
   const status = useChatStore((state) => state.status)
   const activeGroup = useThreadStore((state) => state.activeGroup)

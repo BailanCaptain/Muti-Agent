@@ -139,7 +139,7 @@ export function registerCallbackRoutes(
     } else {
       options.broadcaster.broadcast({
         type: "thread_snapshot",
-        payload: { activeGroup },
+        payload: { sessionGroupId: thread.sessionGroupId, activeGroup },
       })
     }
 
