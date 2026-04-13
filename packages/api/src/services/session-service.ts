@@ -5,6 +5,7 @@ import type {
   ProviderCatalog,
   SessionGroupSummary,
   TimelineMessage,
+  ToolEvent,
 } from "@multi-agent/shared"
 import type { ProviderProfile } from "../runtime/provider-profiles"
 import type { SessionRepository } from "../storage/repositories"
@@ -119,6 +120,7 @@ export class SessionService {
               message.connectorSource ?? undefined,
               message.groupId,
               message.groupRole,
+              JSON.parse(message.toolEvents || "[]") as ToolEvent[],
             ),
           ),
       )
@@ -166,8 +168,9 @@ export class SessionService {
     messageType: "progress" | "final" | "a2a_handoff" = "final",
     groupId: string | null = null,
     groupRole: "header" | "member" | "convergence" | null = null,
+    toolEvents = "[]",
   ) {
-    return this.repository.appendMessage(threadId, "assistant", content, thinking, messageType, null, groupId, groupRole)
+    return this.repository.appendMessage(threadId, "assistant", content, thinking, messageType, null, groupId, groupRole, toolEvents)
   }
 
   appendConnectorMessage(
@@ -180,7 +183,7 @@ export class SessionService {
     return this.repository.appendMessage(threadId, "assistant", content, "", "connector", connectorSource, groupId, groupRole)
   }
 
-  overwriteMessage(messageId: string, updates: { content?: string; thinking?: string }) {
+  overwriteMessage(messageId: string, updates: { content?: string; thinking?: string; toolEvents?: string }) {
     this.repository.overwriteMessage(messageId, updates)
   }
 
@@ -206,6 +209,7 @@ export class SessionService {
       message.connectorSource ?? undefined,
       message.groupId,
       message.groupRole,
+      JSON.parse(message.toolEvents || "[]") as ToolEvent[],
     )
   }
 
@@ -231,6 +235,7 @@ export class SessionService {
     connectorSource?: ConnectorSource,
     groupId?: string | null,
     groupRole?: "header" | "member" | "convergence" | null,
+    toolEvents?: ToolEvent[],
   ): TimelineMessage {
     const isConnector = messageType === "connector"
     return {
@@ -247,6 +252,7 @@ export class SessionService {
       thinking: role === "assistant" && thinking && !isConnector ? thinking : undefined,
       messageType,
       connectorSource: isConnector ? connectorSource : undefined,
+      toolEvents: role === "assistant" && toolEvents?.length ? toolEvents : undefined,
       groupId: groupId ?? undefined,
       groupRole: groupRole ?? undefined,
       model: role === "user" ? null : thread.currentModel,

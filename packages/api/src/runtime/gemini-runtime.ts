@@ -1,3 +1,4 @@
+import type { ToolEvent } from "@multi-agent/shared";
 import { BaseCliRuntime, resolveNodeScript, wrapPromptWithInstructions, type AgentRunInput, type RuntimeCommand, type StopReason } from "./base-runtime";
 import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts";
 
@@ -82,26 +83,34 @@ export class GeminiRuntime extends BaseCliRuntime {
     };
   }
 
-  parseActivityLine(event: Record<string, unknown>): string | null {
+  parseActivityLine(_event: Record<string, unknown>): string | null {
+    return null;
+  }
+
+  transformToolEvent(event: Record<string, unknown>): ToolEvent | null {
     try {
       if (event.type === "tool_use") {
         const toolName = String(event.tool_name ?? "");
         const params = (event.parameters ?? {}) as Record<string, unknown>;
-        const summary = formatGeminiParams(toolName, params);
-        return `⚡ ${toolName} ${summary}`.trimEnd();
+        return {
+          type: "tool_use",
+          toolName,
+          toolInput: formatGeminiParams(toolName, params),
+          status: "started",
+          timestamp: new Date().toISOString(),
+        };
       }
 
       if (event.type === "tool_result") {
         const status = event.status as string | undefined;
         const output = event.output as string | undefined;
-        if (status === "error") {
-          const firstLine = (output ?? "").split("\n")[0].slice(0, 100);
-          return `✗ ${firstLine}`;
-        }
-        if (output && output.trim()) {
-          return `✓ ${output.split("\n")[0].slice(0, 100)}`;
-        }
-        return "✓ done";
+        return {
+          type: "tool_result",
+          toolName: "",
+          content: (output ?? "").split("\n")[0].slice(0, 200) || "done",
+          status: status === "error" ? "error" : "completed",
+          timestamp: new Date().toISOString(),
+        };
       }
 
       return null;

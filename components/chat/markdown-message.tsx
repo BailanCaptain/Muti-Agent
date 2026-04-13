@@ -1,6 +1,6 @@
 "use client"
 
-import { Children, type ReactNode, useCallback, useRef, useState } from "react"
+import { Children, type ReactNode, useCallback, useMemo, useRef, useState } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkBreaks from "remark-breaks"
 import remarkGfm from "remark-gfm"
@@ -280,6 +280,8 @@ export function MarkdownMessage({
   inverted = false,
   className = "",
 }: MarkdownMessageProps) {
+  const sanitized = useMemo(() => sanitizeMarkdown(content), [content])
+
   return (
     <div
       className={[
@@ -299,7 +301,7 @@ export function MarkdownMessage({
       ].join(" ")}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={mdComponents}>
-        {sanitizeMarkdown(content)}
+        {sanitized}
       </ReactMarkdown>
     </div>
   )

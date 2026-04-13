@@ -6,7 +6,7 @@ import { formatTokenCount } from "@/lib/format"
 import { normalizeMessageToBlocks } from "@/lib/blocks"
 import type { DecisionRequest, Provider, TimelineMessage } from "@multi-agent/shared"
 import { ChevronDown, ChevronRight, Copy, Trash2 } from "lucide-react"
-import { useState } from "react"
+import { memo, useState } from "react"
 import { BlockRenderer } from "./block-renderer"
 import { DecisionCard } from "./decision-card"
 import { MarkdownMessage } from "./markdown-message"
@@ -138,7 +138,7 @@ function MessageMeta({ message }: { message: TimelineMessage }) {
   )
 }
 
-export function MessageBubble({ message, inlineDecisions, onDecisionRespond, onDelete, onCopy }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ message, inlineDecisions, onDecisionRespond, onDelete, onCopy }: MessageBubbleProps) {
   const [isThinkingOpen, setIsThinkingOpen] = useState(true)
   const showThinking = useSettingsStore((state) => state.showThinking)
   const isUser = message.role === "user"
@@ -237,7 +237,7 @@ export function MessageBubble({ message, inlineDecisions, onDecisionRespond, onD
                     >
                       <div className="overflow-hidden">
                         <div className="max-h-60 overflow-y-auto border-t border-slate-200/60 pt-3 pr-1">
-                          <StepTracker thinking={message.thinking} provider={message.provider} />
+                          <StepTracker toolEvents={message.toolEvents ?? []} provider={message.provider} />
                           <MarkdownMessage
                             className={`text-[12px] leading-relaxed ${theme.content}`}
                             content={message.thinking}
@@ -290,4 +290,4 @@ export function MessageBubble({ message, inlineDecisions, onDecisionRespond, onD
       </div>
     </div>
   )
-}
+})

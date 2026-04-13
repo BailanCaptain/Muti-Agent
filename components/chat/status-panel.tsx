@@ -8,7 +8,7 @@ import { useThreadStore } from "@/components/stores/thread-store"
 import { formatTokenCount } from "@/lib/format"
 import type { AuthorizationRule, Provider } from "@multi-agent/shared"
 import { Info, MessageSquare, Settings, Shield } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { FoldControls } from "./fold-controls"
 import { ProviderAvatar } from "./provider-avatar"
 
@@ -644,21 +644,28 @@ export function StatusPanel() {
   const providerEntries = Object.entries(providers) as Array<
     [Provider, (typeof providers)[Provider]]
   >
+  const providerEntriesRef = useRef(providerEntries)
+  providerEntriesRef.current = providerEntries
   const isAnyRunning = providerEntries.some(([, provider]) => provider.running)
 
-  // Timer for running agents
   useEffect(() => {
+    if (!isAnyRunning) {
+      setElapsed({})
+      return
+    }
     const interval = setInterval(() => {
-      const next: Record<string, number> = {}
-      for (const [provider, card] of providerEntries) {
-        if (card.running) {
-          next[provider] = (elapsed[provider] ?? 0) + 1
+      setElapsed((prev) => {
+        const next: Record<string, number> = {}
+        for (const [provider, card] of providerEntriesRef.current) {
+          if (card.running) {
+            next[provider] = (prev[provider] ?? 0) + 1
+          }
         }
-      }
-      setElapsed(next)
+        return next
+      })
     }, 1000)
     return () => clearInterval(interval)
-  }, [providerEntries]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isAnyRunning])
 
   const modeLabel =
     socketState === "connected"

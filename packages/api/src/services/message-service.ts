@@ -794,6 +794,7 @@ export class MessageService {
     const startedAt = new Date().toISOString()
     let promptRequestedByCli: string | null = null
     let thinking = ""
+    let toolEventsJson = "[]"
     let run: ActiveRun | null = null
 
     this.events.emit({
@@ -873,6 +874,15 @@ export class MessageService {
           payload: { messageId: assistant.id, delta: `${line}\n` },
         })
       },
+      onToolEvent: (event) => {
+        const parsed = JSON.parse(toolEventsJson) as unknown[]
+        parsed.push(event)
+        toolEventsJson = JSON.stringify(parsed)
+        options.emit({
+          type: "assistant_tool_event",
+          payload: { messageId: assistant.id, event },
+        })
+      },
       onLivenessWarning: (warning) => {
         // Surface liveness issues as status messages so the user sees *why* a turn is dragging on
         // before (or after) we force-kill. Soft warnings are informational; suspected_stall is a
@@ -923,6 +933,7 @@ export class MessageService {
         this.sessions.overwriteMessage(assistant.id, {
           content: prompt,
           thinking,
+          toolEvents: toolEventsJson,
         })
         options.emit({
           type: "status",
@@ -953,6 +964,7 @@ export class MessageService {
         onRunCreated: (handle) => {
           run = handle as ActiveRun
           this.invocations.attachRun(thread.id, identity.invocationId, run)
+          this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
         },
         emitStatus: (message) => {
           options.emit({
@@ -965,6 +977,7 @@ export class MessageService {
             this.sessions.overwriteMessage(assistant.id, {
               content: accumulated || "[empty response]",
               thinking,
+              toolEvents: toolEventsJson,
             })
           }
         },
@@ -1037,6 +1050,7 @@ export class MessageService {
         this.sessions.overwriteMessage(assistant.id, {
           content: accumulatedContent || "[empty response]",
           thinking,
+          toolEvents: toolEventsJson,
         })
       }
 
@@ -1149,6 +1163,7 @@ export class MessageService {
       this.sessions.overwriteMessage(assistant.id, {
         content: `Error: ${message}`,
         thinking,
+        toolEvents: toolEventsJson,
       })
       // Reactive self-heal: match the error message against known failure signatures so
       // we clear session only when doing so actually helps, and give the user a concrete

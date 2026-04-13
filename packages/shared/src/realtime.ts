@@ -1,4 +1,5 @@
 import type { Provider } from "./constants"
+import type { ToolEvent } from "./tool-event"
 
 export type ConnectorSource = {
   kind: "multi_mention_result"
@@ -66,6 +67,7 @@ export type TimelineMessage = {
   connectorSource?: ConnectorSource
   /** Inline confirmation cards embedded in this message bubble */
   inlineConfirmations?: InlineConfirmation[]
+  toolEvents?: ToolEvent[]
   groupId?: string
   groupRole?: "header" | "member" | "convergence"
   inputTokens?: number
@@ -332,6 +334,13 @@ export type RealtimeServerEvent =
       payload: {
         sessionGroupId: string
         itemId: string
+      }
+    }
+  | {
+      type: "assistant_tool_event"
+      payload: {
+        messageId: string
+        event: ToolEvent
       }
     }
 

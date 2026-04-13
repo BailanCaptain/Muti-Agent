@@ -42,6 +42,7 @@ export default function HomePage() {
   const selectSessionGroup = useThreadStore((state) => state.selectSessionGroup)
   const applyAssistantDelta = useThreadStore((state) => state.applyAssistantDelta)
   const applyThinkingDelta = useThreadStore((state) => state.applyThinkingDelta)
+  const applyToolEvent = useThreadStore((state) => state.applyToolEvent)
   const appendTimelineMessage = useThreadStore((state) => state.appendTimelineMessage)
   const replaceActiveGroup = useThreadStore((state) => state.replaceActiveGroup)
   const setStatus = useChatStore((state) => state.setStatus)
@@ -90,6 +91,11 @@ export default function HomePage() {
 
         if (event.type === "assistant_thinking_delta") {
           applyThinkingDelta(event.payload.messageId, event.payload.delta)
+          return
+        }
+
+        if (event.type === "assistant_tool_event") {
+          applyToolEvent(event.payload.messageId, event.payload.event)
           return
         }
 

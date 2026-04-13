@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import type { ToolEvent } from "@multi-agent/shared";
 import { BaseCliRuntime, resolveNpmRoot, wrapPromptWithInstructions, type AgentRunInput, type RuntimeCommand, type StopReason } from "./base-runtime";
 import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts";
 
@@ -48,50 +49,60 @@ export class CodexRuntime extends BaseCliRuntime {
   parseActivityLine(event: Record<string, unknown>): string | null {
     try {
       const type = event.type as string | undefined;
-      const item = event.item as { type?: string; command?: string; output?: string; path?: string; text?: string } | undefined;
+      const item = event.item as { type?: string; text?: string } | undefined;
+      if (!type || !item) return null;
 
-      if (!type || !item) {
-        return null;
-      }
-
-      const itemType = item.type;
-
-      if (itemType === "todo_list") {
-        return null;
-      }
-
-      if (type === "turn.completed") {
-        return null;
-      }
-
-      // Reasoning models (gpt-5/5.4) silently think for seconds before first output token.
-      // Surfacing the started marker + the final reasoning text into the thinking bubble
-      // gives the user visible feedback during what would otherwise be a dead-air gap.
-      if (type === "item.started" && itemType === "reasoning") {
+      if (type === "item.started" && item.type === "reasoning") {
         return "🧠 正在推理...";
       }
-
-      if (type === "item.completed" && itemType === "reasoning") {
+      if (type === "item.completed" && item.type === "reasoning") {
         const text = (item.text ?? "").trim();
-        return text ? text : null;
+        return text || null;
       }
+      return null;
+    } catch {
+      return null;
+    }
+  }
 
-      if ((type === "item.started") && itemType === "command_execution") {
-        const cmd = (item.command ?? "").split("\n")[0].slice(0, 100);
-        return `$ ${cmd}`;
+  transformToolEvent(event: Record<string, unknown>): ToolEvent | null {
+    try {
+      const type = event.type as string | undefined;
+      const item = event.item as { type?: string; command?: string; output?: string; path?: string } | undefined;
+      if (!type || !item) return null;
+      const itemType = item.type;
+
+      if (type === "item.started" && itemType === "command_execution") {
+        return {
+          type: "tool_use",
+          toolName: "Bash",
+          toolInput: (item.command ?? "").split("\n")[0].slice(0, 100),
+          status: "started",
+          timestamp: new Date().toISOString(),
+        };
       }
 
       if (type === "item.completed" && itemType === "command_execution") {
-        const cmd = (item.command ?? "").split("\n")[0].slice(0, 100);
         const output = item.output ?? "";
-        const firstOutputLine = output.split("\n")[0].slice(0, 60);
-        return firstOutputLine ? `✓ ${cmd} → ${firstOutputLine}` : `✓ ${cmd}`;
+        return {
+          type: "tool_result",
+          toolName: "Bash",
+          content: output.split("\n")[0].slice(0, 200) || "done",
+          status: "completed",
+          timestamp: new Date().toISOString(),
+        };
       }
 
       if (type === "item.completed" && itemType === "file_change") {
         const filePath = item.path ?? "";
         const shortPath = filePath.split(/[/\\]/).slice(-2).join("/");
-        return `📝 ${shortPath}`;
+        return {
+          type: "tool_use",
+          toolName: "Edit",
+          toolInput: shortPath,
+          status: "completed",
+          timestamp: new Date().toISOString(),
+        };
       }
 
       return null;

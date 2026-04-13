@@ -8,6 +8,7 @@ import {
   type ProviderCatalog,
   type SessionGroupSummary,
   type TimelineMessage,
+  type ToolEvent,
 } from "@multi-agent/shared"
 import { create } from "zustand"
 
@@ -72,6 +73,7 @@ type ThreadStore = {
   replaceActiveGroup: (group: ActiveGroupPayload) => void
   applyAssistantDelta: (messageId: string, delta: string) => void
   applyThinkingDelta: (messageId: string, delta: string) => void
+  applyToolEvent: (messageId: string, event: ToolEvent) => void
   appendTimelineMessage: (message: TimelineMessage) => void
   buildSendPayload: (input: string) => SendPayload | null
   incrementUnread: (groupId: string) => void
@@ -230,10 +232,16 @@ function mergeTimeline(existing: TimelineMessage[], incoming: TimelineMessage[])
           ? current.thinking
           : message.thinking
 
+      const currentEvents = current.toolEvents ?? []
+      const incomingEvents = message.toolEvents ?? []
+      const toolEvents =
+        currentEvents.length > incomingEvents.length ? current.toolEvents : message.toolEvents
+
       return {
         ...message,
         content,
         thinking,
+        toolEvents,
       }
     })
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
@@ -380,6 +388,15 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       timeline: state.timeline.map((message) =>
         message.id === messageId
           ? { ...message, thinking: `${message.thinking ?? ""}${delta}` }
+          : message,
+      ),
+    }))
+  },
+  applyToolEvent: (messageId, event) => {
+    set((state) => ({
+      timeline: state.timeline.map((message) =>
+        message.id === messageId
+          ? { ...message, toolEvents: [...(message.toolEvents ?? []), event] }
           : message,
       ),
     }))

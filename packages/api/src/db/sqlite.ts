@@ -34,6 +34,7 @@ export type MessageRecord = {
   connectorSource: ConnectorSourceRecord | null
   groupId: string | null
   groupRole: "header" | "member" | "convergence" | null
+  toolEvents: string
   createdAt: string
 }
 
@@ -217,6 +218,12 @@ export class SqliteStore {
         created_at TEXT NOT NULL
       );
     `)
+
+    try {
+      this.db.exec("ALTER TABLE messages ADD COLUMN tool_events TEXT NOT NULL DEFAULT '[]';")
+    } catch {
+      // Column may already exist
+    }
 
     try {
       this.db.exec("ALTER TABLE session_groups ADD COLUMN project_tag TEXT;")
