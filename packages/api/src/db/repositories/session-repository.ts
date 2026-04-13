@@ -130,7 +130,8 @@ export class SessionRepository {
     return this.store.db
       .prepare(
         `SELECT id, session_group_id as sessionGroupId, provider, alias, current_model as currentModel,
-                native_session_id as nativeSessionId, updated_at as updatedAt
+                native_session_id as nativeSessionId, sop_bookmark as sopBookmark,
+                last_fill_ratio as lastFillRatio, updated_at as updatedAt
          FROM threads
          WHERE session_group_id = ?
          ORDER BY provider ASC`,
@@ -142,7 +143,8 @@ export class SessionRepository {
     return this.store.db
       .prepare(
         `SELECT id, session_group_id as sessionGroupId, provider, alias, current_model as currentModel,
-                native_session_id as nativeSessionId, updated_at as updatedAt
+                native_session_id as nativeSessionId, sop_bookmark as sopBookmark,
+                last_fill_ratio as lastFillRatio, updated_at as updatedAt
          FROM threads
          WHERE id = ?
          LIMIT 1`,
@@ -340,19 +342,21 @@ export class SessionRepository {
 
   updateThread(
     threadId: string,
-    updates: { currentModel?: string | null; nativeSessionId?: string | null },
+    updates: { currentModel?: string | null; nativeSessionId?: string | null; sopBookmark?: string | null; lastFillRatio?: number | null },
   ) {
     const currentModel = updates.currentModel ?? null
     const nativeSessionId = updates.nativeSessionId ?? null
+    const sopBookmark = updates.sopBookmark ?? null
+    const lastFillRatio = updates.lastFillRatio ?? null
     const updatedAt = new Date().toISOString()
 
     this.store.db
       .prepare(
         `UPDATE threads
-         SET current_model = ?, native_session_id = ?, updated_at = ?
+         SET current_model = ?, native_session_id = ?, sop_bookmark = ?, last_fill_ratio = ?, updated_at = ?
          WHERE id = ?`,
       )
-      .run(currentModel, nativeSessionId, updatedAt, threadId)
+      .run(currentModel, nativeSessionId, sopBookmark, lastFillRatio, updatedAt, threadId)
 
     this.touchThread(threadId, updatedAt)
   }

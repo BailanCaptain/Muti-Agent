@@ -3,6 +3,10 @@ import type { ContextPolicy } from "./context-policy"
 import { POLICY_FULL } from "./context-policy"
 import type { ContextMessage } from "./context-snapshot"
 import { truncateHeadTail } from "./context-snapshot"
+import { microcompact } from "./microcompact"
+import { computeDynamicLimits } from "./dynamic-budget"
+import type { SOPBookmark } from "./sop-bookmark"
+import { formatBookmarkForInjection } from "./sop-bookmark"
 import { AGENT_SYSTEM_PROMPTS, ACCEPTANCE_GUARDIAN_PROMPT } from "../runtime/agent-prompts"
 import type { MemoryService } from "../services/memory-service"
 
@@ -31,6 +35,10 @@ export type AssemblePromptInput = {
   phase1HeaderText?: string
   /** Optional skill hint line */
   skillHint?: string | null
+  /** SOP bookmark for cross-seal skill state restoration */
+  sopBookmark?: SOPBookmark | null
+  /** Last fill ratio for dynamic budget computation */
+  lastFillRatio?: number
   /** When true, replace system prompt with ACCEPTANCE_GUARDIAN_PROMPT (zero-context mode) */
   guardianMode?: boolean
 }
@@ -74,6 +82,15 @@ export async function assemblePrompt(
     }
   }
 
+  if (policy.injectRollingSummary && input.sopBookmark) {
+    const bookmarkLine = formatBookmarkForInjection(input.sopBookmark)
+    if (bookmarkLine) {
+      systemParts.push("")
+      systemParts.push("## 当前执行状态")
+      systemParts.push(bookmarkLine)
+    }
+  }
+
   const systemPrompt = systemParts.join("\n")
 
   // ── Content (user message) ─────────────────────────────────────────
@@ -112,13 +129,18 @@ export async function assemblePrompt(
   // when nativeSessionId was set (trusting CLI --resume), but that proved
   // unreliable and caused direct-turn amnesia (B005). The API is now the
   // authoritative history source; CLI --resume is a performance optimization.
+  const effectiveLimits = policy.dynamicBudget && input.lastFillRatio !== undefined
+    ? computeDynamicLimits(input.lastFillRatio)
+    : { sharedHistoryLimit: policy.sharedHistoryLimit, selfHistoryLimit: policy.selfHistoryLimit, maxContentLength: policy.maxContentLength }
+
   const shouldInjectSelfHistory = policy.injectSelfHistory
   if (shouldInjectSelfHistory) {
     const selfMessages = roomSnapshot.filter((m) => m.agentId === targetAlias)
-    const recent = selfMessages.slice(-policy.selfHistoryLimit)
-    if (recent.length > 0) {
-      contentSections.push(`--- 你之前的发言 (${recent.length} 条) ---`)
-      for (const m of recent) {
+    const recent = selfMessages.slice(-effectiveLimits.selfHistoryLimit)
+    const compacted = microcompact(recent, { keepRecent: 5, keepLastFailure: true })
+    if (compacted.length > 0) {
+      contentSections.push(`--- 你之前的发言 (${compacted.length} 条) ---`)
+      for (const m of compacted) {
         contentSections.push(`[${m.role === "user" ? "收到" : "你"}]: ${m.content}`)
       }
       contentSections.push("---")
@@ -129,11 +151,12 @@ export async function assemblePrompt(
   // Shared history: other agents' messages
   if (policy.injectSharedHistory) {
     const otherMessages = roomSnapshot.filter((m) => m.agentId !== targetAlias)
-    const recent = otherMessages.slice(-policy.sharedHistoryLimit)
-    if (recent.length > 0) {
-      contentSections.push(`--- 近期对话 (${recent.length} 条) ---`)
-      for (const m of recent) {
-        const truncated = truncateHeadTail(m.content, policy.maxContentLength)
+    const recent = otherMessages.slice(-effectiveLimits.sharedHistoryLimit)
+    const compacted = microcompact(recent, { keepRecent: 5, keepLastFailure: true })
+    if (compacted.length > 0) {
+      contentSections.push(`--- 近期对话 (${compacted.length} 条) ---`)
+      for (const m of compacted) {
+        const truncated = truncateHeadTail(m.content, effectiveLimits.maxContentLength)
         contentSections.push(`[${m.agentId}]: ${truncated}`)
       }
       contentSections.push("---")

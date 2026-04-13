@@ -334,6 +334,44 @@ function SessionTabContent({
                   </div>
                 </div>
 
+                {/* Context Health */}
+                {card.fillRatio != null && card.fillRatio > 0 && (
+                  <div className="mb-3 rounded-2xl bg-white/80 px-3 py-2">
+                    <div className="mb-1 flex items-center justify-between text-[10px]">
+                      <span className="uppercase tracking-[0.16em] text-slate-400">上下文</span>
+                      <span className={`font-mono font-semibold ${
+                        card.fillRatio > 0.7 ? "text-red-500" : card.fillRatio > 0.5 ? "text-amber-500" : "text-emerald-500"
+                      }`}>
+                        {Math.round(card.fillRatio * 100)}%
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-slate-200">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          card.fillRatio > 0.7 ? "bg-red-400" : card.fillRatio > 0.5 ? "bg-amber-400" : "bg-emerald-400"
+                        }`}
+                        style={{ width: `${Math.round(card.fillRatio * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* SOP Bookmark */}
+                {card.sopSkill && (
+                  <div className="mb-3 rounded-2xl bg-indigo-50/60 px-3 py-2">
+                    <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-indigo-400">执行状态</div>
+                    <div className="flex flex-wrap items-center gap-1 text-[11px]">
+                      <span className="font-semibold text-indigo-600">{card.sopSkill.toUpperCase()}</span>
+                      {card.sopPhase && (
+                        <><span className="text-indigo-300">&gt;</span><span className="text-indigo-500">{card.sopPhase}</span></>
+                      )}
+                      {card.sopNext && (
+                        <><span className="text-indigo-300">&gt;</span><span className="truncate text-indigo-400 max-w-[120px]">{card.sopNext}</span></>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-400">
                   当前会话
                 </div>

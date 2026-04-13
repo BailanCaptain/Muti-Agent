@@ -64,6 +64,8 @@ export type RunTurnResult = {
   usage: TokenUsageSnapshot | null;
   sealDecision: SealDecision | null;
   stopReason: StopReason | null;
+  /** Set by message-service when CLI self-compression detected (F-BLOAT) */
+  fBloatDetected?: boolean;
 };
 
 const runtimeAdapters = {

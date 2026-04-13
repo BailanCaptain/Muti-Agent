@@ -37,6 +37,10 @@ import {
   assembleDirectTurnPrompt,
   type AssemblePromptResult,
 } from "../orchestrator/context-assembler"
+import { extractSOPBookmark } from "../orchestrator/sop-bookmark"
+import { shouldAutoResume, buildAutoResumeMessage, MAX_AUTO_RESUMES } from "../orchestrator/auto-resume"
+import { detectFBloat } from "../orchestrator/fbloat-detector"
+import type { SOPBookmark } from "../orchestrator/sop-bookmark"
 import { POLICY_FULL, POLICY_GUARDIAN, POLICY_INDEPENDENT } from "../orchestrator/context-policy"
 import { classifyFailure } from "../runtime/failure-classifier"
 import { loadRuntimeConfig } from "../runtime/runtime-config"
@@ -163,6 +167,7 @@ export class MessageService {
   private decisions: DecisionManager | null = null
   private skillRegistry: SkillRegistry | null = null
   private sopTracker: SopTracker | null = null
+  private readonly prevUsedTokens = new Map<string, number>()
   private memoryService: MemoryService | null = null
   private decisionBoard: DecisionBoard | null = null
   private settlementDetector: SettlementDetector | null = null
@@ -729,6 +734,8 @@ export class MessageService {
     groupId?: string | null
     /** Role within the collapsible group */
     groupRole?: "header" | "member" | "convergence" | null
+    /** Counter for seal auto-resume (prevents infinite loops) */
+    autoResumeCount?: number
   }): Promise<{ messageId: string; content: string } | null> {
     const thread = this.dispatch.resolveThread(options.threadId)
     if (!thread) {
@@ -1032,7 +1039,25 @@ export class MessageService {
         }
       }
 
-      this.sessions.updateThread(thread.id, result.currentModel, effectiveSessionId)
+      if (result.usage) {
+        const prevTokens = this.prevUsedTokens.get(thread.id) ?? 0
+        const bloat = detectFBloat(prevTokens, result.usage.usedTokens)
+        if (bloat.detected) {
+          result.fBloatDetected = true
+          options.emit({
+            type: "status",
+            payload: { message: `${thread.alias} CLI 内部压缩检测到（token 突降 ${Math.round(bloat.dropRatio * 100)}%），下轮将强制重注入 system prompt。` },
+          })
+          this.memoryService?.invalidateSummary(thread.sessionGroupId)
+        }
+        this.prevUsedTokens.set(thread.id, result.usage.usedTokens)
+      }
+
+      const sopStage = this.sopTracker?.getStage(thread.sessionGroupId) ?? null
+      const bookmark = extractSOPBookmark(accumulatedContent, sopStage)
+      const bookmarkJson = bookmark.skill ? JSON.stringify(bookmark) : null
+      const lastFillRatio = result.sealDecision?.fillRatio ?? null
+      this.sessions.updateThread(thread.id, result.currentModel, effectiveSessionId, bookmarkJson, lastFillRatio)
       if (!promptRequestedByCli) {
         this.sessions.overwriteMessage(assistant.id, {
           content: accumulatedContent || "[empty response]",
@@ -1141,6 +1166,29 @@ export class MessageService {
         identity.invocationId,
       )
       this.settlementDetector?.notifyStateChange(thread.sessionGroupId)
+
+      if (loopResult.stoppedReason === "sealed" && bookmarkJson) {
+        const parsedBookmark: SOPBookmark = JSON.parse(bookmarkJson)
+        const resumeCount = options.autoResumeCount ?? 0
+        if (shouldAutoResume(parsedBookmark, resumeCount, MAX_AUTO_RESUMES, 0)) {
+          const resumeMsg = buildAutoResumeMessage(parsedBookmark, resumeCount + 1, MAX_AUTO_RESUMES)
+          options.emit({
+            type: "status",
+            payload: { message: `记忆重组中，自动续接 (${resumeCount + 1}/${MAX_AUTO_RESUMES})` },
+          })
+          const resumeResult = await this.runThreadTurn({
+            threadId: thread.id,
+            content: resumeMsg,
+            emit: options.emit,
+            rootMessageId: options.rootMessageId,
+            autoResumeCount: resumeCount + 1,
+          })
+          if (resumeResult) {
+            return { messageId: resumeResult.messageId, content: accumulatedContent + resumeResult.content }
+          }
+        }
+      }
+
       return { messageId: assistant.id, content: accumulatedContent || "" }
     } catch (error) {
       this.invocations.detachRun(thread.id)

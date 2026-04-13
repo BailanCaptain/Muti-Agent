@@ -113,6 +113,10 @@ export type ProviderThreadView = {
   quotaSummary: string
   preview: string
   running: boolean
+  sopSkill?: string | null
+  sopPhase?: string | null
+  sopNext?: string | null
+  fillRatio?: number | null
 }
 
 export type ActiveGroupView = {

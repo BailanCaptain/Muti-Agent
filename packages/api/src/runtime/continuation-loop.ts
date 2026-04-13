@@ -17,7 +17,8 @@ export type RunContinuationLoopOptions = {
 export type ContinuationStopReason =
   | "complete"
   | "guard_exhausted"
-  | "sealed";
+  | "sealed"
+  | "sealed_auto_resumed";
 
 export type RunContinuationLoopResult = {
   accumulatedContent: string;

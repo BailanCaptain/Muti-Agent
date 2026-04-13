@@ -20,6 +20,8 @@ export type ContextPolicy = {
   phase1Header: boolean
   /** Inject document/requirements preamble */
   injectPreamble: boolean
+  /** Enable dynamic budget based on fillRatio */
+  dynamicBudget?: boolean
 }
 
 /** Normal collaboration: full context, all layers */
@@ -35,6 +37,7 @@ export const POLICY_FULL: ContextPolicy = {
   maxContentLength: 2000,
   phase1Header: false,
   injectPreamble: false,
+  dynamicBudget: true,
 }
 
 /** Phase 1 brainstorm: independent thinking, no cross-agent history */

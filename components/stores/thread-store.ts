@@ -18,6 +18,10 @@ type ProviderCardState = {
   quotaSummary: string
   preview: string
   running: boolean
+  sopSkill?: string | null
+  sopPhase?: string | null
+  sopNext?: string | null
+  fillRatio?: number | null
 }
 
 type ActiveGroupPayload = {

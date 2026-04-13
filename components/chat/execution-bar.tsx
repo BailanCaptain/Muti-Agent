@@ -6,6 +6,26 @@ import { ProviderAvatar } from "./provider-avatar"
 import { useApprovalStore } from "../stores/approval-store"
 import { useThreadStore } from "../stores/thread-store"
 
+function FillBar({ ratio }: { ratio: number }) {
+  const pct = Math.round(ratio * 100)
+  const color = ratio > 0.7 ? "bg-red-400" : ratio > 0.5 ? "bg-amber-400" : "bg-emerald-400"
+  return (
+    <div className="relative h-1.5 w-10 rounded-full bg-slate-200" title={`上下文使用 ${pct}%`}>
+      <div className={`absolute inset-y-0 left-0 rounded-full ${color}`} style={{ width: `${pct}%` }} />
+    </div>
+  )
+}
+
+function SOPBreadcrumb({ skill, phase, next }: { skill: string; phase?: string | null; next?: string | null }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5">
+      <span className="font-semibold">{skill.toUpperCase()}</span>
+      {phase && <><span className="text-indigo-300">&gt;</span><span>{phase}</span></>}
+      {next && <><span className="text-indigo-300">&gt;</span><span className="text-indigo-400 truncate max-w-[100px]">{next}</span></>}
+    </span>
+  )
+}
+
 export function ExecutionBar() {
   const providers = useThreadStore((s) => s.providers)
   const pendingCount = useApprovalStore((s) => s.pending.length)
@@ -34,6 +54,12 @@ export function ExecutionBar() {
             <span className={isWaiting ? "text-amber-600 font-medium" : ""}>
               {PROVIDER_ALIASES[provider]}
             </span>
+            {card?.fillRatio != null && card.fillRatio > 0 && (
+              <FillBar ratio={card.fillRatio} />
+            )}
+            {card?.sopSkill && (
+              <SOPBreadcrumb skill={card.sopSkill} phase={card.sopPhase} next={card.sopNext} />
+            )}
           </div>
         )
       })}

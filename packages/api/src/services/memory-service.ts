@@ -3,7 +3,13 @@ import type { SessionRepository } from "../db/repositories/session-repository"
 import type { SessionMemoryRecord } from "../db/sqlite"
 
 export class MemoryService {
+  private readonly invalidatedGroups = new Set<string>()
+
   constructor(private readonly repository: SessionRepository) {}
+
+  invalidateSummary(sessionGroupId: string) {
+    this.invalidatedGroups.add(sessionGroupId)
+  }
 
   summarizeSession(sessionGroupId: string): SessionMemoryRecord {
     // 1. Get all messages for the group from all threads
@@ -70,7 +76,7 @@ export class MemoryService {
     // 2. Build extractive summary first (key decisions, [拍板] items, topic keywords)
     const extractive = buildExtractiveSummary(allMessages)
 
-    // 3. Attempt Gemini API call for abstractive compression
+    // 3. Attempt Gemini API call for abstractive compression, fallback to Claude CLI, then extractive
     const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
     const summary = await this.callGeminiSummarizer(extractive, allMessages)
     this.repository.createMemory(sessionGroupId, summary, keywords)
@@ -82,10 +88,13 @@ export class MemoryService {
    * (>10 user messages since last summary).
    */
   async getOrCreateSummary(sessionGroupId: string): Promise<string | null> {
+    const forceRefresh = this.invalidatedGroups.has(sessionGroupId)
+    if (forceRefresh) this.invalidatedGroups.delete(sessionGroupId)
+
     // Check for existing summary
     const existing = this.repository.getLatestMemory(sessionGroupId)
 
-    if (existing) {
+    if (existing && !forceRefresh) {
       // Count user messages since the summary was created
       const threads = this.repository.listThreadsByGroup(sessionGroupId)
       let userMessagesSinceSummary = 0
@@ -130,10 +139,10 @@ export class MemoryService {
     allMessages: Array<{ role: string; content: string; alias: string; createdAt: string }>,
   ): Promise<string> {
     const conversationText = allMessages
-      .slice(-50)
+      .slice(-100)
       .map((m) => {
         const speaker = m.role === "user" ? "用户" : m.alias
-        return `[${speaker} ${m.createdAt}]: ${m.content.slice(0, 500)}`
+        return `[${speaker} ${m.createdAt}]: ${m.content.slice(0, 800)}`
       })
       .join("\n")
 
@@ -179,10 +188,16 @@ ${conversationText}`
 
       child.on("close", (code) => {
         const text = stdout.trim()
-        done(code === 0 && text ? text : extractive)
+        if (code === 0 && text) {
+          done(text)
+        } else {
+          this.callClaudeFallbackSummarizer(extractive).then(done, () => done(extractive))
+        }
       })
 
-      child.on("error", () => done(extractive))
+      child.on("error", () => {
+        this.callClaudeFallbackSummarizer(extractive).then(done, () => done(extractive))
+      })
 
       // 60s hard timeout — Gemini CLI 重试可能较慢
       const timer = setTimeout(() => {
@@ -190,6 +205,28 @@ ${conversationText}`
         done(extractive)
       }, 60_000)
 
+      child.on("close", () => clearTimeout(timer))
+    })
+  }
+
+  private callClaudeFallbackSummarizer(extractive: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const prompt = `请将以下对话摘要精炼为 300-500 字的结构化摘要，保留关键决策和未完成任务：\n\n${extractive.slice(0, 3000)}`
+      const child = spawn("claude", ["-p", prompt, "--no-input"], {
+        stdio: ["ignore", "pipe", "pipe"],
+        cwd: process.cwd(),
+      })
+
+      let stdout = ""
+      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString() })
+      child.on("close", (code) => {
+        const text = stdout.trim()
+        if (code === 0 && text) resolve(text)
+        else resolve(extractive)
+      })
+      child.on("error", () => resolve(extractive))
+
+      const timer = setTimeout(() => { child.kill(); resolve(extractive) }, 30_000)
       child.on("close", () => clearTimeout(timer))
     })
   }
@@ -234,14 +271,28 @@ function buildExtractiveSummary(
     sections.push("### 话题关键词\n" + keywords)
   }
 
-  // Recent conversation highlights (last 20 messages, truncated)
+  // Recent conversation as structured Timeline (last 20 messages)
   const recent = allMessages.slice(-20)
-  const summaryLines = recent.map((m) => {
+  const timelineLines = recent.map((m) => {
     const speaker = m.role === "user" ? "用户" : m.alias
-    const content = m.content.length > 200 ? m.content.slice(0, 200) + "..." : m.content
-    return `[${speaker}]: ${content}`
+    const time = m.createdAt.slice(11, 16)
+    const content = m.content.length > 300 ? m.content.slice(0, 300) + "..." : m.content
+    return `${time} ${speaker}: ${content}`
   })
-  sections.push("### 近期对话\n" + summaryLines.join("\n"))
+  sections.push("[Timeline]\n" + timelineLines.join("\n"))
+
+  // Extract unfinished tasks
+  const unfinishedItems: string[] = []
+  for (const msg of allMessages) {
+    const todoMatches = msg.content.match(/待办|TODO|待定|下一步|next step/gi)
+    if (todoMatches) {
+      const speaker = msg.role === "user" ? "用户" : msg.alias
+      unfinishedItems.push(`- ${speaker}: ${msg.content.slice(0, 150)}`)
+    }
+  }
+  if (unfinishedItems.length > 0) {
+    sections.push("[未完成]\n" + unfinishedItems.slice(-5).join("\n"))
+  }
 
   return sections.join("\n\n")
 }

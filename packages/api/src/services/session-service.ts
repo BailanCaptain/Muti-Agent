@@ -16,6 +16,10 @@ type ProviderView = {
   quotaSummary: string
   preview: string
   running: boolean
+  sopSkill?: string | null
+  sopPhase?: string | null
+  sopNext?: string | null
+  fillRatio?: number | null
 }
 
 type DispatchState = {
@@ -90,17 +94,34 @@ export class SessionService {
     const threads = this.repository.listThreadsByGroup(groupId)
 
     const providers = Object.fromEntries(
-      threads.map((thread) => [
-        thread.provider,
-        {
-          threadId: thread.id,
-          alias: thread.alias,
-          currentModel: thread.currentModel,
-          quotaSummary: "额度信息待接入",
-          preview: summary?.previews.find((item) => item.provider === thread.provider)?.text ?? "",
-          running: runningThreadIds.has(thread.id),
-        },
-      ]),
+      threads.map((thread) => {
+        let sopSkill: string | null = null
+        let sopPhase: string | null = null
+        let sopNext: string | null = null
+        if (thread.sopBookmark) {
+          try {
+            const bm = JSON.parse(thread.sopBookmark) as { skill?: string; phase?: string; nextExpectedAction?: string }
+            sopSkill = bm.skill ?? null
+            sopPhase = bm.phase ?? null
+            sopNext = bm.nextExpectedAction ?? null
+          } catch { /* ignore malformed JSON */ }
+        }
+        return [
+          thread.provider,
+          {
+            threadId: thread.id,
+            alias: thread.alias,
+            currentModel: thread.currentModel,
+            quotaSummary: "额度信息待接入",
+            preview: summary?.previews.find((item) => item.provider === thread.provider)?.text ?? "",
+            running: runningThreadIds.has(thread.id),
+            sopSkill,
+            sopPhase,
+            sopNext,
+            fillRatio: thread.lastFillRatio ?? null,
+          },
+        ]
+      }),
     ) as Record<Provider, ProviderView>
 
     const timeline = threads
@@ -213,10 +234,12 @@ export class SessionService {
     this.repository.updateSessionGroupProjectTag(groupId, tag)
   }
 
-  updateThread(threadId: string, model: string | null, nativeSessionId: string | null) {
+  updateThread(threadId: string, model: string | null, nativeSessionId: string | null, sopBookmark?: string | null, lastFillRatio?: number | null) {
     this.repository.updateThread(threadId, {
       currentModel: model,
       nativeSessionId,
+      ...(sopBookmark !== undefined ? { sopBookmark } : {}),
+      ...(lastFillRatio !== undefined ? { lastFillRatio } : {}),
     })
   }
 

@@ -10,6 +10,8 @@ export type ProviderThreadRecord = {
   alias: string
   currentModel: string | null
   nativeSessionId: string | null
+  sopBookmark: string | null
+  lastFillRatio: number | null
   updatedAt: string
 }
 
@@ -220,6 +222,18 @@ export class SqliteStore {
 
     try {
       this.db.exec("ALTER TABLE session_groups ADD COLUMN project_tag TEXT;")
+    } catch {
+      // Column may already exist
+    }
+
+    try {
+      this.db.exec("ALTER TABLE threads ADD COLUMN sop_bookmark TEXT;")
+    } catch {
+      // Column may already exist
+    }
+
+    try {
+      this.db.exec("ALTER TABLE threads ADD COLUMN last_fill_ratio REAL;")
     } catch {
       // Column may already exist
     }
