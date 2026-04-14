@@ -176,7 +176,7 @@ export function Composer() {
 
     if (event.key === "Enter" && !event.shiftKey && !showSuggestions) {
       event.preventDefault()
-      if (!value.trim() || isBusy) return
+      if ((!value.trim() && pendingImages.length === 0) || isBusy) return
       void send(value)
     }
   }
@@ -201,7 +201,7 @@ export function Composer() {
       className="flex flex-col gap-3 rounded-[30px] border border-slate-200/80 bg-white/90 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur"
       onSubmit={(event) => {
         event.preventDefault()
-        if (!value.trim() || isBusy) {
+        if ((!value.trim() && pendingImages.length === 0) || isBusy) {
           return
         }
 
@@ -325,7 +325,7 @@ export function Composer() {
         ) : (
           <button
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500 text-white shadow-lg shadow-amber-500/20 transition-all hover:bg-amber-600 active:scale-95 disabled:bg-slate-200 disabled:shadow-none"
-            disabled={!value.trim() || isBusy}
+            disabled={(!value.trim() && pendingImages.length === 0) || isBusy}
             type="submit"
           >
             <Send className="h-4 w-4" />

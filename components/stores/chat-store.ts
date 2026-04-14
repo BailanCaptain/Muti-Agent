@@ -28,6 +28,9 @@ async function uploadFile(file: File): Promise<string> {
     body: form,
   })
   const data = await res.json()
+  if (!res.ok || !data.url) {
+    throw new Error(data.error ?? `Upload failed (${res.status})`)
+  }
   return `${API_BASE}${data.url}`
 }
 
