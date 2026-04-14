@@ -2,6 +2,9 @@ import type { FastifyInstance } from "fastify";
 import type { RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared";
 import type { ApprovalManager } from "../orchestrator/approval-manager";
 import type { MessageService } from "../services/message-service";
+import { createLogger } from "../lib/logger";
+
+const log = createLogger("ws");
 
 type SocketLike = {
   send: (payload: string) => void;
@@ -23,7 +26,8 @@ export function sendSocketEvent(socket: SocketLike, event: RealtimeServerEvent):
   try {
     socket.send(JSON.stringify(event));
     return true;
-  } catch {
+  } catch (err) {
+    log.warn({ err, eventType: event.type }, "socket send failed, evicting");
     return false;
   }
 }
@@ -63,13 +67,16 @@ export function registerWsRoute(
     },
     wsHandler: (socket) => {
       sockets.add(socket as SocketLike);
+      log.info({ total: sockets.size }, "client connected");
 
       socket.on("close", () => {
         sockets.delete(socket as SocketLike);
+        log.info({ total: sockets.size }, "client disconnected");
       });
 
       socket.on("message", async (raw: Buffer) => {
         const event = JSON.parse(raw.toString()) as RealtimeClientEvent;
+        log.debug({ type: event.type }, "client event received");
 
         if (event.type === "approval.respond" && options.approvals) {
           options.approvals.respond(

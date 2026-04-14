@@ -29,7 +29,14 @@ export type DiffBlock = {
   diff: string
 }
 
-export type Block = MarkdownBlock | ThinkingBlock | CardBlock | DiffBlock
+export type ImageBlock = {
+  kind: "image"
+  url: string
+  alt?: string
+  meta?: { source?: string; timestamp?: string; viewport?: { width: number; height: number } }
+}
+
+export type Block = MarkdownBlock | ThinkingBlock | CardBlock | DiffBlock | ImageBlock
 
 // ── normalizeMessageToBlocks ────────────────────────────────────────
 
@@ -55,6 +62,20 @@ export function normalizeMessageToBlocks(message: TimelineMessage): Block[] {
   // 2. Main content → single markdown block (AC10 backward compat)
   if (message.content) {
     blocks.push({ kind: "markdown", content: message.content })
+  }
+
+  // 3. ContentBlocks → typed blocks (F008 AC7)
+  if (message.contentBlocks) {
+    for (const cb of message.contentBlocks) {
+      if (cb.type === "image") {
+        blocks.push({
+          kind: "image",
+          url: cb.url,
+          alt: cb.alt,
+          meta: cb.meta,
+        })
+      }
+    }
   }
 
   return blocks

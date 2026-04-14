@@ -49,6 +49,7 @@ import type { SkillRegistry } from "../skills/registry"
 import type { SopTracker } from "../skills/sop-tracker"
 import type { MemoryService } from "./memory-service"
 import type { SessionService } from "./session-service"
+import { createLogger } from "../lib/logger"
 
 type ActiveRun = ReturnType<typeof runTurn>
 type EmitEvent = (event: RealtimeServerEvent) => void
@@ -161,6 +162,7 @@ function extractPromptFromActivityChunk(chunk: string) {
 }
 
 export class MessageService {
+  private readonly log = createLogger("message-service")
   private readonly flushingGroups = new Set<string>()
   private readonly parallelGroups = new ParallelGroupRegistry()
   private approvals: ApprovalManager | null = null
@@ -537,6 +539,7 @@ export class MessageService {
     if (!thread || !options.content.trim()) {
       return
     }
+    this.log.info({ from: thread.alias, threadId: thread.id }, "agent public message")
 
     const invocation = this.dispatch.resolveInvocation(options.invocationId)
     if (!invocation) {
@@ -612,6 +615,7 @@ export class MessageService {
     event: Extract<RealtimeClientEvent, { type: "send_message" }>,
     emit: EmitEvent,
   ) {
+    this.log.info({ provider: event.payload.provider, content: event.payload.content.slice(0, 80) }, "user message received")
     const thread = this.dispatch.resolveThread(event.payload.threadId)
     if (!thread) {
       emit({
@@ -754,6 +758,7 @@ export class MessageService {
       })
       return null
     }
+    this.log.info({ threadId: thread.id, agentId: thread.alias, provider: thread.provider }, "turn started")
 
     if (this.invocations.has(thread.id)) {
       options.emit({
@@ -1252,6 +1257,7 @@ export class MessageService {
 
       return { messageId: assistant.id, content: accumulatedContent || "" }
     } catch (error) {
+      this.log.error({ err: error, threadId: thread.id, agentId: thread.alias }, "turn failed")
       this.streamingFlushers.delete(flushKey)
       this.invocations.detachRun(thread.id)
       this.releaseInvocation(identity.invocationId, dispatchCleanupTimer)
@@ -1300,6 +1306,7 @@ export class MessageService {
       return
     }
 
+    this.log.info({ sessionGroupId }, "flushing dispatch queue")
     this.flushingGroups.add(sessionGroupId)
 
     try {
@@ -1896,7 +1903,8 @@ export class MessageService {
             groupId: phase2GroupId,
             groupRole: "member",
           })
-        } catch {
+        } catch (err) {
+          this.log.error({ err, threadId: thread.id, provider }, "parallel think turn failed")
           turnResult = null
         }
 
