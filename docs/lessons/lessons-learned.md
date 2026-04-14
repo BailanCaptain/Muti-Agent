@@ -306,3 +306,76 @@
   - commit `a90edfd`（初始 3s flush）、`e4e3573`（切会话即时 flush + 生命周期管理）
 - 原理（可选）：流式系统 = 实时推送 + 断连恢复。只做推送不做恢复 = 只服务"永远在线"的用户，这在 Web 应用中是不成立的假设。持久化策略应该在数据累积开始时就设计，而不是"run 完再说"。
 - 关联：`docs/features/F006-ui-ux-refinement-and-runtime-governance-v2.md`
+
+---
+
+### LL-013: 正则匹配自然语言推断状态是死胡同——结构化状态必须从结构化源头取
+- 状态：validated
+- 更新时间：2026-04-14
+
+- 坑：`extractSOPBookmark` 用正则（`review|审查|code.?review`）从 agent 输出文本中推断当前 SOP 阶段。agent 说"已完成 review 三轮"或"merge 后补 review 测试"，正则也命中 → 误判为 `phase=review`。SOP 书签一直卡在 `writing-plans | phase=review`，导致 seal 后 agent 反复重跑已完成的步骤。
+- 根因：把自然语言当结构化数据源。正则无法区分"正在做 X"和"X 已完成"——这两种表达都包含关键词 X。系统里已有结构化状态源（`SopTracker.getStage()`），却没有用。
+- 触发条件：
+  1. 用正则/关键词从自然语言文本推断状态
+  2. 文本中同时包含"正在做"和"已经做完"的同名操作
+  3. 推断结果用于控制流程（自动续接、书签恢复）
+- 修复：彻底删除 `PHASE_PATTERNS` 正则数组。`extractSOPBookmark` 直接用 `SopTracker.getStage()` 的结构化 stage 名作为 phase。结构化源 100% 准确，正则在自然语言上 0% 可靠。
+- 防护：
+  1. **规则：状态推断必须从结构化数据源取**。如果系统已有 tracker/store/DB 维护了该状态，禁止从文本重新推断。
+  2. **代码 review 检查项**：看到 `new RegExp` 或 `PATTERNS` 数组用于从 agent 输出推断状态时，必须追问"有没有结构化源头"。
+  3. **LL-010 的延伸**：LL-010 说前端不要用正则猜结构，这条推广到后端——任何从非结构化文本推断结构化状态的场景都危险。
+- 来源锚点：
+  - `packages/api/src/orchestrator/sop-bookmark.ts`（删除 `PHASE_PATTERNS`，改用 `currentSopStage`）
+  - `docs/bugReport/B012-sop-bookmark-phase-drift.md`
+  - commit `72f1475`（彻底修复），`a54cd24`（首次修复无效——加了 `completed:` 前缀但没有代码设置它）
+- 原理（可选）：自然语言是给人读的，不是给程序做控制流判断的。信息在产生时的结构化程度决定了下游能可靠提取到什么——从非结构化文本"恢复"结构等于逆向信息熵，准确率永远受限于文本的歧义性。
+- 关联：`docs/features/F007-context-compression-optimization.md`、LL-010
+
+---
+
+### LL-014: 修复路径必须端到端可达——"加了检测但没加触发"等于死代码
+- 状态：validated
+- 更新时间：2026-04-14
+
+- 坑：B012 首次修复（`a54cd24`）在 `shouldAutoResume` 中加了 `phase=completed` 短路，在 `extractSOPBookmark` 中加了 `completed:` 前缀识别。但整个系统中没有任何代码会写入 `completed:` 前缀到 `SopTracker`——检测逻辑永远不被触发，修复等于没做。同时 `fillRatio` 安全阀把旧 session 的 ratio（>0.8）传给新 session 的判断，语义不对（新 session 上下文为空，ratio ≈ 0），导致自动续接永远不触发。
+- 根因：只验了"加的代码语法正确 + 测试通过"，没验"这条新路径在运行时是否真的可达"。测试用的是手动构造的 `completed:xxx` 输入，不代表真实系统会产生这种输入。
+- 触发条件：
+  1. 修复加了"检测侧"代码（if 条件、pattern 匹配）
+  2. 但没有加"触发侧"代码（设置状态、写入数据）
+  3. 测试用手工构造的数据验证检测侧，跳过了"触发侧 → 检测侧"的完整链路
+- 修复：在 `advanceSopIfNeeded` 中加 cycle 检测——终端 skill（`advance()` 返回 null）或链条循环回起点时，设置 `completed:<skill>` 到 sopTracker。`shouldAutoResume` 传 0 作为 newSessionFillRatio（新 session 是空的）。现在 `completed:` 前缀真正可达。
+- 防护：
+  1. **修复验证三问**：① 新加的检测条件，在真实系统中谁来触发？② 触发代码是否在同一次修复中加了？③ 测试是否覆盖了"触发 → 检测"的完整链路（不只是检测侧）？
+  2. **Code review 检查项**：看到新增 `if (x === "completed")` 或类似状态检测时，必须追问"谁设置 x 为 completed"。
+- 来源锚点：
+  - `packages/api/src/orchestrator/sop-bookmark.ts`（`completed:` 前缀识别——首次修复加的检测侧）
+  - `packages/api/src/services/message-service.ts`（`advanceSopIfNeeded` cycle 检测——第二次修复加的触发侧）
+  - commit `a54cd24`（首次修复，无效）、`72f1475`（第二次修复，补全触发侧）
+  - `docs/bugReport/B012-sop-bookmark-phase-drift.md`
+- 原理（可选）：每个 if 条件都需要一个"写端"和一个"读端"。只加读端不加写端 = 死代码。这跟设计事件系统一样——只有 listener 没有 emitter，listener 永远不会触发。修复时必须同时验证"谁写 + 谁读 + 完整链路测试"。
+- 关联：`docs/features/F007-context-compression-optimization.md`、LL-013
+
+---
+
+### LL-015: 对着真实 CLI 输出写 transformer/parser——基于猜测的实现会反复返工
+- 状态：validated
+- 更新时间：2026-04-14
+
+- 坑：三个 runtime 的 `transformToolEvent`/`parseActivityLine`/`parseAssistantDelta` 基于 API 文档和假设实现，未用真实 CLI 输出验证。结果：① Codex 字段名用了 `item.output`，实际是 `aggregated_output`——工具结果永远显示 "done"。② Claude `parseActivityLine` 检查 `thinking_delta`，但 CLI `stream-json` 输出的是 message 级别事件，这条路径是死代码。③ stderr 被无条件塞入 thinking，Codex 启动日志和 Rust tracing 错误全部显示为"深度思考"。反复修了 4 轮才定位到根因——因为每次都在猜格式。
+- 根因：假设 CLI NDJSON 输出和 API 文档描述的格式一致。实际上 CLI 输出是 CLI 自己的封装格式（message 级别而非流式 content_block_delta），不同 CLI 的字段命名也各不相同。
+- 触发条件：
+  1. 基于文档/假设实现 parser/transformer，未对着真实数据验证
+  2. CLI 封装层改变了底层 API 的事件格式
+  3. 不同 provider 的 CLI 用不同字段名描述同一概念
+- 修复：实现 event-recorder 机制（`RECORD_EVENTS=1`），录制三个 CLI 的全部原始 NDJSON 事件 + 分类结果。对着真实录制数据逐事件确认分类正确性，再修代码。
+- 防护：
+  1. **新增/修改 runtime transformer 前必须录制真实事件**：`RECORD_EVENTS=1` 跑一轮，拿到 ground truth 再写代码。
+  2. **录制数据作为 fixture 纳入测试**：`docs/runtime-events/` 中的 `.ndjson` 文件可作为回归测试输入。
+  3. **字段名不假设——从录制数据中取**：不同 CLI 的同一概念可能用不同字段名（`output` vs `aggregated_output`），必须从实际输出确认。
+- 来源锚点：
+  - `packages/api/src/runtime/event-recorder.ts`（录制工具）
+  - `packages/api/src/runtime/codex-runtime.ts:86`（`aggregated_output` 修复）
+  - `docs/runtime-events/ANALYSIS.md`（三个 runtime 真实事件格式分析）
+  - commit `111e30c`（event recorder + stderr filter）、`3638eb8`（codex aggregated_output 修复）
+- 原理（可选）：CLI 是 API 的封装层，封装层会改变数据格式。基于 API 文档写 CLI 的 parser 等于跳过了一层抽象——必须在 CLI 输出层面验证格式，而不是在 API 层面推断。"先录制再实现"是 data-driven development 在 parser 场景的具体实践。
+- 关联：`docs/features/F006-ui-ux-refinement-and-runtime-governance-v2.md`、`docs/bugReport/B013-frontend-output-ugly-inconsistent.md`、LL-010

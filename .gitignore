@@ -27,3 +27,7 @@ multi-agent.runtime-config.json
 .claude/settings.local.json
 .runtime/api.log
 .runtime/web.log
+reference-code/
+docs/runtime-events/
+scripts/record-events.*
+scripts/analyze-events.*

@@ -68,7 +68,7 @@ export class CodexRuntime extends BaseCliRuntime {
   transformToolEvent(event: Record<string, unknown>): ToolEvent | null {
     try {
       const type = event.type as string | undefined;
-      const item = event.item as { type?: string; command?: string; output?: string; path?: string } | undefined;
+      const item = event.item as { type?: string; command?: string; output?: string; aggregated_output?: string; path?: string } | undefined;
       if (!type || !item) return null;
       const itemType = item.type;
 
@@ -83,7 +83,7 @@ export class CodexRuntime extends BaseCliRuntime {
       }
 
       if (type === "item.completed" && itemType === "command_execution") {
-        const output = item.output ?? "";
+        const output = item.aggregated_output ?? item.output ?? "";
         return {
           type: "tool_result",
           toolName: "Bash",
