@@ -85,7 +85,7 @@ created: 2026-04-14
 ## Links
 
 - Discussion: `docs/discussions/2026-04-14-vision-guardian-infra.md`（本次讨论）
-- Plan: 待创建
+- Plan: `docs/plans/f008-dev-infra-evidence-chain-plan.md`
 - Related: F006（UI/UX 重塑，本 Feature 补齐 F006 未覆盖的图片能力）
 
 ## Evolution
