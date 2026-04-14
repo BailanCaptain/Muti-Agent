@@ -5,9 +5,11 @@ import type {
   Provider,
   ProviderCatalog,
   SessionGroupSummary,
+  ThreadSnapshotDelta,
   TimelineMessage,
   ToolEvent,
 } from "@multi-agent/shared"
+import { perfCollector } from "../lib/perf-collector"
 import type { ProviderProfile } from "../runtime/provider-profiles"
 import type { SessionRepository } from "../storage/repositories"
 
@@ -30,6 +32,8 @@ type DispatchState = {
 }
 
 export class SessionService {
+  private lastSentTimestamps = new Map<string, string>()
+
   constructor(
     private readonly repository: SessionRepository,
     private readonly providerProfiles: ProviderProfile[],
@@ -91,9 +95,17 @@ export class SessionService {
     runningThreadIds: Set<string>,
     dispatchState?: DispatchState,
   ): ActiveGroupView {
-    const groups = this.repository.listSessionGroups()
-    const summary = groups.find((group) => group.id === groupId)
+    const t0 = performance.now()
+
+    const group = this.repository.getSessionGroupById(groupId)
     const threads = this.repository.listThreadsByGroup(groupId)
+    const tThreads = performance.now()
+
+    const threadMessages = new Map<string, ReturnType<SessionRepository["listMessages"]>>()
+    for (const thread of threads) {
+      threadMessages.set(thread.id, this.repository.listMessages(thread.id))
+    }
+    const tMessages = performance.now()
 
     const providers = Object.fromEntries(
       threads.map((thread) => {
@@ -108,6 +120,8 @@ export class SessionService {
             sopNext = bm.nextExpectedAction ?? null
           } catch { /* ignore malformed JSON */ }
         }
+        const msgs = threadMessages.get(thread.id) ?? []
+        const lastMsg = msgs[msgs.length - 1]
         return [
           thread.provider,
           {
@@ -115,7 +129,7 @@ export class SessionService {
             alias: thread.alias,
             currentModel: thread.currentModel,
             quotaSummary: "额度信息待接入",
-            preview: summary?.previews.find((item) => item.provider === thread.provider)?.text ?? "",
+            preview: lastMsg?.content.slice(0, 80) ?? "",
             running: runningThreadIds.has(thread.id),
             sopSkill,
             sopPhase,
@@ -125,12 +139,11 @@ export class SessionService {
         ]
       }),
     ) as Record<Provider, ProviderView>
+    const tProviders = performance.now()
 
     const timeline = threads
       .flatMap((thread) =>
-        this.repository
-          .listMessages(thread.id)
-          .map((message) => {
+        (threadMessages.get(thread.id) ?? []).map((message) => {
             const parsedCB = JSON.parse(message.contentBlocks || "[]")
             return this.mapTimelineMessage(
               thread,
@@ -149,15 +162,107 @@ export class SessionService {
           }),
       )
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    const tTimeline = performance.now()
+
+    const total = tTimeline - t0
+    console.log(`[perf] getActiveGroup(${groupId.slice(0, 8)}): group+threads=${(tThreads - t0).toFixed(1)}ms messages=${(tMessages - tThreads).toFixed(1)}ms providers=${(tProviders - tMessages).toFixed(1)}ms timeline=${(tTimeline - tProviders).toFixed(1)}ms total=${total.toFixed(1)}ms`)
+    perfCollector.record("getActiveGroup", total)
+    perfCollector.record("getActiveGroup.group+threads", tThreads - t0)
+    perfCollector.record("getActiveGroup.messages", tMessages - tThreads)
+    perfCollector.record("getActiveGroup.providers", tProviders - tMessages)
+    perfCollector.record("getActiveGroup.timeline", tTimeline - tProviders)
 
     return {
       id: groupId,
-      title: summary?.title ?? "新会话",
-      meta: `最近更新时间：${summary ? new Date(summary.updatedAt).toLocaleString("zh-CN") : "--"}，消息会按统一时间线展示。`,
+      title: group?.title ?? "新会话",
+      meta: `最近更新时间：${group ? new Date(group.updatedAt).toLocaleString("zh-CN") : "--"}，消息会按统一时间线展示。`,
       timeline,
       hasPendingDispatches: dispatchState?.hasPendingDispatches ?? false,
       dispatchBarrierActive: dispatchState?.dispatchBarrierActive ?? false,
       providers,
+    }
+  }
+
+  isFirstSnapshot(groupId: string): boolean {
+    return !this.lastSentTimestamps.has(groupId)
+  }
+
+  getActiveGroupDelta(
+    groupId: string,
+    runningThreadIds: Set<string>,
+    dispatchState?: DispatchState,
+  ): ThreadSnapshotDelta {
+    const lastTimestamp = this.lastSentTimestamps.get(groupId)
+    const threads = this.repository.listThreadsByGroup(groupId)
+
+    const providers = Object.fromEntries(
+      threads.map((thread) => {
+        let sopSkill: string | null = null
+        let sopPhase: string | null = null
+        let sopNext: string | null = null
+        if (thread.sopBookmark) {
+          try {
+            const bm = JSON.parse(thread.sopBookmark) as { skill?: string; phase?: string; nextExpectedAction?: string }
+            sopSkill = bm.skill ?? null
+            sopPhase = bm.phase ?? null
+            sopNext = bm.nextExpectedAction ?? null
+          } catch { /* ignore malformed JSON */ }
+        }
+        const recentMsgs = this.repository.listRecentMessages(thread.id, 1)
+        const lastMsg = recentMsgs[0]
+        return [
+          thread.provider,
+          {
+            threadId: thread.id,
+            alias: thread.alias,
+            currentModel: thread.currentModel,
+            quotaSummary: "额度信息待接入",
+            preview: lastMsg?.content.slice(0, 80) ?? "",
+            running: runningThreadIds.has(thread.id),
+            sopSkill,
+            sopPhase,
+            sopNext,
+            fillRatio: thread.lastFillRatio ?? null,
+          },
+        ]
+      }),
+    ) as Record<string, ProviderView>
+
+    const newMessages = threads.flatMap((thread) => {
+      const msgs = lastTimestamp
+        ? this.repository.listMessagesSince(thread.id, lastTimestamp)
+        : this.repository.listMessages(thread.id)
+      return msgs.map((message) => {
+        const parsedCB = JSON.parse(message.contentBlocks || "[]")
+        return this.mapTimelineMessage(
+          thread,
+          message.id,
+          message.role,
+          message.content,
+          message.thinking,
+          message.createdAt,
+          message.messageType,
+          message.connectorSource ?? undefined,
+          message.groupId,
+          message.groupRole,
+          JSON.parse(message.toolEvents || "[]") as ToolEvent[],
+          parsedCB.length ? parsedCB : undefined,
+        )
+      })
+    }).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+
+    if (newMessages.length > 0) {
+      const latest = newMessages.reduce((a, b) =>
+        a.createdAt > b.createdAt ? a : b,
+      )
+      this.lastSentTimestamps.set(groupId, latest.createdAt)
+    }
+
+    return {
+      sessionGroupId: groupId,
+      newMessages,
+      providers: providers as ThreadSnapshotDelta["providers"],
+      invocationStats: [],
     }
   }
 

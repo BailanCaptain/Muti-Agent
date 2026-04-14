@@ -45,6 +45,8 @@ export default function HomePage() {
   const applyToolEvent = useThreadStore((state) => state.applyToolEvent)
   const appendTimelineMessage = useThreadStore((state) => state.appendTimelineMessage)
   const replaceActiveGroup = useThreadStore((state) => state.replaceActiveGroup)
+  const applySnapshotDelta = useThreadStore((state) => state.applySnapshotDelta)
+  const reconcileOptimisticMessage = useThreadStore((state) => state.reconcileOptimisticMessage)
   const setStatus = useChatStore((state) => state.setStatus)
   const setSocketState = useSettingsStore((state) => state.setSocketState)
   const incrementUnread = useThreadStore((state) => state.incrementUnread)
@@ -107,6 +109,8 @@ export default function HomePage() {
         if (event.type === "message.created") {
           if (event.payload.sessionGroupId && !isCurrentSession(event.payload.sessionGroupId)) {
             incrementUnread(event.payload.sessionGroupId)
+          } else if (event.payload.clientMessageId) {
+            reconcileOptimisticMessage(event.payload.clientMessageId, event.payload.message)
           } else {
             appendTimelineMessage(event.payload.message)
           }
@@ -116,6 +120,12 @@ export default function HomePage() {
         if (event.type === "thread_snapshot") {
           if (!isCurrentSession(event.payload.sessionGroupId)) return
           replaceActiveGroup(event.payload.activeGroup)
+          return
+        }
+
+        if (event.type === "thread_snapshot_delta") {
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
+          applySnapshotDelta(event.payload)
           return
         }
 

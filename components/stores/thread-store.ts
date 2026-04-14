@@ -8,6 +8,7 @@ import {
   type Provider,
   type ProviderCatalog,
   type SessionGroupSummary,
+  type ThreadSnapshotDelta,
   type TimelineMessage,
   type ToolEvent,
 } from "@multi-agent/shared"
@@ -81,6 +82,8 @@ type ThreadStore = {
   applyThinkingDelta: (messageId: string, delta: string) => void
   applyToolEvent: (messageId: string, event: ToolEvent) => void
   appendTimelineMessage: (message: TimelineMessage) => void
+  applySnapshotDelta: (delta: ThreadSnapshotDelta) => void
+  reconcileOptimisticMessage: (clientMessageId: string, serverMessage: TimelineMessage) => void
   buildSendPayload: (input: string, contentBlocks?: ContentBlock[]) => SendPayload | null
   incrementUnread: (groupId: string) => void
   resetUnread: (groupId: string) => void
@@ -212,45 +215,38 @@ function normalizeContentForBackend(input: string, tokens: MentionToken[]): stri
 function mergeTimeline(existing: TimelineMessage[], incoming: TimelineMessage[]) {
   const existingById = new Map(existing.map((message) => [message.id, message]))
 
-  return incoming
-    .map((message) => {
-      const current = existingById.get(message.id)
-      if (!current) {
-        return message
-      }
+  const merged = incoming.map((message) => {
+    const current = existingById.get(message.id)
+    if (!current) {
+      return message
+    }
 
-      // `thread_snapshot` 里的 assistant 内容来自数据库，流式过程中它往往会落后于
-      // 前端本地已经通过 assistant_delta 追加的内容。这里优先保留更长的那份文本，
-      // 避免气泡被快照回滚成旧内容，最终表现成“最后一瞬间整段弹出来”。
-      const content =
-        current.role === message.role &&
-        current.provider === message.provider &&
-        current.content.length > message.content.length
-          ? current.content
-          : message.content
+    const content =
+      current.role === message.role &&
+      current.provider === message.provider &&
+      current.content.length > message.content.length
+        ? current.content
+        : message.content
 
-      const currentThinking = current.thinking ?? ""
-      const incomingThinking = message.thinking ?? ""
-      const thinking =
-        current.role === message.role &&
-        current.provider === message.provider &&
-        currentThinking.length > incomingThinking.length
-          ? current.thinking
-          : message.thinking
+    const currentThinkingVal = current.thinking ?? ""
+    const incomingThinkingVal = message.thinking ?? ""
+    const thinking =
+      current.role === message.role &&
+      current.provider === message.provider &&
+      currentThinkingVal.length > incomingThinkingVal.length
+        ? current.thinking
+        : message.thinking
 
-      const currentEvents = current.toolEvents ?? []
-      const incomingEvents = message.toolEvents ?? []
-      const toolEvents =
-        currentEvents.length > incomingEvents.length ? current.toolEvents : message.toolEvents
+    const currentEvents = current.toolEvents ?? []
+    const incomingEvents = message.toolEvents ?? []
+    const toolEvents =
+      currentEvents.length > incomingEvents.length ? current.toolEvents : message.toolEvents
 
-      return {
-        ...message,
-        content,
-        thinking,
-        toolEvents,
-      }
-    })
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    return { ...message, content, thinking, toolEvents }
+  })
+
+  const alreadySorted = merged.every((msg, i) => i === 0 || msg.createdAt >= merged[i - 1].createdAt)
+  return alreadySorted ? merged : merged.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -262,6 +258,38 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T
+}
+
+type PendingDelta = { content?: string; thinking?: string }
+let pendingDeltas = new Map<string, PendingDelta>()
+let rafScheduled = false
+
+function flushDeltas(set: (fn: (state: ThreadStore) => Partial<ThreadStore>) => void) {
+  rafScheduled = false
+  if (pendingDeltas.size === 0) return
+  const batch = pendingDeltas
+  pendingDeltas = new Map()
+  set((state) => ({
+    timeline: state.timeline.map((msg) => {
+      const delta = batch.get(msg.id)
+      if (!delta) return msg
+      return {
+        ...msg,
+        content: delta.content !== undefined ? msg.content + delta.content : msg.content,
+        thinking: delta.thinking !== undefined ? (msg.thinking ?? "") + delta.thinking : msg.thinking,
+      }
+    }),
+  }))
+}
+
+function scheduleDeltaFlush(set: (fn: (state: ThreadStore) => Partial<ThreadStore>) => void) {
+  if (rafScheduled) return
+  rafScheduled = true
+  if (typeof requestAnimationFrame !== "undefined") {
+    requestAnimationFrame(() => flushDeltas(set))
+  } else {
+    setTimeout(() => flushDeltas(set), 16)
+  }
 }
 
 export const useThreadStore = create<ThreadStore>((set, get) => ({
@@ -378,29 +406,20 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       if (state.timeline.some((item) => item.id === message.id)) {
         return state
       }
-
-      return {
-        timeline: [...state.timeline, message].sort((left, right) =>
-          left.createdAt.localeCompare(right.createdAt),
-        ),
-      }
+      return { timeline: [...state.timeline, message] }
     })
   },
   applyAssistantDelta: (messageId, delta) => {
-    set((state) => ({
-      timeline: state.timeline.map((message) =>
-        message.id === messageId ? { ...message, content: `${message.content}${delta}` } : message,
-      ),
-    }))
+    const existing = pendingDeltas.get(messageId) ?? {}
+    existing.content = (existing.content ?? "") + delta
+    pendingDeltas.set(messageId, existing)
+    scheduleDeltaFlush(set)
   },
   applyThinkingDelta: (messageId, delta) => {
-    set((state) => ({
-      timeline: state.timeline.map((message) =>
-        message.id === messageId
-          ? { ...message, thinking: `${message.thinking ?? ""}${delta}` }
-          : message,
-      ),
-    }))
+    const existing = pendingDeltas.get(messageId) ?? {}
+    existing.thinking = (existing.thinking ?? "") + delta
+    pendingDeltas.set(messageId, existing)
+    scheduleDeltaFlush(set)
   },
   applyToolEvent: (messageId, event) => {
     set((state) => ({
@@ -408,6 +427,28 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         message.id === messageId
           ? { ...message, toolEvents: [...(message.toolEvents ?? []), event] }
           : message,
+      ),
+    }))
+  },
+  applySnapshotDelta: (delta) => {
+    set((state) => {
+      const newTimeline = [...state.timeline]
+      for (const msg of delta.newMessages) {
+        if (!newTimeline.some((m) => m.id === msg.id)) {
+          newTimeline.push(msg)
+        }
+      }
+      const removed = new Set(delta.removedMessageIds ?? [])
+      const filtered = removed.size > 0
+        ? newTimeline.filter((m) => !removed.has(m.id))
+        : newTimeline
+      return { timeline: filtered, providers: delta.providers }
+    })
+  },
+  reconcileOptimisticMessage: (clientMessageId, serverMessage) => {
+    set((state) => ({
+      timeline: state.timeline.map((msg) =>
+        msg.id === clientMessageId ? serverMessage : msg,
       ),
     }))
   },

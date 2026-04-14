@@ -78,6 +78,10 @@ export class SqliteStore {
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
     this.db = new DatabaseSync(filePath)
     this.db.exec("PRAGMA journal_mode = WAL;")
+    this.db.exec("PRAGMA busy_timeout = 5000;")
+    this.db.exec("PRAGMA synchronous = NORMAL;")
+    this.db.exec("PRAGMA cache_size = -64000;")
+    this.db.exec("PRAGMA journal_size_limit = 67108864;")
     this.migrate()
   }
 
@@ -251,5 +255,16 @@ export class SqliteStore {
     } catch {
       // Column may already exist
     }
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_messages_thread_id ON messages(thread_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+      CREATE INDEX IF NOT EXISTS idx_threads_session_group_id ON threads(session_group_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_events_invocation_id ON agent_events(invocation_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_events_thread_id ON agent_events(thread_id);
+      CREATE INDEX IF NOT EXISTS idx_session_memories_session_group_id ON session_memories(session_group_id);
+      CREATE INDEX IF NOT EXISTS idx_tasks_session_group_id ON tasks(session_group_id);
+      CREATE INDEX IF NOT EXISTS idx_authorization_rules_provider_thread ON authorization_rules(provider, thread_id);
+    `)
   }
 }

@@ -4,6 +4,7 @@ import type {
   RealtimeClientEvent,
   RealtimeServerEvent,
 } from "@multi-agent/shared"
+import { perfCollector } from "../lib/perf-collector"
 import { PROVIDER_ALIASES } from "@multi-agent/shared"
 import type { AppEventBus } from "../events/event-bus"
 import type { ApprovalManager } from "../orchestrator/approval-manager"
@@ -656,6 +657,7 @@ export class MessageService {
           threadId: thread.id,
           sessionGroupId: thread.sessionGroupId,
           message: userTimeline,
+          clientMessageId: event.payload.clientMessageId,
         },
       })
     }
@@ -1513,21 +1515,46 @@ export class MessageService {
   }
 
   emitThreadSnapshot(sessionGroupId: string, emit: EmitEvent) {
+    const t0 = performance.now()
     this.flushActiveStreaming(sessionGroupId)
-    emit({
-      type: "thread_snapshot",
-      payload: {
+    const tFlush = performance.now()
+
+    const runningThreadIds = new Set(this.invocations.keys())
+    const dispatchState = {
+      hasPendingDispatches: this.dispatch.hasQueuedDispatches(sessionGroupId),
+      dispatchBarrierActive: this.dispatch.isSessionGroupCancelled(sessionGroupId),
+    }
+
+    if (this.sessions.isFirstSnapshot(sessionGroupId)) {
+      const activeGroup = this.sessions.getActiveGroup(
         sessionGroupId,
-        activeGroup: this.sessions.getActiveGroup(
-          sessionGroupId,
-          new Set(this.invocations.keys()),
-          {
-            hasPendingDispatches: this.dispatch.hasQueuedDispatches(sessionGroupId),
-            dispatchBarrierActive: this.dispatch.isSessionGroupCancelled(sessionGroupId),
-          },
-        ),
-      },
-    })
+        runningThreadIds,
+        dispatchState,
+      )
+      const tGroup = performance.now()
+      emit({
+        type: "thread_snapshot",
+        payload: { sessionGroupId, activeGroup },
+      })
+      // seed the timestamp tracker so next call goes delta
+      this.sessions.getActiveGroupDelta(sessionGroupId, runningThreadIds, dispatchState)
+      const total = performance.now() - t0
+      console.log(`[perf] emitThreadSnapshot(${sessionGroupId.slice(0, 8)}): FULL flush=${(tFlush - t0).toFixed(1)}ms getActiveGroup=${(tGroup - tFlush).toFixed(1)}ms total=${total.toFixed(1)}ms`)
+      perfCollector.record("emitThreadSnapshot", total)
+      perfCollector.record("emitThreadSnapshot.flush", tFlush - t0)
+      perfCollector.record("emitThreadSnapshot.getActiveGroup", tGroup - tFlush)
+    } else {
+      const delta = this.sessions.getActiveGroupDelta(
+        sessionGroupId,
+        runningThreadIds,
+        dispatchState,
+      )
+      const tDelta = performance.now()
+      emit({ type: "thread_snapshot_delta", payload: delta })
+      const total = performance.now() - t0
+      console.log(`[perf] emitThreadSnapshot(${sessionGroupId.slice(0, 8)}): DELTA flush=${(tFlush - t0).toFixed(1)}ms getDelta=${(tDelta - tFlush).toFixed(1)}ms newMsgs=${delta.newMessages.length} total=${total.toFixed(1)}ms`)
+      perfCollector.record("emitThreadSnapshot.delta", total)
+    }
   }
 
   private releaseInvocation(

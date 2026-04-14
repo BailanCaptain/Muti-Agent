@@ -134,6 +134,14 @@ export type ProviderThreadView = {
   fillRatio?: number | null
 }
 
+export type ThreadSnapshotDelta = {
+  sessionGroupId: string
+  newMessages: TimelineMessage[]
+  removedMessageIds?: string[]
+  providers: Record<Provider, ProviderThreadView>
+  invocationStats: InvocationStats[]
+}
+
 export type ActiveGroupView = {
   id: string
   title: string
@@ -236,6 +244,7 @@ export type RealtimeClientEvent =
         content: string
         alias: string
         contentBlocks?: ContentBlock[]
+        clientMessageId?: string
       }
     }
   | {
@@ -290,6 +299,7 @@ export type RealtimeServerEvent =
         threadId: string
         sessionGroupId?: string
         message: TimelineMessage
+        clientMessageId?: string
       }
     }
   | {
@@ -298,6 +308,10 @@ export type RealtimeServerEvent =
         sessionGroupId: string
         activeGroup: ActiveGroupView
       }
+    }
+  | {
+      type: "thread_snapshot_delta"
+      payload: ThreadSnapshotDelta
     }
   | {
       type: "status"

@@ -1,7 +1,7 @@
 "use client"
 
 import { socketClient } from "@/components/ws/client"
-import type { ContentBlock } from "@multi-agent/shared"
+import type { ContentBlock, TimelineMessage } from "@multi-agent/shared"
 import { create } from "zustand"
 import { useThreadStore } from "./thread-store"
 
@@ -96,9 +96,24 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const payload = threadState.buildSendPayload(input, contentBlocks.length ? contentBlocks : undefined)
     if (!payload) return
 
+    const clientMessageId = crypto.randomUUID()
+
+    const optimistic: TimelineMessage = {
+      id: clientMessageId,
+      provider: payload.provider,
+      alias: "\u6751\u957f",
+      role: "user",
+      content: payload.content,
+      messageType: "final",
+      contentBlocks: payload.contentBlocks,
+      model: null,
+      createdAt: new Date().toISOString(),
+    }
+    threadState.appendTimelineMessage(optimistic)
+
     socketClient.send({
       type: "send_message",
-      payload,
+      payload: { ...payload, clientMessageId },
     })
 
     const groupId = threadState.activeGroupId

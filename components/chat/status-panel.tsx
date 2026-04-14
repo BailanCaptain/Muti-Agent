@@ -203,14 +203,16 @@ function SessionTabContent({
     { label: "跟进", value: stats.followUp },
   ]
 
-  const sortedInvocationStats = [...invocationStats].sort((left, right) => {
-    const orderDelta = invocationStatusOrder[left.status] - invocationStatusOrder[right.status]
-    if (orderDelta !== 0) {
-      return orderDelta
-    }
-
-    return right.startedAt.localeCompare(left.startedAt)
-  })
+  const MAX_VISIBLE_INVOCATIONS = 5
+  const sortedInvocationStats = [...invocationStats]
+    .sort((left, right) => {
+      const orderDelta = invocationStatusOrder[left.status] - invocationStatusOrder[right.status]
+      if (orderDelta !== 0) {
+        return orderDelta
+      }
+      return right.startedAt.localeCompare(left.startedAt)
+    })
+    .slice(0, MAX_VISIBLE_INVOCATIONS)
 
   return (
     <>

@@ -119,6 +119,8 @@ function createSessionsStub(threads: ThreadRecord[]) {
         },
       },
     }),
+    isFirstSnapshot: () => true,
+    getActiveGroupDelta: () => ({ newMessages: [], removedMessageIds: [], providers: {}, invocationStats: [] }),
   }
 }
 

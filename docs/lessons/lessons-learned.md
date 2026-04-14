@@ -379,3 +379,38 @@
   - commit `111e30c`（event recorder + stderr filter）、`3638eb8`（codex aggregated_output 修复）
 - 原理（可选）：CLI 是 API 的封装层，封装层会改变数据格式。基于 API 文档写 CLI 的 parser 等于跳过了一层抽象——必须在 CLI 输出层面验证格式，而不是在 API 层面推断。"先录制再实现"是 data-driven development 在 parser 场景的具体实践。
 - 关联：`docs/features/F006-ui-ux-refinement-and-runtime-governance-v2.md`、`docs/bugReport/B013-frontend-output-ugly-inconsistent.md`、LL-010
+
+---
+
+> LL-016 预留给 F009 perf 讨论（见 `docs/discussions/2026-04-14-perf-storage-strategy.md`），待 F009 phase 1 复测后补写。
+
+---
+
+### LL-017: 改 package.json dependencies 后必须立刻 pnpm install + 端到端启动验证（同一反模式二次复发）
+- 状态：validated
+- 更新时间：2026-04-14
+
+- 坑：F008 dev-infra 提交 `b6c5248` 在 `packages/api/package.json` 声明了 `@fastify/multipart` + `@fastify/static` 并在 `server.ts` import，但同一次提交**没有跑 `pnpm install`**，pnpm store 里这两个包从未物化。下一次跑 `start-project.bat` 时 tsx 加载 `server.ts` 立即崩于 `Cannot find module '@fastify/multipart'`，端口 8787 永远打不开，启动脚本一直 `:wait_for` 点 `/health` 直到超时——表象是"启动脚本卡死"，实际 API 早已 crash。**同一反模式在 commit `00afa87`（2026-04-06，tsx phantom dep）已出过一次，这是第二次。**
+- 根因：
+  1. `package.json` 的 dependencies 改动和"把 dep 真正装到 node_modules"是两件事，pnpm 不会自动触发，lockfile 与物化状态必须显式同步
+  2. Web（Next.js Turbopack）用自己的解析路径正常起来，掩盖了 API 崩溃——`start-project.bat` 看起来"只是 API 慢"
+  3. quality-gate 里只有 typecheck / test，没有"启动脚本端到端跑一遍"的最后一道门，script-only 的崩溃完全逃过自检
+- 触发条件：
+  1. 在 `package.json` 里新增或升级 dependency
+  2. 只跑 typecheck / test，没有 `pnpm install` + 重启服务
+  3. 或者 install 了但没把 `pnpm-lock.yaml` 与代码同批提交
+- 修复：
+  1. 本次：根目录跑 `pnpm install`（lockfile 早已 up-to-date，只是 node_modules 未物化，补齐 33 个包含 @fastify/multipart@9.4.0）
+  2. 重启 `start-project.bat` 验证 API `/health` 通、Web `:3000` 通
+- 防护：
+  1. **加/改 dependency 的提交必须同时包含 `pnpm-lock.yaml` 变更**——否则他人 pull 或 CI 必崩
+  2. **quality-gate skill 增加一条硬门**：涉及 `package.json` 改动的 diff，必须 `pnpm install && start-project.bat` 端到端确认 API + Web 同时 ready，不能只靠 typecheck + test
+  3. **`start-project.bat` 的 `:wait_for` 超时后应打印 `.runtime/api.log` 最后 20 行**——今天是人工去看日志才定位，脚本应主动暴露子进程错误
+- 来源锚点：
+  - commit `b6c5248`（F008 dev-infra，本次引入坑）
+  - commit `00afa87`（2026-04-06，第一次相同模式：tsx phantom dep after `pnpm install --force`）
+  - `packages/api/src/server.ts:5`（`import multipart from "@fastify/multipart"`）
+  - `.runtime/api.log`（本次 `MODULE_NOT_FOUND` 错误现场）
+  - `start-project.bat:39-41`（`:wait_for` 循环掩盖子进程崩溃）
+- 原理（可选）：`package.json` 是声明，`node_modules` 是物化——中间隔着一次必须显式触发的 `pnpm install`。这和 DB migration 同构：schema 文件改了不等于生产库改了，必须显式 apply；任何"声明式配置变更"都对应一个"物化动作"，自检的对象必须是物化后的 runtime 状态，不是声明本身。"跑过一遍真实启动脚本"是配置类改动唯一可信的验证方式。
+- 关联：commit `00afa87`、F008 dev-infra、quality-gate skill、start-project.bat

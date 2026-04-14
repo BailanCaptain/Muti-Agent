@@ -1,6 +1,7 @@
 import crypto from "node:crypto"
 import type { Provider } from "@multi-agent/shared"
 import { PROVIDERS, PROVIDER_ALIASES } from "@multi-agent/shared"
+import { perfCollector } from "../../lib/perf-collector"
 import type {
   AgentEventRecord,
   ConnectorSourceRecord,
@@ -61,27 +62,68 @@ type InvocationRow = {
 export class SessionRepository {
   constructor(private readonly store: SqliteStore) {}
 
-  listSessionGroups() {
-    const groups = this.store.db
+  getSessionGroupById(groupId: string) {
+    return this.store.db
       .prepare(
         `SELECT id, title, project_tag as projectTag, created_at as createdAt, updated_at as updatedAt
          FROM session_groups
-         ORDER BY updated_at DESC`,
+         WHERE id = ?
+         LIMIT 1`,
       )
-      .all() as SessionGroupRow[]
+      .get(groupId) as SessionGroupRow | undefined
+  }
 
-    return groups.map((group) => {
-      const threads = this.listThreadsByGroup(group.id)
-      return {
-        ...group,
-        projectTag: group.projectTag ?? null,
-        previews: threads.map((thread) => ({
-          provider: thread.provider,
-          alias: thread.alias,
-          text: this.getLastMessagePreview(thread.id),
-        })),
+  listSessionGroups() {
+    const t0 = performance.now()
+    const rows = this.store.db
+      .prepare(
+        `SELECT
+           sg.id, sg.title, sg.project_tag AS projectTag,
+           sg.created_at AS createdAt, sg.updated_at AS updatedAt,
+           t.provider, t.alias,
+           (SELECT content FROM messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS lastMessage
+         FROM session_groups sg
+         LEFT JOIN threads t ON t.session_group_id = sg.id
+         ORDER BY sg.updated_at DESC, t.provider ASC`,
+      )
+      .all() as Array<SessionGroupRow & { provider: string | null; alias: string | null; lastMessage: string | null }>
+    const tQuery = performance.now()
+
+    const groupMap = new Map<string, {
+      id: string; title: string; projectTag: string | null
+      createdAt: string; updatedAt: string
+      previews: Array<{ provider: Provider; alias: string; text: string }>
+    }>()
+
+    for (const row of rows) {
+      let group = groupMap.get(row.id)
+      if (!group) {
+        group = {
+          id: row.id,
+          title: row.title,
+          projectTag: row.projectTag ?? null,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          previews: [],
+        }
+        groupMap.set(row.id, group)
       }
-    })
+      if (row.provider) {
+        group.previews.push({
+          provider: row.provider as Provider,
+          alias: row.alias!,
+          text: (row.lastMessage ?? "").slice(0, 80),
+        })
+      }
+    }
+
+    const result = Array.from(groupMap.values())
+    const total = performance.now() - t0
+    console.log(`[perf] listSessionGroups: ${result.length} groups, query=${(tQuery - t0).toFixed(1)}ms assemble=${(total - (tQuery - t0)).toFixed(1)}ms total=${total.toFixed(1)}ms`)
+    perfCollector.record("listSessionGroups", total)
+    perfCollector.record("listSessionGroups.query", tQuery - t0)
+    perfCollector.record("listSessionGroups.assemble", total - (tQuery - t0))
+    return result
   }
 
   createSessionGroup(title?: string) {
@@ -157,6 +199,7 @@ export class SessionRepository {
   }
 
   listMessages(threadId: string) {
+    const t0 = performance.now()
     const rows = this.store.db
       .prepare(
         `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt
@@ -165,7 +208,24 @@ export class SessionRepository {
          ORDER BY created_at ASC`,
       )
       .all(threadId) as MessageRow[]
-    return rows.map(hydrateMessage)
+    const result = rows.map(hydrateMessage)
+    const elapsed = performance.now() - t0
+    console.log(`[perf] listMessages(${threadId.slice(0, 8)}): ${rows.length} rows, ${elapsed.toFixed(1)}ms`)
+    perfCollector.record("listMessages", elapsed)
+    return result
+  }
+
+  listMessagesSince(threadId: string, sinceTimestamp: string) {
+    return (
+      this.store.db
+        .prepare(
+          `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt
+         FROM messages
+         WHERE thread_id = ? AND created_at > ?
+         ORDER BY created_at ASC`,
+        )
+        .all(threadId, sinceTimestamp) as MessageRow[]
+    ).map(hydrateMessage)
   }
 
   listRecentMessages(threadId: string, limit: number) {
