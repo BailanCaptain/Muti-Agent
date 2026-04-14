@@ -1,14 +1,14 @@
 ---
 id: F009
 title: 全链路性能优化 — SQLite 治理 + 增量快照 + 前端减压
-status: in-progress
+status: completed
 owner: 黄仁勋
 created: 2026-04-14
 ---
 
 # F009 — 全链路性能优化
 
-**Status**: in-progress
+**Status**: completed
 **Created**: 2026-04-14
 
 ## Why
@@ -123,3 +123,13 @@ npm run test
 7. **渲染节流**：requestAnimationFrame 级别的更新合并
 8. **Optimistic UI**：用户消息即时展示 + client_message_id 对账
 9. **状态滑窗**：status-panel 只维护最近 5 条事件
+
+## Timeline
+
+| 日期 | 事件 | 说明 |
+|------|------|------|
+| 2026-04-14 | Phase 0 基线采集 | emitThreadSnapshot P50=2999ms |
+| 2026-04-14 | Phase 1 核心优化 | 索引+PRAGMA+N+1 JOIN+getActiveGroup 重构 |
+| 2026-04-14 | Phase 2 增量协议 | FULL/DELTA 快照+rAF 节流+Optimistic UI+滑窗 |
+| 2026-04-14 | Review 修复 | delta 排序+preview 清空+7 个测试 |
+| 2026-04-14 | Squash merge to dev | `96956ec` — 10 commits → 1 squash commit |
