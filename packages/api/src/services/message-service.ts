@@ -88,6 +88,14 @@ const STDERR_NOISE_PATTERNS = [
   /^Using model:/i,
   /^Tip:/i,
   /^\[runtime\]/,
+  /^Reading prompt from stdin/i,
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z?\s+(ERROR|WARN|INFO|DEBUG|TRACE)\s/,
+  /^codex_core/,
+  /^failed to stat skills entry/i,
+  /^Compiling\s/i,
+  /^Finished\s.*release/i,
+  /^warning\[E\d+\]/,
+  /^Downloading\s/i,
 ]
 
 function isStderrNoiseLine(line: string): boolean {
@@ -1188,7 +1196,7 @@ export class MessageService {
           options.emit({
             type: "status",
             payload: {
-              sessionGroupId: thread.sessionGroupId,
+              sessionGroupId: returnPlan.parentSessionGroupId,
               message: `A2A 回程 — ${returnPlan.childAlias} → ${returnPlan.parentAlias}`,
             },
           })

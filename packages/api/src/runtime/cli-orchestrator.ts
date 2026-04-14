@@ -12,6 +12,7 @@ import {
 import type { LivenessWarning } from "./liveness-probe";
 import { claudeRuntime } from "./claude-runtime";
 import { codexRuntime } from "./codex-runtime";
+import { createEventRecorder } from "./event-recorder";
 import { geminiRuntime } from "./gemini-runtime";
 
 export type RunTurnOptions = {
@@ -105,6 +106,7 @@ export function runTurn(options: RunTurnOptions) {
   let latestUsage: TokenUsageSnapshot | null = null;
   let latestStopReason: StopReason | null = null;
   const toolEvents: ToolEvent[] = [];
+  const { record } = createEventRecorder(options.provider);
 
   const handle = runtime.runStream(input, {
     onStdoutLine(line) {
@@ -131,6 +133,21 @@ export function runTurn(options: RunTurnOptions) {
         if (stopReason !== null) {
           latestStopReason = stopReason;
         }
+
+        record({
+          ts: new Date().toISOString(),
+          stream: "stdout",
+          raw: event,
+          classified: {
+            delta: delta ? `[${delta.length} chars]` : null,
+            activity: activityLine || null,
+            toolEvent: toolEvent || null,
+            sessionId: sessionId || null,
+            model: eventModel || null,
+            hasUsage: !!usageRaw,
+            stopReason: stopReason ?? null,
+          },
+        });
 
         if (delta) {
           content += delta;
@@ -163,10 +180,11 @@ export function runTurn(options: RunTurnOptions) {
           }
         }
       } catch {
-        // Non-JSON line: startup noise, debug output, or partial write — ignore.
+        record({ ts: new Date().toISOString(), stream: "stdout_unparsed", line });
       }
     },
     onActivity(activity) {
+      record({ ts: new Date().toISOString(), stream: activity.stream, chunk: activity.chunk });
       options.onActivity?.(activity);
     },
     onLivenessWarning(warning) {
