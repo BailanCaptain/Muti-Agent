@@ -235,6 +235,7 @@ export type RealtimeClientEvent =
         provider: Provider
         content: string
         alias: string
+        contentBlocks?: ContentBlock[]
       }
     }
   | {

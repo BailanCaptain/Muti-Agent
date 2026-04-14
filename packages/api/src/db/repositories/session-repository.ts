@@ -23,6 +23,7 @@ type MessageRow = {
   groupId: string | null
   groupRole: string | null
   toolEvents: string
+  contentBlocks: string
   createdAt: string
 }
 
@@ -33,6 +34,7 @@ function hydrateMessage(row: MessageRow): MessageRecord {
     groupId: row.groupId ?? null,
     groupRole: (row.groupRole as MessageRecord["groupRole"]) ?? null,
     toolEvents: row.toolEvents ?? "[]",
+    contentBlocks: row.contentBlocks ?? "[]",
   }
 }
 
@@ -189,6 +191,7 @@ export class SessionRepository {
     groupId: string | null = null,
     groupRole: MessageRecord["groupRole"] = null,
     toolEvents = "[]",
+    contentBlocks = "[]",
   ) {
     const message: MessageRecord = {
       id: crypto.randomUUID(),
@@ -201,13 +204,14 @@ export class SessionRepository {
       groupId,
       groupRole,
       toolEvents,
+      contentBlocks,
       createdAt: new Date().toISOString(),
     }
 
     this.store.db
       .prepare(
-        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, group_id, group_role, tool_events, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, group_id, group_role, tool_events, content_blocks, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -220,6 +224,7 @@ export class SessionRepository {
         message.groupId,
         message.groupRole,
         message.toolEvents,
+        message.contentBlocks,
         message.createdAt,
       )
 

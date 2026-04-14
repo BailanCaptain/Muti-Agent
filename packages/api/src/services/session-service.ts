@@ -1,6 +1,7 @@
 import type {
   ActiveGroupView,
   ConnectorSource,
+  ContentBlock,
   Provider,
   ProviderCatalog,
   SessionGroupSummary,
@@ -129,8 +130,9 @@ export class SessionService {
       .flatMap((thread) =>
         this.repository
           .listMessages(thread.id)
-          .map((message) =>
-            this.mapTimelineMessage(
+          .map((message) => {
+            const parsedCB = JSON.parse(message.contentBlocks || "[]")
+            return this.mapTimelineMessage(
               thread,
               message.id,
               message.role,
@@ -142,8 +144,9 @@ export class SessionService {
               message.groupId,
               message.groupRole,
               JSON.parse(message.toolEvents || "[]") as ToolEvent[],
-            ),
-          ),
+              parsedCB.length ? parsedCB : undefined,
+            )
+          }),
       )
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
 
@@ -178,8 +181,8 @@ export class SessionService {
     return this.repository.listMessages(threadId)
   }
 
-  appendUserMessage(threadId: string, content: string) {
-    return this.repository.appendMessage(threadId, "user", content, "", "final")
+  appendUserMessage(threadId: string, content: string, contentBlocks = "[]") {
+    return this.repository.appendMessage(threadId, "user", content, "", "final", null, null, null, "[]", contentBlocks)
   }
 
   appendAssistantMessage(
@@ -219,6 +222,7 @@ export class SessionService {
       return null
     }
 
+    const parsedContentBlocks = JSON.parse(message.contentBlocks || "[]")
     return this.mapTimelineMessage(
       thread,
       message.id,
@@ -231,6 +235,7 @@ export class SessionService {
       message.groupId,
       message.groupRole,
       JSON.parse(message.toolEvents || "[]") as ToolEvent[],
+      parsedContentBlocks.length ? parsedContentBlocks : undefined,
     )
   }
 
@@ -259,6 +264,7 @@ export class SessionService {
     groupId?: string | null,
     groupRole?: "header" | "member" | "convergence" | null,
     toolEvents?: ToolEvent[],
+    contentBlocks?: ContentBlock[],
   ): TimelineMessage {
     const isConnector = messageType === "connector"
     return {
@@ -276,6 +282,7 @@ export class SessionService {
       messageType,
       connectorSource: isConnector ? connectorSource : undefined,
       toolEvents: role === "assistant" && toolEvents?.length ? toolEvents : undefined,
+      contentBlocks: contentBlocks?.length ? contentBlocks : undefined,
       groupId: groupId ?? undefined,
       groupRole: groupRole ?? undefined,
       model: role === "user" ? null : thread.currentModel,

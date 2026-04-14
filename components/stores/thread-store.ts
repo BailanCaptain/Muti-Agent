@@ -1,6 +1,7 @@
 "use client"
 
 import {
+  type ContentBlock,
   type InvocationStats,
   PROVIDERS,
   PROVIDER_ALIASES,
@@ -50,6 +51,7 @@ type SendPayload = {
   provider: Provider
   content: string
   alias: string
+  contentBlocks?: ContentBlock[]
 }
 
 type ThreadStore = {
@@ -79,7 +81,7 @@ type ThreadStore = {
   applyThinkingDelta: (messageId: string, delta: string) => void
   applyToolEvent: (messageId: string, event: ToolEvent) => void
   appendTimelineMessage: (message: TimelineMessage) => void
-  buildSendPayload: (input: string) => SendPayload | null
+  buildSendPayload: (input: string, contentBlocks?: ContentBlock[]) => SendPayload | null
   incrementUnread: (groupId: string) => void
   resetUnread: (groupId: string) => void
 }
@@ -424,7 +426,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       return { unreadCounts: rest }
     })
   },
-  buildSendPayload: (input) => {
+  buildSendPayload: (input, contentBlocks) => {
     // The frontend sends the resolved provider/thread pair so the backend ws route can stay transport-focused.
     // Multi-mention handling: resolve *all* mentions, pick the first concrete provider as the direct-turn
     // target, then hand the full (normalized) content to the backend — `enqueuePublicMentions` will
@@ -464,6 +466,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       provider: targetProvider,
       content: normalizedContent,
       alias: thread.alias,
+      contentBlocks: contentBlocks?.length ? contentBlocks : undefined,
     }
   },
 }))

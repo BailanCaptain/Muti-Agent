@@ -3,8 +3,8 @@
 import { useChatStore } from "@/components/stores/chat-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { AGENT_PROFILES, PROVIDERS, PROVIDER_ALIASES, type Provider } from "@multi-agent/shared"
-import { Send, Square } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { ImagePlus, Send, Square, X } from "lucide-react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 const mentionTheme: Record<Provider, string> = {
   codex: "border-amber-200/80 bg-amber-50 text-amber-700 hover:bg-amber-100",
@@ -31,27 +31,22 @@ const SUGGESTIONS: Suggestion[] = [
 ]
 
 type MentionContext = {
-  start: number // index of '@'
-  query: string // text after '@' up to cursor
+  start: number
+  query: string
 }
 
-/** Find the active @mention token the cursor is editing, if any. */
 function findMentionContext(value: string, cursor: number): MentionContext | null {
-  // Walk backwards from cursor to find the nearest '@' that starts a mention token.
   for (let i = cursor - 1; i >= 0; i--) {
     const ch = value[i]
     if (ch === "@") {
-      // '@' must be at start or preceded by whitespace/punctuation so we don't hijack emails etc.
       const prev = i > 0 ? value[i - 1] : ""
       if (prev && !/[\s(（【\[]/.test(prev)) {
         return null
       }
       const query = value.slice(i + 1, cursor)
-      // Stop if the query already contains whitespace — that means we're past the mention.
       if (/\s/.test(query)) return null
       return { start: i, query }
     }
-    // Abort if we hit a non-mention character (whitespace breaks the token).
     if (/\s/.test(ch)) return null
   }
   return null
@@ -67,6 +62,8 @@ function filterSuggestions(query: string): Suggestion[] {
   })
 }
 
+const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"]
+
 export function Composer() {
   const activeGroupId = useThreadStore((state) => state.activeGroupId)
   const value = useChatStore((state) => state.drafts[activeGroupId ?? ""] ?? "")
@@ -77,8 +74,12 @@ export function Composer() {
   const activeGroup = useThreadStore((state) => state.activeGroup)
   const providers = useThreadStore((state) => state.providers)
   const stopThread = useThreadStore((state) => state.stopThread)
+  const pendingImages = useChatStore((state) => state.pendingImages[activeGroupId ?? ""] ?? [])
+  const addPendingImage = useChatStore((state) => state.addPendingImage)
+  const clearPendingImages = useChatStore((state) => state.clearPendingImages)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [cursor, setCursor] = useState(0)
   const [highlight, setHighlight] = useState(0)
 
@@ -93,10 +94,20 @@ export function Composer() {
   )
   const showSuggestions = Boolean(mentionContext) && suggestions.length > 0
 
-  // Keep highlight in range whenever the suggestion list changes.
   useEffect(() => {
     if (highlight >= suggestions.length) setHighlight(0)
   }, [suggestions.length, highlight])
+
+  const addFiles = useCallback(
+    (files: FileList | File[]) => {
+      for (const file of Array.from(files)) {
+        if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) continue
+        const url = URL.createObjectURL(file)
+        addPendingImage(activeGroupId, { url, file })
+      }
+    },
+    [activeGroupId, addPendingImage],
+  )
 
   function applySuggestion(suggestion: Suggestion) {
     if (!mentionContext) return
@@ -108,7 +119,6 @@ export function Composer() {
 
     setDraft(nextValue)
 
-    // Restore cursor after React commits the new value.
     requestAnimationFrame(() => {
       const el = textareaRef.current
       if (!el) return
@@ -128,7 +138,6 @@ export function Composer() {
       }
       return
     }
-    // 没有 running provider 但队列里还有待执行任务——发给任意一个线程来取消整组
     const anyProvider = PROVIDERS.find((p) => providers[p].threadId)
     if (anyProvider) {
       void stopThread(anyProvider)
@@ -154,10 +163,6 @@ export function Composer() {
       }
       if (event.key === "Escape") {
         event.preventDefault()
-        // Dismiss by pretending cursor moved elsewhere — easiest is to kill the current query match
-        // by inserting a trailing space. Simpler: blur + refocus pattern is awkward; instead we just
-        // bump cursor past any '@' by clearing the mention context via a no-op: append a space.
-        // Keep it simple: move cursor to end to break the context.
         const el = textareaRef.current
         if (el) {
           const end = value.length
@@ -169,7 +174,6 @@ export function Composer() {
       }
     }
 
-    // Submit on Enter (without shift) when suggestions are closed.
     if (event.key === "Enter" && !event.shiftKey && !showSuggestions) {
       event.preventDefault()
       if (!value.trim() || isBusy) return
@@ -179,6 +183,17 @@ export function Composer() {
 
   function handleSelect(event: React.SyntheticEvent<HTMLTextAreaElement>) {
     setCursor(event.currentTarget.selectionStart ?? 0)
+  }
+
+  function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const files = event.clipboardData?.files
+    if (files && files.length > 0) {
+      const imageFiles = Array.from(files).filter((f) => ACCEPTED_IMAGE_TYPES.includes(f.type))
+      if (imageFiles.length > 0) {
+        event.preventDefault()
+        addFiles(imageFiles)
+      }
+    }
   }
 
   return (
@@ -201,7 +216,57 @@ export function Composer() {
         </div>
       )}
 
+      {pendingImages.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-2">
+          {pendingImages.map((img, i) => (
+            <div key={img.url} className="group relative">
+              <img
+                src={img.url}
+                alt={img.file.name}
+                className="h-16 w-16 rounded-lg border border-slate-200 object-cover"
+              />
+              <button
+                type="button"
+                className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-slate-600 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                onClick={() => {
+                  URL.revokeObjectURL(img.url)
+                  const store = useChatStore.getState()
+                  const key = activeGroupId ?? ""
+                  const updated = (store.pendingImages[key] ?? []).filter((_, idx) => idx !== i)
+                  useChatStore.setState({
+                    pendingImages: { ...store.pendingImages, [key]: updated },
+                  })
+                }}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="relative flex items-end gap-2 px-2 pb-2">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files) addFiles(e.target.files)
+            e.target.value = ""
+          }}
+        />
+
+        <button
+          type="button"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+          onClick={() => fileInputRef.current?.click()}
+          title="上传图片"
+        >
+          <ImagePlus className="h-4 w-4" />
+        </button>
+
         <textarea
           className="max-h-48 w-full resize-none bg-transparent py-2 text-sm text-slate-700 outline-none placeholder:text-slate-300"
           onChange={(event) => {
@@ -212,8 +277,9 @@ export function Composer() {
           }}
           onKeyDown={handleKeyDown}
           onSelect={handleSelect}
+          onPaste={handlePaste}
           placeholder={
-            isBusy ? "继续输入指令...（消息将自动排队）" : "输入你的指令。使用 @ 可唤起智能体列表。"
+            isBusy ? "继续输入指令...（消息将自动排队）" : "输入你的指令。使用 @ 可唤起智能体列表。支持粘贴图片。"
           }
           ref={textareaRef}
           rows={1}
@@ -221,7 +287,6 @@ export function Composer() {
         />
 
         {showSuggestions && (
-          // The textarea stays focused and drives keyboard navigation; this popup is purely visual.
           <div className="absolute bottom-full left-2 z-20 mb-2 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white/95 shadow-[0_20px_50px_rgba(15,23,42,0.12)] backdrop-blur">
             {suggestions.map((item, index) => {
               const active = index === highlight
@@ -234,7 +299,6 @@ export function Composer() {
                   key={item.label}
                   onClick={() => applySuggestion(item)}
                   onMouseEnter={() => setHighlight(index)}
-                  // Prevent textarea from losing focus on mousedown so cursor state is preserved.
                   onMouseDown={(e) => e.preventDefault()}
                   type="button"
                 >

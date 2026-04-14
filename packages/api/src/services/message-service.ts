@@ -635,7 +635,10 @@ export class MessageService {
       return
     }
 
-    const userMessage = this.sessions.appendUserMessage(thread.id, event.payload.content)
+    const contentBlocksJson = event.payload.contentBlocks?.length
+      ? JSON.stringify(event.payload.contentBlocks)
+      : "[]"
+    const userMessage = this.sessions.appendUserMessage(thread.id, event.payload.content, contentBlocksJson)
     const rootMessageId = this.dispatch.registerUserRoot(userMessage.id, thread.sessionGroupId)
     const userTimeline = this.sessions.toTimelineMessage(thread.id, userMessage.id)
     if (userTimeline) {
