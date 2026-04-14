@@ -79,6 +79,36 @@ created: 2026-04-14
 - [ ] AC-08: CliOutputBlock 只包裹工具输出内容，不再包裹文字回复
 - [ ] AC-09: 流式输出（streaming）时工具块自动展开，完成后自动折叠（解决"页面一直闪"问题）
 
+### Phase 2.5：数据管道打通 + 审批修复（1 天）
+- [ ] AC-20: **Thinking 数据管道打通**（三个 CLI 全修）：
+  - Claude CLI：`claude-runtime.ts` 的 `buildCommand()` 加 `--include-partial-messages` 参数 + effort 改为 `max`
+    - 根因：不加此参数，CLI 只输出完整 message 对象，`thinking_delta` 被内部消费不暴露
+    - 参考：clowder-ai `ClaudeAgentService.ts:225` 已验证此方案
+    - `parseActivityLine` 已有正确的 `thinking_delta` 解析逻辑，不是死代码，是配套参数没开
+  - Codex CLI：`codex-runtime.ts:86` 修 `item.output` → `item.aggregated_output`（字段名 bug）
+    - 用复杂提示验证 `reasoning` 事件是否触发
+  - Gemini CLI：用复杂提示验证 `thought: true` 事件是否触发
+  - 验证方式：三个 CLI 各跑一次复杂提示，确认前端"深度思考"折叠块有内容
+- [ ] AC-21: **审批卡片修复**（两个 bug）：
+  - Bug A — 前端 session 过滤太严：`app/page.tsx:132-136` 的 `isCurrentSession` 检查导致审批事件被丢弃
+    - 修复：去掉 `approval.request` 的 session 过滤，审批卡片应全局可见（不论当前查看哪个 session）
+    - 同步修 `approval.resolved`（line 138-141）和 `approval.auto_granted`（line 144-147）
+  - Bug B — CLI 权限模式缺失：`claude-runtime.ts` 的 `buildCommand()` 没传 `--permission-mode`
+    - 修复：加 `--permission-mode bypassPermissions`，让 CLI 不拦截权限，全部走 MCP callback
+    - 参考：clowder-ai `ClaudeAgentService.ts:54,231-232` 用的就是 `bypassPermissions`
+  - 验证方式：触发需要权限的操作，确认前端弹出审批卡片 + 点击审批后 agent 继续执行
+- [ ] AC-22: **截图能力**（参照 clowder-ai 方案）：
+  - 参考实现：clowder-ai `preview-gateway.ts` + `bridge-script.ts` + `ImageExporter.ts` + `preview.ts:138-163`
+  - 需要新增的组件：
+    - PreviewGateway 反向代理（让 iframe 安全加载本地 dev server）
+    - Bridge Script（注入 iframe，SVG foreignObject + Canvas 截屏）
+    - ImageExporter（Puppeteer 无头浏览器截屏，长页面滚动拼接）
+    - Screenshot API Route（`POST /api/preview/screenshot` 存到 `/uploads/`）
+    - Auto-open API（agent 主动打开浏览器面板）
+  - 新增依赖：`puppeteer`、`sharp`、`http-proxy`
+  - 截屏流程：Agent 调用 auto-open → Bridge 截屏 → POST 到后端 → 存 PNG → 返回 URL → 作为 ContentBlock 存入消息
+  - 验证方式：agent 能自动截屏 mockup/dev server 页面 + 截图在消息中正确渲染
+
 ### Phase 3：DesignSystem 契约化（1 天）
 - [ ] AC-10: 建立统一 theme（`components/theme.ts` 或 `ThemeContext`）：
   - Provider 色彩映射（黄仁勋=绿、范德彪=蓝、桂芬=粉…）
@@ -96,6 +126,9 @@ created: 2026-04-14
 - [ ] AC-17: 手动验证：图片上传 1 张失败、文字 + 其余图片正常发出
 - [ ] AC-18: 手动验证：带工具调用的消息中，skill/MCP/推理过程默认折叠，结论始终显示
 - [ ] AC-19: 手动验证：新增 Provider 只需在 theme 中加一行颜色定义
+- [ ] AC-23: 手动验证：三个 CLI 的 thinking 内容在前端"深度思考"折叠块中可见
+- [ ] AC-24: 手动验证：agent 请求权限时，审批卡片在前端正确弹出，审批后 agent 继续执行
+- [ ] AC-25: 手动验证：agent 能自动截屏并在消息中展示截图
 
 ## Design Decisions
 
@@ -107,6 +140,9 @@ created: 2026-04-14
 | DesignSystem | A: 散落各组件 / B: 统一 theme | B | 村长已选，三处重复定义必须收口 |
 | 视觉风格 | A: 全终端风 / B: 统一浅色卡片风 | B | 村长明确"不要终端风"，图片示例全浅色 SaaS 风；工具块用浅色 card-in-card + accent 左边框 |
 | Skill 数据管道 | A: 文字前缀拼入 content / B: 独立 skillEvents 字段 | B | 实地验证发现 skill 混在 content 里无法独立折叠，需要与 toolEvents/thinking 同级的独立字段 |
+| Thinking 打通 | A: 等 CLI 修 / B: 加 `--include-partial-messages` | B | clowder-ai 已验证：加此参数后 CLI 输出流式事件含 `thinking_delta`，我们的 `parseActivityLine` 解析逻辑已就绪 |
+| 审批卡片修复 | A: 保持 session 过滤 / B: 全局可见 | B | session 过滤导致用户看不到审批卡片，无法审批；同时补 `--permission-mode bypassPermissions` 让权限走 MCP callback |
+| 截图能力 | A: 单独立项 / B: 放进 F012 | B | 村长明确要求放进 F012；参照 clowder-ai 的 PreviewGateway + Puppeteer + Bridge 方案 |
 
 ## 消息卡片结构设计
 
@@ -151,6 +187,9 @@ pnpm dev
 | 2026-04-14 | 村长决定 | DesignSystem 选 [B] 统一契约 |
 | 2026-04-14 | F012 立项 | 前端加固 + 卡片化渲染 + DesignSystem 合并 |
 | 2026-04-14 | 讨论共识 | 去终端风→统一浅色卡片风；去毛玻璃→实色+阴影；补 skillEvents 数据管道；Mockup 产出 |
+| 2026-04-14 | 根因定位 | Thinking 不显示：缺 `--include-partial-messages` 参数（clowder-ai 验证）|
+| 2026-04-14 | 根因定位 | 审批卡片不显示：前端 session 过滤丢弃事件 + CLI 没传 `--permission-mode` |
+| 2026-04-14 | 村长决定 | 截图能力、Thinking 修复、审批卡片修复全部放进 F012 |
 
 ## Links
 
