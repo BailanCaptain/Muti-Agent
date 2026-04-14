@@ -1,14 +1,14 @@
 ---
 id: F007
 title: 上下文压缩优化 — Microcompact + SOP书签 + 自动续接 + 动态预算 + 语义检索 + 摘要增强 + F-BLOAT检测 + 观测指标 + UX
-status: spec
+status: done
 owner: 黄仁勋
 created: 2026-04-13
 ---
 
 # F007 — 上下文压缩优化
 
-**Status**: spec
+**Status**: done
 **Created**: 2026-04-13
 
 ## Why
@@ -62,70 +62,70 @@ F004 解决了"历史由服务端权威持有"的根基问题，但长对话中 
 ## Acceptance Criteria
 
 ### 模块一：Microcompact
-- [ ] AC1.1: 新建 `packages/api/src/orchestrator/microcompact.ts`，导出 `microcompact(messages, config)` 函数
-- [ ] AC1.2: 在 `context-assembler.ts` 构建 `contentSections` 阶段调用 microcompact，仅改注入视图
-- [ ] AC1.3: 保留最近 5 个工具结果完整内容；保留最近 1 个失败结果（exit code !== 0 / stderr / Error）原文
-- [ ] AC1.4: 其余工具结果替换为带锚点占位符：`[工具结果已压缩] msgId=xxx | tool=名称 | path=路径 | exit=码 | at=时间`
-- [ ] AC1.5: SQLite 原始记录不被修改（铁律：数据神圣不可删）
-- [ ] AC1.6: `roomSnapshot` 本身不被修改，其他 agent 的注入不受影响
-- [ ] AC1.7: 单测覆盖：输入 10 条工具消息，验证输出只保留最近 5 条完整 + 1 条最近失败
+- [x] AC1.1: 新建 `packages/api/src/orchestrator/microcompact.ts`，导出 `microcompact(messages, config)` 函数
+- [x] AC1.2: 在 `context-assembler.ts` 构建 `contentSections` 阶段调用 microcompact，仅改注入视图
+- [x] AC1.3: 保留最近 5 个工具结果完整内容；保留最近 1 个失败结果（exit code !== 0 / stderr / Error）原文
+- [x] AC1.4: 其余工具结果替换为带锚点占位符：`[工具结果已压缩] msgId=xxx | tool=名称 | path=路径 | exit=码 | at=时间`
+- [x] AC1.5: SQLite 原始记录不被修改（铁律：数据神圣不可删）
+- [x] AC1.6: `roomSnapshot` 本身不被修改，其他 agent 的注入不受影响
+- [x] AC1.7: 单测覆盖：输入 10 条工具消息，验证输出只保留最近 5 条完整 + 1 条最近失败
 
 ### 模块二：SOP 书签
-- [ ] AC2.1: 定义 `SOPBookmark` 类型：`{ skill, phase, lastCompletedStep, nextExpectedAction, blockingQuestion, updatedAt }`
-- [ ] AC2.2: SQLite `threads` 表新增 `sop_bookmark TEXT` 列
-- [ ] AC2.3: 每轮 turn 结束后从 agent 输出中提取 skill 阶段信息写入 `sop_bookmark`
-- [ ] AC2.4: `context-assembler.ts` 摘要注入时追加 `## 当前执行状态` 段（机器可读格式）
-- [ ] AC2.5: 单测覆盖：seal 后新 session 首轮 prompt 包含正确的 SOP 书签
+- [x] AC2.1: 定义 `SOPBookmark` 类型：`{ skill, phase, lastCompletedStep, nextExpectedAction, blockingQuestion, updatedAt }`
+- [x] AC2.2: SQLite `threads` 表新增 `sop_bookmark TEXT` 列
+- [x] AC2.3: 每轮 turn 结束后从 agent 输出中提取 skill 阶段信息写入 `sop_bookmark`
+- [x] AC2.4: `context-assembler.ts` 摘要注入时追加 `## 当前执行状态` 段（机器可读格式）
+- [x] AC2.5: 单测覆盖：seal 后新 session 首轮 prompt 包含正确的 SOP 书签
 
 ### 模块三：Seal 自动续接
-- [ ] AC3.1: `message-service.ts` seal 处理段：seal 后检查 SOP 书签，有未完成工作则自动注入续接消息
-- [ ] AC3.2: 自动调用 `runThreadTurn()` 开新 turn
-- [ ] AC3.3: 最多自动续接 2 次（`autoResumeCount` 计数器）
-- [ ] AC3.4: 新 turn 首轮 token 使用率 > 50% 时不再续接（防死循环）
-- [ ] AC3.5: 状态栏显示 `"记忆重组中，自动续接 (1/2)"`
-- [ ] AC3.6: 无 SOP 书签或 2 次续接后仍未完成 → 正常停，等用户消息
+- [x] AC3.1: `message-service.ts` seal 处理段：seal 后检查 SOP 书签，有未完成工作则自动注入续接消息
+- [x] AC3.2: 自动调用 `runThreadTurn()` 开新 turn
+- [x] AC3.3: 最多自动续接 2 次（`autoResumeCount` 计数器）
+- [x] AC3.4: 新 turn 首轮 token 使用率 > 50% 时不再续接（防死循环）
+- [x] AC3.5: 状态栏显示 `"记忆重组中，自动续接 (1/2)"`
+- [x] AC3.6: 无 SOP 书签或 2 次续接后仍未完成 → 正常停，等用户消息
 
 ### 模块四：动态 token 预算
-- [ ] AC4.1: `ContextPolicy` 新增 `dynamicBudget?: boolean`，`POLICY_FULL` 启用
-- [ ] AC4.2: `AssemblePromptInput` 新增 `lastFillRatio?: number`
-- [ ] AC4.3: 动态计算规则：fillRatio < 0.3 → 60/30/4000；0.3-0.5 → 40/20/3000；0.5-0.7 → 30/15/2000；> 0.7 → 15/8/1000
-- [ ] AC4.4: 新 session（无 fillRatio）使用默认值 30/15/2000
-- [ ] AC4.5: 单测覆盖各档位计算正确
+- [x] AC4.1: `ContextPolicy` 新增 `dynamicBudget?: boolean`，`POLICY_FULL` 启用
+- [x] AC4.2: `AssemblePromptInput` 新增 `lastFillRatio?: number`
+- [x] AC4.3: 动态计算规则：fillRatio < 0.3 → 60/30/4000；0.3-0.5 → 40/20/3000；0.5-0.7 → 30/15/2000；> 0.7 → 15/8/1000
+- [x] AC4.4: 新 session（无 fillRatio）使用默认值 30/15/2000
+- [x] AC4.5: 单测覆盖各档位计算正确
 
 ### 模块五：渐进式老化（语义检索）
-- [ ] AC5.1: 添加 `@huggingface/transformers` 依赖，使用 `all-MiniLM-L6-v2` 本地模型
-- [ ] AC5.2: better-sqlite3 新建 `message_embeddings` + `message_embedding_meta` 表（普通表，非 vss）
-- [ ] AC5.3: 每条 agent 消息写入后异步生成 embedding（不阻塞主流程，失败静默降级）
-- [ ] AC5.4: 长消息按 512 token 分块，每块独立 embedding
-- [ ] AC5.5: `context-assembler.ts` 构建历史时额外做语义检索：当前用户消息作 query，top-5 相关历史片段，去重后以 `## 相关历史回忆` 段注入
-- [ ] AC5.6: 时间衰减权重：`score = cosine_similarity * exp(-age_hours / 168)`（7 天半衰期）
+- [x] AC5.1: 添加 `@huggingface/transformers` 依赖，使用 `all-MiniLM-L6-v2` 本地模型
+- [x] AC5.2: better-sqlite3 新建 `message_embeddings` + `message_embedding_meta` 表（普通表，非 vss）
+- [x] AC5.3: 每条 agent 消息写入后异步生成 embedding（不阻塞主流程，失败静默降级）
+- [x] AC5.4: 长消息按 512 token 分块，每块独立 embedding
+- [x] AC5.5: `context-assembler.ts` 构建历史时额外做语义检索：当前用户消息作 query，top-5 相关历史片段，去重后以 `## 相关历史回忆` 段注入
+- [x] AC5.6: 时间衰减权重：`score = cosine_similarity * exp(-age_hours / 168)`（7 天半衰期）
 
 ### 模块六：摘要增强
-- [ ] AC6.1: `callGeminiSummarizer` 取样窗口从 50 条 × 500 字扩大到 100 条 × 800 字
-- [ ] AC6.2: `buildExtractiveSummary` 改造为结构化 Timeline 格式（时间 + 人 + 动作 + 关键决策 + 未完成项）
-- [ ] AC6.3: 摘要 Provider Fallback 链：Gemini → 当前 agent CLI → extractive
-- [ ] AC6.4: Fallback 发生时记录到 metrics
+- [x] AC6.1: `callGeminiSummarizer` 取样窗口从 50 条 × 500 字扩大到 100 条 × 800 字
+- [x] AC6.2: `buildExtractiveSummary` 改造为结构化 Timeline 格式（时间 + 人 + 动作 + 关键决策 + 未完成项）
+- [x] AC6.3: 摘要 Provider Fallback 链：Gemini → 当前 agent CLI → extractive
+- [x] AC6.4: Fallback 发生时记录到 metrics
 
 ### 模块七：F-BLOAT 检测
-- [ ] AC7.1: `cli-orchestrator.ts` 的 `computeSealDecision` 对比本轮与上轮 `usedTokens`
-- [ ] AC7.2: usedTokens 突降 > 40% 时标记 `fBloatDetected = true`
-- [ ] AC7.3: 下一轮 turn 强制重新注入完整 system prompt（即使有 nativeSessionId）
-- [ ] AC7.4: 同时触发摘要刷新（不等 10 条消息阈值）
+- [x] AC7.1: `cli-orchestrator.ts` 的 `computeSealDecision` 对比本轮与上轮 `usedTokens`
+- [x] AC7.2: usedTokens 突降 > 40% 时标记 `fBloatDetected = true`
+- [x] AC7.3: 下一轮 turn 强制重新注入完整 system prompt（即使有 nativeSessionId）
+- [x] AC7.4: 同时触发摘要刷新（不等 10 条消息阈值）
 
 ### 模块八：观测指标
-- [ ] AC8.1: 新建 `packages/api/src/services/metrics-service.ts`
-- [ ] AC8.2: SQLite 新建 `context_metrics` 表
-- [ ] AC8.3: 记录指标：seal_count / seal_auto_resume_count / extractive_fallback_count / microcompact_tokens_saved / sop_bookmark_restore_success / sop_bookmark_restore_fail / embedding_retrieval_hit / fbloat_detected / summary_provider_used
-- [ ] AC8.4: WebSocket 推送指标到前端
+- [x] AC8.1: 新建 `packages/api/src/services/metrics-service.ts`
+- [x] AC8.2: SQLite 新建 `context_metrics` 表
+- [x] AC8.3: 记录指标：seal_count / seal_auto_resume_count / extractive_fallback_count / microcompact_tokens_saved / sop_bookmark_restore_success / sop_bookmark_restore_fail / embedding_retrieval_hit / fbloat_detected / summary_provider_used
+- [x] AC8.4: WebSocket 推送指标到前端
 
 ### 模块九：UX 层
-- [ ] AC9.1: seal 触发时状态栏显示 `"记忆重组中..."` → 自动续接时 `"记忆重组完成，自动续接 (1/2)"` → 完成后消失
-- [ ] AC9.2: 顶栏 SOP 面包屑：`Skill[TDD] → Phase[Red] → 下一步: 最小实现`
-- [ ] AC9.3: 设置页"上下文健康度"面板：seal 频率、摘要质量、书签恢复率
+- [x] AC9.1: seal 触发时状态栏显示 `"记忆重组中..."` → 自动续接时 `"记忆重组完成，自动续接 (1/2)"` → 完成后消失
+- [x] AC9.2: 顶栏 SOP 面包屑：`Skill[TDD] → Phase[Red] → 下一步: 最小实现`
+- [x] AC9.3: 设置页"上下文健康度"面板：seal 频率、摘要质量、书签恢复率
 
 ### 交叉验收
-- [ ] AC10.1: @ 非作者 agent 独立做愿景三问 + 输出证物对照表
-- [ ] AC10.2: 手动场景：和 agent 长对话 20+ 轮 → 触发 seal → agent 自动续接不停工 → 续接后 skill 阶段正确
+- [x] AC10.1: @ 非作者 agent 独立做愿景三问 + 输出证物对照表
+- [x] AC10.2: 手动场景：和 agent 长对话 20+ 轮 → 触发 seal → agent 自动续接不停工 → 续接后 skill 阶段正确
 
 ## Dependencies
 
@@ -175,7 +175,14 @@ F004 解决了"历史由服务端权威持有"的根基问题，但长对话中 
 
 | 日期 | 事件 |
 |------|------|
-| 2026-04-13 | Kickoff — 三人协作讨论收敛，方案确认，小孙拍板一次做完 |
+| 2026-04-13 | Kickoff — 三人协作讨论收敛（3 轮），方案确认，小孙拍板一次做完 |
+| 2026-04-13 | 立项 — 聚合文件 + ROADMAP 索引 (`13abf70`) |
+| 2026-04-13 | 实施计划 — `docs/plans/f007-context-compression-plan.md` (`7504f71`) |
+| 2026-04-14 | 实现 — 9 模块 TDD 完成，91+ 测试全绿 (`b5d77fc`) |
+| 2026-04-14 | Review R1 — 德彪 3 条 P1，全部修复 (`db5c079`) |
+| 2026-04-14 | Review R2 — 德彪 2 条 P1 + 1 条 P2，全部修复 (`ece0a52`) |
+| 2026-04-14 | Review R3 — 德彪放行，无新 bug |
+| 2026-04-14 | Merge — 合入 dev 并推送远程 |
 
 ## Links
 

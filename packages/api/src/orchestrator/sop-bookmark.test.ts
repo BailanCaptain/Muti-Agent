@@ -4,15 +4,11 @@ import { extractSOPBookmark, formatBookmarkForInjection } from "./sop-bookmark"
 import type { SOPBookmark } from "./sop-bookmark"
 
 describe("extractSOPBookmark", () => {
-  it("extracts skill and phase from agent output containing skill markers", () => {
-    const output = `按 TDD 流程，我先写失败测试。
-
-## Red Phase
-
-这个测试验证...`
+  it("uses stage name directly as phase — no regex on output", () => {
+    const output = `按 TDD 流程，我先写失败测试。\n## Red Phase\n这个测试验证...`
     const result = extractSOPBookmark(output, "tdd")
     assert.equal(result.skill, "tdd")
-    assert.equal(result.phase, "red")
+    assert.equal(result.phase, "tdd")
     assert.ok(result.lastCompletedStep.length > 0)
   })
 
@@ -22,23 +18,22 @@ describe("extractSOPBookmark", () => {
     assert.equal(result.phase, null)
   })
 
-  it("detects green phase", () => {
-    const output = "测试通过了！现在重构..."
+  it("phase equals stage regardless of output content", () => {
+    const output = "测试通过了！review 完成，准备 merge..."
     const result = extractSOPBookmark(output, "tdd")
     assert.equal(result.skill, "tdd")
-    assert.ok(result.phase === "green" || result.phase === "refactor")
+    assert.equal(result.phase, "tdd", "phase must be stage name, not regex-detected from output")
   })
 
-  it("detects review phase", () => {
+  it("requesting-review stage produces correct phase", () => {
     const output = "@范德彪 请 review 这个改动"
     const result = extractSOPBookmark(output, "requesting-review")
     assert.equal(result.skill, "requesting-review")
+    assert.equal(result.phase, "requesting-review")
   })
 
   it("detects blocking question from 分歧点", () => {
-    const output = `[分歧点] 要不要用 Redis 做缓存
-  [A] 用 Redis
-  [B] 用内存`
+    const output = `[分歧点] 要不要用 Redis 做缓存\n  [A] 用 Redis\n  [B] 用内存`
     const result = extractSOPBookmark(output, "tdd")
     assert.equal(result.blockingQuestion, "要不要用 Redis 做缓存")
   })
@@ -46,18 +41,15 @@ describe("extractSOPBookmark", () => {
   it("handles empty output with skill stage", () => {
     const result = extractSOPBookmark("", "tdd")
     assert.equal(result.skill, "tdd")
-    assert.equal(result.phase, null)
+    assert.equal(result.phase, "tdd")
+    assert.equal(result.lastCompletedStep, "")
   })
 
-  it("does NOT false-positive on 'review' when long output mentions review early but ends with different work", () => {
-    // Simulate a real agent output: early text mentions "review passed",
-    // but the last 300 chars describe current merge/deploy work with no review keywords
-    const earlyText = "F007 review 三轮通过，德彪放行。已 merge 到 dev。".padEnd(400, "。")
-    const recentText = "现在处理文档更新和 ROADMAP 同步，所有改动已提交完毕。"
-    const output = earlyText + recentText
+  it("output mentioning 'review' does NOT change phase when stage is feat-lifecycle", () => {
+    const output = "F007 review 三轮通过，德彪放行。已 merge 到 dev。文档已更新。"
     const result = extractSOPBookmark(output, "feat-lifecycle")
-    assert.notEqual(result.phase, "review",
-      "extractSOPBookmark should only match on the last 300 chars, not early mentions")
+    assert.equal(result.phase, "feat-lifecycle",
+      "phase must be stage name, never regex-detected from natural language")
   })
 
   it("marks phase=completed when sopStage indicates completion", () => {
@@ -65,6 +57,29 @@ describe("extractSOPBookmark", () => {
     const result = extractSOPBookmark(output, "completed:feat-lifecycle")
     assert.equal(result.phase, "completed")
     assert.equal(result.nextExpectedAction, "")
+  })
+
+  it("B014-Bug1: does NOT regex-match 'review' when stage is feat-lifecycle and last 300 chars contain review", () => {
+    const output = "F007 全部完成。德彪第三轮 review 通过了。已 merge 到 dev 并推到远程。"
+    const result = extractSOPBookmark(output, "feat-lifecycle")
+    assert.notEqual(result.phase, "review",
+      "phase must be the stage name, not regex-detected 'review' from natural language")
+    assert.equal(result.skill, "feat-lifecycle")
+  })
+
+  it("B014-Bug1: does NOT regex-match 'merge' when stage is tdd", () => {
+    const output = "测试写完了。merge 后需要补 e2e 场景。"
+    const result = extractSOPBookmark(output, "tdd")
+    assert.notEqual(result.phase, "merge",
+      "mentioning 'merge' in output should not override the structured stage")
+    assert.equal(result.phase, "tdd")
+  })
+
+  it("B014-Bug1: lastCompletedStep contains actual output context, not regex snippet", () => {
+    const output = "Task 9 UX 完成。全部 10 个 Task 实现完毕，91 测试全绿。"
+    const result = extractSOPBookmark(output, "quality-gate")
+    assert.ok(result.lastCompletedStep.includes("91 测试全绿"),
+      "lastCompletedStep should contain meaningful output context")
   })
 })
 

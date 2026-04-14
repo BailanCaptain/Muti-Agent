@@ -1244,7 +1244,7 @@ export class MessageService {
       if (loopResult.stoppedReason === "sealed" && bookmarkJson) {
         const parsedBookmark: SOPBookmark = JSON.parse(bookmarkJson)
         const resumeCount = options.autoResumeCount ?? 0
-        if (shouldAutoResume(parsedBookmark, resumeCount, MAX_AUTO_RESUMES, lastFillRatio ?? 0)) {
+        if (shouldAutoResume(parsedBookmark, resumeCount, MAX_AUTO_RESUMES, 0)) {
           const resumeMsg = buildAutoResumeMessage(parsedBookmark, resumeCount + 1, MAX_AUTO_RESUMES)
           options.emit({
             type: "status",
@@ -2236,7 +2236,24 @@ export class MessageService {
         skill.name,
         this.skillRegistry,
       )
-      if (!advancement) continue
+
+      if (!advancement) {
+        this.sopTracker.setStage(input.sessionGroupId, `completed:${skill.name}`)
+        input.emit({
+          type: "status",
+          payload: { sessionGroupId: input.sessionGroupId, message: `SOP 完成 ${skill.name}，等待新任务。` },
+        })
+        break
+      }
+
+      if (skill.name !== "feat-lifecycle" && advancement.nextStage === "feat-lifecycle") {
+        this.sopTracker.setStage(input.sessionGroupId, `completed:${skill.name}`)
+        input.emit({
+          type: "status",
+          payload: { sessionGroupId: input.sessionGroupId, message: `SOP 链完成（${skill.name}），等待新任务。` },
+        })
+        break
+      }
 
       const sopInfo = this.skillRegistry.getSopStage(advancement.nextStage)
       const skillSuggestion = sopInfo?.suggestedSkill

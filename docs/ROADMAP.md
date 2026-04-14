@@ -7,7 +7,6 @@
 
 | ID | 名称 | 状态 | Owner | Source | Spec |
 |----|------|------|-------|--------|------|
-| F007 | 上下文压缩优化：Microcompact + SOP书签 + 自动续接 + 动态预算 + 语义检索 | spec | 黄仁勋 | internal | [F007](features/F007-context-compression-optimization.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features
@@ -20,4 +19,5 @@
 | F004 | 上下文记忆权威化 – 历史从 API 注入 + 删除 Gemini fast-fail | 2026-04-11 | [F004](features/F004-context-memory-authoritative.md) |
 | F005 | 运行时治理 UI：权限系统 + 面板重构 + 侧边栏重做 | 2026-04-12 | [F005](features/F005-runtime-governance-ui.md) |
 | F006 | UI/UX 深度重塑与运行时治理 V2 + Event Transformer + 会话隔离 | 2026-04-14 | [F006](features/F006-ui-ux-refinement-and-runtime-governance-v2.md) |
+| F007 | 上下文压缩优化：Microcompact + SOP书签 + 自动续接 + 动态预算 + 语义检索 | 2026-04-14 | [F007](features/F007-context-compression-optimization.md) |
 <!-- 完成的 Feature 从活跃表移到此处 -->
