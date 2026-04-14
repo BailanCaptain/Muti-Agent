@@ -354,3 +354,28 @@
   - `docs/bugReport/B012-sop-bookmark-phase-drift.md`
 - 原理（可选）：每个 if 条件都需要一个"写端"和一个"读端"。只加读端不加写端 = 死代码。这跟设计事件系统一样——只有 listener 没有 emitter，listener 永远不会触发。修复时必须同时验证"谁写 + 谁读 + 完整链路测试"。
 - 关联：`docs/features/F007-context-compression-optimization.md`、LL-013
+
+---
+
+### LL-015: 对着真实 CLI 输出写 transformer/parser——基于猜测的实现会反复返工
+- 状态：validated
+- 更新时间：2026-04-14
+
+- 坑：三个 runtime 的 `transformToolEvent`/`parseActivityLine`/`parseAssistantDelta` 基于 API 文档和假设实现，未用真实 CLI 输出验证。结果：① Codex 字段名用了 `item.output`，实际是 `aggregated_output`——工具结果永远显示 "done"。② Claude `parseActivityLine` 检查 `thinking_delta`，但 CLI `stream-json` 输出的是 message 级别事件，这条路径是死代码。③ stderr 被无条件塞入 thinking，Codex 启动日志和 Rust tracing 错误全部显示为"深度思考"。反复修了 4 轮才定位到根因——因为每次都在猜格式。
+- 根因：假设 CLI NDJSON 输出和 API 文档描述的格式一致。实际上 CLI 输出是 CLI 自己的封装格式（message 级别而非流式 content_block_delta），不同 CLI 的字段命名也各不相同。
+- 触发条件：
+  1. 基于文档/假设实现 parser/transformer，未对着真实数据验证
+  2. CLI 封装层改变了底层 API 的事件格式
+  3. 不同 provider 的 CLI 用不同字段名描述同一概念
+- 修复：实现 event-recorder 机制（`RECORD_EVENTS=1`），录制三个 CLI 的全部原始 NDJSON 事件 + 分类结果。对着真实录制数据逐事件确认分类正确性，再修代码。
+- 防护：
+  1. **新增/修改 runtime transformer 前必须录制真实事件**：`RECORD_EVENTS=1` 跑一轮，拿到 ground truth 再写代码。
+  2. **录制数据作为 fixture 纳入测试**：`docs/runtime-events/` 中的 `.ndjson` 文件可作为回归测试输入。
+  3. **字段名不假设——从录制数据中取**：不同 CLI 的同一概念可能用不同字段名（`output` vs `aggregated_output`），必须从实际输出确认。
+- 来源锚点：
+  - `packages/api/src/runtime/event-recorder.ts`（录制工具）
+  - `packages/api/src/runtime/codex-runtime.ts:86`（`aggregated_output` 修复）
+  - `docs/runtime-events/ANALYSIS.md`（三个 runtime 真实事件格式分析）
+  - commit `111e30c`（event recorder + stderr filter）、`3638eb8`（codex aggregated_output 修复）
+- 原理（可选）：CLI 是 API 的封装层，封装层会改变数据格式。基于 API 文档写 CLI 的 parser 等于跳过了一层抽象——必须在 CLI 输出层面验证格式，而不是在 API 层面推断。"先录制再实现"是 data-driven development 在 parser 场景的具体实践。
+- 关联：`docs/features/F006-ui-ux-refinement-and-runtime-governance-v2.md`、`docs/bugReport/B013-frontend-output-ugly-inconsistent.md`、LL-010
