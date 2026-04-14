@@ -70,7 +70,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const groupKey = threadState.activeGroupId ?? ""
     const pending = state.pendingImages[groupKey] ?? []
 
-    const preValidation = threadState.buildSendPayload(input, undefined)
+    const pendingPlaceholder = pending.length > 0
+      ? [{ type: "image" as const, url: "pending", alt: "" }]
+      : undefined
+    const preValidation = threadState.buildSendPayload(input, pendingPlaceholder)
     if (!preValidation) {
       set({ status: "请用 @ 指定智能体：@黄仁勋 / @范德彪 / @桂芬 / @所有人" })
       return

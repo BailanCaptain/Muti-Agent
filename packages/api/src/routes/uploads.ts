@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify"
 import { randomUUID } from "node:crypto"
-import { createWriteStream, writeFileSync } from "node:fs"
+import { createWriteStream, unlinkSync, writeFileSync } from "node:fs"
 import { pipeline } from "node:stream/promises"
 import path from "node:path"
 import { createLogger } from "../lib/logger"
@@ -34,13 +34,14 @@ export function registerUploadRoutes(app: FastifyInstance, uploadsDir: string) {
       return reply.status(400).send({ error: `unsupported mime type: ${file.mimetype}` })
     }
 
-    const ext = path.extname(file.filename) || ".png"
+    const ext = MIME_TO_EXT[file.mimetype] ?? ".png"
     const name = `${randomUUID()}${ext}`
     const dest = path.join(uploadsDir, name)
 
     await pipeline(file.file, createWriteStream(dest))
 
     if (file.file.truncated) {
+      try { unlinkSync(dest) } catch {}
       return reply.status(413).send({ error: "file too large" })
     }
 

@@ -457,7 +457,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     }
 
     const normalizedContent = normalizeContentForBackend(input, tokens).trim()
-    if (!normalizedContent) {
+    const hasImages = contentBlocks && contentBlocks.length > 0
+    if (!normalizedContent && !hasImages) {
       return null
     }
 
