@@ -64,6 +64,8 @@ function filterSuggestions(query: string): Suggestion[] {
 
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"]
 
+const EMPTY_PENDING_IMAGES: { url: string; file: File }[] = []
+
 export function Composer() {
   const activeGroupId = useThreadStore((state) => state.activeGroupId)
   const value = useChatStore((state) => state.drafts[activeGroupId ?? ""] ?? "")
@@ -74,7 +76,9 @@ export function Composer() {
   const activeGroup = useThreadStore((state) => state.activeGroup)
   const providers = useThreadStore((state) => state.providers)
   const stopThread = useThreadStore((state) => state.stopThread)
-  const pendingImages = useChatStore((state) => state.pendingImages[activeGroupId ?? ""] ?? [])
+  const pendingImages = useChatStore(
+    (state) => state.pendingImages[activeGroupId ?? ""] ?? EMPTY_PENDING_IMAGES,
+  )
   const addPendingImage = useChatStore((state) => state.addPendingImage)
   const clearPendingImages = useChatStore((state) => state.clearPendingImages)
 

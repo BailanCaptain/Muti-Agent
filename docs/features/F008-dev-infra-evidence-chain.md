@@ -84,6 +84,7 @@ created: 2026-04-14
 | 2026-04-14 | Implementation — 9 Tasks + quality-gate 自检通过，16/16 AC ✅ |
 | 2026-04-14 | Review — 范德彪 3 轮 review（3P1+2P2+2P3），全部修复后放行 |
 | 2026-04-14 | Merged to dev — squash commit `b6c5248` |
+| 2026-04-14 | Hotfix — Composer `pendingImages` selector 每次返回新数组 `[]`，触发 `useSyncExternalStore` 无限循环（"The result of getServerSnapshot should be cached"）；改用模块级稳定空数组引用 `EMPTY_PENDING_IMAGES` |
 
 ## Links
 
