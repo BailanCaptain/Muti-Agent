@@ -1409,7 +1409,7 @@ export class MessageService {
               // - Phase 1 parallel group → member of that group
               // - A2A single dispatch (no parallelGroupId) → member of the dispatch entry's A2A group
               const dispatchGroupId = entry.parallelGroupId ?? entry.id
-              const dispatchGroupRole: "member" = "member"
+              const dispatchGroupRole = "member" as const
 
               const turnResult = await this.runThreadTurn({
                 threadId,
@@ -2185,7 +2185,7 @@ export class MessageService {
 
     const prompt = userInstruction
       ? `${userInstruction}\n\n（请基于刚才并行+串行讨论的上下文回答；你已经看到过所有人的观点）`
-      : `请综合刚才并行+串行讨论的各方观点，整理共识、分歧和行动项。你已经看到过所有人的观点。`
+      : "请综合刚才并行+串行讨论的各方观点，整理共识、分歧和行动项。你已经看到过所有人的观点。"
     const rootMessage = this.sessions.appendUserMessage(callbackThread.id, prompt)
 
     await this.runThreadTurn({

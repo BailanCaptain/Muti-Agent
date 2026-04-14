@@ -125,7 +125,7 @@ export class DecisionManager {
     if (!thread) return
 
     // Build a readable summary of the decisions
-    const lines: string[] = [`你提出的决策已确认：`]
+    const lines: string[] = ["你提出的决策已确认："]
     for (const d of decisions) {
       const option = request.options.find(o => o.id === d.optionId)
       const label = option?.label ?? d.optionId

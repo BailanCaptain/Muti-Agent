@@ -110,7 +110,7 @@ export function parseCpuTimeSeconds(raw: string): number {
     return 0;
   }
   const val = parseFloat(trimmed);
-  return isNaN(val) ? 0 : Math.round(val * 1000);
+  return Number.isNaN(val) ? 0 : Math.round(val * 1000);
 }
 
 // B010: Windows CPU sampling via PowerShell Get-Process.

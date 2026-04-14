@@ -27,7 +27,7 @@ function makeSessionsStub(hasPendingDispatches = false) {
 
 test("GET /api/session-groups/:groupId includes hasPendingDispatches from dispatch state", async () => {
   const app = Fastify()
-  let pendingState = true
+  const pendingState = true
 
   registerThreadRoutes(app, {
     sessions: makeSessionsStub() as never,

@@ -1,3 +1,10 @@
+---
+id: B012
+status: fixed
+resolved: 2026-04-14
+related: F007
+---
+
 # B012 — SOP 书签阶段漂移导致 seal 后重复劳动
 
 Related: F007

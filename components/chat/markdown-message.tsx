@@ -266,6 +266,7 @@ function sanitizeMarkdown(raw: string): string {
   text = text.replace(/[ \t]{3,}$/gm, '  ')
 
   // Restore code blocks
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional null-byte placeholders
   text = text.replace(/\x00CODEBLOCK_(\d+)\x00/g, (_, i) => blocks[Number(i)])
 
   return text

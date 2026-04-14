@@ -1,7 +1,8 @@
 ---
 id: F008
 title: 开发基础设施 + 视觉证据链
-status: implemented
+status: done
+completed: 2026-04-14
 owner: 黄仁勋
 created: 2026-04-14
 ---

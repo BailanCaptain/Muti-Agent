@@ -12,7 +12,6 @@ function withTempConfig<T>(fn: (configPath: string) => Promise<T> | T): Promise<
   const prev = process.env.MULTI_AGENT_RUNTIME_CONFIG_PATH
   process.env.MULTI_AGENT_RUNTIME_CONFIG_PATH = configPath
   return Promise.resolve(fn(configPath)).finally(() => {
-    // biome-ignore lint/performance/noDelete: process.env assignment coerces undefined to "undefined" string.
     if (prev === undefined) delete process.env.MULTI_AGENT_RUNTIME_CONFIG_PATH
     else process.env.MULTI_AGENT_RUNTIME_CONFIG_PATH = prev
     rmSync(dir, { recursive: true, force: true })

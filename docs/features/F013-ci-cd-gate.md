@@ -1,8 +1,8 @@
 ---
 id: F013
 title: CI/CD 门禁 — GitHub Actions + pre-commit hook + 文档状态校验
-status: spec
-owner: 范德彪
+status: in-progress
+owner: 黄仁勋
 created: 2026-04-14
 ---
 
@@ -27,25 +27,29 @@ created: 2026-04-14
 ## Acceptance Criteria
 
 ### Phase 1：GitHub Actions CI（半天）
-- [ ] AC-01: 创建 `.github/workflows/ci.yml`，push 到 dev/main 及 PR 时触发
-- [ ] AC-02: CI Job 1 — `pnpm typecheck`：类型检查失败则 ❌
-- [ ] AC-03: CI Job 2 — `pnpm test`：测试失败则 ❌
-- [ ] AC-04: CI Job 3 — 文档状态校验脚本：检测 `docs/features/*.md` 和 `docs/bugs/*.md` 中是否存在正文 `**Status**: xxx` 双写，存在则 ❌
-- [ ] AC-05: CI 在 PR 页面显示状态 badge（✅ / ❌）
+- [x] AC-01: 创建 `.github/workflows/ci.yml`，push 到 dev/main 及 PR 时触发
+- [x] AC-02: CI Job 1 — `pnpm typecheck`：类型检查失败则 ❌
+- [x] AC-03: CI Job 2 — `pnpm test`：测试失败则 ❌
+- [x] AC-04: CI Job 3 — 文档校验脚本（`check-docs.sh`）：4 项检查全过
+- [x] AC-04a: CI Job 4 — `pnpm lint`：Biome 代码规范检查失败则 ❌
+- [x] AC-04b: CI Job 5 — `pnpm build`：构建失败则 ❌
+- [ ] AC-05: CI 在 PR 页面显示状态 badge（✅ / ❌）— push 后验证
 - [ ] AC-06: 分支保护规则：dev/main 分支要求 CI 通过才能合入（如仓库权限允许）
 
 ### Phase 2：pre-commit hook（半天）
-- [ ] AC-07: 安装 husky + lint-staged
-- [ ] AC-08: pre-commit hook 执行 `pnpm typecheck`（快速拦截类型错误）
-- [ ] AC-09: pre-commit hook 执行文档状态双写检测脚本
-- [ ] AC-10: hook 失败时输出清晰的错误信息和修复建议
+- [x] AC-07: 安装 husky + lint-staged
+- [x] AC-08: pre-commit hook 执行 `pnpm typecheck`（快速拦截类型错误）
+- [x] AC-09: pre-commit hook 执行文档校验脚本（`check-docs.sh`）
+- [x] AC-10: hook 失败时输出清晰的错误信息和修复建议
 
-### Phase 3：文档状态校验脚本
-- [ ] AC-11: 编写 `scripts/check-doc-status.sh`（或 .ts）：
-  - 扫描 `docs/features/*.md` 和 `docs/bugs/*.md`
-  - 检测正文中是否存在 `**Status**: xxx` 行
-  - 如存在，输出文件名和行号，exit 1
-- [ ] AC-12: 脚本可在 CI 和本地 hook 中复用
+### Phase 3：文档校验脚本（扩展版）
+- [x] AC-11: 编写 `scripts/check-docs.sh`，含以下 4 项检查：
+  - (a) 正文 `**Status**: xxx` 双写检测（扫描 `docs/features/*.md` 和 `docs/bugReport/*.md`）
+  - (b) ROADMAP ↔ feature frontmatter `status:` 交叉校验（不一致则 ❌）
+  - (c) `status: done` 的 feature 必须有 `completed:` 字段
+  - (d) status 值白名单校验（仅允许 spec / in-progress / done）
+  - 任一项检测失败 → 输出文件名 + 行号 + 原因，exit 1
+- [x] AC-12: 脚本可在 CI 和本地 hook 中复用
 
 ### 门禁
 - [ ] AC-13: push 到 dev 自动触发 CI，typecheck + test + 文档校验全过
@@ -97,11 +101,35 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
-  doc-status:
+  doc-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: bash scripts/check-doc-status.sh
+      - run: bash scripts/check-docs.sh
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
 ```
 
 ## 验证命令
@@ -131,6 +159,7 @@ git push  # 观察 GitHub Actions 页面
 | 2026-04-14 | 三方审计 | 发现零 CI/CD、零 pre-commit hook |
 | 2026-04-14 | 共识达成 | 完成态门禁选 [C] Hook + CI 分阶段 |
 | 2026-04-14 | F013 立项 | CI 门禁，与 F011/F012 并行 |
+| 2026-04-14 | Phase 1-3 实现 | CI workflow + husky + check-docs.sh + biome 配置治理 |
 
 ## Links
 

@@ -80,7 +80,6 @@ function collectClaudeModels(baseDir: string) {
               models.push(row.message.model);
             }
           } catch {
-            continue;
           }
         }
       }

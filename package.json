@@ -12,11 +12,18 @@
     "dev:api": "bash scripts/mount-skills.sh && tsc -p packages/shared/tsconfig.json && tsx watch packages/api/src/index.ts",
     "build": "tsc -p packages/shared/tsconfig.json && next build && tsc -p packages/api/tsconfig.json",
     "start": "next start",
-    "lint": "biome check .",
+    "lint": "biome lint .",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit && pnpm --filter @multi-agent/shared typecheck && pnpm --filter @multi-agent/api typecheck",
     "test": "tsx --test \"packages/**/*.test.ts\"",
-    "check:skills": "npx tsx scripts/check-skills.ts"
+    "check:skills": "npx tsx scripts/check-skills.ts",
+    "check:docs": "bash scripts/check-docs.sh",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "biome lint --write"
+    ]
   },
   "dependencies": {
     "@multi-agent/shared": "workspace:*",
@@ -37,6 +44,8 @@
     "@types/react": "^19.2.4",
     "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.20",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.21.0",

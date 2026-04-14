@@ -57,6 +57,7 @@ export default function HomePage() {
   const receiveBoardFlush = useDecisionBoardStore((state) => state.receiveFlush)
   const removeBoardItem = useDecisionBoardStore((state) => state.removeItem)
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: bootstrap effect runs once on mount
   useEffect(() => {
     void bootstrap().catch((error) => {
       setStatus(error instanceof Error ? error.message : "引导程序启动失败")

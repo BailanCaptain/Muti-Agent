@@ -1,4 +1,4 @@
-import { A2AChainRegistry } from "./a2a-chain";
+import type { A2AChainRegistry } from "./a2a-chain";
 
 export type ReturnPathPlanInput = {
   chainRegistry: A2AChainRegistry;

@@ -1,9 +1,10 @@
 ---
 id: F010
 title: 基线回绿 + P0 止血 — typecheck/test 全绿 + 崩服务级 bug 修复
-status: completed
+status: done
 owner: 黄仁勋
 created: 2026-04-14
+completed: 2026-04-14
 ---
 
 # F010 — 基线回绿 + P0 止血

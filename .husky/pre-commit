@@ -1,0 +1,42 @@
+#!/usr/bin/env sh
+
+echo "🔍 Pre-commit gate: typecheck → check-docs → lint-staged → test"
+echo ""
+
+echo "── Step 1/4: typecheck ──"
+pnpm typecheck || {
+  echo ""
+  echo "❌ Typecheck failed. Fix type errors before committing."
+  echo "   Run: pnpm typecheck"
+  exit 1
+}
+
+echo ""
+echo "── Step 2/4: check-docs ──"
+pnpm check:docs || {
+  echo ""
+  echo "❌ Doc validation failed. Fix document issues before committing."
+  echo "   Run: pnpm check:docs"
+  exit 1
+}
+
+echo ""
+echo "── Step 3/4: lint-staged ──"
+npx lint-staged || {
+  echo ""
+  echo "❌ Lint failed on staged files. Fix lint errors before committing."
+  echo "   Run: npx lint-staged"
+  exit 1
+}
+
+echo ""
+echo "── Step 4/4: test ──"
+pnpm test || {
+  echo ""
+  echo "❌ Tests failed. Fix failing tests before committing."
+  echo "   Run: pnpm test"
+  exit 1
+}
+
+echo ""
+echo "✅ All pre-commit checks passed."

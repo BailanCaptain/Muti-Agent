@@ -1,3 +1,10 @@
+---
+id: B013
+status: fixed
+resolved: 2026-04-14
+related: F006
+---
+
 # B013 — 前端输出不统一/丑 + 德彪窜房间 + 心里话/工具折叠
 
 Related: F006

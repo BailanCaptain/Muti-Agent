@@ -1,9 +1,10 @@
 ---
 id: F009
 title: 全链路性能优化 — SQLite 治理 + 增量快照 + 前端减压
-status: completed
+status: done
 owner: 黄仁勋
 created: 2026-04-14
+completed: 2026-04-14
 ---
 
 # F009 — 全链路性能优化

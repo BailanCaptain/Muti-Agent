@@ -1,5 +1,23 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "ignore": [
+      "reference-code/**",
+      ".claude/**",
+      ".agents/**",
+      ".gemini/**",
+      ".runtime/**",
+      "dist/**",
+      ".next/**",
+      "data/**",
+      "*.md"
+    ]
+  },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
@@ -9,7 +27,31 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": true,
+      "suspicious": {
+        "noArrayIndexKey": "off",
+        "noExplicitAny": "off"
+      },
+      "style": {
+        "noNonNullAssertion": "off",
+        "useTemplate": "off",
+        "useNumberNamespace": "off",
+        "noInferrableTypes": "off"
+      },
+      "complexity": {
+        "useOptionalChain": "off"
+      },
+      "performance": {
+        "noDelete": "off"
+      },
+      "a11y": {
+        "noAutofocus": "off",
+        "useSemanticElements": "off",
+        "useKeyWithClickEvents": "off"
+      },
+      "correctness": {
+        "useExhaustiveDependencies": "warn"
+      }
     }
   },
   "javascript": {

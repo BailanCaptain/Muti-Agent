@@ -2,6 +2,7 @@
 id: F007
 title: 上下文压缩优化 — Microcompact + SOP书签 + 自动续接 + 动态预算 + 语义检索 + 摘要增强 + F-BLOAT检测 + 观测指标 + UX
 status: done
+completed: 2026-04-14
 owner: 黄仁勋
 created: 2026-04-13
 ---

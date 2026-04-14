@@ -1,7 +1,7 @@
 ---
 id: F006
 title: UI/UX 深度重塑与运行时治理 V2
-status: completed
+status: done
 owner: 桂芬
 created: 2026-04-13
 completed: 2026-04-14

@@ -80,23 +80,44 @@ created: 2026-04-14
 - [ ] AC-09: 流式输出（streaming）时工具块自动展开，完成后自动折叠（解决"页面一直闪"问题）
 
 ### Phase 2.5：数据管道打通 + 审批修复（1 天）
-- [ ] AC-20: **Thinking 数据管道打通**（三个 CLI 全修）：
-  - Claude CLI：`claude-runtime.ts` 的 `buildCommand()` 加 `--include-partial-messages` 参数 + effort 改为 `max`
+- [ ] AC-20: **Thinking 数据管道打通**（三个 CLI 逐个修）：
+  - Claude CLI：`claude-runtime.ts` 的 `buildCommand()` 加 `--include-partial-messages` 参数
     - 根因：不加此参数，CLI 只输出完整 message 对象，`thinking_delta` 被内部消费不暴露
-    - 参考：clowder-ai `ClaudeAgentService.ts:225` 已验证此方案
-    - `parseActivityLine` 已有正确的 `thinking_delta` 解析逻辑，不是死代码，是配套参数没开
-  - Codex CLI：`codex-runtime.ts:86` 修 `item.output` → `item.aggregated_output`（字段名 bug）
-    - 用复杂提示验证 `reasoning` 事件是否触发
-  - Gemini CLI：用复杂提示验证 `thought: true` 事件是否触发
-  - 验证方式：三个 CLI 各跑一次复杂提示，确认前端"深度思考"折叠块有内容
-- [ ] AC-21: **审批卡片修复**（两个 bug）：
-  - Bug A — 前端 session 过滤太严：`app/page.tsx:132-136` 的 `isCurrentSession` 检查导致审批事件被丢弃
-    - 修复：去掉 `approval.request` 的 session 过滤，审批卡片应全局可见（不论当前查看哪个 session）
+    - 参考：clowder-ai `ClaudeAgentService.ts:224-226` 已验证此方案
+    - `parseActivityLine` 已有正确的 `thinking_delta` 解析逻辑，配套参数没开而已
+  - Codex CLI：`codex-runtime.ts` 的 `parseActivityLine` 逻辑已正确（`item.type === "reasoning"`）
+    - 参考：clowder-ai `codex-event-transform.ts:254-262` 用同样的事件格式，**已跑通**
+    - clowder-ai 用 `model_reasoning_effort` 配置（我们也有），reasoning 作为完整 item 返回
+    - 需用复杂提示实测确认 reasoning 事件能触发
+  - Gemini CLI：**Gemini 没有原生 thinking 输出**
+    - clowder-ai 的 `GeminiAgentService.ts` 也没有 thinking 处理
+    - Gemini 模型推理是内部不可观测的，CLI 不暴露 thought 事件
+    - `gemini-runtime.ts:86-131` 的 `event.thought === true` 是防御性代码，留着不删但不指望它触发
+  - 验证方式：Claude 和 Codex 各跑一次复杂提示，确认前端"深度思考"折叠块有内容
+- [ ] AC-21: **权限审批全链路修复**（三层问题）：
+  - Bug A — 三个 CLI 的权限请求都不走我们的前端审批：
+    - Claude：没传 `--permission-mode`，默认交互式 → stdin 已关 → 卡死
+      - 修复：加 `--permission-mode bypassPermissions`（参考 clowder-ai `ClaudeAgentService.ts:231`）
+    - Codex：有 `approval_policy="on-request"` 但没有 MCP server 配置 → 审批走 Codex 内部 stdin
+      - 修复：给 Codex 也配 MCP server（和 Claude 一样），或改为 `approval_policy="full-auto"` + 用 MCP callback 管权限
+    - Gemini：用 `--approval-mode yolo` 跳过所有审批 → 没有安全控制
+      - 修复：改为通过 MCP callback 走我们的审批链路
+  - Bug B — 前端 session 过滤太严：`app/page.tsx:132-136` 的 `isCurrentSession` 检查导致审批事件丢弃
+    - 修复：审批事件不做 session 过滤，全局可见
     - 同步修 `approval.resolved`（line 138-141）和 `approval.auto_granted`（line 144-147）
-  - Bug B — CLI 权限模式缺失：`claude-runtime.ts` 的 `buildCommand()` 没传 `--permission-mode`
-    - 修复：加 `--permission-mode bypassPermissions`，让 CLI 不拦截权限，全部走 MCP callback
-    - 参考：clowder-ai `ClaudeAgentService.ts:54,231-232` 用的就是 `bypassPermissions`
-  - 验证方式：触发需要权限的操作，确认前端弹出审批卡片 + 点击审批后 agent 继续执行
+  - Bug C — **前端缺少规则管理 UI**（这才是"审批规则完全是废的"的核心原因）：
+    - 后端 API 完整：`POST /api/authorization/rules` 可创建规则、`ApprovalManager.match()` 自动放行逻辑完好
+    - 前端只有查看和删除，**没有"添加规则"表单**
+    - 修复：在 `status-panel.tsx` 的 `ApprovalTabContent` 或 `settings-modal.tsx` 加规则创建表单：
+      - 选择 Provider（Claude/Codex/Gemini/全部）
+      - 输入 Action 模式（支持通配符，如 `npm *`、`edit_file *`）
+      - 选择决策（允许/拒绝）
+      - 选择范围（当前会话/全局）
+    - 用户可主动配置"完全放权"或"逐个审批"，不需要等审批卡片弹出来才能建规则
+  - 验证方式：
+    1. 在前端主动添加一条规则"Claude npm * → 允许（全局）"
+    2. 触发 Claude 执行 npm 命令 → 自动放行，状态栏显示"已自动放行"
+    3. 删除规则后重新触发 → 弹出审批卡片 → 点批准 → agent 继续
 - [ ] AC-22: **截图能力**（参照 clowder-ai 方案）：
   - 参考实现：clowder-ai `preview-gateway.ts` + `bridge-script.ts` + `ImageExporter.ts` + `preview.ts:138-163`
   - 需要新增的组件：
@@ -126,8 +147,8 @@ created: 2026-04-14
 - [ ] AC-17: 手动验证：图片上传 1 张失败、文字 + 其余图片正常发出
 - [ ] AC-18: 手动验证：带工具调用的消息中，skill/MCP/推理过程默认折叠，结论始终显示
 - [ ] AC-19: 手动验证：新增 Provider 只需在 theme 中加一行颜色定义
-- [ ] AC-23: 手动验证：三个 CLI 的 thinking 内容在前端"深度思考"折叠块中可见
-- [ ] AC-24: 手动验证：agent 请求权限时，审批卡片在前端正确弹出，审批后 agent 继续执行
+- [ ] AC-23: 手动验证：Claude 和 Codex 的 thinking 内容在前端"深度思考"折叠块中可见（Gemini 无原生 thinking，不验证）
+- [ ] AC-24: 手动验证：前端可主动添加/删除授权规则 + 规则生效（自动放行或弹审批卡片）+ 三个 CLI 的权限请求都走前端审批
 - [ ] AC-25: 手动验证：agent 能自动截屏并在消息中展示截图
 
 ## Design Decisions
@@ -140,8 +161,8 @@ created: 2026-04-14
 | DesignSystem | A: 散落各组件 / B: 统一 theme | B | 村长已选，三处重复定义必须收口 |
 | 视觉风格 | A: 全终端风 / B: 统一浅色卡片风 | B | 村长明确"不要终端风"，图片示例全浅色 SaaS 风；工具块用浅色 card-in-card + accent 左边框 |
 | Skill 数据管道 | A: 文字前缀拼入 content / B: 独立 skillEvents 字段 | B | 实地验证发现 skill 混在 content 里无法独立折叠，需要与 toolEvents/thinking 同级的独立字段 |
-| Thinking 打通 | A: 等 CLI 修 / B: 加 `--include-partial-messages` | B | clowder-ai 已验证：加此参数后 CLI 输出流式事件含 `thinking_delta`，我们的 `parseActivityLine` 解析逻辑已就绪 |
-| 审批卡片修复 | A: 保持 session 过滤 / B: 全局可见 | B | session 过滤导致用户看不到审批卡片，无法审批；同时补 `--permission-mode bypassPermissions` 让权限走 MCP callback |
+| Thinking 打通 | A: 等 CLI 修 / B: 加 `--include-partial-messages` | B | Claude: clowder-ai 已验证此方案。Codex: clowder-ai 用同样的 reasoning item 格式已跑通。Gemini: 无原生 thinking，clowder-ai 也无解 |
+| 审批全链路 | A: 只修卡片弹出 / B: 三层全修（CLI路由+卡片过滤+规则管理UI） | B | 仅修卡片弹出没用——用户要的是主动配置放权/不放权，需要前端规则创建表单 |
 | 截图能力 | A: 单独立项 / B: 放进 F012 | B | 村长明确要求放进 F012；参照 clowder-ai 的 PreviewGateway + Puppeteer + Bridge 方案 |
 
 ## 消息卡片结构设计
@@ -190,6 +211,8 @@ pnpm dev
 | 2026-04-14 | 根因定位 | Thinking 不显示：缺 `--include-partial-messages` 参数（clowder-ai 验证）|
 | 2026-04-14 | 根因定位 | 审批卡片不显示：前端 session 过滤丢弃事件 + CLI 没传 `--permission-mode` |
 | 2026-04-14 | 村长决定 | 截图能力、Thinking 修复、审批卡片修复全部放进 F012 |
+| 2026-04-14 | 自我纠正 | clowder-ai 确实用了三个 CLI（之前错说没用 Codex/Gemini）；Codex reasoning 在 clowder-ai 已跑通；Gemini 无原生 thinking |
+| 2026-04-14 | 根因补充 | 审批规则"完全废了"不止是卡片弹不出——前端缺规则创建 UI，用户无法主动配置放权/不放权 |
 
 ## Links
 

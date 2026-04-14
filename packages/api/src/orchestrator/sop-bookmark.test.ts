@@ -5,7 +5,7 @@ import type { SOPBookmark } from "./sop-bookmark"
 
 describe("extractSOPBookmark", () => {
   it("uses stage name directly as phase — no regex on output", () => {
-    const output = `按 TDD 流程，我先写失败测试。\n## Red Phase\n这个测试验证...`
+    const output = "按 TDD 流程，我先写失败测试。\n## Red Phase\n这个测试验证..."
     const result = extractSOPBookmark(output, "tdd")
     assert.equal(result.skill, "tdd")
     assert.equal(result.phase, "tdd")
@@ -33,7 +33,7 @@ describe("extractSOPBookmark", () => {
   })
 
   it("detects blocking question from 分歧点", () => {
-    const output = `[分歧点] 要不要用 Redis 做缓存\n  [A] 用 Redis\n  [B] 用内存`
+    const output = "[分歧点] 要不要用 Redis 做缓存\n  [A] 用 Redis\n  [B] 用内存"
     const result = extractSOPBookmark(output, "tdd")
     assert.equal(result.blockingQuestion, "要不要用 Redis 做缓存")
   })

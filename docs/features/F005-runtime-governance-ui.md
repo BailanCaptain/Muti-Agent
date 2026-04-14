@@ -1,7 +1,8 @@
 ---
 id: F005
 title: 运行时治理 UI — 权限系统 + 面板重构 + 侧边栏重做
-status: merged
+status: done
+completed: 2026-04-12
 owner: 黄仁勋
 created: 2026-04-11
 ---
