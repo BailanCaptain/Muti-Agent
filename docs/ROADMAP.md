@@ -8,6 +8,7 @@
 | ID | 名称 | 状态 | Owner | Source | Spec |
 |----|------|------|-------|--------|------|
 | F007 | 上下文压缩优化：Microcompact + SOP书签 + 自动续接 + 动态预算 + 语义检索 | spec | 黄仁勋 | internal | [F007](features/F007-context-compression-optimization.md) |
+| F008 | 开发基础设施 + 视觉证据链：Hot-Reload + ImageBlock + 日志 + 截图 | spec | 黄仁勋 | internal | [F008](features/F008-dev-infra-evidence-chain.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features
