@@ -60,9 +60,21 @@ Step 3: VERIFY — 逐项检查
   - 🔴 新增行为规则 → shared-rules 更新了吗？
 
 Step 4: RUN — 运行验证命令（必须这次真实运行）
-  pnpm test                              # 必须全部通过
-  pnpm --filter @multi-agent/shared build # shared 包构建
-  pnpm --filter @multi-agent/api build    # API 包构建（如有）
+  pnpm typecheck    # 含 shared / api 子包类型检查
+  pnpm build        # 根 build 一条串起 shared + next + api
+  pnpm test         # node:test runner，tsx 跑 packages/**/*.test.ts
+  pnpm lint         # biome
+
+  🔴 条件触发 — 本次 diff 涉及依赖声明改动（package.json / lockfile）:
+     ① 必须跑 `pnpm install` 把声明物化到 node_modules
+     ② 必须用**项目当前的启动脚本**把服务完整起一遍，
+        确认 API + Web 同时 ready
+        （脚本名会随项目演进而改，当前为 `start-project`；
+          以仓库根目录能启动全量服务的脚本为准）
+     原因：缺依赖只在 runtime import 时崩，typecheck / build / 单测都
+          覆盖不到启动链；Web 用自己的解析路径可能掩盖 API 崩溃，
+          必须看到"两端都 ready"。
+     依据：LL-017（同一反模式已两次复发）。
 
 Step 5: READ — 完整读输出，看 exit code，数失败数
 
@@ -102,6 +114,7 @@ pnpm build → exit 0 ✅
 | Bug 修了 | 原症状测试：通过 | 代码改了，以为修了 |
 | 需求满足 | spec + Discussion 逐项打勾 | 测试通过就完事 |
 | Feature 完成/未完成 | git log + PR 状态 + spec 逐项 | 只看 spec checkbox |
+| 依赖改动 | pnpm install + 项目启动脚本端到端跑通（API+Web 都 ready） | 仅 typecheck/build/test |
 
 ## Common Mistakes
 
@@ -113,6 +126,7 @@ pnpm build → exit 0 ✅
 | 测试通过就声称完成 | 还要对照 spec 逐项检查 |
 | 部分实现就提 review | P1/P2 遗漏必须当轮补完 |
 | 交付半成品让小孙"先看看" | 交付完整 feat，步骤是内部节奏 |
+| 改了 package.json 只跑 typecheck/build/test 就声称通过 | 还要 pnpm install + 启动脚本完整起一遍 |
 
 **Red flags — 立刻 STOP**：
 - 用 "should"、"probably"、"seems to"

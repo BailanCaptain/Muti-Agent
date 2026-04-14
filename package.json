@@ -15,6 +15,7 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit && pnpm --filter @multi-agent/shared typecheck && pnpm --filter @multi-agent/api typecheck",
+    "test": "tsx --test \"packages/**/*.test.ts\"",
     "check:skills": "npx tsx scripts/check-skills.ts"
   },
   "dependencies": {
