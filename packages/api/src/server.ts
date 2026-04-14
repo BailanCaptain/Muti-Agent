@@ -1,6 +1,8 @@
 import crypto from "node:crypto"
+import { mkdirSync } from "node:fs"
 import path from "node:path"
 import cors from "@fastify/cors"
+import fastifyStatic from "@fastify/static"
 import websocket from "@fastify/websocket"
 import { PROVIDER_ALIASES } from "@multi-agent/shared"
 import Fastify from "fastify"
@@ -31,6 +33,7 @@ import { MessageService } from "./services/message-service"
 import { SessionService } from "./services/session-service"
 import { SkillRegistry } from "./skills/registry"
 import { SopTracker } from "./skills/sop-tracker"
+import { setRootLogger } from "./lib/logger"
 
 export async function createApiServer(options: {
   apiBaseUrl: string
@@ -39,6 +42,12 @@ export async function createApiServer(options: {
   redisUrl: string
 }) {
   const app = Fastify({ logger: true })
+  setRootLogger(app.log)
+
+  app.setErrorHandler((error: Error & { statusCode?: number }, request, reply) => {
+    app.log.error({ err: error, url: request.url, method: request.method }, "unhandled error")
+    reply.status(error.statusCode ?? 500).send({ error: error.message })
+  })
   const providerProfiles = listProviderProfiles()
   const sqlite = new SqliteStore(options.sqlitePath)
   const repository = new SessionRepository(sqlite)
@@ -201,6 +210,15 @@ export async function createApiServer(options: {
     credentials: true,
   })
   await app.register(websocket)
+
+  const uploadsDir = path.resolve(__dirname, "../../../.runtime/uploads")
+  mkdirSync(uploadsDir, { recursive: true })
+  await app.register(fastifyStatic, {
+    root: uploadsDir,
+    prefix: "/uploads/",
+    decorateReply: false,
+  })
+
   app.addHook("onClose", async () => {
     await awaitRunsToStop(invocations.values())
   })
