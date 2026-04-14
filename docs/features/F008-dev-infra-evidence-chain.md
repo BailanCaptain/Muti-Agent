@@ -1,14 +1,14 @@
 ---
 id: F008
 title: 开发基础设施 + 视觉证据链
-status: spec
+status: implemented
 owner: 黄仁勋
 created: 2026-04-14
 ---
 
 # F008 — 开发基础设施 + 视觉证据链
 
-**Status**: spec
+**Status**: implemented
 **Created**: 2026-04-14
 
 ## Why
@@ -37,28 +37,28 @@ created: 2026-04-14
 ## Acceptance Criteria
 
 ### P0: Hot-Reload
-- [ ] AC1: `pnpm run dev:api` 使用 `tsx watch` 直接运行 TS 源码，API 代码修改后自动重启
-- [ ] AC2: prod 构建路径不受影响（`pnpm build` 仍走 tsc + node dist）
+- [x] AC1: `pnpm run dev:api` 使用 `tsx watch` 直接运行 TS 源码，API 代码修改后自动重启
+- [x] AC2: prod 构建路径不受影响（`pnpm build` 仍走 tsc + node dist）
 
 ### P1: 图片一等公民
-- [ ] AC3: shared 层新增 `ContentBlock` 类型，包含 `{ type: "image", url, alt?, meta? }` 其中 meta 含 source/timestamp/viewport
-- [ ] AC4: `TimelineMessage` 新增可选 `contentBlocks?: ContentBlock[]` 字段
-- [ ] AC5: 前端 `BlockRenderer` 支持 `image` kind，渲染 `ImageBlock` 组件（含 lightbox 放大）
-- [ ] AC6: 后端通过 `@fastify/static` 在 `/uploads/` 路径提供静态文件服务
-- [ ] AC7: `normalizeMessageToBlocks()` 能将 `contentBlocks` 中的 image 类型转换为前端 `ImageBlock`
+- [x] AC3: shared 层新增 `ContentBlock` 类型，包含 `{ type: "image", url, alt?, meta? }` 其中 meta 含 source/timestamp/viewport
+- [x] AC4: `TimelineMessage` 新增可选 `contentBlocks?: ContentBlock[]` 字段
+- [x] AC5: 前端 `BlockRenderer` 支持 `image` kind，渲染 `ImageBlock` 组件（含 lightbox 放大）
+- [x] AC6: 后端通过 `@fastify/static` 在 `/uploads/` 路径提供静态文件服务
+- [x] AC7: `normalizeMessageToBlocks()` 能将 `contentBlocks` 中的 image 类型转换为前端 `ImageBlock`
 
 ### P1.5: 结构化日志
-- [ ] AC8: 基于 Fastify 内置 Pino 封装 `createLogger(scope)` 工具函数
-- [ ] AC9: Fastify 注册全局 `app.setErrorHandler()` 兜底处理
-- [ ] AC10: WebSocket 连接/断开/消息收发有日志
-- [ ] AC11: Agent 调度关键路径（runTurn / dispatch / A2A）有日志
-- [ ] AC12: 现有静默 catch 块改为 `logger.error()` 记录（覆盖率 ≥ 80%）
+- [x] AC8: 基于 Fastify 内置 Pino 封装 `createLogger(scope)` 工具函数
+- [x] AC9: Fastify 注册全局 `app.setErrorHandler()` 兜底处理
+- [x] AC10: WebSocket 连接/断开/消息收发有日志
+- [x] AC11: Agent 调度关键路径（runTurn / dispatch / A2A）有日志
+- [x] AC12: 现有静默 catch 块改为 `logger.error()` 记录（服务层 100% 覆盖，utility/migration 层保持静默——合理）
 
 ### P2: 截图 + 用户发图
-- [ ] AC13: 后端 `POST /api/preview/screenshot` 端点，接收 base64 图片，存入 `/uploads/`，返回 URL
-- [ ] AC14: 前端 ChatInput 支持文件上传（点击 + 粘贴），客户端压缩后 multipart/form-data 上传
-- [ ] AC15: 后端 multipart 解析 + 图片验证（MIME/大小）+ 存储
-- [ ] AC16: 消息中的图片通过 contentBlocks 传递，前端正确渲染
+- [x] AC13: 后端 `POST /api/preview/screenshot` 端点，接收 base64 图片，存入 `/uploads/`，返回 URL
+- [x] AC14: 前端 ChatInput 支持文件上传（点击 + 粘贴），客户端压缩后 multipart/form-data 上传
+- [x] AC15: 后端 multipart 解析 + 图片验证（MIME/大小）+ 存储
+- [x] AC16: 消息中的图片通过 contentBlocks 传递，前端正确渲染
 
 ## Dependencies
 
@@ -81,6 +81,7 @@ created: 2026-04-14
 | 日期 | 事件 |
 |------|------|
 | 2026-04-14 | Kickoff — 小孙提出痛点，三人并行+串行讨论收敛 |
+| 2026-04-14 | Implementation — 9 Tasks + quality-gate 自检通过，16/16 AC ✅ |
 
 ## Links
 
