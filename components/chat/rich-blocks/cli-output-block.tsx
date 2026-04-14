@@ -1,7 +1,8 @@
 "use client"
 
 import type { Provider, ToolEvent } from "@multi-agent/shared"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { MarkdownMessage } from "../markdown-message"
 import { pairToolEvents, deriveCliStatus, type PairedTool, type CliStatus } from "./toCliEvents"
 
 /* ── Color helpers (ported from clowder-ai) ── */
@@ -115,6 +116,28 @@ function ErrorIcon() {
     >
       <line x1="18" y1="6" x2="6" y2="18" />
       <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  )
+}
+
+function PawPrint() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="#64748B"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="flex-shrink-0"
+    >
+      <circle cx="11" cy="4" r="2" />
+      <circle cx="18" cy="8" r="2" />
+      <circle cx="20" cy="16" r="2" />
+      <path d="M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z" />
     </svg>
   )
 }
@@ -318,9 +341,10 @@ interface CliOutputBlockProps {
   toolEvents: ToolEvent[]
   provider: Provider
   isStreaming?: boolean
+  content?: string
 }
 
-export function CliOutputBlock({ toolEvents, provider, isStreaming: isStreamingProp }: CliOutputBlockProps) {
+export function CliOutputBlock({ toolEvents, provider, isStreaming: isStreamingProp, content }: CliOutputBlockProps) {
   const tools = pairToolEvents(toolEvents)
   const status: CliStatus = isStreamingProp ? "streaming" : deriveCliStatus(toolEvents)
   const accent = PROVIDER_ACCENT[provider]
@@ -331,6 +355,7 @@ export function CliOutputBlock({ toolEvents, provider, isStreaming: isStreamingP
   const [expanded, setExpanded] = useState(forceExpanded)
   const userInteracted = useRef(false)
   const prevStatusRef = useRef(status)
+  const hasMounted = useRef(false)
 
   if (forceExpanded && !expanded) {
     setExpanded(true)
@@ -347,9 +372,20 @@ export function CliOutputBlock({ toolEvents, provider, isStreaming: isStreamingP
     prevStatusRef.current = status
   }, [status])
 
+  useLayoutEffect(() => {
+    if (!hasMounted.current) {
+      hasMounted.current = true
+      return
+    }
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("chat-layout-changed"))
+    }
+  }, [expanded])
+
   if (tools.length === 0) return null
 
   const summary = buildSummary(tools, status)
+  const hasContent = content && content.trim().length > 0
 
   return (
     <div
@@ -359,6 +395,7 @@ export function CliOutputBlock({ toolEvents, provider, isStreaming: isStreamingP
       {/* L1: Header */}
       <button
         type="button"
+        data-testid="cli-output-header"
         onClick={() => {
           userInteracted.current = true
           setExpanded((v) => !v)
@@ -370,11 +407,17 @@ export function CliOutputBlock({ toolEvents, provider, isStreaming: isStreamingP
           <ChevronIcon expanded={expanded} />
         </span>
         <span className="font-medium">{summary}</span>
+        <span
+          className="ml-auto flex items-center gap-1"
+          style={{ color: "#64748B", fontSize: 10 }}
+        >
+          <PawPrint />
+        </span>
       </button>
 
       {/* L1: Body */}
       {expanded && (
-        <div style={{ backgroundColor: surfaceInner }}>
+        <div data-testid="cli-output-body" style={{ backgroundColor: surfaceInner }}>
           <div style={{ height: 1, backgroundColor: DIVIDER }} />
           <ToolsSection
             tools={tools}
@@ -384,6 +427,29 @@ export function CliOutputBlock({ toolEvents, provider, isStreaming: isStreamingP
             }}
             accent={accent}
           />
+          {hasContent && (
+            <>
+              <div style={{ height: 1, backgroundColor: DIVIDER }} />
+              <div
+                style={{
+                  padding: "8px 12px 4px 12px",
+                  fontFamily: "JetBrains Mono, monospace",
+                  fontSize: 10,
+                  color: "#475569",
+                }}
+              >
+                ─── stdout ───
+              </div>
+              <div
+                style={{ padding: "8px 12px 10px 12px" }}
+                className="font-mono text-[11px] leading-relaxed"
+              >
+                <span style={{ color: "#CBD5E1" }}>
+                  <MarkdownMessage className="text-[12px] leading-relaxed [&_p]:text-slate-300 [&_code]:bg-slate-800/50 [&_pre]:bg-slate-900/60 [&_a]:text-sky-400 [&_strong]:text-slate-200 [&_h1]:text-slate-200 [&_h2]:text-slate-200 [&_h3]:text-slate-200 [&_li]:text-slate-300 [&_blockquote]:border-slate-600 [&_blockquote]:text-slate-400 [&_hr]:border-slate-700 [&_table]:text-slate-300 [&_th]:text-slate-200 [&_td]:border-slate-700 [&_th]:border-slate-700" content={content} />
+                </span>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -1112,7 +1112,7 @@ export class MessageService {
           result.fBloatDetected = true
           options.emit({
             type: "status",
-            payload: { message: `${thread.alias} CLI 内部压缩检测到（token 突降 ${Math.round(bloat.dropRatio * 100)}%），下轮将强制重注入 system prompt。` },
+            payload: { sessionGroupId: thread.sessionGroupId, message: `${thread.alias} CLI 内部压缩检测到（token 突降 ${Math.round(bloat.dropRatio * 100)}%），下轮将强制重注入 system prompt。` },
           })
           this.memoryService?.invalidateSummary(thread.sessionGroupId)
         }
@@ -1248,7 +1248,7 @@ export class MessageService {
           const resumeMsg = buildAutoResumeMessage(parsedBookmark, resumeCount + 1, MAX_AUTO_RESUMES)
           options.emit({
             type: "status",
-            payload: { message: `记忆重组中，自动续接 (${resumeCount + 1}/${MAX_AUTO_RESUMES})` },
+            payload: { sessionGroupId: thread.sessionGroupId, message: `记忆重组中，自动续接 (${resumeCount + 1}/${MAX_AUTO_RESUMES})` },
           })
           const resumeResult = await this.runThreadTurn({
             threadId: thread.id,

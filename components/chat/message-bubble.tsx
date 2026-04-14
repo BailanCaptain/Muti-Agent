@@ -208,10 +208,6 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
                     : `${bubbleTheme[message.provider]} text-slate-700`
                 }`}
               >
-                {!isUser && message.toolEvents && message.toolEvents.length > 0 && (
-                  <CliOutputBlock toolEvents={message.toolEvents} provider={message.provider} />
-                )}
-
                 {!isUser && message.thinking && theme && showThinking ? (
                   <div
                     className={`mb-4 overflow-hidden rounded-2xl border p-4 shadow-inner ${theme.container}`}
@@ -251,10 +247,14 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
                   </div>
                 ) : null}
 
-                <BlockRenderer
-                  blocks={normalizeMessageToBlocks(message).filter(b => b.kind !== "thinking")}
-                  provider={message.provider}
-                />
+                {!isUser && message.toolEvents && message.toolEvents.length > 0 ? (
+                  <CliOutputBlock toolEvents={message.toolEvents} provider={message.provider} content={message.content} />
+                ) : (
+                  <BlockRenderer
+                    blocks={normalizeMessageToBlocks(message).filter(b => b.kind !== "thinking")}
+                    provider={message.provider}
+                  />
+                )}
 
                 {inlineDecisions && inlineDecisions.length > 0 && onDecisionRespond && (
                   <div className="mt-3 space-y-2 border-t border-slate-200/60 pt-3">
