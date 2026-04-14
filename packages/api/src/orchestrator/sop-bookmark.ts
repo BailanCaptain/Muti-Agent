@@ -25,19 +25,34 @@ export function extractSOPBookmark(agentOutput: string, currentSopStage: string 
     return { skill: null, phase: null, lastCompletedStep: "", nextExpectedAction: "", blockingQuestion: null, updatedAt: now }
   }
 
+  // "completed:skill-name" prefix = skill finished, no further action needed
+  if (currentSopStage.startsWith("completed:")) {
+    const skill = currentSopStage.slice("completed:".length)
+    return {
+      skill,
+      phase: "completed",
+      lastCompletedStep: agentOutput.slice(0, 80).replace(/\n/g, " ").trim(),
+      nextExpectedAction: "",
+      blockingQuestion: null,
+      updatedAt: now,
+    }
+  }
+
   let detectedPhase: string | null = null
   let nextAction = ""
   let lastStep = ""
 
+  // Only use regex as fallback — prefer structured stage from sopTracker
+  const lastLine = agentOutput.slice(-300)
   for (const { pattern, phase, next } of PHASE_PATTERNS) {
-    if (pattern.test(agentOutput)) {
+    if (pattern.test(lastLine)) {
       detectedPhase = phase
       nextAction = next
-      const match = pattern.exec(agentOutput)
+      const match = pattern.exec(lastLine)
       if (match) {
         const start = Math.max(0, match.index - 20)
-        const end = Math.min(agentOutput.length, match.index + match[0].length + 40)
-        lastStep = agentOutput.slice(start, end).replace(/\n/g, " ").trim()
+        const end = Math.min(lastLine.length, match.index + match[0].length + 40)
+        lastStep = lastLine.slice(start, end).replace(/\n/g, " ").trim()
       }
       break
     }

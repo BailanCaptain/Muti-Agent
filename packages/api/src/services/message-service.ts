@@ -1120,11 +1120,8 @@ export class MessageService {
       }
 
       this.streamingFlushers.delete(flushKey)
-      const sopStage = this.sopTracker?.getStage(thread.sessionGroupId) ?? null
-      const bookmark = extractSOPBookmark(accumulatedContent, sopStage)
-      const bookmarkJson = bookmark.skill ? JSON.stringify(bookmark) : null
       const lastFillRatio = result.sealDecision?.fillRatio ?? null
-      this.sessions.updateThread(thread.id, result.currentModel, effectiveSessionId, bookmarkJson, lastFillRatio)
+      this.sessions.updateThread(thread.id, result.currentModel, effectiveSessionId, undefined, lastFillRatio)
       if (!promptRequestedByCli) {
         this.sessions.overwriteMessage(assistant.id, {
           content: accumulatedContent || "[empty response]",
@@ -1228,6 +1225,14 @@ export class MessageService {
         emit: options.emit,
       })
 
+      // Extract SOP bookmark AFTER advanceSopIfNeeded so it reflects the latest stage
+      const sopStage = this.sopTracker?.getStage(thread.sessionGroupId) ?? null
+      const bookmark = extractSOPBookmark(accumulatedContent, sopStage)
+      const bookmarkJson = bookmark.skill ? JSON.stringify(bookmark) : null
+      if (bookmarkJson) {
+        this.sessions.updateThread(thread.id, result.currentModel, effectiveSessionId, bookmarkJson, lastFillRatio)
+      }
+
       this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
       await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
       this.settlementDetector?.clearContinuationInFlight(
@@ -1239,7 +1244,7 @@ export class MessageService {
       if (loopResult.stoppedReason === "sealed" && bookmarkJson) {
         const parsedBookmark: SOPBookmark = JSON.parse(bookmarkJson)
         const resumeCount = options.autoResumeCount ?? 0
-        if (shouldAutoResume(parsedBookmark, resumeCount, MAX_AUTO_RESUMES, 0)) {
+        if (shouldAutoResume(parsedBookmark, resumeCount, MAX_AUTO_RESUMES, lastFillRatio ?? 0)) {
           const resumeMsg = buildAutoResumeMessage(parsedBookmark, resumeCount + 1, MAX_AUTO_RESUMES)
           options.emit({
             type: "status",

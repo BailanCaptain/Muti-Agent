@@ -48,6 +48,24 @@ describe("extractSOPBookmark", () => {
     assert.equal(result.skill, "tdd")
     assert.equal(result.phase, null)
   })
+
+  it("does NOT false-positive on 'review' when long output mentions review early but ends with different work", () => {
+    // Simulate a real agent output: early text mentions "review passed",
+    // but the last 300 chars describe current merge/deploy work with no review keywords
+    const earlyText = "F007 review 三轮通过，德彪放行。已 merge 到 dev。".padEnd(400, "。")
+    const recentText = "现在处理文档更新和 ROADMAP 同步，所有改动已提交完毕。"
+    const output = earlyText + recentText
+    const result = extractSOPBookmark(output, "feat-lifecycle")
+    assert.notEqual(result.phase, "review",
+      "extractSOPBookmark should only match on the last 300 chars, not early mentions")
+  })
+
+  it("marks phase=completed when sopStage indicates completion", () => {
+    const output = "全部完成，已合入 dev"
+    const result = extractSOPBookmark(output, "completed:feat-lifecycle")
+    assert.equal(result.phase, "completed")
+    assert.equal(result.nextExpectedAction, "")
+  })
 })
 
 describe("formatBookmarkForInjection", () => {

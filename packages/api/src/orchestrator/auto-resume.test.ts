@@ -44,6 +44,15 @@ describe("shouldAutoResume", () => {
   it("returns false for null bookmark", () => {
     assert.equal(shouldAutoResume(null, 0, 2, 0.3), false)
   })
+
+  it("returns false when phase is completed (Bug 4 - completed short-circuit)", () => {
+    const completedBookmark: SOPBookmark = {
+      ...activeBookmark,
+      phase: "completed",
+      nextExpectedAction: "",
+    }
+    assert.equal(shouldAutoResume(completedBookmark, 0, 2, 0), false)
+  })
 })
 
 describe("buildAutoResumeMessage", () => {
@@ -64,5 +73,12 @@ describe("buildAutoResumeMessage", () => {
     const bm: SOPBookmark = { ...bookmark, blockingQuestion: "需要确认接口" }
     const msg = buildAutoResumeMessage(bm, 1, 2)
     assert.ok(msg.includes("需要确认接口"))
+  })
+
+  it("includes lastCompletedStep in resume message (Bug 2)", () => {
+    const bm: SOPBookmark = { ...bookmark, lastCompletedStep: "wrote failing test for auth" }
+    const msg = buildAutoResumeMessage(bm, 1, 2)
+    assert.ok(msg.includes("last=wrote failing test for auth"),
+      "resume message must include last= field so agent knows what was already done")
   })
 })
