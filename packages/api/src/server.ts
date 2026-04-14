@@ -2,6 +2,7 @@ import crypto from "node:crypto"
 import { mkdirSync } from "node:fs"
 import path from "node:path"
 import cors from "@fastify/cors"
+import multipart from "@fastify/multipart"
 import fastifyStatic from "@fastify/static"
 import websocket from "@fastify/websocket"
 import { PROVIDER_ALIASES } from "@multi-agent/shared"
@@ -24,6 +25,7 @@ import { registerDecisionBoardRoutes } from "./routes/decision-board"
 import { registerMessageRoutes } from "./routes/messages"
 import { registerRuntimeConfigRoutes } from "./routes/runtime-config"
 import { registerThreadRoutes } from "./routes/threads"
+import { registerUploadRoutes } from "./routes/uploads"
 import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
 import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
@@ -210,6 +212,7 @@ export async function createApiServer(options: {
     credentials: true,
   })
   await app.register(websocket)
+  await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } })
 
   const uploadsDir = path.resolve(__dirname, "../../../.runtime/uploads")
   mkdirSync(uploadsDir, { recursive: true })
@@ -239,6 +242,7 @@ export async function createApiServer(options: {
   registerRuntimeConfigRoutes(app)
   registerAuthorizationRoutes(app, { approvals, ruleStore })
   registerDecisionBoardRoutes(app, { messageService: messages, decisions })
+  registerUploadRoutes(app, uploadsDir)
   registerCallbackRoutes(app, {
     repository,
     sessions,
