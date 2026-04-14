@@ -14,7 +14,7 @@
     "start": "next start",
     "lint": "biome lint .",
     "format": "biome format --write .",
-    "typecheck": "tsc --noEmit && pnpm --filter @multi-agent/shared typecheck && pnpm --filter @multi-agent/api typecheck",
+    "typecheck": "tsc --noEmit && tsc -p packages/shared/tsconfig.json && pnpm --filter @multi-agent/api typecheck",
     "test": "tsx --test \"packages/**/*.test.ts\"",
     "check:skills": "npx tsx scripts/check-skills.ts",
     "check:docs": "bash scripts/check-docs.sh",

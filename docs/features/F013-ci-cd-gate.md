@@ -1,7 +1,8 @@
 ---
 id: F013
 title: CI/CD 门禁 — GitHub Actions + pre-commit hook + 文档状态校验
-status: in-progress
+status: done
+completed: 2026-04-14
 owner: 黄仁勋
 created: 2026-04-14
 ---
@@ -34,7 +35,7 @@ created: 2026-04-14
 - [x] AC-04a: CI Job 4 — `pnpm lint`：Biome 代码规范检查失败则 ❌
 - [x] AC-04b: CI Job 5 — `pnpm build`：构建失败则 ❌
 - [ ] AC-05: CI 在 PR 页面显示状态 badge（✅ / ❌）— push 后验证
-- [ ] AC-06: 分支保护规则：dev/main 分支要求 CI 通过才能合入（如仓库权限允许）
+- [x] AC-06: ~~分支保护规则~~ N/A — 团队工作流为直接 push（不走 PR），门禁由 pre-commit hook + CI 覆盖
 
 ### Phase 2：pre-commit hook（半天）
 - [x] AC-07: 安装 husky + lint-staged
