@@ -4,6 +4,7 @@ import type { Block } from "@/lib/blocks"
 import type { Provider } from "@multi-agent/shared"
 import { CardBlockComponent } from "./rich-blocks/card-block"
 import { DiffBlockComponent } from "./rich-blocks/diff-block"
+import { ImageBlockComponent } from "./rich-blocks/image-block"
 import { MarkdownMessage } from "./markdown-message"
 
 type BlockRendererProps = {
@@ -26,6 +27,8 @@ export function BlockRenderer({ blocks, provider }: BlockRendererProps) {
             return <CardBlockComponent key={index} block={block} />
           case "diff":
             return <DiffBlockComponent key={index} block={block} />
+          case "image":
+            return <ImageBlockComponent key={index} block={block} />
         }
       })}
     </>

@@ -23,6 +23,7 @@ type MessageRow = {
   groupId: string | null
   groupRole: string | null
   toolEvents: string
+  contentBlocks: string
   createdAt: string
 }
 
@@ -33,6 +34,7 @@ function hydrateMessage(row: MessageRow): MessageRecord {
     groupId: row.groupId ?? null,
     groupRole: (row.groupRole as MessageRecord["groupRole"]) ?? null,
     toolEvents: row.toolEvents ?? "[]",
+    contentBlocks: row.contentBlocks ?? "[]",
   }
 }
 
@@ -157,7 +159,7 @@ export class SessionRepository {
   listMessages(threadId: string) {
     const rows = this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, created_at as createdAt
+        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt
          FROM messages
          WHERE thread_id = ?
          ORDER BY created_at ASC`,
@@ -169,7 +171,7 @@ export class SessionRepository {
   listRecentMessages(threadId: string, limit: number) {
     const rows = this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, created_at as createdAt
+        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt
          FROM messages
          WHERE thread_id = ?
          ORDER BY created_at DESC
@@ -189,6 +191,7 @@ export class SessionRepository {
     groupId: string | null = null,
     groupRole: MessageRecord["groupRole"] = null,
     toolEvents = "[]",
+    contentBlocks = "[]",
   ) {
     const message: MessageRecord = {
       id: crypto.randomUUID(),
@@ -201,13 +204,14 @@ export class SessionRepository {
       groupId,
       groupRole,
       toolEvents,
+      contentBlocks,
       createdAt: new Date().toISOString(),
     }
 
     this.store.db
       .prepare(
-        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, group_id, group_role, tool_events, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, group_id, group_role, tool_events, content_blocks, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -220,6 +224,7 @@ export class SessionRepository {
         message.groupId,
         message.groupRole,
         message.toolEvents,
+        message.contentBlocks,
         message.createdAt,
       )
 

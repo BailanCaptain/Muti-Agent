@@ -7,6 +7,7 @@
 
 | ID | 名称 | 状态 | Owner | Source | Spec |
 |----|------|------|-------|--------|------|
+| F008 | 开发基础设施 + 视觉证据链：Hot-Reload + ImageBlock + 日志 + 截图 | spec | 黄仁勋 | internal | [F008](features/F008-dev-infra-evidence-chain.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features

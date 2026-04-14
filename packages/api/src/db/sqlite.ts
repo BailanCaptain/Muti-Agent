@@ -37,6 +37,7 @@ export type MessageRecord = {
   groupId: string | null
   groupRole: "header" | "member" | "convergence" | null
   toolEvents: string
+  contentBlocks: string
   createdAt: string
 }
 
@@ -241,6 +242,12 @@ export class SqliteStore {
 
     try {
       this.db.exec("ALTER TABLE threads ADD COLUMN last_fill_ratio REAL;")
+    } catch {
+      // Column may already exist
+    }
+
+    try {
+      this.db.exec("ALTER TABLE messages ADD COLUMN content_blocks TEXT NOT NULL DEFAULT '[]';")
     } catch {
       // Column may already exist
     }

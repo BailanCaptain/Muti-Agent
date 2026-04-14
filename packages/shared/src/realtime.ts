@@ -56,6 +56,18 @@ export type PendingConfirmationItem = {
   createdAt: string
 }
 
+// ── Content Blocks (F008: 图片一等公民) ─────────────────────────────
+
+export type ImageMeta = {
+  source?: string
+  timestamp?: string
+  viewport?: { width: number; height: number }
+}
+
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; url: string; alt?: string; meta?: ImageMeta }
+
 export type TimelineMessage = {
   id: string
   provider: Provider
@@ -68,6 +80,7 @@ export type TimelineMessage = {
   /** Inline confirmation cards embedded in this message bubble */
   inlineConfirmations?: InlineConfirmation[]
   toolEvents?: ToolEvent[]
+  contentBlocks?: ContentBlock[]
   groupId?: string
   groupRole?: "header" | "member" | "convergence"
   inputTokens?: number
@@ -222,6 +235,7 @@ export type RealtimeClientEvent =
         provider: Provider
         content: string
         alias: string
+        contentBlocks?: ContentBlock[]
       }
     }
   | {
