@@ -73,6 +73,49 @@ test("non-connector messages have connectorSource=null", () => {
   }
 })
 
+test("contentBlocks round-trip: images persist and restore on listMessages", () => {
+  const { repository, cleanup } = createRepository()
+
+  try {
+    const groupId = repository.createSessionGroup("Test Room")
+    repository.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const thread = repository.listThreadsByGroup(groupId).find((item) => item.provider === "codex")
+    assert.ok(thread)
+
+    const blocks = JSON.stringify([
+      { type: "image", url: "http://localhost:8787/uploads/test.png", alt: "screenshot" },
+    ])
+    const msg = repository.appendMessage(
+      thread.id,
+      "user",
+      "看看这张图",
+      "",
+      "final",
+      null,
+      null,
+      null,
+      "[]",
+      blocks,
+    )
+
+    const restored = repository.listMessages(thread.id).find((m) => m.id === msg.id)
+    assert.ok(restored, "message should be found in listMessages")
+    const parsed = JSON.parse(restored.contentBlocks)
+    assert.equal(parsed.length, 1)
+    assert.equal(parsed[0].type, "image")
+    assert.equal(parsed[0].url, "http://localhost:8787/uploads/test.png")
+    assert.equal(parsed[0].alt, "screenshot")
+
+    const recent = repository.listRecentMessages(thread.id, 10).find((m) => m.id === msg.id)
+    assert.ok(recent, "message should be found in listRecentMessages")
+    const parsedRecent = JSON.parse(recent.contentBlocks)
+    assert.equal(parsedRecent.length, 1)
+    assert.equal(parsedRecent[0].type, "image")
+  } finally {
+    cleanup()
+  }
+})
+
 test("assistant thinking is persisted with the message and restored on reload", () => {
   const { repository, cleanup } = createRepository()
 

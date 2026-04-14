@@ -159,7 +159,7 @@ export class SessionRepository {
   listMessages(threadId: string) {
     const rows = this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, created_at as createdAt
+        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt
          FROM messages
          WHERE thread_id = ?
          ORDER BY created_at ASC`,
@@ -171,7 +171,7 @@ export class SessionRepository {
   listRecentMessages(threadId: string, limit: number) {
     const rows = this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, created_at as createdAt
+        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt
          FROM messages
          WHERE thread_id = ?
          ORDER BY created_at DESC

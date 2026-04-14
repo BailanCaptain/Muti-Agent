@@ -17,12 +17,18 @@ type ChatStore = {
   sendMessage: (input: string) => Promise<void>
 }
 
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+
 async function uploadFile(file: File): Promise<string> {
   const form = new FormData()
   form.append("file", file)
-  const res = await fetch("/api/uploads", { method: "POST", body: form })
+  const res = await fetch(`${API_BASE}/api/uploads`, {
+    method: "POST",
+    body: form,
+  })
   const data = await res.json()
-  return data.url
+  return `${API_BASE}${data.url}`
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
@@ -64,6 +70,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const groupKey = threadState.activeGroupId ?? ""
     const pending = state.pendingImages[groupKey] ?? []
 
+    const preValidation = threadState.buildSendPayload(input, undefined)
+    if (!preValidation) {
+      set({ status: "请用 @ 指定智能体：@黄仁勋 / @范德彪 / @桂芬 / @所有人" })
+      return
+    }
+
     const contentBlocks: ContentBlock[] = []
     for (const img of pending) {
       try {
@@ -76,10 +88,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
 
     const payload = threadState.buildSendPayload(input, contentBlocks.length ? contentBlocks : undefined)
-    if (!payload) {
-      set({ status: "请用 @ 指定智能体：@黄仁勋 / @范德彪 / @桂芬 / @所有人" })
-      return
-    }
+    if (!payload) return
 
     socketClient.send({
       type: "send_message",
