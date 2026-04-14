@@ -183,6 +183,7 @@ F004 解决了"历史由服务端权威持有"的根基问题，但长对话中 
 | 2026-04-14 | Review R2 — 德彪 2 条 P1 + 1 条 P2，全部修复 (`ece0a52`) |
 | 2026-04-14 | Review R3 — 德彪放行，无新 bug |
 | 2026-04-14 | Merge — 合入 dev 并推送远程 |
+| 2026-04-14 | B012 Bugfix — SOP 书签阶段漂移：删除正则 phase 检测 + cycle completed 标记 + fillRatio 安全阀修正 (`a54cd24`, `72f1475`) |
 
 ## Links
 
