@@ -9,7 +9,6 @@ completed: 2026-04-11
 
 # F004 — 上下文记忆权威化
 
-**Status**: done
 **Created**: 2026-04-11
 **Completed**: 2026-04-11
 

@@ -9,7 +9,6 @@ completed: 2026-04-11
 
 # F002 — Decision Board：讨论级拍板收敛
 
-**Status**: spec
 **Created**: 2026-04-10
 
 ## Why

@@ -9,7 +9,6 @@ completed: 2026-04-10
 
 # F001 — UI 焕新：配置入口统一 + 消息渲染升级
 
-**Status**: done
 **Created**: 2026-04-10
 **Completed**: 2026-04-10（commit `43c7eda`）
 

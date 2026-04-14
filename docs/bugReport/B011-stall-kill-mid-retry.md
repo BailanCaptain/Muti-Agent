@@ -10,7 +10,6 @@ resolved: 2026-04-13
 # B011 — stall 快杀在 Gemini 429 重试期间误杀
 
 **症状族**：B002 → B006 → B010 → B011，同一根问题的第四轮修复。
-**Status**: fixed
 **Created**: 2026-04-13
 **Resolved**: 2026-04-13
 

@@ -10,7 +10,6 @@ resolved: 2026-04-11
 # B006 — 桂芬起手 RESOURCE_EXHAUSTED
 
 **Related**: F004 上下文记忆权威化 · LL-006 同层反复打补丁的终极教训
-**Status**: fixed（F004 AC5 第三版修复）
 **Created**: 2026-04-11
 **Resolved**: 2026-04-11
 

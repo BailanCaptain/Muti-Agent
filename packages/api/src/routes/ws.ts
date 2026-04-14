@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared";
+import type { OptionVerdict, RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared";
 import type { ApprovalManager } from "../orchestrator/approval-manager";
 import type { MessageService } from "../services/message-service";
 import { createLogger } from "../lib/logger";
@@ -42,7 +42,7 @@ export function registerWsRoute(
     messages: MessageService;
     broadcaster: RealtimeBroadcaster;
     approvals?: ApprovalManager;
-    onDecisionRespond?: (requestId: string, decisions: Array<{optionId: string; verdict: string; modification?: string}>, userInput?: string) => void;
+    onDecisionRespond?: (requestId: string, decisions: Array<{optionId: string; verdict: OptionVerdict; modification?: string}>, userInput?: string) => void;
   }
 ) {
   const sockets = new Set<SocketLike>();
@@ -75,7 +75,13 @@ export function registerWsRoute(
       });
 
       socket.on("message", async (raw: Buffer) => {
-        const event = JSON.parse(raw.toString()) as RealtimeClientEvent;
+        let event: RealtimeClientEvent;
+        try {
+          event = JSON.parse(raw.toString()) as RealtimeClientEvent;
+        } catch {
+          log.warn("malformed JSON from client, ignoring");
+          return;
+        }
         log.debug({ type: event.type }, "client event received");
 
         if (event.type === "approval.respond" && options.approvals) {

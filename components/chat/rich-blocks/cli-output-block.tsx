@@ -290,9 +290,11 @@ function ToolsSection({
     prevStatus.current = status
   }, [status, isStreaming])
 
-  if (isStreaming && !toolsExpanded) {
-    setToolsExpanded(true)
-  }
+  useEffect(() => {
+    if (isStreaming) {
+      setToolsExpanded(true)
+    }
+  }, [isStreaming])
 
   const lastActiveTool = isStreaming
     ? [...tools].reverse().find((t) => t.status === "active")

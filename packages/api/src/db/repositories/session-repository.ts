@@ -415,7 +415,7 @@ export class SessionRepository {
     updates: { currentModel?: string | null; nativeSessionId?: string | null; sopBookmark?: string | null; lastFillRatio?: number | null },
   ) {
     const setClauses: string[] = []
-    const params: unknown[] = []
+    const params: (string | number | null)[] = []
 
     if ("currentModel" in updates) {
       setClauses.push("current_model = ?")

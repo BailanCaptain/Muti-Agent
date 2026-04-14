@@ -8,7 +8,6 @@ created: 2026-04-14
 
 # F009 — 全链路性能优化
 
-**Status**: completed
 **Created**: 2026-04-14
 
 ## Why

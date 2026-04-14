@@ -1,7 +1,7 @@
 ---
 id: B005
 title: direct-turn 失忆 — nativeSessionId 被清后历史彻底丢失
-status: investigating
+status: fixed
 related: F004
 created: 2026-04-11
 ---
@@ -9,7 +9,6 @@ created: 2026-04-11
 # B005 — direct-turn 失忆
 
 **Related**: F004 上下文记忆权威化
-**Status**: investigating（Phase 1 根因已确认，Phase 4 修复挂在 F004 实施中）
 **Created**: 2026-04-11
 
 ## 诊断胶囊（8 栏工作模板）

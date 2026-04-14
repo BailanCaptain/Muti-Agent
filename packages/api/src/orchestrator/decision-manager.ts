@@ -1,7 +1,7 @@
-import type { DecisionRequest, Provider, RealtimeServerEvent } from "@multi-agent/shared"
+import type { DecisionRequest, OptionVerdict, Provider, RealtimeServerEvent } from "@multi-agent/shared"
 
 export type DecisionResponse = {
-  decisions: Array<{ optionId: string; verdict: string; modification?: string }>
+  decisions: Array<{ optionId: string; verdict: OptionVerdict; modification?: string }>
   userInput: string
 }
 
@@ -89,7 +89,7 @@ export class DecisionManager {
     return results
   }
 
-  respond(requestId: string, decisions: Array<{optionId: string; verdict: string; modification?: string}>, userInput?: string): void {
+  respond(requestId: string, decisions: Array<{optionId: string; verdict: OptionVerdict; modification?: string}>, userInput?: string): void {
     const entry = this.pending.get(requestId)
     if (!entry) return
 
@@ -115,7 +115,7 @@ export class DecisionManager {
 
   private writeDecisionToThread(
     request: DecisionRequest,
-    decisions: Array<{optionId: string; verdict: string; modification?: string}>,
+    decisions: Array<{optionId: string; verdict: OptionVerdict; modification?: string}>,
     userInput?: string,
   ): void {
     if (!this.repository) return

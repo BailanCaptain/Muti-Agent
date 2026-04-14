@@ -28,14 +28,14 @@ function SOPBreadcrumb({ skill, phase, next }: { skill: string; phase?: string |
 
 export function ExecutionBar() {
   const providers = useThreadStore((s) => s.providers)
-  const pendingCount = useApprovalStore((s) => s.pending.length)
+  const pending = useApprovalStore((s) => s.pending)
 
   return (
     <div className="flex items-center gap-4 px-4 py-2 border-t border-slate-200/60 bg-slate-50/50">
       {PROVIDERS.map((provider: Provider) => {
         const card = providers[provider]
         const isRunning = card?.running ?? false
-        const isWaiting = useApprovalStore.getState().pending.some(
+        const isWaiting = pending.some(
           (r) => r.provider === provider,
         )
 
@@ -64,10 +64,10 @@ export function ExecutionBar() {
         )
       })}
 
-      {pendingCount > 0 && (
+      {pending.length > 0 && (
         <div className="ml-auto flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700">
           <ShieldAlert className="h-3.5 w-3.5" />
-          {pendingCount} 待审批
+          {pending.length} 待审批
         </div>
       )}
     </div>

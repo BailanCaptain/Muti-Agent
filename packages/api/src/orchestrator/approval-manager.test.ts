@@ -50,7 +50,7 @@ describe("ApprovalManager", () => {
     assert.equal(emitted.length, 2)
     assert.deepEqual(emitted[1], {
       type: "approval.resolved",
-      payload: { requestId: payload.requestId, granted: true },
+      payload: { sessionGroupId: "group-1", requestId: payload.requestId, granted: true },
     })
   })
 

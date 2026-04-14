@@ -8,7 +8,6 @@ created: 2026-04-13
 
 # F007 — 上下文压缩优化
 
-**Status**: done
 **Created**: 2026-04-13
 
 ## Why

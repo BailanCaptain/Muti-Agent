@@ -9,7 +9,6 @@ completed: 2026-04-11
 
 # F003 — A2A 运行时闭环
 
-**Status**: done（AC1-AC4 代码层完成，AC5 由小孙授权归档 — 后续复现转 bug）
 **Created**: 2026-04-11
 **Completed**: 2026-04-11
 

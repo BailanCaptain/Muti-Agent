@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify"
+import "@fastify/multipart"
 import { randomUUID } from "node:crypto"
 import { createWriteStream, unlinkSync, writeFileSync } from "node:fs"
 import { pipeline } from "node:stream/promises"

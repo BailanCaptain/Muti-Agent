@@ -454,7 +454,9 @@ export class MessageService {
       return
     }
 
-    void this.handleSendMessage(event, emit)
+    void this.handleSendMessage(event, emit).catch((err) => {
+      this.log.error({ err }, "handleSendMessage unhandled rejection")
+    })
   }
 
   cancelThreadChain(threadId: string, emit: EmitEvent) {
@@ -1214,6 +1216,8 @@ export class MessageService {
             emit: options.emit,
             rootMessageId: options.rootMessageId,
             parentInvocationId: null,
+          }).catch((err) => {
+            this.log.error({ err }, "A2A return-turn unhandled rejection")
           })
         }
       }
@@ -1805,7 +1809,9 @@ export class MessageService {
           this.parallelGroups.markAggregationDone(group.id)
           this.parallelGroups.remove(group.id)
         }
-      })()
+      })().catch((err) => {
+        this.log.error({ err, provider }, "parallel group member turn unhandled rejection")
+      })
     }
 
     return { ok: true, groupId: group.id }

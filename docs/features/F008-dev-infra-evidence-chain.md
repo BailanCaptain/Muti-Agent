@@ -8,7 +8,6 @@ created: 2026-04-14
 
 # F008 — 开发基础设施 + 视觉证据链
 
-**Status**: implemented
 **Created**: 2026-04-14
 
 ## Why

@@ -9,7 +9,6 @@ completed: 2026-04-14
 
 # F006 — UI/UX 深度重塑与运行时治理 V2
 
-**Status**: completed
 **Created**: 2026-04-13
 
 ## Why

@@ -54,8 +54,8 @@ test("guardianMode strips all context injection", async () => {
     policy: POLICY_GUARDIAN,
     task: "验收 F001",
     roomSnapshot: [
-      { agentId: "黄仁勋", role: "assistant", content: "我完成了实现" },
-      { agentId: "范德彪", role: "assistant", content: "收到" },
+      { id: "msg-1", agentId: "黄仁勋", role: "assistant" as const, content: "我完成了实现", createdAt: "2026-01-01T00:00:00Z" },
+      { id: "msg-2", agentId: "范德彪", role: "assistant" as const, content: "收到", createdAt: "2026-01-01T00:00:01Z" },
     ],
     sourceAlias: "范德彪",
     targetAlias: "黄仁勋",

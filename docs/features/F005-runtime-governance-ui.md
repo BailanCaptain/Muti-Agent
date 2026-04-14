@@ -8,7 +8,6 @@ created: 2026-04-11
 
 # F005 — 运行时治理 UI：权限系统 + 面板重构 + 侧边栏重做
 
-**Status**: merged (dev, commit b623b14)
 **Created**: 2026-04-11
 
 ## Why
