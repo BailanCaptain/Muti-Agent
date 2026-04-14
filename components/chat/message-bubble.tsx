@@ -11,7 +11,7 @@ import { BlockRenderer } from "./block-renderer"
 import { DecisionCard } from "./decision-card"
 import { MarkdownMessage } from "./markdown-message"
 import { ProviderAvatar } from "./provider-avatar"
-import { StepTracker } from "./rich-blocks/step-tracker"
+import { CliOutputBlock } from "./rich-blocks/cli-output-block"
 
 interface MessageBubbleProps {
   message: TimelineMessage
@@ -209,7 +209,7 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
                 }`}
               >
                 {!isUser && message.toolEvents && message.toolEvents.length > 0 && (
-                  <StepTracker toolEvents={message.toolEvents} provider={message.provider} />
+                  <CliOutputBlock toolEvents={message.toolEvents} provider={message.provider} />
                 )}
 
                 {!isUser && message.thinking && theme && showThinking ? (
