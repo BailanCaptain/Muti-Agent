@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ToolEvent } from "@multi-agent/shared";
 import { BaseCliRuntime, resolveNpmRoot, type AgentRunInput, type RuntimeCommand, type StopReason } from "./base-runtime";
@@ -87,8 +88,7 @@ export class ClaudeRuntime extends BaseCliRuntime {
     }
     const mcpServerPath = path.join(__dirname, "..", "mcp", "server.js");
 
-    // 直接把 MCP 配置作为 JSON 字符串内联传入，省去临时文件的创建与清理。
-    const mcpConfig = JSON.stringify({
+    const mcpConfigObj = {
       mcpServers: {
         multi_agent_room: {
           command: process.execPath,
@@ -100,8 +100,21 @@ export class ClaudeRuntime extends BaseCliRuntime {
           }
         }
       }
-    });
-    args.push("--mcp-config", mcpConfig);
+    };
+    let cleanup: (() => void) | undefined;
+    if (process.platform === "win32") {
+      const dir = mkdtempSync(path.join(tmpdir(), "multi-agent-mcp-"));
+      const configPath = path.join(dir, "mcp-config.json");
+      writeFileSync(configPath, JSON.stringify(mcpConfigObj), "utf-8");
+      args.push("--mcp-config", configPath);
+      cleanup = () => {
+        try { require("node:fs").rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+      };
+    } else {
+      args.push("--mcp-config", JSON.stringify(mcpConfigObj));
+    }
+
+    args.push("--permission-mode", "bypassPermissions");
 
     if (model) {
       args.push("--model", model);
@@ -118,6 +131,7 @@ export class ClaudeRuntime extends BaseCliRuntime {
       args: [...runtime.prefixArgs, ...args],
       shell: runtime.shell,
       stdinContent: input.prompt,
+      cleanup,
     };
   }
 
