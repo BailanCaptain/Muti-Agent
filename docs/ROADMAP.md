@@ -7,8 +7,7 @@
 
 | ID | 名称 | 状态 | Owner | Source | Spec |
 |----|------|------|-------|--------|------|
-| F011 | 后端加固 + drizzle-orm 迁移：数据库/WS/事件健壮性 + ORM 一步到位 | spec | 黄仁勋 | internal | [F011](features/F011-backend-hardening-drizzle.md) |
-| F012 | 前端加固 + 渲染重构 + DesignSystem：消息卡片化 + 折叠式展示 + 统一设计 | spec | 桂芬 | internal | [F012](features/F012-frontend-hardening-redesign.md) |
+| F012 | 前端加固 + 渲染重构 + DesignSystem + 三 CLI 整改 + 截图能力：消息卡片化 + 折叠式展示 + 统一设计 + CLI 参数/事件对齐 clowder-ai + Puppeteer 截图 | spec | 桂芬 | internal | [F012](features/F012-frontend-hardening-redesign.md) |
 | F015 | 调度状态持久化：DispatchOrchestrator 关键 Map 写入 DB + 进程重启恢复 | spec | TBD | internal | [F015](features/F015-dispatch-state-persistence.md) |
 | F017 | 跨房间协作感知：侧边栏运行指示 + 全局任务状态 | spec | 桂芬 | internal | [F017](features/F017-cross-room-awareness.md) |
 <!-- 新 Feature 在此行上方添加 -->
@@ -28,4 +27,5 @@
 | F010 | 基线回绿 + P0 止血：typecheck/test 全绿 + 崩服务级 bug 修复 | 2026-04-14 | [F010](features/F010-baseline-greenlight.md) |
 | F008 | 开发基础设施 + 视觉证据链：Hot-Reload + ImageBlock + 日志 + 截图 | 2026-04-14 | [F008](features/F008-dev-infra-evidence-chain.md) |
 | F013 | CI/CD 门禁：GitHub Actions + pre-commit hook + 文档状态校验 | 2026-04-14 | [F013](features/F013-ci-cd-gate.md) |
+| F011 | 后端加固 + drizzle-orm 迁移：数据库/WS/事件健壮性 + ORM 一步到位 | 2026-04-15 | [F011](features/F011-backend-hardening-drizzle.md) |
 <!-- 完成的 Feature 从活跃表移到此处 -->
