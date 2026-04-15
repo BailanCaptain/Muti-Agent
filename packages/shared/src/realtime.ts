@@ -391,6 +391,14 @@ export type RealtimeServerEvent =
       }
     }
   | {
+      type: "assistant_content_block"
+      payload: {
+        sessionGroupId: string
+        messageId: string
+        block: ContentBlock
+      }
+    }
+  | {
       type: "preview.auto_open"
       payload: {
         port: number

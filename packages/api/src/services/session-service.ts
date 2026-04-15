@@ -312,8 +312,12 @@ export class SessionService {
     return this.repository.appendMessage(threadId, "assistant", content, "", "connector", connectorSource, groupId, groupRole)
   }
 
-  overwriteMessage(messageId: string, updates: { content?: string; thinking?: string; toolEvents?: string }) {
+  overwriteMessage(messageId: string, updates: { content?: string; thinking?: string; toolEvents?: string; contentBlocks?: string }) {
     this.repository.overwriteMessage(messageId, updates)
+  }
+
+  appendContentBlock(messageId: string, block: import("@multi-agent/shared").ContentBlock) {
+    this.repository.appendContentBlock(messageId, block as { type: string; [key: string]: unknown })
   }
 
   toTimelineMessage(threadId: string, messageId: string): TimelineMessage | null {

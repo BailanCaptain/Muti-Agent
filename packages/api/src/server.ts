@@ -31,6 +31,7 @@ import { registerPreviewRoutes } from "./routes/preview"
 import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
 import { PreviewGateway } from "./preview/preview-gateway"
 import { collectRuntimePorts } from "./preview/port-validator"
+import { captureScreenshot } from "./preview/screenshot-service"
 import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
 import { awaitRunsToStop } from "./runtime/shutdown"
@@ -356,6 +357,35 @@ export async function createApiServer(options: {
       return { memories }
     },
     requestPermission: (params) => approvals.requestPermission(params),
+    takeScreenshot: async (params) => {
+      const result = await captureScreenshot(uploadsDir, params.url)
+      const block = {
+        type: "image" as const,
+        url: result.url,
+        alt: params.alt ?? "Screenshot",
+        meta: {
+          source: "agent_screenshot",
+          timestamp: new Date().toISOString(),
+          viewport: { width: result.width, height: result.height },
+        },
+      }
+
+      const threadMessages = repository.listMessages(params.threadId)
+      const lastAssistant = [...threadMessages].reverse().find((m) => m.role === "assistant")
+      if (lastAssistant) {
+        sessions.appendContentBlock(lastAssistant.id, block)
+        broadcaster.broadcast({
+          type: "assistant_content_block",
+          payload: {
+            sessionGroupId: params.sessionGroupId,
+            messageId: lastAssistant.id,
+            block,
+          },
+        })
+      }
+
+      return { ok: true as const, imageUrl: result.url }
+    },
   })
   registerWsRoute(app, {
     messages,

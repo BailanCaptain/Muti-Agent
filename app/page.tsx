@@ -40,6 +40,7 @@ export default function HomePage() {
   const applyAssistantDelta = useThreadStore((state) => state.applyAssistantDelta)
   const applyThinkingDelta = useThreadStore((state) => state.applyThinkingDelta)
   const applyToolEvent = useThreadStore((state) => state.applyToolEvent)
+  const applyContentBlock = useThreadStore((state) => state.applyContentBlock)
   const appendTimelineMessage = useThreadStore((state) => state.appendTimelineMessage)
   const replaceActiveGroup = useThreadStore((state) => state.replaceActiveGroup)
   const applySnapshotDelta = useThreadStore((state) => state.applySnapshotDelta)
@@ -108,6 +109,12 @@ export default function HomePage() {
         if (event.type === "assistant_tool_event") {
           if (!isCurrentSession(event.payload.sessionGroupId)) return
           applyToolEvent(event.payload.messageId, event.payload.event)
+          return
+        }
+
+        if (event.type === "assistant_content_block") {
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
+          applyContentBlock(event.payload.messageId, event.payload.block)
           return
         }
 

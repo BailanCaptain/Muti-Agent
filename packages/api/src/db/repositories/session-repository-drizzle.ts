@@ -326,10 +326,10 @@ export class DrizzleSessionRepository {
     return message
   }
 
-  overwriteMessage(messageId: string, updates: { content?: string; thinking?: string; toolEvents?: string }) {
+  overwriteMessage(messageId: string, updates: { content?: string; thinking?: string; toolEvents?: string; contentBlocks?: string }) {
     this.db.transaction((tx) => {
       const current = tx
-      .select({ content: messages.content, thinking: messages.thinking, toolEvents: messages.toolEvents })
+      .select({ content: messages.content, thinking: messages.thinking, toolEvents: messages.toolEvents, contentBlocks: messages.contentBlocks })
       .from(messages)
       .where(eq(messages.id, messageId))
       .limit(1)
@@ -343,9 +343,32 @@ export class DrizzleSessionRepository {
         content: updates.content ?? current[0].content,
         thinking: updates.thinking ?? current[0].thinking,
         toolEvents: updates.toolEvents ?? current[0].toolEvents,
+        contentBlocks: updates.contentBlocks ?? current[0].contentBlocks,
       })
       .where(eq(messages.id, messageId))
       .run()
+    })
+  }
+
+  appendContentBlock(messageId: string, block: { type: string; [key: string]: unknown }) {
+    this.db.transaction((tx) => {
+      const current = tx
+        .select({ contentBlocks: messages.contentBlocks })
+        .from(messages)
+        .where(eq(messages.id, messageId))
+        .limit(1)
+        .all()
+
+      if (current.length === 0) return
+
+      const blocks = JSON.parse(current[0].contentBlocks || "[]") as unknown[]
+      blocks.push(block)
+
+      tx
+        .update(messages)
+        .set({ contentBlocks: JSON.stringify(blocks) })
+        .where(eq(messages.id, messageId))
+        .run()
     })
   }
 

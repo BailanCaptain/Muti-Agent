@@ -1,6 +1,7 @@
 "use client"
 
 import { Children, type ReactNode, useCallback, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkBreaks from "remark-breaks"
 import remarkGfm from "remark-gfm"
@@ -125,6 +126,44 @@ function CodeBlock({ children }: { children: ReactNode }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Inline image lightbox for markdown-rendered images                 */
+/* ------------------------------------------------------------------ */
+
+function ZoomableImage({ src, alt }: { src?: string; alt?: string }) {
+  const [open, setOpen] = useState(false)
+  if (!src) return null
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} className="my-2 block cursor-zoom-in">
+        <img
+          src={src}
+          alt={alt ?? ""}
+          className="max-h-64 rounded-lg border border-zinc-200 object-contain transition hover:border-zinc-400 hover:shadow-md"
+        />
+      </button>
+      {open &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+            onClick={() => setOpen(false)}
+            onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
+            role="button"
+            tabIndex={0}
+          >
+            <img
+              src={src}
+              alt={alt ?? ""}
+              className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>,
+          document.body,
+        )}
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /*  react-markdown component overrides                                 */
 /* ------------------------------------------------------------------ */
 
@@ -204,6 +243,7 @@ const mdComponents: Components = {
       {withMentions(children)}
     </a>
   ),
+  img: ({ src, alt }) => <ZoomableImage src={typeof src === "string" ? src : undefined} alt={typeof alt === "string" ? alt : undefined} />,
   hr: () => <hr className="border-slate-200/60" />,
 
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,

@@ -75,6 +75,12 @@ export function registerCallbackRoutes(
       reason: string
       context?: string
     }) => Promise<{ status: "granted" | "denied" | "timeout" }>
+    takeScreenshot?: (params: {
+      threadId: string
+      sessionGroupId: string
+      url?: string
+      alt?: string
+    }) => Promise<{ ok: true; imageUrl: string }>
   },
 ) {
   app.post("/api/callbacks/post-message", async (request: FastifyRequest, reply: FastifyReply) => {
@@ -490,5 +496,39 @@ export function registerCallbackRoutes(
     })
 
     return result
+  })
+
+  app.post("/api/callbacks/take-screenshot", async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as CallbackBody & { url?: string; alt?: string }
+    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
+
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+
+    if (!options.takeScreenshot) {
+      reply.code(501)
+      return { error: "Screenshot capability not configured." }
+    }
+
+    try {
+      const result = await options.takeScreenshot({
+        threadId: thread.id,
+        sessionGroupId: thread.sessionGroupId,
+        url: body.url,
+        alt: body.alt,
+      })
+      return result
+    } catch (err) {
+      reply.code(500)
+      return { error: err instanceof Error ? err.message : "Screenshot failed" }
+    }
   })
 }

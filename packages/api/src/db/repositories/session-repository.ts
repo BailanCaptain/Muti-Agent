@@ -292,18 +292,39 @@ export class SessionRepository {
     return message
   }
 
-  overwriteMessage(messageId: string, updates: { content?: string; thinking?: string; toolEvents?: string }) {
+  overwriteMessage(messageId: string, updates: { content?: string; thinking?: string; toolEvents?: string; contentBlocks?: string }) {
     const current = this.store.db
-      .prepare("SELECT content, thinking, tool_events as toolEvents FROM messages WHERE id = ? LIMIT 1")
-      .get(messageId) as { content: string; thinking: string; toolEvents: string } | undefined
+      .prepare("SELECT content, thinking, tool_events as toolEvents, content_blocks as contentBlocks FROM messages WHERE id = ? LIMIT 1")
+      .get(messageId) as { content: string; thinking: string; toolEvents: string; contentBlocks: string } | undefined
 
     if (!current) {
       return
     }
 
     this.store.db
-      .prepare("UPDATE messages SET content = ?, thinking = ?, tool_events = ? WHERE id = ?")
-      .run(updates.content ?? current.content, updates.thinking ?? current.thinking, updates.toolEvents ?? current.toolEvents, messageId)
+      .prepare("UPDATE messages SET content = ?, thinking = ?, tool_events = ?, content_blocks = ? WHERE id = ?")
+      .run(
+        updates.content ?? current.content,
+        updates.thinking ?? current.thinking,
+        updates.toolEvents ?? current.toolEvents,
+        updates.contentBlocks ?? current.contentBlocks,
+        messageId,
+      )
+  }
+
+  appendContentBlock(messageId: string, block: { type: string; [key: string]: unknown }) {
+    const current = this.store.db
+      .prepare("SELECT content_blocks as contentBlocks FROM messages WHERE id = ? LIMIT 1")
+      .get(messageId) as { contentBlocks: string } | undefined
+
+    if (!current) return
+
+    const blocks = JSON.parse(current.contentBlocks || "[]") as unknown[]
+    blocks.push(block)
+
+    this.store.db
+      .prepare("UPDATE messages SET content_blocks = ? WHERE id = ?")
+      .run(JSON.stringify(blocks), messageId)
   }
 
   createInvocation(record: InvocationRecord) {

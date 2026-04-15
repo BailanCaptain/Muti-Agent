@@ -81,6 +81,7 @@ type ThreadStore = {
   applyAssistantDelta: (messageId: string, delta: string) => void
   applyThinkingDelta: (messageId: string, delta: string) => void
   applyToolEvent: (messageId: string, event: ToolEvent) => void
+  applyContentBlock: (messageId: string, block: ContentBlock) => void
   appendTimelineMessage: (message: TimelineMessage) => void
   applySnapshotDelta: (delta: ThreadSnapshotDelta) => void
   reconcileOptimisticMessage: (clientMessageId: string, serverMessage: TimelineMessage) => void
@@ -424,6 +425,15 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       timeline: state.timeline.map((message) =>
         message.id === messageId
           ? { ...message, toolEvents: [...(message.toolEvents ?? []), event] }
+          : message,
+      ),
+    }))
+  },
+  applyContentBlock: (messageId, block) => {
+    set((state) => ({
+      timeline: state.timeline.map((message) =>
+        message.id === messageId
+          ? { ...message, contentBlocks: [...(message.contentBlocks ?? []), block] }
           : message,
       ),
     }))

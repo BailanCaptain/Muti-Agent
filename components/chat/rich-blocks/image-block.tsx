@@ -1,20 +1,49 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
+import { createPortal } from "react-dom"
 import type { ImageBlock } from "@/lib/blocks"
+
+function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
+    }
+    document.addEventListener("keydown", handler)
+    return () => document.removeEventListener("keydown", handler)
+  }, [onClose])
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      onClick={onClose}
+      role="button"
+      tabIndex={0}
+    >
+      <img
+        src={src}
+        alt={alt}
+        className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      />
+    </div>,
+    document.body,
+  )
+}
 
 export function ImageBlockComponent({ block }: { block: ImageBlock }) {
   const [expanded, setExpanded] = useState(false)
-  const toggle = useCallback(() => setExpanded((v) => !v), [])
+  const open = useCallback(() => setExpanded(true), [])
+  const close = useCallback(() => setExpanded(false), [])
 
   return (
     <>
       <figure className="my-2 max-w-full">
-        <button type="button" onClick={toggle} className="cursor-zoom-in">
+        <button type="button" onClick={open} className="cursor-zoom-in">
           <img
             src={block.url}
             alt={block.alt ?? ""}
-            className="max-h-64 rounded-lg border border-zinc-700 object-contain"
+            className="max-h-64 rounded-lg border border-zinc-200 object-contain transition hover:border-zinc-400 hover:shadow-md"
           />
         </button>
         {block.alt && (
@@ -28,19 +57,7 @@ export function ImageBlockComponent({ block }: { block: ImageBlock }) {
       </figure>
 
       {expanded && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
-          onClick={toggle}
-          onKeyDown={(e) => e.key === "Escape" && toggle()}
-          role="button"
-          tabIndex={0}
-        >
-          <img
-            src={block.url}
-            alt={block.alt ?? ""}
-            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
-          />
-        </div>
+        <ImageLightbox src={block.url} alt={block.alt ?? ""} onClose={close} />
       )}
     </>
   )

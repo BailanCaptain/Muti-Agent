@@ -6,9 +6,9 @@ import { getTools, handleToolCall } from "./server.js"
 // getTools tests
 // ---------------------------------------------------------------------------
 
-test("getTools returns 11 tools", () => {
+test("getTools returns 12 tools", () => {
   const tools = getTools()
-  assert.equal(tools.length, 11, `Expected 11 tools, got ${tools.length}`)
+  assert.equal(tools.length, 12, `Expected 12 tools, got ${tools.length}`)
   const names = tools.map((t) => t.name).sort()
   assert.deepEqual(names, [
     "create_task",
@@ -21,6 +21,7 @@ test("getTools returns 11 tools", () => {
     "request_decision",
     "request_permission",
     "search_room_memories",
+    "take_screenshot",
     "trigger_mention",
   ])
 })
@@ -156,6 +157,16 @@ test("handleToolCall search_room_memories rejects missing keyword", async () => 
   assert.ok(result, "Should return a result")
   assert.equal(result.isError, true)
   assert.ok(result.content[0]?.text.includes("keyword is required"))
+})
+
+test("handleToolCall dispatches take_screenshot", async () => {
+  await assert.rejects(
+    () => handleToolCall("take_screenshot", { url: "http://localhost:3000" }),
+    (err: Error) => {
+      assert.ok(err.message.includes("ECONNREFUSED"), `Expected ECONNREFUSED, got: ${err.message}`)
+      return true
+    },
+  )
 })
 
 test("handleToolCall returns unknown tool error for invalid tool", async () => {

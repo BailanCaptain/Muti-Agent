@@ -389,6 +389,17 @@ export function getTools() {
         },
         required: ["action", "reason"]
       }
+    },
+    {
+      name: "take_screenshot",
+      description: "对指定 URL 截图并将图片嵌入当前消息，在前端即时展示。默认截 localhost:3000。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "要截图的 URL，默认 http://localhost:3000" },
+          alt: { type: "string", description: "图片描述（alt text）" }
+        }
+      }
     }
   ];
 }
@@ -560,6 +571,31 @@ async function callParallelThink(params: {
   };
 }
 
+async function callTakeScreenshot(params: { url?: string; alt?: string }): Promise<ToolResult> {
+  const identity = getCallbackIdentity();
+  const response = await requestJson(`${identity.apiUrl}/api/callbacks/take-screenshot`, {
+    method: "POST",
+    body: {
+      invocationId: identity.invocationId,
+      callbackToken: identity.callbackToken,
+      url: params.url,
+      alt: params.alt,
+    }
+  });
+
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `take_screenshot failed: ${JSON.stringify(response.json)}` }]
+    };
+  }
+
+  const result = response.json as { ok: boolean; imageUrl: string };
+  return {
+    content: [{ type: "text", text: `Screenshot captured and embedded in message. URL: ${result.imageUrl}` }]
+  };
+}
+
 async function callRequestPermission(params: { action: string; reason: string; context?: string }): Promise<ToolResult> {
   const identity = getCallbackIdentity();
   const response = await requestJson(`${identity.apiUrl}/api/callbacks/request-permission`, {
@@ -666,6 +702,8 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
       });
     case "request_permission":
       return callRequestPermission(args as { action: string; reason: string; context?: string });
+    case "take_screenshot":
+      return callTakeScreenshot(args as { url?: string; alt?: string });
     default:
       return {
         isError: true,
