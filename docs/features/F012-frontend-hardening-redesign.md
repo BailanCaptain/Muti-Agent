@@ -118,7 +118,7 @@ created: 2026-04-14
     1. 在前端主动添加一条规则"Claude npm * → 允许（全局）"
     2. 触发 Claude 执行 npm 命令 → 自动放行，状态栏显示"已自动放行"
     3. 删除规则后重新触发 → 弹出审批卡片 → 点批准 → agent 继续
-- [ ] AC-22: **截图能力**（参照 clowder-ai 方案）：
+- [x] AC-22: **截图能力**（参照 clowder-ai 方案）：
   - 参考实现：clowder-ai `preview-gateway.ts` + `bridge-script.ts` + `ImageExporter.ts` + `preview.ts:138-163`
   - 需要新增的组件：
     - PreviewGateway 反向代理（让 iframe 安全加载本地 dev server）
@@ -220,6 +220,7 @@ pnpm dev
 | 2026-04-15 | Phase 2 完成 | 卡片模型重写 + CollapsibleBlock + skillEvents 数据管道 |
 | 2026-04-15 | Phase 3 完成 | DesignSystem 统一 theme + 4 组件迁移 + 重复色彩删除 |
 | 2026-04-15 | 门禁通过 | typecheck + check-docs + biome lint + 530 tests（529 pass / 1 pre-existing flaky） |
+| 2026-04-15 | AC-22 完成 | PreviewGateway + Bridge Script + WS Patch + port-validator + BrowserPanel + auto-open 事件 + 13 安全测试 |
 | 2026-04-14 | 自我纠正 | clowder-ai 确实用了三个 CLI（之前错说没用 Codex/Gemini）；Codex reasoning 在 clowder-ai 已跑通；Gemini 无原生 thinking |
 | 2026-04-14 | 根因补充 | 审批规则"完全废了"不止是卡片弹不出——前端缺规则创建 UI，用户无法主动配置放权/不放权 |
 
