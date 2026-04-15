@@ -59,8 +59,15 @@ export class CodexRuntime extends BaseCliRuntime {
         return "🧠 正在推理...";
       }
       if (type === "item.completed" && itemType === "reasoning") {
-        const text = ((item.text as string) ?? "").trim();
-        return text || null;
+        const directText = typeof item.text === "string" ? item.text.trim() : "";
+        if (directText) return directText;
+        const summaryArr = Array.isArray(item.summary) ? (item.summary as Array<Record<string, unknown>>) : [];
+        const summaryText = summaryArr
+          .filter((s) => s.type === "summary_text" && typeof s.text === "string")
+          .map((s) => s.text as string)
+          .join("\n")
+          .trim();
+        return summaryText || null;
       }
 
       if (itemType === "todo_list") {
@@ -126,10 +133,22 @@ export class CodexRuntime extends BaseCliRuntime {
       }
 
       if (type === "item.started" && itemType === "command_execution") {
+        const cmd = (item.command as string) ?? "";
+        const skillMatch = cmd.match(/multi-agent-skills[\/\\]+([a-z0-9-]+)/i);
+        if (skillMatch) {
+          return {
+            type: "tool_use",
+            toolName: "Skill",
+            toolInput: skillMatch[1],
+            status: "started",
+            timestamp: new Date().toISOString(),
+            source: "skill",
+          };
+        }
         return {
           type: "tool_use",
           toolName: "Bash",
-          toolInput: ((item.command as string) ?? "").split("\n")[0].slice(0, 100),
+          toolInput: cmd.split("\n")[0].slice(0, 100),
           status: "started",
           timestamp: new Date().toISOString(),
           source: "tool",
@@ -137,27 +156,30 @@ export class CodexRuntime extends BaseCliRuntime {
       }
 
       if (type === "item.completed" && itemType === "command_execution") {
+        const cmd = (item.command as string) ?? "";
         const output = (item.aggregated_output as string) ?? (item.output as string) ?? "";
+        const isSkill = /multi-agent-skills[\/\\]+[a-z0-9-]+/i.test(cmd);
         return {
           type: "tool_result",
-          toolName: "Bash",
+          toolName: isSkill ? "Skill" : "Bash",
           content: output.split("\n")[0].slice(0, 200) || "done",
           status: "completed",
           timestamp: new Date().toISOString(),
-          source: "tool",
+          source: isSkill ? "skill" : "tool",
         };
       }
 
       if (type === "item.completed" && itemType === "file_change") {
         const filePath = (item.path as string) ?? "";
         const shortPath = filePath.split(/[/\\]/).slice(-2).join("/");
+        const isSkill = /multi-agent-skills[\/\\]/i.test(filePath);
         return {
           type: "tool_use",
-          toolName: "Edit",
+          toolName: isSkill ? "Skill" : "Edit",
           toolInput: shortPath,
           status: "completed",
           timestamp: new Date().toISOString(),
-          source: "tool",
+          source: isSkill ? "skill" : "tool",
         };
       }
 

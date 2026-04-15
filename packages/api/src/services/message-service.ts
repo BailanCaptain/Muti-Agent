@@ -90,7 +90,7 @@ const STDERR_NOISE_PATTERNS = [
   /^Using model:/i,
   /^Tip:/i,
   /^\[runtime\]/,
-  /^Reading prompt from stdin/i,
+  /^Reading (prompt|additional input) from stdin/i,
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z?\s+(ERROR|WARN|INFO|DEBUG|TRACE)\s/,
   /^codex_core/,
   /^failed to stat skills entry/i,
@@ -652,7 +652,6 @@ export class MessageService {
     const userMessage = this.sessions.appendUserMessage(thread.id, event.payload.content, contentBlocksJson)
     const rootMessageId = this.dispatch.registerUserRoot(userMessage.id, thread.sessionGroupId)
     const userTimeline = this.sessions.toTimelineMessage(thread.id, userMessage.id)
-    const pendingSkillEvents = this.buildSkillEvents(event.payload.content, thread.provider)
     if (userTimeline) {
       emit({
         type: "message.created",
@@ -740,7 +739,6 @@ export class MessageService {
       content: effectiveContent,
       emit,
       rootMessageId,
-      skillEvents: pendingSkillEvents.length ? pendingSkillEvents : undefined,
     })
     const queueFlush = this.flushDispatchQueue(thread.sessionGroupId, emit)
     await Promise.allSettled([directTurn, queueFlush])
@@ -766,8 +764,6 @@ export class MessageService {
     groupRole?: "header" | "member" | "convergence" | null
     /** Counter for seal auto-resume (prevents infinite loops) */
     autoResumeCount?: number
-    /** SkillEvents matched from user input, to be attached to the assistant response */
-    skillEvents?: import("@multi-agent/shared").SkillEvent[]
   }): Promise<{ messageId: string; content: string } | null> {
     const thread = this.dispatch.resolveThread(options.threadId)
     if (!thread) {
@@ -798,9 +794,6 @@ export class MessageService {
     this.dispatch.attachMessageToRoot(assistant.id, options.rootMessageId)
     const assistantTimeline = this.sessions.toTimelineMessage(thread.id, assistant.id)
     if (assistantTimeline) {
-      if (options.skillEvents?.length) {
-        assistantTimeline.skillEvents = options.skillEvents
-      }
       options.emit({
         type: "message.created",
         payload: {
@@ -837,6 +830,7 @@ export class MessageService {
     const startedAt = new Date().toISOString()
     let promptRequestedByCli: string | null = null
     let thinking = ""
+    let stderrLineBuf = ""
     let toolEventsJson = "[]"
     let run: ActiveRun | null = null
     let assistantContent = ""
@@ -985,13 +979,18 @@ export class MessageService {
         })
 
         if (activity.stream === "stderr" && !promptRequestedByCli) {
-          const cleanedChunk = filterStderrNoise(stripAnsi(activity.chunk))
-          if (cleanedChunk.trim()) {
-            thinking += cleanedChunk
-            options.emit({
-              type: "assistant_thinking_delta",
-              payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, delta: cleanedChunk },
-            })
+          stderrLineBuf += stripAnsi(activity.chunk)
+          const parts = stderrLineBuf.split("\n")
+          stderrLineBuf = parts.pop() ?? ""
+          if (parts.length > 0) {
+            const cleanedChunk = filterStderrNoise(parts.join("\n") + "\n")
+            if (cleanedChunk.trim()) {
+              thinking += cleanedChunk
+              options.emit({
+                type: "assistant_thinking_delta",
+                payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, delta: cleanedChunk },
+              })
+            }
           }
         }
 
@@ -1136,6 +1135,14 @@ export class MessageService {
           this.memoryService?.invalidateSummary(thread.sessionGroupId)
         }
         this.prevUsedTokens.set(thread.id, result.usage.usedTokens)
+      }
+
+      if (stderrLineBuf.trim()) {
+        const remainder = filterStderrNoise(stderrLineBuf)
+        if (remainder.trim()) {
+          thinking += remainder
+        }
+        stderrLineBuf = ""
       }
 
       this.streamingFlushers.delete(flushKey)
@@ -1373,12 +1380,10 @@ export class MessageService {
               const phase1HeaderText = modeBGroup
                 ? buildPhase1Header(modeBGroup.participantProviders.length)
                 : undefined
+              const a2aProvider = entry.to.provider as import("@multi-agent/shared").Provider
               const skillHint = phase1HeaderText
                 ? null
-                : this.buildSkillHintLine(
-                    entry.taskSnippet,
-                    entry.to.provider as import("@multi-agent/shared").Provider,
-                  )
+                : this.buildSkillHintLine(entry.taskSnippet, a2aProvider)
 
               // Acceptance Guardian detection: when skill match includes
               // acceptance-guardian, activate zero-context mode with the
@@ -1681,23 +1686,6 @@ export class MessageService {
     const names = this.matchOrthogonalSkills(content, provider)
     if (!names.length) return null
     return `⚡ 匹配 skill: ${names.join(", ")} — 请加载并按 skill 流程执行。`
-  }
-
-  private buildSkillEvents(
-    content: string,
-    provider: import("@multi-agent/shared").Provider,
-  ): import("@multi-agent/shared").SkillEvent[] {
-    if (!this.skillRegistry) return []
-    const now = new Date().toISOString()
-    const slashSkill = this.skillRegistry.matchSlashCommand(content)
-    if (slashSkill) {
-      return [{ skillName: slashSkill.name, matchType: "slash", timestamp: now }]
-    }
-    return this.matchOrthogonalSkills(content, provider).map((name) => ({
-      skillName: name,
-      matchType: "auto" as const,
-      timestamp: now,
-    }))
   }
 
   /**

@@ -7,5 +7,5 @@ export type ToolEvent = {
   content?: string
   status: ToolEventStatus
   timestamp: string
-  source?: "tool" | "mcp"
+  source?: "tool" | "mcp" | "skill"
 }

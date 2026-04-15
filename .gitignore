@@ -15,8 +15,10 @@ multi-agent.runtime-config.json
 .npm-cache/_cacache/index-v5/26/20/6e3ddcddd0a78acf225bea6d27568e18caf16e280244565d0571d54bcb70
 .npm-cache/_cacache/index-v5/f4/b4/57746747d8a01daf1b628e7d3dbe6ca3f8ae691beddb4920443f8b7fe64e
 .npm-cache/_logs/2026-03-21T16_01_52_861Z-debug-0.log
-.runtime/api.pid
-.runtime/web.pid
+.runtime/
+.worktrees/
+tmp/
+packages/api/data/
 .claude/settings.local.json
 .agents/worktrees/
 .claude/worktrees/
@@ -24,9 +26,6 @@ multi-agent.runtime-config.json
 .claude/skills/
 .gemini/skills/
 .agents/skills/
-.claude/settings.local.json
-.runtime/api.log
-.runtime/web.log
 reference-code/
 docs/runtime-events/
 scripts/record-events.*

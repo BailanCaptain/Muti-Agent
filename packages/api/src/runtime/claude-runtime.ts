@@ -67,6 +67,7 @@ export class ClaudeRuntime extends BaseCliRuntime {
   private thinkingBuffer = "";
   private currentMessageId: string | undefined;
   private partialTextMessageIds = new Set<string>();
+  private lastToolSource: "tool" | "mcp" | "skill" = "tool";
 
   private unwrapStreamEvent(event: Record<string, unknown>): Record<string, unknown> | null {
     if (event.type === "stream_event") {
@@ -196,13 +197,19 @@ export class ClaudeRuntime extends BaseCliRuntime {
         const message = event.message as { content?: Array<{ type?: string; name?: string; input?: Record<string, unknown> }> } | undefined;
         const toolUse = message?.content?.find((item) => item.type === "tool_use");
         if (toolUse?.name) {
+          const source = toolUse.name.startsWith("mcp__")
+            ? "mcp" as const
+            : (toolUse.name === "Skill" || toolUse.name === "Agent" || toolUse.name === "activate_skill")
+              ? "skill" as const
+              : "tool" as const;
+          this.lastToolSource = source;
           return {
             type: "tool_use",
             toolName: toolUse.name,
             toolInput: formatClaudeToolInput(toolUse.name, toolUse.input ?? {}),
             status: "started",
             timestamp: new Date().toISOString(),
-            source: toolUse.name.startsWith("mcp__") ? "mcp" : "tool",
+            source,
           };
         }
         return null;
@@ -230,6 +237,7 @@ export class ClaudeRuntime extends BaseCliRuntime {
             content: text || "done",
             status: toolResult.is_error ? "error" : "completed",
             timestamp: new Date().toISOString(),
+            source: this.lastToolSource,
           };
         }
         return null;
