@@ -83,14 +83,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
 
     const contentBlocks: ContentBlock[] = []
+    const failedNames: string[] = []
     for (const img of pending) {
       try {
         const url = await uploadFile(img.file)
         contentBlocks.push({ type: "image", url, alt: img.file.name })
-      } catch {
-        set({ status: `图片上传失败: ${img.file.name}` })
-        return
+      } catch (err) {
+        console.error(`[chat-store] 图片上传失败: ${img.file.name}`, err)
+        failedNames.push(img.file.name)
       }
+    }
+    if (failedNames.length > 0) {
+      set({ status: `${failedNames.length} 张图片上传失败: ${failedNames.join(", ")}` })
     }
 
     const payload = threadState.buildSendPayload(input, contentBlocks.length ? contentBlocks : undefined)

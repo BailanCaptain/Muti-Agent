@@ -27,7 +27,10 @@ import { registerMessageRoutes } from "./routes/messages"
 import { registerRuntimeConfigRoutes } from "./routes/runtime-config"
 import { registerThreadRoutes } from "./routes/threads"
 import { registerUploadRoutes } from "./routes/uploads"
+import { registerPreviewRoutes } from "./routes/preview"
 import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
+import { PreviewGateway } from "./preview/preview-gateway"
+import { collectRuntimePorts } from "./preview/port-validator"
 import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
 import { awaitRunsToStop } from "./runtime/shutdown"
@@ -262,6 +265,26 @@ export async function createApiServer(options: {
   registerAuthorizationRoutes(app, { approvals, ruleStore })
   registerDecisionBoardRoutes(app, { messageService: messages, decisions })
   registerUploadRoutes(app, uploadsDir)
+
+  const previewGatewayPort = Number(process.env.PREVIEW_GATEWAY_PORT ?? 0)
+  const previewGateway = new PreviewGateway({
+    port: previewGatewayPort,
+    runtimePorts: collectRuntimePorts(),
+  })
+  try {
+    await previewGateway.start()
+  } catch (err) {
+    app.log.warn({ err }, "Preview gateway failed to start — screenshot preview will be unavailable")
+  }
+  app.addHook("onClose", async () => { await previewGateway.stop() })
+
+  registerPreviewRoutes(app, {
+    gatewayPort: previewGateway.actualPort,
+    runtimePorts: collectRuntimePorts(),
+    uploadsDir,
+    broadcast: (event) => broadcaster.broadcast(event),
+  })
+
   registerCallbackRoutes(app, {
     repository,
     sessions,

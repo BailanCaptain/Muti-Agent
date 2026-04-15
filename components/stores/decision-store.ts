@@ -50,8 +50,8 @@ export const useDecisionStore = create<DecisionStore>((set) => ({
       if (!res.ok) return
       const data = (await res.json()) as { pending: DecisionRequest[] }
       set({ pending: data.pending })
-    } catch {
-      // Network error — keep current state
+    } catch (err) {
+      console.error("[decision-store] fetch error", err)
     }
   },
 }))

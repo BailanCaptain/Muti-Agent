@@ -7,6 +7,8 @@ owner: 黄仁勋
 created: 2026-04-11
 ---
 
+> **⚠ Deprecated (F012, 2026-04-15)**: 前端审批 UI 已在 F012 中移除（approval-card、use-approval-notification、status-panel 审批 tab、execution-bar 待审批徽章、session-sidebar 审批指示灯）。后端授权 API（`/api/authorization/*`）及 settings-modal 的权限规则管理保留。`approval-store.ts` 标记为 `@deprecated`，无活跃消费者。
+
 # F005 — 运行时治理 UI：权限系统 + 面板重构 + 侧边栏重做
 
 **Created**: 2026-04-11

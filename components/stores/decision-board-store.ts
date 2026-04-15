@@ -105,8 +105,8 @@ export const useDecisionBoardStore = create<DecisionBoardState>((set) => ({
           customModes: {},
         })
       }
-    } catch {
-      // Network error — keep current state
+    } catch (err) {
+      console.error("[decision-board-store] fetch error", err)
     }
   },
 

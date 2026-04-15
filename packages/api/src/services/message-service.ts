@@ -653,6 +653,8 @@ export class MessageService {
     const rootMessageId = this.dispatch.registerUserRoot(userMessage.id, thread.sessionGroupId)
     const userTimeline = this.sessions.toTimelineMessage(thread.id, userMessage.id)
     if (userTimeline) {
+      const skillEvents = this.buildSkillEvents(event.payload.content, thread.provider)
+      if (skillEvents.length) userTimeline.skillEvents = skillEvents
       emit({
         type: "message.created",
         payload: {
@@ -1674,6 +1676,23 @@ export class MessageService {
     const names = this.matchOrthogonalSkills(content, provider)
     if (!names.length) return null
     return `⚡ 匹配 skill: ${names.join(", ")} — 请加载并按 skill 流程执行。`
+  }
+
+  private buildSkillEvents(
+    content: string,
+    provider: import("@multi-agent/shared").Provider,
+  ): import("@multi-agent/shared").SkillEvent[] {
+    if (!this.skillRegistry) return []
+    const now = new Date().toISOString()
+    const slashSkill = this.skillRegistry.matchSlashCommand(content)
+    if (slashSkill) {
+      return [{ skillName: slashSkill.name, matchType: "slash", timestamp: now }]
+    }
+    return this.matchOrthogonalSkills(content, provider).map((name) => ({
+      skillName: name,
+      matchType: "auto" as const,
+      timestamp: now,
+    }))
   }
 
   /**

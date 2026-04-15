@@ -68,6 +68,12 @@ export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; url: string; alt?: string; meta?: ImageMeta }
 
+export type SkillEvent = {
+  skillName: string
+  matchType: "slash" | "auto"
+  timestamp: string
+}
+
 export type TimelineMessage = {
   id: string
   provider: Provider
@@ -80,6 +86,7 @@ export type TimelineMessage = {
   /** Inline confirmation cards embedded in this message bubble */
   inlineConfirmations?: InlineConfirmation[]
   toolEvents?: ToolEvent[]
+  skillEvents?: SkillEvent[]
   contentBlocks?: ContentBlock[]
   groupId?: string
   groupRole?: "header" | "member" | "convergence"
@@ -381,6 +388,15 @@ export type RealtimeServerEvent =
         sessionGroupId: string
         messageId: string
         event: ToolEvent
+      }
+    }
+  | {
+      type: "preview.auto_open"
+      payload: {
+        port: number
+        path?: string
+        sessionGroupId?: string
+        gatewayPort: number
       }
     }
 

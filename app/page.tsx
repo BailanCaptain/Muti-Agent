@@ -6,18 +6,17 @@ import { SettingsModal } from "@/components/chat/settings-modal"
 import { SessionSidebar } from "@/components/chat/session-sidebar"
 import { StatusPanel } from "@/components/chat/status-panel"
 import { TimelinePanel } from "@/components/chat/timeline-panel"
-import { useApprovalNotification } from "@/components/hooks/use-approval-notification"
 import { useChatStore } from "@/components/stores/chat-store"
 import { useLayoutStore } from "@/components/stores/layout-store"
 import { useSettingsStore } from "@/components/stores/settings-store"
-import { useApprovalStore } from "@/components/stores/approval-store"
 import { useDecisionBoardStore } from "@/components/stores/decision-board-store"
 import { useDecisionStore } from "@/components/stores/decision-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { PROVIDER_ALIASES, type BlockedDispatchAttempt } from "@multi-agent/shared"
 import { connectRealtime } from "@/components/ws/client"
+import { BrowserPanel } from "@/components/preview/browser-panel"
 import { PanelLeft, PanelLeftClose, PanelRight, PanelRightClose } from "lucide-react"
-import { useEffect } from "react"
+import { useCallback, useEffect, useState } from "react"
 
 function formatBlockedDispatchMessage(attempts: BlockedDispatchAttempt[]) {
   if (!attempts.length) {
@@ -36,8 +35,6 @@ function formatBlockedDispatchMessage(attempts: BlockedDispatchAttempt[]) {
 }
 
 export default function HomePage() {
-  useApprovalNotification()
-
   const bootstrap = useThreadStore((state) => state.bootstrap)
   const selectSessionGroup = useThreadStore((state) => state.selectSessionGroup)
   const applyAssistantDelta = useThreadStore((state) => state.applyAssistantDelta)
@@ -50,12 +47,19 @@ export default function HomePage() {
   const setStatus = useChatStore((state) => state.setStatus)
   const setSocketState = useSettingsStore((state) => state.setSocketState)
   const incrementUnread = useThreadStore((state) => state.incrementUnread)
-  const addApprovalRequest = useApprovalStore((state) => state.addRequest)
-  const removeApprovalRequest = useApprovalStore((state) => state.removeRequest)
   const addDecisionRequest = useDecisionStore((state) => state.addRequest)
   const removeDecisionRequest = useDecisionStore((state) => state.removeRequest)
   const receiveBoardFlush = useDecisionBoardStore((state) => state.receiveFlush)
   const removeBoardItem = useDecisionBoardStore((state) => state.removeItem)
+
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewPort, setPreviewPort] = useState(0)
+  const [previewPath, setPreviewPath] = useState("/")
+  const openPreview = useCallback((port: number, path?: string) => {
+    setPreviewPort(port)
+    setPreviewPath(path ?? "/")
+    setPreviewOpen(true)
+  }, [])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: bootstrap effect runs once on mount
   useEffect(() => {
@@ -130,24 +134,6 @@ export default function HomePage() {
           return
         }
 
-        if (event.type === "approval.request") {
-          if (!isCurrentSession(event.payload.sessionGroupId)) return
-          addApprovalRequest(event.payload)
-          return
-        }
-
-        if (event.type === "approval.resolved") {
-          if (!isCurrentSession(event.payload.sessionGroupId)) return
-          removeApprovalRequest(event.payload.requestId)
-          return
-        }
-
-        if (event.type === "approval.auto_granted") {
-          if (!isCurrentSession(event.payload.sessionGroupId)) return
-          setStatus(`${event.payload.action} — 已自动放行 (规则匹配)`)
-          return
-        }
-
         if (event.type === "decision.request") {
           if (!isCurrentSession(event.payload.sessionGroupId)) return
           addDecisionRequest(event.payload)
@@ -179,6 +165,11 @@ export default function HomePage() {
           return
         }
 
+        if (event.type === "preview.auto_open") {
+          openPreview(event.payload.port, event.payload.path)
+          return
+        }
+
         if (event.type === "status") {
           if (event.payload.sessionGroupId && !isCurrentSession(event.payload.sessionGroupId)) return
           setStatus(event.payload.message)
@@ -188,15 +179,14 @@ export default function HomePage() {
 
     return disconnect
   }, [
-    addApprovalRequest,
     addDecisionRequest,
     appendTimelineMessage,
     incrementUnread,
     applyAssistantDelta,
     applyThinkingDelta,
     bootstrap,
+    openPreview,
     receiveBoardFlush,
-    removeApprovalRequest,
     removeBoardItem,
     removeDecisionRequest,
     replaceActiveGroup,
@@ -258,6 +248,15 @@ export default function HomePage() {
           </div>
         </div>
       </main>
+      {previewOpen && (
+        <div className="w-[480px] shrink-0">
+          <BrowserPanel
+            initialPort={previewPort}
+            initialPath={previewPath}
+            onClose={() => setPreviewOpen(false)}
+          />
+        </div>
+      )}
       {statusPanelCollapsed ? (
         <div className="flex h-screen w-12 shrink-0 flex-col items-center border-l border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(255,255,255,0.86))] py-4">
           <button

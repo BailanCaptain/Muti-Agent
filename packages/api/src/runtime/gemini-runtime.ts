@@ -74,24 +74,36 @@ export class GeminiRuntime extends BaseCliRuntime {
     if (sessionId) {
       args.push("--resume", sessionId);
     }
+    args.push("-p", prompt);
 
     return {
       command: runtime.command,
       args: [...runtime.prefixArgs, ...args],
       shell: runtime.shell,
-      stdinContent: prompt,
     };
+  }
+
+  private extractErrorMessage(rawError: unknown): string | null {
+    if (typeof rawError === "string") return rawError.trim() || null;
+    if (typeof rawError === "object" && rawError !== null) {
+      const msg = (rawError as Record<string, unknown>).message;
+      return typeof msg === "string" ? msg.trim() || null : null;
+    }
+    return null;
+  }
+
+  private isCandidatesCrash(errMsg: string | null): boolean {
+    return !!errMsg?.includes("Cannot read properties of undefined (reading 'candidates')");
   }
 
   parseActivityLine(event: Record<string, unknown>): string | null {
     try {
-      // Gemini CLI stream-json emits thinking content with `thought: true`.
-      // Covers several event shapes the CLI may produce:
-      //   { delta: "...", thought: true }
-      //   { type: "content", value: "...", thought: true }
-      //   { type: "message", content: "...", thought: true }
-      //   { type: "message", delta: { text: "..." }, thought: true }
-      //   { type: "message", content: { text: "..." }, thought: true }
+      if (event.type === "result" && event.status !== "success") {
+        const errMsg = this.extractErrorMessage(event.error);
+        if (this.isCandidatesCrash(errMsg)) return null;
+        if (errMsg) return `[error] ${errMsg}`;
+      }
+
       if (!event.thought) return null;
 
       if (typeof event.delta === "string") {
@@ -187,6 +199,13 @@ export class GeminiRuntime extends BaseCliRuntime {
 
   parseStopReason(event: Record<string, unknown>): StopReason | null {
     if (event.type !== "result") return null;
+
+    if (typeof event.status === "string" && event.status !== "success") {
+      const errMsg = this.extractErrorMessage(event.error);
+      if (this.isCandidatesCrash(errMsg)) return "complete";
+      return "aborted";
+    }
+
     const topLevel =
       typeof event.finishReason === "string" ? (event.finishReason as string) : null;
     const stats = event.stats as Record<string, unknown> | undefined;

@@ -1,3 +1,4 @@
+/** @deprecated F012 — approval UI removed; backend API retained. This store has no active consumers. */
 "use client"
 
 import { socketClient } from "@/components/ws/client"
@@ -40,8 +41,8 @@ export const useApprovalStore = create<ApprovalStore>((set) => ({
       if (!res.ok) return
       const data = (await res.json()) as { pending: ApprovalRequest[] }
       set({ pending: data.pending })
-    } catch {
-      // Network error during fetch — keep current state
+    } catch (err) {
+      console.error("[approval-store] fetch error", err)
     }
   },
 }))
