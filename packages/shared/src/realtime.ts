@@ -390,6 +390,15 @@ export type RealtimeServerEvent =
         event: ToolEvent
       }
     }
+  | {
+      type: "preview.auto_open"
+      payload: {
+        port: number
+        path?: string
+        sessionGroupId?: string
+        gatewayPort: number
+      }
+    }
 
 /**
  * F002: A single question held by the Decision Board, sent to the frontend

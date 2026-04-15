@@ -14,8 +14,9 @@ import { useDecisionStore } from "@/components/stores/decision-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { PROVIDER_ALIASES, type BlockedDispatchAttempt } from "@multi-agent/shared"
 import { connectRealtime } from "@/components/ws/client"
+import { BrowserPanel } from "@/components/preview/browser-panel"
 import { PanelLeft, PanelLeftClose, PanelRight, PanelRightClose } from "lucide-react"
-import { useEffect } from "react"
+import { useCallback, useEffect, useState } from "react"
 
 function formatBlockedDispatchMessage(attempts: BlockedDispatchAttempt[]) {
   if (!attempts.length) {
@@ -50,6 +51,15 @@ export default function HomePage() {
   const removeDecisionRequest = useDecisionStore((state) => state.removeRequest)
   const receiveBoardFlush = useDecisionBoardStore((state) => state.receiveFlush)
   const removeBoardItem = useDecisionBoardStore((state) => state.removeItem)
+
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewPort, setPreviewPort] = useState(0)
+  const [previewPath, setPreviewPath] = useState("/")
+  const openPreview = useCallback((port: number, path?: string) => {
+    setPreviewPort(port)
+    setPreviewPath(path ?? "/")
+    setPreviewOpen(true)
+  }, [])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: bootstrap effect runs once on mount
   useEffect(() => {
@@ -155,6 +165,11 @@ export default function HomePage() {
           return
         }
 
+        if (event.type === "preview.auto_open") {
+          openPreview(event.payload.port, event.payload.path)
+          return
+        }
+
         if (event.type === "status") {
           if (event.payload.sessionGroupId && !isCurrentSession(event.payload.sessionGroupId)) return
           setStatus(event.payload.message)
@@ -170,6 +185,7 @@ export default function HomePage() {
     applyAssistantDelta,
     applyThinkingDelta,
     bootstrap,
+    openPreview,
     receiveBoardFlush,
     removeBoardItem,
     removeDecisionRequest,
@@ -232,6 +248,15 @@ export default function HomePage() {
           </div>
         </div>
       </main>
+      {previewOpen && (
+        <div className="w-[480px] shrink-0">
+          <BrowserPanel
+            initialPort={previewPort}
+            initialPath={previewPath}
+            onClose={() => setPreviewOpen(false)}
+          />
+        </div>
+      )}
       {statusPanelCollapsed ? (
         <div className="flex h-screen w-12 shrink-0 flex-col items-center border-l border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(255,255,255,0.86))] py-4">
           <button
