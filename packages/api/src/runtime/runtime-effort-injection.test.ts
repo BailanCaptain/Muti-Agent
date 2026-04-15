@@ -75,11 +75,11 @@ test("codex-runtime omits model_reasoning_effort when empty", () => {
   assert.equal(has, false)
 })
 
-test("codex-runtime keeps approval_policy and sandbox configs unchanged", () => {
+test("codex-runtime keeps approval_policy and uses danger-full-access sandbox", () => {
   const runtime = new InspectableCodex()
   const { args } = runtime.inspect(makeInput({ MULTI_AGENT_EFFORT: "medium" }))
   assert.ok(args.includes('approval_policy="on-request"'))
-  assert.ok(args.includes("workspace-write"))
+  assert.ok(args.includes("danger-full-access"))
 })
 
 test("gemini-runtime ignores MULTI_AGENT_EFFORT (CLI has no effort flag)", () => {

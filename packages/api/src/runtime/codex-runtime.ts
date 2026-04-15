@@ -17,26 +17,29 @@ function resolveCodexCommand() {
 
 export class CodexRuntime extends BaseCliRuntime {
   readonly agentId = "codex";
+  private hadPriorTextTurn = false;
 
   protected buildCommand(input: AgentRunInput): RuntimeCommand {
     const runtime = resolveCodexCommand();
     const model = input.env?.MULTI_AGENT_MODEL;
     const effort = input.env?.MULTI_AGENT_EFFORT;
     const sessionId = input.env?.MULTI_AGENT_NATIVE_SESSION_ID;
-    // 会话已恢复时模型已有指令，不重复附加，减少每轮 ~500 token 的额外开销。
     const systemPrompt = input.env?.MULTI_AGENT_SYSTEM_PROMPT || AGENT_SYSTEM_PROMPTS.codex;
     const prompt = sessionId
       ? input.prompt
       : wrapPromptWithInstructions(systemPrompt, input.prompt);
+    const cwd = input.cwd ?? ".";
+    const hasGit = existsSync(path.join(cwd, ".git"));
     const topLevelArgs = [
       ...(model ? ["-m", model] : []),
       ...(effort ? ["--config", `model_reasoning_effort="${effort}"`] : []),
       "--config", 'approval_policy="on-request"',
-      "--sandbox", "workspace-write",
+      "--sandbox", "danger-full-access",
+      "--add-dir", ".git",
     ];
     const baseArgs = sessionId
-      ? ["exec", "resume", "--skip-git-repo-check", "--json", sessionId]
-      : ["exec", "--skip-git-repo-check", "--json"];
+      ? ["exec", "resume", ...(hasGit ? [] : ["--skip-git-repo-check"]), "--json", sessionId]
+      : ["exec", ...(hasGit ? [] : ["--skip-git-repo-check"]), "--json"];
 
     return {
       command: runtime.command,
@@ -49,16 +52,38 @@ export class CodexRuntime extends BaseCliRuntime {
   parseActivityLine(event: Record<string, unknown>): string | null {
     try {
       const type = event.type as string | undefined;
-      const item = event.item as { type?: string; text?: string } | undefined;
-      if (!type || !item) return null;
+      if (!type) return null;
+      const item = (event.item ?? event) as Record<string, unknown>;
+      const itemType = item.type as string | undefined;
 
-      if (type === "item.started" && item.type === "reasoning") {
+      if (type === "item.started" && itemType === "reasoning") {
         return "🧠 正在推理...";
       }
-      if (type === "item.completed" && item.type === "reasoning") {
-        const text = (item.text ?? "").trim();
+      if (type === "item.completed" && itemType === "reasoning") {
+        const text = ((item.text as string) ?? "").trim();
         return text || null;
       }
+
+      if (itemType === "todo_list") {
+        const items = (Array.isArray(item.todo_items) ? item.todo_items : Array.isArray(item.items) ? item.items : []) as Array<Record<string, unknown>>;
+        const summary = items.map((t) => `[${(t.status as string) ?? "?"}] ${((t.content as string) ?? (t.text as string) ?? "").slice(0, 80)}`).join("; ");
+        return `Tasks: ${summary}`;
+      }
+
+      if (type === "item.completed" && itemType === "web_search") {
+        return "[web search completed]";
+      }
+
+      if (type === "item.completed" && itemType === "error") {
+        return `[warning] ${(item.message as string) ?? "unknown error"}`;
+      }
+
+      if (type === "error") {
+        const msg = ((event.message as string) ?? "").trim();
+        if (msg.startsWith("Reconnecting")) return `[${msg}]`;
+        return null;
+      }
+
       return null;
     } catch {
       return null;
@@ -68,22 +93,49 @@ export class CodexRuntime extends BaseCliRuntime {
   transformToolEvent(event: Record<string, unknown>): ToolEvent | null {
     try {
       const type = event.type as string | undefined;
-      const item = event.item as { type?: string; command?: string; output?: string; aggregated_output?: string; path?: string } | undefined;
+      const item = event.item as Record<string, unknown> | undefined;
       if (!type || !item) return null;
-      const itemType = item.type;
+      const itemType = item.type as string | undefined;
+
+      if (type === "item.started" && itemType === "mcp_tool_call") {
+        const server = typeof item.server === "string" ? item.server : "unknown";
+        const tool = typeof item.tool === "string" ? item.tool : "unknown";
+        return {
+          type: "tool_use",
+          toolName: `mcp:${server}/${tool}`,
+          toolInput: JSON.stringify(item.arguments ?? {}).slice(0, 100),
+          status: "started",
+          timestamp: new Date().toISOString(),
+        };
+      }
+
+      if (type === "item.completed" && itemType === "mcp_tool_call") {
+        const status = (item.status as string) ?? "unknown";
+        const result = item.result as Record<string, unknown> | undefined;
+        const content = Array.isArray(result?.content)
+          ? (result!.content as Array<Record<string, unknown>>).filter((c) => c.type === "text").map((c) => c.text as string).join("\n")
+          : String(result ?? "");
+        return {
+          type: "tool_result",
+          toolName: "",
+          content: `[${status}] ${content.slice(0, 500)}` || "done",
+          status: status === "error" ? "error" : "completed",
+          timestamp: new Date().toISOString(),
+        };
+      }
 
       if (type === "item.started" && itemType === "command_execution") {
         return {
           type: "tool_use",
           toolName: "Bash",
-          toolInput: (item.command ?? "").split("\n")[0].slice(0, 100),
+          toolInput: ((item.command as string) ?? "").split("\n")[0].slice(0, 100),
           status: "started",
           timestamp: new Date().toISOString(),
         };
       }
 
       if (type === "item.completed" && itemType === "command_execution") {
-        const output = item.aggregated_output ?? item.output ?? "";
+        const output = (item.aggregated_output as string) ?? (item.output as string) ?? "";
         return {
           type: "tool_result",
           toolName: "Bash",
@@ -94,7 +146,7 @@ export class CodexRuntime extends BaseCliRuntime {
       }
 
       if (type === "item.completed" && itemType === "file_change") {
-        const filePath = item.path ?? "";
+        const filePath = (item.path as string) ?? "";
         const shortPath = filePath.split(/[/\\]/).slice(-2).join("/");
         return {
           type: "tool_use",
@@ -175,7 +227,11 @@ export class CodexRuntime extends BaseCliRuntime {
     }
 
     if (event.type === "item.completed" && item?.type === "agent_message" && typeof item.text === "string") {
-      return item.text;
+      const text = item.text.trim();
+      if (text.length === 0) return "";
+      const prefix = this.hadPriorTextTurn ? "\n\n" : "";
+      this.hadPriorTextTurn = true;
+      return prefix + text;
     }
 
     return "";
