@@ -16,10 +16,14 @@
     "@fastify/websocket": "^11.0.2",
     "@huggingface/transformers": "^3.4.0",
     "@multi-agent/shared": "workspace:*",
+    "better-sqlite3": "^12.9.0",
+    "drizzle-orm": "^0.45.2",
     "fastify": "^5.2.1",
     "pino": "^9.6.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "drizzle-kit": "^0.31.10",
     "typescript": "^5.8.2",
     "yaml": "^2.8.3"
   }

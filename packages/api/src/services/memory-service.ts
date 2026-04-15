@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import type { SessionRepository } from "../db/repositories/session-repository"
+import type { SessionRepository } from "../db/repositories"
 import type { SessionMemoryRecord } from "../db/sqlite"
 
 export class MemoryService {
@@ -12,27 +12,8 @@ export class MemoryService {
   }
 
   summarizeSession(sessionGroupId: string): SessionMemoryRecord {
-    // 1. Get all messages for the group from all threads
-    const threads = this.repository.listThreadsByGroup(sessionGroupId)
-    const allMessages: Array<{ role: string; content: string; alias: string; createdAt: string }> =
-      []
+    const allMessages = this.repository.listAllMessagesForGroup(sessionGroupId)
 
-    for (const thread of threads) {
-      const messages = this.repository.listMessages(thread.id)
-      for (const msg of messages) {
-        allMessages.push({
-          role: msg.role,
-          content: msg.content,
-          alias: thread.alias,
-          createdAt: msg.createdAt,
-        })
-      }
-    }
-
-    // 2. Sort by time
-    allMessages.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-
-    // 3. Build condensed summary (last 20 messages, truncated)
     const recent = allMessages.slice(-20)
     const summaryLines = recent.map((m) => {
       const speaker = m.role === "user" ? "用户" : m.alias
@@ -41,10 +22,8 @@ export class MemoryService {
     })
     const summary = summaryLines.join("\n")
 
-    // 4. Extract keywords (simple: split Chinese/English words, take top frequent)
     const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
 
-    // 5. Persist
     return this.repository.createMemory(sessionGroupId, summary, keywords)
   }
 
@@ -53,25 +32,7 @@ export class MemoryService {
    * Falls back to extractive-only summary if no API key or on failure.
    */
   async generateRollingSummary(sessionGroupId: string): Promise<string> {
-    // 1. Get all messages for the session group (from all threads)
-    const threads = this.repository.listThreadsByGroup(sessionGroupId)
-    const allMessages: Array<{ role: string; content: string; alias: string; createdAt: string }> =
-      []
-
-    for (const thread of threads) {
-      const messages = this.repository.listMessages(thread.id)
-      for (const msg of messages) {
-        allMessages.push({
-          role: msg.role,
-          content: msg.content,
-          alias: thread.alias,
-          createdAt: msg.createdAt,
-        })
-      }
-    }
-
-    // Sort by time
-    allMessages.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    const allMessages = this.repository.listAllMessagesForGroup(sessionGroupId)
 
     // 2. Build extractive summary first (key decisions, [拍板] items, topic keywords)
     const extractive = buildExtractiveSummary(allMessages)
@@ -95,34 +56,20 @@ export class MemoryService {
     const existing = this.repository.getLatestMemory(sessionGroupId)
 
     if (existing && !forceRefresh) {
-      // Count user messages since the summary was created
-      const threads = this.repository.listThreadsByGroup(sessionGroupId)
-      let userMessagesSinceSummary = 0
+      const userMessagesSinceSummary = this.repository.countUserMessagesSince(
+        sessionGroupId,
+        existing.createdAt,
+      )
 
-      for (const thread of threads) {
-        const messages = this.repository.listMessages(thread.id)
-        for (const msg of messages) {
-          if (msg.role === "user" && msg.createdAt > existing.createdAt) {
-            userMessagesSinceSummary++
-          }
-        }
-      }
-
-      // If fewer than 10 user messages since last summary, return existing
       if (userMessagesSinceSummary <= 10) {
         return existing.summary
       }
     }
 
     // No existing summary or it's stale — check if there are any messages at all
-    const threads = this.repository.listThreadsByGroup(sessionGroupId)
-    let totalMessages = 0
-    for (const thread of threads) {
-      const messages = this.repository.listMessages(thread.id)
-      totalMessages += messages.length
-    }
+    const allMsgs = this.repository.listAllMessagesForGroup(sessionGroupId, 1)
 
-    if (totalMessages === 0) {
+    if (allMsgs.length === 0) {
       return null
     }
 

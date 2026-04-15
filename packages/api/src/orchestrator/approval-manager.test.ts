@@ -1,7 +1,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { SqliteStore } from "../db/sqlite"
-import { AuthorizationRuleRepository } from "../db/repositories/authorization-rule-repository"
+import { createDrizzleDb } from "../db/drizzle-instance"
+import { AuthorizationRuleRepository } from "../db/repositories"
 import { ApprovalManager } from "./approval-manager"
 import { AuthorizationRuleStore } from "./authorization-rule-store"
 
@@ -16,8 +16,8 @@ describe("ApprovalManager", () => {
   function createManagerWithRules(timeoutMs = 500) {
     const emitted: Array<{ type: string; payload: unknown }> = []
     const emit = (event: { type: string; payload: unknown }) => { emitted.push(event) }
-    const sqlite = new SqliteStore(":memory:")
-    const repo = new AuthorizationRuleRepository(sqlite)
+    const { db } = createDrizzleDb(":memory:")
+    const repo = new AuthorizationRuleRepository(db)
     const ruleStore = new AuthorizationRuleStore(repo)
     const manager = new ApprovalManager(emit as never, ruleStore, timeoutMs)
     return { manager, emitted, ruleStore }

@@ -1,7 +1,7 @@
 import type {
   AuthorizationRuleRepository,
   AuthorizationRuleRow,
-} from "../db/repositories/authorization-rule-repository"
+} from "../db/repositories"
 
 function matchAction(pattern: string, action: string): boolean {
   if (pattern === "*") return true

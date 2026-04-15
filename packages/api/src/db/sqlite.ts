@@ -90,6 +90,7 @@ export class SqliteStore {
       CREATE TABLE IF NOT EXISTS session_groups (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
+        project_tag TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -101,6 +102,8 @@ export class SqliteStore {
         alias TEXT NOT NULL,
         current_model TEXT,
         native_session_id TEXT,
+        sop_bookmark TEXT,
+        last_fill_ratio REAL,
         updated_at TEXT NOT NULL
       );
 
@@ -110,6 +113,12 @@ export class SqliteStore {
         role TEXT NOT NULL,
         content TEXT NOT NULL,
         thinking TEXT NOT NULL DEFAULT '',
+        message_type TEXT NOT NULL DEFAULT 'final',
+        connector_source TEXT,
+        group_id TEXT,
+        group_role TEXT,
+        tool_events TEXT NOT NULL DEFAULT '[]',
+        content_blocks TEXT NOT NULL DEFAULT '[]',
         created_at TEXT NOT NULL
       );
 
@@ -135,42 +144,6 @@ export class SqliteStore {
         created_at TEXT NOT NULL
       );
     `)
-
-    try {
-      this.db.exec("ALTER TABLE invocations ADD COLUMN callback_token TEXT;")
-    } catch {
-      // Older databases may already have this column.
-    }
-
-    try {
-      this.db.exec("ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAULT '';")
-    } catch {
-      // Older databases may already have this column.
-    }
-
-    try {
-      this.db.exec("ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'final';")
-    } catch {
-      // Older databases may already have this column.
-    }
-
-    try {
-      this.db.exec("ALTER TABLE messages ADD COLUMN connector_source TEXT;")
-    } catch {
-      // Older databases may already have this column.
-    }
-
-    try {
-      this.db.exec("ALTER TABLE messages ADD COLUMN group_id TEXT;")
-    } catch {
-      // Older databases may already have this column.
-    }
-
-    try {
-      this.db.exec("ALTER TABLE messages ADD COLUMN group_role TEXT;")
-    } catch {
-      // Older databases may already have this column.
-    }
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS session_memories (
@@ -225,36 +198,6 @@ export class SqliteStore {
         created_at TEXT NOT NULL
       );
     `)
-
-    try {
-      this.db.exec("ALTER TABLE messages ADD COLUMN tool_events TEXT NOT NULL DEFAULT '[]';")
-    } catch {
-      // Column may already exist
-    }
-
-    try {
-      this.db.exec("ALTER TABLE session_groups ADD COLUMN project_tag TEXT;")
-    } catch {
-      // Column may already exist
-    }
-
-    try {
-      this.db.exec("ALTER TABLE threads ADD COLUMN sop_bookmark TEXT;")
-    } catch {
-      // Column may already exist
-    }
-
-    try {
-      this.db.exec("ALTER TABLE threads ADD COLUMN last_fill_ratio REAL;")
-    } catch {
-      // Column may already exist
-    }
-
-    try {
-      this.db.exec("ALTER TABLE messages ADD COLUMN content_blocks TEXT NOT NULL DEFAULT '[]';")
-    } catch {
-      // Column may already exist
-    }
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_messages_thread_id ON messages(thread_id);

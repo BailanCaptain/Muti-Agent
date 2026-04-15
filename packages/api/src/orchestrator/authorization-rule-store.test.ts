@@ -1,15 +1,15 @@
 import { describe, it, beforeEach } from "node:test"
 import assert from "node:assert/strict"
-import { SqliteStore } from "../db/sqlite"
-import { AuthorizationRuleRepository } from "../db/repositories/authorization-rule-repository"
+import { createDrizzleDb } from "../db/drizzle-instance"
+import { AuthorizationRuleRepository } from "../db/repositories"
 import { AuthorizationRuleStore } from "./authorization-rule-store"
 
 describe("AuthorizationRuleStore", () => {
   let store: AuthorizationRuleStore
 
   beforeEach(() => {
-    const sqlite = new SqliteStore(":memory:")
-    const repo = new AuthorizationRuleRepository(sqlite)
+    const { db } = createDrizzleDb(":memory:")
+    const repo = new AuthorizationRuleRepository(db)
     store = new AuthorizationRuleStore(repo)
   })
 

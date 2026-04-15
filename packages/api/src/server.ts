@@ -8,7 +8,8 @@ import websocket from "@fastify/websocket"
 import { PROVIDER_ALIASES } from "@multi-agent/shared"
 import Fastify from "fastify"
 import { AuthorizationRuleRepository, SessionRepository } from "./db/repositories"
-import { SqliteStore } from "./db/sqlite"
+import { createDrizzleDb } from "./db/drizzle-instance"
+import { ensurePreMigrationBackup } from "./db/backup"
 import { AppEventBus } from "./events/event-bus"
 import { registerMcpServer } from "./mcp/server"
 import { ApprovalManager } from "./orchestrator/approval-manager"
@@ -51,8 +52,9 @@ export async function createApiServer(options: {
     reply.status(error.statusCode ?? 500).send({ error: error.message })
   })
   const providerProfiles = listProviderProfiles()
-  const sqlite = new SqliteStore(options.sqlitePath)
-  const repository = new SessionRepository(sqlite)
+  ensurePreMigrationBackup(options.sqlitePath)
+  const { db: drizzleDb, close: closeDrizzle } = createDrizzleDb(options.sqlitePath)
+  const repository = new SessionRepository(drizzleDb)
   const sessions = new SessionService(repository, providerProfiles)
   const eventBus = new AppEventBus()
   const broadcaster: RealtimeBroadcaster = {
@@ -64,7 +66,7 @@ export async function createApiServer(options: {
   const dispatch = new DispatchOrchestrator(sessions, PROVIDER_ALIASES, invocations)
   const messages = new MessageService(sessions, dispatch, invocations, eventBus, options.apiBaseUrl)
   const memoryService = new MemoryService(repository)
-  const authRuleRepo = new AuthorizationRuleRepository(sqlite)
+  const authRuleRepo = new AuthorizationRuleRepository(drizzleDb)
   const ruleStore = new AuthorizationRuleStore(authRuleRepo)
   const approvals = new ApprovalManager((event) => broadcaster.broadcast(event), ruleStore)
   messages.setApprovalManager(approvals)
@@ -122,90 +124,107 @@ export async function createApiServer(options: {
   })
   app.addHook("onClose", async () => {
     settlementDetector.dispose()
+    eventBus.off("invocation.started", onInvStarted)
+    eventBus.off("invocation.activity", onInvActivity)
+    eventBus.off("invocation.finished", onInvFinished)
+    eventBus.off("invocation.failed", onInvFailed)
+    closeDrizzle()
   })
   const redisSummary = getRedisReservation(options.redisUrl)
 
-  eventBus.on("invocation.started", (event) => {
-    repository.createInvocation({
-      id: event.invocationId,
-      threadId: event.threadId,
-      agentId: event.agentId,
-      callbackToken: event.callbackToken,
-      status: event.status,
-      startedAt: event.createdAt,
-      finishedAt: null,
-      exitCode: null,
-      lastActivityAt: event.createdAt,
-    })
-
-    repository.appendAgentEvent({
-      id: crypto.randomUUID(),
-      invocationId: event.invocationId,
-      threadId: event.threadId,
-      agentId: event.agentId,
-      eventType: event.type,
-      payload: JSON.stringify(event),
-      createdAt: event.createdAt,
-    })
-  })
-
-  eventBus.on("invocation.activity", (event) => {
-    repository.updateInvocation(event.invocationId, {
-      status: event.status,
-      lastActivityAt: event.createdAt,
-    })
-
-    repository.appendAgentEvent({
-      id: crypto.randomUUID(),
-      invocationId: event.invocationId,
-      threadId: event.threadId,
-      agentId: event.agentId,
-      eventType: `${event.type}.${event.stream}`,
-      payload: JSON.stringify({
+  const onInvStarted = (event: any) => {
+    repository.runTx(() => {
+      repository.createInvocation({
+        id: event.invocationId,
+        threadId: event.threadId,
+        agentId: event.agentId,
+        callbackToken: event.callbackToken,
         status: event.status,
-        chunkPreview: event.chunk.slice(0, 500),
-      }),
-      createdAt: event.createdAt,
-    })
-  })
+        startedAt: event.createdAt,
+        finishedAt: null,
+        exitCode: null,
+        lastActivityAt: event.createdAt,
+      })
 
-  eventBus.on("invocation.finished", (event) => {
-    repository.updateInvocation(event.invocationId, {
-      status: event.status,
-      finishedAt: event.createdAt,
-      exitCode: event.exitCode,
-      lastActivityAt: event.createdAt,
+      repository.appendAgentEvent({
+        id: crypto.randomUUID(),
+        invocationId: event.invocationId,
+        threadId: event.threadId,
+        agentId: event.agentId,
+        eventType: event.type,
+        payload: JSON.stringify(event),
+        createdAt: event.createdAt,
+      })
     })
+  }
+  eventBus.on("invocation.started", onInvStarted)
 
-    repository.appendAgentEvent({
-      id: crypto.randomUUID(),
-      invocationId: event.invocationId,
-      threadId: event.threadId,
-      agentId: event.agentId,
-      eventType: event.type,
-      payload: JSON.stringify(event),
-      createdAt: event.createdAt,
-    })
-  })
+  const onInvActivity = (event: any) => {
+    repository.runTx(() => {
+      repository.updateInvocation(event.invocationId, {
+        status: event.status,
+        lastActivityAt: event.createdAt,
+      })
 
-  eventBus.on("invocation.failed", (event) => {
-    repository.updateInvocation(event.invocationId, {
-      status: event.status,
-      finishedAt: event.createdAt,
-      exitCode: event.exitCode,
-      lastActivityAt: event.createdAt,
+      repository.appendAgentEvent({
+        id: crypto.randomUUID(),
+        invocationId: event.invocationId,
+        threadId: event.threadId,
+        agentId: event.agentId,
+        eventType: `${event.type}.${event.stream}`,
+        payload: JSON.stringify({
+          status: event.status,
+          chunkPreview: event.chunk.slice(0, 500),
+        }),
+        createdAt: event.createdAt,
+      })
     })
+  }
+  eventBus.on("invocation.activity", onInvActivity)
 
-    repository.appendAgentEvent({
-      id: crypto.randomUUID(),
-      invocationId: event.invocationId,
-      threadId: event.threadId,
-      agentId: event.agentId,
-      eventType: event.type,
-      payload: JSON.stringify(event),
-      createdAt: event.createdAt,
+  const onInvFinished = (event: any) => {
+    repository.runTx(() => {
+      repository.updateInvocation(event.invocationId, {
+        status: event.status,
+        finishedAt: event.createdAt,
+        exitCode: event.exitCode,
+        lastActivityAt: event.createdAt,
+      })
+
+      repository.appendAgentEvent({
+        id: crypto.randomUUID(),
+        invocationId: event.invocationId,
+        threadId: event.threadId,
+        agentId: event.agentId,
+        eventType: event.type,
+        payload: JSON.stringify(event),
+        createdAt: event.createdAt,
+      })
     })
-  })
+  }
+  eventBus.on("invocation.finished", onInvFinished)
+
+  const onInvFailed = (event: any) => {
+    repository.runTx(() => {
+      repository.updateInvocation(event.invocationId, {
+        status: event.status,
+        finishedAt: event.createdAt,
+        exitCode: event.exitCode,
+        lastActivityAt: event.createdAt,
+      })
+
+      repository.appendAgentEvent({
+        id: crypto.randomUUID(),
+        invocationId: event.invocationId,
+        threadId: event.threadId,
+        agentId: event.agentId,
+        eventType: event.type,
+        payload: JSON.stringify(event),
+        createdAt: event.createdAt,
+      })
+    })
+  }
+  eventBus.on("invocation.failed", onInvFailed)
 
   await app.register(cors, {
     origin: options.corsOrigin,

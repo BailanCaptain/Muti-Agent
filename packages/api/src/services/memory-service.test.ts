@@ -4,78 +4,99 @@ import { MemoryService } from "./memory-service"
 import type { SessionMemoryRecord } from "../db/sqlite"
 
 function createMockRepository(overrides: Record<string, unknown> = {}) {
-  return {
-    listThreadsByGroup: (_sessionGroupId: string) => [
+  const threads = [
+    {
+      id: "thread-1",
+      sessionGroupId: "group-1",
+      provider: "claude",
+      alias: "Reviewer",
+      currentModel: null,
+      nativeSessionId: null,
+      updatedAt: "2026-04-04T00:00:00.000Z",
+    },
+    {
+      id: "thread-2",
+      sessionGroupId: "group-1",
+      provider: "codex",
+      alias: "Coder",
+      currentModel: null,
+      nativeSessionId: null,
+      updatedAt: "2026-04-04T00:00:00.000Z",
+    },
+  ]
+
+  const messagesByThread: Record<string, Array<{ id: string; threadId: string; role: string; content: string; thinking: string; messageType: string; createdAt: string }>> = {
+    "thread-1": [
       {
-        id: "thread-1",
-        sessionGroupId: "group-1",
-        provider: "claude",
-        alias: "Reviewer",
-        currentModel: null,
-        nativeSessionId: null,
-        updatedAt: "2026-04-04T00:00:00.000Z",
+        id: "msg-1",
+        threadId: "thread-1",
+        role: "user",
+        content: "please implement the memory feature for session",
+        thinking: "",
+        messageType: "final",
+        createdAt: "2026-04-04T00:01:00.000Z",
       },
       {
-        id: "thread-2",
-        sessionGroupId: "group-1",
-        provider: "codex",
-        alias: "Coder",
-        currentModel: null,
-        nativeSessionId: null,
-        updatedAt: "2026-04-04T00:00:00.000Z",
+        id: "msg-2",
+        threadId: "thread-1",
+        role: "assistant",
+        content: "OK I will implement the memory feature with summary and keywords",
+        thinking: "",
+        messageType: "final",
+        createdAt: "2026-04-04T00:02:00.000Z",
       },
     ],
-    listMessages: (threadId: string) => {
-      if (threadId === "thread-1") {
-        return [
-          {
-            id: "msg-1",
-            threadId: "thread-1",
-            role: "user",
-            content: "please implement the memory feature for session",
-            thinking: "",
-            messageType: "final",
-            createdAt: "2026-04-04T00:01:00.000Z",
-          },
-          {
-            id: "msg-2",
-            threadId: "thread-1",
-            role: "assistant",
-            content: "OK I will implement the memory feature with summary and keywords",
-            thinking: "",
-            messageType: "final",
-            createdAt: "2026-04-04T00:02:00.000Z",
-          },
-        ]
+    "thread-2": [
+      {
+        id: "msg-3",
+        threadId: "thread-2",
+        role: "assistant",
+        content: "the memory feature implementation is complete",
+        thinking: "",
+        messageType: "final",
+        createdAt: "2026-04-04T00:03:00.000Z",
+      },
+    ],
+  }
+
+  return {
+    listThreadsByGroup: (_sessionGroupId: string) => threads,
+    listMessages: (threadId: string) => messagesByThread[threadId] ?? [],
+    listAllMessagesForGroup: (_sessionGroupId: string, _limit = 1000) => {
+      const allMsgs: Array<Record<string, unknown>> = []
+      for (const t of threads) {
+        const msgs = messagesByThread[t.id] ?? []
+        for (const m of msgs) {
+          allMsgs.push({ ...m, alias: t.alias })
+        }
       }
-      if (threadId === "thread-2") {
-        return [
-          {
-            id: "msg-3",
-            threadId: "thread-2",
-            role: "assistant",
-            content: "the memory feature implementation is complete",
-            thinking: "",
-            messageType: "final",
-            createdAt: "2026-04-04T00:03:00.000Z",
-          },
-        ]
-      }
-      return []
+      allMsgs.sort((a, b) => (a.createdAt as string).localeCompare(b.createdAt as string))
+      return allMsgs
     },
-    createMemory: (_sessionGroupId: string, summary: string, keywords: string): SessionMemoryRecord => ({
+    countUserMessagesSince: (_sessionGroupId: string, since: string) => {
+      let count = 0
+      for (const t of threads) {
+        const msgs = messagesByThread[t.id] ?? []
+        for (const m of msgs) {
+          if (m.role === "user" && m.createdAt > since) count++
+        }
+      }
+      return count
+    },
+    createMemory: (_sessionGroupId: string, summary: string, keywords: string) => ({
       id: "memory-1",
       sessionGroupId: _sessionGroupId,
       summary,
       keywords,
       createdAt: "2026-04-04T00:04:00.000Z",
     }),
-    getLatestMemory: (_sessionGroupId: string): SessionMemoryRecord | null => null,
-    searchMemories: (_keyword: string): SessionMemoryRecord[] => [],
-    listMemories: (_sessionGroupId: string): SessionMemoryRecord[] => [],
+    getLatestMemory: (_sessionGroupId: string) => null,
+    searchMemories: (_keyword: string) => [],
+    listMemories: (_sessionGroupId: string) => [],
     ...overrides,
-  }
+  } as never
 }
+
 
 test("summarizeSession generates summary from messages", () => {
   const repo = createMockRepository()

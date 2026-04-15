@@ -69,7 +69,23 @@ export function registerWsRoute(
       sockets.add(socket as SocketLike);
       log.info({ total: sockets.size }, "client connected");
 
+      let isAlive = true;
+      const heartbeatInterval = setInterval(() => {
+        if (!isAlive) {
+          log.info("heartbeat timeout, terminating connection");
+          clearInterval(heartbeatInterval);
+          sockets.delete(socket as SocketLike);
+          socket.terminate?.();
+          return;
+        }
+        isAlive = false;
+        socket.ping?.();
+      }, 30_000);
+
+      socket.on("pong", () => { isAlive = true; });
+
       socket.on("close", () => {
+        clearInterval(heartbeatInterval);
         sockets.delete(socket as SocketLike);
         log.info({ total: sockets.size }, "client disconnected");
       });
