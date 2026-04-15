@@ -652,9 +652,8 @@ export class MessageService {
     const userMessage = this.sessions.appendUserMessage(thread.id, event.payload.content, contentBlocksJson)
     const rootMessageId = this.dispatch.registerUserRoot(userMessage.id, thread.sessionGroupId)
     const userTimeline = this.sessions.toTimelineMessage(thread.id, userMessage.id)
+    const pendingSkillEvents = this.buildSkillEvents(event.payload.content, thread.provider)
     if (userTimeline) {
-      const skillEvents = this.buildSkillEvents(event.payload.content, thread.provider)
-      if (skillEvents.length) userTimeline.skillEvents = skillEvents
       emit({
         type: "message.created",
         payload: {
@@ -741,6 +740,7 @@ export class MessageService {
       content: effectiveContent,
       emit,
       rootMessageId,
+      skillEvents: pendingSkillEvents.length ? pendingSkillEvents : undefined,
     })
     const queueFlush = this.flushDispatchQueue(thread.sessionGroupId, emit)
     await Promise.allSettled([directTurn, queueFlush])
@@ -766,6 +766,8 @@ export class MessageService {
     groupRole?: "header" | "member" | "convergence" | null
     /** Counter for seal auto-resume (prevents infinite loops) */
     autoResumeCount?: number
+    /** SkillEvents matched from user input, to be attached to the assistant response */
+    skillEvents?: import("@multi-agent/shared").SkillEvent[]
   }): Promise<{ messageId: string; content: string } | null> {
     const thread = this.dispatch.resolveThread(options.threadId)
     if (!thread) {
@@ -796,6 +798,9 @@ export class MessageService {
     this.dispatch.attachMessageToRoot(assistant.id, options.rootMessageId)
     const assistantTimeline = this.sessions.toTimelineMessage(thread.id, assistant.id)
     if (assistantTimeline) {
+      if (options.skillEvents?.length) {
+        assistantTimeline.skillEvents = options.skillEvents
+      }
       options.emit({
         type: "message.created",
         payload: {

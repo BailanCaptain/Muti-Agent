@@ -153,6 +153,7 @@ export class GeminiRuntime extends BaseCliRuntime {
           toolInput: formatGeminiParams(toolName, params),
           status: "started",
           timestamp: new Date().toISOString(),
+          source: "tool",
         };
       }
 

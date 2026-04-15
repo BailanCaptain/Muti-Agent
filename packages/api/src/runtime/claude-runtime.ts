@@ -202,6 +202,7 @@ export class ClaudeRuntime extends BaseCliRuntime {
             toolInput: formatClaudeToolInput(toolUse.name, toolUse.input ?? {}),
             status: "started",
             timestamp: new Date().toISOString(),
+            source: toolUse.name.startsWith("mcp__") ? "mcp" : "tool",
           };
         }
         return null;

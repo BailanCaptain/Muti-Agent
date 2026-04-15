@@ -105,6 +105,7 @@ export class CodexRuntime extends BaseCliRuntime {
           toolInput: JSON.stringify(item.arguments ?? {}).slice(0, 100),
           status: "started",
           timestamp: new Date().toISOString(),
+          source: "mcp",
         };
       }
 
@@ -120,6 +121,7 @@ export class CodexRuntime extends BaseCliRuntime {
           content: `[${status}] ${content.slice(0, 500)}` || "done",
           status: status === "error" ? "error" : "completed",
           timestamp: new Date().toISOString(),
+          source: "mcp",
         };
       }
 
@@ -130,6 +132,7 @@ export class CodexRuntime extends BaseCliRuntime {
           toolInput: ((item.command as string) ?? "").split("\n")[0].slice(0, 100),
           status: "started",
           timestamp: new Date().toISOString(),
+          source: "tool",
         };
       }
 
@@ -141,6 +144,7 @@ export class CodexRuntime extends BaseCliRuntime {
           content: output.split("\n")[0].slice(0, 200) || "done",
           status: "completed",
           timestamp: new Date().toISOString(),
+          source: "tool",
         };
       }
 
@@ -153,6 +157,7 @@ export class CodexRuntime extends BaseCliRuntime {
           toolInput: shortPath,
           status: "completed",
           timestamp: new Date().toISOString(),
+          source: "tool",
         };
       }
 

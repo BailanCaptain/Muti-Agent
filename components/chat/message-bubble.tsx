@@ -6,7 +6,7 @@ import { formatTokenCount } from "@/lib/format"
 import { normalizeMessageToBlocks } from "@/lib/blocks"
 import type { DecisionRequest, Provider, SkillEvent, ToolEvent, TimelineMessage } from "@multi-agent/shared"
 import { thinkingTheme, bubbleTheme, PROVIDER_ACCENT } from "../theme"
-import { ChevronDown, ChevronRight, Copy, Trash2, Wrench, Zap } from "lucide-react"
+import { ChevronDown, ChevronRight, Copy, Plug, Trash2, Wrench, Zap } from "lucide-react"
 import { memo, useState } from "react"
 import { BlockRenderer } from "./block-renderer"
 import { CollapsibleBlock } from "./collapsible-block"
@@ -71,9 +71,21 @@ function BrainIcon({ className }: { className?: string }) {
   )
 }
 
+function cleanMcpToolName(name: string): string {
+  if (name.startsWith("mcp:")) {
+    const slash = name.indexOf("/")
+    return slash >= 0 ? name.slice(slash + 1) : name.slice(4)
+  }
+  if (name.startsWith("mcp__")) {
+    const parts = name.split("__")
+    return parts[parts.length - 1] ?? name
+  }
+  return name
+}
+
 /* ── Tool Events summary (light-themed) ── */
 
-function ToolEventsSummary({ toolEvents }: { toolEvents: ToolEvent[] }) {
+function ToolEventsSummary({ toolEvents, cleanName }: { toolEvents: ToolEvent[]; cleanName?: (name: string) => string }) {
   const completed = toolEvents.filter((e) => e.type === "tool_result")
   const errors = completed.filter((e) => e.status === "error")
   return (
@@ -86,13 +98,14 @@ function ToolEventsSummary({ toolEvents }: { toolEvents: ToolEvent[] }) {
               (j === toolEvents.indexOf(e) + 1 || !toolEvents.slice(toolEvents.indexOf(e) + 1, j).some((x) => x.type === "tool_use")),
           )
           const isError = result?.status === "error"
+          const displayName = cleanName ? cleanName(e.toolName) : e.toolName
           return (
             <div
               key={`${e.toolName}-${i}`}
               className="flex items-center gap-2 rounded-lg px-2 py-1 text-xs text-slate-600"
             >
               <Wrench className="h-3 w-3 shrink-0 text-slate-400" />
-              <span className="font-medium">{e.toolName}</span>
+              <span className="font-medium">{displayName}</span>
               {e.toolInput && (
                 <span className="truncate text-slate-400">{e.toolInput}</span>
               )}
@@ -171,12 +184,17 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
 
   const isStreaming = message.messageType === "progress"
   const hasThinking = !isUser && message.thinking && showThinking
-  const hasToolEvents = !isUser && message.toolEvents && message.toolEvents.length > 0
-  const hasSkillEvents = message.skillEvents && message.skillEvents.length > 0
+  const allToolEvents = (!isUser && message.toolEvents) || []
+  const mcpEvents = allToolEvents.filter((e) => e.source === "mcp")
+  const regularToolEvents = allToolEvents.filter((e) => e.source !== "mcp")
+  const hasToolEvents = regularToolEvents.length > 0
+  const hasMcpEvents = mcpEvents.length > 0
+  const hasSkillEvents = !isUser && message.skillEvents && message.skillEvents.length > 0
   const accent = PROVIDER_ACCENT[message.provider] ?? "#94A3B8"
   const theme = !isUser ? thinkingTheme[message.provider] : null
 
-  const toolCount = message.toolEvents?.filter((e) => e.type === "tool_use").length ?? 0
+  const toolCount = regularToolEvents.filter((e) => e.type === "tool_use").length
+  const mcpCount = mcpEvents.filter((e) => e.type === "tool_use").length
   const skillCount = message.skillEvents?.length ?? 0
 
   if (isUser) {
@@ -194,17 +212,6 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
               provider={message.provider}
             />
           </div>
-          {hasSkillEvents && (
-            <div className="mt-3">
-              <CollapsibleBlock
-                title={`Skill 匹配 (${skillCount})`}
-                icon={<Zap className="h-3.5 w-3.5 text-amber-500" />}
-                accentColor="#D97706"
-              >
-                <SkillEventsList skillEvents={message.skillEvents!} />
-              </CollapsibleBlock>
-            </div>
-          )}
         </div>
       </div>
     )
@@ -259,7 +266,7 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
         ) : (
           <>
             {/* Collapsible Sections */}
-            {(hasSkillEvents || hasToolEvents || hasThinking) && (
+            {(hasSkillEvents || hasToolEvents || hasMcpEvents || hasThinking) && (
               <div className="space-y-2 px-4 pt-3">
                 {hasSkillEvents && (
                   <CollapsibleBlock
@@ -271,6 +278,17 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
                   </CollapsibleBlock>
                 )}
 
+                {hasMcpEvents && (
+                  <CollapsibleBlock
+                    title={`MCP 调用 (${mcpCount})`}
+                    icon={<Plug className="h-3.5 w-3.5 text-violet-500" />}
+                    accentColor="#7C3AED"
+                    isStreaming={isStreaming}
+                  >
+                    <ToolEventsSummary toolEvents={mcpEvents} cleanName={cleanMcpToolName} />
+                  </CollapsibleBlock>
+                )}
+
                 {hasToolEvents && (
                   <CollapsibleBlock
                     title={`工具调用 (${toolCount})`}
@@ -278,7 +296,7 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
                     accentColor={accent}
                     isStreaming={isStreaming}
                   >
-                    <ToolEventsSummary toolEvents={message.toolEvents!} />
+                    <ToolEventsSummary toolEvents={regularToolEvents} />
                   </CollapsibleBlock>
                 )}
 
