@@ -21,7 +21,8 @@ function loadPinned(): Set<string> {
   try {
     const raw = typeof window !== "undefined" ? localStorage.getItem(PINNED_KEY) : null
     return raw ? new Set(JSON.parse(raw) as string[]) : new Set()
-  } catch {
+  } catch (err) {
+    console.warn("[session-sidebar] failed to load pinned sessions", err)
     return new Set()
   }
 }
@@ -29,8 +30,8 @@ function loadPinned(): Set<string> {
 function savePinned(pinned: Set<string>) {
   try {
     localStorage.setItem(PINNED_KEY, JSON.stringify([...pinned]))
-  } catch {
-    // localStorage may be unavailable
+  } catch (err) {
+    console.warn("[session-sidebar] failed to save pinned sessions", err)
   }
 }
 

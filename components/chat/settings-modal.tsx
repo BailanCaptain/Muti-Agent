@@ -24,8 +24,8 @@ export function SettingsModal() {
         const data = (await res.json()) as { rules: AuthorizationRule[] }
         setRules(data.rules)
       }
-    } catch {
-      // Network error — keep current state
+    } catch (err) {
+      console.error("[settings-modal] fetch rules error", err)
     } finally {
       setLoading(false)
     }
@@ -43,8 +43,8 @@ export function SettingsModal() {
       if (res.ok) {
         setRules((prev) => prev.filter((r) => r.id !== id))
       }
-    } catch {
-      // Network error
+    } catch (err) {
+      console.error("[settings-modal] delete rule error", err)
     }
   }
 

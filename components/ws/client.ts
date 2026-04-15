@@ -86,7 +86,11 @@ class SocketClient {
     });
 
     socket.addEventListener("message", (event) => {
-      callbacks.onMessage(JSON.parse(event.data) as RealtimeServerEvent);
+      try {
+        callbacks.onMessage(JSON.parse(event.data) as RealtimeServerEvent);
+      } catch (err) {
+        console.error("[ws] Failed to parse message:", err, String(event.data).slice(0, 200));
+      }
     });
   }
 

@@ -77,8 +77,8 @@ export function SessionContextMenu({
       const res = await fetch(`${baseUrl}/api/bootstrap`)
       const data = (await res.json()) as { sessionGroups: Array<{ id: string; title: string; updatedAtLabel: string; projectTag?: string; previews: Array<{ provider: string; alias: string; text: string }> }> }
       replaceSessionGroups(data.sessionGroups as Parameters<typeof replaceSessionGroups>[0])
-    } catch {
-      // Silently fail
+    } catch (err) {
+      console.error("[session-context-menu] update project tag error", err)
     }
     onClose()
   }, [groupId, tagValue, onClose, replaceSessionGroups])

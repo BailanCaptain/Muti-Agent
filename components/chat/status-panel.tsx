@@ -562,8 +562,8 @@ function ApprovalTabContent() {
         const data = (await res.json()) as { rules: AuthorizationRule[] }
         setRules(data.rules)
       }
-    } catch {
-      // Network error
+    } catch (err) {
+      console.error("[status-panel] fetch rules error", err)
     } finally {
       setLoading(false)
     }

@@ -40,8 +40,8 @@ export const useApprovalStore = create<ApprovalStore>((set) => ({
       if (!res.ok) return
       const data = (await res.json()) as { pending: ApprovalRequest[] }
       set({ pending: data.pending })
-    } catch {
-      // Network error during fetch — keep current state
+    } catch (err) {
+      console.error("[approval-store] fetch error", err)
     }
   },
 }))
