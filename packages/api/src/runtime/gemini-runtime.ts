@@ -74,12 +74,12 @@ export class GeminiRuntime extends BaseCliRuntime {
     if (sessionId) {
       args.push("--resume", sessionId);
     }
+    args.push("-p", prompt);
 
     return {
       command: runtime.command,
       args: [...runtime.prefixArgs, ...args],
       shell: runtime.shell,
-      stdinContent: prompt,
     };
   }
 
