@@ -129,6 +129,13 @@ created: 2026-04-14
   - 新增依赖：`puppeteer`、`sharp`、`http-proxy`
   - 截屏流程：Agent 调用 auto-open → Bridge 截屏 → POST 到后端 → 存 PNG → 返回 URL → 作为 ContentBlock 存入消息
   - 验证方式：agent 能自动截屏 mockup/dev server 页面 + 截图在消息中正确渲染
+- [x] AC-26: **三 CLI 参数对齐**（非 thinking/非权限的参数修复）：
+  - Claude/Codex/Gemini CLI prompt 传递从 stdin pipe 改为命令行参数 + stdin 改 `"ignore"`
+  - Codex 加 `--add-dir .git`；Gemini 加 `isKnownPostResponseCandidatesCrash` 容错
+- [x] AC-27: **三 CLI 事件类型补全**（对比 clowder-ai 逐个补）：
+  - Claude：`unwrapStreamEvent()` 统一拆信封 + thinkingBuffer + partialTextMessageIds 去重 + 10 类事件
+  - Codex：`mcp_tool_call` / `todo_list` / `web_search` / `error` 等 7 类事件
+  - Gemini：`result` error + candidates crash 容错
 
 ### Phase 3：DesignSystem 契约化（1 天）
 - [x] AC-10: 建立统一 theme（`components/theme.ts` 或 `ThemeContext`）：
@@ -142,7 +149,7 @@ created: 2026-04-14
 - [x] AC-14: 删除各组件内的重复色彩定义
 
 ### 门禁
-- [x] AC-15: `pnpm typecheck && pnpm test` 全绿（529/530，1 个 pre-existing 心跳时序抖动）
+- [x] AC-15: `pnpm typecheck && pnpm test` 全绿（543/543，0 failures）
 - [ ] AC-16: 手动验证：Error Boundary 拦截子组件异常（不白屏）
 - [ ] AC-17: 手动验证：图片上传 1 张失败、文字 + 其余图片正常发出
 - [ ] AC-18: 手动验证：带工具调用的消息中，skill/MCP/推理过程默认折叠，结论始终显示
@@ -150,6 +157,10 @@ created: 2026-04-14
 - [ ] AC-23: 手动验证：Claude 和 Codex 的 thinking 内容在前端"深度思考"折叠块中可见（Gemini 无原生 thinking，不验证）
 - [ ] AC-24: 手动验证：三个 CLI 执行任意操作直接放行（不卡死、不弹审批）+ F005 审批 UI 组件已移除
 - [ ] AC-25: 手动验证：agent 能自动截屏并在消息中展示截图
+- [ ] AC-28: 手动验证：Claude stream_event 信封拆解正确（thinking 累积发出 + text_delta 流式 + tool_use 去重 + usage 正确提取）
+- [ ] AC-29: 手动验证：Codex `mcp_tool_call` / `todo_list` / `web_search` 事件在前端正确显示
+- [ ] AC-30: 手动验证：Gemini 遇到 candidates crash 不报错（优雅降级）
+- [ ] AC-31: 手动验证：Windows 下 Claude MCP config 写临时文件（不再内联 JSON）
 
 ## Design Decisions
 
