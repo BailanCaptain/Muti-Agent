@@ -1,6 +1,5 @@
 "use client"
 
-import { useApprovalStore } from "@/components/stores/approval-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import {
   ChevronDown,
@@ -60,7 +59,6 @@ export function SessionSidebar() {
   const anyProviderRunning = useThreadStore((state) =>
     Object.values(state.providers).some((p) => p.running)
   )
-  const pending = useApprovalStore((s) => s.pending)
 
   const [search, setSearch] = useState("")
   const [pinned, setPinned] = useState<Set<string>>(new Set())
@@ -114,14 +112,6 @@ export function SessionSidebar() {
     }
     return running
   }, [anyProviderRunning, activeGroupId])
-
-  const waitingApprovalGroupIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const req of pending) {
-      ids.add(req.sessionGroupId)
-    }
-    return ids
-  }, [pending])
 
   // Filter by search
   const filtered = useMemo(() => {
@@ -227,7 +217,6 @@ export function SessionSidebar() {
                   previews={group.previews}
                   active={activeGroupId === group.id}
                   running={runningGroupIds.has(group.id)}
-                  waitingApproval={waitingApprovalGroupIds.has(group.id)}
                   isPinned={true}
                   onSelect={selectGroup}
                   onCtxMenu={handleContextMenu}
@@ -269,8 +258,7 @@ export function SessionSidebar() {
                     previews={group.previews}
                     active={activeGroupId === group.id}
                     running={runningGroupIds.has(group.id)}
-                    waitingApproval={waitingApprovalGroupIds.has(group.id)}
-                    isPinned={pinned.has(group.id)}
+                      isPinned={pinned.has(group.id)}
                     onSelect={selectGroup}
                     onCtxMenu={handleContextMenu}
                   />
@@ -340,13 +328,12 @@ type SessionCardProps = {
   previews: Array<{ provider: string; alias: string; text: string }>
   active: boolean
   running: boolean
-  waitingApproval: boolean
   isPinned: boolean
   onSelect: (groupId: string) => void
   onCtxMenu: (e: React.MouseEvent, groupId: string, isPinned: boolean) => void
 }
 
-const SessionCard = memo(function SessionCard({ groupId, title, updatedAtLabel, unreadCount, previews, active, running, waitingApproval, isPinned, onSelect, onCtxMenu }: SessionCardProps) {
+const SessionCard = memo(function SessionCard({ groupId, title, updatedAtLabel, unreadCount, previews, active, running, isPinned, onSelect, onCtxMenu }: SessionCardProps) {
   const handleClick = useCallback(() => {
     void onSelect(groupId)
   }, [onSelect, groupId])
@@ -373,18 +360,10 @@ const SessionCard = memo(function SessionCard({ groupId, title, updatedAtLabel, 
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          {/* Running indicator */}
           {running && (
             <span className="relative flex h-2 w-2 shrink-0">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
-            </span>
-          )}
-          {/* Waiting approval indicator */}
-          {!running && waitingApproval && (
-            <span className="relative flex h-2 w-2 shrink-0">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
             </span>
           )}
           <h3 className="truncate text-sm font-medium text-slate-800">

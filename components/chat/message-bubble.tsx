@@ -4,14 +4,15 @@ import { useFoldStore, useIsMessageFolded } from "@/components/stores/fold-store
 import { useSettingsStore } from "@/components/stores/settings-store"
 import { formatTokenCount } from "@/lib/format"
 import { normalizeMessageToBlocks } from "@/lib/blocks"
-import type { DecisionRequest, Provider, TimelineMessage } from "@multi-agent/shared"
-import { ChevronDown, ChevronRight, Copy, Trash2 } from "lucide-react"
+import type { DecisionRequest, Provider, SkillEvent, ToolEvent, TimelineMessage } from "@multi-agent/shared"
+import { thinkingTheme, bubbleTheme, PROVIDER_ACCENT } from "../theme"
+import { ChevronDown, ChevronRight, Copy, Trash2, Wrench, Zap } from "lucide-react"
 import { memo, useState } from "react"
 import { BlockRenderer } from "./block-renderer"
+import { CollapsibleBlock } from "./collapsible-block"
 import { DecisionCard } from "./decision-card"
 import { MarkdownMessage } from "./markdown-message"
 import { ProviderAvatar } from "./provider-avatar"
-import { CliOutputBlock } from "./rich-blocks/cli-output-block"
 
 interface MessageBubbleProps {
   message: TimelineMessage
@@ -70,41 +71,64 @@ function BrainIcon({ className }: { className?: string }) {
   )
 }
 
-const thinkingTheme: Record<
-  Provider,
-  {
-    container: string
-    button: string
-    content: string
-    icon: string
-  }
-> = {
-  codex: {
-    container: "bg-amber-50/50 border-amber-100/80",
-    button: "text-amber-600 hover:text-amber-700",
-    content: "text-slate-600 [&_blockquote]:border-amber-200 [&_code]:bg-amber-100/50",
-    icon: "text-amber-500/80",
-  },
-  claude: {
-    container: "bg-violet-50/50 border-violet-100/80",
-    button: "text-violet-600 hover:text-violet-700",
-    content: "text-slate-600 [&_blockquote]:border-violet-200 [&_code]:bg-violet-100/50",
-    icon: "text-violet-500/80",
-  },
-  gemini: {
-    container: "bg-sky-50/50 border-sky-100/80",
-    button: "text-sky-600 hover:text-sky-700",
-    content: "text-slate-600 [&_blockquote]:border-sky-200 [&_code]:bg-sky-100/50",
-    icon: "text-sky-500/80",
-  },
+/* ── Tool Events summary (light-themed) ── */
+
+function ToolEventsSummary({ toolEvents }: { toolEvents: ToolEvent[] }) {
+  const completed = toolEvents.filter((e) => e.type === "tool_result")
+  const errors = completed.filter((e) => e.status === "error")
+  return (
+    <div className="space-y-1">
+      {toolEvents
+        .filter((e) => e.type === "tool_use")
+        .map((e, i) => {
+          const result = toolEvents.find(
+            (r, j) => r.type === "tool_result" && j > toolEvents.indexOf(e) &&
+              (j === toolEvents.indexOf(e) + 1 || !toolEvents.slice(toolEvents.indexOf(e) + 1, j).some((x) => x.type === "tool_use")),
+          )
+          const isError = result?.status === "error"
+          return (
+            <div
+              key={`${e.toolName}-${i}`}
+              className="flex items-center gap-2 rounded-lg px-2 py-1 text-xs text-slate-600"
+            >
+              <Wrench className="h-3 w-3 shrink-0 text-slate-400" />
+              <span className="font-medium">{e.toolName}</span>
+              {e.toolInput && (
+                <span className="truncate text-slate-400">{e.toolInput}</span>
+              )}
+              <span className={`ml-auto shrink-0 text-[10px] font-medium ${isError ? "text-red-500" : "text-emerald-500"}`}>
+                {result ? (isError ? "失败" : "完成") : "运行中..."}
+              </span>
+            </div>
+          )
+        })}
+      {errors.length > 0 && (
+        <div className="mt-1 text-[10px] text-red-500">{errors.length} 个工具调用失败</div>
+      )}
+    </div>
+  )
 }
 
-/** AC7: Per-provider bubble visual differentiation */
-const bubbleTheme: Record<Provider, string> = {
-  codex: "border-amber-200/70 bg-amber-50/30",
-  claude: "border-violet-200/70 bg-violet-50/30",
-  gemini: "border-sky-200/70 bg-sky-50/30",
+/* ── Skill Events summary ── */
+
+function SkillEventsList({ skillEvents }: { skillEvents: SkillEvent[] }) {
+  return (
+    <div className="space-y-1">
+      {skillEvents.map((e, i) => (
+        <div key={`${e.skillName}-${i}`} className="flex items-center gap-2 text-xs text-slate-600">
+          <span className="font-medium">{e.skillName}</span>
+          <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+            e.matchType === "slash" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
+          }`}>
+            {e.matchType === "slash" ? "指令触发" : "自动匹配"}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
 }
+
+/* ── Token Meta ── */
 
 function MessageMeta({ message }: { message: TimelineMessage }) {
   const inputTokens = message.inputTokens ?? 0
@@ -112,184 +136,210 @@ function MessageMeta({ message }: { message: TimelineMessage }) {
   const totalTokens = inputTokens + outputTokens
   const cachedPercent = message.cachedPercent ?? 0
 
+  if (totalTokens === 0) return null
+
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-200/80 pt-3 font-mono text-[10px] text-slate-400">
-      <span className="rounded-full bg-slate-100/90 px-2 py-1 text-slate-500">
-        {message.provider}
+    <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-slate-400">
+      <span className="rounded-full bg-slate-100/90 px-2 py-0.5">{message.provider}</span>
+      {message.model && (
+        <span className="rounded-full bg-slate-100/70 px-2 py-0.5">{message.model}</span>
+      )}
+      <span className="rounded-full bg-slate-50 px-2 py-0.5">
+        {formatTokenCount(totalTokens)} tokens
       </span>
-      {message.model ? (
-        <span className="rounded-full bg-slate-100/70 px-2 py-1 text-slate-500">
-          {message.model}
+      {cachedPercent > 0 && (
+        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-600">
+          缓存 {cachedPercent}%
         </span>
-      ) : null}
-      <span className="rounded-full bg-slate-50 px-2 py-1">
-        总量 {formatTokenCount(totalTokens)}
-      </span>
-      <span className="rounded-full bg-slate-50 px-2 py-1">
-        输入 {formatTokenCount(inputTokens)}
-      </span>
-      <span className="rounded-full bg-slate-50 px-2 py-1">
-        输出 {formatTokenCount(outputTokens)}
-      </span>
-      <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-600">
-        缓存 {cachedPercent}%
-      </span>
+      )}
     </div>
   )
 }
 
+/* ── Main Card ── */
+
 export const MessageBubble = memo(function MessageBubble({ message, inlineDecisions, onDecisionRespond, onDelete, onCopy }: MessageBubbleProps) {
-  const [isThinkingOpen, setIsThinkingOpen] = useState(true)
   const showThinking = useSettingsStore((state) => state.showThinking)
   const isUser = message.role === "user"
   const avatarIdentity = isUser ? "user" : message.provider
   const displayAlias = isUser ? "你" : message.alias
-  const theme = !isUser ? thinkingTheme[message.provider] : null
 
-  // Only assistant messages are foldable — user messages are already short turns.
   const foldable = !isUser
   const folded = useIsMessageFolded(message.id, message.provider)
   const toggleMessage = useFoldStore((s) => s.toggleMessage)
   const isFolded = foldable && folded
 
+  const isStreaming = message.messageType === "progress"
+  const hasThinking = !isUser && message.thinking && showThinking
+  const hasToolEvents = !isUser && message.toolEvents && message.toolEvents.length > 0
+  const hasSkillEvents = message.skillEvents && message.skillEvents.length > 0
+  const accent = PROVIDER_ACCENT[message.provider] ?? "#94A3B8"
+  const theme = !isUser ? thinkingTheme[message.provider] : null
+
+  const toolCount = message.toolEvents?.filter((e) => e.type === "tool_use").length ?? 0
+  const skillCount = message.skillEvents?.length ?? 0
+
+  if (isUser) {
+    return (
+      <div className="mb-4">
+        <div className="rounded-2xl border border-orange-200/70 bg-gradient-to-br from-rose-50 via-orange-50 to-amber-50 px-5 py-4 shadow-sm">
+          <div className="mb-2 flex items-center gap-2 text-[11px] text-slate-400">
+            <ProviderAvatar identity="user" size="sm" />
+            <span className="font-semibold text-slate-700">{displayAlias}</span>
+            <span>{formatClock(message.createdAt)}</span>
+          </div>
+          <div className="text-sm text-slate-700">
+            <BlockRenderer
+              blocks={normalizeMessageToBlocks(message).filter((b) => b.kind !== "thinking")}
+              provider={message.provider}
+            />
+          </div>
+          {hasSkillEvents && (
+            <div className="mt-3">
+              <CollapsibleBlock
+                title={`Skill 匹配 (${skillCount})`}
+                icon={<Zap className="h-3.5 w-3.5 text-amber-500" />}
+                accentColor="#D97706"
+              >
+                <SkillEventsList skillEvents={message.skillEvents!} />
+              </CollapsibleBlock>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className={`group mb-6 flex w-full flex-col ${isUser ? "items-end" : "items-start"}`}>
-      <div className={`flex max-w-[85%] gap-3 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
-        <div className="mt-1 shrink-0">
-          <ProviderAvatar identity={avatarIdentity} size="md" />
+    <div className="mb-4">
+      <div
+        className={`overflow-hidden rounded-2xl border shadow-sm ${bubbleTheme[message.provider]}`}
+      >
+        {/* Card Header */}
+        <div className="flex items-center gap-2.5 border-b border-slate-200/60 px-4 py-3">
+          <ProviderAvatar identity={avatarIdentity} size="sm" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 text-[11px]">
+              <span className="font-semibold text-slate-700">{displayAlias}</span>
+              {message.model && (
+                <span className="rounded-full bg-slate-100/90 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
+                  {message.model}
+                </span>
+              )}
+              {isStreaming && (
+                <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600">
+                  输出中...
+                </span>
+              )}
+            </div>
+          </div>
+          <span className="text-[10px] text-slate-400">{formatClock(message.createdAt)}</span>
+          {foldable && (
+            <button
+              className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+              onClick={() => toggleMessage(message.id, message.provider)}
+              title={isFolded ? "展开消息" : "折叠消息"}
+              type="button"
+            >
+              {isFolded ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            </button>
+          )}
         </div>
 
-        <div className="flex flex-col gap-1">
-          <div
-            className={`flex items-center gap-2 px-1 text-[11px] ${isUser ? "flex-row-reverse" : "flex-row"} text-slate-400`}
+        {isFolded ? (
+          <button
+            className="flex w-full items-center gap-2 px-4 py-3 text-left text-xs text-slate-500 transition-colors hover:bg-white/60"
+            onClick={() => toggleMessage(message.id, message.provider)}
+            title="点击展开"
+            type="button"
           >
-            <span className="font-semibold tracking-[0.02em] text-slate-700">
-              {displayAlias}
-              {!isUser && message.model ? (
-                <span className="ml-1.5 rounded-full bg-slate-100/90 px-1.5 py-0.5 font-mono text-[10px] font-medium text-slate-500">
-                  ({message.model})
-                </span>
-              ) : null}
-            </span>
-            <span>{formatClock(message.createdAt)}</span>
-            {foldable ? (
-              <button
-                className="flex items-center gap-1 rounded-full border border-slate-200/80 bg-slate-50/80 px-2 py-0.5 text-[10px] font-medium text-slate-500 transition-colors hover:border-slate-300 hover:bg-slate-100 hover:text-slate-800"
-                onClick={() => toggleMessage(message.id, message.provider)}
-                title={isFolded ? "展开消息" : "折叠消息"}
-                type="button"
-              >
-                {isFolded ? (
-                  <ChevronRight className="h-3 w-3" />
-                ) : (
-                  <ChevronDown className="h-3 w-3" />
-                )}
-                <span>{isFolded ? "展开" : "折叠"}</span>
-              </button>
-            ) : null}
-          </div>
-
-          <div className="relative">
-            {isFolded ? (
-              <button
-                className="flex w-full items-center gap-2 rounded-[26px] border border-dashed border-slate-200/80 bg-white/70 px-5 py-3 text-left text-xs text-slate-500 shadow-[0_8px_20px_rgba(15,23,42,0.04)] transition-colors hover:bg-white/90"
-                onClick={() => toggleMessage(message.id, message.provider)}
-                title="点击展开"
-                type="button"
-              >
-                <ChevronRight className="h-3 w-3 shrink-0 text-slate-400" />
-                <span className="truncate italic">{buildFoldedPreview(message.content)}</span>
-              </button>
-            ) : (
-              <div
-                className={`rounded-[26px] border px-5 py-4 shadow-[0_18px_40px_rgba(15,23,42,0.07)] ${
-                  isUser
-                    ? "border-orange-200/70 bg-gradient-to-br from-rose-50 via-orange-50 to-amber-50 text-slate-700"
-                    : `${bubbleTheme[message.provider]} text-slate-700`
-                }`}
-              >
-                {!isUser && message.thinking && theme && showThinking ? (
-                  <div
-                    className={`mb-4 overflow-hidden rounded-2xl border p-4 shadow-inner ${theme.container}`}
+            <ChevronRight className="h-3 w-3 shrink-0 text-slate-400" />
+            <span className="truncate italic">{buildFoldedPreview(message.content)}</span>
+          </button>
+        ) : (
+          <>
+            {/* Collapsible Sections */}
+            {(hasSkillEvents || hasToolEvents || hasThinking) && (
+              <div className="space-y-2 px-4 pt-3">
+                {hasSkillEvents && (
+                  <CollapsibleBlock
+                    title={`Skill 调用 (${skillCount})`}
+                    icon={<Zap className="h-3.5 w-3.5 text-amber-500" />}
+                    accentColor="#D97706"
                   >
-                    <button
-                      className={`flex w-full items-center gap-2 text-[11px] font-medium transition ${theme.button}`}
-                      onClick={() => setIsThinkingOpen(!isThinkingOpen)}
-                      type="button"
-                    >
-                      <ChevronDown
-                        className={`h-3 w-3 transition-transform duration-200 ${isThinkingOpen ? "" : "-rotate-90"}`}
+                    <SkillEventsList skillEvents={message.skillEvents!} />
+                  </CollapsibleBlock>
+                )}
+
+                {hasToolEvents && (
+                  <CollapsibleBlock
+                    title={`工具调用 (${toolCount})`}
+                    icon={<Wrench className="h-3.5 w-3.5 text-slate-500" />}
+                    accentColor={accent}
+                    isStreaming={isStreaming}
+                  >
+                    <ToolEventsSummary toolEvents={message.toolEvents!} />
+                  </CollapsibleBlock>
+                )}
+
+                {hasThinking && theme && (
+                  <CollapsibleBlock
+                    title="推理过程"
+                    icon={<BrainIcon className="h-3.5 w-3.5 text-slate-500" />}
+                    accentColor={accent}
+                  >
+                    <div className="max-h-60 overflow-y-auto pr-1">
+                      <MarkdownMessage
+                        className={`text-[12px] leading-relaxed ${theme.content}`}
+                        content={message.thinking!}
                       />
-                      <BrainIcon className={`h-3.5 w-3.5 ${theme.icon}`} />
-                      <span>深度思考</span>
-                      {!isThinkingOpen && message.thinking && (
-                        <span className="ml-2 truncate opacity-40">
-                          {message.thinking.slice(0, 60)}...
-                        </span>
-                      )}
-                    </button>
-                    <div
-                      className={`grid transition-all duration-300 ease-in-out ${
-                        isThinkingOpen
-                          ? "grid-rows-[1fr] opacity-100 mt-3"
-                          : "grid-rows-[0fr] opacity-0 mt-0"
-                      }`}
-                    >
-                      <div className="overflow-hidden">
-                        <div className="max-h-60 overflow-y-auto border-t border-slate-200/60 pt-3 pr-1">
-                          <MarkdownMessage
-                            className={`text-[12px] leading-relaxed ${theme.content}`}
-                            content={message.thinking}
-                          />
-                        </div>
-                      </div>
                     </div>
-                  </div>
-                ) : null}
-
-                {!isUser && message.toolEvents && message.toolEvents.length > 0 ? (
-                  <CliOutputBlock toolEvents={message.toolEvents} provider={message.provider} content={message.content} />
-                ) : (
-                  <BlockRenderer
-                    blocks={normalizeMessageToBlocks(message).filter(b => b.kind !== "thinking")}
-                    provider={message.provider}
-                  />
+                  </CollapsibleBlock>
                 )}
-
-                {inlineDecisions && inlineDecisions.length > 0 && onDecisionRespond && (
-                  <div className="mt-3 space-y-2 border-t border-slate-200/60 pt-3">
-                    {inlineDecisions.map((req) => (
-                      <DecisionCard key={req.requestId} request={req} onRespond={onDecisionRespond} />
-                    ))}
-                  </div>
-                )}
-
-                {!isUser ? <MessageMeta message={message} /> : null}
               </div>
             )}
 
-            <div
-              className={`absolute top-3 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 ${
-                isUser ? "right-full mr-2" : "left-full ml-2"
-              }`}
-            >
-              <button
-                className="rounded-full bg-white/95 p-1.5 shadow-sm ring-1 ring-black/5 hover:bg-slate-50"
-                onClick={() => onCopy?.(message.content)}
-                type="button"
-              >
-                <Copy className="h-3.5 w-3.5 text-slate-400" />
-              </button>
-              <button
-                className="rounded-full bg-white/95 p-1.5 shadow-sm ring-1 ring-black/5 hover:bg-slate-50"
-                onClick={() => onDelete?.(message.id)}
-                type="button"
-              >
-                <Trash2 className="h-3.5 w-3.5 text-slate-400" />
-              </button>
+            {/* Content — always visible */}
+            <div className="px-4 py-3 text-sm text-slate-700">
+              <BlockRenderer
+                blocks={normalizeMessageToBlocks(message).filter((b) => b.kind !== "thinking")}
+                provider={message.provider}
+              />
             </div>
-          </div>
-        </div>
+
+            {/* Inline Decisions */}
+            {inlineDecisions && inlineDecisions.length > 0 && onDecisionRespond && (
+              <div className="space-y-2 border-t border-slate-200/60 px-4 py-3">
+                {inlineDecisions.map((req) => (
+                  <DecisionCard key={req.requestId} request={req} onRespond={onDecisionRespond} />
+                ))}
+              </div>
+            )}
+
+            {/* Card Footer */}
+            <div className="flex items-center justify-between border-t border-slate-200/60 px-4 py-2">
+              <MessageMeta message={message} />
+              <div className="flex items-center gap-1">
+                <button
+                  className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  onClick={() => onCopy?.(message.content)}
+                  title="复制"
+                  type="button"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  onClick={() => onDelete?.(message.id)}
+                  title="删除"
+                  type="button"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

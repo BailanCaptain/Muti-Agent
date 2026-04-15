@@ -1,6 +1,7 @@
 "use client"
 
 import type { Provider, ToolEvent } from "@multi-agent/shared"
+import { PROVIDER_ACCENT } from "../../theme"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { MarkdownMessage } from "../markdown-message"
 import { pairToolEvents, deriveCliStatus, type PairedTool, type CliStatus } from "./toCliEvents"
@@ -33,12 +34,6 @@ function hexToRgba(hex: string, opacity: number): string {
 }
 
 const DIVIDER = "#334155"
-
-const PROVIDER_ACCENT: Record<Provider, string> = {
-  claude: "#7C3AED",
-  codex: "#D97706",
-  gemini: "#0EA5E9",
-}
 
 /* ── Inline SVG icons ── */
 

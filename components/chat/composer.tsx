@@ -5,14 +5,7 @@ import { useThreadStore } from "@/components/stores/thread-store"
 import { AGENT_PROFILES, PROVIDERS, PROVIDER_ALIASES, type Provider } from "@multi-agent/shared"
 import { ImagePlus, Send, Square, X } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-
-const mentionTheme: Record<Provider, string> = {
-  codex: "border-amber-200/80 bg-amber-50 text-amber-700 hover:bg-amber-100",
-  claude: "border-violet-200/80 bg-violet-50 text-violet-700 hover:bg-violet-100",
-  gemini: "border-sky-200/80 bg-sky-50 text-sky-700 hover:bg-sky-100",
-}
-
-const everyoneTheme = "border-slate-200/80 bg-slate-50 text-slate-700 hover:bg-slate-100"
+import { mentionTheme, EVERYONE_THEME as everyoneTheme } from "../theme"
 
 type Suggestion =
   | { kind: "provider"; provider: Provider; label: string; role: string }

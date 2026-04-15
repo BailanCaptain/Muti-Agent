@@ -340,10 +340,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     get().replaceActiveGroup(payload.activeGroup)
     get().resetUnread(groupId)
 
-    const { fetchPending: fetchApprovals } = await import("./approval-store").then((m) => m.useApprovalStore.getState())
     const { fetchPending: fetchDecisions } = await import("./decision-store").then((m) => m.useDecisionStore.getState())
     const { fetchPendingFlush } = await import("./decision-board-store").then((m) => m.useDecisionBoardStore.getState())
-    void fetchApprovals(groupId)
     void fetchDecisions(groupId)
     void fetchPendingFlush(groupId)
   },

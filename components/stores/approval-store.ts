@@ -1,3 +1,4 @@
+/** @deprecated F012 — approval UI removed; backend API retained. This store has no active consumers. */
 "use client"
 
 import { socketClient } from "@/components/ws/client"

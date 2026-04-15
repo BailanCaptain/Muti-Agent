@@ -1,12 +1,10 @@
 "use client"
 
-import { useApprovalStore } from "@/components/stores/approval-store"
 import { useDecisionStore } from "@/components/stores/decision-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import type { TimelineMessage } from "@multi-agent/shared"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { useCallback, useEffect, useMemo, useRef } from "react"
-import { ApprovalCard } from "./approval-card"
 import { CollapsibleGroup } from "./collapsible-group"
 import { ConnectorBubble } from "./connector-bubble"
 import { InlineDecisionBoard } from "./decision-board-modal"
@@ -73,8 +71,6 @@ function groupTimeline(timeline: TimelineMessage[]): GroupedItem[] {
 export function TimelinePanel() {
   const timeline = useThreadStore((state) => state.timeline)
   const activeGroupId = useThreadStore((state) => state.activeGroupId)
-  const pendingApprovals = useApprovalStore((state) => state.pending)
-  const respondApproval = useApprovalStore((state) => state.respond)
   const allPendingDecisions = useDecisionStore((state) => state.pending)
   const respondDecision = useDecisionStore((state) => state.respond)
   const latestMessageId = timeline.at(-1)?.id
@@ -206,9 +202,6 @@ export function TimelinePanel() {
           </div>
         )}
         <InlineDecisionBoard />
-        {pendingApprovals.map((request) => (
-          <ApprovalCard key={request.requestId} request={request} onRespond={respondApproval} />
-        ))}
       </div>
     </div>
   )

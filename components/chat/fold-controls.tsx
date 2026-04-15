@@ -3,21 +3,7 @@
 import { useFoldStore } from "@/components/stores/fold-store"
 import { PROVIDERS, PROVIDER_ALIASES, type Provider } from "@multi-agent/shared"
 import { ChevronsDownUp, ChevronsUpDown, Layers } from "lucide-react"
-
-const providerChipTheme: Record<Provider, { folded: string; open: string }> = {
-  codex: {
-    folded: "border-amber-300 bg-amber-100 text-amber-800",
-    open: "border-amber-200/70 bg-amber-50/40 text-amber-700 hover:bg-amber-50",
-  },
-  claude: {
-    folded: "border-violet-300 bg-violet-100 text-violet-800",
-    open: "border-violet-200/70 bg-violet-50/40 text-violet-700 hover:bg-violet-50",
-  },
-  gemini: {
-    folded: "border-sky-300 bg-sky-100 text-sky-800",
-    open: "border-sky-200/70 bg-sky-50/40 text-sky-700 hover:bg-sky-50",
-  },
-}
+import { foldChipTheme as providerChipTheme } from "../theme"
 
 export function FoldControls() {
   const providerFolds = useFoldStore((s) => s.providerFolds)
