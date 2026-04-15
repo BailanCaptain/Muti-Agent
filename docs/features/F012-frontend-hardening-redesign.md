@@ -149,7 +149,7 @@ created: 2026-04-14
 - [x] AC-14: 删除各组件内的重复色彩定义
 
 ### 门禁
-- [x] AC-15: `pnpm typecheck && pnpm test` 全绿（543/543，0 failures）
+- [x] AC-15: `pnpm typecheck && pnpm test` 全绿（562/562，0 failures）
 - [ ] AC-16: 手动验证：Error Boundary 拦截子组件异常（不白屏）
 - [ ] AC-17: 手动验证：图片上传 1 张失败、文字 + 其余图片正常发出
 - [ ] AC-18: 手动验证：带工具调用的消息中，skill/MCP/推理过程默认折叠，结论始终显示
@@ -234,6 +234,12 @@ pnpm dev
 | 2026-04-15 | AC-22 完成 | PreviewGateway + Bridge Script + WS Patch + port-validator + BrowserPanel + auto-open 事件 + 13 安全测试 |
 | 2026-04-14 | 自我纠正 | clowder-ai 确实用了三个 CLI（之前错说没用 Codex/Gemini）；Codex reasoning 在 clowder-ai 已跑通；Gemini 无原生 thinking |
 | 2026-04-14 | 根因补充 | 审批规则"完全废了"不止是卡片弹不出——前端缺规则创建 UI，用户无法主动配置放权/不放权 |
+| 2026-04-16 | Bug 修复 | Codex reasoning 解析修复（summary 数组格式）+ effort 注入已确认 |
+| 2026-04-16 | Bug 修复 | Skill 三栏分拆后端：Codex command_execution/file_change skill 路径检测 + Gemini isSkillRelatedParams + activate_skill |
+| 2026-04-16 | Bug 修复 | stderr 行缓冲 + cleanThinking 前端防御 — 解决 "Reading additional input from stdin..." 噪音 |
+| 2026-04-16 | Bug 修复 | Windows 反斜杠路径：4 处正则从 `\/` 改为 `[\/\\]`，匹配 `Get-Content -Path` 的 `\` 路径 |
+| 2026-04-16 | 编译教训 | 改了 TS 源码没编译到 dist — 运行 8 小时旧代码未生效。增加编译验证步骤 |
+| 2026-04-16 | 测试更新 | 新增 19 个测试（reasoning 6 + skill detection 13），全量 562 绿 |
 
 ## Links
 
