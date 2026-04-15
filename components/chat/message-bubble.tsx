@@ -4,7 +4,7 @@ import { useFoldStore, useIsMessageFolded } from "@/components/stores/fold-store
 import { useSettingsStore } from "@/components/stores/settings-store"
 import { formatTokenCount } from "@/lib/format"
 import { normalizeMessageToBlocks } from "@/lib/blocks"
-import type { DecisionRequest, Provider, SkillEvent, ToolEvent, TimelineMessage } from "@multi-agent/shared"
+import type { DecisionRequest, Provider, ToolEvent, TimelineMessage } from "@multi-agent/shared"
 import { thinkingTheme, bubbleTheme, PROVIDER_ACCENT } from "../theme"
 import { ChevronDown, ChevronRight, Copy, Plug, Trash2, Wrench, Zap } from "lucide-react"
 import { memo, useState } from "react"
@@ -46,6 +46,12 @@ export function buildFoldedPreview(content: string): string {
   return plain.length > 80 ? `${plain.slice(0, 80)}…` : plain || "（空内容）"
 }
 
+const THINKING_NOISE_RE = /^(Reading (prompt|additional input) from stdin.*|YOLO mode is enabled.*|All tool calls will be automatically approved.*|Loaded cached credentials.*|Using model:.*|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z?\s+(ERROR|WARN|INFO|DEBUG|TRACE)\s.*|Tip:.*|\[runtime\].*|codex_core.*|failed to stat skills entry.*)$/gm
+
+function cleanThinking(raw: string): string {
+  return raw.replace(THINKING_NOISE_RE, "").replace(/\n{3,}/g, "\n\n").trim()
+}
+
 function BrainIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -69,6 +75,25 @@ function BrainIcon({ className }: { className?: string }) {
       <path d="M19.967 17.484A4 4 0 0 1 18 18" />
     </svg>
   )
+}
+
+function classifyToolEvents(events: ToolEvent[]) {
+  const mcp: ToolEvent[] = []
+  const skill: ToolEvent[] = []
+  const tool: ToolEvent[] = []
+  let lastSource: "mcp" | "skill" | "tool" = "tool"
+
+  for (const e of events) {
+    const src = e.source ?? (e.type === "tool_result" ? lastSource : "tool")
+
+    if (e.type === "tool_use") lastSource = src as "mcp" | "skill" | "tool"
+
+    if (src === "mcp") mcp.push(e)
+    else if (src === "skill") skill.push(e)
+    else tool.push(e)
+  }
+
+  return { mcp, skill, tool }
 }
 
 function cleanMcpToolName(name: string): string {
@@ -122,25 +147,6 @@ function ToolEventsSummary({ toolEvents, cleanName }: { toolEvents: ToolEvent[];
   )
 }
 
-/* ── Skill Events summary ── */
-
-function SkillEventsList({ skillEvents }: { skillEvents: SkillEvent[] }) {
-  return (
-    <div className="space-y-1">
-      {skillEvents.map((e, i) => (
-        <div key={`${e.skillName}-${i}`} className="flex items-center gap-2 text-xs text-slate-600">
-          <span className="font-medium">{e.skillName}</span>
-          <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-            e.matchType === "slash" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
-          }`}>
-            {e.matchType === "slash" ? "指令触发" : "自动匹配"}
-          </span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 /* ── Token Meta ── */
 
 function MessageMeta({ message }: { message: TimelineMessage }) {
@@ -183,19 +189,19 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
   const isFolded = foldable && folded
 
   const isStreaming = message.messageType === "progress"
-  const hasThinking = !isUser && message.thinking && showThinking
+  const cleanedThinking = !isUser && message.thinking ? cleanThinking(message.thinking) : ""
+  const hasThinking = !isUser && cleanedThinking && showThinking
   const allToolEvents = (!isUser && message.toolEvents) || []
-  const mcpEvents = allToolEvents.filter((e) => e.source === "mcp")
-  const regularToolEvents = allToolEvents.filter((e) => e.source !== "mcp")
+  const { mcp: mcpEvents, skill: skillToolEvents, tool: regularToolEvents } = classifyToolEvents(allToolEvents)
   const hasToolEvents = regularToolEvents.length > 0
   const hasMcpEvents = mcpEvents.length > 0
-  const hasSkillEvents = !isUser && message.skillEvents && message.skillEvents.length > 0
+  const hasSkillEvents = skillToolEvents.length > 0
   const accent = PROVIDER_ACCENT[message.provider] ?? "#94A3B8"
   const theme = !isUser ? thinkingTheme[message.provider] : null
 
   const toolCount = regularToolEvents.filter((e) => e.type === "tool_use").length
   const mcpCount = mcpEvents.filter((e) => e.type === "tool_use").length
-  const skillCount = message.skillEvents?.length ?? 0
+  const skillCount = skillToolEvents.filter((e) => e.type === "tool_use").length
 
   if (isUser) {
     return (
@@ -272,9 +278,9 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
                   <CollapsibleBlock
                     title={`Skill 调用 (${skillCount})`}
                     icon={<Zap className="h-3.5 w-3.5 text-amber-500" />}
-                    accentColor="#D97706"
+                    accentColor={accent}
                   >
-                    <SkillEventsList skillEvents={message.skillEvents!} />
+                    <ToolEventsSummary toolEvents={skillToolEvents} />
                   </CollapsibleBlock>
                 )}
 
@@ -282,7 +288,7 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
                   <CollapsibleBlock
                     title={`MCP 调用 (${mcpCount})`}
                     icon={<Plug className="h-3.5 w-3.5 text-violet-500" />}
-                    accentColor="#7C3AED"
+                    accentColor={accent}
                     isStreaming={isStreaming}
                   >
                     <ToolEventsSummary toolEvents={mcpEvents} cleanName={cleanMcpToolName} />
@@ -309,7 +315,7 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
                     <div className="max-h-60 overflow-y-auto pr-1">
                       <MarkdownMessage
                         className={`text-[12px] leading-relaxed ${theme.content}`}
-                        content={message.thinking!}
+                        content={cleanedThinking}
                       />
                     </div>
                   </CollapsibleBlock>

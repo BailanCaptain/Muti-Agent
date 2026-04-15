@@ -52,6 +52,7 @@ function formatGeminiParams(toolName: string, params: Record<string, unknown>): 
 
 export class GeminiRuntime extends BaseCliRuntime {
   readonly agentId = "gemini";
+  private lastToolSource: "tool" | "mcp" | "skill" = "tool";
 
   protected buildCommand(input: AgentRunInput): RuntimeCommand {
     const runtime = resolveNodeScript(
@@ -142,18 +143,30 @@ export class GeminiRuntime extends BaseCliRuntime {
     }
   }
 
+  private isSkillRelatedParams(params: Record<string, unknown>): boolean {
+    const fp = String(params.file_path ?? params.path ?? "");
+    const cmd = String(params.command ?? "");
+    return /multi-agent-skills[\/\\]/i.test(fp) || /multi-agent-skills[\/\\]/i.test(cmd);
+  }
+
   transformToolEvent(event: Record<string, unknown>): ToolEvent | null {
     try {
       if (event.type === "tool_use") {
         const toolName = String(event.tool_name ?? "");
         const params = (event.parameters ?? {}) as Record<string, unknown>;
+        const source = toolName.startsWith("mcp__") || toolName.startsWith("mcp:")
+          ? "mcp" as const
+          : (toolName === "Skill" || toolName === "Agent" || toolName === "activate_skill" || this.isSkillRelatedParams(params))
+            ? "skill" as const
+            : "tool" as const;
+        this.lastToolSource = source;
         return {
           type: "tool_use",
           toolName,
           toolInput: formatGeminiParams(toolName, params),
           status: "started",
           timestamp: new Date().toISOString(),
-          source: "tool",
+          source,
         };
       }
 
@@ -166,6 +179,7 @@ export class GeminiRuntime extends BaseCliRuntime {
           content: (output ?? "").split("\n")[0].slice(0, 200) || "done",
           status: status === "error" ? "error" : "completed",
           timestamp: new Date().toISOString(),
+          source: this.lastToolSource,
         };
       }
 
