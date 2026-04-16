@@ -534,3 +534,26 @@
   - 全项目测试套件（562 个测试全绿但未捕获任何 UI 呈现问题）
 - 原理（可选）：测试金字塔假设"底层测试覆盖了大部分风险"。这对纯逻辑成立（函数输入输出确定性强），对 UI 呈现不成立（正确性取决于完整链路的每一环都对，且最终结果只在浏览器中可观测）。UI 呈现问题的风险集中在"集成 gap"——每一层独立测试通过，但层与层之间的假设不兼容（LL-008 的变体）。正确的验证策略是：在风险集中的层投入验证资源，而不是在风险不集中的层堆数量。
 - 关联：LL-004（修复轮次 = 根因距离）、LL-008（组件间假设耦合）、LL-018（源码 vs 产物）、LL-020（汇报 vs 验证）、`docs/features/F012-frontend-hardening-redesign.md`
+
+### LL-023: 对齐外部项目时必须先验证前置条件——"别人这么写"不是 rationale
+- 状态：validated
+- 更新时间：2026-04-16
+
+- 坑：F012 AC-26 把 prompt 从 stdin 改回 argv，理由是"参照 clowder-ai 实现"。4 天前 B008 刚修好的 ENAMETOOLONG 精确复发——三家 agent 全挂，DB 里留下 6 条 `Error: spawn ENAMETOOLONG`。
+- 根因：clowder-ai 的技术选型有其隐含前提——大概率运行在 Linux/macOS（ARG_MAX 128KB+），prompt 规模可能远小于我们。我们的约束不同：Windows（CreateProcess 32K 限制）+ POLICY_FULL 最大 90KB 历史。AC-26 在对齐时没有验证这些前提，也没有回查 4 天前刚写的 B008 bug 报告。
+- 触发条件：
+  1. Refactor 的依据来自外部项目（"clowder-ai 这么写"、"社区标准做法"、"参考实现"）
+  2. 我方曾经针对同一问题做过专门修复（有 bug 报告、有 commit、有测试）
+  3. Refactor 时没有交叉比对历史 bug 报告
+- 修复：撤回 cf27d68 的 3 文件改动，恢复 B008 的 stdinContent 路径。
+- 防护：
+  1. **对齐检查清单**：参照外部项目改代码前，必须回答三个问题：(a) 对方的平台/环境约束是否与我们相同？(b) 我方是否有针对同一领域的历史 bug 修复？(c) 对方的选择在我方约束下是否仍然成立？三个都是 YES 才能对齐。
+  2. **Bug 报告交叉比对**：任何涉及 runtime/spawn/CLI 参数的 refactor，review checklist 必须包含"检索 docs/bugReport/ 是否有同领域的已修复 bug"。
+  3. **测试门禁**：B008 的 base-runtime.test.ts 测试从未被删，但 cf27d68 让三个 runtime 不再触发 stdinContent 路径——测试绿灯是假象。应该在 per-runtime 层也有集成测试验证 stdinContent 是否被填充。
+- 来源锚点：
+  - commit `9fe0adf`（B008 原始修复——stdin 路径）
+  - commit `cf27d68`（F012 AC-26——撤回 stdin，复发 B008）
+  - `docs/bugReport/B008-spawn-enametoolong-windows.md`（B008 完整记录）
+  - `docs/bugReport/B014-enametoolong-regression.md`（B014 复发记录）
+- 原理（可选）：外部参照是有价值的——它能避免在真空中设计（LL-004）。但"对齐"和"照搬"不同。对齐需要验证两个项目的约束空间是否重叠；照搬只需要复制代码。当约束不重叠时（平台不同、规模不同、历史包袱不同），照搬外部选型就是把别人不存在的问题引入自己的项目。正确的对齐姿势是：先理解对方为什么这么做，再验证那个"为什么"在我们这里是否成立。
+- 关联：LL-004（根因距离）、B008（原始 ENAMETOOLONG）、B014（复发记录）、`docs/features/F012-frontend-hardening-redesign.md` AC-26

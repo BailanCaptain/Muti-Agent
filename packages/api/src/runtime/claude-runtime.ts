@@ -126,12 +126,12 @@ export class ClaudeRuntime extends BaseCliRuntime {
     if (sessionId) {
       args.push("--resume", sessionId);
     }
-    args.push("-p", input.prompt);
 
     return {
       command: runtime.command,
       args: [...runtime.prefixArgs, ...args],
       shell: runtime.shell,
+      stdinContent: input.prompt,
       cleanup,
     };
   }

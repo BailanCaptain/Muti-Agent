@@ -129,9 +129,9 @@ created: 2026-04-14
   - 新增依赖：`puppeteer`、`sharp`、`http-proxy`
   - 截屏流程：Agent 调用 auto-open → Bridge 截屏 → POST 到后端 → 存 PNG → 返回 URL → 作为 ContentBlock 存入消息
   - 验证方式：agent 能自动截屏 mockup/dev server 页面 + 截图在消息中正确渲染
-- [x] AC-26: **三 CLI 参数对齐**（非 thinking/非权限的参数修复）：
-  - Claude/Codex/Gemini CLI prompt 传递从 stdin pipe 改为命令行参数 + stdin 改 `"ignore"`
-  - Codex 加 `--add-dir .git`；Gemini 加 `isKnownPostResponseCandidatesCrash` 容错
+- [ ] ~~AC-26: **三 CLI 参数对齐**~~ **REVOKED (复发 B008)** — prompt 从 stdin 改回 argv 导致 Windows ENAMETOOLONG 复发，已撤回。详见 B014。
+  - ~~Claude/Codex/Gemini CLI prompt 传递从 stdin pipe 改为命令行参数 + stdin 改 `"ignore"`~~
+  - Codex 加 `--add-dir .git`；Gemini 加 `isKnownPostResponseCandidatesCrash` 容错（此二项保留）
 - [x] AC-27: **三 CLI 事件类型补全**（对比 clowder-ai 逐个补）：
   - Claude：`unwrapStreamEvent()` 统一拆信封 + thinkingBuffer + partialTextMessageIds 去重 + 10 类事件
   - Codex：`mcp_tool_call` / `todo_list` / `web_search` / `error` 等 7 类事件
@@ -237,6 +237,7 @@ pnpm dev
 | 2026-04-16 | Bug 修复 | Codex reasoning 解析修复（summary 数组格式）+ effort 注入已确认 |
 | 2026-04-16 | Bug 修复 | Skill 三栏分拆后端：Codex command_execution/file_change skill 路径检测 + Gemini isSkillRelatedParams + activate_skill |
 | 2026-04-16 | Bug 修复 | stderr 行缓冲 + cleanThinking 前端防御 — 解决 "Reading additional input from stdin..." 噪音 |
+| 2026-04-16 | AC-26 撤回 | AC-26 stdin→argv 迁移复发 B008（ENAMETOOLONG），三 runtime 恢复 stdinContent，AC-26 标 REVOKED。详见 B014 |
 | 2026-04-16 | Bug 修复 | Windows 反斜杠路径：4 处正则从 `\/` 改为 `[\/\\]`，匹配 `Get-Content -Path` 的 `\` 路径 |
 | 2026-04-16 | 编译教训 | 改了 TS 源码没编译到 dist — 运行 8 小时旧代码未生效。增加编译验证步骤 |
 | 2026-04-16 | 测试更新 | 新增 19 个测试（reasoning 6 + skill detection 13），全量 562 绿 |

@@ -43,8 +43,9 @@ export class CodexRuntime extends BaseCliRuntime {
 
     return {
       command: runtime.command,
-      args: [...runtime.prefixArgs, ...topLevelArgs, ...baseArgs, "--", prompt],
+      args: [...runtime.prefixArgs, ...topLevelArgs, ...baseArgs],
       shell: runtime.shell,
+      stdinContent: prompt,
     };
   }
 
