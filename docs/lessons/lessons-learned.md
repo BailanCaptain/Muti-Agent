@@ -102,9 +102,10 @@
 
 ### LL-004: 同类症状在同一层反复打补丁仍复发 → 根因一定在上一层
 - 状态：validated
-- 更新时间：2026-04-11
+- 更新时间：2026-04-16
 
 - 坑：F003 之前对"A2A 不收敛 / 流程不推进 / 会话截断"反复在 skill 文本、prompt 模板、settlement 状态机三个层面打补丁，每次都看起来"修好了"但症状总复发。真相是 A2A 管线本质是 pull-based 的文本扫描（靠正则扫 CLI stdout 里的行首 `@alias`），三个症状都是这个模型的必然失效——无论上层 skill / prompt 写得多完备都无法掩盖底层表达力不足。
+  - **F012 复发实例**：Skill 三栏分拆修了 4 轮（commit `604e9b4` 为最终修复），每一轮"解决了一个问题"但暴露下一个——① 源码改了没编译 → ② 外部工具认知错误 → ③ 路径正则不匹配 Windows 反斜杠 → ④ 终于修对。如果第 2 次被打回时停下来从"用户看到了什么"反向追踪到"dist 里是什么"→"编译了吗"，可能一次就找到根因。**修复轮次是根因距离的度量**。
 - 根因：在错误的层修 bug，会每次都"看起来修好了"一阵子——因为具体 case 的文本能对上。但同类 case 换个表述/时机就复发。把"这次能过"当成"根因找到了"。skill/prompt 是被动配置；真正决定流程走向的执行代码在 runtime 层。
 - 触发条件：
   1. 同一类症状报告过 ≥2 次，每次修的都是描述层面（文案/参数/阈值）。
@@ -122,7 +123,7 @@
   - 历史补丁对比：B003（feat-lifecycle 双重进入）/ B004（settlement premature）都曾被当成"另一个独立 bug"修，实际是同一根因的外层表现
   - **B002→B006→B010→B011 症状族**：Gemini "停了/卡了"改了四轮（classifier → stderr fast-fail → liveness probe → stall 判定），每轮解决上轮问题、引入新问题。第四轮（B011）才发现根因是组件间假设耦合（stderr 不算 activity + CPU 平算 idle + Windows 启用 stall 快杀），见 LL-008
 - 原理（可选）：每个抽象层都有一个"表达力上限"——超出就靠下层表达力硬撑。反复在同一层修同类问题，等于在该层的表达力上限处打补丁。打补丁的次数是根因距离的度量：第 3 次打补丁意味着至少要上抛 1 层。
-- 关联：`docs/features/F003-a2a-convergence.md`, `docs/bugReport/B001-B004`（A2A 症状族）, `docs/bugReport/B010-B011`（Gemini 停了症状族）, `multi-agent-skills/self-evolution/SKILL.md`
+- 关联：`docs/features/F003-a2a-convergence.md`, `docs/bugReport/B001-B004`（A2A 症状族）, `docs/bugReport/B010-B011`（Gemini 停了症状族）, `docs/features/F012-frontend-hardening-redesign.md`（4 轮修复案例）, `multi-agent-skills/self-evolution/SKILL.md`
 
 ### LL-005: 清状态前必须审查"兜底"是否真的能兜
 - 状态：validated
@@ -359,9 +360,10 @@
 
 ### LL-015: 对着真实 CLI 输出写 transformer/parser——基于猜测的实现会反复返工
 - 状态：validated
-- 更新时间：2026-04-14
+- 更新时间：2026-04-16
 
 - 坑：三个 runtime 的 `transformToolEvent`/`parseActivityLine`/`parseAssistantDelta` 基于 API 文档和假设实现，未用真实 CLI 输出验证。结果：① Codex 字段名用了 `item.output`，实际是 `aggregated_output`——工具结果永远显示 "done"。② Claude `parseActivityLine` 检查 `thinking_delta`，但 CLI `stream-json` 输出的是 message 级别事件，这条路径是死代码。③ stderr 被无条件塞入 thinking，Codex 启动日志和 Rust tracing 错误全部显示为"深度思考"。反复修了 4 轮才定位到根因——因为每次都在猜格式。
+  - **F012 补充案例**：Codex 推理内容显示。假设 Responses API 的 reasoning item 结构是 `{ type: "reasoning", text: "..." }`，写了 `item.text` 去读。实际格式是 `{ type: "reasoning", summary: [{ type: "summary_text", text: "..." }] }`——嵌套了一层数组。代码里 `item.text` 返回 `undefined`，推理内容被静默丢弃。教训同根：没有跑一次真实调用抓实际输出，凭 API 印象写解析代码。解析失败时应至少 `console.warn("unexpected reasoning format", item)` 留线索，不能静默吞掉（commit `604e9b4`）。
 - 根因：假设 CLI NDJSON 输出和 API 文档描述的格式一致。实际上 CLI 输出是 CLI 自己的封装格式（message 级别而非流式 content_block_delta），不同 CLI 的字段命名也各不相同。
 - 触发条件：
   1. 基于文档/假设实现 parser/transformer，未对着真实数据验证
@@ -414,3 +416,121 @@
   - `start-project.bat:39-41`（`:wait_for` 循环掩盖子进程崩溃）
 - 原理（可选）：`package.json` 是声明，`node_modules` 是物化——中间隔着一次必须显式触发的 `pnpm install`。这和 DB migration 同构：schema 文件改了不等于生产库改了，必须显式 apply；任何"声明式配置变更"都对应一个"物化动作"，自检的对象必须是物化后的 runtime 状态，不是声明本身。"跑过一遍真实启动脚本"是配置类改动唯一可信的验证方式。
 - 关联：commit `00afa87`、F008 dev-infra、quality-gate skill、start-project.bat
+
+---
+
+### LL-018: "改了源码没编译"——声称完成必须验证到运行时产物
+- 状态：validated
+- 更新时间：2026-04-16
+
+- 坑：F012 三栏分拆修了 `gemini-runtime.ts`、`codex-runtime.ts`、`message-service.ts` 三个文件，单元测试 45 个全绿，TypeScript 编译通过，自信地汇报"修复完成"。但 `dist/` 目录里的 `.js` 还是 8 小时前的旧版本——源码改了，从未编译到 `dist`，服务跑的一直是旧代码。小孙测了两轮说"还是没修"，直到重新排查才发现 dist 落后于 src。
+- 根因：把"测试全绿 + TypeScript 编译通过"等同于"修复已生效"。在 monorepo + tsc 构建的项目里，`tsc --noEmit`（类型检查）和 `tsc`（编译输出）是两条命令。跑的是前者，以为跑了后者。
+- 触发条件：
+  1. 项目有独立的构建步骤（tsc、webpack、esbuild 等），不是直接跑 `.ts`
+  2. dev server 不自动 hot-reload（或已经停了）
+  3. 修复者在汇报前只跑了 lint/test，没有验证 dist 产物
+- 修复：重新执行 `pnpm build`（即 `tsc`），确认 `dist/` 文件更新后重启服务验证。
+- 防护：
+  1. **声称"修复完成"前，必须验证 dist 文件的修改时间 > 源码文件的修改时间**（`ls -la dist/xxx.js src/xxx.ts`）
+  2. **或者直接 grep dist 文件确认关键改动存在**（最后就是这样验证的：`grep "activate_skill" dist/runtime/gemini-runtime.js`）
+  3. **如果项目有 dev server，修完后重启一次并做一个最小的端到端验证**（发一条消息看结果），不能只靠单元测试
+  4. **quality-gate 加硬门**：涉及 `packages/api/src/` 改动时，必须 `pnpm build && ls -la dist/` 确认产物更新
+- 来源锚点：
+  - `packages/api/src/runtime/gemini-runtime.ts`、`codex-runtime.ts`、`packages/api/src/services/message-service.ts`（修改的源码）
+  - `packages/api/dist/`（未更新的产物）
+  - commit `604e9b4`（最终修复，包含重新编译验证）
+  - `docs/features/F012-frontend-hardening-redesign.md`
+- 原理（可选）：在有构建步骤的项目里，"源码"和"运行时产物"是两个独立状态。`tsc --noEmit` 验证的是源码类型正确性，不是产物存在性。验证链必须覆盖到最终运行的文件，而不是中间任意一环。
+- 关联：LL-017（同属"声明 vs 物化"模式）、`docs/features/F012-frontend-hardening-redesign.md`
+
+### LL-019: Windows 路径用反斜杠——所有路径正则必须同时匹配 `/` 和 `\`
+- 状态：validated
+- 更新时间：2026-04-16
+
+- 坑：F012 的 skill 路径检测正则写的是 `multi-agent-skills\/`（只匹配正斜杠）。在 Windows 上，Codex 用 `Get-Content -Path "multi-agent-skills\\cross-role-handoff\\SKILL.md"` 加载 skill 文件，路径全是反斜杠，正则匹配失败，导致 skill 调用在前端显示为普通工具调用而不是 Skill 栏。
+- 根因：开发时脑子里只有 Unix 路径。Windows 作为主开发/运行环境，路径分隔符是 `\`，但三处正则全都只写了 `/`。
+- 触发条件：
+  1. 用正则匹配文件路径
+  2. 项目在 Windows 上运行
+  3. 外部 CLI 输出的路径使用系统原生分隔符（Windows 用 `\`）
+- 修复：所有路径正则中的 `/` 改为 `[/\\]`，同时匹配正反斜杠。新增 4 个 Windows 反斜杠路径的测试 case。
+- 防护：
+  1. **铁律：路径正则中的 `/` 一律写成 `[/\\\\]`**——匹配正反两种斜杠
+  2. **测试必须包含 Windows 反斜杠路径的 case**（`packages/api/src/runtime/skill-detection.test.ts` 已有 4 个）
+  3. **或者更好：在正则匹配前 `path.replace(/\\\\/g, '/')` 统一成正斜杠**，正则只需要匹配一种
+- 来源锚点：
+  - `packages/api/src/runtime/skill-detection.test.ts:53,135,163`（Windows 反斜杠测试 case）
+  - commit `604e9b4`（skill 路径正则修复）
+  - commit `d27786a`（三栏分拆初始实现，引入了只匹配正斜杠的正则）
+- 原理（可选）：路径分隔符是操作系统级别的差异，不是应用级别的选择。任何处理文件路径的正则都必须对两种分隔符保持中立（platform-agnostic），否则在跨平台环境中必然失效。
+- 关联：`docs/features/F012-frontend-hardening-redesign.md`
+
+### LL-020: "汇报修复"不等于"验证修复"——声称修好后必须复现原始症状确认消失
+- 状态：validated
+- 更新时间：2026-04-16
+
+- 坑：F012 全程一共汇报了 4 次"修复完成"，小孙测了 4 次说"还是没修"：第 1 次：代码改了没编译（LL-018）；第 2 次：编译了但对外部工具认知错误（Gemini `activate_skill` 是真实内建工具，被当成自己猜的防御代码）；第 3 次：路径正则不匹配 Windows 反斜杠（LL-019）；第 4 次：终于修对了。
+- 根因：每次都是"改代码 → 跑测试 → 测试绿 → 汇报完成"，从没做过"启动服务 → 发一条消息 → 看 UI 上 skill 是不是真的出现在 Skill 栏"这个用户视角的验证。单元测试验证的是代码逻辑，不是用户体验。
+- 触发条件：
+  1. 修的是 UI 呈现问题（"显示在哪个栏"、"内容是什么"）
+  2. 只跑了单元测试没有做 E2E 或手动验证
+  3. 汇报时用的证据是"X 个测试全绿"而不是"截图/日志证明原始症状消失了"
+- 修复：第 4 轮修复后，用 `grep dist/` 验证编译产物 + 重启服务 + 实际发消息验证 UI 显示，才汇报完成。
+- 防护：
+  1. **UI 问题的"可验证"标准是截图或日志，不是测试计数**：汇报修复时必须附上原始症状的复现步骤 + 修复后的验证结果（"之前发消息给桂芬，skill 显示在工具栏；现在发消息给桂芬，skill 显示在 Skill 栏"）
+  2. **连续被打回 2 次，必须停下来问"我是不是在错误的地方修？"**——不要继续 patch（LL-004）
+  3. **quality-gate 区分验证层级**：纯逻辑问题 → 单元测试够；UI 呈现问题 → 必须手动验证或 E2E；数据问题 → 必须查 DB
+- 来源锚点：
+  - commit `d27786a`（第 1 次，三栏分拆初始实现）
+  - commit `604e9b4`（第 4 次，最终修复）
+  - `docs/features/F012-frontend-hardening-redesign.md`（4 轮修复记录）
+- 原理（可选）：验证必须发生在用户能观测到结果的层——不是源码层，不是编译层，不是测试层，而是运行时 UI 层。每一层的"绿灯"只代表该层的断言通过，不代表上层用户会看到正确结果。LL-018 讲"源码 vs 产物"，LL-020 讲"产物 vs 用户可见"——验证链必须延伸到终端用户。
+- 关联：LL-004（修复轮次 = 根因距离）、LL-018（源码 vs 产物）、LL-022（测试金字塔）、`docs/features/F012-frontend-hardening-redesign.md`
+
+### LL-021: stderr 是字节流不是行流——做行级过滤必须先做行缓冲
+- 状态：validated
+- 更新时间：2026-04-16
+
+- 坑：F012 的 `filterStderrNoise` 按 `\n` 分割 stderr 做噪音过滤（过滤 "Reading additional input from stdin..." 等 Codex CLI 噪音）。但 Node.js 的 `data` 事件是按字节块到达的，一行可能被切成两个 chunk："Reading additional inp" + "ut from stdin...\n"。按行分割后每半行都不匹配噪音正则，原样传出——过滤失效。
+- 根因：把 stderr 的 `data` 事件当成了"一次一行"的逐行流。实际上 `data` 事件的边界由 pipe buffer 决定，和换行符无关。
+- 触发条件：
+  1. 对 `child_process` 的 stderr/stdout 做字符串匹配/过滤
+  2. 按 `\n` 分割处理，假设每个 data chunk 包含完整行
+  3. 噪音内容较长（超过一个 pipe buffer）时更容易触发
+- 修复：在 `message-service.ts` 中实现行缓冲器（`stderrLineBuf`），把不完整的尾行暂存，下个 chunk 到达时拼接后再处理。进程结束时 flush 残留的 buffer。
+- 防护：
+  1. **对 stderr/stdout 做行级处理前，先加行缓冲器**——把不完整的尾行暂存，下个 chunk 到达时拼接后再处理
+  2. **进程结束时 flush 残留的 buffer**（`message-service.ts:1141` 的 close handler）
+  3. **前端也要有防御过滤**（`cleanThinking()`），因为旧消息可能已经持久化了未过滤的噪音
+  4. **测试用多 chunk 输入**：不能只测"完整一行到达"的 happy path，必须测"一行被切成 N 个 chunk"的 case
+- 来源锚点：
+  - `packages/api/src/services/message-service.ts:109`（`filterStderrNoise` 函数）
+  - `packages/api/src/services/message-service.ts:986`（`stderrLineBuf` 行缓冲使用处）
+  - `packages/api/src/services/message-service.ts:1141`（close handler flush）
+  - `components/chat/message-bubble.tsx`（前端 `cleanThinking` 防御过滤）
+  - commit `604e9b4`（stderr 噪音过滤 + 行缓冲实现）
+- 原理（可选）：Unix pipe 和 Node.js stream 都是字节流抽象，不是行流抽象。`data` 事件的边界由内核 pipe buffer size（通常 64KB）决定，和应用层的换行符无关。任何在字节流上做行级处理的代码都必须自己维护行缓冲状态——这是 readline 模块存在的原因。
+- 关联：`docs/features/F012-frontend-hardening-redesign.md`
+
+### LL-022: 测试金字塔在 UI 呈现问题上是倒的——一个手动验证 > 100 个单元测试
+- 状态：validated
+- 更新时间：2026-04-16
+
+- 坑：F012 我们有 562 个测试，全绿。但 UI 问题（skill 显示在哪个栏、推理内容是否可见、stderr 噪音是否过滤）一个都没被这些测试发现。小孙手动测一次就发现了。因为单元测试验证的是"代码逻辑对不对"，不是"用户看到了什么"。
+- 根因：经典测试金字塔（底层多、上层少）适用于业务逻辑，但对 UI 呈现问题是倒的。UI 呈现的正确性取决于完整链路——从数据源到渲染层的每一环都对——单元测试只覆盖其中一环。链路上任何一环的假设偏差（没编译、正则不匹配、格式猜错）都会导致最终呈现错误，但单元测试看不到。
+- 触发条件：
+  1. 修的是 UI 呈现问题（显示位置、样式、内容可见性）
+  2. 有大量单元测试全绿，开发者对测试覆盖率有信心
+  3. 没有做任何端到端验证或手动验证就宣布完成
+- 修复：F012 第 4 轮修复后增加了手动验证环节：重启服务 → 实际发消息 → 确认 UI 显示正确。
+- 防护：
+  1. **验证层级选择规则**：纯逻辑 bug → 单元测试够；数据流 bug → 集成测试；UI 呈现 bug → 必须手动验证或 E2E 截图对比
+  2. **不要用测试计数作为完成证据**："562 个测试全绿"不能证明 UI 问题修好了，只能证明代码逻辑在 mock 环境下正确
+  3. **对于 UI 呈现类任务，quality-gate 的验证命令必须包含"启动服务 + 手动/E2E 验证"步骤**，不能只有 typecheck + test
+  4. **长期方向**：对关键 UI 路径引入 Playwright E2E 测试或视觉回归测试，让 CI 能自动捕获呈现层问题
+- 来源锚点：
+  - commit `604e9b4`（F012 最终修复——4 轮修复暴露测试盲区）
+  - `docs/features/F012-frontend-hardening-redesign.md`（修复历程记录）
+  - 全项目测试套件（562 个测试全绿但未捕获任何 UI 呈现问题）
+- 原理（可选）：测试金字塔假设"底层测试覆盖了大部分风险"。这对纯逻辑成立（函数输入输出确定性强），对 UI 呈现不成立（正确性取决于完整链路的每一环都对，且最终结果只在浏览器中可观测）。UI 呈现问题的风险集中在"集成 gap"——每一层独立测试通过，但层与层之间的假设不兼容（LL-008 的变体）。正确的验证策略是：在风险集中的层投入验证资源，而不是在风险不集中的层堆数量。
+- 关联：LL-004（修复轮次 = 根因距离）、LL-008（组件间假设耦合）、LL-018（源码 vs 产物）、LL-020（汇报 vs 验证）、`docs/features/F012-frontend-hardening-redesign.md`
