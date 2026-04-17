@@ -482,6 +482,22 @@ git commit -m "feat(F018-P1): TranscriptWriter 冷存储 + extractive digest sch
 **分支**：`feat/F018-p2-memory`
 **依赖**：P1 已 merge
 
+**🔴 Phase 边界调整（2026-04-17，P2 执行时决策 + Codex review 对齐）**：
+
+与 P1 同拆分模式 — 纯/单元层在 P2 落地，生产 wiring 批次延到 P3 和 SessionBootstrap 一起接入。
+具体延后项（feature doc 对应 AC 标 `[~]`）：
+
+- **Task 1 Step 5**（session-repository `getThreadMemory`/`setThreadMemory` + message-service seal 分支调用）—
+  依赖 P3 的 TranscriptWriter 生产触发点，先 wire 再改会返工
+- **Task 2 Step 2**（message-service 消息落库后 fire-and-forget `generateAndStore`）—
+  依赖 EmbeddingService DI 实例化（由 P3 server.ts 同批接入）
+- **Task 2 Step 3-4**（MCP 工具 `recall_similar_context` 注册 + API endpoint）—
+  依赖 Bootstrap 的工具清单注入路径
+
+**P2 实际交付**（纯/单元层）：
+- Task 1: `appendSession` 纯函数 + 8 个单测（含 UTF-16 surrogate safety — Codex #4）
+- Task 2: `storeEmbedding`/`searchByVector` SQLite 持久化 + `formatRecallResults`（带 `sanitizeRecallChunk` 防闭合段伪造 — Codex #1）+ 半衰期 `2^(-age/halfLife)` （Codex #2）
+
 ## P2 Task 1: ThreadMemory Rolling Summary（AC2.1–AC2.6）
 
 **Files:**
