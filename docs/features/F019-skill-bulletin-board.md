@@ -78,6 +78,7 @@ created: 2026-04-17
 ## Links
 
 - Discussion: 本 thread（`ed07362a-…` 之后的 self-evolution 讨论 2026-04-17）
+- Plan: [`docs/plans/F019-skill-bulletin-board-plan.md`](../plans/F019-skill-bulletin-board-plan.md) — P1~P4 分步实施计划
 - Related: F003（SOP 回程派发）· F018（clowder-ai 基建对齐模式）
 - References:
   - `reference-code/clowder-ai/packages/api/src/domains/cats/services/context/SystemPromptBuilder.ts:591-596`（sopStageHint 注入样例）
