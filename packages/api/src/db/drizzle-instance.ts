@@ -100,6 +100,7 @@ const INIT_SQL = `
     sop_bookmark TEXT,
     last_fill_ratio REAL,
     thread_memory TEXT,
+    session_chain_index INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL
   );
 
@@ -214,6 +215,12 @@ export function createDrizzleDb(dbPath: string) {
   // F018 AC8.1: backfill thread_memory on pre-F018 databases
   try {
     adapter.exec("ALTER TABLE threads ADD COLUMN thread_memory TEXT")
+  } catch (e) {
+    if (!/duplicate column/i.test(String((e as Error).message))) throw e
+  }
+  // F018 P3 AC3.5: backfill session_chain_index column
+  try {
+    adapter.exec("ALTER TABLE threads ADD COLUMN session_chain_index INTEGER NOT NULL DEFAULT 1")
   } catch (e) {
     if (!/duplicate column/i.test(String((e as Error).message))) throw e
   }

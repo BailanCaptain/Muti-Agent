@@ -153,3 +153,76 @@ test("B005 regression — assembleDirectTurnPrompt injects roomSnapshot into con
   assert.match(result.content, /reference-code/)
   assert.match(result.content, /继续推进/)
 })
+
+// F018 P3 AC3.5 — SessionBootstrap 新 session 注入
+
+test("F018 AC3.5: new session (nativeSessionId=null) injects SessionBootstrap prelude", async () => {
+  const result = await assemblePrompt({
+    provider: "claude",
+    threadId: "t1",
+    sessionGroupId: "sg1",
+    nativeSessionId: null,
+    policy: POLICY_FULL,
+    task: "继续做 backup 功能",
+    roomSnapshot: [],
+    sourceAlias: "user",
+    targetAlias: "黄仁勋",
+    sessionChainIndex: 3,
+    threadMemory: {
+      summary: "Session #2 (09:00-09:15, 15min): edit. Files: a.ts. 0 errors.",
+      sessionCount: 2,
+      lastUpdatedAt: "2026-04-17T09:15:00Z",
+    },
+    recallTools: ["recall_similar_context"],
+  }, null)
+
+  // Bootstrap prelude must be present
+  assert.match(result.content, /\[Session Continuity — Session #3\]/)
+  assert.match(result.content, /\[Thread Memory — 2 sessions\]/)
+  assert.match(result.content, /Session #2/)
+  assert.match(result.content, /\[Session Recall — Available Tools\]/)
+  assert.match(result.content, /recall_similar_context/)
+  assert.match(result.content, /Do NOT guess about what happened in previous sessions\./)
+  // Task still present after the prelude
+  assert.match(result.content, /继续做 backup 功能/)
+})
+
+test("F018 AC3.5: resumed session (nativeSessionId set) does NOT inject Bootstrap", async () => {
+  const result = await assemblePrompt({
+    provider: "claude",
+    threadId: "t1",
+    sessionGroupId: "sg1",
+    nativeSessionId: "sess-abc",
+    policy: POLICY_FULL,
+    task: "继续",
+    roomSnapshot: [],
+    sourceAlias: "user",
+    targetAlias: "黄仁勋",
+    sessionChainIndex: 3,
+    threadMemory: null,
+    recallTools: ["recall_similar_context"],
+  }, null)
+
+  // No Bootstrap identity section when resuming an existing native session
+  assert.ok(!result.content.includes("[Session Continuity"))
+  assert.ok(!result.content.includes("Do NOT guess about what happened"))
+})
+
+test("F018 AC3.5: new session without bootstrap inputs skips injection (backwards compat)", async () => {
+  const result = await assemblePrompt({
+    provider: "claude",
+    threadId: "t1",
+    sessionGroupId: "sg1",
+    nativeSessionId: null,
+    policy: POLICY_FULL,
+    task: "do something",
+    roomSnapshot: [],
+    sourceAlias: "user",
+    targetAlias: "黄仁勋",
+    // 未传 sessionChainIndex / threadMemory / recallTools
+  }, null)
+
+  // No Bootstrap injection if caller didn't supply required inputs — avoids
+  // breaking existing callers that don't yet pass bootstrap metadata.
+  assert.ok(!result.content.includes("[Session Continuity"))
+})

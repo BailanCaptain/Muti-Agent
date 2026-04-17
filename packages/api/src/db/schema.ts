@@ -22,6 +22,7 @@ export const threads = sqliteTable(
     sopBookmark: text("sop_bookmark"),
     lastFillRatio: real("last_fill_ratio"),
     threadMemory: text("thread_memory"),
+    sessionChainIndex: integer("session_chain_index").notNull().default(1),
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [

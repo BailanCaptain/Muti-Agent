@@ -105,6 +105,7 @@ export class SqliteStore {
         sop_bookmark TEXT,
         last_fill_ratio REAL,
         thread_memory TEXT,
+        session_chain_index INTEGER NOT NULL DEFAULT 1,
         updated_at TEXT NOT NULL
       );
 
@@ -226,6 +227,12 @@ export class SqliteStore {
     // CREATE TABLE IF NOT EXISTS 不会给现有表加列，因此单独走 idempotent ALTER
     try {
       this.db.exec("ALTER TABLE threads ADD COLUMN thread_memory TEXT")
+    } catch (e) {
+      if (!/duplicate column/i.test(String((e as Error).message))) throw e
+    }
+    // F018 P3 AC3.5: backfill session_chain_index column (defaults 1 for fresh threads)
+    try {
+      this.db.exec("ALTER TABLE threads ADD COLUMN session_chain_index INTEGER NOT NULL DEFAULT 1")
     } catch (e) {
       if (!/duplicate column/i.test(String((e as Error).message))) throw e
     }

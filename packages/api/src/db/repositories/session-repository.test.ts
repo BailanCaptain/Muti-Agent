@@ -143,3 +143,74 @@ test("assistant thinking is persisted with the message and restored on reload", 
     cleanup()
   }
 })
+
+// F018 P3 AC3.5 wiring prerequisites — SessionRepository 扩展
+
+test("F018: getThreadMemory returns null when unset", () => {
+  const { repository, cleanup } = createRepository()
+  try {
+    const groupId = repository.createSessionGroup("R")
+    repository.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const thread = repository.listThreadsByGroup(groupId)[0]
+    assert.equal(repository.getThreadMemory(thread.id), null)
+  } finally {
+    cleanup()
+  }
+})
+
+test("F018: setThreadMemory + getThreadMemory round-trip", () => {
+  const { repository, cleanup } = createRepository()
+  try {
+    const groupId = repository.createSessionGroup("R")
+    repository.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const thread = repository.listThreadsByGroup(groupId)[0]
+    const memory = {
+      summary: "Session #2 (09:00-09:15, 15min): edit. Files: a.ts. 0 errors.",
+      sessionCount: 2,
+      lastUpdatedAt: "2026-04-17T09:15:00Z",
+    }
+    repository.setThreadMemory(thread.id, memory)
+    const loaded = repository.getThreadMemory(thread.id)
+    assert.deepEqual(loaded, memory)
+  } finally {
+    cleanup()
+  }
+})
+
+test("F018: getSessionChainIndex defaults to 1 for fresh thread", () => {
+  const { repository, cleanup } = createRepository()
+  try {
+    const groupId = repository.createSessionGroup("R")
+    repository.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const thread = repository.listThreadsByGroup(groupId)[0]
+    assert.equal(repository.getSessionChainIndex(thread.id), 1)
+  } finally {
+    cleanup()
+  }
+})
+
+test("F018: incrementSessionChainIndex advances counter", () => {
+  const { repository, cleanup } = createRepository()
+  try {
+    const groupId = repository.createSessionGroup("R")
+    repository.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const thread = repository.listThreadsByGroup(groupId)[0]
+    assert.equal(repository.getSessionChainIndex(thread.id), 1)
+    repository.incrementSessionChainIndex(thread.id)
+    assert.equal(repository.getSessionChainIndex(thread.id), 2)
+    repository.incrementSessionChainIndex(thread.id)
+    assert.equal(repository.getSessionChainIndex(thread.id), 3)
+  } finally {
+    cleanup()
+  }
+})
+
+test("F018: getSessionChainIndex returns 1 for non-existent thread", () => {
+  const { repository, cleanup } = createRepository()
+  try {
+    assert.equal(repository.getSessionChainIndex("nonexistent-thread-id"), 1)
+  } finally {
+    cleanup()
+  }
+})
+

@@ -7,8 +7,11 @@ import { microcompact } from "./microcompact"
 import { computeDynamicLimits } from "./dynamic-budget"
 import type { SOPBookmark } from "./sop-bookmark"
 import { formatBookmarkForInjection } from "./sop-bookmark"
+import { buildSessionBootstrap } from "./session-bootstrap"
 import { AGENT_SYSTEM_PROMPTS, ACCEPTANCE_GUARDIAN_PROMPT } from "../runtime/agent-prompts"
 import type { MemoryService } from "../services/memory-service"
+import type { ThreadMemory } from "../services/thread-memory"
+import type { ExtractiveDigestV1 } from "../services/transcript-writer"
 
 // Note: AGENT_SYSTEM_PROMPTS is Record<Provider, string> containing the base prompt
 // (identity + roster + rules + callback API for codex/gemini).
@@ -41,6 +44,14 @@ export type AssemblePromptInput = {
   lastFillRatio?: number
   /** When true, replace system prompt with ACCEPTANCE_GUARDIAN_PROMPT (zero-context mode) */
   guardianMode?: boolean
+  /** F018 AC3.5: Thread memory rolling summary for SessionBootstrap (new session only) */
+  threadMemory?: ThreadMemory | null
+  /** F018 AC3.5: Session chain index — Nth session under this thread */
+  sessionChainIndex?: number
+  /** F018 AC3.5: Available recall tools injected into Bootstrap tools section */
+  recallTools?: string[]
+  /** F018 AC3.5: Previous session's extractive digest (from TranscriptWriter) */
+  previousDigest?: ExtractiveDigestV1 | null
 }
 
 export type AssemblePromptResult = {
@@ -95,6 +106,31 @@ export async function assemblePrompt(
 
   // ── Content (user message) ─────────────────────────────────────────
   const contentSections: string[] = []
+
+  // F018 AC3.5: New session gets SessionBootstrap reference-only prelude
+  // (Thread Memory / Previous Session / Task Snapshot / Recall Tools / Do NOT guess).
+  // Injected only when nativeSessionId is null AND caller supplied bootstrap metadata —
+  // this preserves existing callers that haven't been wired yet (P4 wires message-service).
+  if (
+    input.nativeSessionId === null &&
+    (input.sessionChainIndex !== undefined ||
+      input.threadMemory !== undefined ||
+      input.previousDigest !== undefined ||
+      input.recallTools !== undefined)
+  ) {
+    const bootstrap = buildSessionBootstrap({
+      threadId: input.threadId,
+      sessionChainIndex: input.sessionChainIndex ?? 1,
+      threadMemory: input.threadMemory ?? null,
+      previousDigest: input.previousDigest ?? null,
+      taskSnapshot: input.sopBookmark
+        ? (formatBookmarkForInjection(input.sopBookmark) ?? null)
+        : null,
+      recallTools: input.recallTools ?? [],
+    })
+    contentSections.push(bootstrap.text)
+    contentSections.push("")
+  }
 
   // Header
   const isUserInitiated = input.sourceAlias === "user"

@@ -198,6 +198,42 @@ export class SessionRepository {
       .get(threadId) as ProviderThreadRecord | undefined
   }
 
+  // F018 P3 AC3.5: ThreadMemory rolling summary persistence
+  getThreadMemory(threadId: string): { summary: string; sessionCount: number; lastUpdatedAt: string } | null {
+    const row = this.store.db
+      .prepare("SELECT thread_memory FROM threads WHERE id = ? LIMIT 1")
+      .get(threadId) as { thread_memory: string | null } | undefined
+    if (!row || !row.thread_memory) return null
+    try {
+      return JSON.parse(row.thread_memory)
+    } catch {
+      return null
+    }
+  }
+
+  setThreadMemory(
+    threadId: string,
+    memory: { summary: string; sessionCount: number; lastUpdatedAt: string },
+  ): void {
+    this.store.db
+      .prepare("UPDATE threads SET thread_memory = ? WHERE id = ?")
+      .run(JSON.stringify(memory), threadId)
+  }
+
+  // F018 P3 AC3.5: Session chain index for Bootstrap identity section
+  getSessionChainIndex(threadId: string): number {
+    const row = this.store.db
+      .prepare("SELECT session_chain_index FROM threads WHERE id = ? LIMIT 1")
+      .get(threadId) as { session_chain_index: number } | undefined
+    return row?.session_chain_index ?? 1
+  }
+
+  incrementSessionChainIndex(threadId: string): void {
+    this.store.db
+      .prepare("UPDATE threads SET session_chain_index = session_chain_index + 1 WHERE id = ?")
+      .run(threadId)
+  }
+
   listMessages(threadId: string) {
     const t0 = performance.now()
     const rows = this.store.db
