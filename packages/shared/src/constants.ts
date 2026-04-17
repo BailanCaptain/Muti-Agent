@@ -104,9 +104,9 @@ export const SEAL_THRESHOLDS_BY_PROVIDER: Record<Provider, { warn: number; actio
 const CONTEXT_WINDOW_FALLBACKS: ReadonlyArray<{ match: RegExp; window: number }> = [
   // Gemini 3.x 家族：1M tokens
   { match: /^gemini-3/i, window: 1_048_576 },
-  // Claude 4.x 1M 扩展上下文变体（[1m] 后缀标识），必须排在 base Claude 4 之前
-  { match: /^claude-.*\[1m\]/i, window: 1_000_000 },
-  // Claude 4.x 家族（base）：200k
+  // Claude Opus 4.7 家族默认 1M 窗口（含 [1m] 显式变体），必须排在通用 Claude 4 之前
+  { match: /^claude-opus-4-7/i, window: 1_000_000 },
+  // 其他 Claude 4.x（Opus 4.6-、Sonnet 4.x、Haiku 4.x）：200k
   { match: /^claude-(opus|sonnet|haiku)-4/i, window: 200_000 },
   { match: /^claude-/i, window: 200_000 },
   // OpenAI reasoning 家族

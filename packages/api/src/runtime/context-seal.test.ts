@@ -112,15 +112,17 @@ test("getContextWindowForModel returns null for unknown models", () => {
   assert.equal(getContextWindowForModel(""), null);
 });
 
-// B016: Claude 1M context variant — "[1m]" suffix marks 1M extended-context
-// mode. Without this mapping, fillRatio is computed against 200K fallback
-// and seal fires ~5× too early.
-test("getContextWindowForModel recognizes Claude 1M context variant ([1m] suffix)", () => {
+// B016: Claude Opus 4.7 default context window is 1M (no [1m] suffix required).
+// Without this mapping, fillRatio is computed against 200K and seal fires ~5× early.
+test("getContextWindowForModel: Claude Opus 4.7 default maps to 1M", () => {
+  // Opus 4.7 默认 1M，不需要 [1m] 后缀
+  assert.equal(getContextWindowForModel("claude-opus-4-7"), 1_000_000);
   assert.equal(getContextWindowForModel("claude-opus-4-7[1m]"), 1_000_000);
-  assert.equal(getContextWindowForModel("claude-sonnet-4-6[1m]"), 1_000_000);
-  assert.equal(getContextWindowForModel("CLAUDE-OPUS-4-7[1M]"), 1_000_000);
-  // Base model without [1m] stays at 200K
-  assert.equal(getContextWindowForModel("claude-opus-4-7"), 200_000);
+  assert.equal(getContextWindowForModel("CLAUDE-OPUS-4-7"), 1_000_000);
+  // 其他 Claude 4.x 维持 200K 不变
+  assert.equal(getContextWindowForModel("claude-opus-4-6"), 200_000);
+  assert.equal(getContextWindowForModel("claude-sonnet-4-6"), 200_000);
+  assert.equal(getContextWindowForModel("claude-haiku-4-5-20251001"), 200_000);
 });
 
 // ── computeSealDecision ────────────────────────────────────────────────────
