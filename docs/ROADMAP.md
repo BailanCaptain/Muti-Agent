@@ -10,7 +10,6 @@
 | F012 | 前端加固 + 渲染重构 + DesignSystem + 三 CLI 整改 + 截图能力：消息卡片化 + 折叠式展示 + 统一设计 + CLI 参数/事件对齐 clowder-ai + Puppeteer 截图 | in-progress | 黄仁勋 | internal | [F012](features/F012-frontend-hardening-redesign.md) |
 | F015 | 调度状态持久化：DispatchOrchestrator 关键 Map 写入 DB + 进程重启恢复 | spec | TBD | internal | [F015](features/F015-dispatch-state-persistence.md) |
 | F017 | 跨房间协作感知：侧边栏运行指示 + 全局任务状态 | spec | 桂芬 | internal | [F017](features/F017-cross-room-awareness.md) |
-| F018 | 上下文续接架构重建：对齐 clowder-ai 冷存储 + SessionBootstrap + embedding 作为 recall 后端（F007 架构级收尾，修复 B015/B012 根因） | in-progress | 黄仁勋 | internal | [F018](features/F018-context-resume-rebuild.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features
@@ -30,4 +29,5 @@
 | F013 | CI/CD 门禁：GitHub Actions + pre-commit hook + 文档状态校验 | 2026-04-14 | [F013](features/F013-ci-cd-gate.md) |
 | F011 | 后端加固 + drizzle-orm 迁移：数据库/WS/事件健壮性 + ORM 一步到位 | 2026-04-15 | [F011](features/F011-backend-hardening-drizzle.md) |
 | F019 | Skill 告示牌机制：WorkflowSop 状态机 + sopStageHint 注入 + update-workflow-sop callback 替换 prependSkillHint 关键词注入层（对齐 clowder-ai F073 P4） | 2026-04-17 | [F019](features/F019-skill-bulletin-board.md) |
+| F018 | 上下文续接架构重建：对齐 clowder-ai 冷存储 + SessionBootstrap + embedding 作为 recall 后端（F007 架构级收尾，修复 B015/B012 根因） | 2026-04-18 | [F018](features/F018-context-resume-rebuild.md) |
 <!-- 完成的 Feature 从活跃表移到此处 -->

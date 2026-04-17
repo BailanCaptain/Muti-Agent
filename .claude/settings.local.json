@@ -66,7 +66,18 @@
       "Bash(mkdir:*)",
       "Bash(ln:*)",
       "Bash(mv:*)",
-      "Bash(cp:*)"
+      "Bash(cp:*)",
+      "Bash(cat *)",
+      "Bash(gh --version)",
+      "Bash(gh auth *)",
+      "Bash(wc -c \"C:\\\\\\\\Users\\\\\\\\-\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\C--Users---Desktop-Multi-Agent\\\\\\\\52cdda74-8311-4590-a5c3-7204871fba9c\\\\\\\\tasks\\\\\\\\bem4dat92.output\")",
+      "Bash(head -100 \"C:\\\\\\\\Users\\\\\\\\-\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\C--Users---Desktop-Multi-Agent\\\\\\\\52cdda74-8311-4590-a5c3-7204871fba9c\\\\\\\\tasks\\\\\\\\bem4dat92.output\")",
+      "Bash(grep -E \"callbacks\\\\.\\(ts|test\\\\.ts\\):[0-9]+.*FIXABLE\\\\|Found.*errors?$\")",
+      "Bash(tail *)",
+      "Bash(awk 'NR==122 || NR==123' docs/features/F018-context-resume-rebuild.md)",
+      "Bash(command -v jq)",
+      "Bash(chmod +x ~/.claude/statusline.sh)",
+      "Bash(bash ~/.claude/statusline.sh)"
     ]
   }
 }
