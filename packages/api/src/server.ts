@@ -74,8 +74,21 @@ export async function createApiServer(options: {
   // transcripts live under .runtime/threads/... alongside the SQLite file.
   const { TranscriptWriter } = await import("./services/transcript-writer")
   const transcriptWriter = new TranscriptWriter({ dataDir: path.dirname(options.sqlitePath) })
+  // F018 P5: EmbeddingService instantiation. Uses a dedicated SqliteStore
+  // connection (WAL mode supports concurrent readers + one writer). Embedding
+  // writes are rare (per assistant message) so contention is low.
+  const { SqliteStore } = await import("./db/sqlite")
+  const { EmbeddingService, formatRecallResults } = await import("./services/embedding-service")
+  const embeddingStore = new SqliteStore(options.sqlitePath)
+  const embeddingService = new EmbeddingService({
+    store: embeddingStore,
+    // Codex P5 Round 2 MEDIUM: propagate Fastify logger so model-load /
+    // inference failures surface to operators instead of being swallowed.
+    logger: { warn: (obj, msg) => app.log.warn(obj, msg) },
+  })
   const messages = new MessageService(sessions, dispatch, invocations, eventBus, options.apiBaseUrl)
   messages.setTranscriptWriter(transcriptWriter)
+  messages.setEmbeddingService(embeddingService)
   const memoryService = new MemoryService(repository)
   const authRuleRepo = new AuthorizationRuleRepository(drizzleDb)
   const ruleStore = new AuthorizationRuleStore(authRuleRepo)
@@ -363,6 +376,30 @@ export async function createApiServer(options: {
         ...params,
         emit: broadcaster.broadcast,
       })
+    },
+    // F018 P5 AC6.3: recall_similar_context backend — semantic search + decay
+    // returns sanitized reference-only 闭合段 formatted text (formatRecallResults)
+    // plus raw hits for introspection.
+    searchRecall: async ({ threadId, query, topK }) => {
+      // Codex P5 Round 1 MEDIUM: log distinct failure types so operators can
+      // differentiate 'model still loading' / 'SQLite lock' / 'schema drift'
+      // from a genuine 'no matches' outcome. Response shape stays stable
+      // (graceful degradation per 铁律), but the log carries diagnostics.
+      try {
+        const hits = await embeddingService.searchSimilarFromDb(
+          query,
+          [threadId],
+          topK,
+          new Set(),
+        )
+        return { text: formatRecallResults(hits), hits }
+      } catch (err) {
+        app.log.warn(
+          { err, threadId, queryLen: query.length, topK },
+          "F018 recall backend error (degraded to empty response)",
+        )
+        return { text: "(no relevant context found)", hits: [] }
+      }
     },
     getMemories: (sessionGroupId, keyword) => {
       const memories = keyword

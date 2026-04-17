@@ -6,9 +6,9 @@ import { getTools, handleToolCall } from "./server.js"
 // getTools tests
 // ---------------------------------------------------------------------------
 
-test("getTools returns 13 tools", () => {
+test("getTools returns 14 tools", () => {
   const tools = getTools()
-  assert.equal(tools.length, 13, `Expected 13 tools, got ${tools.length}`)
+  assert.equal(tools.length, 14, `Expected 14 tools, got ${tools.length}`)
   const names = tools.map((t) => t.name).sort()
   assert.deepEqual(names, [
     "create_task",
@@ -18,6 +18,7 @@ test("getTools returns 13 tools", () => {
     "get_task_status",
     "parallel_think",
     "post_message",
+    "recall_similar_context",
     "request_decision",
     "request_permission",
     "search_room_memories",
@@ -25,6 +26,27 @@ test("getTools returns 13 tools", () => {
     "trigger_mention",
     "update_workflow_sop",
   ])
+})
+
+test("recall_similar_context tool has expected schema (F018 P5 AC6.3)", () => {
+  const tools = getTools()
+  const tool = tools.find((t) => t.name === "recall_similar_context")
+  assert.ok(tool)
+  const schema = tool!.inputSchema as {
+    type: string
+    properties: Record<string, { type: string }>
+    required?: string[]
+  }
+  assert.equal(schema.type, "object")
+  assert.equal(schema.properties.query.type, "string")
+  assert.equal(schema.properties.topK.type, "integer")
+  assert.deepEqual(schema.required, ["query"])
+})
+
+test("handleToolCall recall_similar_context rejects empty query", async () => {
+  const result = await handleToolCall("recall_similar_context", { query: "   " })
+  assert.equal(result.isError, true)
+  assert.match(result.content[0].text, /query is required/)
 })
 
 test("update_workflow_sop tool has expected schema (F019 P3)", () => {

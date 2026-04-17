@@ -183,6 +183,32 @@ async function callSearchRoomMemories(keyword: string): Promise<ToolResult> {
   };
 }
 
+// F018 P5 AC6.3: recall_similar_context MCP tool — 语义召回，走 HTTP backend
+async function callRecallSimilarContext(query: string, topK?: number): Promise<ToolResult> {
+  const identity = getCallbackIdentity();
+  const url = new URL(`${identity.apiUrl}/api/callbacks/recall-similar-context`);
+  url.searchParams.set("invocationId", identity.invocationId);
+  url.searchParams.set("callbackToken", identity.callbackToken);
+  url.searchParams.set("query", query);
+  if (typeof topK === "number") {
+    url.searchParams.set("topK", String(topK));
+  }
+
+  const response = await requestJson(url.toString(), { method: "GET" });
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `recall_similar_context failed: ${JSON.stringify(response.json)}` }]
+    };
+  }
+
+  // Return the reference-only 闭合段 formatted text directly (ready for agent context)
+  const body = response.json as { text?: string };
+  return {
+    content: [{ type: "text", text: body.text ?? "(no relevant context found)" }]
+  };
+}
+
 function writeMessage(message: JsonRpcResponse) {
   const body = JSON.stringify(message);
   process.stdout.write(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
@@ -256,6 +282,27 @@ export function getTools() {
           }
         },
         required: ["keyword"]
+      }
+    },
+    {
+      name: "recall_similar_context",
+      description:
+        "按语义相似度在当前 thread 的历史消息中召回相关片段。适用于需要旧细节但不确定在哪的情况 —— 宁可调一次也不要瞎编。返回 reference-only 闭合段格式，只作参考。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "要搜索的问题或关键词（自然语言）"
+          },
+          topK: {
+            type: "integer",
+            minimum: 1,
+            maximum: 10,
+            description: "返回 Top-K 结果，默认 5"
+          }
+        },
+        required: ["query"]
       }
     },
     {
@@ -753,6 +800,14 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
         return { isError: true, content: [{ type: "text", text: "keyword is required" }] };
       }
       return callSearchRoomMemories(keyword.trim());
+    }
+    case "recall_similar_context": {
+      const query = typeof args?.query === "string" ? args.query : "";
+      if (!query.trim()) {
+        return { isError: true, content: [{ type: "text", text: "query is required" }] };
+      }
+      const topK = typeof args?.topK === "number" ? args.topK : undefined;
+      return callRecallSimilarContext(query.trim(), topK);
     }
     case "get_task_status":
       return callGetTaskStatus(args?.agentId as string | undefined);

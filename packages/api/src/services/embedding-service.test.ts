@@ -86,6 +86,171 @@ describe("searchByEmbedding", () => {
   })
 })
 
+describe("EmbeddingService.ensureModel (Codex P5 Round 1 HIGH #2 — shared loadPromise)", () => {
+  it("concurrent ensureModel calls during cold start all resolve true (no dropped callers)", async () => {
+    let loadCount = 0
+    let resolveLoader: ((v: unknown) => void) | null = null
+    const loaderPromise = new Promise((resolve) => {
+      resolveLoader = resolve
+    })
+    const svc = new EmbeddingService({
+      pipelineLoader: () => {
+        loadCount++
+        return loaderPromise as Promise<unknown>
+      },
+    })
+
+    const p1 = svc.ensureModel()
+    const p2 = svc.ensureModel()
+    const p3 = svc.ensureModel()
+
+    resolveLoader!({})
+    const results = await Promise.all([p1, p2, p3])
+    assert.deepEqual(results, [true, true, true], "all concurrent callers must get true")
+    assert.equal(loadCount, 1, "loader must be called exactly once (shared promise)")
+  })
+
+  it("Codex P5 Round 2 MEDIUM: ensureModel loader failure emits logger.warn (observability)", async () => {
+    const warns: Array<{ obj: unknown; msg: string | undefined }> = []
+    const svc = new EmbeddingService({
+      pipelineLoader: async () => {
+        throw new Error("model download failed")
+      },
+      logger: {
+        warn: (obj: unknown, msg?: string) => warns.push({ obj, msg }),
+      },
+    })
+    const ok = await svc.ensureModel()
+    assert.equal(ok, false)
+    assert.ok(warns.length >= 1, "loader failure must emit at least one warn")
+    const first = warns[0]
+    assert.match(String(first.msg), /model|load|embedding/i)
+  })
+
+  it("Codex P5 Round 2 MEDIUM: generateEmbedding inference failure emits logger.warn", async () => {
+    const warns: Array<{ obj: unknown; msg: string | undefined }> = []
+    // Stub pipeline that loads fine but throws on invocation
+    const stubPipeline = () => {
+      throw new Error("inference crash")
+    }
+    const svc = new EmbeddingService({
+      pipelineLoader: async () => stubPipeline,
+      logger: {
+        warn: (obj: unknown, msg?: string) => warns.push({ obj, msg }),
+      },
+    })
+    const result = await svc.generateEmbedding("hello")
+    assert.equal(result, null)
+    assert.ok(warns.length >= 1, "inference failure must emit at least one warn")
+  })
+
+  it("Codex P5 Round 3 MEDIUM: generateAndStore early-return logs with messageId + threadId context", async () => {
+    const { store, dir } = makeStore()
+    try {
+      const warns: Array<{ obj: unknown; msg?: string }> = []
+      const svc = new EmbeddingService({
+        store,
+        pipelineLoader: async () => {
+          throw new Error("loader broken")
+        },
+        logger: { warn: (obj, msg) => warns.push({ obj, msg }) },
+      })
+      await svc.generateAndStore("msg-abc", "thread-xyz", "some content")
+      // Must have a warn with messageId + threadId in context (not just ensureModel's own)
+      const contextual = warns.find((w) => {
+        if (typeof w.obj !== "object" || w.obj === null) return false
+        const ctx = w.obj as Record<string, unknown>
+        return ctx.messageId === "msg-abc" && ctx.threadId === "thread-xyz"
+      })
+      assert.ok(
+        contextual,
+        `expected warn with messageId + threadId; got: ${warns.map((w) => JSON.stringify(w.obj)).join(" | ")}`,
+      )
+    } finally {
+      cleanup(dir)
+    }
+  })
+
+  it("Codex P5 Round 3 MEDIUM: generateAndStore !vec (inference failed) logs messageId + threadId + reason", async () => {
+    const { store, dir } = makeStore()
+    try {
+      const warns: Array<{ obj: unknown; msg?: string }> = []
+      // Loader succeeds but pipeline invocation throws → ensureModel ok, generateEmbedding returns null
+      const stubPipeline = () => {
+        throw new Error("inference crash")
+      }
+      const svc = new EmbeddingService({
+        store,
+        pipelineLoader: async () => stubPipeline,
+        logger: { warn: (obj, msg) => warns.push({ obj, msg }) },
+      })
+      await svc.generateAndStore("msg-inf-fail", "thread-inf-fail", "content")
+      // Expect a warn with messageId/threadId AND reason: 'inference-failed'
+      const contextual = warns.find((w) => {
+        if (typeof w.obj !== "object" || w.obj === null) return false
+        const ctx = w.obj as Record<string, unknown>
+        return (
+          ctx.messageId === "msg-inf-fail" &&
+          ctx.threadId === "thread-inf-fail" &&
+          ctx.reason === "inference-failed"
+        )
+      })
+      assert.ok(
+        contextual,
+        `expected warn with reason=inference-failed + ids; got: ${warns.map((w) => JSON.stringify(w.obj)).join(" | ")}`,
+      )
+    } finally {
+      cleanup(dir)
+    }
+  })
+
+  it("Codex P5 Round 3 MEDIUM: searchSimilarFromDb early-return logs with threadIds + queryLen + topK context", async () => {
+    const { store, dir } = makeStore()
+    try {
+      const warns: Array<{ obj: unknown; msg?: string }> = []
+      const svc = new EmbeddingService({
+        store,
+        pipelineLoader: async () => {
+          throw new Error("loader broken")
+        },
+        logger: { warn: (obj, msg) => warns.push({ obj, msg }) },
+      })
+      const hits = await svc.searchSimilarFromDb("what is x", ["thread-xyz"], 5, new Set())
+      assert.deepEqual(hits, [])
+      const contextual = warns.find(
+        (w) =>
+          typeof w.obj === "object" &&
+          w.obj !== null &&
+          "threadIds" in w.obj &&
+          "queryLen" in w.obj &&
+          "topK" in w.obj,
+      )
+      assert.ok(
+        contextual,
+        `expected warn with threadIds + queryLen + topK; got: ${warns.map((w) => JSON.stringify(w.obj)).join(" | ")}`,
+      )
+    } finally {
+      cleanup(dir)
+    }
+  })
+
+  it("failed ensureModel resets loadPromise so next call retries", async () => {
+    let attempts = 0
+    const svc = new EmbeddingService({
+      pipelineLoader: async () => {
+        attempts++
+        if (attempts === 1) throw new Error("first attempt fails")
+        return {}
+      },
+    })
+    const first = await svc.ensureModel()
+    assert.equal(first, false, "first attempt fails as expected")
+    const second = await svc.ensureModel()
+    assert.equal(second, true, "second attempt retries, not reuses failed promise")
+    assert.equal(attempts, 2)
+  })
+})
+
 describe("EmbeddingService.storeEmbedding (F018 AC6.2 — F007 Step 8 补齐)", () => {
   it("persists a single chunk with vector as BLOB", () => {
     const { store, dir } = makeStore()

@@ -156,6 +156,7 @@ export class MessageService {
   private readonly prevUsedTokens = new Map<string, number>()
   private memoryService: MemoryService | null = null
   private transcriptWriter: import("./transcript-writer").TranscriptWriter | null = null
+  private embeddingService: import("./embedding-service").EmbeddingService | null = null
   private decisionBoard: DecisionBoard | null = null
   private settlementDetector: SettlementDetector | null = null
   private chainStarterResolver: ChainStarterResolver | null = null
@@ -205,6 +206,13 @@ export class MessageService {
   // so the next session's SessionBootstrap gets Previous Session Summary + rolling memory.
   setTranscriptWriter(writer: import("./transcript-writer").TranscriptWriter) {
     this.transcriptWriter = writer
+  }
+
+  // F018 P5 AC6.2: EmbeddingService DI. Post-message fire-and-forget
+  // embedding.generateAndStore so recall_similar_context can find historic
+  // messages by semantic similarity.
+  setEmbeddingService(service: import("./embedding-service").EmbeddingService) {
+    this.embeddingService = service
   }
 
   setDecisionBoard(board: DecisionBoard) {
@@ -1130,6 +1138,20 @@ export class MessageService {
       })
       const result = loopResult.lastResult
       const accumulatedContent = loopResult.accumulatedContent
+
+      // F018 P5 AC6.2: fire-and-forget embedding generation for this assistant
+      // message so recall_similar_context can find it later by semantic similarity.
+      // Failures (model unavailable / disk error) are silently ignored per 铁律.
+      if (this.embeddingService && accumulatedContent.trim().length > 0) {
+        this.embeddingService
+          .generateAndStore(assistant.id, thread.id, accumulatedContent)
+          .catch((err) => {
+            this.log.warn(
+              { err, threadId: thread.id, messageId: assistant.id },
+              "F018 embedding generation failed (non-fatal)",
+            )
+          })
+      }
 
       this.invocations.detachRun(thread.id)
       this.releaseInvocation(identity.invocationId, dispatchCleanupTimer)

@@ -53,6 +53,15 @@ export function registerCallbackRoutes(
     createTask?: (sessionGroupId: string, params: { assignee: string; description: string; priority?: string; createdBy: string }) => { ok: true; taskId: string }
     triggerMention?: (sessionGroupId: string, params: { targetAlias: string; taskSnippet: string; sourceProvider: import("@multi-agent/shared").Provider; invocationId: string }) => Promise<void> | void
     getMemories?: (sessionGroupId: string, keyword?: string) => { memories: Array<{ id: string; summary: string; keywords: string; createdAt: string }> }
+    // F018 P5 AC6.3: semantic recall tool backend
+    searchRecall?: (params: {
+      threadId: string
+      query: string
+      topK: number
+    }) => Promise<{
+      text: string
+      hits: Array<{ messageId: string; chunkText: string; score: number }>
+    }>
     requestDecision?: (sessionGroupId: string, params: {
       title: string
       description?: string
@@ -253,6 +262,57 @@ export function registerCallbackRoutes(
     }
 
     return { memories: [] }
+  })
+
+  // F018 P5 AC6.3: recall_similar_context backend — semantic search across
+  // the current thread's embedding store (time-decayed cosine), returns
+  // `text` (reference-only 闭合段 formatted string) + `hits` (raw).
+  app.get("/api/callbacks/recall-similar-context", async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = request.query as {
+      invocationId?: string
+      callbackToken?: string
+      query?: string
+      topK?: string
+    }
+    const invocation = assertInvocation(options.invocations, query.invocationId, query.callbackToken)
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    const q = query.query?.trim()
+    if (!q) {
+      reply.code(400)
+      return { error: "query is required." }
+    }
+
+    const topKParsed = query.topK ? Number.parseInt(query.topK, 10) : 5
+    const topK = Number.isFinite(topKParsed) && topKParsed > 0 ? Math.min(topKParsed, 10) : 5
+
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+
+    if (options.searchRecall) {
+      const result = await options.searchRecall({ threadId: thread.id, query: q, topK })
+      // Codex P5 Round 1 HIGH #1: the endpoint is the last boundary before recall
+      // data reaches the agent. Sanitize hits[].chunkText regardless of whether
+      // searchRecall already did — Codex/Gemini direct-fetch path only sees hits,
+      // not text, so raw historical text would bypass reference-only otherwise.
+      const { sanitizeRecallChunk } = await import("../services/embedding-service")
+      return {
+        text: result.text,
+        hits: result.hits.map((h) => ({
+          ...h,
+          chunkText: sanitizeRecallChunk(h.chunkText),
+        })),
+      }
+    }
+
+    // searchRecall not wired (e.g. pre-P5 deploy) → graceful empty response
+    return { text: "(no relevant context found)", hits: [] }
   })
 
   // --- New A2A callback routes ---
