@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-test("schema exports all 9 tables", async () => {
+test("schema exports all 10 tables (F018: + messageEmbeddings)", async () => {
   const schema = await import("./schema")
 
   const expectedTables = [
@@ -14,6 +14,7 @@ test("schema exports all 9 tables", async () => {
     "tasks",
     "authorizationRules",
     "authorizationAudit",
+    "messageEmbeddings", // F018 AC6.1 / AC8.2 — F007 AC5.2 回填
   ]
 
   for (const name of expectedTables) {
@@ -22,6 +23,27 @@ test("schema exports all 9 tables", async () => {
       `schema should export '${name}'`,
     )
   }
+})
+
+test("F018 AC8.1: threads table has nullable thread_memory column", async () => {
+  const schema = await import("./schema")
+  const { getTableColumns } = await import("drizzle-orm")
+  const threadCols = getTableColumns(schema.threads)
+  assert.ok(threadCols.threadMemory, "threads should have threadMemory column (F018)")
+})
+
+test("F018 AC8.2 / AC6.1: message_embeddings table has required columns", async () => {
+  const schema = await import("./schema")
+  const { getTableColumns } = await import("drizzle-orm")
+  assert.ok(schema.messageEmbeddings, "messageEmbeddings table should be exported")
+  const cols = getTableColumns(schema.messageEmbeddings)
+  assert.ok(cols.id, "messageEmbeddings should have id")
+  assert.ok(cols.messageId, "messageEmbeddings should have messageId")
+  assert.ok(cols.threadId, "messageEmbeddings should have threadId")
+  assert.ok(cols.chunkIndex, "messageEmbeddings should have chunkIndex")
+  assert.ok(cols.chunkText, "messageEmbeddings should have chunkText")
+  assert.ok(cols.embedding, "messageEmbeddings should have embedding (BLOB)")
+  assert.ok(cols.createdAt, "messageEmbeddings should have createdAt")
 })
 
 test("schema tables have correct column structures", async () => {

@@ -104,7 +104,18 @@ export class SqliteStore {
         native_session_id TEXT,
         sop_bookmark TEXT,
         last_fill_ratio REAL,
+        thread_memory TEXT,
         updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS message_embeddings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL DEFAULT 0,
+        chunk_text TEXT NOT NULL,
+        embedding BLOB NOT NULL,
+        created_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS messages (
@@ -208,6 +219,15 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_session_memories_session_group_id ON session_memories(session_group_id);
       CREATE INDEX IF NOT EXISTS idx_tasks_session_group_id ON tasks(session_group_id);
       CREATE INDEX IF NOT EXISTS idx_authorization_rules_provider_thread ON authorization_rules(provider, thread_id);
+      CREATE INDEX IF NOT EXISTS idx_embeddings_thread ON message_embeddings(thread_id);
     `)
+
+    // F018 AC8.1: backfill thread_memory column on pre-F018 databases
+    // CREATE TABLE IF NOT EXISTS 不会给现有表加列，因此单独走 idempotent ALTER
+    try {
+      this.db.exec("ALTER TABLE threads ADD COLUMN thread_memory TEXT")
+    } catch (e) {
+      if (!/duplicate column/i.test(String((e as Error).message))) throw e
+    }
   }
 }

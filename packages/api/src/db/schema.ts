@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core"
+import { blob, index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core"
 
 export const sessionGroups = sqliteTable("session_groups", {
   id: text("id").primaryKey(),
@@ -21,10 +21,27 @@ export const threads = sqliteTable(
     nativeSessionId: text("native_session_id"),
     sopBookmark: text("sop_bookmark"),
     lastFillRatio: real("last_fill_ratio"),
+    threadMemory: text("thread_memory"),
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
     index("idx_threads_session_group_id").on(table.sessionGroupId),
+  ],
+)
+
+export const messageEmbeddings = sqliteTable(
+  "message_embeddings",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    messageId: text("message_id").notNull(),
+    threadId: text("thread_id").notNull(),
+    chunkIndex: integer("chunk_index").notNull().default(0),
+    chunkText: text("chunk_text").notNull(),
+    embedding: blob("embedding").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_embeddings_thread").on(table.threadId),
   ],
 )
 

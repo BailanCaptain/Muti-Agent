@@ -99,7 +99,18 @@ const INIT_SQL = `
     native_session_id TEXT,
     sop_bookmark TEXT,
     last_fill_ratio REAL,
+    thread_memory TEXT,
     updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS message_embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL DEFAULT 0,
+    chunk_text TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    created_at TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS messages (
@@ -193,11 +204,20 @@ const INIT_SQL = `
   CREATE INDEX IF NOT EXISTS idx_session_memories_session_group_id ON session_memories(session_group_id);
   CREATE INDEX IF NOT EXISTS idx_tasks_session_group_id ON tasks(session_group_id);
   CREATE INDEX IF NOT EXISTS idx_authorization_rules_provider_thread ON authorization_rules(provider, thread_id);
+  CREATE INDEX IF NOT EXISTS idx_embeddings_thread ON message_embeddings(thread_id);
 `
 
 export function createDrizzleDb(dbPath: string) {
   const adapter = createNodeSqliteAdapter(dbPath)
   adapter.exec(INIT_SQL)
+
+  // F018 AC8.1: backfill thread_memory on pre-F018 databases
+  try {
+    adapter.exec("ALTER TABLE threads ADD COLUMN thread_memory TEXT")
+  } catch (e) {
+    if (!/duplicate column/i.test(String((e as Error).message))) throw e
+  }
+
   const db = drizzle(adapter as any, { schema })
 
   return {
