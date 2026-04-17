@@ -194,5 +194,6 @@ F004 解决了"历史由服务端权威持有"的根基问题，但长对话中 
 ## Evolution
 
 - **Evolved from**: F004（上下文记忆权威化）
+- **Evolved to**: F018（上下文续接架构重建 — F007 架构级收尾，补齐当时未对齐的 clowder-ai Bootstrap 基建 + embedding 接入）
 - **Blocks**: 无
 - **Related**: F006（UI/UX 重塑，模块九 UX 层可能有交叉）

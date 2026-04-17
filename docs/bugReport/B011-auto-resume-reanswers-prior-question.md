@@ -2,7 +2,7 @@
 B-ID: B011
 title: 自动续接（auto-resume）在封存后重复回答用户前一次的问题
 status: diagnosed
-related: F007 (context compression) / F011 (backend hardening)
+related: F007 (context compression) / F011 (backend hardening) / F018 (context resume rebuild — 架构级修复)
 reporter: 小孙
 created: 2026-04-15
 ---

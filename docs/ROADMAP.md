@@ -10,6 +10,7 @@
 | F012 | 前端加固 + 渲染重构 + DesignSystem + 三 CLI 整改 + 截图能力：消息卡片化 + 折叠式展示 + 统一设计 + CLI 参数/事件对齐 clowder-ai + Puppeteer 截图 | in-progress | 黄仁勋 | internal | [F012](features/F012-frontend-hardening-redesign.md) |
 | F015 | 调度状态持久化：DispatchOrchestrator 关键 Map 写入 DB + 进程重启恢复 | spec | TBD | internal | [F015](features/F015-dispatch-state-persistence.md) |
 | F017 | 跨房间协作感知：侧边栏运行指示 + 全局任务状态 | spec | 桂芬 | internal | [F017](features/F017-cross-room-awareness.md) |
+| F018 | 上下文续接架构重建：对齐 clowder-ai 冷存储 + SessionBootstrap + embedding 作为 recall 后端（F007 架构级收尾，修复 B011/B012 根因） | spec | 黄仁勋 | internal | [F018](features/F018-context-resume-rebuild.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features
