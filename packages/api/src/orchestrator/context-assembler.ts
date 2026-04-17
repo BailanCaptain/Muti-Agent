@@ -36,8 +36,6 @@ export type AssemblePromptInput = {
   targetAlias: string
   /** Optional Phase 1 header text */
   phase1HeaderText?: string
-  /** Optional skill hint line */
-  skillHint?: string | null
   /** SOP bookmark for cross-seal skill state restoration */
   sopBookmark?: SOPBookmark | null
   /** Last fill ratio for dynamic budget computation */
@@ -147,11 +145,9 @@ export async function assemblePrompt(
     contentSections.push("")
   }
 
-  // Skill hint
-  if (input.skillHint) {
-    contentSections.push(input.skillHint)
-    contentSections.push("")
-  }
+  // F019 P4: skillHint keyword-injection layer removed — SOP direction now
+  // comes from sopStageHint in the system prompt (see agent-prompts.ts
+  // buildSystemPromptWithHints). CLI-native skill discovery handles the rest.
 
   // Preamble (document-only mode)
   if (policy.injectPreamble && input.preamble) {
@@ -230,7 +226,6 @@ export type AssembleDirectTurnInput = {
   sourceAlias: "user"
   targetAlias: string
   roomSnapshot: readonly ContextMessage[]
-  skillHint?: string | null
   sopBookmark?: SOPBookmark | null
   lastFillRatio?: number
 }
@@ -252,7 +247,6 @@ export async function assembleDirectTurnPrompt(
       sourceAlias: input.sourceAlias,
       targetAlias: input.targetAlias,
       phase1HeaderText: undefined,
-      skillHint: input.skillHint ?? null,
       sopBookmark: input.sopBookmark,
       lastFillRatio: input.lastFillRatio,
       guardianMode: false,

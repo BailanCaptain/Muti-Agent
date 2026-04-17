@@ -47,6 +47,7 @@ import { classifyFailure } from "../runtime/failure-classifier"
 import { loadRuntimeConfig } from "../runtime/runtime-config"
 import type { DecisionManager } from "../orchestrator/decision-manager"
 import type { SkillRegistry } from "../skills/registry"
+import { applySlashCommandHint } from "../skills/slash-route"
 import type { SopTracker } from "../skills/sop-tracker"
 import type { MemoryService } from "./memory-service"
 import type { WorkflowSopService as WorkflowSopServiceType } from "./workflow-sop-service"
@@ -55,34 +56,6 @@ import { createLogger } from "../lib/logger"
 
 type ActiveRun = ReturnType<typeof runTurn>
 type EmitEvent = (event: RealtimeServerEvent) => void
-
-// B003: skills in the linear development chain (feat-lifecycle → writing-plans
-// → worktree → tdd → quality-gate → acceptance-guardian → requesting-review →
-// receiving-review → merge-gate) must NOT re-enter via naive `.includes()`
-// keyword matching on user messages. A mid-flow message like "这个 bugfix 我先
-// TDD 一下" would otherwise make the agent reload feat-lifecycle / tdd from the
-// top, because SkillRegistry.match() has no session-stage awareness.
-//
-// Linear-flow skills advance only via (a) explicit slash command or (b)
-// SopTracker.advance() following the `next` chain. Keyword matching is kept
-// for orthogonal skills meant to interrupt mid-flow: debugging /
-// self-evolution / collaborative-thinking / cross-role-handoff.
-//
-// clowder-ai (the upstream we copied skills from) has no equivalent of
-// prependSkillHint at all — it relies on Claude CLI native skill discovery
-// plus a bulletin-board `sopStageHint`. Our naive keyword-inject layer is
-// the unique-to-us regression that causes double-entry.
-export const LINEAR_FLOW_SKILLS: ReadonlySet<string> = new Set([
-  "feat-lifecycle",
-  "writing-plans",
-  "worktree",
-  "tdd",
-  "quality-gate",
-  "acceptance-guardian",
-  "requesting-review",
-  "receiving-review",
-  "merge-gate",
-])
 
 const STDERR_NOISE_PATTERNS = [
   /^YOLO mode is enabled/i,
@@ -741,8 +714,13 @@ export class MessageService {
       return
     }
 
-    // Inject skill hint into the prompt sent to the direct thread's CLI.
-    const effectiveContent = this.prependSkillHint(event.payload.content, thread.provider)
+    // F019 P4: skill hint KEYWORD scan was removed (Mode B regression root).
+    // Explicit slash commands (/guardian, /think, /review, ...) are still
+    // user-typed intent — preserved via applySlashCommandHint which only
+    // fires on registered slashes, never on free-form content. Non-slash
+    // messages pass through unchanged; SOP direction comes from sopStageHint
+    // in system prompt + CLI-native skill discovery.
+    const effectiveContent = applySlashCommandHint(event.payload.content, this.skillRegistry)
 
     // The user's message was sent to a specific thread — run that thread's turn concurrently with queued dispatches.
     const directTurn = this.runThreadTurn({
@@ -1408,18 +1386,21 @@ export class MessageService {
                 ? buildPhase1Header(modeBGroup.participantProviders.length)
                 : undefined
               const a2aProvider = entry.to.provider as import("@multi-agent/shared").Provider
-              const skillHint = phase1HeaderText
-                ? null
-                : this.buildSkillHintLine(entry.taskSnippet, a2aProvider)
 
-              // Acceptance Guardian detection: when skill match includes
-              // acceptance-guardian, activate zero-context mode with the
-              // dedicated guardian system prompt.
-              const isGuardianMode = !!(
-                skillHint &&
-                (skillHint.includes("acceptance-guardian") ||
-                  skillHint.includes("vision-guardian"))
-              )
+              // F019 P4: keyword-injection layer removed. Guardian mode
+              // detection now queries skillRegistry directly for acceptance-
+              // guardian / vision-guardian — without going through the
+              // (deleted) buildSkillHintLine string. Phase 1 independent
+              // thinking still wins over guardian mode (keeps Mode B
+              // independence guarantee).
+              const guardianCandidateNames = phase1HeaderText || !this.skillRegistry
+                ? []
+                : this.skillRegistry
+                    .match(entry.taskSnippet, a2aProvider)
+                    .map((m) => m.skill.name)
+              const isGuardianMode =
+                guardianCandidateNames.includes("acceptance-guardian") ||
+                guardianCandidateNames.includes("vision-guardian")
 
               const targetThread = this.dispatch.resolveThread(threadId)
               const a2aBookmark = targetThread?.sopBookmark
@@ -1438,7 +1419,6 @@ export class MessageService {
                 sourceAlias: entry.from.agentId,
                 targetAlias: entry.to.agentId,
                 phase1HeaderText,
-                skillHint: isGuardianMode ? null : skillHint,
                 sopBookmark: a2aBookmark,
                 lastFillRatio: targetThread?.lastFillRatio ?? undefined,
                 guardianMode: isGuardianMode,
@@ -1678,43 +1658,6 @@ export class MessageService {
     return null
   }
 
-  // ── Skill hint helpers ──────────────────────────────────────────────
-
-  private matchOrthogonalSkills(
-    content: string,
-    provider: import("@multi-agent/shared").Provider,
-  ): string[] {
-    if (!this.skillRegistry) return []
-    return this.skillRegistry
-      .match(content, provider)
-      .map((m) => m.skill.name)
-      .filter((name) => !LINEAR_FLOW_SKILLS.has(name))
-  }
-
-  private prependSkillHint(content: string, provider: import("@multi-agent/shared").Provider): string {
-    if (!this.skillRegistry) return content
-
-    // Slash command takes priority and is always allowed (explicit user intent).
-    const slashSkill = this.skillRegistry.matchSlashCommand(content)
-    if (slashSkill) {
-      return `⚡ 加载 skill: ${slashSkill.name} — 请按 skill 流程执行。\n\n${content}`
-    }
-
-    const names = this.matchOrthogonalSkills(content, provider)
-    if (!names.length) return content
-
-    return `⚡ 匹配 skill: ${names.join(", ")} — 请加载并按 skill 流程执行。\n\n${content}`
-  }
-
-  private buildSkillHintLine(
-    content: string,
-    provider: import("@multi-agent/shared").Provider,
-  ): string | null {
-    const names = this.matchOrthogonalSkills(content, provider)
-    if (!names.length) return null
-    return `⚡ 匹配 skill: ${names.join(", ")} — 请加载并按 skill 流程执行。`
-  }
-
   /**
    * Agent 主动触发的多 agent 并行思考。
    * 创建 ParallelGroup → 向每个 target agent 派发同一 question → 收集回复 → 回调 callbackTo。
@@ -1822,9 +1765,8 @@ export class MessageService {
     // Fan out in parallel; each provider's reply feeds markCompleted.
     // When all participants are done, run the shared allDone handler
     // (agent-initiated → aggregate goes directly to group.callbackTo).
-    // Don't prependSkillHint: Phase 1 header already says "参考 skill:
-    // collaborative-thinking（不要加载全文，按本 header 执行）" — a ⚡ 加载 skill
-    // line on top would contradict that and make agents load the full SKILL.md.
+    // F019 P4: the old skill-hint keyword injection that Mode B had to dodge
+    // is gone; Phase 1 header alone is the independence contract.
     for (const provider of targetProviders) {
       const thread = this.sessions.findThreadByGroupAndProvider(sessionGroupId, provider)
       if (!thread) continue

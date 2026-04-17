@@ -136,4 +136,33 @@ describe("runTurn — sopStageHint injection into MULTI_AGENT_SYSTEM_PROMPT", ()
     assert.ok(sp.endsWith("\n\nSOP: F019 stage=completion"))
     assert.ok(!sp.includes("→ load skill"))
   })
+
+  // F019 P4 AC7 system-side transport guarantee on the systemPrompt channel
+  // only: when sopStageHint is set, every provider's runTurn invocation puts
+  // the SOP one-liner at the tail of env.MULTI_AGENT_SYSTEM_PROMPT.
+  // (The Phase 1 header travels on the content/user-message channel via
+  // assemblePrompt — that half is covered by context-assembler.test.ts.)
+  it("sopStageHint reaches env.MULTI_AGENT_SYSTEM_PROMPT for all 3 providers", async () => {
+    for (const provider of ["claude", "codex", "gemini"] as const) {
+      const rt = new CapturingRuntime()
+      await runTurn({
+        ...baseOpts(rt),
+        provider,
+        sopStageHint: {
+          featureId: "F019",
+          stage: "impl",
+          suggestedSkill: "collaborative-thinking",
+        },
+      }).promise
+      const sp = rt.capturedInput?.env?.MULTI_AGENT_SYSTEM_PROMPT ?? ""
+      assert.ok(
+        sp.endsWith("\n\nSOP: F019 stage=impl → load skill: collaborative-thinking"),
+        `${provider}: sopStageHint missing at tail`,
+      )
+      assert.ok(
+        sp.startsWith(AGENT_SYSTEM_PROMPTS[provider]),
+        `${provider}: base prompt preserved as prefix`,
+      )
+    }
+  })
 })

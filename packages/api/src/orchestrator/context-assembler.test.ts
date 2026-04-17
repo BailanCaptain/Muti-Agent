@@ -2,8 +2,9 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { assembleDirectTurnPrompt, assemblePrompt } from "./context-assembler"
 import type { ContextMessage } from "./context-snapshot"
-import { POLICY_FULL, POLICY_GUARDIAN } from "./context-policy"
+import { POLICY_FULL, POLICY_GUARDIAN, POLICY_INDEPENDENT } from "./context-policy"
 import { ACCEPTANCE_GUARDIAN_PROMPT } from "../runtime/agent-prompts"
+import { buildPhase1Header } from "./phase1-header"
 
 // ── Guardian mode ───────────────────────────────────────────────────────
 
@@ -89,6 +90,44 @@ test("normal mode uses AGENT_SYSTEM_PROMPTS and wraps content", async () => {
   // Content is wrapped with A2A headers
   assert.ok(result.content.includes("[用户请求]"))
   assert.ok(result.content.includes("你是 黄仁勋"))
+})
+
+// ── F019 P4: Mode B transport — phase1-header lives on CONTENT channel ──
+
+test("Mode B: phase1HeaderText appears in assembled content (not systemPrompt)", async () => {
+  // Counterpart to cli-orchestrator.sop-hint.test.ts: sopStageHint rides
+  // on MULTI_AGENT_SYSTEM_PROMPT env, phase1-header rides on user content.
+  // This test pins the content-channel half of the Mode B replay guarantee.
+  const phase1 = buildPhase1Header(3)
+  const result = await assemblePrompt({
+    provider: "claude",
+    threadId: "t1",
+    sessionGroupId: "sg1",
+    nativeSessionId: "existing-session", // skip Bootstrap prelude noise
+    policy: POLICY_INDEPENDENT,
+    task: "你们讨论一下 X",
+    roomSnapshot: [],
+    sourceAlias: "user",
+    targetAlias: "黄仁勋",
+    phase1HeaderText: phase1,
+  }, null)
+
+  // phase1 header must land in content (the user-message channel)
+  assert.ok(
+    result.content.includes("[当前模式：并行独立思考 · Phase 1]"),
+    `phase1 header must be in content, got tail: ${result.content.slice(-200)}`,
+  )
+  // systemPrompt must NOT contain phase1 — they travel on separate channels
+  assert.ok(
+    !result.systemPrompt.includes("[当前模式：并行独立思考 · Phase 1]"),
+    "phase1 header must NOT leak into systemPrompt",
+  )
+  // systemPrompt must NOT contain a SOP line — that's injected by cli-orchestrator,
+  // not by assemblePrompt (tested separately in cli-orchestrator.sop-hint.test.ts)
+  assert.ok(
+    !result.systemPrompt.includes("SOP:"),
+    "assemblePrompt must not synthesize an SOP line",
+  )
 })
 
 // ── POLICY_GUARDIAN shape ───────────────────────────────────────────────
