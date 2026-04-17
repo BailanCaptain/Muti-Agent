@@ -1,14 +1,16 @@
 ---
 id: F019
 title: Skill 告示牌机制 — WorkflowSop 状态机替换关键词注入层
-status: in-progress
+status: done
 owner: 黄仁勋
 created: 2026-04-17
+completed: 2026-04-17
 ---
 
 # F019 — Skill 告示牌机制：WorkflowSop 状态机替换关键词注入层
 
 **Created**: 2026-04-17
+**Completed**: 2026-04-17
 **Priority**: P0
 
 ## Why
@@ -40,7 +42,7 @@ created: 2026-04-17
 - [x] AC5: `scripts/sync-skill-mounts.sh`（或 `pnpm run sync-skills`）运行后，`.claude/` `.agents/` `.gemini/` 三挂载点 symlink 与 `manifest.yaml` 一致，零 dangling link；`pnpm check` 中加入校验，drift 时 exit 1
 - [x] AC6: `prependSkillHint` / `buildSkillHintLine` / `matchOrthogonalSkills` 被删除，`message-service.ts:69-73` 的历史注释同步清理；`message-service-skill-hint.test.ts` 重写或删除（P4 merged）
 - [x] AC7: 系统侧传输保证 — `phase1HeaderText` → assembled content（`context-assembler.test.ts` 覆盖）+ `sopStageHint` → `MULTI_AGENT_SYSTEM_PROMPT`（`cli-orchestrator.sop-hint.test.ts` 覆盖 3 providers）。**agent 行为层**（SKILL.md 真加载 + Mode C 三件套触发）**留人工 smoke**
-- [ ] AC8: 愿景对照三问全 ✅（本 feature 解决的是"agent 不加载该加载的 skill"）；独立验收守护 agent 输出证物对照表且全匹配 **(acceptance-guardian 独立验收待跑)**
+- [x] AC8: 愿景对照三问全 ✅（本 feature 解决的是"agent 不加载该加载的 skill"）；独立验收守护 agent 输出证物对照表且全匹配（桂芬/Gemini 2026-04-17 零上下文 acceptance-guardian 验收 **PASS**，证物对照表 3 条全匹配 + AC1-AC8 逐条过）
 
 ## Dependencies
 
@@ -66,6 +68,7 @@ created: 2026-04-17
 | 2026-04-17 | Kickoff，已做 self-evolution 讨论（本 thread），选定方案 A |
 | 2026-04-17 | P1-P3 merged to dev (539efa8) — AC1-AC5 完成，Codex adversarial review 三轮闭环 APPROVED。P4（砍 prependSkillHint + AC6/AC7/AC8）独立分支 |
 | 2026-04-17 | P4 merged to dev (5a288aa) — AC6 + AC7 系统侧完成。Codex adversarial review 两轮闭环 APPROVED（round-1 提 2 findings 全修，round-2 no material findings）。AC7 agent 行为 + AC8 acceptance-guardian 待跑 |
+| 2026-04-17 | **Completion** — 桂芬（Gemini）零上下文 acceptance-guardian 独立验收 **PASS**（证物对照表 3 条全匹配 + AC1-AC8 逐条过；AC7 agent 行为层标注为人工 smoke 可选）。feature 正式 close。AC7 agent 行为层实际验证留作 post-ship smoke（非 merge blocker） |
 
 ## Phases
 
