@@ -37,6 +37,8 @@ import { getRedisReservation } from "./runtime/redis"
 import { awaitRunsToStop } from "./runtime/shutdown"
 import { MemoryService } from "./services/memory-service"
 import { MessageService } from "./services/message-service"
+import { WorkflowSopService } from "./services/workflow-sop-service"
+import { DrizzleWorkflowSopRepository } from "./db/repositories/workflow-sop-repository"
 import { SessionService } from "./services/session-service"
 import { SkillRegistry } from "./skills/registry"
 import { SopTracker } from "./skills/sop-tracker"
@@ -78,10 +80,17 @@ export async function createApiServer(options: {
   const manifestPath = path.resolve(__dirname, "../../../multi-agent-skills/manifest.yaml")
   skillRegistry.loadManifest(manifestPath)
   const sopTracker = new SopTracker()
+  // F019: WorkflowSop state machine (告示牌引擎). P3 Task 3.2 wires it into
+  // message-service so every invocation's system prompt carries the
+  // sopStageHint when the thread is bound to a feature. HTTP callback + MCP
+  // tool (Tasks 3.3/3.4) will be added as more consumers.
+  const workflowSopRepo = new DrizzleWorkflowSopRepository(drizzleDb)
+  const workflowSopService = new WorkflowSopService(workflowSopRepo)
   const decisions = new DecisionManager((event) => broadcaster.broadcast(event), repository)
   messages.setMemoryService(memoryService)
   messages.setSkillRegistry(skillRegistry)
   messages.setSopTracker(sopTracker)
+  messages.setWorkflowSopService(workflowSopService)
   messages.setDecisionManager(decisions)
 
   // F002: Decision Board + settle → flush → single dispatch pipeline.
@@ -386,6 +395,8 @@ export async function createApiServer(options: {
 
       return { ok: true as const, imageUrl: result.url }
     },
+    // F019 P3: expose the bulletin board service to /api/callbacks/update-workflow-sop
+    workflowSopService,
   })
   registerWsRoute(app, {
     messages,

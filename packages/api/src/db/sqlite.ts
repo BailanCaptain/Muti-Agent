@@ -12,6 +12,8 @@ export type ProviderThreadRecord = {
   nativeSessionId: string | null
   sopBookmark: string | null
   lastFillRatio: number | null
+  // F019: nullable feature binding used by WorkflowSop state machine.
+  backlogItemId: string | null
   updatedAt: string
 }
 
@@ -106,6 +108,7 @@ export class SqliteStore {
         last_fill_ratio REAL,
         thread_memory TEXT,
         session_chain_index INTEGER NOT NULL DEFAULT 1,
+        backlog_item_id TEXT,
         updated_at TEXT NOT NULL
       );
 
@@ -212,6 +215,21 @@ export class SqliteStore {
     `)
 
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS workflow_sop (
+        backlog_item_id TEXT PRIMARY KEY,
+        feature_id TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        baton_holder TEXT,
+        next_skill TEXT,
+        resume_capsule TEXT NOT NULL DEFAULT '{}',
+        checks TEXT NOT NULL DEFAULT '{}',
+        version INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL,
+        updated_by TEXT NOT NULL
+      );
+    `)
+
+    this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_messages_thread_id ON messages(thread_id);
       CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
       CREATE INDEX IF NOT EXISTS idx_threads_session_group_id ON threads(session_group_id);
@@ -221,20 +239,41 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_tasks_session_group_id ON tasks(session_group_id);
       CREATE INDEX IF NOT EXISTS idx_authorization_rules_provider_thread ON authorization_rules(provider, thread_id);
       CREATE INDEX IF NOT EXISTS idx_embeddings_thread ON message_embeddings(thread_id);
+      CREATE INDEX IF NOT EXISTS idx_workflow_sop_feature_id ON workflow_sop(feature_id);
+      CREATE INDEX IF NOT EXISTS idx_workflow_sop_stage ON workflow_sop(stage);
     `)
 
-    // F018 AC8.1: backfill thread_memory column on pre-F018 databases
-    // CREATE TABLE IF NOT EXISTS 不会给现有表加列，因此单独走 idempotent ALTER
-    try {
-      this.db.exec("ALTER TABLE threads ADD COLUMN thread_memory TEXT")
-    } catch (e) {
-      if (!/duplicate column/i.test(String((e as Error).message))) throw e
-    }
-    // F018 P3 AC3.5: backfill session_chain_index column (defaults 1 for fresh threads)
-    try {
-      this.db.exec("ALTER TABLE threads ADD COLUMN session_chain_index INTEGER NOT NULL DEFAULT 1")
-    } catch (e) {
-      if (!/duplicate column/i.test(String((e as Error).message))) throw e
+    // Idempotent ALTER TABLE for pre-existing databases. CREATE TABLE IF NOT
+    // EXISTS does not back-fill columns on already-existing tables, so each
+    // new column needs its own ALTER with duplicate-column-name tolerance.
+    this.runAlterMigrations()
+  }
+
+  private runAlterMigrations(): void {
+    const alters: ReadonlyArray<{ name: string; sql: string }> = [
+      // F018 AC8.1: ThreadMemory rolling summary persistence column
+      {
+        name: "F018-threads-add-thread-memory",
+        sql: "ALTER TABLE threads ADD COLUMN thread_memory TEXT",
+      },
+      // F018 P3 AC3.5: session chain index for Bootstrap identity section
+      {
+        name: "F018-threads-add-session-chain-index",
+        sql: "ALTER TABLE threads ADD COLUMN session_chain_index INTEGER NOT NULL DEFAULT 1",
+      },
+      // F019 P2: thread → feature binding for WorkflowSop state machine
+      {
+        name: "F019-threads-add-backlog-item-id",
+        sql: "ALTER TABLE threads ADD COLUMN backlog_item_id TEXT",
+      },
+    ]
+    for (const m of alters) {
+      try {
+        this.db.exec(m.sql)
+      } catch (err) {
+        const msg = String((err as { message?: unknown })?.message ?? err)
+        if (!/duplicate column name/i.test(msg)) throw err
+      }
     }
   }
 }

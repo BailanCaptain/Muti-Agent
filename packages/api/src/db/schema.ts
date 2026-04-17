@@ -21,8 +21,12 @@ export const threads = sqliteTable(
     nativeSessionId: text("native_session_id"),
     sopBookmark: text("sop_bookmark"),
     lastFillRatio: real("last_fill_ratio"),
+    // F018: ThreadMemory rolling summary + session chain index
     threadMemory: text("thread_memory"),
     sessionChainIndex: integer("session_chain_index").notNull().default(1),
+    // F019: thread → feature binding for WorkflowSop state machine.
+    // Null = thread not bound to any feature (sopStageHint will not be injected).
+    backlogItemId: text("backlog_item_id"),
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
@@ -173,3 +177,27 @@ export const authorizationAudit = sqliteTable("authorization_audit", {
   matchedRuleId: text("matched_rule_id"),
   createdAt: text("created_at").notNull(),
 })
+
+// F019: WorkflowSop state machine — 告示牌引擎
+// stage enum is stored as TEXT (not constrained by DB CHECK) so we can evolve
+// the stage vocabulary without a migration; WorkflowSopService enforces valid values.
+// resumeCapsule and checks are JSON blobs (stringified at repo boundary).
+export const workflowSop = sqliteTable(
+  "workflow_sop",
+  {
+    backlogItemId: text("backlog_item_id").primaryKey(),
+    featureId: text("feature_id").notNull(),
+    stage: text("stage").notNull(),
+    batonHolder: text("baton_holder"),
+    nextSkill: text("next_skill"),
+    resumeCapsule: text("resume_capsule").notNull().default("{}"),
+    checks: text("checks").notNull().default("{}"),
+    version: integer("version").notNull().default(1),
+    updatedAt: text("updated_at").notNull(),
+    updatedBy: text("updated_by").notNull(),
+  },
+  (table) => [
+    index("idx_workflow_sop_feature_id").on(table.featureId),
+    index("idx_workflow_sop_stage").on(table.stage),
+  ],
+)

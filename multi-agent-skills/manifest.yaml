@@ -314,42 +314,71 @@ skills:
         description: "合入门禁检查"
 
 # SOP 导航牌
+# 每个条目必须有 suggested_skill + ≥1 hard_rules + ≥1 pitfalls
+# （pnpm check:skills 强制校验，见 scripts/skill-mount-check.ts:verifySopNavigationQuality）
 sop_navigation:
+  feat-lifecycle:
+    suggested_skill: feat-lifecycle
+    hard_rules:
+      - "新功能必须先走 Step 0 关联检测（搜 ROADMAP + 历史讨论）"
+      - "AC 必须可验证（具体文件/测试/命令，不是'应该工作'）"
+    pitfalls:
+      - "AC 打勾就标 done，不做愿景对照三问"
+      - "立项时不记录 Evolved from，追溯链断裂"
+
   writing-plans:
     suggested_skill: writing-plans
     hard_rules:
       - "计划必须包含 TDD 步骤和检查点"
+      - "每步产物在终态保留，不是临时脚手架"
     pitfalls:
       - "没有对齐就直接写代码"
+      - "一个步骤做太多事（违反 2-5 分钟 bite-size 规则）"
 
   worktree:
     suggested_skill: worktree
     hard_rules:
       - "worktree 开之前必须 dev 双向同步 (ahead=0 behind=0)"
+      - "新 worktree 必须跑 pnpm mount-skills 挂载三 CLI skills 目录"
     pitfalls:
-      - "不同步就开 worktree"
+      - "不同步就开 worktree，合入时冲突地狱"
+      - "在主仓库目录里改代码还以为在 worktree"
 
   tdd:
     suggested_skill: tdd
     hard_rules:
       - "没有失败的测试，就没有实现代码"
+      - "必须亲眼看到测试以预期理由失败（不是 typo）"
     pitfalls:
       - "先写实现再补测试"
+      - "跳过 RED 阶段直接 GREEN"
 
   quality-gate:
     suggested_skill: quality-gate
     hard_rules:
       - "测试全部通过才能进入 review"
+      - "自检报告必须包含愿景覆盖度（对照小孙原话）"
     pitfalls:
       - "声称完成但没跑全量测试"
+      - "只跑改动相关的测试没跑全量"
 
   acceptance-guardian:
     suggested_skill: acceptance-guardian
     hard_rules:
       - "实现者不能自己做独立验收"
-      - "守护 agent 必须零上下文"
+      - "守护 agent 必须零上下文，只看 AC + 代码 + 测试 + 运行结果"
     pitfalls:
       - "跳过独立验收直接提 review"
+      - "接受'应该通过'不要求本次运行证据"
+
+  code-review:
+    suggested_skill: code-review
+    hard_rules:
+      - "Review 必须 Read→Green：先写失败测试复现问题，再提修复意见"
+      - "同一个体不能 review 自己的代码"
+    pitfalls:
+      - "光挑毛病不给根因分析"
+      - "把 nit 和 P1 混在一起列，让收信人分不清优先级"
 
   request-review:
     suggested_skill: requesting-review
@@ -358,21 +387,25 @@ sop_navigation:
       - "Review 请求必须明确范围和风险点"
     pitfalls:
       - "没自检就提 review"
+      - "范围描述模糊，让 reviewer 不知道要看哪里"
 
   receive-review:
     suggested_skill: receiving-review
     hard_rules:
       - "P1/P2 必须在当前迭代修完"
-      - "禁止表演性同意"
+      - "禁止表演性同意（'好的我改'但实际没改）"
     pitfalls:
       - "收到 P1 修完后没 re-trigger review"
+      - "对 reviewer 的质疑一律认同而不核实"
 
   merge-gate:
     suggested_skill: merge-gate
     hard_rules:
-      - "必须有 reviewer 明确放行"
+      - "必须有 reviewer 明确放行（APPROVED）"
+      - "必须用 gh pr merge --squash（禁止本地 squash push）"
     pitfalls:
       - "reviewer 没说 APPROVED 就合入"
+      - "本地 squash + push + gh pr close（PR 显示 closed 不是 merged）"
 
 # Lint 规则
 lint:

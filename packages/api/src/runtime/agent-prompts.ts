@@ -260,3 +260,37 @@ export const AGENT_SYSTEM_PROMPTS: Record<Provider, string> = {
   codex: [buildBasePrompt("codex"), CALLBACK_API_PROMPT].join("\n\n"),
   gemini: [buildBasePrompt("gemini"), CALLBACK_API_PROMPT].join("\n\n")
 };
+
+/**
+ * F019 P3: Per-invocation 告示牌 context passed by cli-orchestrator.
+ * Currently carries sopStageHint; future per-invocation fields go here too.
+ */
+export interface InvocationContext {
+  sopStageHint?: {
+    featureId: string;
+    stage: string;
+    suggestedSkill: string | null;
+  };
+}
+
+/**
+ * F019 P3: Build the effective system prompt for a single invocation.
+ *
+ * Takes the precomputed static AGENT_SYSTEM_PROMPTS[provider] and appends
+ * the dynamic 告示牌 (sopStageHint) as a one-liner at the end. Format:
+ *   SOP: {featureId} stage={stage} → load skill: {suggestedSkill}
+ *
+ * When suggestedSkill is null/empty, the "→ load skill: X" suffix is omitted.
+ * When ctx.sopStageHint is absent (thread not bound to a feature), returns
+ * the base static prompt verbatim (backward-compat with pre-F019 behavior).
+ */
+export function buildSystemPromptWithHints(
+  provider: Provider,
+  ctx: InvocationContext,
+): string {
+  const base = AGENT_SYSTEM_PROMPTS[provider];
+  if (!ctx.sopStageHint) return base;
+  const { featureId, stage, suggestedSkill } = ctx.sopStageHint;
+  const suffix = suggestedSkill ? ` → load skill: ${suggestedSkill}` : "";
+  return `${base}\n\nSOP: ${featureId} stage=${stage}${suffix}`;
+}

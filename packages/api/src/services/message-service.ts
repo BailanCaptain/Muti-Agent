@@ -49,6 +49,7 @@ import type { DecisionManager } from "../orchestrator/decision-manager"
 import type { SkillRegistry } from "../skills/registry"
 import type { SopTracker } from "../skills/sop-tracker"
 import type { MemoryService } from "./memory-service"
+import type { WorkflowSopService as WorkflowSopServiceType } from "./workflow-sop-service"
 import type { SessionService } from "./session-service"
 import { createLogger } from "../lib/logger"
 
@@ -178,6 +179,7 @@ export class MessageService {
   private decisions: DecisionManager | null = null
   private skillRegistry: SkillRegistry | null = null
   private sopTracker: SopTracker | null = null
+  private workflowSopService: WorkflowSopServiceType | null = null
   private readonly prevUsedTokens = new Map<string, number>()
   private memoryService: MemoryService | null = null
   private decisionBoard: DecisionBoard | null = null
@@ -210,6 +212,15 @@ export class MessageService {
 
   setSopTracker(tracker: SopTracker) {
     this.sopTracker = tracker
+  }
+
+  /**
+   * F019 P3: Wire in WorkflowSopService so message-service can look up
+   * thread.backlogItemId → sopStageHint and pass it to runTurn.
+   * When not set, flows behave identically to pre-F019 (no hint injection).
+   */
+  setWorkflowSopService(svc: WorkflowSopServiceType) {
+    this.workflowSopService = svc
   }
 
   setMemoryService(service: MemoryService) {
@@ -902,8 +913,22 @@ export class MessageService {
     // already rendered the content, so we pass options.content through.
     const effectiveUserMessage = assembledDirectTurn?.content ?? options.content
 
+    // F019 P3: Look up thread → feature binding → WorkflowSop → sopStageHint.
+    // null when thread is not bound to a feature (pre-F019 behavior preserved).
+    const sopStageHint = (() => {
+      if (!this.workflowSopService) return undefined
+      const sop = this.workflowSopService.get(thread.backlogItemId ?? "")
+      if (!sop) return undefined
+      return {
+        featureId: sop.featureId,
+        stage: sop.stage,
+        suggestedSkill: sop.nextSkill,
+      }
+    })()
+
     const createRun = (userMessage: string) => runTurn({
       systemPrompt,
+      sopStageHint,
       invocationId: identity.invocationId,
       threadId: thread.id,
       provider: thread.provider,

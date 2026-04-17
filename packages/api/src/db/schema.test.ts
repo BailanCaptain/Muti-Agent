@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-test("schema exports all 10 tables (F018: + messageEmbeddings)", async () => {
+test("schema exports all 11 tables (F018 messageEmbeddings + F019 workflowSop)", async () => {
   const schema = await import("./schema")
 
   const expectedTables = [
@@ -15,6 +15,7 @@ test("schema exports all 10 tables (F018: + messageEmbeddings)", async () => {
     "authorizationRules",
     "authorizationAudit",
     "messageEmbeddings", // F018 AC6.1 / AC8.2 — F007 AC5.2 回填
+    "workflowSop", // F019 P2 — 告示牌状态机
   ]
 
   for (const name of expectedTables) {
@@ -84,4 +85,27 @@ test("schema tables have correct column structures", async () => {
   const auditCols = getTableColumns(schema.authorizationAudit)
   assert.ok(auditCols.requestId, "authorizationAudit should have requestId")
   assert.ok(auditCols.matchedRuleId, "authorizationAudit should have matchedRuleId")
+})
+
+test("threads has backlogItemId column (F019 feature→thread binding)", async () => {
+  const schema = await import("./schema")
+  const { getTableColumns } = await import("drizzle-orm")
+  const threadCols = getTableColumns(schema.threads)
+  assert.ok(threadCols.backlogItemId, "threads should have backlogItemId column")
+})
+
+test("workflow_sop table has F019 state machine columns", async () => {
+  const schema = await import("./schema")
+  const { getTableColumns } = await import("drizzle-orm")
+  const cols = getTableColumns(schema.workflowSop)
+  assert.ok(cols.backlogItemId, "workflowSop should have backlogItemId (PK)")
+  assert.ok(cols.featureId, "workflowSop should have featureId")
+  assert.ok(cols.stage, "workflowSop should have stage")
+  assert.ok(cols.batonHolder, "workflowSop should have batonHolder")
+  assert.ok(cols.nextSkill, "workflowSop should have nextSkill")
+  assert.ok(cols.resumeCapsule, "workflowSop should have resumeCapsule (JSON)")
+  assert.ok(cols.checks, "workflowSop should have checks (JSON)")
+  assert.ok(cols.version, "workflowSop should have version (optimistic lock)")
+  assert.ok(cols.updatedAt, "workflowSop should have updatedAt")
+  assert.ok(cols.updatedBy, "workflowSop should have updatedBy")
 })

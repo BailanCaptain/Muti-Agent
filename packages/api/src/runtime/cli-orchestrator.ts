@@ -14,6 +14,7 @@ import { claudeRuntime } from "./claude-runtime";
 import { codexRuntime } from "./codex-runtime";
 import { createEventRecorder } from "./event-recorder";
 import { geminiRuntime } from "./gemini-runtime";
+import { buildSystemPromptWithHints } from "./agent-prompts";
 
 export type RunTurnOptions = {
   invocationId?: string;
@@ -27,6 +28,18 @@ export type RunTurnOptions = {
   nativeSessionId: string | null;
   userMessage: string;
   systemPrompt?: string;
+  /**
+   * F019 P3: Per-invocation 告示牌 hint. When set (and systemPrompt is NOT
+   * explicitly provided), cli-orchestrator builds the effective system prompt
+   * via buildSystemPromptWithHints so the SOP one-liner appears at the end.
+   * When systemPrompt is explicitly set by caller (e.g., A2A fan-out path),
+   * sopStageHint is ignored — caller is fully responsible.
+   */
+  sopStageHint?: {
+    featureId: string;
+    stage: string;
+    suggestedSkill: string | null;
+  };
   onAssistantDelta: (delta: string) => void;
   onSession: (nativeSessionId: string) => void;
   onModel: (model: string) => void;
@@ -82,6 +95,27 @@ export function runTurn(options: RunTurnOptions) {
 
   const runtime = options.runtime ?? runtimeAdapters[options.provider];
 
+  // F019 P3: Resolve the effective system prompt.
+  // sopStageHint, when present, is ALWAYS appended as a 告示牌 one-liner —
+  // whether the base prompt came from options.systemPrompt (A2A / direct-turn
+  // assembled) or from AGENT_SYSTEM_PROMPTS[provider] fallback. The hint is
+  // additive, not overriding.
+  let effectiveSystemPrompt = options.systemPrompt ?? "";
+  if (options.sopStageHint) {
+    const { featureId, stage, suggestedSkill } = options.sopStageHint;
+    const suffix = suggestedSkill ? ` → load skill: ${suggestedSkill}` : "";
+    const sopLine = `SOP: ${featureId} stage=${stage}${suffix}`;
+    if (effectiveSystemPrompt) {
+      // Append to caller-provided base (direct-turn or A2A path).
+      effectiveSystemPrompt = `${effectiveSystemPrompt}\n\n${sopLine}`;
+    } else {
+      // Fallback path: start from the static provider base and add hint.
+      effectiveSystemPrompt = buildSystemPromptWithHints(options.provider, {
+        sopStageHint: options.sopStageHint,
+      });
+    }
+  }
+
   const input: AgentRunInput = {
     invocationId: options.invocationId ?? crypto.randomUUID(),
     threadId: options.threadId,
@@ -95,7 +129,7 @@ export function runTurn(options: RunTurnOptions) {
       MULTI_AGENT_MODEL: options.model ?? "",
       MULTI_AGENT_EFFORT: options.effort ?? "",
       MULTI_AGENT_NATIVE_SESSION_ID: options.nativeSessionId ?? "",
-      MULTI_AGENT_SYSTEM_PROMPT: options.systemPrompt ?? ""
+      MULTI_AGENT_SYSTEM_PROMPT: effectiveSystemPrompt
     }
   };
 

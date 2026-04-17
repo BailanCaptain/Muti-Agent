@@ -177,7 +177,7 @@ export class SessionRepository {
       .prepare(
         `SELECT id, session_group_id as sessionGroupId, provider, alias, current_model as currentModel,
                 native_session_id as nativeSessionId, sop_bookmark as sopBookmark,
-                last_fill_ratio as lastFillRatio, updated_at as updatedAt
+                last_fill_ratio as lastFillRatio, backlog_item_id as backlogItemId, updated_at as updatedAt
          FROM threads
          WHERE session_group_id = ?
          ORDER BY provider ASC`,
@@ -190,7 +190,7 @@ export class SessionRepository {
       .prepare(
         `SELECT id, session_group_id as sessionGroupId, provider, alias, current_model as currentModel,
                 native_session_id as nativeSessionId, sop_bookmark as sopBookmark,
-                last_fill_ratio as lastFillRatio, updated_at as updatedAt
+                last_fill_ratio as lastFillRatio, backlog_item_id as backlogItemId, updated_at as updatedAt
          FROM threads
          WHERE id = ?
          LIMIT 1`,

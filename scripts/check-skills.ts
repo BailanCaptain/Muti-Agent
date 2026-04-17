@@ -5,10 +5,11 @@
  * Usage: npx tsx scripts/check-skills.ts
  */
 
-import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { parse as parseYaml } from "yaml"
+import { scanCliDir, verifyBootstrapCoverage, verifySopNavigationQuality } from "./skill-mount-check.ts"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(__dirname, "..")
@@ -35,10 +36,12 @@ if (!existsSync(MANIFEST_PATH)) {
 
 const doc = parseYaml(readFileSync(MANIFEST_PATH, "utf-8")) as {
   skills?: Record<string, Record<string, unknown>>
+  sop_navigation?: Record<string, { suggested_skill?: string; hard_rules?: string[]; pitfalls?: string[] }>
 }
 
 const skills = doc.skills ?? {}
 const skillNames = Object.keys(skills)
+const sopNavigation = doc.sop_navigation ?? {}
 
 // ── Check each skill in manifest ─────────────────────────────────────
 
@@ -110,7 +113,7 @@ for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true })) {
   }
 }
 
-// ── Check symlinks ───────────────────────────────────────────────────
+// ── Check symlinks (drift detection via scanCliDir) ──────────────────
 
 for (const cliDir of CLI_DIRS) {
   const cliLabel = path.basename(path.dirname(cliDir)) // .claude, .gemini, .agents
@@ -118,19 +121,27 @@ for (const cliDir of CLI_DIRS) {
     warnings.push({ rule: "symlink", detail: `${cliLabel}/skills/ directory does not exist` })
     continue
   }
-
-  for (const name of skillNames) {
-    const linkPath = path.join(cliDir, name)
-    if (!existsSync(linkPath)) {
-      warnings.push({ rule: "symlink", detail: `${cliLabel}/skills/${name} missing (run scripts/mount-skills.sh)` })
-      continue
-    }
-
-    const stat = lstatSync(linkPath)
-    if (!stat.isSymbolicLink()) {
-      warnings.push({ rule: "symlink", detail: `${cliLabel}/skills/${name} is not a symlink (should be)` })
-    }
+  const issues = scanCliDir(cliDir, cliLabel, skillNames)
+  for (const iss of issues) {
+    const bucket = iss.severity === "error" ? errors : warnings
+    bucket.push({ rule: iss.rule, detail: iss.detail })
   }
+}
+
+// ── Check BOOTSTRAP.md coverage (manifest single truth source) ───────
+
+const BOOTSTRAP_PATH = path.join(SKILLS_DIR, "BOOTSTRAP.md")
+const bootstrapContent = existsSync(BOOTSTRAP_PATH) ? readFileSync(BOOTSTRAP_PATH, "utf-8") : ""
+for (const iss of verifyBootstrapCoverage(bootstrapContent, skillNames)) {
+  const bucket = iss.severity === "error" ? errors : warnings
+  bucket.push({ rule: iss.rule, detail: iss.detail })
+}
+
+// ── Check sop_navigation content quality ─────────────────────────────
+
+for (const iss of verifySopNavigationQuality(sopNavigation)) {
+  const bucket = iss.severity === "error" ? errors : warnings
+  bucket.push({ rule: iss.rule, detail: iss.detail })
 }
 
 // ── Report ───────────────────────────────────────────────────────────

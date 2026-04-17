@@ -4,6 +4,13 @@ import type { SessionRepository } from "../db/repositories"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
 import type { SessionService } from "../services/session-service"
 import type { RealtimeBroadcaster } from "./ws"
+import type { WorkflowSopService } from "../services/workflow-sop-service"
+import {
+  validateUpdateSopBody,
+  WorkflowSopValidationError,
+} from "../services/workflow-sop-service"
+import type { UpdateSopInput } from "../services/workflow-sop-types"
+import { FeatureIdMismatchError, OptimisticLockError } from "../db/repositories/workflow-sop-repository"
 
 type CallbackBody = {
   invocationId?: string
@@ -81,6 +88,8 @@ export function registerCallbackRoutes(
       url?: string
       alt?: string
     }) => Promise<{ ok: true; imageUrl: string }>
+    /** F019 P3: WorkflowSop 告示牌引擎. Used by /api/callbacks/update-workflow-sop. */
+    workflowSopService?: WorkflowSopService
   },
 ) {
   app.post("/api/callbacks/post-message", async (request: FastifyRequest, reply: FastifyReply) => {
@@ -529,6 +538,94 @@ export function registerCallbackRoutes(
     } catch (err) {
       reply.code(500)
       return { error: err instanceof Error ? err.message : "Screenshot failed" }
+    }
+  })
+
+  // F019 P3: WorkflowSop 告示牌 state machine 推进入口（HTTP 通道；MCP
+  // 对等工具在 Task 3.4 挂）。auth 同 post-message；失败映射：
+  // 401（auth）/ 400（参数）/ 403（越权）/ 404（thread 不存在）/ 409（写冲突）/ 500（DB 错）
+  app.post("/api/callbacks/update-workflow-sop", async (request: FastifyRequest, reply: FastifyReply) => {
+    const rawBody = request.body as (CallbackBody & Record<string, unknown>) | undefined
+    const invocation = assertInvocation(
+      options.invocations,
+      rawBody?.invocationId,
+      rawBody?.callbackToken,
+    )
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    // F019 review-P2 (Codex Finding 3): full-body validation + normalization at
+    // the boundary. Upstream agents pass untrusted JSON; validateUpdateSopBody
+    // trims IDs, rejects invalid enums, type-checks resumeCapsule/checks/
+    // expectedVersion shapes. The service+repo layers trust their input.
+    let input: UpdateSopInput
+    try {
+      input = validateUpdateSopBody({
+        ...(rawBody ?? {}),
+        // updatedBy is derived from authenticated identity, not caller-supplied
+        updatedBy: invocation.agentId,
+      })
+    } catch (err) {
+      if (err instanceof WorkflowSopValidationError) {
+        reply.code(400)
+        return { error: err.message }
+      }
+      throw err
+    }
+
+    // F019 review-P1 (Codex Finding 1): thread-scope + session-cancelled guards.
+    // The caller's invocation can only write to the feature its thread is bound
+    // to. Unbound threads and cancelled sessions must be rejected before any
+    // DB write — otherwise any valid callback token could mutate foreign SOP rows.
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+    if (!thread.backlogItemId) {
+      reply.code(403)
+      return {
+        error: "Thread is not bound to any feature; cannot update workflow SOP.",
+      }
+    }
+    if (thread.backlogItemId !== input.backlogItemId) {
+      reply.code(403)
+      return {
+        error: `Thread is bound to "${thread.backlogItemId}", request does not match.`,
+      }
+    }
+    if (options.isSessionGroupCancelled(thread.sessionGroupId)) {
+      reply.code(403)
+      return { error: "Session group has been cancelled." }
+    }
+
+    if (!options.workflowSopService) {
+      reply.code(503)
+      return { error: "WorkflowSopService not wired" }
+    }
+
+    try {
+      const sop = options.workflowSopService.upsert(input)
+      return { ok: true, sop }
+    } catch (err) {
+      if (err instanceof OptimisticLockError) {
+        reply.code(409)
+        return { error: err.message }
+      }
+      if (err instanceof FeatureIdMismatchError) {
+        reply.code(409)
+        return { error: err.message }
+      }
+      if (err instanceof WorkflowSopValidationError) {
+        // Defense-in-depth: service-level validation (e.g. invalid stage) should
+        // have been caught at the boundary, but map to 400 if it slips through.
+        reply.code(400)
+        return { error: err.message }
+      }
+      reply.code(500)
+      return { error: err instanceof Error ? err.message : "update-workflow-sop failed" }
     }
   })
 }

@@ -400,6 +400,45 @@ export function getTools() {
           alt: { type: "string", description: "图片描述（alt text）" }
         }
       }
+    },
+    {
+      name: "update_workflow_sop",
+      description: "F019 告示牌：推进当前 feature 的 WorkflowSop 状态机（stage / batonHolder / checks / resumeCapsule）。与 HTTP callback /api/callbacks/update-workflow-sop 行为等价。stage 枚举：kickoff|impl|quality_gate|review|merge|completion。乐观锁失配会报错；仅有 backlogItemId 必填。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          backlogItemId: { type: "string", description: "feature 绑定 ID（如 F019）" },
+          featureId: { type: "string", description: "feature 短 ID（默认等于 backlogItemId）" },
+          stage: {
+            type: "string",
+            enum: ["kickoff", "impl", "quality_gate", "review", "merge", "completion"],
+            description: "生命周期阶段枚举"
+          },
+          batonHolder: { type: "string", description: "接力棒持有者（当前该谁动）" },
+          nextSkill: { type: "string", description: "下一步建议加载的 skill 名" },
+          resumeCapsule: {
+            type: "object",
+            description: "恢复胶囊（goal/done/currentFocus）— 合并到现有，不覆盖",
+            properties: {
+              goal: { type: "string" },
+              done: { type: "array", items: { type: "string" } },
+              currentFocus: { type: "string" }
+            }
+          },
+          checks: {
+            type: "object",
+            description: "四项 SOP gate 检查状态（attested|verified|unknown）",
+            properties: {
+              remoteMainSynced: { type: "string", enum: ["attested", "verified", "unknown"] },
+              qualityGatePassed: { type: "string", enum: ["attested", "verified", "unknown"] },
+              reviewApproved: { type: "string", enum: ["attested", "verified", "unknown"] },
+              visionGuardDone: { type: "string", enum: ["attested", "verified", "unknown"] }
+            }
+          },
+          expectedVersion: { type: "integer", description: "乐观锁：当前期望的 version；不匹配则 upsert 报错" }
+        },
+        required: ["backlogItemId"]
+      }
     }
   ];
 }
@@ -571,6 +610,48 @@ async function callParallelThink(params: {
   };
 }
 
+// F019 P3: MCP tool → HTTP callback bridge. Shares auth + validation with
+// /api/callbacks/update-workflow-sop. Stage enum / optimistic lock errors are
+// returned as MCP isError responses so the caller can distinguish from success.
+async function callUpdateWorkflowSop(params: {
+  backlogItemId: string;
+  featureId?: string;
+  stage?: string;
+  batonHolder?: string | null;
+  nextSkill?: string | null;
+  resumeCapsule?: Record<string, unknown>;
+  checks?: Record<string, unknown>;
+  expectedVersion?: number;
+}): Promise<ToolResult> {
+  const identity = getCallbackIdentity();
+  const response = await requestJson(`${identity.apiUrl}/api/callbacks/update-workflow-sop`, {
+    method: "POST",
+    body: {
+      invocationId: identity.invocationId,
+      callbackToken: identity.callbackToken,
+      backlogItemId: params.backlogItemId,
+      ...(params.featureId !== undefined ? { featureId: params.featureId } : {}),
+      ...(params.stage !== undefined ? { stage: params.stage } : {}),
+      ...(params.batonHolder !== undefined ? { batonHolder: params.batonHolder } : {}),
+      ...(params.nextSkill !== undefined ? { nextSkill: params.nextSkill } : {}),
+      ...(params.resumeCapsule !== undefined ? { resumeCapsule: params.resumeCapsule } : {}),
+      ...(params.checks !== undefined ? { checks: params.checks } : {}),
+      ...(params.expectedVersion !== undefined ? { expectedVersion: params.expectedVersion } : {})
+    }
+  });
+
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `update_workflow_sop failed (HTTP ${response.statusCode}): ${JSON.stringify(response.json)}` }]
+    };
+  }
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(response.json) }]
+  };
+}
+
 async function callTakeScreenshot(params: { url?: string; alt?: string }): Promise<ToolResult> {
   const identity = getCallbackIdentity();
   const response = await requestJson(`${identity.apiUrl}/api/callbacks/take-screenshot`, {
@@ -704,6 +785,16 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
       return callRequestPermission(args as { action: string; reason: string; context?: string });
     case "take_screenshot":
       return callTakeScreenshot(args as { url?: string; alt?: string });
+    case "update_workflow_sop": {
+      const backlogItemId = typeof args?.backlogItemId === "string" ? args.backlogItemId.trim() : "";
+      if (!backlogItemId) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: "backlogItemId is required (non-empty string)" }]
+        } satisfies ToolResult;
+      }
+      return callUpdateWorkflowSop(args as Parameters<typeof callUpdateWorkflowSop>[0]);
+    }
     default:
       return {
         isError: true,

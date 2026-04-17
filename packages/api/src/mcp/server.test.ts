@@ -6,9 +6,9 @@ import { getTools, handleToolCall } from "./server.js"
 // getTools tests
 // ---------------------------------------------------------------------------
 
-test("getTools returns 12 tools", () => {
+test("getTools returns 13 tools", () => {
   const tools = getTools()
-  assert.equal(tools.length, 12, `Expected 12 tools, got ${tools.length}`)
+  assert.equal(tools.length, 13, `Expected 13 tools, got ${tools.length}`)
   const names = tools.map((t) => t.name).sort()
   assert.deepEqual(names, [
     "create_task",
@@ -23,7 +23,31 @@ test("getTools returns 12 tools", () => {
     "search_room_memories",
     "take_screenshot",
     "trigger_mention",
+    "update_workflow_sop",
   ])
+})
+
+test("update_workflow_sop tool has expected schema (F019 P3)", () => {
+  const tools = getTools()
+  const tool = tools.find((t) => t.name === "update_workflow_sop")
+  assert.ok(tool, "update_workflow_sop tool should be registered")
+  assert.ok(tool.description.length > 0)
+  const schema = tool.inputSchema as {
+    type: string
+    properties: Record<string, unknown>
+    required?: string[]
+  }
+  assert.equal(schema.type, "object")
+  assert.ok(schema.properties.backlogItemId, "backlogItemId property present")
+  assert.ok(schema.properties.stage, "stage property present")
+  assert.ok(schema.properties.expectedVersion, "expectedVersion property present")
+  assert.deepEqual(schema.required, ["backlogItemId"])
+})
+
+test("handleToolCall update_workflow_sop returns error when backlogItemId missing", async () => {
+  const result = await handleToolCall("update_workflow_sop", {})
+  assert.equal(result.isError, true)
+  assert.match(result.content[0].text, /backlogItemId/)
 })
 
 test("get_task_status tool has optional agentId property", () => {
