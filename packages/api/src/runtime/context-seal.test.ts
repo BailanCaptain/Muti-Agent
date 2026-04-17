@@ -112,6 +112,17 @@ test("getContextWindowForModel returns null for unknown models", () => {
   assert.equal(getContextWindowForModel(""), null);
 });
 
+// B016: Claude 1M context variant — "[1m]" suffix marks 1M extended-context
+// mode. Without this mapping, fillRatio is computed against 200K fallback
+// and seal fires ~5× too early.
+test("getContextWindowForModel recognizes Claude 1M context variant ([1m] suffix)", () => {
+  assert.equal(getContextWindowForModel("claude-opus-4-7[1m]"), 1_000_000);
+  assert.equal(getContextWindowForModel("claude-sonnet-4-6[1m]"), 1_000_000);
+  assert.equal(getContextWindowForModel("CLAUDE-OPUS-4-7[1M]"), 1_000_000);
+  // Base model without [1m] stays at 200K
+  assert.equal(getContextWindowForModel("claude-opus-4-7"), 200_000);
+});
+
 // ── computeSealDecision ────────────────────────────────────────────────────
 
 const snapshot = (used: number, window: number): TokenUsageSnapshot => ({
