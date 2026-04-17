@@ -1272,7 +1272,9 @@ export class MessageService {
       if (loopResult.stoppedReason === "sealed" && bookmarkJson) {
         const parsedBookmark: SOPBookmark = JSON.parse(bookmarkJson)
         const resumeCount = options.autoResumeCount ?? 0
-        if (shouldAutoResume(parsedBookmark, resumeCount, MAX_AUTO_RESUMES, 0)) {
+        // B015: 传入 seal 那轮的 stopReason，"complete" (Claude end_turn) 时短路，
+        // 避免把已完整回答的问题当 pending 续接导致重答
+        if (shouldAutoResume(parsedBookmark, resumeCount, MAX_AUTO_RESUMES, 0, result.stopReason)) {
           const resumeMsg = buildAutoResumeMessage(parsedBookmark, resumeCount + 1, MAX_AUTO_RESUMES)
           options.emit({
             type: "status",

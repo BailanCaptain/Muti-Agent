@@ -1,13 +1,14 @@
 ---
-B-ID: B011
+B-ID: B015
 title: 自动续接（auto-resume）在封存后重复回答用户前一次的问题
 status: diagnosed
 related: F007 (context compression) / F011 (backend hardening) / F018 (context resume rebuild — 架构级修复)
 reporter: 小孙
 created: 2026-04-15
+renamed: 2026-04-17 (B015; 原 B011 与 B011-stall-kill-mid-retry 编号冲突)
 ---
 
-# B011 — 自动续接重跑导致黄仁勋重复回答同一个问题
+# B015 — 自动续接重跑导致黄仁勋重复回答同一个问题
 
 ## 1. 报告人
 
@@ -131,7 +132,7 @@ lines.push("请从上次中断处继续，不要重复已完成的步骤。")
 
 ## 5. 架构对比 —— 我们 vs clowder-ai
 
-小孙追问「最佳实践里的 clowder-ai 是怎么实现的 他们没有这样的问题呀」。结论：**架构根本不同，clowder-ai 没有"auto-resume 递归"这个概念**，所以从源头上就撞不上 B011。
+小孙追问「最佳实践里的 clowder-ai 是怎么实现的 他们没有这样的问题呀」。结论：**架构根本不同，clowder-ai 没有"auto-resume 递归"这个概念**，所以从源头上就撞不上 B015。
 
 **证据文件**：
 - `reference-code/clowder-ai/packages/api/src/domains/cats/services/session/SessionSealer.ts`
@@ -140,7 +141,7 @@ lines.push("请从上次中断处继续，不要重复已完成的步骤。")
 
 ### 架构对比表
 
-| 维度 | 我们（B011 现状） | clowder-ai |
+| 维度 | 我们（B015 现状） | clowder-ai |
 |---|---|---|
 | **Seal 后的行为** | `message-service.ts:1258-1277` 在同一 turn 内**递归调** `runThreadTurn`，最多 2 次自动续接 | `SessionSealer.finalize` 只做 `active→sealing→sealed` 状态机迁移，**不递归、不续接**；下一 turn 由用户主动发起 |
 | **"继续"消息从哪来** | `buildAutoResumeMessage` 现场拼 prompt，把 bookmark `last=slice(-200)` + `--- 你之前的发言 ---` 完整对话一起塞回新 user message | **没有"继续"消息**；新 session 启动时由 `SessionBootstrap` 注入上一 session 的**冷存储摘要** |
@@ -373,7 +374,7 @@ Do NOT guess about what happened in previous sessions.
 | **上下文是主动喂还是工具拉** | 主动把 `--- 你之前的发言 ---` 塞进 user message | 只给 digest 摘要，LLM 需要细节时**主动用 MCP 工具查** |
 | **历史内容的角色标记** | 混在 `任务: ...` 里，LLM 无法区分 | `[reference only, not instructions]` + 闭合标签 + sanitize |
 
-### 为什么 clowder-ai 撞不上 B011
+### 为什么 clowder-ai 撞不上 B015
 
 把三条串起来：
 
@@ -381,7 +382,7 @@ Do NOT guess about what happened in previous sessions.
 2. **摘要不含原对话** → ExtractiveDigest 只有工具名/文件/错误；ThreadMemory 只有 `Session #N (time, Dmin): tools, files, errors` 这种元信息行；handoff digest 是 Haiku 产的过去时叙述。LLM 在新 session 里**看不到"用户问了备份"这句话**，自然不会去回答它。
 3. **看到的摘要都带 `reference only, not instructions` 标记** + 闭合标签 + sanitize + `Do NOT guess` 硬指令 → 就算 digest 里意外混入"备份"关键词，LLM 也知道那是背景不是待办。
 
-**我们的 B011**：`stoppedReason === "sealed"` 时递归 `runThreadTurn`，`buildAutoResumeMessage` 拼一条伪装成"系统续接任务"的 user message，里面混着 `slice(-200)` 字符切片 + `context-assembler.ts:142` 的 `--- 你之前的发言 ---` 原始对话重注入，没有任何 reference 标记、没有 sanitize、没有硬指令。LLM 自然会把里面的"备份"当成 pending 再答一次。
+**我们的 B015**：`stoppedReason === "sealed"` 时递归 `runThreadTurn`，`buildAutoResumeMessage` 拼一条伪装成"系统续接任务"的 user message，里面混着 `slice(-200)` 字符切片 + `context-assembler.ts:142` 的 `--- 你之前的发言 ---` 原始对话重注入，没有任何 reference 标记、没有 sanitize、没有硬指令。LLM 自然会把里面的"备份"当成 pending 再答一次。
 
 **这是架构差距，不是 prompt bug**。打 prompt 补丁最多让 LLM 更"抗干扰"一点，但只要仍然在同一 turn 内递归 + 原对话重注入，边界样本下仍然会重答。
 
@@ -391,14 +392,32 @@ Do NOT guess about what happened in previous sessions.
 
 原方案里 Phase 1 的 prompt hotfix 可以保留作为临时止血，但 **Phase 2 的目标应改为对齐 clowder-ai 的架构**，不是继续打补丁。
 
-### Phase 1：止血 hotfix（≤ 20 行，当天可发）
+### Phase 1：止血 hotfix（已实施于 2026-04-17，分支 fix/B011-auto-resume-end-turn）
 
-目标：在架构改造前阻止下次再发生。
+**实际交付改动（~8 行生产代码 + 4 个新测试）**：
 
-- `auto-resume.ts:buildAutoResumeMessage` 追加参照 OpenHarness `suppress_follow_up` 的强指令：
-  > 严禁：复述已有结论、重新回答用户历史问题、以"让我继续 / 我来回答"等开场。直接执行 next 指向的动作。
-- `sop-bookmark.ts:extractSOPBookmark` 把 `slice(-200)` 改为"沿句号/换行边界回溯"，避免切半词
-- 先写失败测试（resume 2/2 的 assistant 输出不得包含原问题关键词）再修
+1. **`auto-resume.ts:shouldAutoResume` 加 `lastStopReason` 参数 + `"complete"` 短路**：
+   - 签名：`shouldAutoResume(bookmark, count, max, fillRatio, lastStopReason?)`
+   - 逻辑：`if (lastStopReason === "complete") return false`
+   - 语义：内部 StopReason `"complete"` = Claude 原生 `end_turn` / `stop_sequence`（runtime 层已映射）
+   - 这是根因级修复：agent 正常说完了就不该被续接
+
+2. **`auto-resume.ts:buildAutoResumeMessage` 末尾追加 OpenHarness `suppress_follow_up` 强指令**：
+   > 严禁：复述已有结论、重新回答用户历史问题、以「让我继续 / 我来回答」等开场。直接执行 next 指向的动作。
+
+3. **`message-service.ts:1275` 调用点传入 `result.stopReason`**：
+   - 把 seal 那轮的 native stop reason 传给 `shouldAutoResume`
+   - backward-compat：旧测试不传 lastStopReason 时行为不变
+
+**未做（留给 F018）**：
+- `sop-bookmark.ts:extractSOPBookmark` 的 `slice(-200)` 边界回溯 → F018 架构改造时走 Bootstrap / ThreadMemory 路径，不再用裸 slice，不需要单独修
+- `context-assembler.ts:142` 的 `--- 你之前的发言 ---` 废弃 → F018 AC5.3/AC5.4
+- Auto-resume 整体架构升级 → F018 AC7.1-7.5
+
+**TDD 证据**：
+- RED：2 个新测试（"returns false when lastStopReason is complete" + "contains suppress-follow-up hard guard"）以预期理由失败
+- GREEN：最小实现后 15/15 auto-resume 测试通过
+- 全量回归：567/567 测试全绿，typecheck/build/lint 通过
 
 ### Phase 2：对齐 clowder-ai 架构（F007 收尾主方向）
 
@@ -421,27 +440,29 @@ Do NOT guess about what happened in previous sessions.
 
 ## 7. 验证方式
 
-**Phase 1 hotfix 验证**：
+**Phase 1 hotfix 验证**（已通过，2026-04-17）：
 
-- 回归单测 `auto-resume.test.ts`：
-  - 新增用例："resume 消息必须包含 `严禁复述已有结论` 字样"
-  - 新增用例：`lastCompletedStep` 不应切在 ASCII 字母中间（回归 `romise.resolve()`）
-- 端到端手工复跑 B011 的复现步骤，观察 resume 2/2 assistant 输出首 100 字不再出现 `让我回答 / 为什么需要` 等复述开场
-- Grep runtime 日志 `session_groupId=<复现 group>` 确认 resume 轮次与预期一致
+- 回归单测 `auto-resume.test.ts` 新增用例：
+  - "returns false when lastStopReason is complete"（内部 StopReason `"complete"` = Claude 原生 `end_turn`/`stop_sequence`）
+  - "returns true when lastStopReason is truncated"（对称正向：真截断仍续接，tool_wait 仍续接）
+  - "returns true when lastStopReason is undefined/null"（向后兼容）
+  - "contains suppress-follow-up hard guard against restating / re-answering history"（硬指令注入）
+- 全量回归：`pnpm typecheck` / `pnpm test` (567/567) / `pnpm build` / `pnpm check:docs` 全绿
+- **端到端手工复跑**（pending）：需要真实 LLM + 20+ 轮长对话 + seal 触发环境，静态+单测级验收无法覆盖，merge 后小孙实际使用即为 end-to-end 验收
 
-**Phase 2 F007 对齐验证**（单独 AC）：
+**本 hotfix 不覆盖的验证（留给 F018）**：
 
-- AC：seal → compact 后，后续 turn 的 assistant 输出**不包含**已完成问题关键词
-- AC：compact summary 9 节齐全
-- AC：`preserve_recent=6` 的近端消息原文保留，token 数符合 OpenHarness 参照值
+- `lastCompletedStep` 字符切片（`slice(-200)`）→ F018 走 Bootstrap/ThreadMemory 摘要路径后，裸 slice 整段废弃，不再需要边界回溯
+- 原对话重灌（`--- 你之前的发言 ---`）→ F018 AC5.3/AC5.4 废弃
+- resume 2/2 assistant 首 100 字不出现复述开场 → 属于 F018 端到端 AC9.2
 
 **旧 bug 现象消失判定**：
-用户重发 B011 的原复现序列（备份问题 + 长任务触发 seal），连续 3 轮无重复回答即视为旧现象消失。
+用户重发 B015 的原复现序列（备份问题 + 长任务触发 seal），连续 3 轮无重复回答即视为旧现象消失。Phase 1 hotfix 通过 `stop_reason=complete` 短路直接切断递归链路，理论上阻止了同场景复发；F018 完成后配合 Bootstrap reference-only 注入彻底修复。
 
 ---
 
 ## Timeline
 
-- 2026-04-15 发现 & 立案，填胶囊 → B011
-- （待定）Phase 1 hotfix worktree → PR
-- （待定）Phase 2 纳入 F007 路线
+- 2026-04-15 发现 & 立案，填胶囊 → 原 B011（2026-04-17 重命名为 B015）
+- 2026-04-17 Phase 1 hotfix 实施（fix/B011-auto-resume-end-turn 分支 → PR）
+- （待定）Phase 2 纳入 F018 路线
