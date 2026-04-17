@@ -151,11 +151,11 @@ completed: 2026-04-11
 
 - Discussion: 本次对话（2026-04-11）
 - Plan: `docs/plans/F003-*.md`（待 writing-plans 生成）
-- Related: B003（feat-lifecycle 双重进入，已修复）、B004（settlement premature，已修复）
+- Related: B003（feat-lifecycle 双重进入，已修复）、B004（settlement premature，已修复）、F019（告示牌机制 — next_dispatch 与 sopStageHint 同属 SOP 推进层不同层级）
 - Reference: `reference-code/clowder-ai/packages/api/src/domains/cats/services/agents/routing/`（WorklistRegistry / route-serial.ts）
 
 ## Evolution
 
 - **Evolved from**: 无直接前序 Feature。继承 B003/B004 暴露出来的 A2A 管线脆弱性。
 - **Blocks**: 未来所有依赖"跨 agent 自动协作"的 Feature（review 自动化、SOP 自动推进、并行讨论收敛）
-- **Related**: F002 Decision Board（settlement detector 需与续写/回程协同，不能把续写中的 turn 当 settled）
+- **Related**: F002 Decision Board（settlement detector 需与续写/回程协同，不能把续写中的 turn 当 settled）· F019 Skill 告示牌（状态机 + sopStageHint 注入，与 next_dispatch 正交）
