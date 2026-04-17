@@ -1,7 +1,7 @@
 ---
 id: F019
 title: Skill 告示牌机制 — WorkflowSop 状态机替换关键词注入层
-status: spec
+status: in-progress
 owner: 黄仁勋
 created: 2026-04-17
 ---
@@ -33,11 +33,11 @@ created: 2026-04-17
 
 ## Acceptance Criteria
 
-- [ ] AC1: `WorkflowSopService` 持久化到 SQLite，stage 枚举覆盖 `kickoff | impl | quality_gate | review | merge | completion` 六阶段；版本号 + 乐观锁防并发写丢失
-- [ ] AC2: 每次 CLI invocation 的 system prompt 包含 `sopStageHint` 一行（当 thread 关联到 feature 时）；无 feature 绑定时不注入
-- [ ] AC3: Agent 可通过 MCP tool `update_workflow_sop` 或 HTTP callback `/api/callbacks/update-workflow-sop` 主动推进 stage，DB 写入成功即视为推进；两路径行为一致
-- [ ] AC4: `multi-agent-skills/BOOTSTRAP.md` 存在，包含 15 个 skill 的压缩表（skill 名 / 触发场景 / SOP step）+ 三 CLI 加载方式说明 + `<EXTREMELY_IMPORTANT>` 段
-- [ ] AC5: `scripts/sync-skill-mounts.sh`（或 `pnpm run sync-skills`）运行后，`.claude/` `.agents/` `.gemini/` 三挂载点 symlink 与 `manifest.yaml` 一致，零 dangling link；`pnpm check` 中加入校验，drift 时 exit 1
+- [x] AC1: `WorkflowSopService` 持久化到 SQLite，stage 枚举覆盖 `kickoff | impl | quality_gate | review | merge | completion` 六阶段；版本号 + 乐观锁防并发写丢失
+- [x] AC2: 每次 CLI invocation 的 system prompt 包含 `sopStageHint` 一行（当 thread 关联到 feature 时）；无 feature 绑定时不注入
+- [x] AC3: Agent 可通过 MCP tool `update_workflow_sop` 或 HTTP callback `/api/callbacks/update-workflow-sop` 主动推进 stage，DB 写入成功即视为推进；两路径行为一致
+- [x] AC4: `multi-agent-skills/BOOTSTRAP.md` 存在，包含 15 个 skill 的压缩表（skill 名 / 触发场景 / SOP step）+ 三 CLI 加载方式说明 + `<EXTREMELY_IMPORTANT>` 段
+- [x] AC5: `scripts/sync-skill-mounts.sh`（或 `pnpm run sync-skills`）运行后，`.claude/` `.agents/` `.gemini/` 三挂载点 symlink 与 `manifest.yaml` 一致，零 dangling link；`pnpm check` 中加入校验，drift 时 exit 1
 - [ ] AC6: `prependSkillHint` / `buildSkillHintLine` / `matchOrthogonalSkills` 被删除，`message-service.ts:69-73` 的历史注释同步清理；`message-service-skill-hint.test.ts` 重写或删除
 - [ ] AC7: 重放 2026-04-16 "讨论一下" 场景（自动化测试）：三 agent 的 system prompt 包含 `sopStageHint`，扇入者主动加载 `collaborative-thinking/SKILL.md`（`tool_events` 出现 SKILL.md 读取记录），综合纪要含 Mode C 三件套"有/没有"显式回答
 - [ ] AC8: 愿景对照三问全 ✅（本 feature 解决的是"agent 不加载该加载的 skill"）；独立验收守护 agent 输出证物对照表且全匹配
@@ -64,6 +64,7 @@ created: 2026-04-17
 | 日期 | 事件 |
 |------|------|
 | 2026-04-17 | Kickoff，已做 self-evolution 讨论（本 thread），选定方案 A |
+| 2026-04-17 | P1-P3 merged to dev (539efa8) — AC1-AC5 完成，Codex adversarial review 三轮闭环 APPROVED。P4（砍 prependSkillHint + AC6/AC7/AC8）独立分支 |
 
 ## Phases
 
