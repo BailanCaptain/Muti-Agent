@@ -5,7 +5,7 @@ import type {
   RealtimeServerEvent,
 } from "@multi-agent/shared"
 import { perfCollector } from "../lib/perf-collector"
-import { PROVIDER_ALIASES } from "@multi-agent/shared"
+import { PROVIDER_ALIASES, getContextWindowForModel } from "@multi-agent/shared"
 import type { AppEventBus } from "../events/event-bus"
 import type { ApprovalManager } from "../orchestrator/approval-manager"
 import type { ContextMessage } from "../orchestrator/context-snapshot"
@@ -155,6 +155,7 @@ export class MessageService {
   private workflowSopService: WorkflowSopServiceType | null = null
   private readonly prevUsedTokens = new Map<string, number>()
   private memoryService: MemoryService | null = null
+  private transcriptWriter: import("./transcript-writer").TranscriptWriter | null = null
   private decisionBoard: DecisionBoard | null = null
   private settlementDetector: SettlementDetector | null = null
   private chainStarterResolver: ChainStarterResolver | null = null
@@ -198,6 +199,12 @@ export class MessageService {
 
   setMemoryService(service: MemoryService) {
     this.memoryService = service
+  }
+
+  // F018 P4: TranscriptWriter DI. Seal hook flushes digest + updates ThreadMemory
+  // so the next session's SessionBootstrap gets Previous Session Summary + rolling memory.
+  setTranscriptWriter(writer: import("./transcript-writer").TranscriptWriter) {
+    this.transcriptWriter = writer
   }
 
   setDecisionBoard(board: DecisionBoard) {
@@ -868,6 +875,13 @@ export class MessageService {
         options.rootMessageId,
       )
       const parsedBookmark = thread.sopBookmark ? (() => { try { return JSON.parse(thread.sopBookmark) } catch { return null } })() : null
+      // F018 P4 AC3.5 wiring: when starting a new session, pass bootstrap metadata
+      // so assemblePrompt injects SessionBootstrap prelude (reference-only + Do NOT guess).
+      // F018 P4 (Codex HIGH #2 fix): Feed the most recent sealed digest as
+      // `previousDigest` so the Bootstrap includes [Previous Session Summary].
+      const previousDigest = this.transcriptWriter
+        ? await this.transcriptWriter.readLatestDigest(thread.id).catch(() => null)
+        : null
       assembledDirectTurn = await assembleDirectTurnPrompt(
         {
           provider: thread.provider,
@@ -880,6 +894,10 @@ export class MessageService {
           roomSnapshot,
           sopBookmark: parsedBookmark,
           lastFillRatio: thread.lastFillRatio ?? undefined,
+          sessionChainIndex: this.sessions.getSessionChainIndex(thread.id),
+          threadMemory: this.sessions.getThreadMemory(thread.id),
+          previousDigest,
+          recallTools: [],
         },
         this.memoryService,
       )
@@ -903,6 +921,16 @@ export class MessageService {
         suggestedSkill: sop.nextSkill,
       }
     })()
+
+    // F018 P4 (Codex HIGH #1 fix): track the live CLI session id for the duration
+    // of this turn. onSession sets it as soon as the CLI emits; recordEvent uses
+    // it so first-ever sessions (thread.nativeSessionId=null) still attribute events.
+    // Events that arrive before onSession fires get buffered and backfilled.
+    let liveSessionId: string | null = null
+    const pendingToolEvents: Array<{
+      event: Record<string, unknown>
+      at: string
+    }> = []
 
     const createRun = (userMessage: string) => runTurn({
       systemPrompt,
@@ -933,7 +961,25 @@ export class MessageService {
           })
         }
       },
-      onSession: () => {},
+      onSession: (sid: string) => {
+        // F018 P4 (fix Codex HIGH #1): Track the live session id so first-ever
+        // sessions (where thread.nativeSessionId starts null) still attribute
+        // their tool events to a real sessionId. If events arrived before the
+        // id was known, backfill them now.
+        liveSessionId = sid
+        if (this.transcriptWriter && pendingToolEvents.length > 0) {
+          for (const buffered of pendingToolEvents) {
+            this.transcriptWriter.recordEvent({
+              sessionId: sid,
+              threadId: thread.id,
+              event: buffered.event,
+              at: buffered.at,
+              invocationId: identity.invocationId,
+            })
+          }
+          pendingToolEvents.length = 0
+        }
+      },
       onModel: () => {},
       onToolActivity: (line: string) => {
         thinking += `${line}\n`
@@ -954,6 +1000,28 @@ export class MessageService {
         this.sessions.overwriteMessage(assistant.id, {
           toolEvents: toolEventsJson,
         })
+        // F018 P4 AC1.3 集成: buffer tool event for TranscriptWriter's extractive digest.
+        // TranscriptWriter extractors look for: event.toolName (invocations),
+        // event.path (filesTouched), event.type==="error" + event.message (errors).
+        // sessionId 来源（按优先级）：liveSessionId (onSession 捕获的最新) →
+        // thread.nativeSessionId (CLI 继承) → 都没有则暂存到 pendingToolEvents
+        // 等 onSession 回填（修 Codex HIGH #1：首次 session 事件不能丢）
+        if (this.transcriptWriter) {
+          const transcriptSessionId = liveSessionId ?? thread.nativeSessionId
+          const at = new Date().toISOString()
+          if (transcriptSessionId) {
+            this.transcriptWriter.recordEvent({
+              sessionId: transcriptSessionId,
+              threadId: thread.id,
+              event: event as Record<string, unknown>,
+              at,
+              invocationId: identity.invocationId,
+            })
+          } else {
+            // 暂存，等 onSession 回填
+            pendingToolEvents.push({ event: event as Record<string, unknown>, at })
+          }
+        }
       },
       onLivenessWarning: (warning) => {
         // Surface liveness issues as status messages so the user sees *why* a turn is dragging on
@@ -1076,6 +1144,48 @@ export class MessageService {
         result.exitCode !== 0 &&
         result.nativeSessionId === thread.nativeSessionId
       let effectiveSessionId = emptyAndAbnormal ? null : result.nativeSessionId
+      // F018 P4 Round 3 (Codex HIGH #2): capture the session id that's being SEALED
+      // before any downstream code nulls effectiveSessionId. The seal hook below needs
+      // this to run flush/readDigest/appendSession/incrementSessionChainIndex.
+      // Otherwise auto-seal clears effectiveSessionId first → seal hook sees null →
+      // entire flush pipeline is a no-op.
+      let sealedSessionId: string | null = null
+
+      // F018 P4 Round 3 (Codex HIGH #1): turn-completion backfill for pendingToolEvents.
+      // onSession may never fire if the CLI crashes before emitting a session_id line.
+      // In that case liveSessionId AND effectiveSessionId are both null. Fall back to
+      // identity.invocationId as a synthetic sessionId so events are still persisted —
+      // readLatestDigest picks the freshest by mtime regardless of key shape.
+      // Also flush this orphan session immediately since no seal branch will fire for it
+      // (the CLI already exited).
+      if (pendingToolEvents.length > 0) {
+        const orphanFallback = !liveSessionId && !effectiveSessionId
+        const finalSessionId = liveSessionId ?? effectiveSessionId ?? identity.invocationId
+        if (this.transcriptWriter) {
+          for (const buffered of pendingToolEvents) {
+            this.transcriptWriter.recordEvent({
+              sessionId: finalSessionId,
+              threadId: thread.id,
+              event: buffered.event,
+              at: buffered.at,
+              invocationId: identity.invocationId,
+            })
+          }
+          // Orphan case: no seal branch will fire, flush the synthetic session now so
+          // the events are durable. Mark orphan=true in the digest so readLatestDigest
+          // skips it when building the next turn's [Previous Session Summary]
+          // (Codex Round 4 HIGH #2: orphan digests must not pollute Bootstrap history).
+          if (orphanFallback) {
+            this.transcriptWriter.flush(finalSessionId, { orphan: true }).catch((err) => {
+              this.log.warn(
+                { err, threadId: thread.id },
+                "F018: orphan pending-events flush failed (non-fatal)",
+              )
+            })
+          }
+        }
+        pendingToolEvents.length = 0
+      }
 
       // Reactive self-heal: the CLI may exit 0 while its stderr tells the real story
       // (e.g. Gemini gives up after 10 retries and prints the 429 reason, Claude exits
@@ -1107,6 +1217,12 @@ export class MessageService {
       if (result.sealDecision) {
         const pct = Math.round(result.sealDecision.fillRatio * 100)
         if (result.sealDecision.shouldSeal) {
+          // F018 P4 Round 4 (Codex MEDIUM): capture from result.nativeSessionId
+          // instead of effectiveSessionId — classification.shouldClearSession above
+          // may have already nulled effectiveSessionId on a failed+sealed turn.
+          // result.nativeSessionId is immutable (from runTurn result), so we get
+          // the real sealed id regardless of intermediate mutations.
+          sealedSessionId = result.nativeSessionId
           effectiveSessionId = null
           options.emit({
             type: "status",
@@ -1272,13 +1388,42 @@ export class MessageService {
       )
       this.settlementDetector?.notifyStateChange(thread.sessionGroupId)
 
+      // F018 P4 Round 4 (Codex HIGH #1): seal 持久化 与 SOP bookmark 解耦。
+      // 非 SOP 线程也会 auto-seal — 原来 bookmarkJson guard 让这些场景完全
+      // 没有 digest 持久化、ThreadMemory 不滚动、sessionChainIndex 不递增。
+      // 现改为"真 seal 就持久化，bookmark 只 gate auto-resume"。
+      const sessionForSeal = sealedSessionId ?? effectiveSessionId
+      if (loopResult.stoppedReason === "sealed" && this.transcriptWriter && sessionForSeal) {
+        try {
+          await this.transcriptWriter.flush(sessionForSeal)
+          const digest = await this.transcriptWriter.readDigest(sessionForSeal, thread.id)
+          if (digest) {
+            const { appendSession } = await import("./thread-memory")
+            const existing = this.sessions.getThreadMemory(thread.id)
+            const contextWindow = getContextWindowForModel(thread.currentModel) ?? 200_000
+            const updated = appendSession(existing, digest, contextWindow)
+            this.sessions.setThreadMemory(thread.id, updated)
+          }
+          this.sessions.incrementSessionChainIndex(thread.id)
+        } catch (err) {
+          this.log.warn({ err, threadId: thread.id }, "F018 seal hook failed (non-fatal)")
+        }
+      }
+
       if (loopResult.stoppedReason === "sealed" && bookmarkJson) {
         const parsedBookmark: SOPBookmark = JSON.parse(bookmarkJson)
         const resumeCount = options.autoResumeCount ?? 0
         // B015: 传入 seal 那轮的 stopReason，"complete" (Claude end_turn) 时短路，
         // 避免把已完整回答的问题当 pending 续接导致重答
         if (shouldAutoResume(parsedBookmark, resumeCount, MAX_AUTO_RESUMES, 0, result.stopReason)) {
-          const resumeMsg = buildAutoResumeMessage(parsedBookmark, resumeCount + 1, MAX_AUTO_RESUMES)
+          // F018 P4 AC7.2: resume 消息走 Bootstrap 风格（reference-only + ThreadMemory 段）
+          const threadMemory = this.sessions.getThreadMemory(thread.id)
+          const resumeMsg = buildAutoResumeMessage(
+            parsedBookmark,
+            resumeCount + 1,
+            MAX_AUTO_RESUMES,
+            threadMemory,
+          )
           options.emit({
             type: "status",
             payload: { sessionGroupId: thread.sessionGroupId, message: `记忆重组中，自动续接 (${resumeCount + 1}/${MAX_AUTO_RESUMES})` },
@@ -1406,6 +1551,13 @@ export class MessageService {
               const a2aBookmark = targetThread?.sopBookmark
                 ? (() => { try { return JSON.parse(targetThread.sopBookmark) } catch { return null } })()
                 : null
+              // F018 P4 AC3.5 wiring: A2A path also feeds SessionBootstrap metadata
+              // so Bootstrap prelude fires on new-session A2A invocations.
+              // F018 P4 (Codex HIGH #2): previousDigest from latest sealed session
+              const a2aPreviousDigest =
+                !isGuardianMode && this.transcriptWriter
+                  ? await this.transcriptWriter.readLatestDigest(threadId).catch(() => null)
+                  : null
               const assembled = await assemblePrompt({
                 provider: entry.to.provider as import("@multi-agent/shared").Provider,
                 threadId,
@@ -1422,6 +1574,10 @@ export class MessageService {
                 sopBookmark: a2aBookmark,
                 lastFillRatio: targetThread?.lastFillRatio ?? undefined,
                 guardianMode: isGuardianMode,
+                sessionChainIndex: isGuardianMode ? undefined : this.sessions.getSessionChainIndex(threadId),
+                threadMemory: isGuardianMode ? undefined : this.sessions.getThreadMemory(threadId),
+                previousDigest: a2aPreviousDigest,
+                recallTools: isGuardianMode ? undefined : [],
               }, this.memoryService)
 
               // Determine groupId/groupRole for collapsible groups:

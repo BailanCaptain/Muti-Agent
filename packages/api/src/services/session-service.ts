@@ -398,4 +398,24 @@ export class SessionService {
       createdAt,
     }
   }
+
+  // F018 P3/P4: SessionBootstrap 持久化访问器（pass-through to repository）
+  getThreadMemory(threadId: string) {
+    return this.repository.getThreadMemory(threadId)
+  }
+
+  setThreadMemory(
+    threadId: string,
+    memory: { summary: string; sessionCount: number; lastUpdatedAt: string },
+  ): void {
+    this.repository.setThreadMemory(threadId, memory)
+  }
+
+  getSessionChainIndex(threadId: string): number {
+    return this.repository.getSessionChainIndex(threadId)
+  }
+
+  incrementSessionChainIndex(threadId: string): void {
+    this.repository.incrementSessionChainIndex(threadId)
+  }
 }

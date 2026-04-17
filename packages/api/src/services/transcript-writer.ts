@@ -32,6 +32,11 @@ export type ExtractiveDigestV1 = {
   invocations: Array<{ invocationId?: string; toolNames?: string[] }>
   filesTouched: Array<{ path: string; ops: string[] }>
   errors: Array<{ at: string; invocationId?: string; message: string }>
+  // F018 P4 Round 4 (Codex HIGH #2): orphan digests come from turns that crashed
+  // before a real CLI session id was learned — flushed under identity.invocationId
+  // so events aren't lost. These must NOT become "Previous Session Summary" on
+  // the next turn. readLatestDigest filters where orphan === true.
+  orphan?: boolean
 }
 
 export class TranscriptWriter {
@@ -45,7 +50,7 @@ export class TranscriptWriter {
     this.buffer.get(key)?.push(record)
   }
 
-  async flush(sessionId: string): Promise<void> {
+  async flush(sessionId: string, options: { orphan?: boolean } = {}): Promise<void> {
     const events = this.buffer.get(sessionId)
     if (!events || events.length === 0) return
 
@@ -74,6 +79,7 @@ export class TranscriptWriter {
       invocations: this.extractInvocations(events),
       filesTouched: this.extractFilesTouched(events),
       errors: this.extractErrors(events),
+      ...(options.orphan ? { orphan: true } : {}),
     }
     await fs.writeFile(
       join(baseDir, "digest.extractive.json"),
@@ -99,6 +105,38 @@ export class TranscriptWriter {
     } catch {
       return null
     }
+  }
+
+  // F018 P4 (Codex HIGH #2 + Round 2 MEDIUM + Round 3 MEDIUM): scan
+  // threads/{threadId}/sessions/*, parse each digest.extractive.json, sort by
+  // digest.time.sealedAt DESC (deterministic — not dependent on filesystem
+  // mtime resolution or enumeration order), return the freshest valid one.
+  // Corrupt digests are skipped; tied sealedAt falls back to sessionId string
+  // comparison for determinism.
+  async readLatestDigest(threadId: string): Promise<ExtractiveDigestV1 | null> {
+    const sessionsDir = join(this.config.dataDir, "threads", threadId, "sessions")
+    let sessionIds: string[]
+    try {
+      const entries = await fs.readdir(sessionsDir, { withFileTypes: true })
+      sessionIds = entries.filter((e) => e.isDirectory()).map((e) => e.name)
+    } catch {
+      return null
+    }
+    // Parse every digest; skip corrupt (null) and orphan (unsealed fallback) ones.
+    const parsed: ExtractiveDigestV1[] = []
+    for (const sessionId of sessionIds) {
+      const digest = await this.readDigest(sessionId, threadId)
+      if (digest && !digest.orphan) parsed.push(digest)
+    }
+    if (parsed.length === 0) return null
+    // Deterministic ordering: sealedAt DESC, ties broken by sessionId DESC.
+    parsed.sort((a, b) => {
+      if (a.time.sealedAt !== b.time.sealedAt) {
+        return a.time.sealedAt < b.time.sealedAt ? 1 : -1
+      }
+      return a.sessionId < b.sessionId ? 1 : -1
+    })
+    return parsed[0]
   }
 
   private extractInvocations(events: EventRecord[]): ExtractiveDigestV1["invocations"] {

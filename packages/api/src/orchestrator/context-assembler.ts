@@ -2,12 +2,10 @@ import type { Provider } from "@multi-agent/shared"
 import type { ContextPolicy } from "./context-policy"
 import { POLICY_FULL } from "./context-policy"
 import type { ContextMessage } from "./context-snapshot"
-import { truncateHeadTail } from "./context-snapshot"
-import { microcompact } from "./microcompact"
-import { computeDynamicLimits } from "./dynamic-budget"
 import type { SOPBookmark } from "./sop-bookmark"
 import { formatBookmarkForInjection } from "./sop-bookmark"
 import { buildSessionBootstrap } from "./session-bootstrap"
+import { sanitizeHandoffBody } from "./sanitize-handoff"
 import { AGENT_SYSTEM_PROMPTS, ACCEPTANCE_GUARDIAN_PROMPT } from "../runtime/agent-prompts"
 import type { MemoryService } from "../services/memory-service"
 import type { ThreadMemory } from "../services/thread-memory"
@@ -84,10 +82,16 @@ export async function assemblePrompt(
   if (policy.injectRollingSummary && memoryService) {
     const summary = await memoryService.getOrCreateSummary(input.sessionGroupId)
     if (summary) {
-      systemParts.push("")
-      systemParts.push("## 本房间摘要")
-      systemParts.push(summary)
-      systemParts.push("请参考上述背景信息继续协作。")
+      // F018 AC5.6: LLM-generated rolling summary can contain directive-like
+      // lines (SYSTEM:/IMPORTANT:) or forged closing tags; sanitize before
+      // injecting into the system prompt.
+      const sanitized = sanitizeHandoffBody(summary)
+      if (sanitized) {
+        systemParts.push("")
+        systemParts.push("## 本房间摘要")
+        systemParts.push(sanitized)
+        systemParts.push("请参考上述背景信息继续协作。")
+      }
     }
   }
 
@@ -157,44 +161,12 @@ export async function assemblePrompt(
     contentSections.push("")
   }
 
-  // Self history: F004 — always inject when policy allows. Previously skipped
-  // when nativeSessionId was set (trusting CLI --resume), but that proved
-  // unreliable and caused direct-turn amnesia (B005). The API is now the
-  // authoritative history source; CLI --resume is a performance optimization.
-  const effectiveLimits = policy.dynamicBudget && input.lastFillRatio !== undefined
-    ? computeDynamicLimits(input.lastFillRatio)
-    : { sharedHistoryLimit: policy.sharedHistoryLimit, selfHistoryLimit: policy.selfHistoryLimit, maxContentLength: policy.maxContentLength }
-
-  const shouldInjectSelfHistory = policy.injectSelfHistory
-  if (shouldInjectSelfHistory) {
-    const selfMessages = roomSnapshot.filter((m) => m.agentId === targetAlias)
-    const recent = selfMessages.slice(-effectiveLimits.selfHistoryLimit)
-    const compacted = microcompact(recent, { keepRecent: 5, keepLastFailure: true })
-    if (compacted.length > 0) {
-      contentSections.push(`--- 你之前的发言 (${compacted.length} 条) ---`)
-      for (const m of compacted) {
-        contentSections.push(`[${m.role === "user" ? "收到" : "你"}]: ${m.content}`)
-      }
-      contentSections.push("---")
-      contentSections.push("")
-    }
-  }
-
-  // Shared history: other agents' messages
-  if (policy.injectSharedHistory) {
-    const otherMessages = roomSnapshot.filter((m) => m.agentId !== targetAlias)
-    const recent = otherMessages.slice(-effectiveLimits.sharedHistoryLimit)
-    const compacted = microcompact(recent, { keepRecent: 5, keepLastFailure: true })
-    if (compacted.length > 0) {
-      contentSections.push(`--- 近期对话 (${compacted.length} 条) ---`)
-      for (const m of compacted) {
-        const truncated = truncateHeadTail(m.content, effectiveLimits.maxContentLength)
-        contentSections.push(`[${m.agentId}]: ${truncated}`)
-      }
-      contentSections.push("---")
-      contentSections.push("")
-    }
-  }
+  // F018 AC5.3/5.4: 废弃 `--- 你之前的发言 ---` + `--- 近期对话 ---` 原对话重灌。
+  // 新架构：新 session 的历史通过 SessionBootstrap (ThreadMemory + Previous Session
+  // Summary) 注入；继承 session (nativeSessionId !== null) 依赖 CLI --resume；按需
+  // 细节由 agent 主动调 recall_similar_context 工具（Bootstrap tools 段已注入工具清单）。
+  // F004 defensive injection 在此移除，`policy.injectSelfHistory` / `injectSharedHistory`
+  // / dynamic-budget 依然存在仅用于未来其他策略；原 slice + microcompact 分节已删。
 
   // MCP hint
   contentSections.push("如需更早的上下文，可调用 MCP get_room_context 工具获取。")
@@ -228,6 +200,11 @@ export type AssembleDirectTurnInput = {
   roomSnapshot: readonly ContextMessage[]
   sopBookmark?: SOPBookmark | null
   lastFillRatio?: number
+  /** F018 AC3.5: SessionBootstrap metadata (forwarded to assemblePrompt) */
+  threadMemory?: ThreadMemory | null
+  sessionChainIndex?: number
+  recallTools?: string[]
+  previousDigest?: ExtractiveDigestV1 | null
 }
 
 export async function assembleDirectTurnPrompt(
@@ -250,6 +227,10 @@ export async function assembleDirectTurnPrompt(
       sopBookmark: input.sopBookmark,
       lastFillRatio: input.lastFillRatio,
       guardianMode: false,
+      threadMemory: input.threadMemory,
+      sessionChainIndex: input.sessionChainIndex,
+      recallTools: input.recallTools,
+      previousDigest: input.previousDigest,
     },
     memoryService,
   )

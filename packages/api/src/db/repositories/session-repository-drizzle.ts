@@ -458,6 +458,55 @@ export class DrizzleSessionRepository {
       .run()
   }
 
+  // F018 P3: ThreadMemory rolling summary persistence
+  getThreadMemory(
+    threadId: string,
+  ): { summary: string; sessionCount: number; lastUpdatedAt: string } | null {
+    const rows = this.db
+      .select({ threadMemory: threads.threadMemory })
+      .from(threads)
+      .where(eq(threads.id, threadId))
+      .limit(1)
+      .all()
+    const raw = rows[0]?.threadMemory
+    if (!raw) return null
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
+  }
+
+  setThreadMemory(
+    threadId: string,
+    memory: { summary: string; sessionCount: number; lastUpdatedAt: string },
+  ): void {
+    this.db
+      .update(threads)
+      .set({ threadMemory: JSON.stringify(memory) })
+      .where(eq(threads.id, threadId))
+      .run()
+  }
+
+  // F018 P3 AC3.5: Session chain index for Bootstrap identity section
+  getSessionChainIndex(threadId: string): number {
+    const rows = this.db
+      .select({ sessionChainIndex: threads.sessionChainIndex })
+      .from(threads)
+      .where(eq(threads.id, threadId))
+      .limit(1)
+      .all()
+    return rows[0]?.sessionChainIndex ?? 1
+  }
+
+  incrementSessionChainIndex(threadId: string): void {
+    this.db
+      .update(threads)
+      .set({ sessionChainIndex: sql`${threads.sessionChainIndex} + 1` })
+      .where(eq(threads.id, threadId))
+      .run()
+  }
+
   updateThread(
     threadId: string,
     updates: {

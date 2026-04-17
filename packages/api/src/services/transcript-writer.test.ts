@@ -174,4 +174,204 @@ describe("TranscriptWriter", () => {
       cleanup(dir)
     }
   })
+
+  it("Codex P4 HIGH #2: readLatestDigest returns most recently sealed session", async () => {
+    const dir = makeTempDir()
+    try {
+      const writer = new TranscriptWriter({ dataDir: dir })
+      writer.recordEvent({
+        sessionId: "s1",
+        threadId: "t1",
+        event: { type: "tool_call", toolName: "edit" },
+        at: "2026-04-17T10:00:00Z",
+      })
+      await writer.flush("s1")
+      // Ensure s2 seal mtime is strictly later
+      await new Promise((r) => setTimeout(r, 15))
+      writer.recordEvent({
+        sessionId: "s2",
+        threadId: "t1",
+        event: { type: "tool_call", toolName: "bash" },
+        at: "2026-04-17T11:00:00Z",
+      })
+      await writer.flush("s2")
+
+      const latest = await writer.readLatestDigest("t1")
+      assert.ok(latest)
+      assert.equal(latest!.sessionId, "s2", "most recently sealed session wins")
+    } finally {
+      cleanup(dir)
+    }
+  })
+
+  it("Codex P4 Round 2 MEDIUM: readLatestDigest falls back to older valid digest when newest is corrupt", async () => {
+    const dir = makeTempDir()
+    try {
+      const writer = new TranscriptWriter({ dataDir: dir })
+      writer.recordEvent({
+        sessionId: "s-old",
+        threadId: "t1",
+        event: { type: "tool_call", toolName: "edit" },
+        at: "2026-04-17T09:00:00Z",
+      })
+      await writer.flush("s-old")
+      await new Promise((r) => setTimeout(r, 15))
+      writer.recordEvent({
+        sessionId: "s-new",
+        threadId: "t1",
+        event: { type: "tool_call", toolName: "bash" },
+        at: "2026-04-17T10:00:00Z",
+      })
+      await writer.flush("s-new")
+
+      // Corrupt the newest digest (simulate truncated write / disk error)
+      const { writeFileSync } = await import("node:fs")
+      const corruptPath = join(dir, "threads", "t1", "sessions", "s-new", "digest.extractive.json")
+      writeFileSync(corruptPath, "{ not valid json", "utf8")
+
+      const latest = await writer.readLatestDigest("t1")
+      assert.ok(latest, "must fall back to older valid digest, not return null")
+      assert.equal(latest!.sessionId, "s-old", "fallback picks the next-freshest valid digest")
+    } finally {
+      cleanup(dir)
+    }
+  })
+
+  it("Codex P4 Round 3 MEDIUM: readLatestDigest ties broken by digest.time.sealedAt (deterministic)", async () => {
+    const dir = makeTempDir()
+    try {
+      const writer = new TranscriptWriter({ dataDir: dir })
+      // Two sessions with same recordEvent 'at' but different sealedAt;
+      // sealedAt comes from events[last].at at flush time.
+      writer.recordEvent({
+        sessionId: "s-earlier",
+        threadId: "t1",
+        event: { type: "tool_call", toolName: "edit" },
+        at: "2026-04-17T10:00:00Z",
+      })
+      await writer.flush("s-earlier")
+      writer.recordEvent({
+        sessionId: "s-later",
+        threadId: "t1",
+        event: { type: "tool_call", toolName: "bash" },
+        at: "2026-04-17T11:00:00Z",
+      })
+      await writer.flush("s-later")
+
+      // Even if filesystem mtime somehow ordered them reversed, digest-time ordering wins
+      const latest = await writer.readLatestDigest("t1")
+      assert.ok(latest)
+      assert.equal(latest!.sessionId, "s-later", "sealedAt DESC picks later")
+    } finally {
+      cleanup(dir)
+    }
+  })
+
+  it("Codex P4 Round 4 HIGH #2: orphan digests are excluded from readLatestDigest", async () => {
+    const dir = makeTempDir()
+    try {
+      const writer = new TranscriptWriter({ dataDir: dir })
+      // Orphan (unsealed, from crashed pre-session turn)
+      writer.recordEvent({
+        sessionId: "orphan-1",
+        threadId: "t1",
+        event: { type: "tool_call", toolName: "edit" },
+        at: "2026-04-17T10:00:00Z",
+      })
+      await writer.flush("orphan-1", { orphan: true })
+
+      // Real sealed session (older timestamp but sealed properly)
+      writer.recordEvent({
+        sessionId: "real-seal",
+        threadId: "t1",
+        event: { type: "tool_call", toolName: "bash" },
+        at: "2026-04-17T09:00:00Z",
+      })
+      await writer.flush("real-seal")
+
+      // Another orphan, newest
+      writer.recordEvent({
+        sessionId: "orphan-2",
+        threadId: "t1",
+        event: { type: "tool_call", toolName: "read" },
+        at: "2026-04-17T11:00:00Z",
+      })
+      await writer.flush("orphan-2", { orphan: true })
+
+      const latest = await writer.readLatestDigest("t1")
+      assert.ok(latest)
+      assert.equal(
+        latest!.sessionId,
+        "real-seal",
+        "orphan digests must be filtered — only sealed sessions populate previousDigest",
+      )
+    } finally {
+      cleanup(dir)
+    }
+  })
+
+  it("Codex P4 Round 5: digest without orphan field is treated as legitimate sealed (backwards compat)", async () => {
+    // Contract: readLatestDigest filters `orphan === true`. A digest without the
+    // field (legacy / sealed-but-no-marker) is considered legitimate sealed.
+    // This is the intentional design — orphan is opt-in via flush({orphan:true}).
+    const dir = makeTempDir()
+    try {
+      const writer = new TranscriptWriter({ dataDir: dir })
+      writer.recordEvent({
+        sessionId: "legacy-session",
+        threadId: "t1",
+        event: { type: "tool_call", toolName: "edit" },
+        at: "2026-04-17T10:00:00Z",
+      })
+      // Normal flush without { orphan: true } → digest file has no orphan field
+      await writer.flush("legacy-session")
+
+      // Manually verify digest file does NOT have orphan field (explicit contract check)
+      const { readFileSync } = await import("node:fs")
+      const rawDigest = JSON.parse(
+        readFileSync(
+          join(dir, "threads", "t1", "sessions", "legacy-session", "digest.extractive.json"),
+          "utf8",
+        ),
+      )
+      assert.equal(rawDigest.orphan, undefined, "non-orphan flush must NOT set orphan field")
+
+      // readLatestDigest must still return this digest (contract: no orphan flag = sealed)
+      const latest = await writer.readLatestDigest("t1")
+      assert.ok(latest, "digest without orphan field must be treated as legitimate sealed")
+      assert.equal(latest!.sessionId, "legacy-session")
+    } finally {
+      cleanup(dir)
+    }
+  })
+
+  it("Codex P4 Round 4: flush({orphan:true}) marks digest as orphan", async () => {
+    const dir = makeTempDir()
+    try {
+      const writer = new TranscriptWriter({ dataDir: dir })
+      writer.recordEvent({
+        sessionId: "orph",
+        threadId: "t1",
+        event: { type: "tool_call", toolName: "x" },
+        at: "2026-04-17T10:00:00Z",
+      })
+      await writer.flush("orph", { orphan: true })
+      const digest = await writer.readDigest("orph", "t1")
+      assert.ok(digest)
+      assert.equal(digest!.orphan, true)
+    } finally {
+      cleanup(dir)
+    }
+  })
+
+  it("Codex P4 HIGH #2: readLatestDigest returns null when thread has no sealed sessions", async () => {
+    const dir = makeTempDir()
+    try {
+      const writer = new TranscriptWriter({ dataDir: dir })
+      const latest = await writer.readLatestDigest("nonexistent-thread")
+      assert.equal(latest, null)
+    } finally {
+      cleanup(dir)
+    }
+  })
 })

@@ -21,10 +21,10 @@ export function sanitizeHandoffBody(text: string): string {
         /\u200B|\u200C|\u200D|\u200E|\u200F|\u2060|\u2061|\u2062|\u2063|\u2064|\u2066|\u2067|\u2068|\u2069|\uFEFF/g,
         "",
       )
-      // Strip all Bootstrap wrapper closing tags to prevent body from terminating
-      // its section early and leaking into the next (reference-only boundary).
+      // Strip all Bootstrap/Auto-resume wrapper closing tags to prevent body from
+      // terminating its section early and leaking into the next (reference-only boundary).
       .replace(
-        /\[\/(?:Previous Session Summary|Thread Memory|Task Snapshot|Session Recall — Available Tools)\]/g,
+        /\[\/(?:Previous Session Summary|Thread Memory|Task Snapshot|Session Recall — Available Tools|Auto-resume Context|SOP Bookmark)\]/g,
         "",
       )
       .replace(/^\s*(IMPORTANT|INSTRUCTION|SYSTEM|NOTE)\s*[:：].*$/gim, "")

@@ -70,7 +70,12 @@ export async function createApiServer(options: {
     ReturnType<typeof import("./runtime/cli-orchestrator").runTurn>
   >()
   const dispatch = new DispatchOrchestrator(sessions, PROVIDER_ALIASES, invocations)
+  // F018 P4: TranscriptWriter instantiation. dataDir = dirname(sqlitePath) so
+  // transcripts live under .runtime/threads/... alongside the SQLite file.
+  const { TranscriptWriter } = await import("./services/transcript-writer")
+  const transcriptWriter = new TranscriptWriter({ dataDir: path.dirname(options.sqlitePath) })
   const messages = new MessageService(sessions, dispatch, invocations, eventBus, options.apiBaseUrl)
+  messages.setTranscriptWriter(transcriptWriter)
   const memoryService = new MemoryService(repository)
   const authRuleRepo = new AuthorizationRuleRepository(drizzleDb)
   const ruleStore = new AuthorizationRuleStore(authRuleRepo)
