@@ -243,6 +243,14 @@ export class GeminiRuntime extends BaseCliRuntime {
   }
 
   parseAssistantDelta(event: Record<string, unknown>) {
+    // F006/F012 防线：Gemini CLI stream-json 会发 `{ thought: true, ... }` 事件
+    // 携带模型的原始思考文本。thinking 内容通过 afterRun 从本地 session 文件
+    // 回读（拼成 **Subject**/Description 格式），**不能**让 stdout 上的 thought
+    // 事件泄漏到 assistant content 正文。删除此防线会导致思考文本混入正文。
+    if (event.thought) {
+      return "";
+    }
+
     if (typeof event.delta === "string") {
       return event.delta;
     }

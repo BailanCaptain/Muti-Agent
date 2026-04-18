@@ -72,6 +72,23 @@ const STDERR_NOISE_PATTERNS = [
   /^Finished\s.*release/i,
   /^warning\[E\d+\]/,
   /^Downloading\s/i,
+  // F012 AC-20 Gemini: strip the GaxiosError / refreshAuth TLS dump block so it
+  // never pollutes the `thinking` field. isStderrNoiseLine() trims leading
+  // whitespace before matching, so patterns here assume trimmed input. Covers
+  // the top-level message, stack frames, the util.inspect() object dump
+  // (nested keys, quoted keys, Symbols, [Function:] / [Object:] placeholders,
+  // closing braces), and the FetchError inner object.
+  /^Failed to fetch\s/i,
+  /^_?GaxiosError:/,
+  /^FetchError\d*:/,
+  /^[a-zA-Z_][\w-]*:\s*[A-Z][\w]*\d*:\s/, // nested error: "error: FetchError2: request ..."
+  /^at\s(async\s)?[\w$][\w$.<>]*\s*\(/, // stack frame: "at Foo.bar (..." or "at async ..."
+  /^Symbol\(/,
+  /^'[\w-]+':\s/,
+  /^[a-zA-Z_][\w-]*:\s*(['"{[]|undefined|true|false|-?\d|[A-Z][\w]*\s*\{|\[(Object|Function|Array))/,
+  /^[a-zA-Z_][\w-]*\s*\{\s*$/,
+  /^\}[,)]?\s*$/,
+  /^\]\s*$/,
 ]
 
 function isStderrNoiseLine(line: string): boolean {
@@ -80,7 +97,7 @@ function isStderrNoiseLine(line: string): boolean {
   return STDERR_NOISE_PATTERNS.some((p) => p.test(trimmed))
 }
 
-function filterStderrNoise(chunk: string): string {
+export function filterStderrNoise(chunk: string): string {
   return chunk
     .split("\n")
     .filter((line) => !isStderrNoiseLine(line))

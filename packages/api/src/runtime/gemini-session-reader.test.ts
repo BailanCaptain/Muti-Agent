@@ -61,38 +61,41 @@ describe("readGeminiThoughtsFromSession", () => {
   });
 });
 
-describe("formatGeminiThoughts", () => {
-  it("joins subject + description with markdown formatting", () => {
+describe("formatGeminiThoughts — numbered H3 headings (candidate 1)", () => {
+  it("renders each thought as '### N. Subject' + blank line + description", () => {
     const out = formatGeminiThoughts([
       { subject: "Analyzing", description: "I'm dissecting..." },
       { subject: "Planning", description: "Next I will..." },
     ]);
     assert.equal(
       out,
-      "**Analyzing**\nI'm dissecting...\n\n**Planning**\nNext I will...",
+      "### 1. Analyzing\n\nI'm dissecting...\n\n### 2. Planning\n\nNext I will...",
     );
   });
 
-  it("handles missing subject (description only)", () => {
+  it("handles missing subject (description only, no heading)", () => {
     const out = formatGeminiThoughts([{ description: "just a thought" }]);
     assert.equal(out, "just a thought");
   });
 
-  it("handles missing description (subject only)", () => {
+  it("handles missing description (heading only)", () => {
     const out = formatGeminiThoughts([{ subject: "Heading" }]);
-    assert.equal(out, "**Heading**");
+    assert.equal(out, "### 1. Heading");
   });
 
   it("returns empty string for empty array", () => {
     assert.equal(formatGeminiThoughts([]), "");
   });
 
-  it("skips thoughts with both fields empty/whitespace", () => {
+  it("skips thoughts with both fields empty/whitespace, renumbering sequentially", () => {
     const out = formatGeminiThoughts([
       { subject: "Real", description: "content" },
       { subject: "   ", description: "" },
       { subject: "Second", description: "valid" },
     ]);
-    assert.equal(out, "**Real**\ncontent\n\n**Second**\nvalid");
+    assert.equal(
+      out,
+      "### 1. Real\n\ncontent\n\n### 2. Second\n\nvalid",
+    );
   });
 });

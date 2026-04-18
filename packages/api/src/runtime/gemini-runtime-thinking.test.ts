@@ -48,7 +48,7 @@ describe("GeminiRuntime.afterRun — thinking from session file", () => {
     assert.equal(emitted.length, 1);
     assert.equal(
       emitted[0],
-      "**Greeting**\nSaying hi back.\n\n**Tone**\nKeep it friendly.",
+      "### 1. Greeting\n\nSaying hi back.\n\n### 2. Tone\n\nKeep it friendly.",
     );
   });
 

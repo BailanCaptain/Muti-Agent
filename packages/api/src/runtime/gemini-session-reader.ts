@@ -61,15 +61,20 @@ export async function readGeminiThoughtsFromSession(
 }
 
 export function formatGeminiThoughts(thoughts: GeminiThought[]): string {
-  return thoughts
-    .map((t) => {
-      const subject = t.subject?.trim();
-      const description = t.description?.trim();
-      if (subject && description) return `**${subject}**\n${description}`;
-      if (subject) return `**${subject}**`;
-      if (description) return description;
-      return "";
-    })
-    .filter((s) => s.length > 0)
-    .join("\n\n");
+  const rendered: string[] = [];
+  let index = 0;
+  for (const t of thoughts) {
+    const subject = t.subject?.trim();
+    const description = t.description?.trim();
+    if (subject && description) {
+      index += 1;
+      rendered.push(`### ${index}. ${subject}\n\n${description}`);
+    } else if (subject) {
+      index += 1;
+      rendered.push(`### ${index}. ${subject}`);
+    } else if (description) {
+      rendered.push(description);
+    }
+  }
+  return rendered.join("\n\n");
 }

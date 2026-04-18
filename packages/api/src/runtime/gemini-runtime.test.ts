@@ -58,3 +58,28 @@ test("parseAssistantDelta reads assistant text from Gemini candidate payloads", 
 
   assert.equal(delta, "从 candidates 返回的内容")
 })
+
+// Guard: Gemini CLI stream-json may emit `{ thought: true, delta: "..." }` events
+// carrying the model's raw thinking text. These must NOT leak into the visible
+// content field — thinking is surfaced via afterRun (session file readback).
+test("parseAssistantDelta filters out thought events (F006 regression guard)", () => {
+  assert.equal(
+    runtime.parseAssistantDelta({ thought: true, delta: "I'm thinking..." }),
+    "",
+  )
+  assert.equal(
+    runtime.parseAssistantDelta({
+      thought: true,
+      type: "message",
+      content: "internal reasoning",
+    }),
+    "",
+  )
+  assert.equal(
+    runtime.parseAssistantDelta({
+      thought: true,
+      candidates: [{ content: { parts: [{ text: "thoughts leak test" }] } }],
+    }),
+    "",
+  )
+})
