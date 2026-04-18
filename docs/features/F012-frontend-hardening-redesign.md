@@ -80,20 +80,29 @@ created: 2026-04-14
 - [x] AC-09: 流式输出（streaming）时工具块自动展开，完成后自动折叠（解决"页面一直闪"问题）
 
 ### Phase 2.5：数据管道打通 + 审批修复（1 天）
-- [x] AC-20: **Thinking 数据管道打通**（三个 CLI 逐个修）：
-  - Claude CLI：`claude-runtime.ts` 的 `buildCommand()` 加 `--include-partial-messages` 参数
+- [ ] AC-20: **Thinking 数据管道打通**（三个 CLI 逐个修）：
+  - [x] Claude CLI：`claude-runtime.ts` 的 `buildCommand()` 加 `--include-partial-messages` 参数
     - 根因：不加此参数，CLI 只输出完整 message 对象，`thinking_delta` 被内部消费不暴露
     - 参考：clowder-ai `ClaudeAgentService.ts:224-226` 已验证此方案
     - `parseActivityLine` 已有正确的 `thinking_delta` 解析逻辑，配套参数没开而已
-  - Codex CLI：`codex-runtime.ts` 的 `parseActivityLine` 逻辑已正确（`item.type === "reasoning"`）
+  - [x] Codex CLI：`codex-runtime.ts` 的 `parseActivityLine` 逻辑已正确（`item.type === "reasoning"`）
     - 参考：clowder-ai `codex-event-transform.ts:254-262` 用同样的事件格式，**已跑通**
     - clowder-ai 用 `model_reasoning_effort` 配置（我们也有），reasoning 作为完整 item 返回
     - 需用复杂提示实测确认 reasoning 事件能触发
-  - Gemini CLI：**Gemini 没有原生 thinking 输出**
-    - clowder-ai 的 `GeminiAgentService.ts` 也没有 thinking 处理
-    - Gemini 模型推理是内部不可观测的，CLI 不暴露 thought 事件
-    - `gemini-runtime.ts:86-131` 的 `event.thought === true` 是防御性代码，留着不删但不指望它触发
-  - 验证方式：Claude 和 Codex 各跑一次复杂提示，确认前端"深度思考"折叠块有内容
+  - [ ] **Gemini CLI：本地 session 文件回读方案**（2026-04-18 翻案，原结论"做不到"错误）
+    - 真相：Gemini CLI 执行后会把完整会话写到 `~/.gemini/tmp/<projectDir>/chats/session-<sessionId>.json`，每条 `type === 'gemini'` 的消息带 `thoughts: [{ subject, description }]` 数组 —— **thinking 数据一直都在硬盘上**
+    - 证据：自验 `~/.gemini/tmp/multi-agent/chats/` 从 2026-03-19 起就有 session 文件、`~/.gemini/tmp/clowder-ai/chats/session-2026-04-18T08-31-8c6f6e07.json` 肉眼看到 `thoughts` 数组内容（subject: "Analyzing User Requests" / "Considering Initial Response" / ...）
+    - 实现路径（参考 clowder-ai 新版本 GeminiAgentService，本地 reference-code/clowder-ai 副本停在 2026-03-30 `50012c7`，不含此功能，需要拉最新）：
+      1. `invoke()` 正常跑完 Gemini CLI（stream-json stdout 不变）
+      2. CLI 结束后，按 sessionId 读 `session-<sessionId>.json`
+      3. 按消息文本匹配本次 assistant 输出对应的那条消息，取 `thoughts` 数组
+      4. 格式化为 `**${subject}**\n${description}` 拼接的 markdown
+      5. 作为 thinking 事件（或 system_info 子类型）推给前端，走和 Claude/Codex 一样的深度思考折叠块
+    - 旧错误结论清理：
+      - `gemini-runtime.ts:86-131` F006 `3b571bc` 引入的 `parseActivityLine` 对 `event.thought === true` 的解析是**永远不触发的空壳**（Gemini CLI stdout 从不吐 thought 事件）—— 实现时删除这段死代码
+      - `parseAssistantDelta` 的 `if (event.thought) return ""` 防御也可以删（真相源是本地 session 文件，不是 stdout 事件）
+    - 时序边界：多轮 resume 时要按**消息文本**精准匹配到对应那条 assistant 消息，不能取最后一条（可能是更旧或更新的）
+  - 验证方式：Claude 和 Codex 各跑一次复杂提示，Gemini 用复杂提示跑一次后确认前端"深度思考"折叠块里能看到 subject/description 拼接内容
 - [x] AC-21: **权限全放开 + 废弃 F005 审批系统**（村长决定简化方案）：
   - Bug A — 三个 CLI 的权限请求都不走我们的前端审批：
     - Claude：没传 `--permission-mode`，默认交互式 → stdin 已关 → 卡死
@@ -154,7 +163,7 @@ created: 2026-04-14
 - [ ] AC-17: 手动验证：图片上传 1 张失败、文字 + 其余图片正常发出
 - [ ] AC-18: 手动验证：带工具调用的消息中，skill/MCP/推理过程默认折叠，结论始终显示
 - [ ] AC-19: 手动验证：新增 Provider 只需在 theme 中加一行颜色定义
-- [ ] AC-23: 手动验证：Claude 和 Codex 的 thinking 内容在前端"深度思考"折叠块中可见（Gemini 无原生 thinking，不验证）
+- [ ] AC-23: 手动验证：Claude / Codex / Gemini 三端的 thinking 内容在前端"深度思考"折叠块中可见（Gemini 走本地 session 文件回读路径，见 AC-20 Gemini 子项）
 - [ ] AC-24: 手动验证：三个 CLI 执行任意操作直接放行（不卡死、不弹审批）+ F005 审批 UI 组件已移除
 - [ ] AC-25: 手动验证：agent 能自动截屏并在消息中展示截图
 - [ ] AC-28: 手动验证：Claude stream_event 信封拆解正确（thinking 累积发出 + text_delta 流式 + tool_use 去重 + usage 正确提取）
@@ -172,7 +181,8 @@ created: 2026-04-14
 | DesignSystem | A: 散落各组件 / B: 统一 theme | B | 村长已选，三处重复定义必须收口 |
 | 视觉风格 | A: 全终端风 / B: 统一浅色卡片风 | B | 村长明确"不要终端风"，图片示例全浅色 SaaS 风；工具块用浅色 card-in-card + accent 左边框 |
 | Skill 数据管道 | A: 文字前缀拼入 content / B: 独立 skillEvents 字段 | B | 实地验证发现 skill 混在 content 里无法独立折叠，需要与 toolEvents/thinking 同级的独立字段 |
-| Thinking 打通 | A: 等 CLI 修 / B: 加 `--include-partial-messages` | B | Claude: clowder-ai 已验证此方案。Codex: clowder-ai 用同样的 reasoning item 格式已跑通。Gemini: 无原生 thinking，clowder-ai 也无解 |
+| Thinking 打通（Claude/Codex） | A: 等 CLI 修 / B: 加 `--include-partial-messages` | B | Claude: clowder-ai 已验证此方案。Codex: clowder-ai 用同样的 reasoning item 格式已跑通 |
+| Thinking 打通（Gemini）| A: 放弃（原结论"无原生 thinking"）/ B: 回读本地 session 文件 `~/.gemini/tmp/<projectDir>/chats/session-<sessionId>.json` 的 `thoughts` 数组 / C: 切 `@google/genai` SDK + `thinkingConfig.includeThoughts` | B | 2026-04-18 翻案：Gemini CLI 一直在本地持久化 `thoughts: [{subject, description}]`（自验 + clowder-ai 新版实现确认）。方案 B 零成本、不换 runtime、架构改动最小 |
 | 权限策略 | A: 修复审批链路可配置放权 / B: 全放权 + 废弃 F005 | B | 村长决定：权限系统废了（后端有但前端不能创建规则），直接全放权。F005 审批相关组件删除 |
 | 截图能力 | A: 单独立项 / B: 放进 F012 | B | 村长明确要求放进 F012；参照 clowder-ai 的 PreviewGateway + Puppeteer + Bridge 方案 |
 | CLI 参数对齐 | A: 只修致命项 / B: 全面对齐 clowder-ai | B | 逐行读代码发现 19 个事件类型漏掉、stdin 方式差异、Windows MCP bug、Gemini crash 等，一并整改 |
@@ -241,6 +251,7 @@ pnpm dev
 | 2026-04-16 | Bug 修复 | Windows 反斜杠路径：4 处正则从 `\/` 改为 `[\/\\]`，匹配 `Get-Content -Path` 的 `\` 路径 |
 | 2026-04-16 | 编译教训 | 改了 TS 源码没编译到 dist — 运行 8 小时旧代码未生效。增加编译验证步骤 |
 | 2026-04-16 | 测试更新 | 新增 19 个测试（reasoning 6 + skill detection 13），全量 562 绿 |
+| 2026-04-18 | 自我再纠正 | Gemini thinking "无原生输出"结论推翻：CLI 在 `~/.gemini/tmp/<projectDir>/chats/session-*.json` 持久化 `thoughts:[{subject,description}]` 数组。AC-20 重开 Gemini 子项，AC-23 含 Gemini 验证。触发：小孙实测 clowder-ai Gemini 能显示 thinking + Codex 查源 + 自验本地 session 文件 |
 
 ## Links
 
