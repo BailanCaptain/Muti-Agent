@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readGeminiThoughtsFromSession } from "./gemini-session-reader";
+import { readGeminiThoughtsFromSession, formatGeminiThoughts } from "./gemini-session-reader";
 
 const FIXTURE_PATH = join(__dirname, "__fixtures__", "gemini-session-sample.json");
 
@@ -58,5 +58,41 @@ describe("readGeminiThoughtsFromSession", () => {
       projectDir: "x",
     });
     assert.deepEqual(thoughts, []);
+  });
+});
+
+describe("formatGeminiThoughts", () => {
+  it("joins subject + description with markdown formatting", () => {
+    const out = formatGeminiThoughts([
+      { subject: "Analyzing", description: "I'm dissecting..." },
+      { subject: "Planning", description: "Next I will..." },
+    ]);
+    assert.equal(
+      out,
+      "**Analyzing**\nI'm dissecting...\n\n**Planning**\nNext I will...",
+    );
+  });
+
+  it("handles missing subject (description only)", () => {
+    const out = formatGeminiThoughts([{ description: "just a thought" }]);
+    assert.equal(out, "just a thought");
+  });
+
+  it("handles missing description (subject only)", () => {
+    const out = formatGeminiThoughts([{ subject: "Heading" }]);
+    assert.equal(out, "**Heading**");
+  });
+
+  it("returns empty string for empty array", () => {
+    assert.equal(formatGeminiThoughts([]), "");
+  });
+
+  it("skips thoughts with both fields empty/whitespace", () => {
+    const out = formatGeminiThoughts([
+      { subject: "Real", description: "content" },
+      { subject: "   ", description: "" },
+      { subject: "Second", description: "valid" },
+    ]);
+    assert.equal(out, "**Real**\ncontent\n\n**Second**\nvalid");
   });
 });
