@@ -1,0 +1,37 @@
+{
+  "sessionId": "fixture-abc-123",
+  "projectHash": "deadbeef",
+  "startTime": "2026-04-18T08:00:00.000Z",
+  "lastUpdated": "2026-04-18T08:00:30.000Z",
+  "kind": "headless",
+  "messages": [
+    {
+      "id": "u1",
+      "timestamp": "2026-04-18T08:00:00.000Z",
+      "type": "user",
+      "content": "分析一下这个架构",
+      "displayContent": "分析一下这个架构"
+    },
+    {
+      "id": "g1",
+      "timestamp": "2026-04-18T08:00:30.000Z",
+      "type": "gemini",
+      "content": "好的，我从三个层面分析……",
+      "model": "gemini-2.5-pro",
+      "thoughts": [
+        {
+          "subject": "Analyzing User Request",
+          "description": "I'm currently focused on the user's intent, specifically dissecting the request.",
+          "timestamp": "2026-04-18T08:00:05.000Z"
+        },
+        {
+          "subject": "Planning Response Structure",
+          "description": "Next I'll organize my analysis into three layers: architecture, modularity, extensibility.",
+          "timestamp": "2026-04-18T08:00:15.000Z"
+        }
+      ],
+      "tokens": { "input": 100, "output": 50 },
+      "toolCalls": []
+    }
+  ]
+}
