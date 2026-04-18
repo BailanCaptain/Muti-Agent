@@ -2,9 +2,13 @@
 id: B007
 title: Decision Board 收敛泄漏 — 已收敛决策仍弹给用户 + UI 体感问题
 related: F002
+superseded_by: F020
 reporter: 小孙
 created: 2026-04-11
 ---
+
+> **Status (2026-04-18)**：本 bug 被 **F020 — 决策卡片挂载矩阵** 吸收。根因 A（`[撤销拍板]` 过滤）/B（Phase 2 consensus 清 Board）已转为 F020 AC11/AC12；根因 C（UI 选型）被 F020 挂载矩阵升级为按场景分流的完整 UX 方案。F020 完成时本 bug 一并关闭。
+
 
 # B007 — Decision Board 收敛泄漏
 
