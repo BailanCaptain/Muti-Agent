@@ -1372,6 +1372,60 @@ export function formatGeminiThoughts(thoughts: GeminiThought[]): string
 git commit -m "docs(F012): Task 14-A spike 结论 — Gemini session 文件 projectDir/匹配/时序"
 ```
 
+#### Spike 结论（2026-04-18）
+
+**问题 1 — projectDir 推导规则：**
+
+- **公式：`basename(cwd()).toLowerCase()`**
+- 证据：本地路径 `C:/Users/-/Desktop/Multi-Agent` → `~/.gemini/tmp/multi-agent/`（大小写翻转）；`clowder-ai` 本身小写无歧义，映射一致
+- **已知边界**：basename 冲突时 Gemini CLI 会加 `-N` 后缀去重（肉眼证据：`~/.gemini/tmp/claude-code-sourcemap` vs `claude-code-sourcemap-1`）。我们 Multi-Agent 项目名唯一，MVP 不处理此边界
+- **降级策略**（可选）：若推导出的目录不存在，fallback 到 glob 扫描 `~/.gemini/tmp/*/chats/session-<sessionId>.json`，按 sessionId 唯一性定位（文件名含完整 UUID，跨目录唯一）
+- worktree 注意事项：`.worktrees/F012` 下 basename 是 `F012`。但 Multi-Agent 的 Gemini runtime 在运行时是 API 子进程启动、`cwd` 取主仓库根目录，不受 worktree 影响；单元测试里用注入 `projectDir` 参数避开真实 cwd
+
+**问题 2 — 多轮 resume 消息匹配策略：**
+
+- **Session 文件完整 schema**（实测 `~/.gemini/tmp/multi-agent/chats/session-2026-04-05T19-17-81c8b0d3.json`）：
+  ```typescript
+  interface SessionFile {
+    sessionId: string
+    projectHash: string
+    startTime: string
+    lastUpdated: string
+    kind: string
+    messages: Array<{
+      id: string
+      timestamp: string
+      type: "user" | "gemini"
+      content: string
+      // user 专属
+      displayContent?: string
+      // gemini 专属
+      thoughts?: Array<{ subject: string; description: string; timestamp: string }>
+      tokens?: unknown
+      model?: string
+      toolCalls?: unknown
+    }>
+  }
+  ```
+- **实测结果**：6 条消息 / 4 条 gemini / **4 条 gemini 全部含 thoughts（100% 覆盖率）**
+- **关键结论**：**多轮 resume 累积到同一个 session 文件**（同 sessionId 一个文件，不是每轮一个）
+- **MVP 匹配策略**：**取最后一条 `type === "gemini"` 的消息的 thoughts**
+  - 正确性前提：invoke 结束后立即读 → 下一次 resume 还未写入 → "最后一条"就是本次产出
+  - 这是 plan 14-B 初始实现已采用的策略，**不改动**
+- **加固策略**（下一步考虑，**不阻塞 MVP**）：invoke 开始前记录文件 `lastUpdated`（或当前 Date.now()），读完后只取 timestamp 严格大于该时刻的 gemini 消息。若 14-E 手动验证出现错配再加
+
+**问题 3 — CLI 退出后文件写入时序：**
+
+- **未亲自跑 CLI 验证**（Spike 时间预算不够跑完整 `gemini -p ...`）
+- 已有间接证据：schema 含 `lastUpdated` 字段 → Gemini CLI 主动管理文件生命周期、不是偶发 flush
+- **保守实现策略**：读文件失败（ENOENT 或 JSON.parse 失败）→ 直接返回 `[]`（plan 14-B 已有此分支测试）。**不加 poll/retry 复杂度**——如果手动验证（14-E）发现"CLI 退出瞬间文件偶尔读不到"再回来加 `stat.mtime` 稳定性探测（最多 500ms / 50ms 间隔）
+- 理由：多一次错误兜底 < 多一层异步 poll 逻辑；前者几行，后者要测试 + 边界分析
+
+**产出 → 可以进 14-B：**
+
+- plan 14-B 的 fixture JSON 需要体现完整 schema（顶层含 sessionId/projectHash/startTime/lastUpdated/kind/messages；messages 条目含 id/timestamp；thoughts 条目含 timestamp）。**对 reader 函数行为无影响**，纯数据结构对齐
+- plan 14-B 代码无需调整，MVP"取最后一条 gemini 消息"策略已覆盖多轮情形
+
 ---
 
 ### Task 14-B: 写 `readGeminiThoughtsFromSession` 纯函数 + 失败测试
