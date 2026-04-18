@@ -66,9 +66,39 @@ describe("ClaudeRuntime stream_event handling", () => {
       assert.equal(result, "[context compacted]");
     });
 
-    it("handles rate_limit_event", () => {
+    it("rate_limit_event with status=allowed is a quota heartbeat — drop (B016)", () => {
+      const result = runtime.parseActivityLine({
+        type: "rate_limit_event",
+        rate_limit: { status: "allowed", windowType: "five_hour" },
+      });
+      assert.equal(result, null);
+    });
+
+    it("rate_limit_event without status field is treated as heartbeat — drop (B016)", () => {
       const result = runtime.parseActivityLine({ type: "rate_limit_event" });
-      assert.equal(result, "[rate limited]");
+      assert.equal(result, null);
+    });
+
+    it("rate_limit_event with non-allowed status surfaces precise placeholder (B016)", () => {
+      const exceeded = runtime.parseActivityLine({
+        type: "rate_limit_event",
+        rate_limit: { status: "exceeded" },
+      });
+      assert.equal(exceeded, "[quota: exceeded]");
+
+      const approaching = runtime.parseActivityLine({
+        type: "rate_limit_event",
+        rate_limit: { status: "approaching" },
+      });
+      assert.equal(approaching, "[quota: approaching]");
+    });
+
+    it("rate_limit_event status at top level is also honored (B016)", () => {
+      const result = runtime.parseActivityLine({
+        type: "rate_limit_event",
+        status: "blocked",
+      });
+      assert.equal(result, "[quota: blocked]");
     });
   });
 

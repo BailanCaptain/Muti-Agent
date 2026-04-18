@@ -177,7 +177,15 @@ export class ClaudeRuntime extends BaseCliRuntime {
         const subtype = (event as Record<string, unknown>).subtype ?? (event as Record<string, unknown>).event;
         if (subtype === "compact_boundary") return "[context compacted]";
       }
-      if (event.type === "rate_limit_event") return "[rate limited]";
+      if (event.type === "rate_limit_event") {
+        // rate_limit_event 是 Claude Code CLI 每次请求都发的配额心跳，不是限流告警。
+        // 只有 status 为非 allowed 值（approaching / blocked / exceeded 等）才提示用户。
+        // 默认 drop，避免 status:allowed 的心跳淹没推理流（B016）。
+        const nested = (event as Record<string, unknown>).rate_limit as Record<string, unknown> | undefined;
+        const status = (nested?.status ?? (event as Record<string, unknown>).status) as string | undefined;
+        if (!status || status === "allowed") return null;
+        return `[quota: ${status}]`;
+      }
 
       if (event.type === "content_block_delta") {
         const delta = event.delta as { type?: string; thinking?: string } | undefined;
