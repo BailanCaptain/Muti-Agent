@@ -1289,7 +1289,7 @@ Expected: 全绿 (AC-15)
 | AC-17 | 上传 3 张图片（1 张故意损坏） | 2 张成功 + 文字正常发出 |
 | AC-18 | 发送带 tool_use 的消息 | skill/MCP/thinking 默认折叠，结论展示 |
 | AC-19 | theme.ts 加新 Provider | 只改一处，全局生效 |
-| AC-23 | Claude 跑复杂提示 | thinking 折叠块有内容 |
+| AC-23 | Claude / Codex / Gemini 各跑一次复杂提示 | 三端 thinking 折叠块都有内容（Gemini 显示 subject/description 拼接 markdown）|
 | AC-24 | 三个 CLI 执行操作 | 不卡死、不弹审批、直接放行 |
 | AC-25 | agent 调用截图 API | 截图在消息中渲染 |
 | AC-28 | Claude stream_event 流式输出 | thinking 累积 + text 流式 + usage 正确 |
@@ -1300,6 +1300,429 @@ Expected: 全绿 (AC-15)
 **Commit:**
 ```bash
 git commit --allow-empty -m "chore(F012): 全部门禁验证通过 (AC-15..31)"
+```
+
+---
+
+## Task 14: Gemini thinking 本地 session 文件回读 (AC-20 Gemini)
+
+**背景（2026-04-18 翻案追加）**：原 AC-20 Gemini 子项判定"无原生 thinking，做不到"是错的。Gemini CLI 一直在 `~/.gemini/tmp/<projectDir>/chats/session-<sessionId>.json` 持久化完整会话，每条 `type === "gemini"` 的消息带 `thoughts: [{ subject, description }]` 数组。自验 `~/.gemini/tmp/multi-agent/chats/`（我们项目自己也在写）+ `~/.gemini/tmp/clowder-ai/chats/session-2026-04-18T08-31-*.json`（clowder 今日会话）已确认数据存在、格式一致。
+
+### Pin finish line
+
+- **B**：Gemini 跑一次复杂提示后，前端"深度思考"折叠块显示 Gemini 本次推理的 `**{subject}**\n{description}` 拼接 markdown；复用 Claude/Codex 既有 thinking 字段管道，前端零改动。
+- **不做**：切 `@google/genai` SDK；新增 thinking 专用事件类型（复用 `system_info({type:"thinking"})` 路径）；修改前端 `<ThinkingContent>` 组件；处理历史 session（只处理本次 invoke 产生的）。
+
+### Terminal schema
+
+```typescript
+// packages/api/src/runtime/gemini-session-reader.ts
+export interface GeminiThought {
+  subject?: string
+  description?: string
+}
+
+export interface GeminiSessionMessage {
+  type: "user" | "gemini" | string
+  content?: string
+  thoughts?: GeminiThought[]
+}
+
+// 按 sessionId 读 session 文件，返回本次 invoke 的 assistant 消息 thoughts
+export function readGeminiThoughtsFromSession(
+  sessionId: string,
+  opts: { home?: string; projectDir?: string; assistantText?: string }
+): Promise<GeminiThought[]>
+
+// thoughts[] → markdown
+export function formatGeminiThoughts(thoughts: GeminiThought[]): string
+```
+
+---
+
+### Task 14-A: Spike — 核实 projectDir 推导规则 + 消息匹配策略（限时 20 min）
+
+**产出：决策，不是代码。** 不写实现，不跑测试。
+
+**需要确认的三个问题：**
+
+1. **`projectDir` 是怎么算的？**
+   - 假设：`basename(cwd())`。自验方法：
+     ```bash
+     ls ~/.gemini/tmp/ | head
+     echo "cwd names:"; pwd
+     ```
+   - 对比本地目录名 `multi-agent` / `clowder-ai` / `api` / `bin` / `desktop` / `project` —— 看能否和已知工作目录一一对上
+   - 如果不是 basename，看 Gemini CLI 源码 / docs 确认
+
+2. **多轮 resume 时怎么精准匹配本次 assistant 消息？**
+   - 打开 `~/.gemini/tmp/multi-agent/chats/session-2026-03-19T17-41-887670b9.json` 看完整结构
+   - 重点看：消息有没有 `id` / `timestamp` / `role` 字段？多轮对话是追加到同一个文件还是每轮新文件？
+   - 初始策略：取最后一条 `type === "gemini"` 的消息的 thoughts（单轮可用）
+   - 如果多轮会累积到同一文件，需要改为"按本次 invoke 的 assistant 输出文本反查"策略
+
+3. **文件写入时序**：CLI 进程退出后，session 文件是否已落盘完成？需要 poll/wait 吗？
+   - 自验方法：shell 里跑一次 `gemini -p "test" -o stream-json`，进程退出后立即 `cat` session 文件看内容完整性
+   - 如果不完整，加最多 3 次 50ms 轮询
+
+**产出物：** 在本 plan Task 14-A 下方追加"Spike 结论"小节，三问都有结论后才进 14-B。
+
+**Commit：**
+```bash
+git commit -m "docs(F012): Task 14-A spike 结论 — Gemini session 文件 projectDir/匹配/时序"
+```
+
+---
+
+### Task 14-B: 写 `readGeminiThoughtsFromSession` 纯函数 + 失败测试
+
+**Files:**
+- Create: `packages/api/src/runtime/gemini-session-reader.ts`
+- Create: `packages/api/src/runtime/gemini-session-reader.test.ts`
+- Create fixture: `packages/api/src/runtime/__fixtures__/gemini-session-sample.json`（从 `~/.gemini/tmp/clowder-ai/chats/session-2026-04-18T08-31-8c6f6e07.json` 脱敏抽取：保留 1 条 user + 1 条 gemini 消息含 2-3 个 thoughts 条目，删除无关字段）
+
+**Step 1: 写失败测试**
+
+```typescript
+import { describe, it } from "node:test"
+import assert from "node:assert/strict"
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { readGeminiThoughtsFromSession } from "./gemini-session-reader.js"
+
+describe("readGeminiThoughtsFromSession", () => {
+  it("extracts thoughts[] from the last gemini message in session JSON", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gemini-session-test-"))
+    const projectDir = "multi-agent"
+    const sessionId = "abc-123"
+    const chatsDir = join(home, ".gemini", "tmp", projectDir, "chats")
+    mkdirSync(chatsDir, { recursive: true })
+    const sample = JSON.parse(readFileSync("packages/api/src/runtime/__fixtures__/gemini-session-sample.json", "utf8"))
+    writeFileSync(join(chatsDir, `session-${sessionId}.json`), JSON.stringify(sample))
+
+    const thoughts = await readGeminiThoughtsFromSession(sessionId, { home, projectDir })
+
+    assert.ok(Array.isArray(thoughts))
+    assert.ok(thoughts.length >= 1)
+    assert.equal(typeof thoughts[0].subject, "string")
+    assert.equal(typeof thoughts[0].description, "string")
+  })
+
+  it("returns empty array when session file missing", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gemini-session-test-"))
+    const thoughts = await readGeminiThoughtsFromSession("nope", { home, projectDir: "x" })
+    assert.deepEqual(thoughts, [])
+  })
+
+  it("returns empty array when last gemini message has no thoughts field", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gemini-session-test-"))
+    const chatsDir = join(home, ".gemini", "tmp", "x", "chats")
+    mkdirSync(chatsDir, { recursive: true })
+    writeFileSync(join(chatsDir, "session-sid.json"), JSON.stringify({
+      messages: [{ type: "gemini", content: "hi" }]
+    }))
+    const thoughts = await readGeminiThoughtsFromSession("sid", { home, projectDir: "x" })
+    assert.deepEqual(thoughts, [])
+  })
+})
+```
+
+**Step 2: 跑测试确认失败**
+
+```bash
+pnpm --filter @multi-agent/api test -- gemini-session-reader
+```
+Expected: FAIL with "Cannot find module './gemini-session-reader.js'"
+
+**Step 3: 最小实现**
+
+```typescript
+// packages/api/src/runtime/gemini-session-reader.ts
+import { readFile } from "node:fs/promises"
+import { homedir } from "node:os"
+import { join } from "node:path"
+
+export interface GeminiThought {
+  subject?: string
+  description?: string
+}
+
+interface GeminiSessionMessage {
+  type?: string
+  content?: string
+  thoughts?: GeminiThought[]
+}
+
+interface GeminiSessionFile {
+  messages?: GeminiSessionMessage[]
+}
+
+export async function readGeminiThoughtsFromSession(
+  sessionId: string,
+  opts: { home?: string; projectDir: string; assistantText?: string } = { projectDir: "" }
+): Promise<GeminiThought[]> {
+  const home = opts.home ?? homedir()
+  const path = join(home, ".gemini", "tmp", opts.projectDir, "chats", `session-${sessionId}.json`)
+
+  let raw: string
+  try {
+    raw = await readFile(path, "utf8")
+  } catch {
+    return []
+  }
+
+  let parsed: GeminiSessionFile
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return []
+  }
+
+  const messages = Array.isArray(parsed.messages) ? parsed.messages : []
+  const geminiMessages = messages.filter((m) => m.type === "gemini")
+  if (geminiMessages.length === 0) return []
+
+  // MVP: 取最后一条 gemini 消息的 thoughts。
+  // 多轮 resume 按 assistantText 匹配的策略在 14-A spike 结论中确定后再扩展。
+  const last = geminiMessages[geminiMessages.length - 1]
+  const thoughts = Array.isArray(last.thoughts) ? last.thoughts : []
+  return thoughts.filter((t) => t && (t.subject || t.description))
+}
+```
+
+**Step 4: 跑测试确认通过**
+
+```bash
+pnpm --filter @multi-agent/api test -- gemini-session-reader
+```
+Expected: PASS 3/3
+
+**Step 5: Commit**
+
+```bash
+git add packages/api/src/runtime/gemini-session-reader.ts \
+        packages/api/src/runtime/gemini-session-reader.test.ts \
+        packages/api/src/runtime/__fixtures__/gemini-session-sample.json
+git commit -m "feat(F012): readGeminiThoughtsFromSession — 回读本地 session 文件 thoughts 数组 (AC-20 Gemini)"
+```
+
+---
+
+### Task 14-C: 写 `formatGeminiThoughts` + 测试
+
+**Files:**
+- Modify: `packages/api/src/runtime/gemini-session-reader.ts`（追加 export）
+- Modify: `packages/api/src/runtime/gemini-session-reader.test.ts`（追加 describe 块）
+
+**Step 1: 写失败测试**
+
+```typescript
+import { formatGeminiThoughts } from "./gemini-session-reader.js"
+
+describe("formatGeminiThoughts", () => {
+  it("joins subject + description with markdown formatting", () => {
+    const out = formatGeminiThoughts([
+      { subject: "Analyzing", description: "I'm dissecting..." },
+      { subject: "Planning", description: "Next I will..." },
+    ])
+    assert.equal(out, "**Analyzing**\nI'm dissecting...\n\n**Planning**\nNext I will...")
+  })
+
+  it("handles missing subject (description only)", () => {
+    const out = formatGeminiThoughts([{ description: "just a thought" }])
+    assert.equal(out, "just a thought")
+  })
+
+  it("handles missing description (subject only)", () => {
+    const out = formatGeminiThoughts([{ subject: "Heading" }])
+    assert.equal(out, "**Heading**")
+  })
+
+  it("returns empty string for empty array", () => {
+    assert.equal(formatGeminiThoughts([]), "")
+  })
+})
+```
+
+**Step 2: 失败**
+
+```bash
+pnpm --filter @multi-agent/api test -- gemini-session-reader
+```
+Expected: FAIL "formatGeminiThoughts is not exported"
+
+**Step 3: 实现**
+
+```typescript
+// 追加到 packages/api/src/runtime/gemini-session-reader.ts
+export function formatGeminiThoughts(thoughts: GeminiThought[]): string {
+  return thoughts
+    .map((t) => {
+      const subject = t.subject?.trim()
+      const description = t.description?.trim()
+      if (subject && description) return `**${subject}**\n${description}`
+      if (subject) return `**${subject}**`
+      if (description) return description
+      return ""
+    })
+    .filter((s) => s.length > 0)
+    .join("\n\n")
+}
+```
+
+**Step 4: 通过**
+
+```bash
+pnpm --filter @multi-agent/api test -- gemini-session-reader
+```
+Expected: PASS 7/7
+
+**Step 5: Commit**
+
+```bash
+git add packages/api/src/runtime/gemini-session-reader.ts \
+        packages/api/src/runtime/gemini-session-reader.test.ts
+git commit -m "feat(F012): formatGeminiThoughts — thoughts[] 拼成 markdown (AC-20 Gemini)"
+```
+
+---
+
+### Task 14-D: GeminiRuntime 集成 — invoke 结束后发 thinking 事件
+
+**Files:**
+- Modify: `packages/api/src/runtime/gemini-runtime.ts`（invoke 收尾处加回读 + emit；删 L86-131 `parseActivityLine` 对 `event.thought` 的死代码；删 L246 `parseAssistantDelta` 的 `if (event.thought) return ""` 防御）
+- Modify: `packages/api/src/runtime/gemini-runtime.test.ts`（或新建对应集成测试文件）
+
+**Step 1: 写失败测试**
+
+```typescript
+// packages/api/src/runtime/gemini-runtime-thinking.test.ts
+import { describe, it } from "node:test"
+import assert from "node:assert/strict"
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { GeminiRuntime } from "./gemini-runtime.js"
+
+describe("GeminiRuntime thinking event from session file", () => {
+  it("emits a thinking event with formatted thoughts after invoke completes", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gemini-rt-"))
+    const projectDir = "testproj"
+    const sessionId = "sid-xyz"
+    const chatsDir = join(home, ".gemini", "tmp", projectDir, "chats")
+    mkdirSync(chatsDir, { recursive: true })
+    writeFileSync(join(chatsDir, `session-${sessionId}.json`), JSON.stringify({
+      messages: [
+        { type: "user", content: "hi" },
+        { type: "gemini", content: "hello", thoughts: [
+          { subject: "Greeting", description: "Saying hi back." }
+        ]}
+      ]
+    }))
+
+    const events: Array<{ type: string; content?: unknown }> = []
+    const runtime = new GeminiRuntime({ home, projectDir })
+    await runtime.emitThinkingFromSession(sessionId, (e) => events.push(e))
+
+    const thinking = events.find((e) => e.type === "system_info"
+      && JSON.parse((e.content as string) ?? "{}").type === "thinking")
+    assert.ok(thinking, "should emit a thinking system_info")
+    const payload = JSON.parse(thinking.content as string)
+    assert.equal(payload.text, "**Greeting**\nSaying hi back.")
+  })
+
+  it("emits nothing when session has no thoughts", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gemini-rt-"))
+    const events: Array<{ type: string }> = []
+    const runtime = new GeminiRuntime({ home, projectDir: "x" })
+    await runtime.emitThinkingFromSession("missing", (e) => events.push(e))
+    assert.equal(events.length, 0)
+  })
+})
+```
+
+**Step 2: 失败**
+```bash
+pnpm --filter @multi-agent/api test -- gemini-runtime-thinking
+```
+Expected: FAIL "emitThinkingFromSession is not a function" 或 constructor 不接受 `{ home, projectDir }`
+
+**Step 3: 实现 `emitThinkingFromSession` + invoke 收尾调用 + 删死代码**
+
+```typescript
+// packages/api/src/runtime/gemini-runtime.ts 增加
+import { readGeminiThoughtsFromSession, formatGeminiThoughts } from "./gemini-session-reader.js"
+
+// constructor 支持注入（便于测试）：
+constructor(private readonly deps: { home?: string; projectDir?: string } = {}) { super() }
+
+async emitThinkingFromSession(
+  sessionId: string,
+  emit: (event: { type: string; content: string; timestamp: number }) => void
+): Promise<void> {
+  const projectDir = this.deps.projectDir ?? basename(process.cwd())
+  const thoughts = await readGeminiThoughtsFromSession(sessionId, { home: this.deps.home, projectDir })
+  if (thoughts.length === 0) return
+  const text = formatGeminiThoughts(thoughts)
+  if (!text) return
+  emit({
+    type: "system_info",
+    content: JSON.stringify({ type: "thinking", text }),
+    timestamp: Date.now(),
+  })
+}
+
+// invoke() 收尾处（在 yield done 前）调用：
+// await this.emitThinkingFromSession(sessionId, (e) => yieldQueue.push(e))
+// —— 具体集成点按 invoke 现有代码结构嵌入
+```
+
+删除死代码（L86-131 `parseActivityLine` 全段 `if (!event.thought) return null; ...` → 直接 `return null`；L246 `parseAssistantDelta` 的 `if (event.thought) return ""` 整段删）。
+
+**Step 4: 通过**
+```bash
+pnpm --filter @multi-agent/api test -- gemini-runtime-thinking
+pnpm --filter @multi-agent/api test  # 全量回归，确认 F006 3b571bc 的旧 parseActivityLine 测试不回归（如果有，更新它们）
+```
+Expected: PASS + 全量绿
+
+**Step 5: Commit**
+```bash
+git add packages/api/src/runtime/gemini-runtime.ts \
+        packages/api/src/runtime/gemini-runtime-thinking.test.ts
+git commit -m "feat(F012): GeminiRuntime 集成 session 回读 + emit thinking 事件 + 删 F006 死代码 (AC-20 Gemini)"
+```
+
+---
+
+### Task 14-E: 手动验证 AC-23 Gemini 项
+
+**Step 1: 重启 dev server + 触发复杂提示**
+
+```bash
+pnpm dev  # 或现有启动脚本
+```
+
+在前端选 Gemini（桂芬），发一条需要多步推理的复杂提示（例如"分析这个文件的架构并给出三条改进建议"）。
+
+**Step 2: 观察前端"深度思考"折叠块**
+
+预期：
+- Gemini 消息气泡下方出现"深度思考"折叠标签
+- 展开后显示 `**{subject}**\n{description}` 格式的多条思考，和 Claude/Codex 同样样式
+- 若 thinking 为空（简单提示），折叠块不出现
+
+**Step 3: 对照 session 文件验证一致性**
+
+```bash
+ls -t ~/.gemini/tmp/multi-agent/chats/ | head -1
+# 打开最新 session-*.json，确认前端显示内容与 thoughts[] 一致
+```
+
+**Step 4: Commit 验证记录**
+```bash
+git commit --allow-empty -m "chore(F012): AC-23 Gemini thinking 手动验证通过"
 ```
 
 ---
@@ -1321,8 +1744,9 @@ git commit --allow-empty -m "chore(F012): 全部门禁验证通过 (AC-15..31)"
 | 11. DesignSystem 迁移 | AC-11..14 | 3 | 30 min |
 | 12. 截图能力 | AC-22 | 6 | 2 hr |
 | 13. 最终验证 | AC-15..31 | 0 | 1 hr |
-| **总计** | **31 个 AC** | **~38 文件** | **~12 hr** |
+| 14. Gemini thinking 回读 | AC-20 Gemini (AC-23 Gemini) | 3 | 1.5 hr |
+| **总计** | **31 个 AC** | **~41 文件** | **~13.5 hr** |
 
-**实施顺序：** Task 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13
+**实施顺序：** Task 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14（2026-04-18 翻案追加）
 
-**关键路径：** Task 2（Claude stream_event 重写）是风险最高、工作量最大的任务，建议优先做并充分测试。
+**关键路径：** Task 2（Claude stream_event 重写）是风险最高、工作量最大的任务，建议优先做并充分测试。Task 14 风险点在 Spike（14-A）—— projectDir 推导规则 / 多轮匹配 / 写入时序三者任一错判会让 session 回读取不到或取错 thoughts；Spike 未结论前不进 14-B。
