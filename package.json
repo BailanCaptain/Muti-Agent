@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "pnpm run dev:web",
     "dev:web": "next dev",
-    "dev:api": "bash scripts/mount-skills.sh && tsc -p packages/shared/tsconfig.json && tsx watch packages/api/src/index.ts",
+    "dev:api": "bash scripts/mount-skills.sh --prune && tsc -p packages/shared/tsconfig.json && tsx watch packages/api/src/index.ts",
     "build": "tsc -p packages/shared/tsconfig.json && next build && tsc -p packages/api/tsconfig.json",
     "start": "next start",
     "lint": "biome lint .",
@@ -18,6 +18,7 @@
     "test": "tsx --test \"packages/**/*.test.ts\" \"scripts/**/*.test.ts\"",
     "mount-skills": "bash scripts/mount-skills.sh",
     "mount-skills:prune": "bash scripts/mount-skills.sh --prune",
+    "check": "pnpm check:skills && pnpm check:docs",
     "check:skills": "npx tsx scripts/check-skills.ts",
     "check:docs": "bash scripts/check-docs.sh",
     "prepare": "husky"
