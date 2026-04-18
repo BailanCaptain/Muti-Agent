@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<title>右侧面板重设计 v2 · 讨论收敛版</title>
+<style>
+  :root{
+    --bg:#f6f7fb;--ink:#0f172a;--muted:#64748b;--sub:#94a3b8;
+    --line:#e2e8f0;--card:#ffffff;--soft:#f8fafc;
+    --amber:#f59e0b;--emerald:#10b981;--rose:#f43f5e;--violet:#8b5cf6;--indigo:#6366f1;--sky:#0ea5e9;
+    --shadow:0 18px 42px rgba(15,23,42,.06);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg)}
+  .wrap{display:flex;gap:28px;padding:32px;align-items:flex-start;min-height:100vh;flex-wrap:wrap}
+  .col{flex:0 0 auto}
+  h1{font-size:16px;margin:0 0 4px;font-weight:600}
+  .caption{color:var(--muted);font-size:11px;margin-bottom:14px;max-width:360px;line-height:1.5}
+  .tag{display:inline-block;font-size:10px;background:#eef2ff;color:var(--indigo);padding:2px 8px;border-radius:999px;margin-right:6px;font-weight:600;letter-spacing:.04em}
+
+  /* Right panel */
+  .panel{
+    width:340px;background:linear-gradient(180deg,rgba(248,250,252,.96),rgba(255,255,255,.86));
+    border:1px solid rgba(226,232,240,.8);border-radius:20px;padding:18px;box-shadow:var(--shadow);
+  }
+
+  /* ROOM header (新增，桂芬提议) */
+  .room-head{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#eef2ff;border-radius:10px;margin-bottom:14px;font-size:11px}
+  .room-head .k{color:var(--indigo);font-weight:700;letter-spacing:.16em;font-size:10px}
+  .room-head .v{color:var(--ink);font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .room-head .meta{color:var(--muted);font-family:ui-monospace,Consolas,monospace;font-size:10px}
+
+  .panel-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}
+  .panel-head .eyebrow{font-size:10px;letter-spacing:.28em;color:var(--sub);text-transform:uppercase;font-weight:600}
+  .panel-head h2{font-size:19px;font-weight:600;margin:6px 0 2px;letter-spacing:.01em}
+  .panel-head .status{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .dot.green{background:var(--emerald)}.dot.gray{background:#cbd5e1}.dot.orange{background:var(--amber)}
+  .icon-btn{background:transparent;border:none;color:var(--sub);cursor:pointer;padding:6px;border-radius:999px;font-size:14px}
+  .icon-btn:hover{background:#f1f5f9;color:var(--muted)}
+
+  .sec-title{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--sub);font-weight:600;margin:16px 0 8px;padding:0 2px;display:flex;justify-content:space-between;align-items:center}
+  .sec-title .chev{color:var(--sub);font-size:10px;text-decoration:none}
+  .sec-title .chev:hover{color:var(--indigo)}
+
+  /* Observability */
+  .obs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
+  .obs .cell{text-align:center}
+  .obs .k{font-size:10px;color:var(--sub);letter-spacing:.12em;text-transform:uppercase}
+  .obs .v{font-family:ui-monospace,Consolas,monospace;font-weight:600;font-size:15px;margin-top:3px}
+
+  /* Agent row */
+  .agents{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .agent-row{display:grid;grid-template-columns:32px 1fr auto;gap:12px;padding:12px 14px;align-items:center;border-bottom:1px solid var(--line)}
+  .agent-row:last-child{border-bottom:none}
+  .avatar{width:32px;height:32px;border-radius:10px;background:#eef2ff;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--indigo);font-size:14px}
+  .avatar.a2{background:#fef3c7;color:#b45309}
+  .avatar.a3{background:#e0f2fe;color:#0369a1}
+  .agent-main .row1{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600}
+  .agent-main .pill{font-size:10px;background:#f1f5f9;color:var(--muted);padding:1px 7px;border-radius:999px;font-family:ui-monospace,Consolas,monospace;display:inline-flex;align-items:center;gap:4px;font-weight:500}
+  /* 覆盖态小橙点 (桂芬+黄仁勋共识) */
+  .override-dot{width:6px;height:6px;border-radius:50%;background:var(--amber);display:inline-block;box-shadow:0 0 0 2px #fffbeb}
+  .agent-main .meta{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-top:3px;font-family:ui-monospace,Consolas,monospace}
+  .agent-actions{display:flex;gap:6px;align-items:center}
+  .agent-actions .gear{background:#f1f5f9;border:none;border-radius:10px;width:28px;height:28px;cursor:pointer;color:var(--muted);font-size:13px}
+  .agent-actions .gear:hover{background:#e2e8f0;color:var(--ink)}
+  .agent-actions .gear.active{background:var(--ink);color:#fff}
+  .agent-actions .stop{background:#ffe4e6;border:none;color:#be123c;font-size:10px;padding:4px 10px;border-radius:999px;cursor:pointer;font-weight:600}
+  .elapsed{font-family:ui-monospace,Consolas,monospace;font-size:10px;color:var(--muted)}
+  .ctx-bar{height:3px;background:#f1f5f9;border-radius:2px;overflow:hidden;margin-top:5px}
+  .ctx-bar > i{display:block;height:100%;background:var(--emerald)}
+  .ctx-bar.warn > i{background:var(--amber)}
+
+  /* Switches */
+  .switch-row{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;background:var(--card);border:1px solid var(--line);border-radius:12px;margin-top:8px;font-size:12px;color:var(--ink)}
+  .switch-row + .switch-row{margin-top:6px}
+  .sw{position:relative;width:34px;height:18px;background:#e2e8f0;border-radius:999px;cursor:pointer;transition:.2s;flex-shrink:0}
+  .sw.on{background:var(--violet)}
+  .sw::after{content:"";position:absolute;left:2px;top:2px;width:14px;height:14px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 2px 4px rgba(0,0,0,.1)}
+  .sw.on::after{left:18px}
+  .switch-row .hint{font-size:10px;color:var(--sub);margin-left:8px}
+
+  /* Drawer */
+  .drawer{
+    width:360px;background:var(--card);border:1px solid var(--line);border-radius:18px;
+    box-shadow:0 32px 64px rgba(15,23,42,.1);padding:18px;position:relative;
+  }
+  .drawer-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .drawer-head .avatar{width:38px;height:38px;border-radius:11px;font-size:15px}
+  .drawer-head h3{margin:0;font-size:14px;font-weight:600}
+  .drawer-head .sub{font-size:10px;color:var(--muted);margin-top:2px;font-family:ui-monospace,Consolas,monospace}
+
+  .scope{display:flex;background:#f1f5f9;border-radius:10px;padding:3px;gap:2px;margin-bottom:4px}
+  .scope button{flex:1;border:none;background:transparent;padding:6px 10px;border-radius:8px;font-size:12px;color:var(--muted);cursor:pointer;font-weight:500}
+  .scope button.active{background:var(--card);color:var(--ink);box-shadow:0 2px 6px rgba(15,23,42,.06);font-weight:600}
+  .scope-hint{font-size:10px;color:var(--sub);margin:8px 2px 14px;display:flex;align-items:center;gap:6px;line-height:1.4}
+  .scope-hint .inherit{background:#eef2ff;color:var(--indigo);padding:1px 6px;border-radius:5px;font-family:ui-monospace,Consolas,monospace;font-size:10px}
+  .scope-hint.global{color:var(--muted)}
+
+  .field{margin-bottom:12px}
+  .field-label{font-size:11px;color:var(--muted);letter-spacing:.06em;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center}
+  .inherit-badge{background:#eef2ff;color:var(--indigo);padding:1px 6px;border-radius:5px;font-size:9px;letter-spacing:.04em;font-weight:600}
+  .override-badge{background:#fef3c7;color:#b45309;padding:1px 6px;border-radius:5px;font-size:9px;letter-spacing:.04em;font-weight:600}
+  .select{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:10px;font-size:12px;color:var(--ink);background:var(--card);font-family:ui-monospace,Consolas,monospace}
+
+  .ctx-card{background:var(--soft);border-radius:10px;padding:10px 12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;font-size:11px}
+  .ctx-card .label{color:var(--muted);letter-spacing:.08em;font-size:9px;text-transform:uppercase}
+  .ctx-card .val{font-family:ui-monospace,Consolas,monospace;font-weight:600;color:var(--emerald)}
+
+  /* Pending / running-notice (新增，第 2 轮收敛) */
+  .pending{margin-bottom:10px;padding:9px 12px;border-radius:10px;background:#fff7ed;border:1px solid #fed7aa;font-size:11px;color:#9a3412;display:flex;gap:8px;align-items:flex-start}
+  .pending .i{font-size:13px;line-height:1;flex-shrink:0}
+
+  .actions{display:flex;gap:8px;margin-top:10px}
+  .btn{flex:1;padding:9px 12px;border-radius:10px;font-size:11px;font-weight:600;cursor:pointer;border:none;transition:.15s}
+  .btn-primary{background:var(--ink);color:#fff}
+  .btn-primary:hover{background:#1e293b}
+  .btn-primary:disabled{background:#cbd5e1;color:#64748b;cursor:not-allowed}
+  .btn-ghost{background:#f1f5f9;color:var(--ink)}
+  .btn-ghost:hover{background:#e2e8f0}
+  .btn-wide{flex:1}
+
+  .annot{margin-top:12px;font-size:10px;color:var(--muted);padding:9px 12px;background:#fffbeb;border:1px dashed #fcd34d;border-radius:10px;line-height:1.55}
+  .annot.blue{background:#f0f9ff;border-color:#bae6fd}
+  .annot b{color:#b45309}
+  .annot.blue b{color:#0369a1}
+
+  .callouts{margin-top:14px;padding:10px 12px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;font-size:10px;color:var(--muted);line-height:1.6}
+  .callouts b{color:var(--ink)}
+  .callouts .num{display:inline-block;width:14px;height:14px;background:var(--ink);color:#fff;border-radius:50%;font-size:9px;text-align:center;line-height:14px;margin-right:4px;font-weight:700;font-family:ui-monospace,Consolas,monospace}
+</style>
+</head>
+<body>
+  <div class="wrap">
+
+    <!-- 视图 1: 默认态 -->
+    <div class="col">
+      <h1><span class="tag">视图 1</span>默认态 · 压缩后的右侧面板</h1>
+      <div class="caption">ROOM 归属（顶） · 观测 · 智能体（一行一个，带覆盖小橙点） · 房间开关</div>
+      <div class="panel">
+        <!-- ROOM 归属 (桂芬提议) -->
+        <div class="room-head">
+          <span class="k">ROOM</span>
+          <span class="v">核心架构讨论</span>
+          <span class="meta">#a3f2</span>
+        </div>
+
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">控制面板</div>
+            <h2>状态看板</h2>
+            <div class="status"><span class="dot orange"></span><span>运行中 · 1/3 活跃</span></div>
+          </div>
+          <button class="icon-btn" title="全局设置">⚙</button>
+        </div>
+
+        <div class="sec-title"><span>观测</span><a class="chev" href="#">会话链 →</a></div>
+        <div class="obs">
+          <div class="cell"><div class="k">消息</div><div class="v">13</div></div>
+          <div class="cell"><div class="k">证据</div><div class="v">4</div></div>
+          <div class="cell"><div class="k">跟进</div><div class="v">10</div></div>
+        </div>
+
+        <div class="sec-title"><span>智能体 · 会话级</span><span class="chev">⚙ 配置 · ● 已覆盖</span></div>
+        <div class="agents">
+          <div class="agent-row">
+            <div class="avatar">黄</div>
+            <div class="agent-main">
+              <div class="row1">黄仁勋
+                <span class="pill">claude-opus-4-7</span>
+              </div>
+              <div class="meta"><span class="dot gray"></span><span>空闲 · 待命</span></div>
+              <div class="ctx-bar"><i style="width:22%"></i></div>
+            </div>
+            <div class="agent-actions"><button class="gear">⚙</button></div>
+          </div>
+          <div class="agent-row">
+            <div class="avatar a2">范</div>
+            <div class="agent-main">
+              <div class="row1">范德彪
+                <span class="pill">gpt-5.4-codex <span class="override-dot" title="会话级已覆盖全局默认"></span></span>
+              </div>
+              <div class="meta"><span class="dot orange"></span><span>运行中</span><span class="elapsed">2:13</span></div>
+              <div class="ctx-bar warn"><i style="width:58%"></i></div>
+            </div>
+            <div class="agent-actions">
+              <button class="stop">停止</button>
+              <button class="gear active">⚙</button>
+            </div>
+          </div>
+          <div class="agent-row">
+            <div class="avatar a3">桂</div>
+            <div class="agent-main">
+              <div class="row1">桂芬
+                <span class="pill">gemini-2.5-pro</span>
+              </div>
+              <div class="meta"><span class="dot gray"></span><span>空闲 · 待命</span></div>
+              <div class="ctx-bar"><i style="width:8%"></i></div>
+            </div>
+            <div class="agent-actions"><button class="gear">⚙</button></div>
+          </div>
+        </div>
+
+        <div class="sec-title"><span>房间开关</span></div>
+        <div class="switch-row">
+          <div>心里话模式 <span class="hint">显示 thinking</span></div>
+          <div class="sw on"></div>
+        </div>
+        <div class="switch-row">
+          <div>小孙发言器 <span class="hint">允许真人打字</span></div>
+          <div class="sw"></div>
+        </div>
+      </div>
+
+      <div class="callouts">
+        <div><span class="num">1</span><b>ROOM 归属徽章</b> · 顶部明示"哪些是房间级"</div>
+        <div><span class="num">2</span><b>覆盖小橙点</b> · 范德彪 pill 后的橙点 = 此会话覆盖了全局默认</div>
+        <div><span class="num">3</span><b>⚙ 激活态</b> · 范行 ⚙ 变黑表示当前已打开抽屉（对应视图 2）</div>
+        <div><span class="num">4</span><b>房间开关独立段</b> · 心里话/发言器 脱离智能体卡片</div>
+      </div>
+    </div>
+
+    <!-- 视图 2: 抽屉 · 会话专属 tab · 运行中禁用态 -->
+    <div class="col">
+      <h1><span class="tag">视图 2</span>抽屉 · 会话专属 tab（运行中）</h1>
+      <div class="caption">双按钮差异化 + 运行中 disable + 下一轮生效文案（范德彪 snapshot 方案的 UI）</div>
+      <div class="drawer">
+        <div class="drawer-head">
+          <div class="avatar a2">范</div>
+          <div>
+            <h3>范德彪 · 配置</h3>
+            <div class="sub">session · 5f52c51b · 运行中 2:13</div>
+          </div>
+          <button class="icon-btn" style="margin-left:auto">✕</button>
+        </div>
+
+        <div class="scope">
+          <button class="active">会话专属</button>
+          <button>全局默认</button>
+        </div>
+        <div class="scope-hint">
+          改这里只影响当前会话 · 未覆盖字段继承自
+          <span class="inherit">全局默认</span>
+        </div>
+
+        <div class="field">
+          <div class="field-label"><span>模型</span><span class="override-badge">已覆盖</span></div>
+          <div class="select">gpt-5.4-codex-high</div>
+        </div>
+
+        <div class="field">
+          <div class="field-label"><span>思考强度</span><span class="inherit-badge">继承 · high</span></div>
+          <div class="select" style="color:var(--muted)">high（继承自全局）</div>
+        </div>
+
+        <div class="ctx-card">
+          <div>
+            <div class="label">上下文占用</div>
+            <div style="font-family:ui-monospace,Consolas,monospace;font-weight:600;font-size:13px;margin-top:2px">58% · 116k / 200k</div>
+          </div>
+          <div class="val">cache 41%</div>
+        </div>
+
+        <!-- 运行中提示 -->
+        <div class="pending">
+          <span class="i">⏱</span>
+          <div>
+            <b>会话运行中 · 将在下一轮生效</b><br>
+            改动写入 <code style="background:#fde68a;padding:1px 4px;border-radius:3px;font-size:10px">nextRunConfig</code>，下一轮起跑时 snapshot 到 invocation
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn btn-ghost">以此配置开新会话</button>
+          <button class="btn btn-primary" disabled>应用到当前会话</button>
+        </div>
+
+        <div class="annot blue">
+          <b>运行中 disable 而非 modal 打断</b> · 彪哥 [A] 方案的 UI 落地：写 pending + 下一轮 snapshot，日志和实际执行参数永远对得上。
+        </div>
+      </div>
+    </div>
+
+    <!-- 视图 3: 抽屉 · 全局默认 tab · 单按钮 -->
+    <div class="col">
+      <h1><span class="tag">视图 3</span>抽屉 · 全局默认 tab</h1>
+      <div class="caption">单按钮「保存为全局默认」· 不出现"应用到当前会话"（避免动态改写运行中）</div>
+      <div class="drawer">
+        <div class="drawer-head">
+          <div class="avatar a2">范</div>
+          <div>
+            <h3>范德彪 · 配置</h3>
+            <div class="sub">全局默认 · 影响所有新会话</div>
+          </div>
+          <button class="icon-btn" style="margin-left:auto">✕</button>
+        </div>
+
+        <div class="scope">
+          <button>会话专属</button>
+          <button class="active">全局默认</button>
+        </div>
+        <div class="scope-hint global">
+          影响所有<b>未来新建的</b>房间/会话 · 不改动任何当前运行中的会话
+        </div>
+
+        <div class="field">
+          <div class="field-label"><span>默认模型</span></div>
+          <div class="select">gpt-5.4-codex</div>
+        </div>
+
+        <div class="field">
+          <div class="field-label"><span>默认思考强度</span></div>
+          <div class="select">high</div>
+        </div>
+
+        <div class="field">
+          <div class="field-label"><span>默认 CLI 路径</span></div>
+          <div class="select" style="font-size:10px">C:\…\codex\bin\codex.exe</div>
+        </div>
+
+        <div class="actions">
+          <button class="btn btn-primary btn-wide">保存为全局默认</button>
+        </div>
+
+        <div class="annot">
+          <b>单按钮 · 保守原则</b> · 全局默认保存后，当前正在跑的会话 <u>不会</u> 被动态改写。
+          想把新全局应用到当前会话？切到「会话专属」tab 主动操作。
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

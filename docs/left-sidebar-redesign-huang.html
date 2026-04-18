@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<title>左侧会话列表重设计 · 黄仁勋</title>
+<style>
+  :root{
+    --bg:#f6f7fb;--ink:#0f172a;--muted:#64748b;--sub:#94a3b8;
+    --line:#e2e8f0;--card:#ffffff;--soft:#f8fafc;
+    --amber:#f59e0b;--emerald:#10b981;--rose:#f43f5e;--violet:#8b5cf6;--indigo:#6366f1;--sky:#0ea5e9;
+    --shadow:0 18px 42px rgba(15,23,42,.06);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg)}
+  .wrap{display:flex;gap:40px;padding:32px;align-items:flex-start;flex-wrap:wrap;min-height:100vh}
+  h1{font-size:16px;margin:0 0 4px;font-weight:600}
+  .caption{color:var(--muted);font-size:11px;margin-bottom:14px;max-width:360px;line-height:1.5}
+  .tag{display:inline-block;font-size:10px;background:#eef2ff;color:var(--indigo);padding:2px 8px;border-radius:999px;margin-right:6px;font-weight:600;letter-spacing:.04em}
+
+  /* Sidebar */
+  .sidebar{width:300px;background:rgba(255,255,255,.85);border:1px solid var(--line);border-radius:18px;padding:14px 12px;box-shadow:var(--shadow);backdrop-filter:blur(12px)}
+  .side-head{display:flex;justify-content:space-between;align-items:center;padding:4px 6px 10px}
+  .side-head h2{font-size:13px;font-weight:600;margin:0;color:var(--ink)}
+  .side-head .new{background:var(--amber);color:#fff;border:none;font-size:11px;padding:5px 10px;border-radius:8px;cursor:pointer;font-weight:600;display:flex;align-items:center;gap:4px}
+
+  /* Search with hint */
+  .search{position:relative;margin:0 6px 10px}
+  .search input{width:100%;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 10px 7px 28px;font-size:12px;outline:none;color:var(--ink)}
+  .search input:focus{border-color:var(--indigo)}
+  .search .icon{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--sub);font-size:12px}
+  .search-hints{display:flex;gap:4px;padding:0 6px;margin-bottom:10px;flex-wrap:wrap}
+  .search-hints .hint{font-size:9px;color:var(--sub);background:#f1f5f9;padding:2px 6px;border-radius:4px;font-family:ui-monospace,Consolas,monospace}
+  .search-hints .hint b{color:var(--indigo)}
+
+  /* Agent filter chips */
+  .chips{display:flex;gap:4px;padding:0 6px 12px;border-bottom:1px solid var(--line);margin-bottom:10px}
+  .chip{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;background:var(--card);border:1px solid var(--line);border-radius:999px;font-size:10px;cursor:pointer;color:var(--muted);font-weight:500}
+  .chip.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .chip .av{width:14px;height:14px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:9px}
+  .chip .av.h{background:#eef2ff;color:var(--indigo)}
+  .chip .av.f{background:#fef3c7;color:#b45309}
+  .chip .av.g{background:#e0f2fe;color:#0369a1}
+
+  /* Section (time bucket) */
+  .bucket{margin-bottom:6px}
+  .bucket-head{display:flex;align-items:center;gap:5px;padding:4px 8px;font-size:10px;font-weight:700;color:var(--sub);letter-spacing:.14em;text-transform:uppercase;cursor:pointer}
+  .bucket-head .count{margin-left:auto;background:#f1f5f9;color:var(--muted);padding:0 7px;border-radius:999px;font-size:9px;font-family:ui-monospace,Consolas,monospace;font-weight:600;letter-spacing:0}
+  .bucket-head .chev{font-size:10px;color:var(--sub)}
+  .pinned .bucket-head{color:var(--amber)}
+
+  /* Session card */
+  .card{display:block;padding:8px 10px;border-radius:8px;margin:1px 4px;border-left:2px solid transparent;cursor:pointer;text-decoration:none;color:inherit}
+  .card:hover{background:rgba(255,255,255,.7)}
+  .card.active{background:var(--card);border-left-color:var(--amber);box-shadow:0 2px 6px rgba(15,23,42,.04)}
+  .card .r1{display:flex;align-items:center;gap:5px;margin-bottom:3px}
+  .card .room-id{font-family:ui-monospace,Consolas,monospace;font-size:9px;color:var(--indigo);background:#eef2ff;padding:1px 5px;border-radius:4px;font-weight:600;flex-shrink:0}
+  .card .title{font-size:12px;font-weight:500;color:var(--ink);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .card .title.untitled{color:var(--sub);font-style:italic}
+  .card .running-dot{width:7px;height:7px;border-radius:50%;background:var(--emerald);flex-shrink:0;box-shadow:0 0 0 3px rgba(16,185,129,.2)}
+  .card .r2{display:flex;align-items:center;gap:6px;margin-top:2px}
+  .card .avs{display:flex;gap:-2px}
+  .card .avs .av{width:14px;height:14px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:8px;margin-right:-3px;border:1.5px solid var(--card)}
+  .card .avs .av.h{background:#eef2ff;color:var(--indigo)}
+  .card .avs .av.f{background:#fef3c7;color:#b45309}
+  .card .avs .av.g{background:#e0f2fe;color:#0369a1}
+  .card .kw{display:inline-flex;gap:3px}
+  .card .kw span{font-size:8px;padding:1px 5px;border-radius:3px;font-weight:600}
+  .kw .ui{background:#e0f2fe;color:#0369a1}
+  .kw .feat{background:#fef3c7;color:#b45309}
+  .kw .bug{background:#ffe4e6;color:#be123c}
+  .kw .refactor{background:#ede9fe;color:#7c3aed}
+  .card .meta{margin-left:auto;font-size:9px;color:var(--sub);font-family:ui-monospace,Consolas,monospace}
+  .card .unread{background:var(--amber);color:#fff;font-size:9px;padding:0 5px;border-radius:999px;font-family:ui-monospace,Consolas,monospace;font-weight:700}
+
+  /* Context menu mock */
+  .ctx-menu{position:absolute;top:340px;left:240px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 32px rgba(15,23,42,.15);padding:4px;width:180px;z-index:10}
+  .ctx-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;font-size:11px;color:var(--ink);cursor:pointer}
+  .ctx-item:hover{background:#f1f5f9}
+  .ctx-item .i{font-size:12px;width:14px;text-align:center}
+  .ctx-item.danger{color:var(--rose)}
+  .ctx-sep{height:1px;background:var(--line);margin:3px 0}
+
+  /* Annotations */
+  .annot{margin-top:14px;padding:10px 14px;background:#fffbeb;border:1px dashed #fcd34d;border-radius:10px;font-size:11px;color:var(--muted);line-height:1.6}
+  .annot b{color:#b45309}
+  .annot.blue{background:#f0f9ff;border-color:#bae6fd}
+  .annot.blue b{color:#0369a1}
+
+  .callouts{margin-top:14px;padding:10px 12px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;font-size:10px;color:var(--muted);line-height:1.7;max-width:300px}
+  .callouts b{color:var(--ink)}
+  .num{display:inline-block;width:14px;height:14px;background:var(--ink);color:#fff;border-radius:50%;font-size:9px;text-align:center;line-height:14px;margin-right:4px;font-weight:700;font-family:ui-monospace,Consolas,monospace}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <!-- 视图 1：默认态 -->
+    <div>
+      <h1><span class="tag">视图 1</span>默认态 · 时间桶 + agent 过滤</h1>
+      <div class="caption">ROOM-XXX 稳定 ID · 语义标题（Haiku 自动命名）· 时间桶分组 · 顶部 agent 快筛</div>
+      <div class="sidebar">
+        <div class="side-head">
+          <h2>会话</h2>
+          <button class="new">+ 新建</button>
+        </div>
+
+        <div class="search">
+          <span class="icon">🔍</span>
+          <input type="text" placeholder="搜索 / @agent / #tag / room:xxx" value="@范德彪 nextRun"/>
+        </div>
+        <div class="search-hints">
+          <span class="hint"><b>@</b>agent</span>
+          <span class="hint"><b>#</b>tag</span>
+          <span class="hint"><b>room:</b>042</span>
+        </div>
+
+        <div class="chips">
+          <span class="chip active">全部</span>
+          <span class="chip"><span class="av h">黄</span>黄</span>
+          <span class="chip"><span class="av f">范</span>范</span>
+          <span class="chip"><span class="av g">桂</span>桂</span>
+        </div>
+
+        <!-- Pinned -->
+        <div class="bucket pinned">
+          <div class="bucket-head"><span>📌</span><span>置顶</span><span class="count">2</span></div>
+          <a class="card active">
+            <div class="r1">
+              <span class="room-id">R-042</span>
+              <span class="title">右侧面板重设计</span>
+            </div>
+            <div class="r2">
+              <span class="avs"><span class="av h">黄</span><span class="av f">范</span><span class="av g">桂</span></span>
+              <span class="kw"><span class="ui">UI</span><span class="refactor">Refactor</span></span>
+              <span class="meta">14:02</span>
+            </div>
+          </a>
+          <a class="card">
+            <div class="r1">
+              <span class="room-id">R-038</span>
+              <span class="title">F020 多智能体协作 canvas</span>
+            </div>
+            <div class="r2">
+              <span class="avs"><span class="av h">黄</span><span class="av f">范</span></span>
+              <span class="kw"><span class="feat">Feature</span></span>
+              <span class="meta">昨天</span>
+            </div>
+          </a>
+        </div>
+
+        <!-- Today -->
+        <div class="bucket">
+          <div class="bucket-head"><span>▾</span><span>今天</span><span class="count">3</span></div>
+          <a class="card">
+            <div class="r1">
+              <span class="running-dot"></span>
+              <span class="room-id">R-044</span>
+              <span class="title">Gemini thinking 回读修复</span>
+            </div>
+            <div class="r2">
+              <span class="avs"><span class="av g">桂</span><span class="av h">黄</span></span>
+              <span class="kw"><span class="bug">BugFix</span></span>
+              <span class="unread">3</span>
+              <span class="meta">12m</span>
+            </div>
+          </a>
+          <a class="card">
+            <div class="r1">
+              <span class="room-id">R-043</span>
+              <span class="title">F012 Claude rate limit 诊断</span>
+            </div>
+            <div class="r2">
+              <span class="avs"><span class="av h">黄</span></span>
+              <span class="kw"><span class="bug">BugFix</span></span>
+              <span class="meta">9:32</span>
+            </div>
+          </a>
+          <a class="card">
+            <div class="r1">
+              <span class="room-id">R-041</span>
+              <span class="title untitled">未命名（首条后自动命名）</span>
+            </div>
+            <div class="r2">
+              <span class="avs"><span class="av h">黄</span></span>
+              <span class="meta">8:01</span>
+            </div>
+          </a>
+        </div>
+
+        <!-- This week -->
+        <div class="bucket">
+          <div class="bucket-head"><span>▾</span><span>本周</span><span class="count">5</span></div>
+          <a class="card">
+            <div class="r1">
+              <span class="room-id">R-040</span>
+              <span class="title">Gemini session 文件 spike</span>
+            </div>
+            <div class="r2">
+              <span class="avs"><span class="av g">桂</span><span class="av f">范</span></span>
+              <span class="kw"><span class="feat">Feature</span></span>
+              <span class="meta">周三</span>
+            </div>
+          </a>
+          <a class="card">
+            <div class="r1">
+              <span class="room-id">R-039</span>
+              <span class="title">formatGeminiThoughts 拼接</span>
+            </div>
+            <div class="r2">
+              <span class="avs"><span class="av g">桂</span></span>
+              <span class="meta">周二</span>
+            </div>
+          </a>
+        </div>
+
+        <!-- Collapsed -->
+        <div class="bucket">
+          <div class="bucket-head"><span>▸</span><span>本月</span><span class="count">12</span></div>
+        </div>
+        <div class="bucket">
+          <div class="bucket-head"><span>▸</span><span>更早</span><span class="count">28</span></div>
+        </div>
+      </div>
+
+      <div class="callouts">
+        <div><span class="num">1</span><b>R-042 · 右侧面板重设计</b> — 稳定 ID + 语义标题，不再是"新会话 2026-04-18…"</div>
+        <div><span class="num">2</span><b>顶部 agent chip</b> — 点"范"只保留范参与过的房间</div>
+        <div><span class="num">3</span><b>搜索框前缀</b> — @范德彪 / #UI / room:042 直达</div>
+        <div><span class="num">4</span><b>时间桶</b> — 今天 / 本周 / 本月 / 更早，符合人类回忆方式</div>
+        <div><span class="num">5</span><b>R-041 未命名</b> — 新建首条消息前的灰色占位态</div>
+        <div><span class="num">6</span><b>卡片压缩到 2 行</b> — ID+标题 / avatars+tag+未读+时间</div>
+      </div>
+    </div>
+
+    <!-- 视图 2：右键菜单 -->
+    <div style="position:relative">
+      <h1><span class="tag">视图 2</span>右键菜单 · 命名 / 归档 / 引用</h1>
+      <div class="caption">房间号可复制，重命名锁定自动命名，「标记为证据」打 evidence 标签便于日后检索</div>
+
+      <div class="sidebar" style="opacity:.55;filter:blur(.5px)">
+        <div class="side-head"><h2>会话</h2><button class="new">+ 新建</button></div>
+        <div class="search"><span class="icon">🔍</span><input type="text" placeholder="搜索..."/></div>
+        <div class="chips">
+          <span class="chip active">全部</span>
+          <span class="chip"><span class="av h">黄</span>黄</span>
+          <span class="chip"><span class="av f">范</span>范</span>
+          <span class="chip"><span class="av g">桂</span>桂</span>
+        </div>
+        <div class="bucket">
+          <div class="bucket-head"><span>▾</span><span>今天</span><span class="count">3</span></div>
+          <a class="card active">
+            <div class="r1"><span class="room-id">R-042</span><span class="title">右侧面板重设计</span></div>
+            <div class="r2"><span class="avs"><span class="av h">黄</span><span class="av f">范</span></span><span class="meta">14:02</span></div>
+          </a>
+        </div>
+      </div>
+
+      <div class="ctx-menu">
+        <div class="ctx-item"><span class="i">📌</span>置顶</div>
+        <div class="ctx-item"><span class="i">✏</span>重命名</div>
+        <div class="ctx-item"><span class="i">📋</span>复制 ROOM-042</div>
+        <div class="ctx-item"><span class="i">🔗</span>复制引用链接</div>
+        <div class="ctx-sep"></div>
+        <div class="ctx-item"><span class="i">🏷</span>标记为证据</div>
+        <div class="ctx-item"><span class="i">🗂</span>加入项目…</div>
+        <div class="ctx-sep"></div>
+        <div class="ctx-item"><span class="i">📦</span>归档</div>
+        <div class="ctx-item danger"><span class="i">🗑</span>删除</div>
+      </div>
+
+      <div class="annot blue" style="margin-top:240px">
+        <b>新增的两个证据向功能</b><br>
+        · <b>复制 ROOM-042</b> → 在其他房间粘贴可作为引用<br>
+        · <b>标记为证据</b> → 打 `evidence` 标签，搜索 <code>#evidence</code> 一次性拉出所有证据房间
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

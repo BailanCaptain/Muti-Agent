@@ -1,0 +1,104 @@
+---
+id: F021
+title: 右侧面板重设计 — 观测带 + 智能体列表 + 两级配置（全局默认/会话专属）+ Side-Drawer
+status: spec
+owner: 黄仁勋
+created: 2026-04-19
+---
+
+# F021 — 右侧面板重设计
+
+**Created**: 2026-04-19
+
+## Why
+
+当前 `components/chat/status-panel.tsx`（657 行）在 340px 宽度里塞了 **9 块信息**，一屏展不下：
+
+- 控制面板标题 / 房间健康度 / 消息统计 / 折叠控制 / 心里话 toggle / 智能体配置（每个 provider 5 层信息 × 3）/ 会话链
+- 真正症结：**观测数据和操作入口混在一起**；**全局/房间/会话三层配置继承**导致心智灾难；**会话链**抢占一级视觉
+
+> 小孙："右侧信息太冗余了。"
+
+三人讨论收敛：不是样式不够精致，是信息分层错了。
+
+### 讨论来源
+
+- 本轮 collaborative-thinking（2026-04-18）全员讨论并达成共识
+- 设计图：
+  - `docs/right-panel-redesign-huang-v2.png`（v2 含共识细节）
+  - `docs/full-layout-redesign-huang.png`（整体布局）
+
+## What
+
+把右侧面板重构为 **3 段式**，配置态从 Popover 改 Side-Drawer，继承层级从三层砍到两层：
+
+1. **顶部 ROOM 归属徽章** — `ROOM · {名字} · #hash`，第一眼建立"在哪个房间"心智
+2. **观测带**（薄 3 数字）— 消息数 / 证据数 / 跟进数 + 会话链链接（降级为右上角）
+3. **智能体列表**（一行一人）— 头像 · 名字 · 模型 pill · ⚙ 设置入口 · 运行状态
+4. **房间开关**（心里话 / 发言器） — 保留作为房间级独立领地
+5. **Side-Drawer 配置态** — 从右侧滑出，Segmented Tab 切换「全局默认 / 会话专属」
+6. **覆盖指示** — 模型 pill 右侧 2px 橙色小点 = 该 agent 存在会话专属覆盖
+
+## Acceptance Criteria
+
+### Phase 1：观测带 + 智能体行（1.5 天）
+- [ ] AC-01: 拆分 `status-panel.tsx` 为 3 个子组件：`ObservationBar` / `AgentList` / `RoomSwitches`
+- [ ] AC-02: 顶部 ROOM 归属徽章（`ROOM · {title} · #{shortHash}`）
+- [ ] AC-03: 观测带只展示 3 个数字（消息/证据/跟进）+ 会话链链接
+- [ ] AC-04: 智能体行：头像 + 名字 + 模型 pill + ⚙ + 运行指示（pulse 或 idle）
+- [ ] AC-05: 右侧面板整体滚动高度 ≤ 屏高（1080p 下无纵向滚动）
+
+### Phase 2：Side-Drawer 配置态（1 天）
+- [ ] AC-06: 点击 ⚙ 从右侧滑出 Drawer（不是 Popover）
+- [ ] AC-07: Drawer 顶部 Segmented Tab：「全局默认」/「会话专属」
+- [ ] AC-08: 全局默认 Tab：一个保存按钮写入全局 config
+- [ ] AC-09: 会话专属 Tab：显示继承自全局的值，编辑后可保存为会话覆盖
+- [ ] AC-10: 模型 pill 右侧橙色小圆点仅当存在会话专属覆盖时显示
+
+### Phase 3：运行中保护 + 下一轮生效（0.5 天）
+- [ ] AC-11: 会话运行中（streaming）时，「应用到当前会话」按钮 disable
+- [ ] AC-12: 文案提示"运行中，下一轮生效"
+- [ ] AC-13: 编辑写入 `pendingConfig`（下一轮启动时读取）
+- [ ] AC-14: invocation 启动时 snapshot pendingConfig 到本次 invocation 元数据（可追溯）
+- [ ] AC-15: 快照写入 `invocationStats` 记录
+
+### Phase 4：验收
+- [ ] AC-16: 桂芬视觉验收通过
+- [ ] AC-17: 范德彪 code review 通过（无运行中配置竞态）
+- [ ] AC-18: 小孙端到端跑一轮 → OK
+
+## Dependencies
+
+- 依赖现有 `status-panel.tsx` / `AgentConfigProvider` / 会话状态 store
+- 运行中检测依赖 F012 的 streaming 状态事件
+- 无硬阻塞
+
+## Design Decisions
+
+| 决策 | 选项 | 结论 | 原因 |
+|------|------|------|------|
+| 配置态展现 | Popover / Side-Drawer | **Drawer** | Popover 挤不下 Tab + 按钮 + 继承提示 |
+| 模型配置继承层级 | 三层（全局→房间→会话）/ 两层（全局→会话） | **两层** | 三层是心智灾难，"房间"作为 UI 维度保留但不参与模型继承 |
+| 运行中改模型 | 立即生效 / 挂起到下一轮 | **挂起到下一轮** | 避免 token 统计和 session 对不上的竞态 |
+| 会话覆盖的视觉标记 | 颜色 / 小点 / 文字标签 | **模型 pill 右侧 2px 橙色小点** | 不侵入 ⚙（⚙ 是入口，不是状态） |
+| 会话链位置 | 一级视觉 / 观测带右上角链接 | **观测带右上角链接** | 降级让位给智能体列表 |
+| ROOM 徽章位置 | 顶部显眼 / 省略 | **顶部紫色条** | 让房间归属第一眼可见 |
+
+## Timeline
+
+| 日期 | 事件 |
+|------|------|
+| 2026-04-18 | collaborative-thinking 讨论（黄仁勋 + 范德彪 + 桂芬）|
+| 2026-04-19 | Kickoff |
+
+## Links
+
+- Discussion: ROOM-042（本轮讨论 · timeline 见 MEMORY room context）
+- Design: `docs/right-panel-redesign-huang-v2.png` · `docs/full-layout-redesign-huang.png`
+- Related: F022（左侧 sidebar 重设计，并行推进）
+
+## Evolution
+
+- **Evolved from**: F005（运行时治理 UI）· F001（UI 焕新）
+- **Blocks**: 无
+- **Related**: F022（同期，并行）· F017（跨房间协作感知，未来联动）

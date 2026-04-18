@@ -11,6 +11,8 @@
 | F015 | 调度状态持久化：DispatchOrchestrator 关键 Map 写入 DB + 进程重启恢复 | spec | TBD | internal | [F015](features/F015-dispatch-state-persistence.md) |
 | F017 | 跨房间协作感知：侧边栏运行指示 + 全局任务状态 | spec | 桂芬 | internal | [F017](features/F017-cross-room-awareness.md) |
 | F020 | 决策卡片挂载矩阵：按场景分流（单 agent 消息内嵌 / 链级 Footer / 多人讨论收敛后弹）+ 折叠徽章 + 吸收 B007 | spec | 黄仁勋 | internal | [F020](features/F020-decision-card-mounting-matrix.md) |
+| F021 | 右侧面板重设计：观测带 + 智能体列表 + 两级配置（全局默认/会话专属）+ Side-Drawer + 运行中挂起到下一轮 | spec | 黄仁勋 | internal | [F021](features/F021-right-panel-redesign.md) |
+| F022 | 左侧 Sidebar 重设计：全局递增 ROOM ID (R-001) + 首 user+assistant 后 Haiku 自动命名 + 反向溯源 | spec | 黄仁勋 | internal | [F022](features/F022-left-sidebar-redesign.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features

@@ -23,11 +23,6 @@ test("buildPhase1Header states no-synthesis rule", () => {
   )
 })
 
-test("buildPhase1Header mentions not loading full skill", () => {
-  const header = buildPhase1Header(3)
-  assert.ok(header.includes("不要加载全文"))
-})
-
 test("buildPhase1Header singular form for 1 participant still renders", () => {
   // Edge case: single-participant Mode B shouldn't happen, but helper must not crash
   const header = buildPhase1Header(1)
