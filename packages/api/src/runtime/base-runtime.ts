@@ -210,6 +210,17 @@ export abstract class BaseCliRuntime implements AgentRuntime {
     return this.runStream(input).promise;
   }
 
+  /**
+   * Hook for runtimes that surface thinking/activity data outside the stdout
+   * stream (e.g. Gemini CLI persists thoughts to a local session file). Called
+   * by cli-orchestrator after the CLI exits, with the final session id. Default
+   * no-op; concrete runtimes override when they need to extract post-run data.
+   */
+  async afterRun(
+    _ctx: { sessionId: string | null },
+    _emit: (line: string) => void,
+  ): Promise<void> {}
+
   runStream(input: AgentRunInput, hooks: RuntimeStreamHooks = {}): RuntimeExecutionHandle {
     const command = this.buildCommand(input);
     const env = {

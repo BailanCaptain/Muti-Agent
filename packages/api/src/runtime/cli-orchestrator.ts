@@ -231,19 +231,31 @@ export function runTurn(options: RunTurnOptions) {
       cancelled = true;
       handle.cancel();
     },
-    promise: handle.promise.then((output) => ({
-      content,
-      nativeSessionId: currentSessionId,
-      currentModel,
-      stopped: cancelled,
-      rawStdout: output.rawStdout,
-      rawStderr: output.rawStderr,
-      exitCode: output.exitCode,
-      usage: latestUsage,
-      sealDecision: computeSealDecision(options.provider, latestUsage),
-      stopReason: latestStopReason ?? output.stopReason,
-      toolEvents
-    }))
+    promise: handle.promise.then(async (output) => {
+      // Post-run hook: runtimes that carry thinking/activity outside the stdout
+      // stream (Gemini's local session file) emit it here into the same
+      // onToolActivity pipe Claude/Codex thinking uses.
+      try {
+        await runtime.afterRun({ sessionId: currentSessionId }, (line) => {
+          options.onToolActivity?.(line);
+        });
+      } catch {
+        // afterRun is best-effort; never let post-run bookkeeping fail the turn.
+      }
+      return {
+        content,
+        nativeSessionId: currentSessionId,
+        currentModel,
+        stopped: cancelled,
+        rawStdout: output.rawStdout,
+        rawStderr: output.rawStderr,
+        exitCode: output.exitCode,
+        usage: latestUsage,
+        sealDecision: computeSealDecision(options.provider, latestUsage),
+        stopReason: latestStopReason ?? output.stopReason,
+        toolEvents,
+      };
+    })
   };
 }
 

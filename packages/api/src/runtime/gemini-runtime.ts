@@ -1,6 +1,8 @@
+import { basename } from "node:path";
 import type { ToolEvent } from "@multi-agent/shared";
 import { BaseCliRuntime, resolveNodeScript, wrapPromptWithInstructions, type AgentRunInput, type RuntimeCommand, type StopReason } from "./base-runtime";
 import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts";
+import { readGeminiThoughtsFromSession, formatGeminiThoughts } from "./gemini-session-reader";
 
 function formatGeminiParams(toolName: string, params: Record<string, unknown>): string {
   try {
@@ -53,6 +55,35 @@ function formatGeminiParams(toolName: string, params: Record<string, unknown>): 
 export class GeminiRuntime extends BaseCliRuntime {
   readonly agentId = "gemini";
   private lastToolSource: "tool" | "mcp" | "skill" = "tool";
+  private readonly sessionDeps: { home?: string; projectDir?: string };
+
+  constructor(sessionDeps: { home?: string; projectDir?: string } = {}) {
+    super();
+    this.sessionDeps = sessionDeps;
+  }
+
+  /**
+   * Gemini CLI 的 thinking（thoughts）不走 stdout stream——它被持久化到
+   * ~/.gemini/tmp/<projectDir>/chats/session-<sessionId>.json 的 gemini 消息
+   * `thoughts: [{subject, description}]` 数组。invoke 结束后回读该文件，
+   * 把 thoughts 拼成 markdown 作为一条 activity line 推出去，复用 Claude/Codex
+   * 既有的 thinking 管道（onToolActivity → assistant_thinking_delta）。
+   */
+  async afterRun(
+    ctx: { sessionId: string | null },
+    emit: (line: string) => void,
+  ): Promise<void> {
+    if (!ctx.sessionId) return;
+    const projectDir =
+      this.sessionDeps.projectDir ?? basename(process.cwd()).toLowerCase();
+    const thoughts = await readGeminiThoughtsFromSession(ctx.sessionId, {
+      home: this.sessionDeps.home,
+      projectDir,
+    });
+    if (thoughts.length === 0) return;
+    const text = formatGeminiThoughts(thoughts);
+    if (text) emit(text);
+  }
 
   protected buildCommand(input: AgentRunInput): RuntimeCommand {
     const runtime = resolveNodeScript(
@@ -104,39 +135,8 @@ export class GeminiRuntime extends BaseCliRuntime {
         if (this.isCandidatesCrash(errMsg)) return null;
         if (errMsg) return `[error] ${errMsg}`;
       }
-
-      if (!event.thought) return null;
-
-      if (typeof event.delta === "string") {
-        return event.delta;
-      }
-
-      if (event.type === "content" && typeof event.value === "string") {
-        return event.value;
-      }
-
-      if (event.type === "message" && typeof event.content === "string") {
-        return event.content;
-      }
-
-      if (
-        event.type === "message" &&
-        typeof event.content === "object" &&
-        event.content &&
-        typeof (event.content as { text?: string }).text === "string"
-      ) {
-        return (event.content as { text: string }).text;
-      }
-
-      if (
-        event.type === "message" &&
-        typeof event.delta === "object" &&
-        event.delta &&
-        typeof (event.delta as { text?: string }).text === "string"
-      ) {
-        return (event.delta as { text: string }).text;
-      }
-
+      // Gemini CLI stdout stream 从不输出 thought 事件——thinking 内容通过
+      // afterRun() 从本地 session 文件回读。stream 侧只保留 error 提取。
       return null;
     } catch {
       return null;
@@ -243,10 +243,6 @@ export class GeminiRuntime extends BaseCliRuntime {
   }
 
   parseAssistantDelta(event: Record<string, unknown>) {
-    if (event.thought) {
-      return "";
-    }
-
     if (typeof event.delta === "string") {
       return event.delta;
     }
