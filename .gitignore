@@ -6,6 +6,7 @@ dist
 data/*.sqlite
 data/*.sqlite-*
 .env.local
+.env.development.local
 .env
 multi-agent.sqlite
 multi-agent.runtime-config.json
@@ -26,6 +27,8 @@ packages/api/data/
 .claude/skills/
 .gemini/skills/
 .agents/skills/
+.agents/acceptance/
+.worktree-ports.json
 reference-code/
 docs/runtime-events/
 scripts/record-events.*

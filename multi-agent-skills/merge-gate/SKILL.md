@@ -35,13 +35,18 @@ git merge --ff-only {feature}
 
 ## 核心知识
 
-### 门禁 5 硬条件（全部满足才能开 PR）
+### 门禁 6 硬条件（全部满足才能开 PR）
 
 1. Reviewer 有**明确放行信号**（"放行"/"LGTM"/"通过"/"可以合入"/"Approved"）
 2. **所有 P1/P2** 已修复且经 reviewer 确认
 3. Review 针对**当前分支/当前工作**（不是历史 review）
 4. Feature doc 涉及的 AC 已打勾
 5. **全量测试绿灯**（基于最新 `origin/dev` rebase 后）
+6. **验收证据硬门（F024 · 严解）**：
+   - 单 feature merge 前必须存在 `{current-worktree}/.agents/acceptance/{feature-id}/*/worktree-report.md`
+   - 多 feature 协同 merge（staging worktree）前必须存在 `{staging-worktree}/.agents/acceptance/{stagingId}/*/integration-report.md`
+   - 报告内必须带 manifest 三元组（`featureId` / `commitSha` / `visionVersion`）
+   - 报告不进 git（已被 `.gitignore`），本门校验走 **FS 路径**而非 `git log`；worktree 清理前完成校验
 
 ### 合入前全量验证
 

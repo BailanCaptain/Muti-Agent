@@ -7,7 +7,8 @@ async function main() {
     apiBaseUrl: apiConfig.apiBaseUrl,
     sqlitePath: apiConfig.sqlitePath,
     corsOrigin: apiConfig.corsOrigin,
-    redisUrl: apiConfig.redisUrl
+    redisUrl: apiConfig.redisUrl,
+    uploadsDir: apiConfig.uploadsDir
   })
 
   registerGracefulShutdown({

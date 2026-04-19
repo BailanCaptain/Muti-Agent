@@ -21,7 +21,9 @@ export function createEventRecorder(provider: Provider): {
     return { record: () => {}, filePath: null };
   }
 
-  const dir = path.resolve(process.cwd(), "docs", "runtime-events");
+  const dir =
+    process.env.RUNTIME_EVENTS_DIR ??
+    path.join(process.cwd(), ".runtime", "runtime-events");
   try {
     fs.mkdirSync(dir, { recursive: true });
   } catch {

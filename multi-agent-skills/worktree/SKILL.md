@@ -64,6 +64,19 @@ pnpm install
 - 目录名：`../multi-agent-{feature-name}`
 - Bug fix：`fix/{bug-name}`
 
+### Step 2: 验证 preview 启动（F024 · L1 愿景验收同源）
+
+```bash
+pnpm worktree:preview
+```
+
+Expected：
+- stdout 包含 `worktree <name> preview: localhost:<port>`
+- `.worktree-ports.json` 出现本 worktree 条目
+- `.runtime/worktree-preview/` 与 `.agents/acceptance/` 目录就位
+
+Preview 不起来 = worktree 不能做 L1 愿景验收 = 合入时必卡 merge-gate 硬门，优先修复。
+
 ## 硬规则
 
 1. **创建前必须 dev 同步** — ahead=0 behind=0
@@ -94,10 +107,15 @@ cd /c/Users/-/Desktop/Multi-Agent
 # 2. 更新 dev
 git checkout dev && git pull origin dev
 
-# 3. 删除 worktree
+# 3. （可选）归档验收证据 — 严解下证据不进 git，worktree 删了就没了
+#    如需长期保留某 feature 的截图/报告，先复制出去再删 worktree
+#    cp -r ../multi-agent-{feature}/.agents/acceptance/{feature-id} /some/archive/path/
+
+# 4. 删除 worktree（含 .agents/acceptance/ 内所有证据）
 git worktree remove ../multi-agent-{feature}
 
-# 4. 删除分支 + 清理
+# 5. 释放端口 + 删除分支 + 清理
+# .worktree-ports.json 条目由 worktree:preview 脚本维护，如有残留手动清理
 git branch -d feat/{feature}
 git worktree prune
 ```

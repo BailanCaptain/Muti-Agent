@@ -1,0 +1,9 @@
+{
+  "stagingId": "f021-f022-vision-check",
+  "baseRef": "dev",
+  "visionVersion": "2026-04-19",
+  "features": [
+    { "featureId": "F021", "commitSha": "aaaaaaaa" },
+    { "featureId": "F022", "commitSha": "bbbbbbbb" }
+  ]
+}

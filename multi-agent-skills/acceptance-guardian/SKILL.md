@@ -157,6 +157,15 @@ Bug Report: docs/bugReport/Bxxx-name.md
 - **BLOCKED**：原 AC 未满足，或原 bug 现象仍可复现，或明显撞上历史 bug 回归
 - **ESCALATE**：出现疑似新 bug，守护 agent 已给初判，但需要小孙决定是否阻塞
 
+## 路径绑定与证据落地（F024 · 严解）
+
+- **验收环境同源**：验收对象路径必须与待合入 worktree 同源；不允许从 `dev` 首次证明 AC 成立
+- **Feature Mode 报告路径**：`{current-worktree}/.agents/acceptance/{feature-id}/{timestamp}/worktree-report.md`
+- **Staging（L2）报告路径**：`{staging-worktree}/.agents/acceptance/{stagingId}/{timestamp}/integration-report.md`
+- **证据不进 git**：`.agents/acceptance/` 已在主仓 `.gitignore`，截图/日志/报告只留 worktree 本地；merge 后 dev 不含归档
+- **主仓 agent 跨 worktree 读取**：需要查看其他 worktree 证据时，走 `git worktree list` → 按分支名匹配 feature-id → 拼 `{worktree-path}/.agents/acceptance/{feature-id}/` 直接读文件系统
+- **证据生命周期**：worktree 被 `git worktree remove` 后证据随之消失；如需长期归档由人工显式复制到主仓外的存档位置
+
 ## Common Mistakes
 
 | 错误 | 正确 |

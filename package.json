@@ -16,6 +16,8 @@
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit && tsc -p packages/shared/tsconfig.json && pnpm --filter @multi-agent/api typecheck",
     "test": "tsx --test \"packages/**/*.test.ts\" \"scripts/**/*.test.ts\"",
+    "worktree:preview": "tsx scripts/worktree-preview.ts",
+    "worktree:staging": "tsx scripts/worktree-staging.ts",
     "mount-skills": "bash scripts/mount-skills.sh",
     "mount-skills:prune": "bash scripts/mount-skills.sh --prune",
     "check": "pnpm check:skills && pnpm check:docs",
@@ -44,12 +46,14 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/node": "^22.13.10",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/react": "^19.2.4",
     "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.20",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "postcss": "^8.5.3",
+    "proper-lockfile": "^4.1.2",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.21.0",
     "typescript": "^5.8.2"

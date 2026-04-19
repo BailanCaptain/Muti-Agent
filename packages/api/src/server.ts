@@ -49,6 +49,7 @@ export async function createApiServer(options: {
   sqlitePath: string
   corsOrigin: string
   redisUrl: string
+  uploadsDir: string
 }) {
   const app = Fastify({ logger: true })
   setRootLogger(app.log)
@@ -264,7 +265,7 @@ export async function createApiServer(options: {
   await app.register(websocket)
   await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } })
 
-  const uploadsDir = path.resolve(__dirname, "../../../.runtime/uploads")
+  const uploadsDir = options.uploadsDir
   mkdirSync(uploadsDir, { recursive: true })
   await app.register(fastifyStatic, {
     root: uploadsDir,

@@ -61,6 +61,11 @@
 12. **不冒充他人** — 不许假装是另一位成员、不许编造别人的观点。
 13. **commit 带签名** — commit message 必须带 `[昵称/模型 🐾]`（例：`[黄仁勋/Opus-46 🐾]`），否则无法追踪是谁干的。
 
+### 验收同源（Acceptance Co-origin · F024）
+14. **验收环境必须和待合入对象同源** — 不允许从 `dev` 首次证明 AC 成立；单 feature 在自己的 worktree 内跑 L1 preview + acceptance-guardian，多 feature 在一次性 staging worktree 跑 L2。
+15. **L2 集成验收必须绑定 manifest 三元组** — `featureId` + `commitSha` + `visionVersion` 三项缺一不可；staging worktree 命名强制 `staging/` 前缀，验完销毁，严禁退化为第二个 dev。
+16. **验收证据只留 worktree 本地** — 截图 / 日志 / 报告落 `{worktree}/.agents/acceptance/`，已在主仓 `.gitignore`，**不进 git 历史**；主仓 agent 需读取时走 `git worktree list` + FS 路径。worktree 被 `git worktree remove` 即证据消失，如需长期归档由人工显式复制出主仓。
+
 ---
 
 ## Skill 路由表（意图 → skill）
