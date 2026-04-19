@@ -52,6 +52,7 @@ import type { SopTracker } from "../skills/sop-tracker"
 import type { MemoryService } from "./memory-service"
 import type { WorkflowSopService as WorkflowSopServiceType } from "./workflow-sop-service"
 import type { SessionService } from "./session-service"
+import { computeEffectiveSessionId } from "./session-effectiveness"
 import { createLogger } from "../lib/logger"
 
 type ActiveRun = ReturnType<typeof runTurn>
@@ -1177,12 +1178,18 @@ export class MessageService {
       // which meant a normal-exit empty turn (e.g. CLI printed nothing but didn't crash)
       // would wipe history. Direct-turn now injects history from SQLite, so we only
       // clear on genuinely abnormal exits.
-      const emptyAndAbnormal =
-        !accumulatedContent.trim() &&
-        result.exitCode !== null &&
-        result.exitCode !== 0 &&
-        result.nativeSessionId === thread.nativeSessionId
-      let effectiveSessionId = emptyAndAbnormal ? null : result.nativeSessionId
+      //
+      // B017: the id-equality sub-condition that used to live here (result ===
+      // thread) silently trapped us whenever Claude's error envelope minted a
+      // fresh junk session id — ids differed, clear was skipped, junk persisted,
+      // next --resume repeated the failure forever. Fix: extract to a pure helper
+      // that decides on exit-code + content alone. See session-effectiveness.ts.
+      let effectiveSessionId = computeEffectiveSessionId({
+        content: accumulatedContent,
+        resultExitCode: result.exitCode,
+        resultSessionId: result.nativeSessionId,
+        threadSessionId: thread.nativeSessionId,
+      })
       // F018 P4 Round 3 (Codex HIGH #2): capture the session id that's being SEALED
       // before any downstream code nulls effectiveSessionId. The seal hook below needs
       // this to run flush/readDigest/appendSession/incrementSessionChainIndex.

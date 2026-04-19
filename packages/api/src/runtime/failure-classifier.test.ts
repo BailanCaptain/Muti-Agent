@@ -113,3 +113,48 @@ test("classifyFailure ignores 'session' in unrelated contexts", () => {
   const result = classifyFailure("starting new session...", "");
   assert.equal(result.class, "unknown");
 });
+
+// B017: three CLI families emit DIFFERENT phrasing when --resume can't find the
+// session on disk. The classifier was provider-agnostic in intent but the regex
+// only caught "session ... (not found|...)" — Claude's actual wording has
+// "session" AFTER "found", so it fell to unknown and (post-F004) didn't clear.
+// These tests pin the real stderr strings captured by probing each CLI on
+// 2026-04-18 with a synthetic bad UUID — see docs/bugReport/B017-*.md.
+
+test("B017: Claude CLI 'No conversation found with session ID' → session_corrupt", () => {
+  const stderr = "No conversation found with session ID: 00000000-0000-0000-0000-000000000000";
+  const result = classifyFailure(stderr, "");
+  assert.equal(result.class, "session_corrupt", "must catch Claude's actual wording");
+  assert.equal(result.shouldClearSession, true);
+  assert.equal(result.safeToRetry, true);
+});
+
+test("B017: Claude CLI structured error_during_execution subtype → session_corrupt", () => {
+  // The result envelope itself carries subtype:"error_during_execution" — a
+  // structural signal that's harder to break than English text.
+  const stderr = '{"subtype":"error_during_execution","errors":["some claude internal"]}';
+  const result = classifyFailure(stderr, "");
+  assert.equal(result.class, "session_corrupt");
+  assert.equal(result.shouldClearSession, true);
+});
+
+test("B017: Codex CLI 'no rollout found for thread id' → session_corrupt", () => {
+  const stderr = "Error: thread/resume: thread/resume failed: no rollout found for thread id 00000000-0000-0000-0000-000000000000";
+  const result = classifyFailure(stderr, "");
+  assert.equal(result.class, "session_corrupt", "must catch Codex 'no rollout' wording");
+  assert.equal(result.shouldClearSession, true);
+});
+
+test("B017: Gemini CLI 'Invalid session identifier' → session_corrupt", () => {
+  // Gemini exits 0 so this is the ONLY line of defence for Gemini; miss it and
+  // Gemini enters the death loop.
+  const stderr = 'Error resuming session: Invalid session identifier "00000000-0000-0000-0000-000000000000". Searched for sessions in ...';
+  const result = classifyFailure(stderr, "");
+  assert.equal(result.class, "session_corrupt", "must catch Gemini 'invalid session identifier' wording (Gemini's only defence)");
+  assert.equal(result.shouldClearSession, true);
+});
+
+test("B017: existing 'session does not exist' wording still caught (no regression)", () => {
+  const result = classifyFailure("Error: session does not exist: abc-123", "");
+  assert.equal(result.class, "session_corrupt");
+});

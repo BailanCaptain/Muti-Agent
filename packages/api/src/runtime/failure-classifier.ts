@@ -65,8 +65,19 @@ const PATTERNS: Array<{ match: RegExp; cls: FailureClass }> = [
     cls: "auth_failed"
   },
   {
+    // B017: three CLI families speak three dialects when --resume can't find
+    // the target. Captured by probing each CLI on 2026-04-18 with a synthetic
+    // bad UUID (see docs/bugReport/B017-*.md):
+    //   Claude  — "No conversation found with session ID: <id>"   (stderr)
+    //           + subtype:"error_during_execution"                (structural)
+    //   Codex   — "Error: thread/resume: thread/resume failed: no rollout
+    //              found for thread id <id>"                      (stderr)
+    //   Gemini  — `Error resuming session: Invalid session identifier "<id>"`
+    //              (stderr; exit code 0 — this is Gemini's ONLY defence line)
+    // Keep the original "session ... (not found|...)" alternation as a catch-
+    // all for future wording drift that still puts "session" first.
     match:
-      /session[^\n]{0,40}(not found|expired|corrupt|invalid|cannot resume|could not resume|does not exist)/i,
+      /(session[^\n]{0,40}(not found|expired|corrupt|invalid|cannot resume|could not resume|does not exist)|no conversation found with session id|no rollout found for thread id|thread\/resume failed|invalid session identifier|error resuming session|error_during_execution)/i,
     cls: "session_corrupt"
   },
   // True account-level RPS: session-agnostic, clearing wouldn't help.

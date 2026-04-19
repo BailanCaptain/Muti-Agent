@@ -650,6 +650,16 @@ export function findSessionId(payload: unknown): string | null {
   }
 
   const value = payload as Record<string, unknown>;
+
+  // B017: skip error-result envelopes. Claude CLI emits
+  // `{type:"result", is_error:true, num_turns:0, session_id:"<junk>"}` when
+  // --resume can't find the target session — that session_id is a freshly-minted
+  // id with no jsonl on disk; trusting it makes next --resume repeat the failure
+  // forever (observed in thread 8b43322b 2026-04-18 18:38).
+  if (value.type === "result" && value.is_error === true) {
+    return null;
+  }
+
   if (typeof value.session_id === "string" && value.session_id) {
     return value.session_id;
   }
