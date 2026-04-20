@@ -71,10 +71,12 @@ created: 2026-04-19
 - [x] AC-14i: 右键菜单「归档」启用 —— DB 加 `archived_at` 字段，归档项从主列表移除；侧栏底部新增「归档列表」视图展示 `archived_at != null` 或 `deleted_at != null` 的条目；归档列表每条带小标签（"归档中" / "已删除"）区分状态；点击可恢复（清 `archived_at` / `deleted_at`）
 - [x] AC-14j: 右键菜单「删除」启用（软删）—— `deleted_at` 字段，二次确认弹框，确认后软删并进归档列表的"已删除"区；**铁律 1：不提供物理删除/彻底清除按钮**，只支持恢复
 
-### Phase 4：标题栏三层 ID 补丁（0.5 天）
-- [ ] AC-16: 右侧面板顶部 ROOM 徽章显示 `R-xxx`（与 F021 联动）
-- [ ] AC-17: ChatHeader 显示 `R-xxx · {title}`，支持点击复制 ID
-- [ ] AC-18: 消息元数据（调试态）可见 roomId
+### Phase 4：标题栏三层 ID 补丁（**Dropped 2026-04-21 — 迁移 F021**）
+- [~] AC-16: ~~右侧面板顶部 ROOM 徽章显示 `R-xxx`（与 F021 联动）~~ **迁 F021**
+- [~] AC-17: ~~ChatHeader 显示 `R-xxx · {title}`，支持点击复制 ID~~ **迁 F021**
+- [~] AC-18: ~~消息元数据（调试态）可见 roomId~~ **迁 F021**
+
+> 2026-04-21 小孙决策：三层 ID 徽章本质属于右侧面板/ChatHeader 重设计范畴，F021 正在做同模块，合并处理避免重复改动。F022 只保留侧栏重塑（Phase 1~3.5）。
 
 ### Phase 5：验收
 - [ ] AC-19: 桂芬视觉验收通过
@@ -118,7 +120,8 @@ created: 2026-04-19
 | 2026-04-20 | Phase 2 实施完成（AC-05~10 ✅，6 个 TDD commits，33 新测试覆盖；isDefaultTitle / updateSessionGroupTitle / HaikuRunner / SessionTitler / SessionService hook / buildTitlePrompt）|
 | 2026-04-20 | Phase 3 实施完成（AC-11~15 ✅，5 个 commit；backend 透传 roomId/participants/messageCount/createdAtLabel → SessionCard R-xxx 前缀 + 真实参与者头像 + 悬停详情 → 搜索 R-xxx 精确跳转 + 自动选中 → Agent pills 多选 AND 过滤）|
 | 2026-04-20 | worktree 预览验收（小孙 L1 @ :3200）发现 3 项反馈 → Phase 3.5 开（AC-14 Dropped + AC-14a/b/c 新增；产品决策固化到 Design Decisions）|
-| 2026-04-21 | Phase 3.5 实施完成（AC-14a~j ✅）：时间分组 + 历史回填 migration + title fallback + F/B/D/Q 分类前缀 + 立项号识别 + HaikuRunner stdin/超时修复 + 右键菜单四件套（重命名/清除项目标签/归档/软删）+ 归档列表视图 · typecheck ✅ · 928/928 tests ✅ · 小孙 :3200 分桶验收通过 |
+| 2026-04-21 | Phase 3.5 实施完成（AC-14a~j ✅）：时间分组 + 历史回填 migration + title fallback + F/B/D/Q 分类前缀 + 立项号识别 + HaikuRunner stdin/超时修复 + 右键菜单四件套（重命名/清除项目标签/归档/软删）+ 归档列表视图 · typecheck ✅ · 928/928 tests ✅ · 小孙 :3200 分桶 + 右键菜单实机验收通过 |
+| 2026-04-21 | 小孙决策：Phase 4（AC-16/17/18 标题栏三层 ID 徽章）Dropped，迁移至 F021 右侧面板重设计合并处理 |
 
 ## Links
 
