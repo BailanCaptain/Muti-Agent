@@ -98,7 +98,9 @@ Preview 不起来 = worktree 不能做 L1 愿景验收 = 合入时必卡 merge-g
 
 ## 清理 Worktree
 
-**PR merge 后必做**：
+**清理的完整流程由 `merge-gate` 编排**（5a 副产物清理 → 5b 切 dev 同步 → 5c 调用本章节物理删除）。本章节只负责**物理删除动作**，不复刻 merge-gate 的清理命令，避免双真相源漂移。
+
+### 物理删除命令
 
 ```bash
 # 1. 回到主仓库
@@ -107,18 +109,21 @@ cd /c/Users/-/Desktop/Multi-Agent
 # 2. 更新 dev
 git checkout dev && git pull origin dev
 
-# 3. （可选）归档验收证据 — 严解下证据不进 git，worktree 删了就没了
-#    如需长期保留某 feature 的截图/报告，先复制出去再删 worktree
+# 3. （可选）归档验收证据 — 按 F024 策略 B，证据不进 git，worktree 删了就没了
+#    如需长期保留某 feature 的截图/报告，先复制到主仓外再删 worktree
 #    cp -r ../multi-agent-{feature}/.agents/acceptance/{feature-id} /some/archive/path/
 
 # 4. 删除 worktree（含 .agents/acceptance/ 内所有证据）
+#    untracked/modified 报错 = 5a 副产物没清干净，回 merge-gate；禁 --force
 git worktree remove ../multi-agent-{feature}
 
-# 5. 释放端口 + 删除分支 + 清理
-# .worktree-ports.json 条目由 worktree:preview 脚本维护，如有残留手动清理
+# 5. 分支清理
+#    .worktree-ports.json 条目由 worktree:preview 脚本维护，如有残留手动清理
 git branch -d feat/{feature}
 git worktree prune
 ```
+
+**为什么禁 `--force`**：`--force` 会静默销毁未清的 `.runtime/uploads`（可能含用户持久化数据），违反数据神圣铁律。正确做法是回 merge-gate 5a 补清理，不是加 `--force`。
 
 ## Common Mistakes
 
@@ -126,7 +131,8 @@ git worktree prune
 |------|------|
 | dev 没同步就开 worktree | 先 fetch + rebase，确认 ahead=0 behind=0 |
 | 忘了在 worktree 里装依赖 | 新 worktree 先跑 `pnpm install` |
-| merge 后不清理 worktree | 用完必须 remove + prune |
+| merge 后不清理 worktree | 回 `merge-gate` 跑 5a/5b/5c，顺序不可调 |
+| `git worktree remove --force` 绕过未清副产物 | force 会静默销毁 `.runtime/uploads` 等数据；回 merge-gate 5a 补清理 |
 | 在 dev 上直接改代码 | 开 worktree |
 | 在主仓库目录改代码以为是 worktree | 检查 `pwd`，确认在 `../multi-agent-{feature}` 下 |
 | 不搜历史直接开始 | 先 Recall 搜相关 feature 和讨论 |

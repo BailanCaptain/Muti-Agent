@@ -95,12 +95,35 @@ gh pr merge {PR_NUMBER} --squash --delete-branch
 
 # 4. Phase 文档同步（见下方）
 
-# 5. 更新本地 + 清理
-git checkout dev && git pull origin dev
-git worktree remove ../multi-agent-{feature}  # 如果用了 worktree
-git branch -d feat/{feature-name}
-git worktree prune
+# 5. 合入后：副产物清理 → 切 dev → Worktree 物理删除（见下方）
 ```
+
+## 合入后清理流程
+
+**按 F024 Design Decisions**：验收证据（`.agents/acceptance/` 下截图/日志/报告）只留 worktree 本地，不进 git；worktree 被 `git worktree remove` 后证据随之消失。**如需长期归档由人工显式复制到主仓外**，走人工操作，不是自动流程。
+
+### 5a. 副产物清理（必做）
+
+`git worktree remove` 遇到 untracked/modified 文件会拒绝，必须先清。**禁用 `--force`**——`.runtime/uploads` 可能含持久化数据，`--force` 会静默销毁，违反数据神圣铁律。
+
+```bash
+cd ../multi-agent-{feature}
+rm -rf node_modules
+rm -rf .runtime/uploads .runtime/runtime-events
+rm -f .env*.backup-by-preview          # preview 异常退出残留（TD：preview 脚本根治）
+# .agents/acceptance/ 里证据按策略 B 随 worktree 一起 remove 消失；如需长期归档先人工复制到主仓外
+```
+
+### 5b. 切回主仓 dev 并同步
+
+```bash
+cd /c/Users/-/Desktop/Multi-Agent
+git checkout dev && git pull origin dev
+```
+
+### 5c. Worktree 物理删除 + 分支清理
+
+调用 `worktree` skill 的「清理 Worktree · 物理删除」章节（单一真相源，本 skill 不再重复命令）。
 
 ## Phase 文档同步（每次 merge 必做）🔴
 
@@ -142,7 +165,9 @@ git worktree prune
 | 一个 feature 在 dev 留下 N 个 atomic commit | 合入前 squash 成 1 个（含 kickoff/design/plan docs） |
 | 本地 merge 后 `gh pr close` | `close` = 放弃，`merge` = 合入 |
 | Merge 后不更新 feature doc | Phase 文档同步每次 merge 必做 |
-| Merge 后不清理 worktree | 必须 remove + prune |
+| Merge 后不清理 worktree | 按 5a → 5b → 5c 顺序完成 |
+| `git worktree remove --force` 绕过未清副产物 | force 会静默销毁 `.runtime/uploads` 等数据，违反数据神圣铁律；先跑 5a |
+| 把 `.agents/acceptance/` 拷进 git 当归档 | F024 Design Decisions 选 B：不进 git；长期归档由人工复制到主仓外 |
 | 修了 P1 不通知 reviewer | 修完后 @ reviewer 确认 |
 | 历史重写用 `git push --force` | 用 `--force-with-lease`；只在自己主导的分支上做 |
 
