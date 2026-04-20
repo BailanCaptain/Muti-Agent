@@ -422,3 +422,50 @@ test("F022 AC-02: listSessionGroups 返回结果含 roomId", async () => {
     safeCleanup(tempDir)
   }
 })
+
+test("F022-P2 updateSessionGroupTitle writes new title and bumps updatedAt", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup()
+    const before = repo.getSessionGroupById(groupId)
+    assert.ok(before)
+    const originalUpdatedAt = before.updatedAt
+
+    // Ensure clock ticks before update so updatedAt changes.
+    await new Promise((r) => setTimeout(r, 10))
+
+    repo.updateSessionGroupTitle(groupId, "学习 Drizzle")
+
+    const after = repo.getSessionGroupById(groupId)
+    assert.ok(after)
+    assert.equal(after.title, "学习 Drizzle")
+    assert.ok(after.updatedAt >= originalUpdatedAt, "updatedAt should advance")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F022-P2 updateSessionGroupTitle is no-op for unknown id (does not throw)", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    // Should not throw; drizzle UPDATE with 0 rows affected is silent.
+    repo.updateSessionGroupTitle("does-not-exist", "whatever")
+    assert.equal(repo.getSessionGroupById("does-not-exist"), undefined)
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})

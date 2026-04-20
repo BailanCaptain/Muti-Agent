@@ -178,6 +178,15 @@ export class DrizzleSessionRepository {
       .run()
   }
 
+  updateSessionGroupTitle(groupId: string, title: string) {
+    const now = new Date().toISOString()
+    this.db
+      .update(sessionGroups)
+      .set({ title, updatedAt: now })
+      .where(eq(sessionGroups.id, groupId))
+      .run()
+  }
+
   createThread(sessionGroupId: string, provider: Provider, currentModel: string | null) {
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
