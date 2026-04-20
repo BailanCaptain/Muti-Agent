@@ -2,6 +2,7 @@ import crypto from "node:crypto"
 import { mkdirSync } from "node:fs"
 import path from "node:path"
 import cors from "@fastify/cors"
+import type { CorsOrigin } from "./config"
 import multipart from "@fastify/multipart"
 import fastifyStatic from "@fastify/static"
 import websocket from "@fastify/websocket"
@@ -48,7 +49,7 @@ import { setRootLogger } from "./lib/logger"
 export async function createApiServer(options: {
   apiBaseUrl: string
   sqlitePath: string
-  corsOrigin: string
+  corsOrigin: CorsOrigin
   redisUrl: string
   uploadsDir: string
 }) {
