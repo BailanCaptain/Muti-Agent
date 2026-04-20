@@ -220,3 +220,54 @@ test("getActiveGroupDelta running flag reflects runningThreadIds", () => {
   assert.equal(delta.providers.codex?.running, true)
   assert.equal(delta.providers.claude?.running, false)
 })
+
+test("F022-P3 AC-11/12: SessionService.listSessionGroups 透传 roomId + participants + messageCount + createdAtLabel", () => {
+  const repo = {
+    ...createMockRepository([], []),
+    listSessionGroups: () => [
+      {
+        id: "g1",
+        roomId: "R-042",
+        title: "学习 TDD",
+        projectTag: null,
+        createdAt: "2026-04-18T06:30:00.000Z",
+        updatedAt: "2026-04-20T06:00:00.000Z",
+        previews: [],
+        participants: ["claude", "codex"] as Provider[],
+        messageCount: 12,
+      },
+    ],
+  }
+  const service = new SessionService(repo as never, [])
+  const [row] = service.listSessionGroups()
+  assert.ok(row)
+  assert.equal(row.roomId, "R-042")
+  assert.deepEqual(row.participants, ["claude", "codex"])
+  assert.equal(row.messageCount, 12)
+  assert.match(row.createdAtLabel, /2026/)
+  assert.match(row.updatedAtLabel, /2026/)
+})
+
+test("F022-P3 AC-15: SessionService.listSessionGroups 对缺失 participants/messageCount 提供默认值", () => {
+  const repo = {
+    ...createMockRepository([], []),
+    listSessionGroups: () =>
+      [
+        {
+          id: "g-empty",
+          roomId: null,
+          title: "未命名",
+          projectTag: null,
+          createdAt: "2026-04-20T06:00:00.000Z",
+          updatedAt: "2026-04-20T06:00:00.000Z",
+          previews: [],
+        },
+      ] as never,
+  }
+  const service = new SessionService(repo as never, [])
+  const [row] = service.listSessionGroups()
+  assert.ok(row)
+  assert.equal(row.roomId, null)
+  assert.deepEqual(row.participants, [])
+  assert.equal(row.messageCount, 0)
+})

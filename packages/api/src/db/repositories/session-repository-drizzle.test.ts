@@ -469,3 +469,60 @@ test("F022-P2 updateSessionGroupTitle is no-op for unknown id (does not throw)",
     safeCleanup(tempDir)
   }
 })
+
+test("F022-P3 AC-12: listSessionGroups participants 只含真正发过消息的 provider", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup("room with msgs")
+    repo.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const threads = repo.listThreadsByGroup(groupId)
+    const claudeThread = threads.find((t) => t.provider === "claude")!
+    const codexThread = threads.find((t) => t.provider === "codex")!
+    repo.appendMessage(claudeThread.id, "user", "hi")
+    repo.appendMessage(codexThread.id, "assistant", "ok")
+    // gemini thread 存在但无消息
+    const list = repo.listSessionGroups() as Array<{
+      id: string
+      participants?: string[]
+      messageCount?: number
+    }>
+    const row = list.find((g) => g.id === groupId)
+    assert.ok(row, "group row should be in list")
+    assert.deepEqual([...(row.participants ?? [])].sort(), ["claude", "codex"])
+    assert.equal(row.messageCount, 2)
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F022-P3 AC-15: listSessionGroups 返回 messageCount=0 + participants=[] for empty group", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup("empty room")
+    const list = repo.listSessionGroups() as Array<{
+      id: string
+      participants?: string[]
+      messageCount?: number
+    }>
+    const row = list.find((g) => g.id === groupId)
+    assert.ok(row)
+    assert.equal(row.messageCount, 0)
+    assert.deepEqual(row.participants, [])
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})

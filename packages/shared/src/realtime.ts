@@ -111,9 +111,13 @@ export interface InvocationStats {
 
 export type SessionGroupSummary = {
   id: string
+  roomId: string | null
   title: string
   updatedAtLabel: string
+  createdAtLabel: string
   projectTag?: string
+  participants: Provider[]
+  messageCount: number
   previews: Array<{
     provider: Provider
     alias: string

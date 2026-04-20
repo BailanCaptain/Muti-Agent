@@ -105,6 +105,7 @@ export class DrizzleSessionRepository {
         provider: threads.provider,
         alias: threads.alias,
         lastMessage: sql<string | null>`(SELECT content FROM messages WHERE thread_id = ${threads.id} ORDER BY created_at DESC LIMIT 1)`,
+        msgCount: sql<number>`(SELECT COUNT(*) FROM messages WHERE thread_id = ${threads.id})`,
       })
       .from(sessionGroups)
       .leftJoin(threads, eq(threads.sessionGroupId, sessionGroups.id))
@@ -122,6 +123,8 @@ export class DrizzleSessionRepository {
         createdAt: string
         updatedAt: string
         previews: Array<{ provider: Provider; alias: string; text: string }>
+        participants: Provider[]
+        messageCount: number
       }
     >()
 
@@ -136,6 +139,8 @@ export class DrizzleSessionRepository {
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
           previews: [],
+          participants: [],
+          messageCount: 0,
         }
         groupMap.set(row.id, group)
       }
@@ -145,9 +150,15 @@ export class DrizzleSessionRepository {
           alias: row.alias!,
           text: (row.lastMessage ?? "").slice(0, 80),
         })
+        const count = Number(row.msgCount ?? 0)
+        group.messageCount += count
+        if (count > 0 && !group.participants.includes(row.provider as Provider)) {
+          group.participants.push(row.provider as Provider)
+        }
       }
     }
 
+    for (const g of groupMap.values()) g.participants.sort()
     return Array.from(groupMap.values())
   }
 

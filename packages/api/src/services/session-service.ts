@@ -64,9 +64,13 @@ export class SessionService {
   listSessionGroups(): SessionGroupSummary[] {
     return this.repository.listSessionGroups().map((group) => ({
       id: group.id,
+      roomId: group.roomId ?? null,
       title: group.title,
       updatedAtLabel: new Date(group.updatedAt).toLocaleString("zh-CN"),
+      createdAtLabel: new Date(group.createdAt).toLocaleString("zh-CN"),
       projectTag: group.projectTag ?? undefined,
+      participants: group.participants ?? [],
+      messageCount: group.messageCount ?? 0,
       previews: group.previews,
     }))
   }
