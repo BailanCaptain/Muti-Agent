@@ -45,12 +45,12 @@ created: 2026-04-19
 - [x] AC-04: ID 在数据库层面全局唯一（`CREATE UNIQUE INDEX idx_session_groups_room_id`）
 
 ### Phase 2：Haiku 自动命名（1 天）
-- [ ] AC-05: 触发时机：首条 user + 首条 assistant 之后，等 2-3 秒
-- [ ] AC-06: 调用 Haiku（claude-haiku-4-5）总结 session，生成简短 title（≤ 20 字）
-- [ ] AC-07: 命名结果写入 session.title，替换原有 `YYYY-MM-DD · 未命名` 格式
-- [ ] AC-08: Haiku 失败时回退到当前日期格式（不阻塞）
-- [ ] AC-09: 命名过程不阻塞用户输入（异步）
-- [ ] AC-10: 已命名过的 session 不重复命名（除非手动重置）
+- [x] AC-05: 触发时机：assistant final 消息后 debounce 2.5s（SessionTitler.schedule 合并多次调用）
+- [x] AC-06: 调用 Haiku（claude-haiku-4-5）总结 session，生成简短 title（≤ 10 字）
+- [x] AC-07: 命名结果写入 session_groups.title，替换原有 `YYYY-MM-DD · 未命名` 格式
+- [x] AC-08: Haiku 失败时回退到 `新会话 YYYY-MM-DD`（不阻塞；timeout/exit-code/empty-output/spawn-error 四类失败统一处理）
+- [x] AC-09: 命名过程不阻塞用户输入（schedule 同步返回，setTimeout + .unref() 不阻塞进程退出）
+- [x] AC-10: 已命名过的 session 不重复命名（通过 `isDefaultTitle` 正则匹配默认模式实现幂等）
 
 ### Phase 3：Sidebar UI 重塑（1 天）
 - [ ] AC-11: 条目显示 `R-xxx · {语义 title}`（ID 在前，title 紧跟）
@@ -84,6 +84,7 @@ created: 2026-04-19
 | 命名用什么模型 | Haiku / Sonnet | **Haiku** | 命名是轻量总结任务，Haiku 成本低速度快 |
 | 命名失败处理 | 报错阻塞 / 回退默认 | **回退到日期格式** | 命名是锦上添花，不阻塞主流程 |
 | 历史 session 处理 | 不动 / 批量命名 / 按需命名 | **migration 先分 ID，title 按需触发 Haiku** | ID 必须立即全量回填，title 可以懒加载 |
+| Title 长度上限 | 20 字 / 10 字 | **≤ 10 字**（2026-04-20 产品下调） | 20 字在 sidebar 条目里太长，左侧栏窄，短标题更清爽 |
 
 ## Timeline
 
@@ -93,6 +94,8 @@ created: 2026-04-19
 | 2026-04-18 | 产品决策：Haiku 触发时机 + 全局递增 ID |
 | 2026-04-19 | Kickoff |
 | 2026-04-19 | Phase 1 实施完成（AC-01~04 ✅，TDD 10 新测试覆盖）|
+| 2026-04-20 | 产品决策：title 上限 20 → 10 字；Haiku 命名走 CLI 订阅（不引 SDK）|
+| 2026-04-20 | Phase 2 实施完成（AC-05~10 ✅，6 个 TDD commits，33 新测试覆盖；isDefaultTitle / updateSessionGroupTitle / HaikuRunner / SessionTitler / SessionService hook / buildTitlePrompt）|
 
 ## Links
 
