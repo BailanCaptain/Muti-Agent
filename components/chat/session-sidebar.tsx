@@ -76,6 +76,16 @@ export function SessionSidebar() {
   const [search, setSearch] = useState("")
   const [pinned, setPinned] = useState<Set<string>>(new Set())
   const [collapsedTags, setCollapsedTags] = useState<Set<string>>(new Set())
+  const [agentFilter, setAgentFilter] = useState<Set<Provider>>(new Set())
+
+  const toggleAgentFilter = useCallback((p: Provider) => {
+    setAgentFilter((prev) => {
+      const next = new Set(prev)
+      if (next.has(p)) next.delete(p)
+      else next.add(p)
+      return next
+    })
+  }, [])
 
   // Context menu
   const [contextMenu, setContextMenu] = useState<{
@@ -126,21 +136,24 @@ export function SessionSidebar() {
     return running
   }, [anyProviderRunning, activeGroupId])
 
-  // Filter by search (ROOM-ID 精确匹配优先 → 普通 fuzzy)
+  // Filter by agent pills + search (ROOM-ID 精确优先 → fuzzy)
   const filtered = useMemo(() => {
-    const raw = search.trim()
-    if (!raw) return sessionGroups
-    const roomTarget = matchRoomId(raw)
-    if (roomTarget) {
-      return sessionGroups.filter((g) => g.roomId === roomTarget)
+    let list = sessionGroups
+    if (agentFilter.size > 0) {
+      const required = [...agentFilter]
+      list = list.filter((g) => required.every((p) => g.participants.includes(p)))
     }
+    const raw = search.trim()
+    if (!raw) return list
+    const roomTarget = matchRoomId(raw)
+    if (roomTarget) return list.filter((g) => g.roomId === roomTarget)
     const query = raw.toLowerCase()
-    return sessionGroups.filter(
+    return list.filter(
       (group) =>
         group.title.toLowerCase().includes(query) ||
         group.previews.some((p) => p.text.toLowerCase().includes(query)),
     )
-  }, [sessionGroups, search])
+  }, [sessionGroups, search, agentFilter])
 
   // R-xxx 命中唯一房间时自动选中（debounce 由用户输入节奏自然形成）
   useEffect(() => {
@@ -219,6 +232,38 @@ export function SessionSidebar() {
           value={search}
         />
       </label>
+
+      {/* Agent filter pills */}
+      <div className="mb-2 flex items-center gap-1.5 px-1">
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">
+          Agents
+        </span>
+        {(["claude", "codex", "gemini"] as Provider[]).map((p) => {
+          const active = agentFilter.has(p)
+          return (
+            <button
+              className={`flex items-center rounded-full p-0.5 transition ${
+                active ? "ring-2 ring-amber-400" : "opacity-60 hover:opacity-100"
+              }`}
+              key={p}
+              onClick={() => toggleAgentFilter(p)}
+              title={`过滤 ${p} 参与的房间`}
+              type="button"
+            >
+              <ProviderAvatar identity={p} size="xs" />
+            </button>
+          )
+        })}
+        {agentFilter.size > 0 && (
+          <button
+            className="ml-auto text-[10px] text-slate-400 hover:text-slate-600"
+            onClick={() => setAgentFilter(new Set())}
+            type="button"
+          >
+            清除
+          </button>
+        )}
+      </div>
 
       {/* Scrollable list */}
       <div className="flex-1 overflow-y-auto">
