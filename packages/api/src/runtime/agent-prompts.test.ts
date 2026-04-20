@@ -14,14 +14,19 @@ test("AGENT_SYSTEM_PROMPTS.claude contains identity and rules", () => {
   assert.ok(prompt.includes("家规"))
 })
 
-test("AGENT_SYSTEM_PROMPTS.codex includes Callback API section", () => {
+const LEGACY_SECTION = ["Call", "back", " API"].join("")
+const LEGACY_NODE_E = ["node", " -e"].join("")
+
+test("AGENT_SYSTEM_PROMPTS.codex does not include legacy curl-fetch section (F023 — MCP 挂载统一后废弃)", () => {
   const prompt = AGENT_SYSTEM_PROMPTS.codex
-  assert.ok(prompt.includes("Callback API"))
+  assert.ok(!prompt.includes(LEGACY_SECTION), "Codex prompt must not embed legacy curl-fetch guide")
+  assert.ok(!prompt.includes(LEGACY_NODE_E), "Codex prompt must not teach manual fetch command")
 })
 
-test("AGENT_SYSTEM_PROMPTS.gemini includes Callback API section", () => {
+test("AGENT_SYSTEM_PROMPTS.gemini does not include legacy curl-fetch section (F023 — MCP 挂载统一后废弃)", () => {
   const prompt = AGENT_SYSTEM_PROMPTS.gemini
-  assert.ok(prompt.includes("Callback API"))
+  assert.ok(!prompt.includes(LEGACY_SECTION), "Gemini prompt must not embed legacy curl-fetch guide")
+  assert.ok(!prompt.includes(LEGACY_NODE_E), "Gemini prompt must not teach manual fetch command")
 })
 
 test("buildSystemPromptWithHints returns base prompt unchanged when no context", () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { getTools, handleToolCall } from "./server.js"
+import { encodeMessage, getTools, handleToolCall, parseFrame } from "./server.js"
 
 // ---------------------------------------------------------------------------
 // getTools tests
@@ -213,6 +213,47 @@ test("handleToolCall dispatches take_screenshot", async () => {
       return true
     },
   )
+})
+
+// ---------------------------------------------------------------------------
+// Transport: MCP stdio must use NDJSON (newline-delimited JSON), not LSP
+// Content-Length framing. All three CLIs (Claude/Codex/Gemini) parse stdio
+// MCP servers per the spec — NDJSON — so we must match.
+// ---------------------------------------------------------------------------
+
+test("encodeMessage produces NDJSON (trailing \\n, no Content-Length header)", () => {
+  const line = encodeMessage({ jsonrpc: "2.0", id: 1, result: { ok: true } })
+  assert.ok(line.endsWith("\n"), "must terminate with newline")
+  assert.ok(!line.includes("Content-Length"), "must not use LSP framing")
+  const parsed = JSON.parse(line.trimEnd())
+  assert.equal(parsed.id, 1)
+  assert.deepEqual(parsed.result, { ok: true })
+})
+
+test("parseFrame splits newline-delimited JSON", () => {
+  const { messages, remaining } = parseFrame(
+    '{"jsonrpc":"2.0","id":1,"method":"initialize"}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n',
+  )
+  assert.equal(messages.length, 2)
+  assert.equal((messages[0] as { id: number }).id, 1)
+  assert.equal((messages[1] as { id: number }).id, 2)
+  assert.equal(remaining, "")
+})
+
+test("parseFrame keeps incomplete tail across chunk boundary", () => {
+  const first = parseFrame('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n{"jsonrpc":"2.0"')
+  assert.equal(first.messages.length, 1)
+  assert.equal(first.remaining, '{"jsonrpc":"2.0"')
+  const second = parseFrame(first.remaining + ',"id":2,"method":"tools/list"}\n')
+  assert.equal(second.messages.length, 1)
+  assert.equal((second.messages[0] as { id: number }).id, 2)
+  assert.equal(second.remaining, "")
+})
+
+test("parseFrame ignores blank lines (LSP-to-NDJSON tolerant)", () => {
+  const { messages, remaining } = parseFrame('\n\n{"jsonrpc":"2.0","id":1,"method":"ping"}\n\n')
+  assert.equal(messages.length, 1)
+  assert.equal(remaining, "")
 })
 
 test("handleToolCall returns unknown tool error for invalid tool", async () => {

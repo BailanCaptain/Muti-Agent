@@ -1,0 +1,9 @@
+[mcp_servers.multi_agent_room]
+command = "node"
+args = [ "packages/api/dist/mcp/server.js" ]
+enabled = true
+env_vars = [
+  "MULTI_AGENT_API_URL",
+  "MULTI_AGENT_INVOCATION_ID",
+  "MULTI_AGENT_CALLBACK_TOKEN",
+]

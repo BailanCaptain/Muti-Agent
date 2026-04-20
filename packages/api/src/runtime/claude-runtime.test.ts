@@ -260,3 +260,21 @@ describe("ClaudeRuntime stream_event handling", () => {
     });
   });
 });
+
+describe("F023 ClaudeRuntime buildCommand — 项目级 .mcp.json 接管", () => {
+  it("must NOT inject --mcp-config (project-level .mcp.json takes over)", () => {
+    const runtime = new ClaudeRuntime();
+    const cmd = (runtime as unknown as {
+      buildCommand: (i: { prompt: string; env?: Record<string, string> }) => { args: string[]; cleanup?: unknown };
+    }).buildCommand({
+      prompt: "hi",
+      env: {
+        MULTI_AGENT_API_URL: "http://localhost:8787",
+        MULTI_AGENT_INVOCATION_ID: "inv_test",
+        MULTI_AGENT_CALLBACK_TOKEN: "tok_test",
+      },
+    });
+    assert.ok(!cmd.args.includes("--mcp-config"), "--mcp-config must be removed (project-level .mcp.json replaces it)");
+    assert.equal(cmd.cleanup, undefined, "cleanup must be undefined (no tmp dir to clean)");
+  });
+});

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "multi_agent_room": {
+      "command": "node",
+      "args": [
+        "packages/api/dist/mcp/server.js"
+      ]
+    }
+  }
+}

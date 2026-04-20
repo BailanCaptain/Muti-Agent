@@ -209,9 +209,31 @@ async function callRecallSimilarContext(query: string, topK?: number): Promise<T
   };
 }
 
+export function encodeMessage(message: JsonRpcResponse): string {
+  return `${JSON.stringify(message)}\n`;
+}
+
+export function parseFrame(buffer: string): { messages: unknown[]; remaining: string } {
+  const messages: unknown[] = [];
+  let rest = buffer;
+  while (true) {
+    const nl = rest.indexOf("\n");
+    if (nl === -1) break;
+    const line = rest.slice(0, nl);
+    rest = rest.slice(nl + 1);
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      messages.push(JSON.parse(trimmed));
+    } catch {
+      // Drop malformed line; real server will reply with parse error via write path.
+    }
+  }
+  return { messages, remaining: rest };
+}
+
 function writeMessage(message: JsonRpcResponse) {
-  const body = JSON.stringify(message);
-  process.stdout.write(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
+  process.stdout.write(encodeMessage(message));
 }
 
 function writeResult(id: JsonRpcId, result: unknown) {
@@ -900,48 +922,21 @@ export function startMcpServer() {
 
   process.stdin.on("data", async (chunk) => {
     buffer += chunk;
+    const { messages, remaining } = parseFrame(buffer);
+    buffer = remaining;
 
-    while (true) {
-      const headerEnd = buffer.indexOf("\r\n\r\n");
-      if (headerEnd === -1) {
-        break;
-      }
-
-      const headerText = buffer.slice(0, headerEnd);
-      const lengthMatch = headerText.match(/Content-Length:\s*(\d+)/i);
-      if (!lengthMatch) {
-        buffer = buffer.slice(headerEnd + 4);
-        continue;
-      }
-
-      const contentLength = Number(lengthMatch[1]);
-      const bodyStart = headerEnd + 4;
-      const bodyEnd = bodyStart + contentLength;
-      if (buffer.length < bodyEnd) {
-        break;
-      }
-
-      const body = buffer.slice(bodyStart, bodyEnd);
-      buffer = buffer.slice(bodyEnd);
-
+    for (const raw of messages) {
+      const request = raw as JsonRpcRequest;
       try {
-        const request = JSON.parse(body) as JsonRpcRequest;
         const result = await handleRequest(request);
         if (request.id !== undefined && result !== null) {
           writeResult(request.id, result);
         }
       } catch (error) {
-        const requestId =
-          typeof body === "string"
-            ? (() => {
-                try {
-                  return (JSON.parse(body) as { id?: JsonRpcId }).id ?? null;
-                } catch {
-                  return null;
-                }
-              })()
-            : null;
-        writeError(requestId, error instanceof Error ? error.message : "Unknown MCP server error");
+        writeError(
+          request?.id ?? null,
+          error instanceof Error ? error.message : "Unknown MCP server error"
+        );
       }
     }
   });

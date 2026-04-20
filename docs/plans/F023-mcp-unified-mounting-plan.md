@@ -2,7 +2,7 @@
 
 **Feature:** F023 — `docs/features/F023-mcp-unified-mounting.md`
 **Goal:** 三家 CLI（Claude / Codex / Gemini）统一通过项目级官方配置挂载 `multi_agent_room` MCP server；删除 runtime 临时 `--mcp-config` + `mkdtemp` 路径和 `CALLBACK_API_PROMPT` 指令。
-**Acceptance Criteria:**
+**Acceptance Criteria (Phase A — Task 1-6 已交付):**
 - AC1: Claude runtime 工具列表含 `mcp__multi_agent_room__take_screenshot` 等 MCP 工具
 - AC2: Codex runtime 能直接调用 MCP 工具（通过 `.codex/config.toml`）
 - AC3: Gemini runtime 能直接调用 MCP 工具（通过 `.gemini/settings.json`）
@@ -12,7 +12,16 @@
 - AC7: `agent-prompts.test.ts` 中 `Callback API` 断言删除或重写，pnpm test 全绿
 - AC8: 三家联动实际跑一次——Codex/Gemini 通过 MCP 调 `post_message` 或 `take_screenshot`，前端看到结果
 
-**Architecture:** 照搬 clowder-ai 验证过的模式——项目根放三份同构的官方 MCP 配置文件，全部指向稳定的 `packages/api/dist/mcp/server.js`（绝对路径）。动态 token 靠进程继承链（base-runtime spawn 时 `env: {MULTI_AGENT_*}` 已传）。Gemini 配置需额外写 `env: {VAR: "${VAR}"}` 触发 CLI 侧展开，Claude/Codex 裸继承即可。
+**Acceptance Criteria (Phase B — 2026-04-20 扩 scope，Task 7-11):**
+- AC9（根因 A 修复）: runtime spawn CLI 时 cwd 显式传当前 invocation 的 `projectRoot`；`AgentRunInput` 补 cwd 字段；单元测试断言 spawn 接收到正确 cwd
+- AC10（根因 B Spike + 修复）: Gemini 在 worktree 启动后，MCP 工具列表包含 `mcp__multi_agent_room__*`；产出 Spike 报告 + 针对性修复 + 回归测试
+- AC11（根因 C Spike + 修复）: Codex 在 worktree 启动后，MCP 工具列表包含 `mcp__multi_agent_room__*`；产出 Spike 报告 + 针对性修复 + 回归测试
+- AC12（worktree 同源验证）: worktree 里加 stub tool → 该 worktree CLI 能列出 stub tool，主仓 CLI 不出现
+- AC13（Phase D 防御）: runtime room 启动时清理 `~/.claude.json.projects[projectRoot].mcpServers.multi_agent_room`；单元测试覆盖 stale/empty/other-server 三种场景
+
+**Architecture (Phase A):** 照搬 clowder-ai 验证过的模式——项目根放三份同构的官方 MCP 配置文件，全部指向 `packages/api/dist/mcp/server.js`（现为相对路径，hotfix 9fd0582 后）。动态 token 靠进程继承链（base-runtime spawn 时 `env: {MULTI_AGENT_*}` 已传）。Gemini 配置写 `env: {VAR: "${VAR}"}` 触发 CLI 侧展开，Claude/Codex 裸继承即可。
+
+**Architecture (Phase B 追加，2026-04-20):** 相对路径方向对但不够——runtime spawn CLI 时 cwd 必须显式传当前 invocation 的 projectRoot（`AgentRunInput.cwd`），相对路径才会被解析到该 worktree 的 dist。Gemini/Codex 挂不上的根因未知，先 Spike 再补修复。Phase D 清理逻辑作为前瞻防御加入 room 启动链。
 
 **Tech Stack:** Node.js / TypeScript / 三家官方 CLI 配置规范 / pnpm 工作流
 
@@ -20,7 +29,8 @@
 - 不动 `getCallbackIdentity()` 读 env 的逻辑（已就绪）
 - 不动 `packages/api/src/mcp/server.ts` 里的工具注册（F018/F019 已注册足够）
 - 不做 monorepo 拆 `packages/mcp-server` 子包（单包足够）
-- 不做跨机器可移植——本项目只在小孙的 Windows 桌面跑，绝对路径接受
+- **不做 ACP resolver**（Phase B 调研确认 Gemini 走纯 CLI spawn，`gemini-runtime.ts:88-116`，不适用 clowder-ai F145 Phase C 的 `resolveAcpMcpServers`）
+- **不主动清理 `~/.claude.json` global mcpServers**（clowder-ai F145 KD：global 优先级低于 `.mcp.json`，不遮蔽；且可能服务其他项目）
 
 ---
 
@@ -426,6 +436,178 @@ git commit -m "docs(F023): 三家 MCP 挂载统一验收通过 [黄仁勋/Opus-4
 
 ---
 
+---
+
+# Phase B — 2026-04-20 扩 scope（A 方案：聚焦根因 + Spike）
+
+> 前置：Phase A Task 1-6 已完成 6 个 commits（含 9fd0582 相对路径 hotfix + b5179f3 Known Bug 记录）。Phase B 在同一 F023 worktree 继续叠加。
+
+## Task 7: 修根因 A — runtime spawn 显式传 projectRoot 作 cwd（AC9）
+
+**Files:**
+- Modify: `packages/api/src/runtime/types.ts`（或 base-runtime 所在类型文件）— `AgentRunInput` 的 cwd 字段改必填
+- Modify: `packages/api/src/orchestrator/cli-orchestrator.ts:119-134` — 构建 `AgentRunInput` 时赋值 cwd
+- Test: `packages/api/src/runtime/base-runtime.test.ts` 或新建 — 断言 spawn 接收到正确 cwd
+
+**Step 7.1: 写失败测试 — AgentRunInput 带 cwd，spawn 能拿到**
+
+Create / extend test：
+- 构造 `AgentRunInput` 传 `cwd: '/tmp/fake-worktree'`
+- mock `spawn`，断言第 3 个参数 `.cwd === '/tmp/fake-worktree'`
+- 同时断言：不传 cwd 时 type error（TS 层）或运行时 assert 失败（运行时层）
+
+**Step 7.2: 跑测试确认 FAIL**
+
+Expected: 当前 cli-orchestrator 没传 cwd → spawn 收到 undefined，测试红
+
+**Step 7.3: 类型改硬 — AgentRunInput.cwd: string（必填）**
+
+Edit 类型文件。若有多处构造 AgentRunInput，全部会 TS 报错，逐个补。
+
+**Step 7.4: cli-orchestrator 赋值 projectRoot**
+
+`projectRoot` 来源策略（两选一，挑简单的）：
+- [a] 从 invocation context / room context 读 — 若已有字段则直接用
+- [b] 用 `process.cwd()`（`dev:api` 启动时的主仓根）
+
+> 注：Phase B 当前仅解决"runtime 有 cwd 可传"这一层。worktree 场景下 projectRoot = worktree 根的问题归 F024 基础设施负责（F024 会在 preview 启动时以 worktree cwd 拉 dev:api，此时 `process.cwd()` 自然 = worktree 根）。F023 不承担 F024 的职责。
+
+**Step 7.5: 跑测试确认 PASS + typecheck**
+
+Run: `pnpm --filter @multi-agent/api test` + `pnpm --filter @multi-agent/api typecheck`
+Expected: 全绿
+
+**Step 7.6: Commit**
+
+```
+feat(F023): runtime spawn 显式传 projectRoot 作 cwd（根因 A 修复，AC9）[黄仁勋/Opus-47 🐾]
+```
+
+---
+
+## Task 8: Spike 根因 B — Gemini MCP 挂不上（AC10 先产 Spike 报告）
+
+**Files:** 无代码修改，仅实测 + 调研文档
+
+**Step 8.1: 实跑桂芬拿日志**
+
+在 F023 worktree 或 F024 preview 启动一轮 Gemini invocation。收集：
+- Gemini CLI stderr（启动报错 / MCP 挂载日志）
+- spawn 时实际传入的 cwd / env / args
+- `.gemini/settings.json` 的解析结果（在 CLI 视角）
+
+**Step 8.2: 对照假设定位根因**
+
+候选检查清单：
+- [ ] env 插值 `${VAR}` 是否被 Gemini CLI 展开？（对比实际 env 值和 CLI 读到的值）
+- [ ] Gemini CLI 实际读的 settings.json 路径 — 项目级（`<cwd>/.gemini/settings.json`）还是用户级（`~/.gemini/settings.json`）？
+- [ ] cwd 对不对？（Task 7 修完后复核）
+- [ ] Gemini CLI 版本（`gemini --version`）是否支持 `mcpServers` 配置？
+
+**Step 8.3: 写 Spike 报告**
+
+Create: `docs/discussions/F023-phase-b-gemini-spike.md`
+- 实验步骤 + 观察到的日志原文
+- 根因判定（明确是哪一条或哪几条）
+- 修复方案草案
+
+**Step 8.4: Commit**
+
+```
+docs(F023): Gemini MCP 根因 B Spike 报告（AC10 前置）[黄仁勋/Opus-47 🐾]
+```
+
+---
+
+## Task 9: 根因 B 修复（AC10）
+
+**Files:** 依 Spike 结论决定——可能动 `.gemini/settings.json` / `gemini-runtime.ts` / runtime env 传递逻辑。
+
+**Step 9.1-9.N:** 依 Task 8 结论展开 TDD（Red → Green → Refactor），每个 step 含测试。
+
+**Step 9.last: Commit**
+
+```
+feat(F023): Gemini MCP 挂载修复（根因 B，AC10）[黄仁勋/Opus-47 🐾]
+```
+
+---
+
+## Task 10: Spike 根因 C — Codex MCP 挂不上 + 修复（AC11）
+
+结构同 Task 8 + 9。合并为单 task 因 Codex 问题域大概率和 Gemini 同构（cwd / 项目级配置位置 / CLI 版本）。
+
+**Step 10.1: 实跑德彪拿日志**
+**Step 10.2: 对照假设定位根因**
+**Step 10.3: 写 Spike 报告**（`docs/discussions/F023-phase-b-codex-spike.md`）
+**Step 10.4-N: TDD 修复**
+**Step 10.last: Commit** — `feat(F023): Codex MCP 挂载修复（根因 C，AC11）[黄仁勋/Opus-47 🐾]`
+
+---
+
+## Task 11: Phase D 防御 — 清理 `~/.claude.json` per-project stale override（AC13）
+
+**Files:**
+- Create: `packages/api/src/runtime/claude-overrides-cleaner.ts` — 导出 `cleanStaleClaudeProjectOverrides(claudeConfigPath, projectRoot, serverNames)`
+- Modify: room / invocation 启动链里合适的位置（例：writeMcpConfigs 之后）调用 cleaner
+- Test: `packages/api/src/runtime/claude-overrides-cleaner.test.ts`
+
+**Step 11.1: 写失败测试**
+
+三场景：
+- stale entry → 删除，文件 write-back
+- 无 `projects[projectRoot]` 或 `.mcpServers` 为空 → no-op（不 crash、不 write）
+- `mcpServers` 里有其他非 `multi_agent_room` server（如用户手动加的 pencil）→ 保留不动
+
+**Step 11.2: FAIL → 实现 → PASS**
+
+参考 clowder-ai `packages/api/src/config/capabilities/mcp-config-adapters.ts:270-306` 的 `cleanStaleClaudeProjectOverrides`（纯函数 + write-back，14 行核心逻辑）。只清 `projects[projectRoot].mcpServers[serverName]`，**不动 global `mcpServers`**。
+
+**Step 11.3: 接入 room 启动链**
+
+在 Claude runtime 启动前（或 writeMcpConfigs 之后）调用 `cleanStaleClaudeProjectOverrides(os.homedir() + '/.claude.json', projectRoot, ['multi_agent_room'])`。失败不抛（best-effort 防御，不阻塞 room 启动）。
+
+**Step 11.4: Commit**
+
+```
+feat(F023): Phase D 防御 — 清理 ~/.claude.json per-project stale override（AC13）[黄仁勋/Opus-47 🐾]
+```
+
+---
+
+## Task 12: Phase B 端到端验收（AC10/AC11/AC12 实跑确认）
+
+**Files:** 无代码修改
+
+**Step 12.1: worktree 同源 probe（AC12）**
+
+在 F023 worktree 的 `packages/api/src/mcp/server.ts` 注册一个 stub tool `_f023_probe`（返回字符串 `"f023-phase-b-alive"`）。`pnpm build` worktree。
+
+**Step 12.2: F024 preview 启 worktree 版 API + 三家**
+
+Expected:
+- worktree 的三家 CLI 工具列表都有 `mcp__multi_agent_room___f023_probe`
+- 调用返回 `"f023-phase-b-alive"`
+- 主仓（另起的 dev:api）CLI 工具列表**不出现** `_f023_probe`
+
+**Step 12.3: 删 stub，complete Timeline**
+
+Edit `docs/features/F023-mcp-unified-mounting.md` Timeline：
+
+```
+| 2026-04-XX | Phase B 全 AC（9-13）通过，worktree 同源验证成功 |
+```
+
+**Step 12.4: Commit**
+
+```
+docs(F023): Phase B 验收通过 — 根因 A/B/C 修 + Phase D 防御 + worktree 同源 [黄仁勋/Opus-47 🐾]
+```
+
+---
+
 ## 下一步
 
-计划写完 → 进入 `worktree`（创建 F023 隔离开发环境）→ `tdd`（Task 1 开始实现）。
+Phase A 已完成（6 commits）。Phase B 从 Task 7（根因 A 修复）开始，走 tdd 流程逐 task 推进。
+
+每个 task 完成后按现有节奏 commit 到 F023 worktree；Phase B 全部完成后走 quality-gate → acceptance-guardian → requesting-review → merge-gate。

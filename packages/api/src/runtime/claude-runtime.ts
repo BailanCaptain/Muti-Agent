@@ -1,5 +1,4 @@
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import type { ToolEvent } from "@multi-agent/shared";
 import { BaseCliRuntime, resolveNpmRoot, type AgentRunInput, type RuntimeCommand, type StopReason } from "./base-runtime";
@@ -87,34 +86,6 @@ export class ClaudeRuntime extends BaseCliRuntime {
       const systemPrompt = input.env?.MULTI_AGENT_SYSTEM_PROMPT || AGENT_SYSTEM_PROMPTS.claude;
       args.push("--append-system-prompt", systemPrompt);
     }
-    const mcpServerPath = path.join(__dirname, "..", "mcp", "server.js");
-
-    const mcpConfigObj = {
-      mcpServers: {
-        multi_agent_room: {
-          command: process.execPath,
-          args: [mcpServerPath],
-          env: {
-            MULTI_AGENT_API_URL: input.env?.MULTI_AGENT_API_URL ?? "",
-            MULTI_AGENT_INVOCATION_ID: input.env?.MULTI_AGENT_INVOCATION_ID ?? "",
-            MULTI_AGENT_CALLBACK_TOKEN: input.env?.MULTI_AGENT_CALLBACK_TOKEN ?? ""
-          }
-        }
-      }
-    };
-    let cleanup: (() => void) | undefined;
-    if (process.platform === "win32") {
-      const dir = mkdtempSync(path.join(tmpdir(), "multi-agent-mcp-"));
-      const configPath = path.join(dir, "mcp-config.json");
-      writeFileSync(configPath, JSON.stringify(mcpConfigObj), "utf-8");
-      args.push("--mcp-config", configPath);
-      cleanup = () => {
-        try { require("node:fs").rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
-      };
-    } else {
-      args.push("--mcp-config", JSON.stringify(mcpConfigObj));
-    }
-
     args.push("--permission-mode", "bypassPermissions");
 
     if (model) {
@@ -132,7 +103,6 @@ export class ClaudeRuntime extends BaseCliRuntime {
       args: [...runtime.prefixArgs, ...args],
       shell: runtime.shell,
       stdinContent: input.prompt,
-      cleanup,
     };
   }
 

@@ -121,6 +121,10 @@ export function runTurn(options: RunTurnOptions) {
     threadId: options.threadId,
     agentId: options.agentId ?? options.provider,
     prompt,
+    // F023 Task 7 根因 A：runtime spawn 必须显式传当前进程 cwd，才能让
+    // 三家 CLI 解析项目级 MCP 配置（.mcp.json / .codex/config.toml /
+    // .gemini/settings.json）里的相对路径到本 worktree 自己的 dist。
+    cwd: process.cwd(),
     env: {
       // Callback credentials and model/session context travel through env because each CLI exposes a different shell surface.
       MULTI_AGENT_API_URL: options.apiBaseUrl ?? "",

@@ -25,7 +25,7 @@ export type AgentRunInput = {
   threadId: string;
   agentId: string;
   prompt: string;
-  cwd?: string;
+  cwd: string;
   env?: Record<string, string>;
   runtime?: Partial<RuntimeLifecycleConfig>;
 };

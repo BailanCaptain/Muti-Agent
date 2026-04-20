@@ -65,6 +65,7 @@ function createInput(runtime?: AgentRunInput["runtime"]): AgentRunInput {
     threadId: "thread-1",
     agentId: "agent-1",
     prompt: "hello",
+    cwd: process.cwd(),
     runtime
   };
 }

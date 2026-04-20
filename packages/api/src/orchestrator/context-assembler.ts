@@ -11,10 +11,6 @@ import type { MemoryService } from "../services/memory-service"
 import type { ThreadMemory } from "../services/thread-memory"
 import type { ExtractiveDigestV1 } from "../services/transcript-writer"
 
-// Note: AGENT_SYSTEM_PROMPTS is Record<Provider, string> containing the base prompt
-// (identity + roster + rules + callback API for codex/gemini).
-// CALLBACK_API_PROMPT is already included in the codex/gemini entries.
-
 export type AssemblePromptInput = {
   provider: Provider
   threadId: string

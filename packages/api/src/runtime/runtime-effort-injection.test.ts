@@ -28,6 +28,7 @@ function makeInput(env: Record<string, string>): AgentRunInput {
     threadId: "thr-1",
     agentId: "a",
     prompt: "hello",
+    cwd: process.cwd(),
     env,
   }
 }

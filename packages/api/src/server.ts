@@ -31,6 +31,7 @@ import { registerPreviewRoutes } from "./routes/preview"
 import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
 import { PreviewGateway } from "./preview/preview-gateway"
 import { collectRuntimePorts } from "./preview/port-validator"
+import { resolveUploadUrl } from "./preview/resolve-upload-url"
 import { captureScreenshot } from "./preview/screenshot-service"
 import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
@@ -411,9 +412,14 @@ export async function createApiServer(options: {
     requestPermission: (params) => approvals.requestPermission(params),
     takeScreenshot: async (params) => {
       const result = await captureScreenshot(uploadsDir, params.url)
+      const apiBase =
+        process.env.NEXT_PUBLIC_API_HTTP_URL ??
+        process.env.NEXT_PUBLIC_API_BASE_URL ??
+        process.env.NEXT_PUBLIC_API_URL
+      const absoluteUrl = resolveUploadUrl(result.url, apiBase)
       const block = {
         type: "image" as const,
-        url: result.url,
+        url: absoluteUrl,
         alt: params.alt ?? "Screenshot",
         meta: {
           source: "agent_screenshot",
@@ -436,7 +442,7 @@ export async function createApiServer(options: {
         })
       }
 
-      return { ok: true as const, imageUrl: result.url }
+      return { ok: true as const, imageUrl: absoluteUrl }
     },
     // F019 P3: expose the bulletin board service to /api/callbacks/update-workflow-sop
     workflowSopService,
