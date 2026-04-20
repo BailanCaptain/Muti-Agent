@@ -80,9 +80,9 @@ describe("SessionTitler", () => {
     assert.equal(runSpy.mock.calls.length, 1, "haiku should be called once")
   })
 
-  it("AC-07: writes Haiku result to session_groups.title on success and logs event=success", async () => {
+  it("AC-07: writes Haiku prefix-formatted result to session_groups.title on success and logs event=success", async () => {
     const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20 14:30:00", roomId: ROOM })
-    const { haiku } = makeHaiku({ ok: true, text: "学习 TDD" })
+    const { haiku } = makeHaiku({ ok: true, text: "D-学习 TDD" })
     const { logger, byEvent } = makeLogger()
     const titler = new SessionTitler({
       repo,
@@ -95,18 +95,18 @@ describe("SessionTitler", () => {
     titler.schedule(SID)
     await titler.flushPending()
     assert.equal(updateSpy.mock.calls.length, 1)
-    assert.deepEqual(updateSpy.mock.calls[0].arguments, [SID, "学习 TDD"])
+    assert.deepEqual(updateSpy.mock.calls[0].arguments, [SID, "D-学习 TDD"])
     const ok = byEvent("success")
     assert.equal(ok.length, 1)
     assert.equal(ok[0].obj.sessionGroupId, SID)
     assert.equal(ok[0].obj.roomId, ROOM)
-    assert.equal(ok[0].obj.titleGenerated, "学习 TDD")
+    assert.equal(ok[0].obj.titleGenerated, "D-学习 TDD")
     assert.equal(typeof ok[0].obj.durationMs, "number")
   })
 
-  it("AC-06: truncates Haiku output to 10 chars", async () => {
+  it("AC-06: truncates description part of Haiku output to 8 chars (prefix preserved)", async () => {
     const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20", roomId: ROOM })
-    const { haiku } = makeHaiku({ ok: true, text: "这是一个会被截断的超长标题" })
+    const { haiku } = makeHaiku({ ok: true, text: "D-这是会被截断的超长描述" })
     const { logger } = makeLogger()
     const titler = new SessionTitler({
       repo,
@@ -119,12 +119,164 @@ describe("SessionTitler", () => {
     titler.schedule(SID)
     await titler.flushPending()
     assert.equal(updateSpy.mock.calls.length, 1)
-    const written = updateSpy.mock.calls[0].arguments[1] as string
-    assert.ok(written.length <= 10, `title should be <=10 chars, got "${written}" (${written.length})`)
-    assert.equal(written, "这是一个会被截断的超")
+    assert.equal(updateSpy.mock.calls[0].arguments[1], "D-这是会被截断的超")
   })
 
-  it("AC-08: falls back to '新会话 YYYY-MM-DD' on Haiku failure and logs event=fallback", async () => {
+  it("AC-14d: preserves D/Q bare prefix returned by Haiku", async () => {
+    for (const prefix of ["D", "Q"]) {
+      const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20", roomId: ROOM })
+      const { haiku } = makeHaiku({ ok: true, text: `${prefix}-测试` })
+      const { logger } = makeLogger()
+      const titler = new SessionTitler({
+        repo,
+        haiku,
+        logger,
+        debounceMs: 10,
+        buildPrompt: () => "p",
+        dateFormatter: () => "2026-04-20",
+      })
+      titler.schedule(SID)
+      await titler.flushPending()
+      assert.equal(updateSpy.mock.calls[0].arguments[1], `${prefix}-测试`, `prefix ${prefix} should be preserved`)
+    }
+  })
+
+  it("AC-14d: normalizes lowercase D-/Q- to uppercase", async () => {
+    const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20", roomId: ROOM })
+    const { haiku } = makeHaiku({ ok: true, text: "d-讨论架构" })
+    const { logger } = makeLogger()
+    const titler = new SessionTitler({
+      repo,
+      haiku,
+      logger,
+      debounceMs: 10,
+      buildPrompt: () => "p",
+      dateFormatter: () => "2026-04-20",
+    })
+    titler.schedule(SID)
+    await titler.flushPending()
+    assert.equal(updateSpy.mock.calls[0].arguments[1], "D-讨论架构")
+  })
+
+  it("AC-14e: preserves filed F\\d+- / B\\d+- ids from Haiku output", async () => {
+    const cases: Array<[string, string]> = [
+      ["F022-侧栏重塑", "F022-侧栏重塑"],
+      ["B026-修登录", "B026-修登录"],
+      ["F001-a", "F001-a"],
+      ["B9-x", "B9-x"],
+    ]
+    for (const [input, expected] of cases) {
+      const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20", roomId: ROOM })
+      const { haiku } = makeHaiku({ ok: true, text: input })
+      const { logger } = makeLogger()
+      const titler = new SessionTitler({
+        repo,
+        haiku,
+        logger,
+        debounceMs: 10,
+        buildPrompt: () => "p",
+        dateFormatter: () => "2026-04-20",
+      })
+      titler.schedule(SID)
+      await titler.flushPending()
+      assert.equal(updateSpy.mock.calls[0].arguments[1], expected, `input=${input}`)
+    }
+  })
+
+  it("AC-14e: normalizes lowercase filed prefix (f022-/b026-) to uppercase letter", async () => {
+    const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20", roomId: ROOM })
+    const { haiku } = makeHaiku({ ok: true, text: "f022-侧栏重塑" })
+    const { logger } = makeLogger()
+    const titler = new SessionTitler({
+      repo,
+      haiku,
+      logger,
+      debounceMs: 10,
+      buildPrompt: () => "p",
+      dateFormatter: () => "2026-04-20",
+    })
+    titler.schedule(SID)
+    await titler.flushPending()
+    assert.equal(updateSpy.mock.calls[0].arguments[1], "F022-侧栏重塑")
+  })
+
+  it("AC-14e: demotes bare F-/B- (no id) to D- — unfiled does not earn F/B prefix", async () => {
+    const cases: Array<[string, string]> = [
+      ["F-登录页", "D-登录页"],
+      ["B-bug修复", "D-bug修复"],
+      ["f-登录页", "D-登录页"],
+      ["b-xxx", "D-xxx"],
+    ]
+    for (const [input, expected] of cases) {
+      const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20", roomId: ROOM })
+      const { haiku } = makeHaiku({ ok: true, text: input })
+      const { logger } = makeLogger()
+      const titler = new SessionTitler({
+        repo,
+        haiku,
+        logger,
+        debounceMs: 10,
+        buildPrompt: () => "p",
+        dateFormatter: () => "2026-04-20",
+      })
+      titler.schedule(SID)
+      await titler.flushPending()
+      assert.equal(updateSpy.mock.calls[0].arguments[1], expected, `input=${input}`)
+    }
+  })
+
+  it("AC-14e: truncates long filed title description to 8 chars, keeping id intact", async () => {
+    const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20", roomId: ROOM })
+    const { haiku } = makeHaiku({ ok: true, text: "F022-这是一个超长的描述文本" })
+    const { logger } = makeLogger()
+    const titler = new SessionTitler({
+      repo,
+      haiku,
+      logger,
+      debounceMs: 10,
+      buildPrompt: () => "p",
+      dateFormatter: () => "2026-04-20",
+    })
+    titler.schedule(SID)
+    await titler.flushPending()
+    assert.equal(updateSpy.mock.calls[0].arguments[1], "F022-这是一个超长的描")
+  })
+
+  it("AC-14d: prepends D- when Haiku output has no valid prefix (plain text)", async () => {
+    const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20", roomId: ROOM })
+    const { haiku } = makeHaiku({ ok: true, text: "学习 TDD" })
+    const { logger } = makeLogger()
+    const titler = new SessionTitler({
+      repo,
+      haiku,
+      logger,
+      debounceMs: 10,
+      buildPrompt: () => "p",
+      dateFormatter: () => "2026-04-20",
+    })
+    titler.schedule(SID)
+    await titler.flushPending()
+    assert.equal(updateSpy.mock.calls[0].arguments[1], "D-学习 TDD")
+  })
+
+  it("AC-14d: prepends D- when Haiku returns an invalid prefix letter (e.g. X-)", async () => {
+    const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20", roomId: ROOM })
+    const { haiku } = makeHaiku({ ok: true, text: "X-乱" })
+    const { logger } = makeLogger()
+    const titler = new SessionTitler({
+      repo,
+      haiku,
+      logger,
+      debounceMs: 10,
+      buildPrompt: () => "p",
+      dateFormatter: () => "2026-04-20",
+    })
+    titler.schedule(SID)
+    await titler.flushPending()
+    assert.equal(updateSpy.mock.calls[0].arguments[1], "D-X-乱")
+  })
+
+  it("AC-08: falls back to 'D-新会话 YYYY-MM-DD' on Haiku failure and logs event=fallback", async () => {
     const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20 14:30:00", roomId: ROOM })
     const { haiku, runSpy } = makeHaiku({ ok: false, error: "timeout", durationMs: 5000 })
     const { logger, byEvent } = makeLogger()
@@ -139,12 +291,12 @@ describe("SessionTitler", () => {
     titler.schedule(SID)
     await titler.flushPending()
     assert.equal(runSpy.mock.calls.length, 1)
-    assert.deepEqual(updateSpy.mock.calls[0].arguments, [SID, "新会话 2026-04-20"])
+    assert.deepEqual(updateSpy.mock.calls[0].arguments, [SID, "D-新会话 2026-04-20"])
     const fb = byEvent("fallback")
     assert.equal(fb.length, 1)
     assert.equal(fb[0].level, "warn")
     assert.equal(fb[0].obj.error, "timeout")
-    assert.equal(fb[0].obj.titleGenerated, "新会话 2026-04-20")
+    assert.equal(fb[0].obj.titleGenerated, "D-新会话 2026-04-20")
   })
 
   it("AC-10: skips when current title is NOT a default pattern (user-edited)", async () => {

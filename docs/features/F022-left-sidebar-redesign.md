@@ -63,6 +63,8 @@ created: 2026-04-19
 - [ ] AC-14a: 时间分组替换 projectTag 分组（置顶 / 今日 / 本周 / 本月 / 更早）—— projectTag 多数落"未分组"不承载索引价值，时间更贴反向溯源场景
 - [ ] AC-14b: 历史 session title 批量回填 migration —— 启动时扫 `title IS NULL OR isDefaultTitle(title)` 批量排队 Haiku，带并发限流
 - [ ] AC-14c: 前端 title fallback —— DB title 为空/默认/null 时 UI 显示 `新会话 {createdAtLabel}`，与 AC-08 失败回退格式一致
+- [ ] AC-14d: 标题分类前缀 —— Haiku 按会话意图输出 `{F|B|D|Q}-{≤8字描述}`（F=feature, B=bug, D=discussion, Q=question）；判不准默认落 `D-`；不符规则的输出由 sanitize 兜底 `D-` 前缀；AC-08 失败回退同步改为 `D-新会话 YYYY-MM-DD`
+- [ ] AC-14e: 立项号规则 —— 当会话中明确出现 `F\d+` / `B\d+` 编号时，标题前缀使用带号形式 `F022-xxx` / `B026-xxx`（编号原样照抄）；**裸 `F-` / `B-` 无号视为未立项，sanitize 降级为 `D-`**（F/B 前缀 ⇔ 已立项的身份声明）；描述部分统一 ≤ 8 字，带号前缀不受 10 字硬上限约束
 
 ### Phase 4：标题栏三层 ID 补丁（0.5 天）
 - [ ] AC-16: 右侧面板顶部 ROOM 徽章显示 `R-xxx`（与 F021 联动）
@@ -93,6 +95,8 @@ created: 2026-04-19
 | Agent 过滤 pills | 保留 / 删除 | **删除**（2026-04-20 产品下调） | worktree 预览验收后产品判定"用处不大"，Agent 头像已在条目显示，不需额外过滤入口 |
 | Sidebar 分组维度 | projectTag / 时间 / 并存 | **时间分组替换 projectTag**（2026-04-20 产品下调） | projectTag 多数落"未分组"不承载索引价值；时间分组（置顶/今日/本周/本月/更早）更贴反向溯源场景 |
 | 历史 title 处理 | 不动 / 按需 / 批量 / 批量+fallback | **批量回填 + 前端 fallback**（2026-04-20 产品下调） | 之前"懒加载"定义模糊 → 沉默会话永久无标题；改为启动 migration 批量 Haiku + UI 在 null/default 时展示 `新会话 {createdAtLabel}` 兜底 |
+| 标题分类前缀 | 自由文本 / `{F\|B\|D\|Q}-` 前缀 | **`{F\|B\|D\|Q}-{描述}`，判不准落 D-**（2026-04-20 产品拍板） | 小孙需要一眼看出会话性质（做 feature / 修 bug / 讨论 / 问答）；分类不准落 `D-` 偏宽容，错分概率低；Haiku 下一轮 debounce 会纠正 |
+| F/B 立项号 | 不带号 / 带号 / 立项必带 | **立项必带号（`F022-xxx` / `B026-xxx`），无号 F/B 降级 D-**（2026-04-20 产品下调） | 小孙："F B 如果立项了要加上 F012 B026 这样 是多少就是多少"；F/B 前缀本身就蕴含"已立项"身份声明，没编号就不配叫 F/B，统一归到讨论 D-。消除"伪 feature 讨论"与"真立项"的混淆 |
 
 ## Timeline
 

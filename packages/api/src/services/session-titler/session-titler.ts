@@ -2,10 +2,41 @@ import type { FastifyBaseLogger } from "fastify"
 import type { HaikuRunner } from "../../runtime/haiku-runner"
 import { isDefaultTitle } from "./default-title"
 
-/** Max chars of the auto-generated title (product decision 2026-04-20, down from 20). */
-const MAX_TITLE_CHARS = 10
+/** Max chars of the description part after the type prefix (product decision 2026-04-20). */
+const DESC_MAX_CHARS = 8
 const DEFAULT_DEBOUNCE_MS = 2500
 const DEFAULT_TIMEOUT_MS = 5000
+
+/**
+ * AC-14d + AC-14e: normalize Haiku output to one of:
+ *   - `F{编号}-{desc}` / `B{编号}-{desc}` — filed feature / bug (编号原样保留)
+ *   - `D-{desc}` / `Q-{desc}` — discussion / question
+ * Unfiled bare `F-` / `B-` (no digit id) are demoted to `D-` per product rule:
+ *   "F/B 前缀必须对应立项号，没立项就归讨论"。
+ * Description is truncated to DESC_MAX_CHARS so filed titles like `F022-xxx` keep
+ * their id intact instead of being chopped at 10 chars.
+ */
+function enforceTitlePrefix(raw: string): string {
+  const trimmed = raw.trim()
+
+  const filed = /^([FfBb])(\d+)-(.*)$/.exec(trimmed)
+  if (filed) {
+    const letter = filed[1].toUpperCase()
+    return `${letter}${filed[2]}-${filed[3].slice(0, DESC_MAX_CHARS)}`
+  }
+
+  const unfiledFB = /^[FfBb]-(.*)$/.exec(trimmed)
+  if (unfiledFB) {
+    return `D-${unfiledFB[1].slice(0, DESC_MAX_CHARS)}`
+  }
+
+  const discussion = /^([DdQq])-(.*)$/.exec(trimmed)
+  if (discussion) {
+    return `${discussion[1].toUpperCase()}-${discussion[2].slice(0, DESC_MAX_CHARS)}`
+  }
+
+  return `D-${trimmed.slice(0, DESC_MAX_CHARS)}`
+}
 
 export interface SessionTitlerRepo {
   getSessionGroupById(id: string): { id: string; roomId: string | null; title: string } | undefined
@@ -104,7 +135,7 @@ export class SessionTitler {
     const result = await haiku.runPrompt(prompt, { timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS })
 
     if (result.ok) {
-      const title = result.text.slice(0, MAX_TITLE_CHARS)
+      const title = enforceTitlePrefix(result.text)
       repo.updateSessionGroupTitle(sessionGroupId, title)
       logger.info(
         {
@@ -119,7 +150,7 @@ export class SessionTitler {
       return
     }
 
-    const fallback = `新会话 ${(dateFormatter ?? defaultDateFormatter)()}`
+    const fallback = `D-新会话 ${(dateFormatter ?? defaultDateFormatter)()}`
     repo.updateSessionGroupTitle(sessionGroupId, fallback)
     logger.warn(
       {

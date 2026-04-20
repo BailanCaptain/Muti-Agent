@@ -42,4 +42,18 @@ describe("isDefaultTitle", () => {
   it("rejects partial date like '新会话 2026-04' (not full YYYY-MM-DD)", () => {
     assert.equal(isDefaultTitle("新会话 2026-04"), false)
   })
+
+  it("AC-14d: matches 'D-新会话 YYYY-MM-DD' (new prefixed fallback)", () => {
+    assert.equal(isDefaultTitle("D-新会话 2026-04-20"), true)
+  })
+
+  it("AC-14d: matches F-/B-/Q- variants of the new fallback", () => {
+    assert.equal(isDefaultTitle("F-新会话 2026-04-20"), true)
+    assert.equal(isDefaultTitle("B-新会话 2026-04-20"), true)
+    assert.equal(isDefaultTitle("Q-新会话 2026-04-20"), true)
+  })
+
+  it("AC-14d: rejects invalid prefix letter (X-新会话 ...)", () => {
+    assert.equal(isDefaultTitle("X-新会话 2026-04-20"), false)
+  })
 })
