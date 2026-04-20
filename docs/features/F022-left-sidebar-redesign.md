@@ -56,8 +56,13 @@ created: 2026-04-19
 - [x] AC-11: 条目显示 `R-xxx · {语义 title}`（等宽琥珀色前缀 + 中点分隔）
 - [x] AC-12: 条目下方显示 agent 头像堆叠（participants = 发过消息的 provider，不含空 thread）
 - [x] AC-13: 搜索框输入 `R-042` 直跳（`/^R-?0*\d+$/i` 三形态识别 + 自动 selectGroup + 空结果提示）
-- [x] AC-14: 搜索支持 agent 过滤（头像 pills，多选 AND 过滤参与房间）
+- [~] AC-14: ~~搜索支持 agent 过滤（头像 pills，多选 AND 过滤参与房间）~~ **Dropped 2026-04-20** — 小孙 worktree 预览验收判定"用处不大"，按产品反馈删除实现
 - [x] AC-15: 条目悬停显示完整信息（原生 title 属性：创建 · 最后活动 · N 条消息）
+
+### Phase 3.5：预览验收反馈补丁（2026-04-20 小孙 worktree 验收发现）
+- [ ] AC-14a: 时间分组替换 projectTag 分组（置顶 / 今日 / 本周 / 本月 / 更早）—— projectTag 多数落"未分组"不承载索引价值，时间更贴反向溯源场景
+- [ ] AC-14b: 历史 session title 批量回填 migration —— 启动时扫 `title IS NULL OR isDefaultTitle(title)` 批量排队 Haiku，带并发限流
+- [ ] AC-14c: 前端 title fallback —— DB title 为空/默认/null 时 UI 显示 `新会话 {createdAtLabel}`，与 AC-08 失败回退格式一致
 
 ### Phase 4：标题栏三层 ID 补丁（0.5 天）
 - [ ] AC-16: 右侧面板顶部 ROOM 徽章显示 `R-xxx`（与 F021 联动）
@@ -85,6 +90,9 @@ created: 2026-04-19
 | 命名失败处理 | 报错阻塞 / 回退默认 | **回退到日期格式** | 命名是锦上添花，不阻塞主流程 |
 | 历史 session 处理 | 不动 / 批量命名 / 按需命名 | **migration 先分 ID，title 按需触发 Haiku** | ID 必须立即全量回填，title 可以懒加载 |
 | Title 长度上限 | 20 字 / 10 字 | **≤ 10 字**（2026-04-20 产品下调） | 20 字在 sidebar 条目里太长，左侧栏窄，短标题更清爽 |
+| Agent 过滤 pills | 保留 / 删除 | **删除**（2026-04-20 产品下调） | worktree 预览验收后产品判定"用处不大"，Agent 头像已在条目显示，不需额外过滤入口 |
+| Sidebar 分组维度 | projectTag / 时间 / 并存 | **时间分组替换 projectTag**（2026-04-20 产品下调） | projectTag 多数落"未分组"不承载索引价值；时间分组（置顶/今日/本周/本月/更早）更贴反向溯源场景 |
+| 历史 title 处理 | 不动 / 按需 / 批量 / 批量+fallback | **批量回填 + 前端 fallback**（2026-04-20 产品下调） | 之前"懒加载"定义模糊 → 沉默会话永久无标题；改为启动 migration 批量 Haiku + UI 在 null/default 时展示 `新会话 {createdAtLabel}` 兜底 |
 
 ## Timeline
 
@@ -97,6 +105,7 @@ created: 2026-04-19
 | 2026-04-20 | 产品决策：title 上限 20 → 10 字；Haiku 命名走 CLI 订阅（不引 SDK）|
 | 2026-04-20 | Phase 2 实施完成（AC-05~10 ✅，6 个 TDD commits，33 新测试覆盖；isDefaultTitle / updateSessionGroupTitle / HaikuRunner / SessionTitler / SessionService hook / buildTitlePrompt）|
 | 2026-04-20 | Phase 3 实施完成（AC-11~15 ✅，5 个 commit；backend 透传 roomId/participants/messageCount/createdAtLabel → SessionCard R-xxx 前缀 + 真实参与者头像 + 悬停详情 → 搜索 R-xxx 精确跳转 + 自动选中 → Agent pills 多选 AND 过滤）|
+| 2026-04-20 | worktree 预览验收（小孙 L1 @ :3200）发现 3 项反馈 → Phase 3.5 开（AC-14 Dropped + AC-14a/b/c 新增；产品决策固化到 Design Decisions）|
 
 ## Links
 
