@@ -41,6 +41,7 @@ type SessionListItem = {
   id: string
   roomId: string | null
   title: string
+  updatedAt: string
   updatedAtLabel: string
   createdAtLabel: string
   projectTag?: string
@@ -120,11 +121,20 @@ const emptyCatalogs = Object.fromEntries(
   ]),
 ) as unknown as Record<Provider, ProviderCatalog>
 
+// AC-14c: title 为 null / 空 / 旧占位格式时，fallback 到与 AC-08 失败回退一致的 `新会话 {createdAtLabel}`
+const LEGACY_PLACEHOLDER_PATTERN = /·\s*未命名\s*$/
+function fallbackTitle(title: string | null | undefined, createdAtLabel: string): string {
+  const t = (title ?? "").trim()
+  if (!t || LEGACY_PLACEHOLDER_PATTERN.test(t)) return `新会话 ${createdAtLabel}`
+  return t
+}
+
 function normalizeSessionGroups(groups: SessionGroupSummary[]): SessionListItem[] {
   return groups.map((group) => ({
     id: group.id,
     roomId: group.roomId ?? null,
-    title: group.title,
+    title: fallbackTitle(group.title, group.createdAtLabel),
+    updatedAt: group.updatedAt,
     updatedAtLabel: group.updatedAtLabel,
     createdAtLabel: group.createdAtLabel,
     projectTag: group.projectTag,

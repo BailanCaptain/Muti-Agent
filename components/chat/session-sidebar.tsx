@@ -37,20 +37,48 @@ function savePinned(pinned: Set<string>) {
 
 /* ── Types ── */
 
-type ProjectGroup = {
-  tag: string
+type TimeBucket = "today" | "thisWeek" | "thisMonth" | "earlier"
+
+type TimeGroup = {
+  bucket: TimeBucket
   label: string
   items: Array<{
     id: string
     roomId: string | null
     title: string
+    updatedAt: string
     updatedAtLabel: string
     createdAtLabel: string
-    projectTag?: string
     participants: Provider[]
     messageCount: number
     previews: Array<{ provider: string; alias: string; text: string }>
   }>
+}
+
+const BUCKET_ORDER: TimeBucket[] = ["today", "thisWeek", "thisMonth", "earlier"]
+const BUCKET_LABELS: Record<TimeBucket, string> = {
+  today: "今日",
+  thisWeek: "本周",
+  thisMonth: "本月",
+  earlier: "更早",
+}
+
+// AC-14a: 以"最后活动时间 updatedAt"为分桶维度；周起点 = 本周周一 00:00（ISO 标准）
+function computeBucketBoundaries(now: Date) {
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const dayOfWeek = now.getDay() // 0=Sun
+  const daysFromMonday = (dayOfWeek + 6) % 7
+  const weekStart = todayStart - daysFromMonday * 86_400_000
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+  return { todayStart, weekStart, monthStart }
+}
+
+function bucketOf(updatedAt: string, boundaries: ReturnType<typeof computeBucketBoundaries>): TimeBucket {
+  const t = new Date(updatedAt).getTime()
+  if (t >= boundaries.todayStart) return "today"
+  if (t >= boundaries.weekStart) return "thisWeek"
+  if (t >= boundaries.monthStart) return "thisMonth"
+  return "earlier"
 }
 
 const ROOM_ID_PATTERN = /^r-?0*(\d+)$/i
@@ -76,16 +104,6 @@ export function SessionSidebar() {
   const [search, setSearch] = useState("")
   const [pinned, setPinned] = useState<Set<string>>(new Set())
   const [collapsedTags, setCollapsedTags] = useState<Set<string>>(new Set())
-  const [agentFilter, setAgentFilter] = useState<Set<Provider>>(new Set())
-
-  const toggleAgentFilter = useCallback((p: Provider) => {
-    setAgentFilter((prev) => {
-      const next = new Set(prev)
-      if (next.has(p)) next.delete(p)
-      else next.add(p)
-      return next
-    })
-  }, [])
 
   // Context menu
   const [contextMenu, setContextMenu] = useState<{
@@ -136,24 +154,19 @@ export function SessionSidebar() {
     return running
   }, [anyProviderRunning, activeGroupId])
 
-  // Filter by agent pills + search (ROOM-ID 精确优先 → fuzzy)
+  // Filter by search (ROOM-ID 精确优先 → fuzzy)
   const filtered = useMemo(() => {
-    let list = sessionGroups
-    if (agentFilter.size > 0) {
-      const required = [...agentFilter]
-      list = list.filter((g) => required.every((p) => g.participants.includes(p)))
-    }
     const raw = search.trim()
-    if (!raw) return list
+    if (!raw) return sessionGroups
     const roomTarget = matchRoomId(raw)
-    if (roomTarget) return list.filter((g) => g.roomId === roomTarget)
+    if (roomTarget) return sessionGroups.filter((g) => g.roomId === roomTarget)
     const query = raw.toLowerCase()
-    return list.filter(
+    return sessionGroups.filter(
       (group) =>
         group.title.toLowerCase().includes(query) ||
         group.previews.some((p) => p.text.toLowerCase().includes(query)),
     )
-  }, [sessionGroups, search, agentFilter])
+  }, [sessionGroups, search])
 
   // R-xxx 命中唯一房间时自动选中（debounce 由用户输入节奏自然形成）
   useEffect(() => {
@@ -165,33 +178,29 @@ export function SessionSidebar() {
     }
   }, [search, sessionGroups, activeGroupId, selectGroup])
 
-  // Split into pinned and project groups directly — no intermediate enriched objects,
-  // so item references stay stable for React.memo
+  // Split into pinned and time-bucketed groups (AC-14a)
   const pinnedItems = useMemo(() => filtered.filter((g) => pinned.has(g.id)), [filtered, pinned])
 
-  const projectGroups = useMemo(() => {
+  const timeGroups = useMemo<TimeGroup[]>(() => {
     const unpinned = filtered.filter((g) => !pinned.has(g.id))
-    const tagMap = new Map<string, typeof unpinned>()
+    const boundaries = computeBucketBoundaries(new Date())
+    const buckets: Record<TimeBucket, TimeGroup["items"]> = {
+      today: [],
+      thisWeek: [],
+      thisMonth: [],
+      earlier: [],
+    }
     for (const item of unpinned) {
-      const tag = item.projectTag ?? "__ungrouped__"
-      if (!tagMap.has(tag)) tagMap.set(tag, [])
-      tagMap.get(tag)!.push(item)
+      buckets[bucketOf(item.updatedAt, boundaries)].push(item)
     }
-
-    const groups: ProjectGroup[] = []
-    for (const [tag, items] of tagMap) {
-      groups.push({
-        tag,
-        label: tag === "__ungrouped__" ? "未分组" : tag,
-        items,
-      })
+    for (const key of BUCKET_ORDER) {
+      buckets[key].sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt))
     }
-    groups.sort((a, b) => {
-      if (a.tag === "__ungrouped__") return 1
-      if (b.tag === "__ungrouped__") return -1
-      return a.label.localeCompare(b.label)
-    })
-    return groups
+    return BUCKET_ORDER.filter((b) => buckets[b].length > 0).map((b) => ({
+      bucket: b,
+      label: BUCKET_LABELS[b],
+      items: buckets[b],
+    }))
   }, [filtered, pinned])
 
   const handleContextMenu = useCallback(
@@ -232,38 +241,6 @@ export function SessionSidebar() {
           value={search}
         />
       </label>
-
-      {/* Agent filter pills */}
-      <div className="mb-2 flex items-center gap-1.5 px-1">
-        <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">
-          Agents
-        </span>
-        {(["claude", "codex", "gemini"] as Provider[]).map((p) => {
-          const active = agentFilter.has(p)
-          return (
-            <button
-              className={`flex items-center rounded-full p-0.5 transition ${
-                active ? "ring-2 ring-amber-400" : "opacity-60 hover:opacity-100"
-              }`}
-              key={p}
-              onClick={() => toggleAgentFilter(p)}
-              title={`过滤 ${p} 参与的房间`}
-              type="button"
-            >
-              <ProviderAvatar identity={p} size="xs" />
-            </button>
-          )
-        })}
-        {agentFilter.size > 0 && (
-          <button
-            className="ml-auto text-[10px] text-slate-400 hover:text-slate-600"
-            onClick={() => setAgentFilter(new Set())}
-            type="button"
-          >
-            清除
-          </button>
-        )}
-      </div>
 
       {/* Scrollable list */}
       <div className="flex-1 overflow-y-auto">
@@ -310,29 +287,29 @@ export function SessionSidebar() {
           </div>
         )}
 
-        {/* Project groups */}
-        {projectGroups.map((pg) => (
-          <div key={pg.tag} className="mb-1">
+        {/* Time-bucketed groups (AC-14a) */}
+        {timeGroups.map((tg) => (
+          <div key={tg.bucket} className="mb-1">
             <button
               className="mb-0.5 flex w-full items-center gap-1.5 px-2 py-1 text-left"
-              onClick={() => toggleCollapse(pg.tag)}
+              onClick={() => toggleCollapse(tg.bucket)}
               type="button"
             >
-              {collapsedTags.has(pg.tag) ? (
+              {collapsedTags.has(tg.bucket) ? (
                 <ChevronRight className="h-3 w-3 text-slate-400" />
               ) : (
                 <ChevronDown className="h-3 w-3 text-slate-400" />
               )}
               <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
-                {pg.label}
+                {tg.label}
               </span>
               <span className="ml-auto rounded-full bg-slate-100 px-1.5 text-[10px] font-mono text-slate-500">
-                {pg.items.length}
+                {tg.items.length}
               </span>
             </button>
-            {!collapsedTags.has(pg.tag) && (
+            {!collapsedTags.has(tg.bucket) && (
               <div className="space-y-0.5">
-                {pg.items.map((group) => (
+                {tg.items.map((group) => (
                   <SessionCard
                     key={group.id}
                     groupId={group.id}

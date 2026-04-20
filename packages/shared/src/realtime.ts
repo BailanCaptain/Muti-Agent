@@ -113,6 +113,7 @@ export type SessionGroupSummary = {
   id: string
   roomId: string | null
   title: string
+  updatedAt: string
   updatedAtLabel: string
   createdAtLabel: string
   projectTag?: string

@@ -44,6 +44,7 @@ import { DrizzleWorkflowSopRepository } from "./db/repositories/workflow-sop-rep
 import { SessionService } from "./services/session-service"
 import { SessionTitler } from "./services/session-titler/session-titler"
 import { buildTitlePromptFromRecentMessages } from "./services/session-titler/build-title-prompt"
+import { backfillHistoricalTitles } from "./services/session-titler/title-backfill"
 import { createHaikuRunner } from "./runtime/haiku-runner"
 import { SkillRegistry } from "./skills/registry"
 import { SopTracker } from "./skills/sop-tracker"
@@ -477,6 +478,23 @@ export async function createApiServer(options: {
       invocations,
     },
   })
+
+  // F022 P3.5 AC-14b: schedule historical title backfill asynchronously.
+  // Serial + rate-limited (1s between runs) to avoid bursting Haiku.
+  // Gate with MULTI_AGENT_SKIP_TITLE_BACKFILL=1 for tests / ops.
+  if (process.env.MULTI_AGENT_SKIP_TITLE_BACKFILL !== "1") {
+    const t = setTimeout(() => {
+      void backfillHistoricalTitles(
+        {
+          listSessionGroups: () =>
+            repository.listSessionGroups().map((g) => ({ id: g.id, title: g.title })),
+        },
+        sessionTitler,
+        { logger: createLogger("title-backfill") },
+      )
+    }, 5000)
+    t.unref?.()
+  }
 
   return app
 }

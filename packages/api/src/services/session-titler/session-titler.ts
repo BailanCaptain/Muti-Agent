@@ -63,6 +63,15 @@ export class SessionTitler {
     this.timers.set(sessionGroupId, timer)
   }
 
+  /**
+   * AC-14b: run the titler synchronously for one sessionGroup (no debounce).
+   * Used by the historical-title backfill orchestrator to control pacing / rate-limit.
+   * Idempotent: skips when the current title is not a default pattern (same as schedule()).
+   */
+  async runNow(sessionGroupId: string): Promise<void> {
+    await this.run(sessionGroupId)
+  }
+
   /** Test-only hook: wait for all scheduled runs to finish. */
   async flushPending(): Promise<void> {
     // Wait for any timers to fire (max debounce interval + small slack).

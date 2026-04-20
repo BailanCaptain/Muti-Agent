@@ -248,6 +248,29 @@ test("F022-P3 AC-11/12: SessionService.listSessionGroups 透传 roomId + partici
   assert.match(row.updatedAtLabel, /2026/)
 })
 
+test("F022-P3.5 AC-14a: SessionService.listSessionGroups 透传 updatedAt（ISO，供前端时间分桶）", () => {
+  const repo = {
+    ...createMockRepository([], []),
+    listSessionGroups: () => [
+      {
+        id: "g1",
+        roomId: "R-001",
+        title: "t",
+        projectTag: null,
+        createdAt: "2026-04-18T06:30:00.000Z",
+        updatedAt: "2026-04-20T06:00:00.000Z",
+        previews: [],
+        participants: ["claude"] as Provider[],
+        messageCount: 1,
+      },
+    ],
+  }
+  const service = new SessionService(repo as never, [])
+  const [row] = service.listSessionGroups()
+  assert.ok(row)
+  assert.equal(row.updatedAt, "2026-04-20T06:00:00.000Z")
+})
+
 test("F022-P3 AC-15: SessionService.listSessionGroups 对缺失 participants/messageCount 提供默认值", () => {
   const repo = {
     ...createMockRepository([], []),

@@ -66,6 +66,7 @@ export class SessionService {
       id: group.id,
       roomId: group.roomId ?? null,
       title: group.title,
+      updatedAt: new Date(group.updatedAt).toISOString(),
       updatedAtLabel: new Date(group.updatedAt).toLocaleString("zh-CN"),
       createdAtLabel: new Date(group.createdAt).toLocaleString("zh-CN"),
       projectTag: group.projectTag ?? undefined,
