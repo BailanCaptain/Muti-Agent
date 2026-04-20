@@ -700,7 +700,13 @@ const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedA
       {/* Row 1: R-042 + lock + title (+ time, unread on right) */}
       <div className="flex min-w-0 items-center gap-1">
         {roomId && (
-          <span className="shrink-0 rounded bg-slate-100 px-1 py-0 font-mono text-[10px] font-medium text-slate-500 leading-4">
+          <span
+            className={`shrink-0 rounded px-1 py-0 font-mono text-[10px] font-semibold leading-4 ring-1 ${
+              active
+                ? "bg-amber-500 text-white ring-amber-500/60"
+                : "bg-amber-100 text-amber-700 ring-amber-200/60"
+            }`}
+          >
             {roomId}
           </span>
         )}
