@@ -53,6 +53,14 @@ type ProjectGroup = {
   }>
 }
 
+const ROOM_ID_PATTERN = /^r-?0*(\d+)$/i
+
+function matchRoomId(query: string): string | null {
+  const m = query.trim().match(ROOM_ID_PATTERN)
+  if (!m) return null
+  return `R-${m[1].padStart(3, "0")}`
+}
+
 /* ── Component ── */
 
 export function SessionSidebar() {
@@ -118,16 +126,31 @@ export function SessionSidebar() {
     return running
   }, [anyProviderRunning, activeGroupId])
 
-  // Filter by search
+  // Filter by search (ROOM-ID 精确匹配优先 → 普通 fuzzy)
   const filtered = useMemo(() => {
-    const query = search.toLowerCase()
-    if (!query) return sessionGroups
+    const raw = search.trim()
+    if (!raw) return sessionGroups
+    const roomTarget = matchRoomId(raw)
+    if (roomTarget) {
+      return sessionGroups.filter((g) => g.roomId === roomTarget)
+    }
+    const query = raw.toLowerCase()
     return sessionGroups.filter(
       (group) =>
         group.title.toLowerCase().includes(query) ||
         group.previews.some((p) => p.text.toLowerCase().includes(query)),
     )
   }, [sessionGroups, search])
+
+  // R-xxx 命中唯一房间时自动选中（debounce 由用户输入节奏自然形成）
+  useEffect(() => {
+    const roomTarget = matchRoomId(search)
+    if (!roomTarget) return
+    const hit = sessionGroups.find((g) => g.roomId === roomTarget)
+    if (hit && hit.id !== activeGroupId) {
+      void selectGroup(hit.id)
+    }
+  }, [search, sessionGroups, activeGroupId, selectGroup])
 
   // Split into pinned and project groups directly — no intermediate enriched objects,
   // so item references stay stable for React.memo
@@ -199,6 +222,13 @@ export function SessionSidebar() {
 
       {/* Scrollable list */}
       <div className="flex-1 overflow-y-auto">
+        {filtered.length === 0 && search.trim() !== "" && (
+          <div className="px-2 py-4 text-center text-xs text-slate-400">
+            {matchRoomId(search)
+              ? `未找到房间 ${matchRoomId(search)}`
+              : "无匹配会话"}
+          </div>
+        )}
         {/* Pinned section */}
         {pinnedItems.length > 0 && (
           <div className="mb-2">
