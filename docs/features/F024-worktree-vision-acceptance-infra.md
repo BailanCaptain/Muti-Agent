@@ -1,9 +1,10 @@
 ---
 id: F024
 title: Worktree 愿景验收基础设施（L1 preview + L2 临时集成 worktree）
-status: spec
+status: done
 owner: 黄仁勋
 created: 2026-04-19
+completed: 2026-04-20
 ---
 
 # F024 — Worktree 愿景验收基础设施
@@ -67,9 +68,10 @@ F024 是 F008 第二步的落地。
 ### Meta · Dogfooding 自举（硬门禁）
 
 - [x] **AC-M.1** 本 feature 自己的 AC 必须用 **L1 本身**验收：在 F024 自己的 worktree 里起 preview → 跑 acceptance-guardian → 产出 worktree-report ✅
-- [ ] **AC-M.2** L2 实战演示：挑两个在途 feature（优先 F021 + F022），用 L2 搭临时集成面完整跑一次愿景体验验收流程
-  - **BLOCKED（2026-04-19）**：实际切 F021+F022 前先用 `staging/f022-f023-dogfood` dogfood，暴露 F023 MCP 配置硬编码绝对路径导致 worktree 内桂芬 MCP 工具列表空。详见 `docs/features/F023-mcp-unified-mounting.md` 新增"Known Bug"小节。F023 修复 merge 回 dev 后重跑本 AC
-  - F024 基础设施本身不受此 bug 影响（脚本 / 端口 / 目录隔离 / 报告模板全部已实证）
+- [x] **AC-M.2** L2 实战演示：挑两个在途 feature（优先 F021 + F022），用 L2 搭临时集成面完整跑一次愿景体验验收流程
+  - **等效证据（2026-04-20，小孙 CVO 拍板 B 路径打勾）**：`staging/f022-f023-dogfood` dogfood 已完成一次真实多 feature 拼装（F022-P1 + F023 Phase A）— 脚本走通、manifest 强校验生效、preview 起来了、抓到 F023 MCP 绝对路径 bug 并反向推动了 F023 Phase B 修复（B018 式联动闭环）。L2 infra 的全部价值主张（冲突检出 / 一次性即用即毁 / 报告三元组可追溯）由此次 dogfood 实证覆盖，AC-M.2 原教旨的"F021+F022 专项演示"变为冗余
+  - 原计划失效前提：截至 2026-04-20 F020/F021/F022/F023 tip 全部已合 dev，桌面上不存在真正"在途未 merge"的两家 feature 可供专项拼装；若强行 cherry-pick 造假，违背 L2 设计初衷（真实冲突检出），反而污染证据链
+  - 原始记录保留于 Timeline 2026-04-19/20 条目，后续遇到真并发场景时按此模式再跑一次自然覆盖
 - [x] **AC-M.3** 规则同步闭环：shared-rules.md、acceptance-guardian/SKILL.md、merge-gate/SKILL.md 三处改动完成后，reviewer 能按新规则直接跑（commit `e3e1dd2` 落地；`worktree/SKILL.md` 同批同步）
 
 ## Dependencies
@@ -123,6 +125,12 @@ F024 是 F008 第二步的落地。
 | 2026-04-20 | 小孙产品信号"多 feature 并发是常态" → P2 升级为必修：port-registry 接入 `proper-lockfile`，claim/release 改 async + `withLock` 包住 read-modify-write。新增跨进程 race 测试（6 并发 tsx worker 同时 claim）：修复前抓到 3 条 8802 冲突（RED），修复后 6 个 worktree 拿到互斥端口（GREEN）。preview/staging 两处 caller 同步改 await |
 | 2026-04-20 | 范德彪 re-review 抓到新 P1：`preview` 的 SIGINT/SIGTERM 处理器里 `void releasePorts().catch()` 后紧跟 `process.exit(0)`，Promise 没机会落盘 → `.worktree-ports.json` 残留僵尸 entry。修复：抽出 `shutdownPreview(): Promise<void>`（await release + restoreDotenv + killers），handler 改 `triggerShutdown().finally(() => exit(0))`。新增 2 个回归测：(1) 单元测 `shutdownPreview` 合同 — Promise resolve 时 registry 已空且 killers 已跑；(2) 端到端 child-worker — 子进程 `await shutdownPreview; exit(0)` 之后 parent 读 registry 必须为 0 条。实测翻 fire-and-forget 两测均 fail（RED），await 版本全绿（GREEN）。L0 33/33 绿 |
 | 2026-04-20 | 范德彪 re-LGTM ✅。proactively 收掉 re-review 的 non-blocking 观察（signal handler 幂等性覆盖）：抽 `createShutdownController` 把 `triggerShutdown` 单例逻辑拎到可测试边界，+2 回归测覆盖 (1) 3 路 racing triggerShutdown 返回同一 Promise / killers 各跑 1 次 / registry 归零；(2) onSignal 链路 SIGINT+SIGTERM drains registry + exit spy 每次 code 0。Red 验过（非 memoize 版本 test 1 fail）。L0 35/35 绿；全量 821/821 绿（rebase origin/dev 后）。**AC-M.2 仍 blocked on F023** — 跨 feature 依赖，不在本 PR 范围 |
+| 2026-04-20 | F024 merged to dev（squash `2f2e80f`）+ pushed origin/dev |
+| 2026-04-20 | Completion — F023 Phase B 已 merge（`d1b516b`），小孙 CVO 拍板 B 路径：AC-M.2 以 `staging/f022-f023-dogfood` dogfood 为等效证据打勾（该次 dogfood 真实覆盖 L2 infra 全部价值主张且反向推动了 F023 bug 修复，等效强于造假 cherry-pick）。全 AC 绿，`staging/f022-f023-dogfood` worktree + 分支一并清理 |
+
+## Follow-up TDs
+
+- **TD-preview-backup-residue**：`scripts/worktree-preview.ts` 在异常退出（taskkill / Ctrl+C 硬杀 / 进程崩溃，signal handler 未跑完）时，`.env.development.local.backup-by-preview` 会残留在 worktree 内。正常 teardown 已由 `restoreDotenv` 恢复，但异常路径缺兜底。**发现**：2026-04-20 F023 merge-gate 清理时（小孙发现）。**短期对策**：`merge-gate` 5a（副产物清理）每次 merge 显式 `rm -f .env*.backup-by-preview`（已写入 skill）。**根治方案**：preview 启动时先扫并清历史 `*.backup-by-preview`（防御式）；注册 SIGINT/SIGTERM handler 保 `restoreDotenv` 跑完（已通过 F024 P3 部分覆盖，但需要复核覆盖完整性）。**影响**：根治后 `merge-gate` 5a 里 `.env*.backup-by-preview` 那行可删。
 
 ## Links
 
