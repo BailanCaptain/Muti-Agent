@@ -91,6 +91,7 @@ export class SqliteStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS session_groups (
         id TEXT PRIMARY KEY,
+        room_id TEXT UNIQUE,
         title TEXT NOT NULL,
         project_tag TEXT,
         created_at TEXT NOT NULL,
@@ -265,6 +266,13 @@ export class SqliteStore {
       {
         name: "F019-threads-add-backlog-item-id",
         sql: "ALTER TABLE threads ADD COLUMN backlog_item_id TEXT",
+      },
+      // F022 Phase 1: 全局递增 ROOM ID (R-001, R-002, ...)
+      // 旧库 ALTER 不带 UNIQUE（已有 NULL 行兼容），回填后通过
+      // CREATE UNIQUE INDEX 补齐。
+      {
+        name: "F022-session-groups-add-room-id",
+        sql: "ALTER TABLE session_groups ADD COLUMN room_id TEXT",
       },
     ]
     for (const m of alters) {

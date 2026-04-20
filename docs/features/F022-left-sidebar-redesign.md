@@ -39,10 +39,10 @@ created: 2026-04-19
 ## Acceptance Criteria
 
 ### Phase 1：ROOM ID 生成 + 存储（0.5 天）
-- [ ] AC-01: 新建 session 时分配全局递增 ID：`R-001`, `R-002`, ...
-- [ ] AC-02: ID 持久化到 session 记录（DB schema 加 `roomId` 字段或复用现有字段）
-- [ ] AC-03: 历史 session 回填（migration：按 createdAt 升序分配 R-xxx）
-- [ ] AC-04: ID 在数据库层面全局唯一（不按 projectTag 分号，不复用）
+- [x] AC-01: 新建 session 时分配全局递增 ID：`R-001`, `R-002`, ...
+- [x] AC-02: ID 持久化到 session 记录（`session_groups.room_id` 字段）
+- [x] AC-03: 历史 session 回填（`backfillRoomIds` 启动时幂等执行，按 createdAt 升序分配）
+- [x] AC-04: ID 在数据库层面全局唯一（`CREATE UNIQUE INDEX idx_session_groups_room_id`）
 
 ### Phase 2：Haiku 自动命名（1 天）
 - [ ] AC-05: 触发时机：首条 user + 首条 assistant 之后，等 2-3 秒
@@ -92,6 +92,7 @@ created: 2026-04-19
 | 2026-04-18 | collaborative-thinking 讨论（黄仁勋主导方案）|
 | 2026-04-18 | 产品决策：Haiku 触发时机 + 全局递增 ID |
 | 2026-04-19 | Kickoff |
+| 2026-04-19 | Phase 1 实施完成（AC-01~04 ✅，TDD 10 新测试覆盖）|
 
 ## Links
 

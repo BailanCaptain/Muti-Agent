@@ -60,11 +60,27 @@ export class DrizzleSessionRepository {
     const r = rows[0]
     return {
       id: r.id,
+      roomId: r.roomId,
       title: r.title,
       projectTag: r.projectTag,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     }
+  }
+
+  // F022 Phase 1: 全局递增 ROOM ID 分配。
+  // MAX 扫全表 + 1；格式 `R-{padStart(3)}`，超过 999 自然扩位。
+  // SQLite WAL 单写进程场景下串行执行，无需额外锁。
+  private allocateNextRoomId(): string {
+    const rows = this.db
+      .select({
+        maxSeq: sql<number | null>`MAX(CAST(SUBSTR(room_id, 3) AS INTEGER))`,
+      })
+      .from(sessionGroups)
+      .where(sql`room_id IS NOT NULL AND room_id LIKE 'R-%'`)
+      .all()
+    const next = (rows[0]?.maxSeq ?? 0) + 1
+    return `R-${String(next).padStart(3, "0")}`
   }
 
   listSessionGroups(limit = 200) {
@@ -81,6 +97,7 @@ export class DrizzleSessionRepository {
     const rows = this.db
       .select({
         id: sessionGroups.id,
+        roomId: sessionGroups.roomId,
         title: sessionGroups.title,
         projectTag: sessionGroups.projectTag,
         createdAt: sessionGroups.createdAt,
@@ -99,6 +116,7 @@ export class DrizzleSessionRepository {
       string,
       {
         id: string
+        roomId: string | null
         title: string
         projectTag: string | null
         createdAt: string
@@ -112,6 +130,7 @@ export class DrizzleSessionRepository {
       if (!group) {
         group = {
           id: row.id,
+          roomId: row.roomId ?? null,
           title: row.title,
           projectTag: row.projectTag ?? null,
           createdAt: row.createdAt,
@@ -135,11 +154,13 @@ export class DrizzleSessionRepository {
   createSessionGroup(title?: string) {
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
+    const roomId = this.allocateNextRoomId()
 
     this.db
       .insert(sessionGroups)
       .values({
         id,
+        roomId,
         title: title ?? `新会话 ${now.slice(0, 19).replace("T", " ")}`,
         createdAt: now,
         updatedAt: now,
@@ -193,6 +214,7 @@ export class DrizzleSessionRepository {
 
 
   createSessionGroupWithDefaults(defaults: Record<Provider, string | null>, title?: string): string {
+    const roomId = this.allocateNextRoomId()
     return this.db.transaction((tx) => {
       const now = new Date().toISOString()
       const id = crypto.randomUUID()
@@ -200,6 +222,7 @@ export class DrizzleSessionRepository {
       tx.insert(sessionGroups)
         .values({
           id,
+          roomId,
           title: title ?? `新会话 ${now.slice(0, 19).replace("T", " ")}`,
           createdAt: now,
           updatedAt: now,

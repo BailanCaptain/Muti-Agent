@@ -91,6 +91,7 @@ function createNodeSqliteAdapter(dbPath: string) {
 const INIT_SQL = `
   CREATE TABLE IF NOT EXISTS session_groups (
     id TEXT PRIMARY KEY,
+    room_id TEXT UNIQUE,
     title TEXT NOT NULL,
     project_tag TEXT,
     created_at TEXT NOT NULL,
@@ -250,6 +251,13 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
     name: "F019-threads-add-backlog-item-id",
     sql: "ALTER TABLE threads ADD COLUMN backlog_item_id TEXT;",
   },
+  // F022 Phase 1: 全局递增 ROOM ID (R-001, R-002, ...)
+  // 旧库 ALTER 不带 UNIQUE（已有 NULL 行兼容），回填后由 SqliteStore.migrate()
+  // 的 CREATE UNIQUE INDEX 补齐唯一性。
+  {
+    name: "F022-session-groups-add-room-id",
+    sql: "ALTER TABLE session_groups ADD COLUMN room_id TEXT;",
+  },
 ]
 
 function runMigrations(adapter: ReturnType<typeof createNodeSqliteAdapter>): void {
@@ -266,10 +274,71 @@ function runMigrations(adapter: ReturnType<typeof createNodeSqliteAdapter>): voi
   }
 }
 
+// F022 Phase 1: 历史 session roomId 回填（幂等）。
+// 仅回填 room_id IS NULL 的行，按 created_at 升序分配 R-xxx，接续表中已有的
+// 最大序号。旧库 ALTER 路径不带 UNIQUE，回填后由 CREATE UNIQUE INDEX 补齐。
+function backfillRoomIds(adapter: ReturnType<typeof createNodeSqliteAdapter>): void {
+  const pending = adapter
+    .prepare(
+      "SELECT id FROM session_groups WHERE room_id IS NULL ORDER BY created_at ASC, id ASC",
+    )
+    .all() as Array<{ id: string }>
+
+  if (pending.length > 0) {
+    const maxRow = adapter
+      .prepare(
+        "SELECT MAX(CAST(SUBSTR(room_id, 3) AS INTEGER)) AS maxSeq FROM session_groups WHERE room_id IS NOT NULL AND room_id LIKE 'R-%'",
+      )
+      .get() as { maxSeq: number | null } | undefined
+    let next = (maxRow?.maxSeq ?? 0) + 1
+
+    const update = adapter.prepare("UPDATE session_groups SET room_id = ? WHERE id = ?")
+    adapter.exec("BEGIN")
+    try {
+      for (const row of pending) {
+        update.run(`R-${String(next).padStart(3, "0")}`, row.id)
+        next++
+      }
+      adapter.exec("COMMIT")
+    } catch (err) {
+      adapter.exec("ROLLBACK")
+      throw err
+    }
+  }
+
+  // 回填之后补齐 UNIQUE 约束。新库走 CREATE TABLE 路径已有 sqlite_autoindex，
+  // 重复 CREATE UNIQUE INDEX 会造成同列两份索引 — 每次写都要维护两遍。
+  // 只在还没有任何 UNIQUE 单列索引覆盖 room_id 时建命名索引（补旧库 ALTER 路径）。
+  if (!hasUniqueIndexOnColumn(adapter, "session_groups", "room_id")) {
+    adapter.exec(
+      "CREATE UNIQUE INDEX idx_session_groups_room_id ON session_groups(room_id)",
+    )
+  }
+}
+
+function hasUniqueIndexOnColumn(
+  adapter: ReturnType<typeof createNodeSqliteAdapter>,
+  table: string,
+  column: string,
+): boolean {
+  const indexes = adapter
+    .prepare('SELECT name, "unique" AS isUnique FROM pragma_index_list(?)')
+    .all(table) as Array<{ name: string; isUnique: number }>
+  for (const idx of indexes) {
+    if (idx.isUnique !== 1) continue
+    const cols = adapter
+      .prepare("SELECT name FROM pragma_index_info(?)")
+      .all(idx.name) as Array<{ name: string }>
+    if (cols.length === 1 && cols[0].name === column) return true
+  }
+  return false
+}
+
 export function createDrizzleDb(dbPath: string) {
   const adapter = createNodeSqliteAdapter(dbPath)
   adapter.exec(INIT_SQL)
   runMigrations(adapter)
+  backfillRoomIds(adapter)
   const db = drizzle(adapter as any, { schema })
 
   return {

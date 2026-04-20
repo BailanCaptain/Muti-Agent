@@ -2,6 +2,7 @@ import { blob, index, integer, real, sqliteTable, text } from "drizzle-orm/sqlit
 
 export const sessionGroups = sqliteTable("session_groups", {
   id: text("id").primaryKey(),
+  roomId: text("room_id").unique(),
   title: text("title").notNull(),
   projectTag: text("project_tag"),
   createdAt: text("created_at").notNull(),
