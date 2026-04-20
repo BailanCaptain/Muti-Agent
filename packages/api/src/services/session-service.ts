@@ -37,6 +37,7 @@ export class SessionService {
   constructor(
     private readonly repository: SessionRepository,
     private readonly providerProfiles: ProviderProfile[],
+    private readonly sessionTitler?: { schedule(sessionGroupId: string): void },
   ) {
     this.repository.reconcileLegacyDefaultModels({
       codex: {
@@ -299,7 +300,14 @@ export class SessionService {
     groupRole: "header" | "member" | "convergence" | null = null,
     toolEvents = "[]",
   ) {
-    return this.repository.appendMessage(threadId, "assistant", content, thinking, messageType, null, groupId, groupRole, toolEvents)
+    const result = this.repository.appendMessage(threadId, "assistant", content, thinking, messageType, null, groupId, groupRole, toolEvents)
+    if (messageType === "final" && this.sessionTitler) {
+      const thread = this.repository.getThreadById(threadId)
+      if (thread?.sessionGroupId) {
+        this.sessionTitler.schedule(thread.sessionGroupId)
+      }
+    }
+    return result
   }
 
   appendConnectorMessage(

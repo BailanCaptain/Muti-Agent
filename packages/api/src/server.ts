@@ -42,9 +42,12 @@ import { MessageService } from "./services/message-service"
 import { WorkflowSopService } from "./services/workflow-sop-service"
 import { DrizzleWorkflowSopRepository } from "./db/repositories/workflow-sop-repository"
 import { SessionService } from "./services/session-service"
+import { SessionTitler } from "./services/session-titler/session-titler"
+import { buildTitlePromptFromRecentMessages } from "./services/session-titler/build-title-prompt"
+import { createHaikuRunner } from "./runtime/haiku-runner"
 import { SkillRegistry } from "./skills/registry"
 import { SopTracker } from "./skills/sop-tracker"
-import { setRootLogger } from "./lib/logger"
+import { createLogger, setRootLogger } from "./lib/logger"
 
 export async function createApiServer(options: {
   apiBaseUrl: string
@@ -64,7 +67,17 @@ export async function createApiServer(options: {
   ensurePreMigrationBackup(options.sqlitePath)
   const { db: drizzleDb, close: closeDrizzle } = createDrizzleDb(options.sqlitePath)
   const repository = new SessionRepository(drizzleDb)
-  const sessions = new SessionService(repository, providerProfiles)
+  // F022 P2: Haiku auto-titler. Fire-and-forget debounced title generation
+  // for session groups with a default "新会话 YYYY-MM-DD …" title. See
+  // `services/session-titler/*`.
+  const haikuRunner = createHaikuRunner()
+  const sessionTitler = new SessionTitler({
+    repo: repository,
+    haiku: haikuRunner,
+    logger: createLogger("session-titler"),
+    buildPrompt: (sid) => buildTitlePromptFromRecentMessages(sid, repository),
+  })
+  const sessions = new SessionService(repository, providerProfiles, sessionTitler)
   const eventBus = new AppEventBus()
   const broadcaster: RealtimeBroadcaster = {
     broadcast: () => {},
