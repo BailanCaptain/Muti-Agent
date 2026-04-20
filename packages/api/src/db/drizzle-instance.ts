@@ -94,6 +94,9 @@ const INIT_SQL = `
     room_id TEXT UNIQUE,
     title TEXT NOT NULL,
     project_tag TEXT,
+    title_locked_at TEXT,
+    archived_at TEXT,
+    deleted_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
@@ -257,6 +260,21 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   {
     name: "F022-session-groups-add-room-id",
     sql: "ALTER TABLE session_groups ADD COLUMN room_id TEXT;",
+  },
+  // F022 Phase 3.5: 手动命名锁（AC-14g）— SessionTitler 看到非 NULL 跳过 Haiku 覆盖
+  {
+    name: "F022-session-groups-add-title-locked-at",
+    sql: "ALTER TABLE session_groups ADD COLUMN title_locked_at TEXT;",
+  },
+  // F022 Phase 3.5: 归档（AC-14i）— 非 NULL 从主列表移出，进归档列表
+  {
+    name: "F022-session-groups-add-archived-at",
+    sql: "ALTER TABLE session_groups ADD COLUMN archived_at TEXT;",
+  },
+  // F022 Phase 3.5: 软删（AC-14j）— 非 NULL 从主列表移出，进归档列表；禁物删
+  {
+    name: "F022-session-groups-add-deleted-at",
+    sql: "ALTER TABLE session_groups ADD COLUMN deleted_at TEXT;",
   },
 ]
 

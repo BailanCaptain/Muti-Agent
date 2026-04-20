@@ -45,6 +45,8 @@ export default function HomePage() {
   const replaceActiveGroup = useThreadStore((state) => state.replaceActiveGroup)
   const applySnapshotDelta = useThreadStore((state) => state.applySnapshotDelta)
   const reconcileOptimisticMessage = useThreadStore((state) => state.reconcileOptimisticMessage)
+  const recordMessageInGroup = useThreadStore((state) => state.recordMessageInGroup)
+  const applyTitleUpdate = useThreadStore((state) => state.applyTitleUpdate)
   const setStatus = useChatStore((state) => state.setStatus)
   const setSocketState = useSettingsStore((state) => state.setSocketState)
   const incrementUnread = useThreadStore((state) => state.incrementUnread)
@@ -119,6 +121,9 @@ export default function HomePage() {
         }
 
         if (event.type === "message.created") {
+          if (event.payload.sessionGroupId) {
+            recordMessageInGroup(event.payload.sessionGroupId, event.payload.message)
+          }
           if (event.payload.sessionGroupId && !isCurrentSession(event.payload.sessionGroupId)) {
             incrementUnread(event.payload.sessionGroupId)
           } else if (event.payload.clientMessageId) {
@@ -177,6 +182,15 @@ export default function HomePage() {
           return
         }
 
+        if (event.type === "session.title_updated") {
+          applyTitleUpdate(
+            event.payload.sessionGroupId,
+            event.payload.title,
+            event.payload.titleLockedAt,
+          )
+          return
+        }
+
         if (event.type === "status") {
           if (event.payload.sessionGroupId && !isCurrentSession(event.payload.sessionGroupId)) return
           setStatus(event.payload.message)
@@ -188,6 +202,7 @@ export default function HomePage() {
   }, [
     addDecisionRequest,
     appendTimelineMessage,
+    applyTitleUpdate,
     incrementUnread,
     applyAssistantDelta,
     applyThinkingDelta,
@@ -195,6 +210,7 @@ export default function HomePage() {
     openPreview,
     receiveBoardFlush,
     removeBoardItem,
+    recordMessageInGroup,
     removeDecisionRequest,
     replaceActiveGroup,
     selectSessionGroup,

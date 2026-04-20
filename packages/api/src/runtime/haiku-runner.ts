@@ -27,7 +27,7 @@ export interface HaikuRunnerDeps {
   spawn?: SpawnFn
 }
 
-const DEFAULT_TIMEOUT_MS = 5000
+const DEFAULT_TIMEOUT_MS = 15000
 
 /**
  * 单轮 Haiku 调用封装。内部 spawn `claude --print --model claude-haiku-4-5 "<prompt>"`，
@@ -45,6 +45,10 @@ export function createHaikuRunner(deps: HaikuRunnerDeps = {}): HaikuRunner {
       const args = [...runtime.prefixArgs, "--print", "--model", "claude-haiku-4-5", prompt]
       const start = Date.now()
       const proc = spawn(runtime.command, args, { shell: runtime.shell })
+      // Close stdin immediately so `claude --print` sees EOF and can exit cleanly.
+      // Without this, claude CLI on Windows hangs until external kill even after
+      // writing stdout, which meant every call hit the timeout branch in prod.
+      proc.stdin?.end()
 
       let stdout = ""
       proc.stdout?.on("data", (chunk: Buffer | string) => {

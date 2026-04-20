@@ -63,6 +63,9 @@ export class DrizzleSessionRepository {
       roomId: r.roomId,
       title: r.title,
       projectTag: r.projectTag,
+      titleLockedAt: r.titleLockedAt ?? null,
+      archivedAt: r.archivedAt ?? null,
+      deletedAt: r.deletedAt ?? null,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     }
@@ -83,10 +86,12 @@ export class DrizzleSessionRepository {
     return `R-${String(next).padStart(3, "0")}`
   }
 
+  // F022 Phase 3.5 (AC-14i/j): 主列表只看活跃项；归档/软删进归档列表。
   listSessionGroups(limit = 200) {
     const groupIds = this.db
       .select({ id: sessionGroups.id })
       .from(sessionGroups)
+      .where(sql`archived_at IS NULL AND deleted_at IS NULL`)
       .orderBy(desc(sessionGroups.updatedAt))
       .limit(limit)
       .all()
@@ -100,6 +105,9 @@ export class DrizzleSessionRepository {
         roomId: sessionGroups.roomId,
         title: sessionGroups.title,
         projectTag: sessionGroups.projectTag,
+        titleLockedAt: sessionGroups.titleLockedAt,
+        archivedAt: sessionGroups.archivedAt,
+        deletedAt: sessionGroups.deletedAt,
         createdAt: sessionGroups.createdAt,
         updatedAt: sessionGroups.updatedAt,
         provider: threads.provider,
@@ -120,6 +128,9 @@ export class DrizzleSessionRepository {
         roomId: string | null
         title: string
         projectTag: string | null
+        titleLockedAt: string | null
+        archivedAt: string | null
+        deletedAt: string | null
         createdAt: string
         updatedAt: string
         previews: Array<{ provider: Provider; alias: string; text: string }>
@@ -136,6 +147,9 @@ export class DrizzleSessionRepository {
           roomId: row.roomId ?? null,
           title: row.title,
           projectTag: row.projectTag ?? null,
+          titleLockedAt: row.titleLockedAt ?? null,
+          archivedAt: row.archivedAt ?? null,
+          deletedAt: row.deletedAt ?? null,
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
           previews: [],
@@ -189,13 +203,87 @@ export class DrizzleSessionRepository {
       .run()
   }
 
-  updateSessionGroupTitle(groupId: string, title: string) {
+  // F022 Phase 3.5 (AC-14g): manual=true 时写 title_locked_at，SessionTitler 看 lock 跳过覆盖。
+  // 自动命名（Haiku）调用保持原 behavior — 不写 lock。
+  updateSessionGroupTitle(
+    groupId: string,
+    title: string,
+    opts: { manual?: boolean } = {},
+  ) {
+    const now = new Date().toISOString()
+    const patch: { title: string; updatedAt: string; titleLockedAt?: string } = {
+      title,
+      updatedAt: now,
+    }
+    if (opts.manual) patch.titleLockedAt = now
+    this.db
+      .update(sessionGroups)
+      .set(patch)
+      .where(eq(sessionGroups.id, groupId))
+      .run()
+  }
+
+  // F022 Phase 3.5 (AC-14i)
+  archiveSessionGroup(groupId: string) {
     const now = new Date().toISOString()
     this.db
       .update(sessionGroups)
-      .set({ title, updatedAt: now })
+      .set({ archivedAt: now, updatedAt: now })
       .where(eq(sessionGroups.id, groupId))
       .run()
+  }
+
+  // F022 Phase 3.5 (AC-14j) — 软删，禁物删
+  softDeleteSessionGroup(groupId: string) {
+    const now = new Date().toISOString()
+    this.db
+      .update(sessionGroups)
+      .set({ deletedAt: now, updatedAt: now })
+      .where(eq(sessionGroups.id, groupId))
+      .run()
+  }
+
+  // F022 Phase 3.5 (AC-14i/j) — 恢复：清 archived_at 和 deleted_at 回到主列表
+  restoreSessionGroup(groupId: string) {
+    const now = new Date().toISOString()
+    this.db
+      .update(sessionGroups)
+      .set({ archivedAt: null, deletedAt: null, updatedAt: now })
+      .where(eq(sessionGroups.id, groupId))
+      .run()
+  }
+
+  // F022 Phase 3.5 (AC-14i/j) — 归档列表：archived_at 或 deleted_at 非 NULL。
+  // 按更新时间降序，最新动的排前面。
+  listArchivedSessionGroups(limit = 200) {
+    const rows = this.db
+      .select({
+        id: sessionGroups.id,
+        roomId: sessionGroups.roomId,
+        title: sessionGroups.title,
+        projectTag: sessionGroups.projectTag,
+        titleLockedAt: sessionGroups.titleLockedAt,
+        archivedAt: sessionGroups.archivedAt,
+        deletedAt: sessionGroups.deletedAt,
+        createdAt: sessionGroups.createdAt,
+        updatedAt: sessionGroups.updatedAt,
+      })
+      .from(sessionGroups)
+      .where(sql`archived_at IS NOT NULL OR deleted_at IS NOT NULL`)
+      .orderBy(desc(sessionGroups.updatedAt))
+      .limit(limit)
+      .all()
+    return rows.map(r => ({
+      id: r.id,
+      roomId: r.roomId ?? null,
+      title: r.title,
+      projectTag: r.projectTag ?? null,
+      titleLockedAt: r.titleLockedAt ?? null,
+      archivedAt: r.archivedAt ?? null,
+      deletedAt: r.deletedAt ?? null,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    }))
   }
 
   createThread(sessionGroupId: string, provider: Provider, currentModel: string | null) {

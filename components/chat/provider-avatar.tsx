@@ -3,7 +3,7 @@
 import type { Provider } from "@multi-agent/shared"
 
 type AvatarIdentity = Provider | "user"
-type AvatarSize = "xs" | "sm" | "md"
+type AvatarSize = "2xs" | "xs" | "sm" | "md"
 
 type ProviderAvatarProps = {
   identity: AvatarIdentity
@@ -77,6 +77,19 @@ const sizeMap: Record<
     userText: string
   }
 > = {
+  "2xs": {
+    shell: "h-5 w-5",
+    face: "h-3.5 w-3.5",
+    ear: "h-1.5 w-1.5",
+    badge: "h-2.5 w-2.5 text-[6px]",
+    eye: "h-0.5 w-0.5",
+    muzzle: "h-1.5 w-2.5",
+    cheek: "h-1 w-1",
+    mouth: "h-px w-1.5",
+    gap: "gap-1",
+    badgeOffset: "-bottom-0 -right-0",
+    userText: "text-[9px]",
+  },
   xs: {
     shell: "h-7 w-7",
     face: "h-5 w-5",

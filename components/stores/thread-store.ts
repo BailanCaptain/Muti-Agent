@@ -1,6 +1,7 @@
 "use client"
 
 import {
+  applyMessageToSessionGroups,
   type ContentBlock,
   type InvocationStats,
   PROVIDERS,
@@ -43,8 +44,11 @@ type SessionListItem = {
   title: string
   updatedAt: string
   updatedAtLabel: string
+  createdAt: string
   createdAtLabel: string
   projectTag?: string
+  // F022 Phase 3.5 (AC-14g): 手动命名锁；非 null 时前端显示 🔒 图标
+  titleLockedAt?: string | null
   pinned?: boolean
   unreadCount?: number
   participants: Provider[]
@@ -82,6 +86,8 @@ type ThreadStore = {
   stopThread: (provider: Provider) => Promise<void>
   stopAgent: (provider: Provider) => Promise<void>
   replaceSessionGroups: (groups: SessionGroupSummary[]) => void
+  // F022 Phase 3.5 (AC-14k): realtime push after Haiku renames or manual rename.
+  applyTitleUpdate: (groupId: string, title: string, titleLockedAt: string | null) => void
   replaceActiveGroup: (group: ActiveGroupPayload) => void
   applyAssistantDelta: (messageId: string, delta: string) => void
   applyThinkingDelta: (messageId: string, delta: string) => void
@@ -90,6 +96,7 @@ type ThreadStore = {
   appendTimelineMessage: (message: TimelineMessage) => void
   applySnapshotDelta: (delta: ThreadSnapshotDelta) => void
   reconcileOptimisticMessage: (clientMessageId: string, serverMessage: TimelineMessage) => void
+  recordMessageInGroup: (groupId: string, message: TimelineMessage) => void
   buildSendPayload: (input: string, contentBlocks?: ContentBlock[]) => SendPayload | null
   incrementUnread: (groupId: string) => void
   resetUnread: (groupId: string) => void
@@ -136,8 +143,10 @@ function normalizeSessionGroups(groups: SessionGroupSummary[]): SessionListItem[
     title: fallbackTitle(group.title, group.createdAtLabel),
     updatedAt: group.updatedAt,
     updatedAtLabel: group.updatedAtLabel,
+    createdAt: group.createdAt,
     createdAtLabel: group.createdAtLabel,
     projectTag: group.projectTag,
+    titleLockedAt: group.titleLockedAt ?? null,
     participants: group.participants ?? [],
     messageCount: group.messageCount ?? 0,
     previews: group.previews,
@@ -404,6 +413,17 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   replaceSessionGroups: (groups) => {
     set({ sessionGroups: normalizeSessionGroups(groups) })
   },
+  applyTitleUpdate: (groupId, title, titleLockedAt) => {
+    set((state) => ({
+      sessionGroups: state.sessionGroups.map((g) =>
+        g.id === groupId ? { ...g, title, titleLockedAt } : g,
+      ),
+      activeGroup:
+        state.activeGroup && state.activeGroup.id === groupId
+          ? { ...state.activeGroup, title }
+          : state.activeGroup,
+    }))
+  },
   replaceActiveGroup: (group) => {
     set((state) => ({
       activeGroup: {
@@ -425,6 +445,16 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       }
       return { timeline: [...state.timeline, message] }
     })
+  },
+  recordMessageInGroup: (groupId, message) => {
+    set((state) => ({
+      sessionGroups: applyMessageToSessionGroups(state.sessionGroups, groupId, {
+        provider: message.provider,
+        alias: message.alias,
+        content: message.content,
+        createdAt: message.createdAt,
+      }),
+    }))
   },
   applyAssistantDelta: (messageId, delta) => {
     const existing = pendingDeltas.get(messageId) ?? {}

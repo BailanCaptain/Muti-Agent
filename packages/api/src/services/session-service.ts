@@ -4,6 +4,7 @@ import type {
   ContentBlock,
   Provider,
   ProviderCatalog,
+  RealtimeServerEvent,
   SessionGroupSummary,
   ThreadSnapshotDelta,
   TimelineMessage,
@@ -33,6 +34,7 @@ type DispatchState = {
 
 export class SessionService {
   private lastSentTimestamps = new Map<string, string>()
+  private emit: ((event: RealtimeServerEvent) => void) | null = null
 
   constructor(
     private readonly repository: SessionRepository,
@@ -68,11 +70,33 @@ export class SessionService {
       title: group.title,
       updatedAt: new Date(group.updatedAt).toISOString(),
       updatedAtLabel: new Date(group.updatedAt).toLocaleString("zh-CN"),
+      createdAt: new Date(group.createdAt).toISOString(),
       createdAtLabel: new Date(group.createdAt).toLocaleString("zh-CN"),
       projectTag: group.projectTag ?? undefined,
+      titleLockedAt: group.titleLockedAt ?? null,
       participants: group.participants ?? [],
       messageCount: group.messageCount ?? 0,
       previews: group.previews,
+    }))
+  }
+
+  // F022 Phase 3.5 (AC-14i/j): 归档列表 — 含归档和软删，前端一起展示。
+  listArchivedSessionGroups(): SessionGroupSummary[] {
+    return this.repository.listArchivedSessionGroups().map((group) => ({
+      id: group.id,
+      roomId: group.roomId ?? null,
+      title: group.title,
+      updatedAt: new Date(group.updatedAt).toISOString(),
+      updatedAtLabel: new Date(group.updatedAt).toLocaleString("zh-CN"),
+      createdAt: new Date(group.createdAt).toISOString(),
+      createdAtLabel: new Date(group.createdAt).toLocaleString("zh-CN"),
+      projectTag: group.projectTag ?? undefined,
+      titleLockedAt: group.titleLockedAt ?? null,
+      archivedAt: group.archivedAt ?? null,
+      deletedAt: group.deletedAt ?? null,
+      participants: [],
+      messageCount: 0,
+      previews: [],
     }))
   }
 
@@ -363,6 +387,41 @@ export class SessionService {
 
   updateSessionGroupProjectTag(groupId: string, tag: string | null) {
     this.repository.updateSessionGroupProjectTag(groupId, tag)
+  }
+
+  // F022 Phase 3.5 (AC-14k): wire the broadcaster so rename + Haiku update
+  // push `session.title_updated` to connected clients.
+  setBroadcaster(emit: (event: RealtimeServerEvent) => void) {
+    this.emit = emit
+  }
+
+  // F022 Phase 3.5 (AC-14g): 手动重命名 — 写 title_locked_at 防 Haiku 覆盖
+  renameSessionGroup(groupId: string, title: string) {
+    this.repository.updateSessionGroupTitle(groupId, title, { manual: true })
+    const row = this.repository.getSessionGroupById(groupId)
+    this.emit?.({
+      type: "session.title_updated",
+      payload: {
+        sessionGroupId: groupId,
+        title,
+        titleLockedAt: row?.titleLockedAt ?? null,
+      },
+    })
+  }
+
+  // F022 Phase 3.5 (AC-14i)
+  archiveSessionGroup(groupId: string) {
+    this.repository.archiveSessionGroup(groupId)
+  }
+
+  // F022 Phase 3.5 (AC-14j) — 软删
+  softDeleteSessionGroup(groupId: string) {
+    this.repository.softDeleteSessionGroup(groupId)
+  }
+
+  // F022 Phase 3.5 (AC-14i/j) — 恢复：清 archived_at 和 deleted_at
+  restoreSessionGroup(groupId: string) {
+    this.repository.restoreSessionGroup(groupId)
   }
 
   updateThread(threadId: string, model: string | null, nativeSessionId: string | null, sopBookmark?: string | null, lastFillRatio?: number | null) {

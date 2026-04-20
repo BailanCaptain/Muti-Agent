@@ -3,15 +3,21 @@
 import { useThreadStore } from "@/components/stores/thread-store"
 import type { Provider } from "@multi-agent/shared"
 import {
+  Archive,
+  ArchiveRestore,
   ChevronDown,
   ChevronRight,
   Plus,
   Search,
   Pin,
+  Tag,
+  Trash2,
 } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ProviderAvatar } from "./provider-avatar"
 import { SessionContextMenu } from "./session-context-menu"
+
+const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
 
 /* ── localStorage helpers for pinned sessions ── */
 
@@ -48,11 +54,24 @@ type TimeGroup = {
     title: string
     updatedAt: string
     updatedAtLabel: string
+    createdAt: string
     createdAtLabel: string
+    projectTag?: string
+    titleLockedAt?: string | null
     participants: Provider[]
     messageCount: number
     previews: Array<{ provider: string; alias: string; text: string }>
   }>
+}
+
+// F022 Phase 3.5 (AC-14i/j): 归档列表条目结构（与主列表不同：无 previews/participants）
+type ArchivedItem = {
+  id: string
+  roomId: string | null
+  title: string
+  updatedAtLabel: string
+  archivedAt: string | null
+  deletedAt: string | null
 }
 
 const BUCKET_ORDER: TimeBucket[] = ["today", "thisWeek", "thisMonth", "earlier"]
@@ -63,7 +82,7 @@ const BUCKET_LABELS: Record<TimeBucket, string> = {
   earlier: "更早",
 }
 
-// AC-14a: 以"最后活动时间 updatedAt"为分桶维度；周起点 = 本周周一 00:00（ISO 标准）
+// 分桶维度：会话创建时间 createdAt（稳定，不受新消息/加锁影响）。周起点 = 本周周一 00:00（ISO 标准）。
 function computeBucketBoundaries(now: Date) {
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
   const dayOfWeek = now.getDay() // 0=Sun
@@ -73,8 +92,8 @@ function computeBucketBoundaries(now: Date) {
   return { todayStart, weekStart, monthStart }
 }
 
-function bucketOf(updatedAt: string, boundaries: ReturnType<typeof computeBucketBoundaries>): TimeBucket {
-  const t = new Date(updatedAt).getTime()
+function bucketOf(isoTime: string, boundaries: ReturnType<typeof computeBucketBoundaries>): TimeBucket {
+  const t = new Date(isoTime).getTime()
   if (t >= boundaries.todayStart) return "today"
   if (t >= boundaries.weekStart) return "thisWeek"
   if (t >= boundaries.monthStart) return "thisMonth"
@@ -96,6 +115,7 @@ export function SessionSidebar() {
   const activeGroupId = useThreadStore((state) => state.activeGroupId)
   const createGroup = useThreadStore((state) => state.createSessionGroup)
   const selectGroup = useThreadStore((state) => state.selectSessionGroup)
+  const replaceSessionGroups = useThreadStore((state) => state.replaceSessionGroups)
   const unreadCounts = useThreadStore((state) => state.unreadCounts)
   const anyProviderRunning = useThreadStore((state) =>
     Object.values(state.providers).some((p) => p.running)
@@ -104,14 +124,176 @@ export function SessionSidebar() {
   const [search, setSearch] = useState("")
   const [pinned, setPinned] = useState<Set<string>>(new Set())
   const [collapsedTags, setCollapsedTags] = useState<Set<string>>(new Set())
+  // F022 Phase 3.5 (AC-14g): 哪个 group 处于行内重命名输入态；null 表示无
+  const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null)
+  // F022 Phase 3.5 (AC-14i/j): 归档列表
+  const [archivedOpen, setArchivedOpen] = useState(false)
+  const [archivedItems, setArchivedItems] = useState<ArchivedItem[]>([])
 
-  // Context menu
+  // Context menu — hasProjectTag 传给菜单控制"清除项目标签"可见性
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
     groupId: string
     isPinned: boolean
+    hasProjectTag: boolean
   } | null>(null)
+
+  // F022 Phase 3.5: 主列表刷新（复用 /api/bootstrap 的 sessionGroups 字段）
+  const reloadSessionGroups = useCallback(async () => {
+    const res = await fetch(`${baseUrl}/api/bootstrap`)
+    const data = (await res.json()) as { sessionGroups: Parameters<typeof replaceSessionGroups>[0] }
+    replaceSessionGroups(data.sessionGroups)
+  }, [replaceSessionGroups])
+
+  const reloadArchived = useCallback(async () => {
+    const res = await fetch(`${baseUrl}/api/archived-session-groups`)
+    const data = (await res.json()) as {
+      sessionGroups: Array<{
+        id: string
+        roomId: string | null
+        title: string
+        updatedAtLabel: string
+        archivedAt?: string | null
+        deletedAt?: string | null
+      }>
+    }
+    setArchivedItems(
+      data.sessionGroups.map((g) => ({
+        id: g.id,
+        roomId: g.roomId,
+        title: g.title,
+        updatedAtLabel: g.updatedAtLabel,
+        archivedAt: g.archivedAt ?? null,
+        deletedAt: g.deletedAt ?? null,
+      })),
+    )
+  }, [])
+
+  const handleRequestRename = useCallback((groupId: string) => {
+    setRenamingGroupId(groupId)
+  }, [])
+
+  const handleCommitRename = useCallback(
+    async (groupId: string, newTitle: string) => {
+      const trimmed = newTitle.trim()
+      if (trimmed.length === 0) {
+        setRenamingGroupId(null)
+        return
+      }
+      if (trimmed.length > 40) {
+        console.warn("[session-sidebar] rename rejected: title > 40 chars")
+        return
+      }
+      try {
+        await fetch(`${baseUrl}/api/session-groups/${groupId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: trimmed }),
+        })
+        await reloadSessionGroups()
+      } catch (err) {
+        console.error("[session-sidebar] rename error", err)
+      }
+      setRenamingGroupId(null)
+    },
+    [reloadSessionGroups],
+  )
+
+  const handleCancelRename = useCallback(() => {
+    setRenamingGroupId(null)
+  }, [])
+
+  const handleSetProjectTag = useCallback(
+    async (groupId: string, tag: string | null) => {
+      try {
+        await fetch(`${baseUrl}/api/session-groups/${groupId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectTag: tag }),
+        })
+        await reloadSessionGroups()
+      } catch (err) {
+        console.error("[session-sidebar] set tag error", err)
+      }
+    },
+    [reloadSessionGroups],
+  )
+
+  const handleClearProjectTag = useCallback(
+    async (groupId: string) => {
+      await handleSetProjectTag(groupId, null)
+    },
+    [handleSetProjectTag],
+  )
+
+  // 会话被移出可见列表（归档/软删）后，若正好是当前选中，则跳到下一条，
+  // 没有下一条退回前一条；一条都不剩就清 activeGroupId。避免详情面板残留指向
+  // 一个已不可见会话造成"删了还在显示"的错觉。
+  const switchAwayIfActive = useCallback(
+    async (removedId: string) => {
+      const state = useThreadStore.getState()
+      if (state.activeGroupId !== removedId) return
+      const list = state.sessionGroups
+      const i = list.findIndex((g) => g.id === removedId)
+      const next = i >= 0 ? (list[i + 1] ?? list[i - 1]) : undefined
+      if (next) {
+        await selectGroup(next.id)
+      } else {
+        useThreadStore.setState({ activeGroupId: null })
+      }
+    },
+    [selectGroup],
+  )
+
+  const handleArchive = useCallback(
+    async (groupId: string) => {
+      try {
+        await fetch(`${baseUrl}/api/session-groups/${groupId}/archive`, { method: "POST" })
+        await switchAwayIfActive(groupId)
+        await reloadSessionGroups()
+        if (archivedOpen) await reloadArchived()
+      } catch (err) {
+        console.error("[session-sidebar] archive error", err)
+      }
+    },
+    [reloadSessionGroups, reloadArchived, archivedOpen, switchAwayIfActive],
+  )
+
+  const handleDelete = useCallback(
+    async (groupId: string) => {
+      try {
+        await fetch(`${baseUrl}/api/session-groups/${groupId}`, { method: "DELETE" })
+        await switchAwayIfActive(groupId)
+        await reloadSessionGroups()
+        if (archivedOpen) await reloadArchived()
+      } catch (err) {
+        console.error("[session-sidebar] delete error", err)
+      }
+    },
+    [reloadSessionGroups, reloadArchived, archivedOpen, switchAwayIfActive],
+  )
+
+  const handleRestore = useCallback(
+    async (groupId: string) => {
+      try {
+        await fetch(`${baseUrl}/api/session-groups/${groupId}/restore`, { method: "POST" })
+        await reloadSessionGroups()
+        await reloadArchived()
+        // 恢复后自动选中该会话，省一次点击
+        await selectGroup(groupId)
+      } catch (err) {
+        console.error("[session-sidebar] restore error", err)
+      }
+    },
+    [reloadSessionGroups, reloadArchived, selectGroup],
+  )
+
+  const toggleArchivedOpen = useCallback(async () => {
+    const next = !archivedOpen
+    setArchivedOpen(next)
+    if (next) await reloadArchived()
+  }, [archivedOpen, reloadArchived])
 
   // Load pinned from localStorage on mount
   useEffect(() => {
@@ -179,7 +361,13 @@ export function SessionSidebar() {
   }, [search, sessionGroups, activeGroupId, selectGroup])
 
   // Split into pinned and time-bucketed groups (AC-14a)
-  const pinnedItems = useMemo(() => filtered.filter((g) => pinned.has(g.id)), [filtered, pinned])
+  const pinnedItems = useMemo(
+    () =>
+      filtered
+        .filter((g) => pinned.has(g.id))
+        .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
+    [filtered, pinned],
+  )
 
   const timeGroups = useMemo<TimeGroup[]>(() => {
     const unpinned = filtered.filter((g) => !pinned.has(g.id))
@@ -191,10 +379,10 @@ export function SessionSidebar() {
       earlier: [],
     }
     for (const item of unpinned) {
-      buckets[bucketOf(item.updatedAt, boundaries)].push(item)
+      buckets[bucketOf(item.createdAt, boundaries)].push(item)
     }
     for (const key of BUCKET_ORDER) {
-      buckets[key].sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt))
+      buckets[key].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
     }
     return BUCKET_ORDER.filter((b) => buckets[b].length > 0).map((b) => ({
       bucket: b,
@@ -204,9 +392,9 @@ export function SessionSidebar() {
   }, [filtered, pinned])
 
   const handleContextMenu = useCallback(
-    (e: React.MouseEvent, groupId: string, isPinned: boolean) => {
+    (e: React.MouseEvent, groupId: string, isPinned: boolean, hasProjectTag: boolean) => {
       e.preventDefault()
-      setContextMenu({ x: e.clientX, y: e.clientY, groupId, isPinned })
+      setContextMenu({ x: e.clientX, y: e.clientY, groupId, isPinned, hasProjectTag })
     },
     [],
   )
@@ -276,11 +464,16 @@ export function SessionSidebar() {
                   unreadCount={unreadCounts[group.id] ?? 0}
                   participants={group.participants}
                   previews={group.previews}
+                  projectTag={group.projectTag}
+                  titleLockedAt={group.titleLockedAt}
                   active={activeGroupId === group.id}
                   running={runningGroupIds.has(group.id)}
                   isPinned={true}
+                  isRenaming={renamingGroupId === group.id}
                   onSelect={selectGroup}
                   onCtxMenu={handleContextMenu}
+                  onRenameCommit={handleCommitRename}
+                  onRenameCancel={handleCancelRename}
                 />
               ))}
             </div>
@@ -321,17 +514,61 @@ export function SessionSidebar() {
                     unreadCount={unreadCounts[group.id] ?? 0}
                     participants={group.participants}
                     previews={group.previews}
+                    projectTag={group.projectTag}
+                    titleLockedAt={group.titleLockedAt}
                     active={activeGroupId === group.id}
                     running={runningGroupIds.has(group.id)}
                     isPinned={pinned.has(group.id)}
+                    isRenaming={renamingGroupId === group.id}
                     onSelect={selectGroup}
                     onCtxMenu={handleContextMenu}
+                    onRenameCommit={handleCommitRename}
+                    onRenameCancel={handleCancelRename}
                   />
                 ))}
               </div>
             )}
           </div>
         ))}
+
+        {/* F022 Phase 3.5 (AC-14i/j): 归档列表 — 固定在滚动列表底部，可折叠 */}
+        <div className="mt-4 border-t border-slate-200/40 pt-2">
+          <button
+            className="flex w-full items-center gap-1.5 px-2 py-1 text-left"
+            onClick={() => void toggleArchivedOpen()}
+            type="button"
+          >
+            {archivedOpen ? (
+              <ChevronDown className="h-3 w-3 text-slate-400" />
+            ) : (
+              <ChevronRight className="h-3 w-3 text-slate-400" />
+            )}
+            <Archive className="h-3 w-3 text-slate-400" />
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+              归档列表
+            </span>
+            {archivedOpen && archivedItems.length > 0 && (
+              <span className="ml-auto rounded-full bg-slate-100 px-1.5 text-[10px] font-mono text-slate-500">
+                {archivedItems.length}
+              </span>
+            )}
+          </button>
+          {archivedOpen && (
+            <div className="mt-1 space-y-0.5">
+              {archivedItems.length === 0 ? (
+                <div className="px-2 py-2 text-center text-xs text-slate-400">归档列表为空</div>
+              ) : (
+                archivedItems.map((item) => (
+                  <ArchivedRow
+                    key={item.id}
+                    item={item}
+                    onRestore={handleRestore}
+                  />
+                ))
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Context menu */}
@@ -341,46 +578,55 @@ export function SessionSidebar() {
           y={contextMenu.y}
           groupId={contextMenu.groupId}
           isPinned={contextMenu.isPinned}
+          hasProjectTag={contextMenu.hasProjectTag}
           onClose={closeContextMenu}
           onTogglePin={togglePin}
+          onRequestRename={handleRequestRename}
+          onSetProjectTag={handleSetProjectTag}
+          onClearProjectTag={handleClearProjectTag}
+          onArchive={handleArchive}
+          onDelete={handleDelete}
         />
       )}
     </aside>
   )
 }
 
-/* ── Keyword Capsules ── */
+/* ── Archived Row ── */
 
-type KeywordRule = {
-  en: RegExp
-  cn: string[]
-  label: string
-  color: string
-}
-
-const KEYWORD_RULES: KeywordRule[] = [
-  { en: /\brefactor\b/i, cn: ["重构"], label: "Refactor", color: "bg-violet-100 text-violet-600" },
-  { en: /\b(bugfix|bug|fix)\b/i, cn: ["修复", "修 bug"], label: "BugFix", color: "bg-rose-100 text-rose-600" },
-  { en: /\bUI\b/i, cn: ["界面", "前端", "视觉", "样式"], label: "UI", color: "bg-sky-100 text-sky-600" },
-  { en: /\b(test|TDD)\b/i, cn: ["测试"], label: "Test", color: "bg-emerald-100 text-emerald-600" },
-  { en: /\b(feat|feature)\b/i, cn: ["新功能", "功能"], label: "Feature", color: "bg-amber-100 text-amber-600" },
-  { en: /\b(docs|README)\b/i, cn: ["文档"], label: "Docs", color: "bg-slate-100 text-slate-600" },
-  { en: /\bperf\b/i, cn: ["性能", "优化"], label: "Perf", color: "bg-orange-100 text-orange-600" },
-  { en: /\b(review|code review)\b/i, cn: ["审查"], label: "Review", color: "bg-indigo-100 text-indigo-600" },
-  { en: /\bdeploy\b/i, cn: ["部署", "发布", "上线"], label: "Deploy", color: "bg-teal-100 text-teal-600" },
-]
-
-function extractKeywords(title: string, previews: Array<{ text: string }>): Array<{ label: string; color: string }> {
-  const corpus = [title, ...previews.map((p) => p.text)].join(" ")
-  const found: Array<{ label: string; color: string }> = []
-  for (const { en, cn, label, color } of KEYWORD_RULES) {
-    const hit = en.test(corpus) || cn.some((w) => corpus.includes(w))
-    if (hit) {
-      found.push({ label, color })
-    }
-    if (found.length >= 3) break
-  }
-  return found
+function ArchivedRow({
+  item,
+  onRestore,
+}: {
+  item: ArchivedItem
+  onRestore: (groupId: string) => Promise<void>
+}) {
+  const statusLabel = item.deletedAt ? "已删除" : "归档中"
+  return (
+    <div className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-slate-500 hover:bg-slate-50/60">
+      {item.roomId && (
+        <span className="shrink-0 font-mono text-[10px] font-semibold text-amber-600/70">
+          {item.roomId}
+        </span>
+      )}
+      <span className="min-w-0 flex-1 truncate">{item.title}</span>
+      <span
+        className={`shrink-0 rounded px-1 text-[9px] font-semibold ${
+          item.deletedAt ? "bg-red-100 text-red-500" : "bg-slate-100 text-slate-500"
+        }`}
+      >
+        {statusLabel}
+      </span>
+      <button
+        className="shrink-0 rounded p-0.5 text-slate-400 transition hover:bg-slate-200/60 hover:text-emerald-600"
+        onClick={() => void onRestore(item.id)}
+        title="恢复"
+        type="button"
+      >
+        <ArchiveRestore className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  )
 }
 
 /* ── Session Card ── */
@@ -395,99 +641,139 @@ type SessionCardProps = {
   unreadCount: number
   participants: Provider[]
   previews: Array<{ provider: string; alias: string; text: string }>
+  projectTag?: string
+  titleLockedAt?: string | null
   active: boolean
   running: boolean
   isPinned: boolean
+  isRenaming: boolean
   onSelect: (groupId: string) => void
-  onCtxMenu: (e: React.MouseEvent, groupId: string, isPinned: boolean) => void
+  onCtxMenu: (
+    e: React.MouseEvent,
+    groupId: string,
+    isPinned: boolean,
+    hasProjectTag: boolean,
+  ) => void
+  onRenameCommit: (groupId: string, newTitle: string) => Promise<void> | void
+  onRenameCancel: () => void
 }
 
-const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedAtLabel, createdAtLabel, messageCount, unreadCount, participants, previews, active, running, isPinned, onSelect, onCtxMenu }: SessionCardProps) {
+const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedAtLabel, createdAtLabel, messageCount, unreadCount, participants, previews, projectTag, titleLockedAt, active, running, isPinned, isRenaming, onSelect, onCtxMenu, onRenameCommit, onRenameCancel }: SessionCardProps) {
   const handleClick = useCallback(() => {
+    if (isRenaming) return
     void onSelect(groupId)
-  }, [onSelect, groupId])
+  }, [onSelect, groupId, isRenaming])
 
   const handleCtxMenu = useCallback((e: React.MouseEvent) => {
-    onCtxMenu(e, groupId, isPinned)
-  }, [onCtxMenu, groupId, isPinned])
+    onCtxMenu(e, groupId, isPinned, Boolean(projectTag))
+  }, [onCtxMenu, groupId, isPinned, projectTag])
 
-  const keywords = useMemo(
-    () => extractKeywords(title, previews),
-    [title, previews],
-  )
+  // F022 Phase 3.5 (AC-14g): 行内重命名输入
+  const [draft, setDraft] = useState(title)
+  const inputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (isRenaming) {
+      setDraft(title)
+      const h = setTimeout(() => inputRef.current?.select(), 0)
+      return () => clearTimeout(h)
+    }
+  }, [isRenaming, title])
+
+  // F022 Phase 3.5 (AC-14k): three-column layout per 桂芬's design —
+  // left: avatar stack (xs) with running dot as badge on the group corner;
+  // middle: flex-1 title (with R-xxx mono pill + lock) + preview + projectTag;
+  // right: fixed width meta column with time on top, unread amber badge below.
+  const previewText = previews.find((p) => p.text)?.text || "尚无消息"
 
   return (
     <button
       className={`group relative w-full rounded-md px-2.5 py-2 text-left transition ${
         active
-          ? "border-l-2 border-amber-500 bg-white/80 shadow-sm"
-          : "border-l-2 border-transparent hover:bg-white/50"
+          ? "border-l-[3px] border-amber-500 bg-white/90 shadow-sm"
+          : "border-l-[3px] border-transparent hover:bg-amber-50/60"
       }`}
       onClick={handleClick}
       onContextMenu={handleCtxMenu}
       title={`创建 ${createdAtLabel} · 最后活动 ${updatedAtLabel} · ${messageCount} 条消息`}
       type="button"
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          {running && (
-            <span className="relative flex h-2 w-2 shrink-0">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
-            </span>
-          )}
-          {roomId && (
-            <span className="shrink-0 font-mono text-[11px] font-semibold tracking-tight text-amber-600">
-              {roomId}
-            </span>
-          )}
-          <h3 className="truncate text-sm font-medium text-slate-800">
-            {roomId && <span className="mx-1 text-slate-300">·</span>}
+      {/* Row 1: R-042 + lock + title (+ time, unread on right) */}
+      <div className="flex min-w-0 items-center gap-1">
+        {roomId && (
+          <span className="shrink-0 rounded bg-slate-100 px-1 py-0 font-mono text-[10px] font-medium text-slate-500 leading-4">
+            {roomId}
+          </span>
+        )}
+        {titleLockedAt && (
+          <span
+            aria-label="手动命名（已锁定）"
+            className="shrink-0 text-sm leading-none"
+            title="手动命名（已锁定，不会被自动重命名覆盖）"
+          >
+            🔒
+          </span>
+        )}
+        {isRenaming ? (
+          <input
+            ref={inputRef}
+            className="min-w-0 flex-1 rounded border border-amber-500/40 bg-white/90 px-1.5 py-0.5 text-sm font-medium text-slate-800 outline-none focus:border-amber-500"
+            maxLength={40}
+            onChange={(e) => setDraft(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation()
+              if (e.key === "Enter") void onRenameCommit(groupId, draft)
+              if (e.key === "Escape") onRenameCancel()
+            }}
+            onBlur={() => void onRenameCommit(groupId, draft)}
+            value={draft}
+          />
+        ) : (
+          <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
             {title}
           </h3>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          {unreadCount > 0 && (
-            <span className="rounded-full bg-amber-500 px-1.5 text-[10px] font-medium text-white">
-              {unreadCount}
-            </span>
-          )}
-          <span className="text-[10px] text-slate-400">{updatedAtLabel}</span>
-        </div>
+        )}
+        <span className="shrink-0 text-[10px] leading-none text-slate-400">{updatedAtLabel}</span>
+        {unreadCount > 0 && (
+          <span className="shrink-0 min-w-[18px] rounded-full bg-amber-500 px-1.5 text-center text-[10px] font-medium leading-[18px] text-white">
+            {unreadCount > 99 ? "99+" : unreadCount}
+          </span>
+        )}
       </div>
 
-      {/* Keyword capsules */}
-      {keywords.length > 0 && (
-        <div className="mt-1 flex flex-wrap gap-1">
-          {keywords.map((kw) => (
+      {/* Row 2: avatar stack (with running badge) + preview + projectTag */}
+      <div className="mt-1 flex min-w-0 items-center gap-1.5">
+        <div className="relative shrink-0">
+          <div className="flex -space-x-1.5">
+            {participants.length === 0 ? (
+              <span className="h-5 w-5 rounded-full bg-slate-100 ring-1 ring-white/80" />
+            ) : (
+              participants.map((p) => (
+                <ProviderAvatar
+                  className="ring-1 ring-white/80"
+                  identity={p}
+                  key={p}
+                  size="2xs"
+                />
+              ))
+            )}
+          </div>
+          {running && (
             <span
-              key={kw.label}
-              className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${kw.color}`}
+              aria-label="运行中"
+              className="absolute -bottom-0.5 -right-0.5 flex h-2 w-2"
             >
-              {kw.label}
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full border border-white bg-green-500" />
             </span>
-          ))}
-        </div>
-      )}
-
-      <div className="mt-1.5 flex items-center gap-2">
-        <div className="flex -space-x-1.5">
-          {participants.length === 0 ? (
-            <span className="text-[10px] text-slate-400">尚无 agent 参与</span>
-          ) : (
-            participants.map((p) => (
-              <ProviderAvatar
-                className="ring-1 ring-white/80"
-                identity={p}
-                key={p}
-                size="xs"
-              />
-            ))
           )}
         </div>
-        <p className="min-w-0 flex-1 truncate text-xs text-slate-500">
-          {previews.find((p) => p.text)?.text || "尚无消息"}
-        </p>
+        <p className="min-w-0 flex-1 truncate text-xs text-slate-500">{previewText}</p>
+        {projectTag && (
+          <span className="shrink-0 rounded bg-amber-100/80 px-1.5 text-[10px] font-medium leading-4 text-amber-700 ring-1 ring-amber-200/60">
+            {projectTag}
+          </span>
+        )}
       </div>
     </button>
   )

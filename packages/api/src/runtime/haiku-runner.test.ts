@@ -8,10 +8,12 @@ type FakeSpawnOpts = { code: number | null; stdout?: string; delayMs?: number; s
 
 function fakeSpawn(opts: FakeSpawnOpts) {
   const killSpy = mock.fn()
+  const stdinEndSpy = mock.fn()
   const spawn = () => {
     const proc: any = new EventEmitter()
     proc.stdout = new EventEmitter()
     proc.stderr = new EventEmitter()
+    proc.stdin = { end: stdinEndSpy }
     proc.kill = killSpy
     if (opts.spawnError) {
       setImmediate(() => proc.emit("error", opts.spawnError))
@@ -25,7 +27,7 @@ function fakeSpawn(opts: FakeSpawnOpts) {
     }, opts.delayMs ?? 1)
     return proc as ChildProcess
   }
-  return { spawn: spawn as any, killSpy }
+  return { spawn: spawn as any, killSpy, stdinEndSpy }
 }
 
 describe("HaikuRunner", () => {
@@ -72,6 +74,22 @@ describe("HaikuRunner", () => {
     assert.equal(res.ok, false)
     assert.match(res.error ?? "", /^spawn-error:/)
     assert.match(res.error ?? "", /ENOENT/)
+  })
+
+  it("closes child process stdin immediately after spawn (prevents claude CLI stdin-EOF hang on Windows)", async () => {
+    const { spawn, stdinEndSpy } = fakeSpawn({ code: 0, stdout: "ok" })
+    const r = createHaikuRunner({ spawn })
+    await r.runPrompt("x")
+    assert.equal(stdinEndSpy.mock.calls.length, 1, "proc.stdin.end() must be called to signal EOF")
+  })
+
+  it("default timeout gives claude CLI cold start enough headroom (>= 10000ms)", async () => {
+    // Haiku local cold start measured ~8.4s on Windows; 5s default caused every call to timeout.
+    const { spawn, killSpy } = fakeSpawn({ code: 0, stdout: "done", delayMs: 6000 })
+    const r = createHaikuRunner({ spawn })
+    const res = await r.runPrompt("x")
+    assert.equal(res.ok, true, `should not timeout at 6s; default must be >= 10000ms. got error=${res.error}`)
+    assert.equal(killSpy.mock.calls.length, 0, "should not kill when response arrives at 6s")
   })
 
   it("passes --print --model claude-haiku-4-5 {prompt} to spawn", async () => {

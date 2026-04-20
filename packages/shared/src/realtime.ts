@@ -115,8 +115,14 @@ export type SessionGroupSummary = {
   title: string
   updatedAt: string
   updatedAtLabel: string
+  createdAt: string
   createdAtLabel: string
   projectTag?: string
+  // F022 Phase 3.5 (AC-14g): 手动命名后写时间戳；前端据此渲染 🔒 图标。
+  titleLockedAt?: string | null
+  // F022 Phase 3.5 (AC-14i/j): 归档列表条目才带这两个时间戳；主列表恒为 null/undefined。
+  archivedAt?: string | null
+  deletedAt?: string | null
   participants: Provider[]
   messageCount: number
   previews: Array<{
@@ -410,6 +416,16 @@ export type RealtimeServerEvent =
         path?: string
         sessionGroupId?: string
         gatewayPort: number
+      }
+    }
+  | {
+      // F022 Phase 3.5 (AC-14k): Haiku auto-titler / manual rename → push title
+      // so the left sidebar updates without a browser refresh.
+      type: "session.title_updated"
+      payload: {
+        sessionGroupId: string
+        title: string
+        titleLockedAt: string | null
       }
     }
 

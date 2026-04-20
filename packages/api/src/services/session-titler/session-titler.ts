@@ -1,11 +1,15 @@
 import type { FastifyBaseLogger } from "fastify"
+import type { RealtimeServerEvent } from "@multi-agent/shared"
 import type { HaikuRunner } from "../../runtime/haiku-runner"
 import { isDefaultTitle } from "./default-title"
 
 /** Max chars of the description part after the type prefix (product decision 2026-04-20). */
 const DESC_MAX_CHARS = 8
 const DEFAULT_DEBOUNCE_MS = 2500
-const DEFAULT_TIMEOUT_MS = 5000
+// Windows 上 `claude --print` 冷启动实测 ~18s / 热启动 ~8-9s（F022 验收时测量，2026-04-20）。
+// 原本 5s 几乎必超时 → 每次都 fallback 成 `D-新会话 ${date}`，AC-14f 从未真正生效。
+// 20s 留余量给冷启，同时仍远低于用户可感知的"命名没来"窗口。
+const DEFAULT_TIMEOUT_MS = 20000
 
 /**
  * AC-14d + AC-14e: normalize Haiku output to one of:
@@ -39,7 +43,11 @@ function enforceTitlePrefix(raw: string): string {
 }
 
 export interface SessionTitlerRepo {
-  getSessionGroupById(id: string): { id: string; roomId: string | null; title: string } | undefined
+  getSessionGroupById(
+    id: string,
+  ):
+    | { id: string; roomId: string | null; title: string; titleLockedAt?: string | null }
+    | undefined
   updateSessionGroupTitle(id: string, title: string): void
 }
 
@@ -55,6 +63,8 @@ export interface SessionTitlerDeps {
   timeoutMs?: number
   /** Date formatter for fallback title; default `new Date().toISOString().slice(0,10)`. */
   dateFormatter?: () => string
+  /** AC-14k: push `session.title_updated` so the sidebar refreshes without F5. */
+  emit?: (event: RealtimeServerEvent) => void
 }
 
 /**
@@ -118,10 +128,18 @@ export class SessionTitler {
   }
 
   private async run(sessionGroupId: string): Promise<void> {
-    const { repo, haiku, logger, buildPrompt, timeoutMs, dateFormatter } = this.deps
+    const { repo, haiku, logger, buildPrompt, timeoutMs, dateFormatter, emit } = this.deps
     const row = repo.getSessionGroupById(sessionGroupId)
     if (!row) return
     const roomId = row.roomId
+    // F022 Phase 3.5 (AC-14g): 手动重命名锁 — 用户改过名的不允许 Haiku 覆盖
+    if (row.titleLockedAt) {
+      logger.info(
+        { event: "skip.locked", sessionGroupId, roomId, titleLockedAt: row.titleLockedAt },
+        "session-titler skipped (title locked by user rename)",
+      )
+      return
+    }
     if (!isDefaultTitle(row.title)) {
       logger.info(
         { event: "skip.idempotent", sessionGroupId, roomId, currentTitle: row.title },
@@ -137,6 +155,10 @@ export class SessionTitler {
     if (result.ok) {
       const title = enforceTitlePrefix(result.text)
       repo.updateSessionGroupTitle(sessionGroupId, title)
+      emit?.({
+        type: "session.title_updated",
+        payload: { sessionGroupId, title, titleLockedAt: null },
+      })
       logger.info(
         {
           event: "success",
@@ -152,6 +174,10 @@ export class SessionTitler {
 
     const fallback = `D-新会话 ${(dateFormatter ?? defaultDateFormatter)()}`
     repo.updateSessionGroupTitle(sessionGroupId, fallback)
+    emit?.({
+      type: "session.title_updated",
+      payload: { sessionGroupId, title: fallback, titleLockedAt: null },
+    })
     logger.warn(
       {
         event: "fallback",

@@ -94,6 +94,9 @@ export class SqliteStore {
         room_id TEXT UNIQUE,
         title TEXT NOT NULL,
         project_tag TEXT,
+        title_locked_at TEXT,
+        archived_at TEXT,
+        deleted_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -273,6 +276,19 @@ export class SqliteStore {
       {
         name: "F022-session-groups-add-room-id",
         sql: "ALTER TABLE session_groups ADD COLUMN room_id TEXT",
+      },
+      // F022 Phase 3.5: AC-14g/i/j — 手动命名锁 + 归档 + 软删
+      {
+        name: "F022-session-groups-add-title-locked-at",
+        sql: "ALTER TABLE session_groups ADD COLUMN title_locked_at TEXT",
+      },
+      {
+        name: "F022-session-groups-add-archived-at",
+        sql: "ALTER TABLE session_groups ADD COLUMN archived_at TEXT",
+      },
+      {
+        name: "F022-session-groups-add-deleted-at",
+        sql: "ALTER TABLE session_groups ADD COLUMN deleted_at TEXT",
       },
     ]
     for (const m of alters) {

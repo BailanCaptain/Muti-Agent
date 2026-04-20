@@ -60,11 +60,16 @@ created: 2026-04-19
 - [x] AC-15: 条目悬停显示完整信息（原生 title 属性：创建 · 最后活动 · N 条消息）
 
 ### Phase 3.5：预览验收反馈补丁（2026-04-20 小孙 worktree 验收发现）
-- [ ] AC-14a: 时间分组替换 projectTag 分组（置顶 / 今日 / 本周 / 本月 / 更早）—— projectTag 多数落"未分组"不承载索引价值，时间更贴反向溯源场景
-- [ ] AC-14b: 历史 session title 批量回填 migration —— 启动时扫 `title IS NULL OR isDefaultTitle(title)` 批量排队 Haiku，带并发限流
-- [ ] AC-14c: 前端 title fallback —— DB title 为空/默认/null 时 UI 显示 `新会话 {createdAtLabel}`，与 AC-08 失败回退格式一致
-- [ ] AC-14d: 标题分类前缀 —— Haiku 按会话意图输出 `{F|B|D|Q}-{≤8字描述}`（F=feature, B=bug, D=discussion, Q=question）；判不准默认落 `D-`；不符规则的输出由 sanitize 兜底 `D-` 前缀；AC-08 失败回退同步改为 `D-新会话 YYYY-MM-DD`
-- [ ] AC-14e: 立项号规则 —— 当会话中明确出现 `F\d+` / `B\d+` 编号时，标题前缀使用带号形式 `F022-xxx` / `B026-xxx`（编号原样照抄）；**裸 `F-` / `B-` 无号视为未立项，sanitize 降级为 `D-`**（F/B 前缀 ⇔ 已立项的身份声明）；描述部分统一 ≤ 8 字，带号前缀不受 10 字硬上限约束
+- [x] AC-14a: 时间分组替换 projectTag 分组（置顶 / 今日 / 本周 / 本月 / 更早）—— projectTag 多数落"未分组"不承载索引价值，时间更贴反向溯源场景
+- [x] AC-14b: 历史 session title 批量回填 migration —— 启动时扫 `title IS NULL OR isDefaultTitle(title)` 批量排队 Haiku，带并发限流
+- [x] AC-14c: 前端 title fallback —— DB title 为空/默认/null 时 UI 显示 `新会话 {createdAtLabel}`，与 AC-08 失败回退格式一致
+- [x] AC-14d: 标题分类前缀 —— Haiku 按会话意图输出 `{F|B|D|Q}-{≤8字描述}`（F=feature, B=bug, D=discussion, Q=question）；判不准默认落 `D-`；不符规则的输出由 sanitize 兜底 `D-` 前缀；AC-08 失败回退同步改为 `D-新会话 YYYY-MM-DD`
+- [x] AC-14e: 立项号规则 —— 当会话中明确出现 `F\d+` / `B\d+` 编号时，标题前缀使用带号形式 `F022-xxx` / `B026-xxx`（编号原样照抄）；**裸 `F-` / `B-` 无号视为未立项，sanitize 降级为 `D-`**（F/B 前缀 ⇔ 已立项的身份声明）；描述部分统一 ≤ 8 字，带号前缀不受 10 字硬上限约束
+- [x] AC-14f: **HaikuRunner 子进程 stdin 关闭 + 超时 15s**（修复 AC-05/06 回归）—— `proc.stdin?.end()` 防 Windows `claude --print` stdin-EOF hang；`DEFAULT_TIMEOUT_MS: 5000 → 15000` 给本地冷启动 ~8.4s 留余量；没这一步 AC-14a~e 全部废题
+- [x] AC-14g: 右键菜单「重命名」启用 —— 行内输入框 ≤ 40 字，Enter 提交 `PATCH /api/session-groups/:id { title }`；重命名成功后写 `title_locked_at = now()`，SessionTitler 看到 lock 跳过 Haiku 覆盖；列表项前显示 🔒 图标提示"手动命名"
+- [x] AC-14h: 右键菜单「清除项目标签」独立入口 —— 当 `projectTag != null` 时可见，点击 `PATCH {projectTag: null}`，无二次确认（标签语义轻，后端已支持）
+- [x] AC-14i: 右键菜单「归档」启用 —— DB 加 `archived_at` 字段，归档项从主列表移除；侧栏底部新增「归档列表」视图展示 `archived_at != null` 或 `deleted_at != null` 的条目；归档列表每条带小标签（"归档中" / "已删除"）区分状态；点击可恢复（清 `archived_at` / `deleted_at`）
+- [x] AC-14j: 右键菜单「删除」启用（软删）—— `deleted_at` 字段，二次确认弹框，确认后软删并进归档列表的"已删除"区；**铁律 1：不提供物理删除/彻底清除按钮**，只支持恢复
 
 ### Phase 4：标题栏三层 ID 补丁（0.5 天）
 - [ ] AC-16: 右侧面板顶部 ROOM 徽章显示 `R-xxx`（与 F021 联动）
@@ -97,6 +102,9 @@ created: 2026-04-19
 | 历史 title 处理 | 不动 / 按需 / 批量 / 批量+fallback | **批量回填 + 前端 fallback**（2026-04-20 产品下调） | 之前"懒加载"定义模糊 → 沉默会话永久无标题；改为启动 migration 批量 Haiku + UI 在 null/default 时展示 `新会话 {createdAtLabel}` 兜底 |
 | 标题分类前缀 | 自由文本 / `{F\|B\|D\|Q}-` 前缀 | **`{F\|B\|D\|Q}-{描述}`，判不准落 D-**（2026-04-20 产品拍板） | 小孙需要一眼看出会话性质（做 feature / 修 bug / 讨论 / 问答）；分类不准落 `D-` 偏宽容，错分概率低；Haiku 下一轮 debounce 会纠正 |
 | F/B 立项号 | 不带号 / 带号 / 立项必带 | **立项必带号（`F022-xxx` / `B026-xxx`），无号 F/B 降级 D-**（2026-04-20 产品下调） | 小孙："F B 如果立项了要加上 F012 B026 这样 是多少就是多少"；F/B 前缀本身就蕴含"已立项"身份声明，没编号就不配叫 F/B，统一归到讨论 D-。消除"伪 feature 讨论"与"真立项"的混淆 |
+| 会话删除语义 | 硬删 / 软删+回收站 / 软删+归档列表 | **软删（`deleted_at`）**（2026-04-20 产品拍板） | 铁律 1：数据神圣不可删；软删进归档列表可恢复，永不物理删除 |
+| 归档 vs 删除视图 | 归档列表 + 回收站双视图 / 单归档列表双状态 | **单归档列表，条目带"归档中 / 已删除"状态小标签**（2026-04-20 产品下调） | 小孙："就来一个归档列表就行了"；减少视图复杂度，用状态标签区分语义；不提供"彻底清除"按钮（铁律 1 兜底） |
+| 手动重命名后 Haiku 覆盖 | 允许覆盖 / `title_locked_at` 锁字段 | **加 `title_locked_at` 锁字段，SessionTitler 看锁跳过**（2026-04-20 产品拍板） | 否则"重命名"按钮做出来 2 秒就被 Haiku 盖掉形同废物；列表项 🔒 小图标提示"手动命名" |
 
 ## Timeline
 
@@ -110,6 +118,7 @@ created: 2026-04-19
 | 2026-04-20 | Phase 2 实施完成（AC-05~10 ✅，6 个 TDD commits，33 新测试覆盖；isDefaultTitle / updateSessionGroupTitle / HaikuRunner / SessionTitler / SessionService hook / buildTitlePrompt）|
 | 2026-04-20 | Phase 3 实施完成（AC-11~15 ✅，5 个 commit；backend 透传 roomId/participants/messageCount/createdAtLabel → SessionCard R-xxx 前缀 + 真实参与者头像 + 悬停详情 → 搜索 R-xxx 精确跳转 + 自动选中 → Agent pills 多选 AND 过滤）|
 | 2026-04-20 | worktree 预览验收（小孙 L1 @ :3200）发现 3 项反馈 → Phase 3.5 开（AC-14 Dropped + AC-14a/b/c 新增；产品决策固化到 Design Decisions）|
+| 2026-04-21 | Phase 3.5 实施完成（AC-14a~j ✅）：时间分组 + 历史回填 migration + title fallback + F/B/D/Q 分类前缀 + 立项号识别 + HaikuRunner stdin/超时修复 + 右键菜单四件套（重命名/清除项目标签/归档/软删）+ 归档列表视图 · typecheck ✅ · 928/928 tests ✅ · 小孙 :3200 分桶验收通过 |
 
 ## Links
 

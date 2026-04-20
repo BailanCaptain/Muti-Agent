@@ -5,6 +5,11 @@ export const sessionGroups = sqliteTable("session_groups", {
   roomId: text("room_id").unique(),
   title: text("title").notNull(),
   projectTag: text("project_tag"),
+  // F022 Phase 3.5: 手动命名锁（AC-14g）
+  titleLockedAt: text("title_locked_at"),
+  // F022 Phase 3.5: 归档 / 软删（AC-14i/j）— 与主列表互斥，归档列表合并展示。
+  archivedAt: text("archived_at"),
+  deletedAt: text("deleted_at"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 })

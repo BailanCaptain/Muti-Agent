@@ -77,8 +77,12 @@ export async function createApiServer(options: {
     haiku: haikuRunner,
     logger: createLogger("session-titler"),
     buildPrompt: (sid) => buildTitlePromptFromRecentMessages(sid, repository),
+    // AC-14k: the wrapper reads broadcaster.broadcast lazily so it picks up
+    // the real implementation once registerWsRoute installs it below.
+    emit: (event) => broadcaster.broadcast(event),
   })
   const sessions = new SessionService(repository, providerProfiles, sessionTitler)
+  sessions.setBroadcaster((event) => broadcaster.broadcast(event))
   const eventBus = new AppEventBus()
   const broadcaster: RealtimeBroadcaster = {
     broadcast: () => {},
