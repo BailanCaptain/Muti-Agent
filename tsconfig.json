@@ -37,6 +37,7 @@
   },
   "include": [
     "next-env.d.ts",
+    "jest-dom-matchers.d.ts",
     "app/**/*.ts",
     "app/**/*.tsx",
     "components/**/*.ts",

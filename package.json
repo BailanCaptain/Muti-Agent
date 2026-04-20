@@ -15,7 +15,9 @@
     "lint": "biome lint .",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit && tsc -p packages/shared/tsconfig.json && pnpm --filter @multi-agent/api typecheck",
-    "test": "tsx --test \"packages/**/*.test.ts\" \"scripts/**/*.test.ts\"",
+    "test:api": "tsx --test \"packages/**/*.test.ts\" \"scripts/**/*.test.ts\"",
+    "test:components": "vitest run",
+    "test": "pnpm run test:api && pnpm run test:components",
     "worktree:preview": "tsx scripts/worktree-preview.ts",
     "worktree:staging": "tsx scripts/worktree-staging.ts",
     "mount-skills": "bash scripts/mount-skills.sh",
@@ -45,18 +47,24 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^22.13.10",
     "@types/proper-lockfile": "^4.1.4",
     "@types/react": "^19.2.4",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
     "autoprefixer": "^10.4.20",
+    "happy-dom": "^20.9.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "postcss": "^8.5.3",
     "proper-lockfile": "^4.1.2",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.21.0",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "vitest": "^4.1.4"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
