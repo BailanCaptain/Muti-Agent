@@ -1,6 +1,7 @@
 "use client"
 
 import { useThreadStore } from "@/components/stores/thread-store"
+import type { Provider } from "@multi-agent/shared"
 import {
   ChevronDown,
   ChevronRight,
@@ -41,9 +42,13 @@ type ProjectGroup = {
   label: string
   items: Array<{
     id: string
+    roomId: string | null
     title: string
     updatedAtLabel: string
+    createdAtLabel: string
     projectTag?: string
+    participants: Provider[]
+    messageCount: number
     previews: Array<{ provider: string; alias: string; text: string }>
   }>
 }
@@ -211,9 +216,13 @@ export function SessionSidebar() {
                 <SessionCard
                   key={group.id}
                   groupId={group.id}
+                  roomId={group.roomId}
                   title={group.title}
                   updatedAtLabel={group.updatedAtLabel}
+                  createdAtLabel={group.createdAtLabel}
+                  messageCount={group.messageCount}
                   unreadCount={unreadCounts[group.id] ?? 0}
+                  participants={group.participants}
                   previews={group.previews}
                   active={activeGroupId === group.id}
                   running={runningGroupIds.has(group.id)}
@@ -252,13 +261,17 @@ export function SessionSidebar() {
                   <SessionCard
                     key={group.id}
                     groupId={group.id}
+                    roomId={group.roomId}
                     title={group.title}
                     updatedAtLabel={group.updatedAtLabel}
+                    createdAtLabel={group.createdAtLabel}
+                    messageCount={group.messageCount}
                     unreadCount={unreadCounts[group.id] ?? 0}
+                    participants={group.participants}
                     previews={group.previews}
                     active={activeGroupId === group.id}
                     running={runningGroupIds.has(group.id)}
-                      isPinned={pinned.has(group.id)}
+                    isPinned={pinned.has(group.id)}
                     onSelect={selectGroup}
                     onCtxMenu={handleContextMenu}
                   />
@@ -322,9 +335,13 @@ function extractKeywords(title: string, previews: Array<{ text: string }>): Arra
 
 type SessionCardProps = {
   groupId: string
+  roomId: string | null
   title: string
   updatedAtLabel: string
+  createdAtLabel: string
+  messageCount: number
   unreadCount: number
+  participants: Provider[]
   previews: Array<{ provider: string; alias: string; text: string }>
   active: boolean
   running: boolean
@@ -333,7 +350,7 @@ type SessionCardProps = {
   onCtxMenu: (e: React.MouseEvent, groupId: string, isPinned: boolean) => void
 }
 
-const SessionCard = memo(function SessionCard({ groupId, title, updatedAtLabel, unreadCount, previews, active, running, isPinned, onSelect, onCtxMenu }: SessionCardProps) {
+const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedAtLabel, createdAtLabel, messageCount, unreadCount, participants, previews, active, running, isPinned, onSelect, onCtxMenu }: SessionCardProps) {
   const handleClick = useCallback(() => {
     void onSelect(groupId)
   }, [onSelect, groupId])
@@ -356,6 +373,7 @@ const SessionCard = memo(function SessionCard({ groupId, title, updatedAtLabel, 
       }`}
       onClick={handleClick}
       onContextMenu={handleCtxMenu}
+      title={`创建 ${createdAtLabel} · 最后活动 ${updatedAtLabel} · ${messageCount} 条消息`}
       type="button"
     >
       <div className="flex items-start justify-between gap-2">
@@ -366,7 +384,13 @@ const SessionCard = memo(function SessionCard({ groupId, title, updatedAtLabel, 
               <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
             </span>
           )}
+          {roomId && (
+            <span className="shrink-0 font-mono text-[11px] font-semibold tracking-tight text-amber-600">
+              {roomId}
+            </span>
+          )}
           <h3 className="truncate text-sm font-medium text-slate-800">
+            {roomId && <span className="mx-1 text-slate-300">·</span>}
             {title}
           </h3>
         </div>
@@ -396,14 +420,18 @@ const SessionCard = memo(function SessionCard({ groupId, title, updatedAtLabel, 
 
       <div className="mt-1.5 flex items-center gap-2">
         <div className="flex -space-x-1.5">
-          {previews.map((preview) => (
-            <ProviderAvatar
-              className="ring-1 ring-white/80"
-              identity={preview.provider as "claude" | "codex" | "gemini"}
-              key={preview.provider}
-              size="xs"
-            />
-          ))}
+          {participants.length === 0 ? (
+            <span className="text-[10px] text-slate-400">尚无 agent 参与</span>
+          ) : (
+            participants.map((p) => (
+              <ProviderAvatar
+                className="ring-1 ring-white/80"
+                identity={p}
+                key={p}
+                size="xs"
+              />
+            ))
+          )}
         </div>
         <p className="min-w-0 flex-1 truncate text-xs text-slate-500">
           {previews.find((p) => p.text)?.text || "尚无消息"}
