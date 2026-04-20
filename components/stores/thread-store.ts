@@ -39,11 +39,15 @@ type ActiveGroupPayload = {
 
 type SessionListItem = {
   id: string
+  roomId: string | null
   title: string
   updatedAtLabel: string
+  createdAtLabel: string
   projectTag?: string
   pinned?: boolean
   unreadCount?: number
+  participants: Provider[]
+  messageCount: number
   previews: Array<{ provider: Provider; alias: string; text: string }>
 }
 
@@ -119,9 +123,13 @@ const emptyCatalogs = Object.fromEntries(
 function normalizeSessionGroups(groups: SessionGroupSummary[]): SessionListItem[] {
   return groups.map((group) => ({
     id: group.id,
+    roomId: group.roomId ?? null,
     title: group.title,
     updatedAtLabel: group.updatedAtLabel,
+    createdAtLabel: group.createdAtLabel,
     projectTag: group.projectTag,
+    participants: group.participants ?? [],
+    messageCount: group.messageCount ?? 0,
     previews: group.previews,
   }))
 }
