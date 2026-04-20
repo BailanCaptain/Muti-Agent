@@ -139,6 +139,7 @@ git worktree prune
 | 在 dev 上直接改代码 | 开 worktree |
 | 在主仓库目录改代码以为是 worktree | 检查 `pwd`，确认在 `../multi-agent-{feature}` 下 |
 | 不搜历史直接开始 | 先 Recall 搜相关 feature 和讨论 |
+| 改 worktree `.env.local` 后没重启 next dev | `NEXT_PUBLIC_*` 是 next dev 启动那一刻 inline 进客户端 bundle 的，改 env 后必须杀掉 next dev 再 `pnpm dev`；否则浏览器拿到的还是旧端口，常见表现为前端打到主库 API（:8787）报 "Failed to fetch"。固定顺序：**先写 .env.local → 再 pnpm dev**。中途调 env 必重启 next dev。|
 
 ## 下一步
 
