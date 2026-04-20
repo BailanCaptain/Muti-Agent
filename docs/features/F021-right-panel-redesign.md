@@ -71,7 +71,7 @@ created: 2026-04-19
 
 - 依赖现有 `status-panel.tsx` / `AgentConfigProvider` / 会话状态 store
 - 运行中检测依赖 F012 的 streaming 状态事件
-- 无硬阻塞
+- **Blocked by F025**（前端单测基础设施）— 本 feature 的 TDD 实施节奏依赖 vitest + @testing-library/react 落地后才能起飞；F025 合 dev 前 F021 worktree/plan 保留待命
 
 ## Design Decisions
 
@@ -90,6 +90,8 @@ created: 2026-04-19
 |------|------|
 | 2026-04-18 | collaborative-thinking 讨论（黄仁勋 + 范德彪 + 桂芬）|
 | 2026-04-19 | Kickoff |
+| 2026-04-20 | Plan 落地（`docs/plans/F021-right-panel-redesign-plan.md`，4 Phase 拆分）|
+| 2026-04-20 | **Blocked on F025**：动手前发现前端零单测基础设施，拆出 F025 先做 |
 
 ## Links
 
@@ -100,5 +102,6 @@ created: 2026-04-19
 ## Evolution
 
 - **Evolved from**: F005（运行时治理 UI）· F001（UI 焕新）
+- **Blocked by**: F025（前端单测基础设施）
 - **Blocks**: 无
 - **Related**: F022（同期，并行）· F017（跨房间协作感知，未来联动）

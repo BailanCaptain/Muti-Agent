@@ -15,6 +15,7 @@
 | F022 | 左侧 Sidebar 重设计：全局递增 ROOM ID (R-001) + 首 user+assistant 后 Haiku 自动命名 + 反向溯源 | spec | 黄仁勋 | internal | [F022](features/F022-left-sidebar-redesign.md) |
 | F023 | 三家 MCP 挂载统一（对齐 clowder-ai）+ 弃 CALLBACK_API_PROMPT：`.mcp.json` + `.codex/config.toml` + `.gemini/settings.json` 三份项目级配置 + 修 server.js 路径 bug（F003 遗留） | spec | 黄仁勋 | internal | [F023](features/F023-mcp-unified-mounting.md) |
 | F024 | Worktree 愿景验收基础设施：L1 worktree preview（独立端口+数据目录）+ L2 临时集成 worktree（多 feature 协同验收，一次性即用即毁）+ acceptance-guardian/merge-gate/shared-rules 规则改造 + Dogfooding 自举（Evolved from F008） | spec | 黄仁勋 | internal | [F024](features/F024-worktree-vision-acceptance-infra.md) |
+| F025 | 前端单测基础设施：vitest + @testing-library/react + happy-dom + `pnpm test:components` + 示例测试 + 速查文档（Blocks F021；F012/F017/F020/F022 受益）| spec | 黄仁勋 | internal | [F025](features/F025-frontend-unit-test-infra.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features
