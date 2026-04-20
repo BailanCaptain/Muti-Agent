@@ -98,7 +98,9 @@ Preview 不起来 = worktree 不能做 L1 愿景验收 = 合入时必卡 merge-g
 
 ## 清理 Worktree
 
-**清理的完整流程由 `merge-gate` 编排**（5a 副产物清理 → 5b 切 dev 同步 → 5c 调用本章节物理删除）。本章节只负责**物理删除动作**，不复刻 merge-gate 的清理命令，避免双真相源漂移。
+**清理的完整流程由 `merge-gate` 编排**（5a-0 停 preview → 5a 副产物清理 → 5b 切 dev 同步 → 5c 调用本章节物理删除）。本章节只负责**物理删除动作**，不复刻 merge-gate 的清理命令，避免双真相源漂移。
+
+**前置硬门禁**：调用本章节前必须已完成 5a-0（preview 进程已停）+ 5a（副产物已清）。preview 没停 → node_modules/端口被占 → `git worktree remove` 会报 file busy 或静默失败。
 
 ### 物理删除命令
 
@@ -131,7 +133,8 @@ git worktree prune
 |------|------|
 | dev 没同步就开 worktree | 先 fetch + rebase，确认 ahead=0 behind=0 |
 | 忘了在 worktree 里装依赖 | 新 worktree 先跑 `pnpm install` |
-| merge 后不清理 worktree | 回 `merge-gate` 跑 5a/5b/5c，顺序不可调 |
+| merge 后不清理 worktree | 回 `merge-gate` 跑 5a-0/5a/5b/5c，顺序不可调 |
+| 清 worktree 前没停 preview 进程 | file busy / 端口泄漏；先按 merge-gate 5a-0 Ctrl+C 或 taskkill |
 | `git worktree remove --force` 绕过未清副产物 | force 会静默销毁 `.runtime/uploads` 等数据；回 merge-gate 5a 补清理 |
 | 在 dev 上直接改代码 | 开 worktree |
 | 在主仓库目录改代码以为是 worktree | 检查 `pwd`，确认在 `../multi-agent-{feature}` 下 |

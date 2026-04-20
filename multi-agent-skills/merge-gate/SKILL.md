@@ -95,12 +95,28 @@ gh pr merge {PR_NUMBER} --squash --delete-branch
 
 # 4. Phase 文档同步（见下方）
 
-# 5. 合入后：副产物清理 → 切 dev → Worktree 物理删除（见下方）
+# 5. 合入后：停 preview → 副产物清理 → 切 dev → Worktree 物理删除（见下方）
 ```
 
 ## 合入后清理流程
 
 **按 F024 Design Decisions**：验收证据（`.agents/acceptance/` 下截图/日志/报告）只留 worktree 本地，不进 git；worktree 被 `git worktree remove` 后证据随之消失。**如需长期归档由人工显式复制到主仓外**，走人工操作，不是自动流程。
+
+### 5a-0. 先停 preview 进程（必做前置）
+
+合入前 reviewer 可能还在跑 L1 preview，节点进程会占住 `node_modules/` 和端口。必须先停 preview，否则 5a 的 `rm -rf node_modules` 会失败 / 5c 的 `git worktree remove` 会报 file busy。
+
+**正常停法**（启动 preview 的终端还在）：在该终端按 `Ctrl+C`，SIGINT handler 会自动跑 `releasePorts` + `restoreDotenv`。
+
+**兜底**（终端已关 / 进程孤儿化）：
+```bash
+# 查 worktree 占用的端口（主仓）
+cat .worktree-ports.json
+# 按端口找 PID 并杀（Windows git-bash）
+netstat -ano | grep LISTEN | grep :{API_PORT}
+taskkill //F //PID {pid}
+# 孤儿化会留 .env*.backup-by-preview 和 .worktree-ports.json 残留，由 5a 补清
+```
 
 ### 5a. 副产物清理（必做）
 
@@ -165,7 +181,8 @@ git checkout dev && git pull origin dev
 | 一个 feature 在 dev 留下 N 个 atomic commit | 合入前 squash 成 1 个（含 kickoff/design/plan docs） |
 | 本地 merge 后 `gh pr close` | `close` = 放弃，`merge` = 合入 |
 | Merge 后不更新 feature doc | Phase 文档同步每次 merge 必做 |
-| Merge 后不清理 worktree | 按 5a → 5b → 5c 顺序完成 |
+| Merge 后不清理 worktree | 按 5a-0 → 5a → 5b → 5c 顺序完成 |
+| 清 worktree 前没先停 preview 进程 | node_modules/端口被占，rm 和 worktree remove 会失败；先按 5a-0 Ctrl+C 或 taskkill |
 | `git worktree remove --force` 绕过未清副产物 | force 会静默销毁 `.runtime/uploads` 等数据，违反数据神圣铁律；先跑 5a |
 | 把 `.agents/acceptance/` 拷进 git 当归档 | F024 Design Decisions 选 B：不进 git；长期归档由人工复制到主仓外 |
 | 修了 P1 不通知 reviewer | 修完后 @ reviewer 确认 |
