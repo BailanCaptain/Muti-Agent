@@ -13,7 +13,6 @@
 | F020 | 决策卡片挂载矩阵：按场景分流（单 agent 消息内嵌 / 链级 Footer / 多人讨论收敛后弹）+ 折叠徽章 + 吸收 B007 | spec | 黄仁勋 | internal | [F020](features/F020-decision-card-mounting-matrix.md) |
 | F021 | 右侧面板重设计：观测带 + 智能体列表 + 两级配置（全局默认/会话专属）+ Side-Drawer + 运行中挂起到下一轮 | spec | 黄仁勋 | internal | [F021](features/F021-right-panel-redesign.md) |
 | F022 | 左侧 Sidebar 重设计：全局递增 ROOM ID (R-001) + 首 user+assistant 后 Haiku 自动命名 + 反向溯源 | spec | 黄仁勋 | internal | [F022](features/F022-left-sidebar-redesign.md) |
-| F025 | 前端单测基础设施：vitest + @testing-library/react + happy-dom + `pnpm test:components` + 示例测试 + 速查文档（Blocks F021；F012/F017/F020/F022 受益）| spec | 黄仁勋 | internal | [F025](features/F025-frontend-unit-test-infra.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features
@@ -36,4 +35,5 @@
 | F018 | 上下文续接架构重建：对齐 clowder-ai 冷存储 + SessionBootstrap + embedding 作为 recall 后端（F007 架构级收尾，修复 B015/B012 根因） | 2026-04-18 | [F018](features/F018-context-resume-rebuild.md) |
 | F023 | 三家 MCP 挂载统一（对齐 clowder-ai）+ 弃 CALLBACK_API_PROMPT | 2026-04-20 | [F023](features/F023-mcp-unified-mounting.md) |
 | F024 | Worktree 愿景验收基础设施（L1 preview + L2 临时集成 worktree + Dogfooding） | 2026-04-20 | [F024](features/F024-worktree-vision-acceptance-infra.md) |
+| F025 | 前端单测基础设施：vitest + @testing-library/react + happy-dom + `pnpm test:components` + 示例测试 + 速查文档 | 2026-04-20 | [F025](features/F025-frontend-unit-test-infra.md) |
 <!-- 完成的 Feature 从活跃表移到此处 -->
