@@ -1,27 +1,10 @@
-import { existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ToolEvent } from "@multi-agent/shared";
-import { BaseCliRuntime, resolveNpmRoot, type AgentRunInput, type RuntimeCommand, type StopReason } from "./base-runtime";
+import { BaseCliRuntime, type AgentRunInput, type RuntimeCommand, type StopReason } from "./base-runtime";
 import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts";
-
-function resolveClaudeCommand() {
-  // 1. npm 全局安装：cli.js 在 npm node_modules 里
-  const npmRoot = resolveNpmRoot();
-  const cliJs = npmRoot ? path.join(npmRoot, "node_modules", "@anthropic-ai", "claude-code", "cli.js") : "";
-  if (cliJs && existsSync(cliJs)) {
-    return { command: process.execPath, prefixArgs: [cliJs], shell: false };
-  }
-
-  // 2. PowerShell / standalone 安装：claude.exe 在 ~/.local/bin/
-  const homeDir = process.env.USERPROFILE || process.env.HOME || "";
-  const standaloneExe = path.join(homeDir, ".local", "bin", "claude.exe");
-  if (existsSync(standaloneExe)) {
-    return { command: standaloneExe, prefixArgs: [], shell: false };
-  }
-
-  // 3. 兜底：shell 模式（避免 --append-system-prompt 换行符被截断，不推荐）
-  return { command: "claude", prefixArgs: [], shell: true };
-}
+import { resolveClaudeCommand } from "./claude-command";
 
 function formatClaudeToolInput(name: string, input: Record<string, unknown>): string {
   try {
