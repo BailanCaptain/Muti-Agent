@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest"
-import { dispatchArchiveStateChanged } from "./archive-event-handler"
+import { renderHook } from "@testing-library/react"
+import { dispatchArchiveStateChanged, useArchiveStateReloader } from "./archive-event-handler"
 import { useThreadStore } from "./thread-store"
 
 function makeActions() {
@@ -100,6 +101,58 @@ describe("useThreadStore.clearActiveGroupIfMatches — identity guard", () => {
     expect(state.activeGroupId).toBe("g-active")
     expect(state.activeGroup).toBe(beforeActiveGroup)
     expect(state.timeline).toHaveLength(1)
+  })
+})
+
+describe("useArchiveStateReloader — F022 P2 sidebar reload regression", () => {
+  it("initial mount: does NOT call reload (avoid spurious bootstrap refetch)", () => {
+    const reloadSessionGroups = vi.fn()
+    const reloadArchived = vi.fn()
+    renderHook(() =>
+      useArchiveStateReloader(0, reloadSessionGroups, reloadArchived, false),
+    )
+    expect(reloadSessionGroups).not.toHaveBeenCalled()
+    expect(reloadArchived).not.toHaveBeenCalled()
+  })
+
+  it("archiveStateVersion bump with archivedOpen=false: reloads main list only", () => {
+    const reloadSessionGroups = vi.fn()
+    const reloadArchived = vi.fn()
+    const { rerender } = renderHook(
+      ({ version }: { version: number }) =>
+        useArchiveStateReloader(version, reloadSessionGroups, reloadArchived, false),
+      { initialProps: { version: 0 } },
+    )
+    rerender({ version: 1 })
+    expect(reloadSessionGroups).toHaveBeenCalledTimes(1)
+    expect(reloadArchived).not.toHaveBeenCalled()
+  })
+
+  it("archiveStateVersion bump with archivedOpen=true: reloads both main + archived lists", () => {
+    const reloadSessionGroups = vi.fn()
+    const reloadArchived = vi.fn()
+    const { rerender } = renderHook(
+      ({ version, archivedOpen }: { version: number; archivedOpen: boolean }) =>
+        useArchiveStateReloader(version, reloadSessionGroups, reloadArchived, archivedOpen),
+      { initialProps: { version: 0, archivedOpen: true } },
+    )
+    rerender({ version: 1, archivedOpen: true })
+    expect(reloadSessionGroups).toHaveBeenCalledTimes(1)
+    expect(reloadArchived).toHaveBeenCalledTimes(1)
+  })
+
+  it("archivedOpen toggled from false to true without version bump: reloads both (deps changed)", () => {
+    // 用户手动打开归档抽屉时，effect 会重跑一次。确保此时 UI 能看到最新快照。
+    const reloadSessionGroups = vi.fn()
+    const reloadArchived = vi.fn()
+    const { rerender } = renderHook(
+      ({ archivedOpen }: { archivedOpen: boolean }) =>
+        useArchiveStateReloader(0, reloadSessionGroups, reloadArchived, archivedOpen),
+      { initialProps: { archivedOpen: false } },
+    )
+    rerender({ archivedOpen: true })
+    expect(reloadSessionGroups).toHaveBeenCalledTimes(1)
+    expect(reloadArchived).toHaveBeenCalledTimes(1)
   })
 })
 

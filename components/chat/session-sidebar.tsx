@@ -1,5 +1,6 @@
 "use client"
 
+import { useArchiveStateReloader } from "@/components/stores/archive-event-handler"
 import { useThreadStore } from "@/components/stores/thread-store"
 import type { Provider } from "@multi-agent/shared"
 import {
@@ -307,18 +308,15 @@ export function SessionSidebar() {
     setPinned(loadPinned())
   }, [])
 
-  // F022 Phase 3.5 (review P2 follow-up): archiveStateVersion 变化 → 另一个
-  // 客户端执行了 archive/softDelete/restore。主列表必刷；归档列表仅在展开时刷。
-  // 初始 0 也会触发一次，但两个 fetch 都是幂等读取，成本可接受。
-  const isInitialArchiveVersionRef = useRef(true)
-  useEffect(() => {
-    if (isInitialArchiveVersionRef.current) {
-      isInitialArchiveVersionRef.current = false
-      return
-    }
-    void reloadSessionGroups()
-    if (archivedOpen) void reloadArchived()
-  }, [archiveStateVersion, reloadSessionGroups, reloadArchived, archivedOpen])
+  // F022 Phase 3.5 (review 4th round P2 闭环): 订阅 + reload 效果抽到
+  // useArchiveStateReloader hook（components/stores/archive-event-handler.ts），
+  // 由 archive-event-handler.test.ts 覆盖初始跳过 / 主列表刷 / 归档列表条件刷三条分支。
+  useArchiveStateReloader(
+    archiveStateVersion,
+    reloadSessionGroups,
+    reloadArchived,
+    archivedOpen,
+  )
 
   const togglePin = useCallback(
     (groupId: string) => {
