@@ -1,9 +1,10 @@
 ---
 id: F022
 title: 左侧 Sidebar 重设计 — 全局递增 ROOM ID + Haiku 自动命名 + 反向溯源
-status: spec
+status: done
 owner: 黄仁勋
 created: 2026-04-19
+completed: 2026-04-21
 ---
 
 # F022 — 左侧 Sidebar 重设计
@@ -123,6 +124,8 @@ created: 2026-04-19
 | 2026-04-21 | Phase 3.5 实施完成（AC-14a~j ✅）：时间分组 + 历史回填 migration + title fallback + F/B/D/Q 分类前缀 + 立项号识别 + HaikuRunner stdin/超时修复 + 右键菜单四件套（重命名/清除项目标签/归档/软删）+ 归档列表视图 · typecheck ✅ · 928/928 tests ✅ · 小孙 :3200 分桶 + 右键菜单实机验收通过 |
 | 2026-04-21 | 小孙决策：Phase 4（AC-16/17/18 标题栏三层 ID 徽章）Dropped，迁移至 F021 右侧面板重设计合并处理 |
 | 2026-04-21 | 范德彪 code review 4 轮迭代（`840a474` → `fee622c` → `1624f7b` → `b5e4474`），3rd round 放行 ✅；P2（前端状态机无自动化测试覆盖）小孙决策路径 B — rebase F022 worktree 到 origin/dev 带入 F025 vitest infra，本轮闭合：抽 `dispatchArchiveStateChanged` 纯 helper + 7 个回归用例（archive/delete/restore/no-match + store 身份守卫） |
+| 2026-04-21 | 范德彪 4th round：P2（sidebar.tsx archiveStateVersion useEffect + reload 效果裸奔）→ `5124443`：抽 `useArchiveStateReloader` hook + 4 个回归用例覆盖"远端归档后 sidebar 刷新"契约 |
+| 2026-04-21 | 范德彪 5th round 放行 ✅（本地 squash merge · commit `d6f29eb`）：typecheck ✅ · 后端 943/943 ✅ · 前端 vitest 14/14 ✅ · rebase onto origin/dev(162ece8) · Residual risk: 未跑浏览器双标签页实机(前端 vitest 已覆盖核心契约) |
 
 ## Links
 
