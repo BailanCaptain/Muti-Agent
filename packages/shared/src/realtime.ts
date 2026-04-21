@@ -97,6 +97,10 @@ export type TimelineMessage = {
   createdAt: string
 }
 
+export type InvocationConfigSnapshot = Partial<
+  Record<Provider, { model?: string; effort?: string }>
+>
+
 export interface InvocationStats {
   sessionId: string
   agentId: string
@@ -107,6 +111,9 @@ export interface InvocationStats {
   inputTokens: number
   outputTokens: number
   cachedTokens: number
+  // F021 Phase 3.3: frozen per-provider runtime config at invocation start
+  // (pending flushed into active). Undefined on legacy/pre-F021 rows.
+  configSnapshot?: InvocationConfigSnapshot
 }
 
 export type SessionGroupSummary = {
@@ -162,6 +169,7 @@ export type ThreadSnapshotDelta = {
 
 export type ActiveGroupView = {
   id: string
+  roomId: string | null
   title: string
   meta: string
   timeline: TimelineMessage[]

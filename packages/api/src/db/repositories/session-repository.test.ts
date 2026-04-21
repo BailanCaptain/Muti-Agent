@@ -55,6 +55,44 @@ test("connector messages persist connectorSource JSON round-trip", () => {
   }
 })
 
+// F021 Phase 5: messages.model column — chat bubble pill needs the resolved
+// per-message snapshot so historical bubbles don't shift when global/session
+// runtime config later changes.
+test("F021: appendMessage persists model snapshot and listMessages restores it", () => {
+  const { repository, cleanup } = createRepository()
+
+  try {
+    const groupId = repository.createSessionGroup("Test Room")
+    repository.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const thread = repository.listThreadsByGroup(groupId).find((item) => item.provider === "gemini")
+    assert.ok(thread)
+
+    const withModel = repository.appendMessage(
+      thread.id,
+      "assistant",
+      "answer one",
+      "",
+      "final",
+      null,
+      null,
+      null,
+      "[]",
+      "[]",
+      "gemini-2.5-pro",
+    )
+    assert.equal(withModel.model, "gemini-2.5-pro")
+
+    const legacy = repository.appendMessage(thread.id, "assistant", "answer two")
+    assert.equal(legacy.model, null)
+
+    const restored = repository.listMessages(thread.id)
+    assert.equal(restored.find((m) => m.id === withModel.id)?.model, "gemini-2.5-pro")
+    assert.equal(restored.find((m) => m.id === legacy.id)?.model, null)
+  } finally {
+    cleanup()
+  }
+})
+
 test("non-connector messages have connectorSource=null", () => {
   const { repository, cleanup } = createRepository()
 

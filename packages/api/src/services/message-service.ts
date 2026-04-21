@@ -44,7 +44,7 @@ import { detectFBloat } from "../orchestrator/fbloat-detector"
 import type { SOPBookmark } from "../orchestrator/sop-bookmark"
 import { POLICY_FULL, POLICY_GUARDIAN, POLICY_INDEPENDENT } from "../orchestrator/context-policy"
 import { classifyFailure } from "../runtime/failure-classifier"
-import { loadRuntimeConfig } from "../runtime/runtime-config"
+import { loadRuntimeConfig, resolveEffectiveOverride } from "../runtime/runtime-config"
 import type { DecisionManager } from "../orchestrator/decision-manager"
 import type { SkillRegistry } from "../skills/registry"
 import { applySlashCommandHint } from "../skills/slash-route"
@@ -822,6 +822,22 @@ export class MessageService {
       return null
     }
 
+    // F021 Phase 5: flush pending → active and resolve effective model BEFORE
+    // appending the assistant placeholder, so the message row carries the
+    // correct snapshot for the chat bubble pill. Order: snapshot → resolve →
+    // append. The same snapshot is later emitted on invocation.started.
+    const sessionSnapshot = this.sessions.flushSessionPending(thread.sessionGroupId) as Record<
+      string,
+      { model?: string; effort?: string }
+    >
+    const hasSessionSnapshot = Object.keys(sessionSnapshot).length > 0
+    const globalOverride = loadRuntimeConfig()[thread.provider]
+    const snapshotForProvider = sessionSnapshot[thread.provider]
+    // F021 P1 (范德彪 review): merge at field granularity so a session snapshot
+    // that only sets `effort` still inherits `model` from the global override.
+    const runtimeOverride = resolveEffectiveOverride(snapshotForProvider, globalOverride)
+    const resolvedModel = runtimeOverride?.model ?? thread.currentModel
+
     const assistant = this.sessions.appendAssistantMessage(
       thread.id,
       "",
@@ -829,6 +845,8 @@ export class MessageService {
       "final",
       options.groupId ?? null,
       options.groupRole ?? null,
+      "[]",
+      resolvedModel,
     )
     this.dispatch.attachMessageToRoot(assistant.id, options.rootMessageId)
     const assistantTimeline = this.sessions.toTimelineMessage(thread.id, assistant.id)
@@ -888,6 +906,8 @@ export class MessageService {
       },
     })
 
+    // F021 Phase 3.3: snapshot the resolved per-provider config onto this
+    // invocation (already computed above for the assistant message bubble).
     this.events.emit({
       type: "invocation.started",
       invocationId: identity.invocationId,
@@ -896,16 +916,13 @@ export class MessageService {
       callbackToken: identity.callbackToken,
       status: "running",
       createdAt: startedAt,
+      configSnapshot: hasSessionSnapshot ? sessionSnapshot : null,
     })
 
     options.emit({
       type: "status",
       payload: { sessionGroupId: thread.sessionGroupId, message: `正在运行 ${thread.alias}` },
     })
-
-    // Per-provider model/effort override from runtime-config.json.
-    // Falls back to thread.currentModel (legacy per-thread selector) when unset.
-    const runtimeOverride = loadRuntimeConfig()[thread.provider]
 
     // System prompt + content: use pre-computed (from assemblePrompt for A2A)
     // or compute on the fly (direct turn). F004: direct-turn assembly now
@@ -984,7 +1001,7 @@ export class MessageService {
       agentId: thread.alias,
       apiBaseUrl: this.apiBaseUrl,
       callbackToken: identity.callbackToken,
-      model: runtimeOverride?.model ?? thread.currentModel,
+      model: resolvedModel,
       effort: runtimeOverride?.effort ?? null,
       nativeSessionId: thread.nativeSessionId,
       userMessage,
@@ -1328,7 +1345,7 @@ export class MessageService {
       }
 
       this.streamingFlushers.delete(flushKey)
-      const lastFillRatio = result.sealDecision?.fillRatio ?? null
+      const lastFillRatio = result.sealDecision?.fillRatio
       this.sessions.updateThread(thread.id, result.currentModel, effectiveSessionId, undefined, lastFillRatio)
       if (!promptRequestedByCli) {
         this.sessions.overwriteMessage(assistant.id, {

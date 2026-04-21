@@ -94,6 +94,7 @@ const INIT_SQL = `
     room_id TEXT UNIQUE,
     title TEXT NOT NULL,
     project_tag TEXT,
+    runtime_config TEXT,
     title_locked_at TEXT,
     archived_at TEXT,
     deleted_at TEXT,
@@ -139,7 +140,8 @@ const INIT_SQL = `
     group_role TEXT,
     tool_events TEXT NOT NULL DEFAULT '[]',
     content_blocks TEXT NOT NULL DEFAULT '[]',
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    model TEXT
   );
 
   CREATE TABLE IF NOT EXISTS invocations (
@@ -151,7 +153,8 @@ const INIT_SQL = `
     started_at TEXT NOT NULL,
     finished_at TEXT,
     exit_code INTEGER,
-    last_activity_at TEXT
+    last_activity_at TEXT,
+    config_snapshot TEXT
   );
 
   CREATE TABLE IF NOT EXISTS agent_events (
@@ -255,33 +258,45 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
     name: "F019-threads-add-backlog-item-id",
     sql: "ALTER TABLE threads ADD COLUMN backlog_item_id TEXT;",
   },
+  // F021 Phase 2.2: per-session runtime config override (JSON stringified)
+  {
+    name: "F021-session-groups-add-runtime-config",
+    sql: "ALTER TABLE session_groups ADD COLUMN runtime_config TEXT;",
+  },
+  // F021 Phase 3.3: frozen per-invocation config snapshot (JSON)
+  {
+    name: "F021-invocations-add-config-snapshot",
+    sql: "ALTER TABLE invocations ADD COLUMN config_snapshot TEXT;",
+  },
   // F022 Phase 1: 全局递增 ROOM ID (R-001, R-002, ...)
-  // 旧库 ALTER 不带 UNIQUE（已有 NULL 行兼容），回填后由 SqliteStore.migrate()
-  // 的 CREATE UNIQUE INDEX 补齐唯一性。
   {
     name: "F022-session-groups-add-room-id",
     sql: "ALTER TABLE session_groups ADD COLUMN room_id TEXT;",
   },
-  // F022 Phase 3.5: 手动命名锁（AC-14g）— SessionTitler 看到非 NULL 跳过 Haiku 覆盖
+  // F022 Phase 3.5: 手动命名锁（AC-14g）
   {
     name: "F022-session-groups-add-title-locked-at",
     sql: "ALTER TABLE session_groups ADD COLUMN title_locked_at TEXT;",
   },
-  // F022 Phase 3.5: 归档（AC-14i）— 非 NULL 从主列表移出，进归档列表
+  // F022 Phase 3.5: 归档（AC-14i）
   {
     name: "F022-session-groups-add-archived-at",
     sql: "ALTER TABLE session_groups ADD COLUMN archived_at TEXT;",
   },
-  // F022 Phase 3.5: 软删（AC-14j）— 非 NULL 从主列表移出，进归档列表；禁物删
+  // F022 Phase 3.5: 软删（AC-14j）
   {
     name: "F022-session-groups-add-deleted-at",
     sql: "ALTER TABLE session_groups ADD COLUMN deleted_at TEXT;",
   },
-  // F022 Phase 3.5 (review P1-2): Haiku 命名失败计数 — backfill 过 3 次永久跳过，
-  // 防止 Haiku 永久不可用时每次启动都对同批会话重试形成后台风暴。
+  // F022 Phase 3.5: Haiku 命名失败计数
   {
     name: "F022-session-groups-add-title-backfill-attempts",
     sql: "ALTER TABLE session_groups ADD COLUMN title_backfill_attempts INTEGER NOT NULL DEFAULT 0;",
+  },
+  // F021 Phase 5: per-message resolved model snapshot (chat bubble pill)
+  {
+    name: "F021-messages-add-model",
+    sql: "ALTER TABLE messages ADD COLUMN model TEXT;",
   },
 ]
 

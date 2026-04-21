@@ -197,6 +197,46 @@ test("createInvocation + getInvocationById + updateInvocation", async () => {
   }
 })
 
+test("F021 createInvocation persists configSnapshot (JSON) and round-trips via getInvocationById", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup("Snapshot")
+    repo.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const thread = repo.listThreadsByGroup(groupId).find((t) => t.provider === "claude")
+    assert.ok(thread)
+
+    const snapshotJson = JSON.stringify({
+      claude: { model: "claude-opus-4-7", effort: "high" },
+      codex: { model: "gpt-5" },
+    })
+    repo.createInvocation({
+      id: "inv-snap",
+      threadId: thread.id,
+      agentId: "claude",
+      callbackToken: "tok-snap",
+      status: "running",
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      exitCode: null,
+      lastActivityAt: null,
+      configSnapshot: snapshotJson,
+    })
+
+    const got = repo.getInvocationById("inv-snap")
+    assert.ok(got)
+    assert.equal(got.configSnapshot, snapshotJson)
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
 test("createMemory + listMemories + getLatestMemory", async () => {
   const { createDrizzleDb } = await import("../drizzle-instance")
   const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
@@ -603,6 +643,40 @@ test("review P1-2: title_backfill_attempts 达到 MAX 后 backfill 跳过（防 
     repo.resetTitleBackfillAttempts(stuck)
     const after = repo.listSessionGroupsForBackfill().map((r) => r.id)
     assert.ok(after.includes(stuck), "reset 后回到扫描队列")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+// F021 P1 (范德彪 二轮 review residual risk): 主库实际走 DrizzleSessionRepository，
+// legacy SessionRepository 已有 partial-pending 测试，这里给 Drizzle 补等价断言，
+// 保证两个 repo 走同一个 mergeRuntimeConfigFieldwise helper 的行为一致。
+test("F021 P1 DrizzleSessionRepository.flushSessionPending merges per-field within a provider (partial pending preserves active fields)", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup("Test")
+    repo.setSessionRuntimeConfig(groupId, {
+      claude: { model: "claude-opus-4-7", effort: "high" },
+    })
+    repo.setSessionPendingConfig(groupId, {
+      claude: { effort: "low" },
+    })
+
+    const merged = repo.flushSessionPending(groupId)
+    assert.deepEqual(merged, {
+      claude: { model: "claude-opus-4-7", effort: "low" },
+    })
+    assert.deepEqual(repo.getSessionRuntimeConfig(groupId), {
+      claude: { model: "claude-opus-4-7", effort: "low" },
+    })
+    assert.deepEqual(repo.getSessionPendingConfig(groupId), {})
   } finally {
     close()
     safeCleanup(tempDir)

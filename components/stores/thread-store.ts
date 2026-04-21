@@ -30,6 +30,7 @@ type ProviderCardState = {
 
 type ActiveGroupPayload = {
   id: string
+  roomId: string | null
   title: string
   meta: string
   timeline: TimelineMessage[]
@@ -71,6 +72,7 @@ type ThreadStore = {
   activeGroupId: string | null
   activeGroup: {
     id: string
+    roomId: string | null
     title: string
     meta: string
     hasPendingDispatches: boolean
@@ -453,6 +455,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     set((state) => ({
       activeGroup: {
         id: group.id,
+        roomId: group.roomId,
         title: group.title,
         meta: group.meta,
         hasPendingDispatches: group.hasPendingDispatches,

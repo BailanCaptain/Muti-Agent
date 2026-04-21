@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
-import { loadRuntimeConfig, saveRuntimeConfig } from "./runtime-config"
+import { loadRuntimeConfig, resolveEffectiveOverride, saveRuntimeConfig } from "./runtime-config"
 
 function tmpConfigPath() {
   const dir = mkdtempSync(path.join(os.tmpdir(), "ma-runtime-config-"))
@@ -69,6 +69,30 @@ test("sanitize drops empty strings, unknown agents, and non-object entries", () 
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test("F021 P1: resolveEffectiveOverride merges session over global at field granularity", () => {
+  // session only has effort, global only has model → merge, don't pick object
+  assert.deepEqual(
+    resolveEffectiveOverride({ effort: "high" }, { model: "claude-sonnet-4-6" }),
+    { model: "claude-sonnet-4-6", effort: "high" },
+  )
+})
+
+test("F021 P1: resolveEffectiveOverride session field wins when both set", () => {
+  assert.deepEqual(
+    resolveEffectiveOverride(
+      { model: "claude-opus-4-7" },
+      { model: "claude-sonnet-4-6", effort: "medium" },
+    ),
+    { model: "claude-opus-4-7", effort: "medium" },
+  )
+})
+
+test("F021 P1: resolveEffectiveOverride returns undefined when neither set", () => {
+  assert.equal(resolveEffectiveOverride(undefined, undefined), undefined)
+  assert.equal(resolveEffectiveOverride({}, {}), undefined)
+  assert.equal(resolveEffectiveOverride({}, undefined), undefined)
 })
 
 test("saveRuntimeConfig trims whitespace on write", () => {

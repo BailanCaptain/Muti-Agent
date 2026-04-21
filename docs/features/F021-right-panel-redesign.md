@@ -1,7 +1,7 @@
 ---
 id: F021
 title: 右侧面板重设计 — 观测带 + 智能体列表 + 两级配置（全局默认/会话专属）+ Side-Drawer
-status: spec
+status: in-progress
 owner: 黄仁勋
 created: 2026-04-19
 ---
@@ -42,30 +42,40 @@ created: 2026-04-19
 ## Acceptance Criteria
 
 ### Phase 1：观测带 + 智能体行（1.5 天）
-- [ ] AC-01: 拆分 `status-panel.tsx` 为 3 个子组件：`ObservationBar` / `AgentList` / `RoomSwitches`
-- [ ] AC-02: 顶部 ROOM 归属徽章（`ROOM · {title} · #{shortHash}`）
-- [ ] AC-03: 观测带只展示 3 个数字（消息/证据/跟进）+ 会话链链接
-- [ ] AC-04: 智能体行：头像 + 名字 + 模型 pill + ⚙ + 运行指示（pulse 或 idle）
-- [ ] AC-05: 右侧面板整体滚动高度 ≤ 屏高（1080p 下无纵向滚动）
+- [x] AC-01: 拆分 `status-panel.tsx` 为 3 个子组件：`ObservationBar` / `AgentList` / `RoomSwitches`
+- [x] AC-02: 顶部 ROOM 归属徽章（`ROOM · {title} · #{shortHash}`）
+- [x] AC-03: 观测带只展示 3 个数字（消息/证据/跟进）+ 会话链链接
+- [x] AC-04: 智能体行：头像 + 名字 + 模型 pill + ⚙ + 运行指示（pulse 或 idle）
+- [x] AC-05: 右侧面板整体滚动高度 ≤ 屏高（1080p 下无纵向滚动）
 
 ### Phase 2：Side-Drawer 配置态（1 天）
-- [ ] AC-06: 点击 ⚙ 从右侧滑出 Drawer（不是 Popover）
-- [ ] AC-07: Drawer 顶部 Segmented Tab：「全局默认」/「会话专属」
-- [ ] AC-08: 全局默认 Tab：一个保存按钮写入全局 config
-- [ ] AC-09: 会话专属 Tab：显示继承自全局的值，编辑后可保存为会话覆盖
-- [ ] AC-10: 模型 pill 右侧橙色小圆点仅当存在会话专属覆盖时显示
+- [x] AC-06: 点击 ⚙ 从右侧滑出 Drawer（不是 Popover）
+- [x] AC-07: Drawer 顶部 Segmented Tab：「全局默认」/「会话专属」
+- [x] AC-08: 全局默认 Tab：一个保存按钮写入全局 config
+- [x] AC-09: 会话专属 Tab：显示继承自全局的值，编辑后可保存为会话覆盖
+- [x] AC-10: 模型 pill 右侧橙色小圆点仅当存在会话专属覆盖时显示
 
 ### Phase 3：运行中保护 + 下一轮生效（0.5 天）
-- [ ] AC-11: 会话运行中（streaming）时，「应用到当前会话」按钮 disable
-- [ ] AC-12: 文案提示"运行中，下一轮生效"
-- [ ] AC-13: 编辑写入 `pendingConfig`（下一轮启动时读取）
-- [ ] AC-14: invocation 启动时 snapshot pendingConfig 到本次 invocation 元数据（可追溯）
-- [ ] AC-15: 快照写入 `invocationStats` 记录
+- [x] AC-11: 会话运行中（streaming）时，「应用到当前会话」按钮 disable
+- [x] AC-12: 文案提示"运行中，下一轮生效"
+- [x] AC-13: 编辑写入 `pendingConfig`（下一轮启动时读取）
+- [x] AC-14: invocation 启动时 snapshot pendingConfig 到本次 invocation 元数据（可追溯）
+- [x] AC-15: 快照写入 `invocationStats` 记录
 
 ### Phase 4：验收
-- [ ] AC-16: 桂芬视觉验收通过
-- [ ] AC-17: 范德彪 code review 通过（无运行中配置竞态）
-- [ ] AC-18: 小孙端到端跑一轮 → OK
+- [x] AC-16: 桂芬视觉验收通过
+- [x] AC-17: 范德彪 code review 通过（无运行中配置竞态）
+- [x] AC-18: 小孙端到端跑一轮 → OK
+
+### Phase 5：验收中发现的缺陷回修 — 聊天气泡 model pill（feature 内修，不建 B-ID）
+
+> 小孙（2026-04-21）："聊天框的不会变呀 你看看 我已经选了 pro 了，但是聊天模型还是 flash。"
+
+右侧面板 AgentList 的 pill 和消息气泡里的 model pill 没有正确反映会话当前 resolved model——改了会话覆盖后 pill 不跟随变化；而且历史气泡也应该被"冻结"在它当时产生的 model，避免后续全局/会话配置变更导致历史记录跳字。
+
+- [x] AC-19: 右侧面板 AgentList 的 pill 即时反映 resolved model（会话覆盖 > 全局默认 > `card.currentModel` fallback），会话切换/覆盖变更后 pill 立刻更新
+- [x] AC-20: 后端消息表新增 `messages.model` snapshot 列（ALTER 迁移 `F021-messages-add-model`），assistant 消息 append 时把本次 resolved model 冻结写入该列
+- [x] AC-21: 聊天气泡 pill 读取 `message.model` snapshot；旧消息（pre-F021 / user / connector 消息）fallback 到 `thread.currentModel`；改会话覆盖后只影响新气泡，历史气泡保持原样（小孙 2026-04-21 人工验收通过）
 
 ## Dependencies
 
@@ -92,6 +102,10 @@ created: 2026-04-19
 | 2026-04-19 | Kickoff |
 | 2026-04-20 | Plan 落地（`docs/plans/F021-right-panel-redesign-plan.md`，4 Phase 拆分）|
 | 2026-04-20 | **Blocked on F025**：动手前发现前端零单测基础设施，拆出 F025 先做 |
+| 2026-04-20 | F025 合 dev → F021 rebase unblock，进 Phase 1 TDD（Task 1.1 ObservationBar）|
+| 2026-04-20 | Phase 1–3 实现完成（AC-01~AC-15 全绿，后端 862 + 前端 42 测试通过，`pnpm build` 绿）；进 Phase 4 独立验收 |
+| 2026-04-21 | Phase 4 验收中发现聊天气泡 / 右面板 pill 不跟随会话 resolved model → 新增 Phase 5（AC-19/20/21）；实现完成后小孙人工验收通过，请范德彪 code review（AC-17）|
+| 2026-04-21 | 范德彪二轮扩大范围 review 提 2 P1 + 1 P2 → `d749074` 字段级 merge + 清 pending + Tab 同步闭环；residual risk `2c06753` Drizzle 定向回归 → 二轮放行，AC-17 通过 |
 
 ## Links
 

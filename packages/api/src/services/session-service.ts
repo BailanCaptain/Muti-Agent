@@ -188,6 +188,7 @@ export class SessionService {
               message.groupRole,
               JSON.parse(message.toolEvents || "[]") as ToolEvent[],
               parsedCB.length ? parsedCB : undefined,
+              message.model,
             )
           }),
       )
@@ -204,6 +205,7 @@ export class SessionService {
 
     return {
       id: groupId,
+      roomId: group?.roomId ?? null,
       title: group?.title ?? "新会话",
       meta: `最近更新时间：${group ? new Date(group.updatedAt).toLocaleString("zh-CN") : "--"}，消息会按统一时间线展示。`,
       timeline,
@@ -277,6 +279,7 @@ export class SessionService {
           message.groupRole,
           JSON.parse(message.toolEvents || "[]") as ToolEvent[],
           parsedCB.length ? parsedCB : undefined,
+          message.model,
         )
       })
     }).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -328,8 +331,9 @@ export class SessionService {
     groupId: string | null = null,
     groupRole: "header" | "member" | "convergence" | null = null,
     toolEvents = "[]",
+    model: string | null = null,
   ) {
-    const result = this.repository.appendMessage(threadId, "assistant", content, thinking, messageType, null, groupId, groupRole, toolEvents)
+    const result = this.repository.appendMessage(threadId, "assistant", content, thinking, messageType, null, groupId, groupRole, toolEvents, "[]", model)
     if (messageType === "final" && this.sessionTitler) {
       const thread = this.repository.getThreadById(threadId)
       if (thread?.sessionGroupId) {
@@ -382,6 +386,7 @@ export class SessionService {
       message.groupRole,
       JSON.parse(message.toolEvents || "[]") as ToolEvent[],
       parsedContentBlocks.length ? parsedContentBlocks : undefined,
+      message.model,
     )
   }
 
@@ -478,6 +483,7 @@ export class SessionService {
     groupRole?: "header" | "member" | "convergence" | null,
     toolEvents?: ToolEvent[],
     contentBlocks?: ContentBlock[],
+    messageModel: string | null = null,
   ): TimelineMessage {
     const isConnector = messageType === "connector"
     return {
@@ -498,7 +504,9 @@ export class SessionService {
       contentBlocks: contentBlocks?.length ? contentBlocks : undefined,
       groupId: groupId ?? undefined,
       groupRole: groupRole ?? undefined,
-      model: role === "user" ? null : thread.currentModel,
+      // F021 Phase 5: prefer per-message snapshot. Fallback to thread.currentModel
+      // for legacy rows persisted before the messages.model column existed.
+      model: role === "user" ? null : (messageModel ?? thread.currentModel),
       createdAt,
     }
   }
@@ -521,5 +529,11 @@ export class SessionService {
 
   incrementSessionChainIndex(threadId: string): void {
     this.repository.incrementSessionChainIndex(threadId)
+  }
+
+  // F021 Phase 3.3: merge session's pending runtime-config into active,
+  // clear pending, return the resulting active. Called at invocation start.
+  flushSessionPending(sessionGroupId: string): Record<string, unknown> {
+    return this.repository.flushSessionPending(sessionGroupId)
   }
 }

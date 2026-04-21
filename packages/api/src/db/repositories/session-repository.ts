@@ -2,6 +2,7 @@ import crypto from "node:crypto"
 import type { Provider } from "@multi-agent/shared"
 import { PROVIDERS, PROVIDER_ALIASES } from "@multi-agent/shared"
 import { perfCollector } from "../../lib/perf-collector"
+import { mergeRuntimeConfigFieldwise } from "./runtime-config-merge"
 import type {
   AgentEventRecord,
   ConnectorSourceRecord,
@@ -21,6 +22,7 @@ type MessageRow = {
   thinking: string
   messageType: MessageType
   connectorSource: string | null
+  model: string | null
   groupId: string | null
   groupRole: string | null
   toolEvents: string
@@ -36,6 +38,7 @@ function hydrateMessage(row: MessageRow): MessageRecord {
     groupRole: (row.groupRole as MessageRecord["groupRole"]) ?? null,
     toolEvents: row.toolEvents ?? "[]",
     contentBlocks: row.contentBlocks ?? "[]",
+    model: row.model ?? null,
   }
 }
 
@@ -57,6 +60,43 @@ type InvocationRow = {
   finishedAt: string | null
   exitCode: number | null
   lastActivityAt: string | null
+  configSnapshot: string | null
+}
+
+// F021 Phase 3.3: per-session runtime config is stored as `{active, pending}`.
+// Legacy rows (pre-pending) stored the flat `active` object directly; we
+// migrate-on-read by treating the flat blob as `{active: <flat>, pending: {}}`.
+type RuntimeConfigBlob = {
+  active: Record<string, unknown>
+  pending: Record<string, unknown>
+}
+
+function parseRuntimeConfigBlob(raw: string | null): RuntimeConfigBlob {
+  if (!raw) return { active: {}, pending: {} }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return { active: {}, pending: {} }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { active: {}, pending: {} }
+  }
+  const obj = parsed as Record<string, unknown>
+  const hasShape = "active" in obj || "pending" in obj
+  if (hasShape) {
+    const active =
+      obj.active && typeof obj.active === "object" && !Array.isArray(obj.active)
+        ? (obj.active as Record<string, unknown>)
+        : {}
+    const pending =
+      obj.pending && typeof obj.pending === "object" && !Array.isArray(obj.pending)
+        ? (obj.pending as Record<string, unknown>)
+        : {}
+    return { active, pending }
+  }
+  // Legacy flat shape → treat as active.
+  return { active: obj, pending: {} }
 }
 
 export class SessionRepository {
@@ -144,6 +184,53 @@ export class SessionRepository {
     this.store.db
       .prepare("UPDATE session_groups SET project_tag = ? WHERE id = ?")
       .run(tag, groupId)
+  }
+
+  // F021 Phase 2.2 / 3.3: per-session runtime-config overrides.
+  // Stored as JSON blob `{active, pending}`; legacy flat blobs are read as
+  // `{active: <flat>, pending: {}}` so existing rows keep working.
+  private readRuntimeConfigBlob(groupId: string): RuntimeConfigBlob {
+    const row = this.store.db
+      .prepare("SELECT runtime_config FROM session_groups WHERE id = ? LIMIT 1")
+      .get(groupId) as { runtime_config: string | null } | undefined
+    if (!row) return { active: {}, pending: {} }
+    return parseRuntimeConfigBlob(row.runtime_config)
+  }
+
+  private writeRuntimeConfigBlob(groupId: string, blob: RuntimeConfigBlob): void {
+    this.store.db
+      .prepare("UPDATE session_groups SET runtime_config = ? WHERE id = ?")
+      .run(JSON.stringify(blob), groupId)
+  }
+
+  getSessionRuntimeConfig(groupId: string): Record<string, unknown> {
+    return this.readRuntimeConfigBlob(groupId).active
+  }
+
+  setSessionRuntimeConfig(groupId: string, config: Record<string, unknown>): void {
+    const blob = this.readRuntimeConfigBlob(groupId)
+    this.writeRuntimeConfigBlob(groupId, { active: config ?? {}, pending: blob.pending })
+  }
+
+  // F021 Phase 3.3: pending overrides written during a running invocation;
+  // flushed into active on the next invocation start.
+  getSessionPendingConfig(groupId: string): Record<string, unknown> {
+    return this.readRuntimeConfigBlob(groupId).pending
+  }
+
+  setSessionPendingConfig(groupId: string, pending: Record<string, unknown>): void {
+    const blob = this.readRuntimeConfigBlob(groupId)
+    this.writeRuntimeConfigBlob(groupId, { active: blob.active, pending: pending ?? {} })
+  }
+
+  // Merge pending into active, clear pending, return the resulting active.
+  // F021 P1 (范德彪 二轮 review): provider 内按字段 merge，不能 provider 级浅覆盖 —
+  // 否则 pending 只含一个字段时会把 active 的另一个字段吞掉。
+  flushSessionPending(groupId: string): Record<string, unknown> {
+    const { active, pending } = this.readRuntimeConfigBlob(groupId)
+    const merged = mergeRuntimeConfigFieldwise(active, pending)
+    this.writeRuntimeConfigBlob(groupId, { active: merged, pending: {} })
+    return merged
   }
 
   createThread(sessionGroupId: string, provider: Provider, currentModel: string | null) {
@@ -238,7 +325,7 @@ export class SessionRepository {
     const t0 = performance.now()
     const rows = this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt
+        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt, model
          FROM messages
          WHERE thread_id = ?
          ORDER BY created_at ASC`,
@@ -255,7 +342,7 @@ export class SessionRepository {
     return (
       this.store.db
         .prepare(
-          `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt
+          `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt, model
          FROM messages
          WHERE thread_id = ? AND created_at > ?
          ORDER BY created_at ASC`,
@@ -267,7 +354,7 @@ export class SessionRepository {
   listRecentMessages(threadId: string, limit: number) {
     const rows = this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt
+        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt, model
          FROM messages
          WHERE thread_id = ?
          ORDER BY created_at DESC
@@ -288,6 +375,7 @@ export class SessionRepository {
     groupRole: MessageRecord["groupRole"] = null,
     toolEvents = "[]",
     contentBlocks = "[]",
+    model: string | null = null,
   ) {
     const message: MessageRecord = {
       id: crypto.randomUUID(),
@@ -302,12 +390,13 @@ export class SessionRepository {
       toolEvents,
       contentBlocks,
       createdAt: new Date().toISOString(),
+      model,
     }
 
     this.store.db
       .prepare(
-        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, group_id, group_role, tool_events, content_blocks, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, group_id, group_role, tool_events, content_blocks, created_at, model)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -322,6 +411,7 @@ export class SessionRepository {
         message.toolEvents,
         message.contentBlocks,
         message.createdAt,
+        message.model,
       )
 
     this.touchThread(threadId, message.createdAt)
@@ -366,8 +456,8 @@ export class SessionRepository {
   createInvocation(record: InvocationRecord) {
     this.store.db
       .prepare(
-        `INSERT INTO invocations (id, thread_id, agent_id, callback_token, status, started_at, finished_at, exit_code, last_activity_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO invocations (id, thread_id, agent_id, callback_token, status, started_at, finished_at, exit_code, last_activity_at, config_snapshot)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         record.id,
@@ -379,6 +469,7 @@ export class SessionRepository {
         record.finishedAt,
         record.exitCode,
         record.lastActivityAt,
+        record.configSnapshot ?? null,
       )
   }
 
@@ -393,7 +484,8 @@ export class SessionRepository {
                 started_at as startedAt,
                 finished_at as finishedAt,
                 exit_code as exitCode,
-                last_activity_at as lastActivityAt
+                last_activity_at as lastActivityAt,
+                config_snapshot as configSnapshot
          FROM invocations
          WHERE id = ?
          LIMIT 1`,
@@ -412,7 +504,8 @@ export class SessionRepository {
                 started_at as startedAt,
                 finished_at as finishedAt,
                 exit_code as exitCode,
-                last_activity_at as lastActivityAt
+                last_activity_at as lastActivityAt,
+                config_snapshot as configSnapshot
          FROM invocations
          WHERE id = ?
            AND callback_token = ?

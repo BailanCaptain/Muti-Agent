@@ -3,7 +3,7 @@
 import type { Provider } from "@multi-agent/shared"
 
 type AvatarIdentity = Provider | "user"
-type AvatarSize = "2xs" | "xs" | "sm" | "md"
+type AvatarSize = "2xs" | "xs" | "sm" | "md" | "lg" | "xl"
 
 type ProviderAvatarProps = {
   identity: AvatarIdentity
@@ -14,50 +14,45 @@ type ProviderAvatarProps = {
 const avatarTheme: Record<
   AvatarIdentity,
   {
+    mainEmoji: string
+    subEmoji: string
+    subTransform: string
     shell: string
-    ear: string
-    face: string
     ring: string
-    badge: string
-    badgeText: string
-    accent: string
+    shadow: string
   }
 > = {
   user: {
-    shell: "from-rose-100 via-orange-50 to-amber-50",
-    ear: "from-orange-400 to-rose-400",
-    face: "from-orange-500 via-orange-400 to-rose-400",
+    mainEmoji: "🤠",
+    subEmoji: "🫓",
+    subTransform: "rotate-12 translate-x-[10%] translate-y-[10%]",
+    shell: "from-orange-100/80 via-rose-50/80 to-rose-100/80",
     ring: "ring-orange-200/80",
-    badge: "bg-rose-500 text-white",
-    badgeText: "Y",
-    accent: "bg-rose-200/80",
-  },
-  codex: {
-    shell: "from-amber-100 via-orange-50 to-orange-100",
-    ear: "from-amber-500 to-orange-500",
-    face: "from-amber-500 via-orange-400 to-orange-500",
-    ring: "ring-amber-200/80",
-    badge: "bg-amber-500 text-white",
-    badgeText: "C",
-    accent: "bg-amber-200/80",
+    shadow: "shadow-orange-500/20",
   },
   claude: {
-    shell: "from-violet-100 via-purple-50 to-indigo-100",
-    ear: "from-violet-500 to-purple-500",
-    face: "from-violet-500 via-purple-400 to-indigo-500",
+    mainEmoji: "🐶",
+    subEmoji: "🔧",
+    subTransform: "-rotate-[30deg] translate-x-[20%] translate-y-[15%]",
+    shell: "from-violet-100/80 via-indigo-50/80 to-purple-100/80",
     ring: "ring-violet-200/80",
-    badge: "bg-violet-500 text-white",
-    badgeText: "A",
-    accent: "bg-violet-200/80",
+    shadow: "shadow-violet-500/20",
+  },
+  codex: {
+    mainEmoji: "🐮",
+    subEmoji: "🧱",
+    subTransform: "rotate-12 translate-x-[15%] translate-y-[15%]",
+    shell: "from-amber-100/80 via-orange-50/80 to-yellow-100/80",
+    ring: "ring-amber-200/80",
+    shadow: "shadow-amber-500/20",
   },
   gemini: {
-    shell: "from-sky-100 via-cyan-50 to-blue-100",
-    ear: "from-sky-500 to-cyan-500",
-    face: "from-sky-500 via-cyan-400 to-blue-500",
+    mainEmoji: "🙀",
+    subEmoji: "🔪",
+    subTransform: "-rotate-[15deg] translate-x-[15%] translate-y-[10%]",
+    shell: "from-sky-100/80 via-cyan-50/80 to-blue-100/80",
     ring: "ring-sky-200/80",
-    badge: "bg-sky-500 text-white",
-    badgeText: "G",
-    accent: "bg-sky-200/80",
+    shadow: "shadow-sky-500/20",
   },
 }
 
@@ -65,130 +60,70 @@ const sizeMap: Record<
   AvatarSize,
   {
     shell: string
-    face: string
-    ear: string
-    badge: string
-    eye: string
-    muzzle: string
-    cheek: string
-    mouth: string
-    gap: string
-    badgeOffset: string
-    userText: string
+    mainSize: string
+    subSize: string
+    subPosition: string
   }
 > = {
   "2xs": {
-    shell: "h-5 w-5",
-    face: "h-3.5 w-3.5",
-    ear: "h-1.5 w-1.5",
-    badge: "h-2.5 w-2.5 text-[6px]",
-    eye: "h-0.5 w-0.5",
-    muzzle: "h-1.5 w-2.5",
-    cheek: "h-1 w-1",
-    mouth: "h-px w-1.5",
-    gap: "gap-1",
-    badgeOffset: "-bottom-0 -right-0",
-    userText: "text-[9px]",
+    shell: "h-5 w-5 rounded-lg",
+    mainSize: "text-[12px]",
+    subSize: "text-[8px]",
+    subPosition: "-bottom-0 -right-0",
   },
   xs: {
-    shell: "h-7 w-7",
-    face: "h-5 w-5",
-    ear: "h-2.5 w-2.5",
-    badge: "h-3.5 w-3.5 text-[7px]",
-    eye: "h-1 w-1",
-    muzzle: "h-2.5 w-3.5",
-    cheek: "h-1.5 w-1.5",
-    mouth: "h-[2px] w-2",
-    gap: "gap-1.5",
-    badgeOffset: "-bottom-0.5 -right-0.5",
-    userText: "text-[11px]",
+    shell: "h-7 w-7 rounded-[10px]",
+    mainSize: "text-[16px]",
+    subSize: "text-[10px]",
+    subPosition: "-bottom-0.5 -right-0.5",
   },
   sm: {
-    shell: "h-9 w-9",
-    face: "h-6.5 w-6.5",
-    ear: "h-3.5 w-3.5",
-    badge: "h-4 w-4 text-[8px]",
-    eye: "h-1.5 w-1.5",
-    muzzle: "h-3.5 w-4.5",
-    cheek: "h-2 w-2",
-    mouth: "h-[2px] w-2.5",
-    gap: "gap-2",
-    badgeOffset: "-bottom-0.5 -right-0.5",
-    userText: "text-[13px]",
+    shell: "h-9 w-9 rounded-xl",
+    mainSize: "text-[22px]",
+    subSize: "text-[14px]",
+    subPosition: "-bottom-1 -right-1",
   },
   md: {
-    shell: "h-11 w-11",
-    face: "h-8 w-8",
-    ear: "h-4 w-4",
-    badge: "h-4.5 w-4.5 text-[9px]",
-    eye: "h-1.5 w-1.5",
-    muzzle: "h-4 w-5.5",
-    cheek: "h-2 w-2",
-    mouth: "h-[2px] w-3",
-    gap: "gap-2.5",
-    badgeOffset: "-bottom-1 -right-1",
-    userText: "text-[15px]",
+    shell: "h-11 w-11 rounded-2xl",
+    mainSize: "text-[28px]",
+    subSize: "text-[16px]",
+    subPosition: "-bottom-1 -right-1",
   },
-}
-
-function UserAvatar({ size = "md", className = "" }: { size?: AvatarSize; className?: string }) {
-  const dimensions = sizeMap[size]
-
-  return (
-    <div
-      className={`relative inline-flex ${dimensions.shell} items-center justify-center rounded-full bg-gradient-to-br from-orange-400 via-rose-400 to-orange-500 ring-1 ring-orange-200/80 shadow-[0_8px_20px_rgba(15,23,42,0.08)] ${className}`.trim()}
-    >
-      <span className={`font-semibold text-white ${dimensions.userText}`}>Y</span>
-    </div>
-  )
+  lg: {
+    shell: "h-16 w-16 rounded-[22px]",
+    mainSize: "text-[42px]",
+    subSize: "text-[24px]",
+    subPosition: "-bottom-1.5 -right-1.5",
+  },
+  xl: {
+    shell: "h-24 w-24 rounded-[32px]",
+    mainSize: "text-[64px]",
+    subSize: "text-[36px]",
+    subPosition: "-bottom-2 -right-2",
+  },
 }
 
 export function ProviderAvatar({ identity, size = "md", className = "" }: ProviderAvatarProps) {
-  if (identity === "user") {
-    return <UserAvatar size={size} className={className} />
-  }
-
   const theme = avatarTheme[identity]
   const dimensions = sizeMap[size]
 
   return (
     <div
-      className={`relative isolate inline-flex ${dimensions.shell} items-center justify-center rounded-full bg-gradient-to-br ${theme.shell} ring-1 ${theme.ring} shadow-[0_8px_20px_rgba(15,23,42,0.08)] ${className}`.trim()}
+      className={`relative inline-flex items-center justify-center bg-gradient-to-br bg-white/50 backdrop-blur-md ring-1 shadow-lg transition-transform hover:scale-105 ${dimensions.shell} ${theme.shell} ${theme.ring} ${theme.shadow} ${className}`.trim()}
     >
-      <span
-        className={`absolute left-[18%] top-[10%] ${dimensions.ear} rounded-[35%] bg-gradient-to-br ${theme.ear} rotate-[-28deg] shadow-sm`}
-      />
-      <span
-        className={`absolute right-[18%] top-[10%] ${dimensions.ear} rounded-[35%] bg-gradient-to-br ${theme.ear} rotate-[28deg] shadow-sm`}
-      />
+      <div className="absolute inset-0 z-0 mix-blend-overlay opacity-20 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.8)_0%,transparent_70%)]" />
 
-      <div
-        className={`relative flex ${dimensions.face} items-center justify-center rounded-full bg-gradient-to-br ${theme.face}`}
+      <span
+        className={`relative z-10 flex items-center justify-center drop-shadow-md ${dimensions.mainSize}`}
+        style={{ transform: "translateY(-5%)" }}
       >
-        <span
-          className={`absolute left-[18%] top-[28%] ${dimensions.cheek} rounded-full ${theme.accent} blur-[1px]`}
-        />
-        <span
-          className={`absolute right-[18%] top-[28%] ${dimensions.cheek} rounded-full ${theme.accent} blur-[1px]`}
-        />
-
-        <div className={`absolute top-[38%] flex ${dimensions.gap}`}>
-          <span className={`${dimensions.eye} rounded-full bg-slate-900/90`} />
-          <span className={`${dimensions.eye} rounded-full bg-slate-900/90`} />
-        </div>
-
-        <div
-          className={`absolute top-[56%] ${dimensions.muzzle} rounded-full bg-white/85 shadow-[inset_0_1px_1px_rgba(255,255,255,0.75)]`}
-        />
-        <span
-          className={`absolute top-[65%] ${dimensions.mouth} rounded-full border-b-2 border-slate-900/65`}
-        />
-      </div>
+        {theme.mainEmoji}
+      </span>
 
       <span
-        className={`absolute ${dimensions.badgeOffset} flex ${dimensions.badge} items-center justify-center rounded-full border border-white/80 ${theme.badge} font-semibold shadow-sm`}
+        className={`absolute z-20 drop-shadow-lg ${dimensions.subPosition} ${dimensions.subSize} ${theme.subTransform}`}
       >
-        {theme.badgeText}
+        {theme.subEmoji}
       </span>
     </div>
   )

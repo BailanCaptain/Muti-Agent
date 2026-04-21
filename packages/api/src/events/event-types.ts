@@ -9,6 +9,9 @@ export type AppEvent =
       callbackToken: string;
       status: Extract<AgentStatus, "running">;
       createdAt: string;
+      // F021 Phase 3.3: frozen per-provider runtime config snapshot captured
+      // when this invocation started (pending flushed into active).
+      configSnapshot?: Record<string, { model?: string; effort?: string }> | null;
     }
   | {
       type: "invocation.activity";

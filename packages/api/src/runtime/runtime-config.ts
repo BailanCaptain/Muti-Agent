@@ -47,6 +47,29 @@ export function saveRuntimeConfig(
   writeFileSync(configPath, `${JSON.stringify(sanitized, null, 2)}\n`, "utf8")
 }
 
+/**
+ * F021: merge session override over global override at field granularity.
+ *
+ * Session and global each own `model` and `effort` independently. A session
+ * snapshot that only sets `effort` must still inherit `model` from global
+ * (and vice versa) — object-level `??` would drop the sibling field.
+ *
+ * Returns undefined when no field on either side is set, so callers can
+ * fall back to `thread.currentModel` etc.
+ */
+export function resolveEffectiveOverride(
+  session: AgentOverride | undefined,
+  global: AgentOverride | undefined,
+): AgentOverride | undefined {
+  const model = session?.model ?? global?.model
+  const effort = session?.effort ?? global?.effort
+  if (!model && !effort) return undefined
+  const result: AgentOverride = {}
+  if (model) result.model = model
+  if (effort) result.effort = effort
+  return result
+}
+
 function sanitize(input: unknown): RuntimeConfig {
   if (!input || typeof input !== "object") return {}
   const source = input as Record<string, unknown>

@@ -3,6 +3,7 @@ import type { Provider } from "@multi-agent/shared"
 import { PROVIDERS, PROVIDER_ALIASES } from "@multi-agent/shared"
 import { eq, desc, asc, like, or, and, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
+import { mergeRuntimeConfigFieldwise } from "./runtime-config-merge"
 import {
   sessionGroups,
   threads,
@@ -39,6 +40,7 @@ function hydrateMessage(row: typeof messages.$inferSelect): MessageRecord {
     toolEvents: row.toolEvents ?? "[]",
     contentBlocks: row.contentBlocks ?? "[]",
     createdAt: row.createdAt,
+    model: row.model ?? null,
   }
 }
 
@@ -209,8 +211,83 @@ export class DrizzleSessionRepository {
       .run()
   }
 
-  // F022 Phase 3.5 (AC-14g): manual=true 时写 title_locked_at，SessionTitler 看 lock 跳过覆盖。
-  // 自动命名（Haiku）调用保持原 behavior — 不写 lock。
+  // F021 Phase 2.2 / 3.3: per-session runtime-config overrides.
+  // Stored as JSON blob `{active, pending}`; legacy flat blobs read as
+  // `{active: <flat>, pending: {}}` so existing rows keep working.
+  private readRuntimeConfigBlob(
+    groupId: string,
+  ): { active: Record<string, unknown>; pending: Record<string, unknown> } {
+    const rows = this.db
+      .select({ runtimeConfig: sessionGroups.runtimeConfig })
+      .from(sessionGroups)
+      .where(eq(sessionGroups.id, groupId))
+      .limit(1)
+      .all()
+    if (rows.length === 0) return { active: {}, pending: {} }
+    const raw = rows[0]?.runtimeConfig
+    if (!raw) return { active: {}, pending: {} }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      return { active: {}, pending: {} }
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { active: {}, pending: {} }
+    }
+    const obj = parsed as Record<string, unknown>
+    if ("active" in obj || "pending" in obj) {
+      const active =
+        obj.active && typeof obj.active === "object" && !Array.isArray(obj.active)
+          ? (obj.active as Record<string, unknown>)
+          : {}
+      const pending =
+        obj.pending && typeof obj.pending === "object" && !Array.isArray(obj.pending)
+          ? (obj.pending as Record<string, unknown>)
+          : {}
+      return { active, pending }
+    }
+    return { active: obj, pending: {} }
+  }
+
+  private writeRuntimeConfigBlob(
+    groupId: string,
+    blob: { active: Record<string, unknown>; pending: Record<string, unknown> },
+  ): void {
+    this.db
+      .update(sessionGroups)
+      .set({ runtimeConfig: JSON.stringify(blob) })
+      .where(eq(sessionGroups.id, groupId))
+      .run()
+  }
+
+  getSessionRuntimeConfig(groupId: string): Record<string, unknown> {
+    return this.readRuntimeConfigBlob(groupId).active
+  }
+
+  setSessionRuntimeConfig(groupId: string, config: Record<string, unknown>): void {
+    const { pending } = this.readRuntimeConfigBlob(groupId)
+    this.writeRuntimeConfigBlob(groupId, { active: config ?? {}, pending })
+  }
+
+  getSessionPendingConfig(groupId: string): Record<string, unknown> {
+    return this.readRuntimeConfigBlob(groupId).pending
+  }
+
+  setSessionPendingConfig(groupId: string, pending: Record<string, unknown>): void {
+    const { active } = this.readRuntimeConfigBlob(groupId)
+    this.writeRuntimeConfigBlob(groupId, { active, pending: pending ?? {} })
+  }
+
+  flushSessionPending(groupId: string): Record<string, unknown> {
+    // F021 P1 (范德彪 二轮 review): provider 内按字段 merge，不能 provider 级浅覆盖。
+    const { active, pending } = this.readRuntimeConfigBlob(groupId)
+    const merged = mergeRuntimeConfigFieldwise(active, pending)
+    this.writeRuntimeConfigBlob(groupId, { active: merged, pending: {} })
+    return merged
+  }
+
+  // F022 Phase 3.5 (AC-14g): manual=true 时写 title_locked_at，SessionTitler 跳过覆盖。
   updateSessionGroupTitle(
     groupId: string,
     title: string,
@@ -260,10 +337,6 @@ export class DrizzleSessionRepository {
   }
 
   // F022 Phase 3.5 (review P1-1/P1-2): title backfill 专用扫描。
-  // - 不分页：listSessionGroups 默认 200 会让历史规模大时漏扫老会话
-  // - 只过滤软删（deleted_at）；归档会话允许 backfill（归档≠不命名）
-  // - 过滤 title_backfill_attempts < MAX：防止 Haiku 永久挂时每次启动风暴
-  // - 只取 id + title 两列，前端永远不消费这条路径
   listSessionGroupsForBackfill(): Array<{ id: string; title: string | null }> {
     const rows = this.db
       .select({ id: sessionGroups.id, title: sessionGroups.title })
@@ -291,8 +364,7 @@ export class DrizzleSessionRepository {
       .run()
   }
 
-  // F022 Phase 3.5 (AC-14i/j) — 归档列表：archived_at 或 deleted_at 非 NULL。
-  // 按更新时间降序，最新动的排前面。
+  // F022 Phase 3.5 (AC-14i/j) — 归档列表
   listArchivedSessionGroups(limit = 200) {
     const rows = this.db
       .select({
@@ -454,6 +526,7 @@ export class DrizzleSessionRepository {
     groupRole: MessageRecord["groupRole"] = null,
     toolEvents = "[]",
     contentBlocks = "[]",
+    model: string | null = null,
   ): MessageRecord {
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
@@ -471,6 +544,7 @@ export class DrizzleSessionRepository {
       toolEvents,
       contentBlocks,
       createdAt: now,
+      model,
     }
 
     this.db
@@ -488,6 +562,7 @@ export class DrizzleSessionRepository {
         toolEvents,
         contentBlocks,
         createdAt: now,
+        model,
       })
       .run()
 
@@ -554,6 +629,7 @@ export class DrizzleSessionRepository {
         finishedAt: record.finishedAt,
         exitCode: record.exitCode,
         lastActivityAt: record.lastActivityAt,
+        configSnapshot: record.configSnapshot ?? null,
       })
       .run()
   }
@@ -805,6 +881,7 @@ export class DrizzleSessionRepository {
         toolEvents: messages.toolEvents,
         contentBlocks: messages.contentBlocks,
         createdAt: messages.createdAt,
+        model: messages.model,
         alias: threads.alias,
       })
       .from(messages)

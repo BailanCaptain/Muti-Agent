@@ -5,14 +5,14 @@ export const sessionGroups = sqliteTable("session_groups", {
   roomId: text("room_id").unique(),
   title: text("title").notNull(),
   projectTag: text("project_tag"),
+  // F021: per-session runtime config override (JSON stringified).
+  runtimeConfig: text("runtime_config"),
   // F022 Phase 3.5: 手动命名锁（AC-14g）
   titleLockedAt: text("title_locked_at"),
-  // F022 Phase 3.5: 归档 / 软删（AC-14i/j）— 与主列表互斥，归档列表合并展示。
+  // F022 Phase 3.5: 归档 / 软删（AC-14i/j）
   archivedAt: text("archived_at"),
   deletedAt: text("deleted_at"),
-  // F022 Phase 3.5 (review P1-2): Haiku 命名失败计数 — backfill 过 3 次永久跳过，
-  // 防止 Haiku 永久不可用时每次启动都对同批会话重试形成后台风暴。
-  // 成功命名重置 0；手动 rename 也重置 0（用户意图重新开放命名）。
+  // F022 Phase 3.5 (review P1-2): Haiku 命名失败计数
   titleBackfillAttempts: integer("title_backfill_attempts").notNull().default(0),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
@@ -77,6 +77,8 @@ export const messages = sqliteTable(
     toolEvents: text("tool_events").notNull().default("[]"),
     contentBlocks: text("content_blocks").notNull().default("[]"),
     createdAt: text("created_at").notNull(),
+    // F021 Phase 5: resolved per-message model snapshot for chat bubble pill.
+    model: text("model"),
   },
   (table) => [
     index("idx_messages_thread_id").on(table.threadId),
@@ -96,6 +98,10 @@ export const invocations = sqliteTable("invocations", {
   finishedAt: text("finished_at"),
   exitCode: integer("exit_code"),
   lastActivityAt: text("last_activity_at"),
+  // F021 Phase 3.3: frozen per-provider model/effort snapshot captured at
+  // invocation start (pending flushed into active). JSON stringified. Null =
+  // legacy row (pre-F021) or no override active at start.
+  configSnapshot: text("config_snapshot"),
 })
 
 export const agentEvents = sqliteTable(

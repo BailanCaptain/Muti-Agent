@@ -26,6 +26,7 @@ import { registerCallbackRoutes } from "./routes/callbacks"
 import { registerDecisionBoardRoutes } from "./routes/decision-board"
 import { registerMessageRoutes } from "./routes/messages"
 import { registerRuntimeConfigRoutes } from "./routes/runtime-config"
+import { registerSessionRuntimeConfigRoutes } from "./routes/session-runtime-config"
 import { registerThreadRoutes } from "./routes/threads"
 import { registerUploadRoutes } from "./routes/uploads"
 import { registerPreviewRoutes } from "./routes/preview"
@@ -196,6 +197,8 @@ export async function createApiServer(options: {
         finishedAt: null,
         exitCode: null,
         lastActivityAt: event.createdAt,
+        // F021 Phase 3.3: JSON-stringify snapshot for sqlite TEXT column.
+        configSnapshot: event.configSnapshot ? JSON.stringify(event.configSnapshot) : null,
       })
 
       repository.appendAgentEvent({
@@ -311,6 +314,7 @@ export async function createApiServer(options: {
   })
   registerMessageRoutes(app)
   registerRuntimeConfigRoutes(app)
+  registerSessionRuntimeConfigRoutes(app, { sessions: repository })
   registerAuthorizationRoutes(app, { approvals, ruleStore })
   registerDecisionBoardRoutes(app, { messageService: messages, decisions })
   registerUploadRoutes(app, uploadsDir)

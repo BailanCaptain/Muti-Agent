@@ -41,6 +41,10 @@ export type MessageRecord = {
   toolEvents: string
   contentBlocks: string
   createdAt: string
+  // F021 Phase 5: per-message resolved model snapshot. Frozen at append time
+  // so historical bubbles stay stable when global/session config later changes.
+  // Null for legacy rows (pre-F021) and user/connector messages.
+  model: string | null
 }
 
 export type InvocationRecord = {
@@ -53,6 +57,8 @@ export type InvocationRecord = {
   finishedAt: string | null
   exitCode: number | null
   lastActivityAt: string | null
+  // F021 Phase 3.3: frozen per-provider runtime config (JSON stringified) at invocation start.
+  configSnapshot?: string | null
 }
 
 export type AgentEventRecord = {
@@ -94,6 +100,7 @@ export class SqliteStore {
         room_id TEXT UNIQUE,
         title TEXT NOT NULL,
         project_tag TEXT,
+        runtime_config TEXT,
         title_locked_at TEXT,
         archived_at TEXT,
         deleted_at TEXT,
@@ -139,7 +146,8 @@ export class SqliteStore {
         group_role TEXT,
         tool_events TEXT NOT NULL DEFAULT '[]',
         content_blocks TEXT NOT NULL DEFAULT '[]',
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        model TEXT
       );
 
       CREATE TABLE IF NOT EXISTS invocations (
@@ -151,7 +159,8 @@ export class SqliteStore {
         started_at TEXT NOT NULL,
         finished_at TEXT,
         exit_code INTEGER,
-        last_activity_at TEXT
+        last_activity_at TEXT,
+        config_snapshot TEXT
       );
 
       CREATE TABLE IF NOT EXISTS agent_events (
@@ -271,9 +280,17 @@ export class SqliteStore {
         name: "F019-threads-add-backlog-item-id",
         sql: "ALTER TABLE threads ADD COLUMN backlog_item_id TEXT",
       },
+      // F021 Phase 2.2: per-session runtime config override
+      {
+        name: "F021-session-groups-add-runtime-config",
+        sql: "ALTER TABLE session_groups ADD COLUMN runtime_config TEXT",
+      },
+      // F021 Phase 3.3: frozen per-invocation config snapshot (JSON)
+      {
+        name: "F021-invocations-add-config-snapshot",
+        sql: "ALTER TABLE invocations ADD COLUMN config_snapshot TEXT",
+      },
       // F022 Phase 1: 全局递增 ROOM ID (R-001, R-002, ...)
-      // 旧库 ALTER 不带 UNIQUE（已有 NULL 行兼容），回填后通过
-      // CREATE UNIQUE INDEX 补齐。
       {
         name: "F022-session-groups-add-room-id",
         sql: "ALTER TABLE session_groups ADD COLUMN room_id TEXT",
@@ -291,11 +308,15 @@ export class SqliteStore {
         name: "F022-session-groups-add-deleted-at",
         sql: "ALTER TABLE session_groups ADD COLUMN deleted_at TEXT",
       },
-      // F022 Phase 3.5 (review P1-2): Haiku 失败计数，backfill 过 N 次永久跳过，
-      // 防止 Haiku 不可用时重启风暴。
+      // F022 Phase 3.5: Haiku 失败计数
       {
         name: "F022-session-groups-add-title-backfill-attempts",
         sql: "ALTER TABLE session_groups ADD COLUMN title_backfill_attempts INTEGER NOT NULL DEFAULT 0",
+      },
+      // F021 Phase 5: per-message resolved model snapshot (chat bubble pill)
+      {
+        name: "F021-messages-add-model",
+        sql: "ALTER TABLE messages ADD COLUMN model TEXT",
       },
     ]
     for (const m of alters) {

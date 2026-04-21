@@ -62,6 +62,7 @@ describe("useThreadStore.clearActiveGroupIfMatches — identity guard", () => {
       activeGroupId: "g-active",
       activeGroup: {
         id: "g-active",
+        roomId: null,
         title: "active",
         meta: "",
         hasPendingDispatches: false,
@@ -84,6 +85,7 @@ describe("useThreadStore.clearActiveGroupIfMatches — identity guard", () => {
   it("is a no-op when groupId does not match activeGroupId (defends against late websocket arrivals)", () => {
     const beforeActiveGroup = {
       id: "g-active",
+      roomId: null,
       title: "still here",
       meta: "",
       hasPendingDispatches: false,
