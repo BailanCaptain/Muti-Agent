@@ -372,6 +372,47 @@ test("review P2-3: 未 setBroadcaster 时 archive 不抛异常", () => {
   assert.doesNotThrow(() => service.archiveSessionGroup("g1"))
 })
 
+// --- review 2nd round P1: 服务端 send guard — 归档/软删会话拒收消息 ---
+
+test("review P1: isSessionGroupSendable — 活跃会话 sendable=true", () => {
+  const { repo } = makeArchiveRepo()
+  const service = new SessionService(repo as never, [])
+  assert.deepEqual(service.isSessionGroupSendable("g1"), { sendable: true })
+})
+
+test("review P1: isSessionGroupSendable — 归档会话 sendable=false reason=archived", () => {
+  const { repo } = makeArchiveRepo({ archivedAt: "2026-04-21T02:00:00Z" })
+  const service = new SessionService(repo as never, [])
+  assert.deepEqual(service.isSessionGroupSendable("g1"), {
+    sendable: false,
+    reason: "archived",
+  })
+})
+
+test("review P1: isSessionGroupSendable — 软删会话 sendable=false reason=deleted（优先于 archived）", () => {
+  const { repo } = makeArchiveRepo({
+    archivedAt: "2026-04-21T02:00:00Z",
+    deletedAt: "2026-04-21T02:10:00Z",
+  })
+  const service = new SessionService(repo as never, [])
+  assert.deepEqual(service.isSessionGroupSendable("g1"), {
+    sendable: false,
+    reason: "deleted",
+  })
+})
+
+test("review P1: isSessionGroupSendable — 不存在会话视作 deleted", () => {
+  const repo = {
+    getSessionGroupById: () => undefined,
+    reconcileLegacyDefaultModels: () => {},
+  }
+  const service = new SessionService(repo as never, [])
+  assert.deepEqual(service.isSessionGroupSendable("missing"), {
+    sendable: false,
+    reason: "deleted",
+  })
+})
+
 test("F022-P3 AC-15: SessionService.listSessionGroups 对缺失 participants/messageCount 提供默认值", () => {
   const repo = {
     ...createMockRepository([], []),

@@ -48,6 +48,7 @@ export default function HomePage() {
   const recordMessageInGroup = useThreadStore((state) => state.recordMessageInGroup)
   const applyTitleUpdate = useThreadStore((state) => state.applyTitleUpdate)
   const bumpArchiveStateVersion = useThreadStore((state) => state.bumpArchiveStateVersion)
+  const clearActiveGroupIfMatches = useThreadStore((state) => state.clearActiveGroupIfMatches)
   const setStatus = useChatStore((state) => state.setStatus)
   const setSocketState = useSettingsStore((state) => state.setSocketState)
   const incrementUnread = useThreadStore((state) => state.incrementUnread)
@@ -196,8 +197,14 @@ export default function HomePage() {
         // 发起操作的那个标签页靠 sidebar 本地 reload 自愈；这里专为"另一个
         // 已连接客户端"准备 —— bump 一个 version 让 sidebar effect 重 fetch
         // 主列表 + 归档列表。
+        // review 2nd round P1: 如果当前 activeGroup 正好是被归档/软删的那个，
+        // 必须切走 active 态，否则右侧面板仍停留在失效会话上、composer 还能继续发消息。
+        // 恢复（两个时间戳都 null）无需清 active —— 会话仍然可用。
         if (event.type === "session.archive_state_changed") {
           bumpArchiveStateVersion()
+          if (event.payload.archivedAt || event.payload.deletedAt) {
+            clearActiveGroupIfMatches(event.payload.sessionGroupId)
+          }
           return
         }
 
@@ -214,6 +221,7 @@ export default function HomePage() {
     appendTimelineMessage,
     applyTitleUpdate,
     bumpArchiveStateVersion,
+    clearActiveGroupIfMatches,
     incrementUnread,
     applyAssistantDelta,
     applyThinkingDelta,

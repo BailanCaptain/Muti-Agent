@@ -409,6 +409,19 @@ export class SessionService {
     })
   }
 
+  // F022 Phase 3.5 (review 2nd round P1): 服务端 send guard —
+  // 归档/软删/不存在的会话不再接收新消息。前端切换/禁发是第一道防线，
+  // 这里是第二道；即使远端标签页漏切，服务端也不会往失效会话写入。
+  isSessionGroupSendable(
+    groupId: string,
+  ): { sendable: true } | { sendable: false; reason: "archived" | "deleted" } {
+    const row = this.repository.getSessionGroupById(groupId)
+    if (!row) return { sendable: false, reason: "deleted" }
+    if (row.deletedAt != null) return { sendable: false, reason: "deleted" }
+    if (row.archivedAt != null) return { sendable: false, reason: "archived" }
+    return { sendable: true }
+  }
+
   // F022 Phase 3.5 (AC-14i)
   archiveSessionGroup(groupId: string) {
     this.repository.archiveSessionGroup(groupId)

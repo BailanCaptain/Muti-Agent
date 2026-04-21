@@ -45,8 +45,17 @@ function createThreads(): ThreadRecord[] {
   ]
 }
 
-function createSessionsStub(threads: ThreadRecord[]) {
+type SendableState =
+  | { sendable: true }
+  | { sendable: false; reason: "archived" | "deleted" }
+
+function createSessionsStub(
+  threads: ThreadRecord[],
+  opts: { sendable?: SendableState } = {},
+) {
   return {
+    isSessionGroupSendable: (_groupId: string): SendableState =>
+      opts.sendable ?? { sendable: true },
     findThread: (threadId: string) => threads.find((thread) => thread.id === threadId) ?? null,
     findThreadByGroupAndProvider: (sessionGroupId: string, provider: Provider) =>
       threads.find(
@@ -124,9 +133,9 @@ function createSessionsStub(threads: ThreadRecord[]) {
   }
 }
 
-function createMessageService() {
+function createMessageService(opts: { sendable?: SendableState } = {}) {
   const threads = createThreads()
-  const sessions = createSessionsStub(threads)
+  const sessions = createSessionsStub(threads, opts)
   const dispatch = new DispatchOrchestrator(sessions as never, {
     codex: "Coder",
     claude: "Reviewer",
@@ -324,6 +333,75 @@ test("handleSendMessage rejects when the same provider slot is busy", () => {
     events.some(
       (event) => event.type === "status" && event.payload.message.includes("已经在运行中"),
     ),
+  )
+})
+
+// ── review 2nd round P1: 服务端 archived/deleted send guard ──────────
+
+test("review P1: handleSendMessage rejects when session group is archived", () => {
+  const { messageService } = createMessageService({
+    sendable: { sendable: false, reason: "archived" },
+  })
+
+  const events: RealtimeServerEvent[] = []
+  messageService.handleClientEvent(
+    {
+      type: "send_message",
+      payload: {
+        threadId: "thread-claude",
+        provider: "claude",
+        alias: "Reviewer",
+        content: "这条消息不该进去",
+      },
+    },
+    (event) => {
+      events.push(event)
+    },
+  )
+
+  const status = events.find((e) => e.type === "status")
+  assert.ok(status, "应发 status 通知用户")
+  assert.ok(
+    status.payload.message.includes("归档") || status.payload.message.includes("archived"),
+    `status 应提示归档原因，实际: ${status.payload.message}`,
+  )
+  // 没有真正写入消息 — 不应看到 message.created
+  assert.ok(
+    !events.some((e) => e.type === "message.created"),
+    "归档会话不应落库 message.created",
+  )
+})
+
+test("review P1: handleSendMessage rejects when session group is soft-deleted", () => {
+  const { messageService } = createMessageService({
+    sendable: { sendable: false, reason: "deleted" },
+  })
+
+  const events: RealtimeServerEvent[] = []
+  messageService.handleClientEvent(
+    {
+      type: "send_message",
+      payload: {
+        threadId: "thread-claude",
+        provider: "claude",
+        alias: "Reviewer",
+        content: "这条消息不该进去",
+      },
+    },
+    (event) => {
+      events.push(event)
+    },
+  )
+
+  const status = events.find((e) => e.type === "status")
+  assert.ok(status, "应发 status 通知用户")
+  assert.ok(
+    status.payload.message.includes("删除") || status.payload.message.includes("deleted"),
+    `status 应提示删除原因，实际: ${status.payload.message}`,
+  )
+  assert.ok(
+    !events.some((e) => e.type === "message.created"),
+    "软删会话不应落库 message.created",
   )
 })
 

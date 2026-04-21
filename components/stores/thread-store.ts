@@ -84,6 +84,10 @@ type ThreadStore = {
   // + 归档列表。多端/多标签场景下不再看陈旧态。
   archiveStateVersion: number
   bumpArchiveStateVersion: () => void
+  // F022 review 2nd round P1: 远端标签页的 activeGroup 刚被归档/软删时，
+  // 如果只刷 sidebar 不清 active，右侧面板仍停在失效会话上、还能继续发消息。
+  // 该 action 负责在 activeGroupId 匹配时清空 active 态，让用户必须重新选会话。
+  clearActiveGroupIfMatches: (groupId: string) => void
   bootstrap: () => Promise<void>
   createSessionGroup: () => Promise<void>
   selectSessionGroup: (groupId: string) => Promise<void>
@@ -337,6 +341,18 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   archiveStateVersion: 0,
   bumpArchiveStateVersion: () => {
     set((state) => ({ archiveStateVersion: state.archiveStateVersion + 1 }))
+  },
+  clearActiveGroupIfMatches: (groupId) => {
+    set((state) => {
+      if (state.activeGroupId !== groupId) return state
+      return {
+        activeGroupId: null,
+        activeGroup: null,
+        timeline: [],
+        providers: emptyProviders,
+        invocationStats: [],
+      }
+    })
   },
   bootstrap: async () => {
     // Bootstrap stitches together the static provider catalog and the latest session list before selecting a room.
