@@ -80,7 +80,7 @@ created: 2026-04-19
 
 ### Phase 5：验收
 - [ ] AC-19: 桂芬视觉验收通过
-- [ ] AC-20: 范德彪 code review 通过（Haiku 调用有超时、migration 幂等）
+- [x] AC-20: 范德彪 code review 通过（Haiku 调用有超时、migration 幂等；4 轮修复后 3rd round 放行 `b5e4474`）
 - [ ] AC-21: 小孙用"R-042"搜到历史房间 → OK
 
 ## Dependencies
@@ -122,6 +122,7 @@ created: 2026-04-19
 | 2026-04-20 | worktree 预览验收（小孙 L1 @ :3200）发现 3 项反馈 → Phase 3.5 开（AC-14 Dropped + AC-14a/b/c 新增；产品决策固化到 Design Decisions）|
 | 2026-04-21 | Phase 3.5 实施完成（AC-14a~j ✅）：时间分组 + 历史回填 migration + title fallback + F/B/D/Q 分类前缀 + 立项号识别 + HaikuRunner stdin/超时修复 + 右键菜单四件套（重命名/清除项目标签/归档/软删）+ 归档列表视图 · typecheck ✅ · 928/928 tests ✅ · 小孙 :3200 分桶 + 右键菜单实机验收通过 |
 | 2026-04-21 | 小孙决策：Phase 4（AC-16/17/18 标题栏三层 ID 徽章）Dropped，迁移至 F021 右侧面板重设计合并处理 |
+| 2026-04-21 | 范德彪 code review 4 轮迭代（`840a474` → `fee622c` → `1624f7b` → `b5e4474`），3rd round 放行 ✅；P2（前端状态机无自动化测试覆盖）小孙决策路径 B — rebase F022 worktree 到 origin/dev 带入 F025 vitest infra，本轮闭合：抽 `dispatchArchiveStateChanged` 纯 helper + 7 个回归用例（archive/delete/restore/no-match + store 身份守卫） |
 
 ## Links
 

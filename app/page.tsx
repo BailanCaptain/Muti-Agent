@@ -12,6 +12,7 @@ import { useSettingsStore } from "@/components/stores/settings-store"
 import { useDecisionBoardStore } from "@/components/stores/decision-board-store"
 import { useDecisionStore } from "@/components/stores/decision-store"
 import { useThreadStore } from "@/components/stores/thread-store"
+import { dispatchArchiveStateChanged } from "@/components/stores/archive-event-handler"
 import { PROVIDER_ALIASES, type BlockedDispatchAttempt } from "@multi-agent/shared"
 import { connectRealtime } from "@/components/ws/client"
 import { BrowserPanel } from "@/components/preview/browser-panel"
@@ -193,18 +194,14 @@ export default function HomePage() {
           return
         }
 
-        // F022 Phase 3.5 (review P2 follow-up): 归档/软删/恢复广播。
-        // 发起操作的那个标签页靠 sidebar 本地 reload 自愈；这里专为"另一个
-        // 已连接客户端"准备 —— bump 一个 version 让 sidebar effect 重 fetch
-        // 主列表 + 归档列表。
-        // review 2nd round P1: 如果当前 activeGroup 正好是被归档/软删的那个，
-        // 必须切走 active 态，否则右侧面板仍停留在失效会话上、composer 还能继续发消息。
-        // 恢复（两个时间戳都 null）无需清 active —— 会话仍然可用。
+        // F022 Phase 3.5 (review P2 follow-up): 归档/软删/恢复广播 dispatch
+        // 已抽到 dispatchArchiveStateChanged 纯函数（components/stores/archive-event-handler.ts），
+        // 两条分支由 archive-event-handler.test.ts 覆盖。
         if (event.type === "session.archive_state_changed") {
-          bumpArchiveStateVersion()
-          if (event.payload.archivedAt || event.payload.deletedAt) {
-            clearActiveGroupIfMatches(event.payload.sessionGroupId)
-          }
+          dispatchArchiveStateChanged(event.payload, {
+            bumpArchiveStateVersion,
+            clearActiveGroupIfMatches,
+          })
           return
         }
 
