@@ -653,6 +653,23 @@ export class MessageService {
       return
     }
 
+    // F022 review 2nd round P1: archived/deleted 会话禁止写入。
+    // 远端标签页即使漏切 activeGroup，服务端也要挡住；否则会在失效会话上继续落消息。
+    const sendable = this.sessions.isSessionGroupSendable(thread.sessionGroupId)
+    if (!sendable.sendable) {
+      emit({
+        type: "status",
+        payload: {
+          sessionGroupId: thread.sessionGroupId,
+          message:
+            sendable.reason === "archived"
+              ? "会话已归档，无法继续发送消息。请先从归档中恢复。"
+              : "会话已删除，无法继续发送消息。",
+        },
+      })
+      return
+    }
+
     const groupBusyMessage = this.getBusyStatus(thread.id, thread.sessionGroupId)
     if (groupBusyMessage) {
       emit({

@@ -91,8 +91,13 @@ export class SqliteStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS session_groups (
         id TEXT PRIMARY KEY,
+        room_id TEXT UNIQUE,
         title TEXT NOT NULL,
         project_tag TEXT,
+        title_locked_at TEXT,
+        archived_at TEXT,
+        deleted_at TEXT,
+        title_backfill_attempts INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -265,6 +270,32 @@ export class SqliteStore {
       {
         name: "F019-threads-add-backlog-item-id",
         sql: "ALTER TABLE threads ADD COLUMN backlog_item_id TEXT",
+      },
+      // F022 Phase 1: 全局递增 ROOM ID (R-001, R-002, ...)
+      // 旧库 ALTER 不带 UNIQUE（已有 NULL 行兼容），回填后通过
+      // CREATE UNIQUE INDEX 补齐。
+      {
+        name: "F022-session-groups-add-room-id",
+        sql: "ALTER TABLE session_groups ADD COLUMN room_id TEXT",
+      },
+      // F022 Phase 3.5: AC-14g/i/j — 手动命名锁 + 归档 + 软删
+      {
+        name: "F022-session-groups-add-title-locked-at",
+        sql: "ALTER TABLE session_groups ADD COLUMN title_locked_at TEXT",
+      },
+      {
+        name: "F022-session-groups-add-archived-at",
+        sql: "ALTER TABLE session_groups ADD COLUMN archived_at TEXT",
+      },
+      {
+        name: "F022-session-groups-add-deleted-at",
+        sql: "ALTER TABLE session_groups ADD COLUMN deleted_at TEXT",
+      },
+      // F022 Phase 3.5 (review P1-2): Haiku 失败计数，backfill 过 N 次永久跳过，
+      // 防止 Haiku 不可用时重启风暴。
+      {
+        name: "F022-session-groups-add-title-backfill-attempts",
+        sql: "ALTER TABLE session_groups ADD COLUMN title_backfill_attempts INTEGER NOT NULL DEFAULT 0",
       },
     ]
     for (const m of alters) {

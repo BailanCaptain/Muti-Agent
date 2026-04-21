@@ -43,6 +43,12 @@ function hydrateMessage(row: typeof messages.$inferSelect): MessageRecord {
 }
 
 export class DrizzleSessionRepository {
+  // F022 Phase 3.5 (review P1-2): Haiku 命名失败的 session 最多重试 N 次；
+  // 超过后 backfill 永久跳过，防止 Haiku 不可用时重启风暴。
+  // 手动重命名（titleLockedAt）会直接让 SessionTitler.skip.locked，不需要清 attempts。
+  // 若未来提供"重新命名"入口想恢复 Haiku，应同步在对应 service 层调 resetTitleBackfillAttempts。
+  static readonly MAX_TITLE_BACKFILL_ATTEMPTS = 3
+
   constructor(private readonly db: DrizzleDb) {}
 
   runTx<T>(fn: () => T): T {
@@ -60,17 +66,38 @@ export class DrizzleSessionRepository {
     const r = rows[0]
     return {
       id: r.id,
+      roomId: r.roomId,
       title: r.title,
       projectTag: r.projectTag,
+      titleLockedAt: r.titleLockedAt ?? null,
+      archivedAt: r.archivedAt ?? null,
+      deletedAt: r.deletedAt ?? null,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     }
   }
 
+  // F022 Phase 1: 全局递增 ROOM ID 分配。
+  // MAX 扫全表 + 1；格式 `R-{padStart(3)}`，超过 999 自然扩位。
+  // SQLite WAL 单写进程场景下串行执行，无需额外锁。
+  private allocateNextRoomId(): string {
+    const rows = this.db
+      .select({
+        maxSeq: sql<number | null>`MAX(CAST(SUBSTR(room_id, 3) AS INTEGER))`,
+      })
+      .from(sessionGroups)
+      .where(sql`room_id IS NOT NULL AND room_id LIKE 'R-%'`)
+      .all()
+    const next = (rows[0]?.maxSeq ?? 0) + 1
+    return `R-${String(next).padStart(3, "0")}`
+  }
+
+  // F022 Phase 3.5 (AC-14i/j): 主列表只看活跃项；归档/软删进归档列表。
   listSessionGroups(limit = 200) {
     const groupIds = this.db
       .select({ id: sessionGroups.id })
       .from(sessionGroups)
+      .where(sql`archived_at IS NULL AND deleted_at IS NULL`)
       .orderBy(desc(sessionGroups.updatedAt))
       .limit(limit)
       .all()
@@ -81,13 +108,18 @@ export class DrizzleSessionRepository {
     const rows = this.db
       .select({
         id: sessionGroups.id,
+        roomId: sessionGroups.roomId,
         title: sessionGroups.title,
         projectTag: sessionGroups.projectTag,
+        titleLockedAt: sessionGroups.titleLockedAt,
+        archivedAt: sessionGroups.archivedAt,
+        deletedAt: sessionGroups.deletedAt,
         createdAt: sessionGroups.createdAt,
         updatedAt: sessionGroups.updatedAt,
         provider: threads.provider,
         alias: threads.alias,
         lastMessage: sql<string | null>`(SELECT content FROM messages WHERE thread_id = ${threads.id} ORDER BY created_at DESC LIMIT 1)`,
+        msgCount: sql<number>`(SELECT COUNT(*) FROM messages WHERE thread_id = ${threads.id})`,
       })
       .from(sessionGroups)
       .leftJoin(threads, eq(threads.sessionGroupId, sessionGroups.id))
@@ -99,11 +131,17 @@ export class DrizzleSessionRepository {
       string,
       {
         id: string
+        roomId: string | null
         title: string
         projectTag: string | null
+        titleLockedAt: string | null
+        archivedAt: string | null
+        deletedAt: string | null
         createdAt: string
         updatedAt: string
         previews: Array<{ provider: Provider; alias: string; text: string }>
+        participants: Provider[]
+        messageCount: number
       }
     >()
 
@@ -112,11 +150,17 @@ export class DrizzleSessionRepository {
       if (!group) {
         group = {
           id: row.id,
+          roomId: row.roomId ?? null,
           title: row.title,
           projectTag: row.projectTag ?? null,
+          titleLockedAt: row.titleLockedAt ?? null,
+          archivedAt: row.archivedAt ?? null,
+          deletedAt: row.deletedAt ?? null,
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
           previews: [],
+          participants: [],
+          messageCount: 0,
         }
         groupMap.set(row.id, group)
       }
@@ -126,20 +170,28 @@ export class DrizzleSessionRepository {
           alias: row.alias!,
           text: (row.lastMessage ?? "").slice(0, 80),
         })
+        const count = Number(row.msgCount ?? 0)
+        group.messageCount += count
+        if (count > 0 && !group.participants.includes(row.provider as Provider)) {
+          group.participants.push(row.provider as Provider)
+        }
       }
     }
 
+    for (const g of groupMap.values()) g.participants.sort()
     return Array.from(groupMap.values())
   }
 
   createSessionGroup(title?: string) {
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
+    const roomId = this.allocateNextRoomId()
 
     this.db
       .insert(sessionGroups)
       .values({
         id,
+        roomId,
         title: title ?? `新会话 ${now.slice(0, 19).replace("T", " ")}`,
         createdAt: now,
         updatedAt: now,
@@ -155,6 +207,121 @@ export class DrizzleSessionRepository {
       .set({ projectTag: tag })
       .where(eq(sessionGroups.id, groupId))
       .run()
+  }
+
+  // F022 Phase 3.5 (AC-14g): manual=true 时写 title_locked_at，SessionTitler 看 lock 跳过覆盖。
+  // 自动命名（Haiku）调用保持原 behavior — 不写 lock。
+  updateSessionGroupTitle(
+    groupId: string,
+    title: string,
+    opts: { manual?: boolean } = {},
+  ) {
+    const now = new Date().toISOString()
+    const patch: { title: string; updatedAt: string; titleLockedAt?: string } = {
+      title,
+      updatedAt: now,
+    }
+    if (opts.manual) patch.titleLockedAt = now
+    this.db
+      .update(sessionGroups)
+      .set(patch)
+      .where(eq(sessionGroups.id, groupId))
+      .run()
+  }
+
+  // F022 Phase 3.5 (AC-14i)
+  archiveSessionGroup(groupId: string) {
+    const now = new Date().toISOString()
+    this.db
+      .update(sessionGroups)
+      .set({ archivedAt: now, updatedAt: now })
+      .where(eq(sessionGroups.id, groupId))
+      .run()
+  }
+
+  // F022 Phase 3.5 (AC-14j) — 软删，禁物删
+  softDeleteSessionGroup(groupId: string) {
+    const now = new Date().toISOString()
+    this.db
+      .update(sessionGroups)
+      .set({ deletedAt: now, updatedAt: now })
+      .where(eq(sessionGroups.id, groupId))
+      .run()
+  }
+
+  // F022 Phase 3.5 (AC-14i/j) — 恢复：清 archived_at 和 deleted_at 回到主列表
+  restoreSessionGroup(groupId: string) {
+    const now = new Date().toISOString()
+    this.db
+      .update(sessionGroups)
+      .set({ archivedAt: null, deletedAt: null, updatedAt: now })
+      .where(eq(sessionGroups.id, groupId))
+      .run()
+  }
+
+  // F022 Phase 3.5 (review P1-1/P1-2): title backfill 专用扫描。
+  // - 不分页：listSessionGroups 默认 200 会让历史规模大时漏扫老会话
+  // - 只过滤软删（deleted_at）；归档会话允许 backfill（归档≠不命名）
+  // - 过滤 title_backfill_attempts < MAX：防止 Haiku 永久挂时每次启动风暴
+  // - 只取 id + title 两列，前端永远不消费这条路径
+  listSessionGroupsForBackfill(): Array<{ id: string; title: string | null }> {
+    const rows = this.db
+      .select({ id: sessionGroups.id, title: sessionGroups.title })
+      .from(sessionGroups)
+      .where(
+        sql`deleted_at IS NULL AND title_backfill_attempts < ${DrizzleSessionRepository.MAX_TITLE_BACKFILL_ATTEMPTS}`,
+      )
+      .all()
+    return rows.map((r) => ({ id: r.id, title: r.title }))
+  }
+
+  incrementTitleBackfillAttempts(id: string): void {
+    this.db
+      .update(sessionGroups)
+      .set({ titleBackfillAttempts: sql`title_backfill_attempts + 1` })
+      .where(eq(sessionGroups.id, id))
+      .run()
+  }
+
+  resetTitleBackfillAttempts(id: string): void {
+    this.db
+      .update(sessionGroups)
+      .set({ titleBackfillAttempts: 0 })
+      .where(eq(sessionGroups.id, id))
+      .run()
+  }
+
+  // F022 Phase 3.5 (AC-14i/j) — 归档列表：archived_at 或 deleted_at 非 NULL。
+  // 按更新时间降序，最新动的排前面。
+  listArchivedSessionGroups(limit = 200) {
+    const rows = this.db
+      .select({
+        id: sessionGroups.id,
+        roomId: sessionGroups.roomId,
+        title: sessionGroups.title,
+        projectTag: sessionGroups.projectTag,
+        titleLockedAt: sessionGroups.titleLockedAt,
+        archivedAt: sessionGroups.archivedAt,
+        deletedAt: sessionGroups.deletedAt,
+        createdAt: sessionGroups.createdAt,
+        updatedAt: sessionGroups.updatedAt,
+      })
+      .from(sessionGroups)
+      .where(sql`archived_at IS NOT NULL OR deleted_at IS NOT NULL`)
+      .orderBy(desc(sessionGroups.updatedAt))
+      .limit(limit)
+      .all()
+    return rows.map(r => ({
+      id: r.id,
+      roomId: r.roomId ?? null,
+      title: r.title,
+      projectTag: r.projectTag ?? null,
+      titleLockedAt: r.titleLockedAt ?? null,
+      archivedAt: r.archivedAt ?? null,
+      deletedAt: r.deletedAt ?? null,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    }))
   }
 
   createThread(sessionGroupId: string, provider: Provider, currentModel: string | null) {
@@ -193,6 +360,7 @@ export class DrizzleSessionRepository {
 
 
   createSessionGroupWithDefaults(defaults: Record<Provider, string | null>, title?: string): string {
+    const roomId = this.allocateNextRoomId()
     return this.db.transaction((tx) => {
       const now = new Date().toISOString()
       const id = crypto.randomUUID()
@@ -200,6 +368,7 @@ export class DrizzleSessionRepository {
       tx.insert(sessionGroups)
         .values({
           id,
+          roomId,
           title: title ?? `新会话 ${now.slice(0, 19).replace("T", " ")}`,
           createdAt: now,
           updatedAt: now,

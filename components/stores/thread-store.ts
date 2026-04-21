@@ -1,6 +1,7 @@
 "use client"
 
 import {
+  applyMessageToSessionGroups,
   type ContentBlock,
   type InvocationStats,
   PROVIDERS,
@@ -39,11 +40,19 @@ type ActiveGroupPayload = {
 
 type SessionListItem = {
   id: string
+  roomId: string | null
   title: string
+  updatedAt: string
   updatedAtLabel: string
+  createdAt: string
+  createdAtLabel: string
   projectTag?: string
+  // F022 Phase 3.5 (AC-14g): 手动命名锁；非 null 时前端显示 🔒 图标
+  titleLockedAt?: string | null
   pinned?: boolean
   unreadCount?: number
+  participants: Provider[]
+  messageCount: number
   previews: Array<{ provider: Provider; alias: string; text: string }>
 }
 
@@ -70,6 +79,15 @@ type ThreadStore = {
   timeline: TimelineMessage[]
   invocationStats: InvocationStats[]
   unreadCounts: Record<string, number>
+  // F022 Phase 3.5 (review P2 follow-up): 服务端收到 archive/softDelete/restore
+  // 后广播 session.archive_state_changed；sidebar 订阅这个 version 变化重刷主列表
+  // + 归档列表。多端/多标签场景下不再看陈旧态。
+  archiveStateVersion: number
+  bumpArchiveStateVersion: () => void
+  // F022 review 2nd round P1: 远端标签页的 activeGroup 刚被归档/软删时，
+  // 如果只刷 sidebar 不清 active，右侧面板仍停在失效会话上、还能继续发消息。
+  // 该 action 负责在 activeGroupId 匹配时清空 active 态，让用户必须重新选会话。
+  clearActiveGroupIfMatches: (groupId: string) => void
   bootstrap: () => Promise<void>
   createSessionGroup: () => Promise<void>
   selectSessionGroup: (groupId: string) => Promise<void>
@@ -77,6 +95,8 @@ type ThreadStore = {
   stopThread: (provider: Provider) => Promise<void>
   stopAgent: (provider: Provider) => Promise<void>
   replaceSessionGroups: (groups: SessionGroupSummary[]) => void
+  // F022 Phase 3.5 (AC-14k): realtime push after Haiku renames or manual rename.
+  applyTitleUpdate: (groupId: string, title: string, titleLockedAt: string | null) => void
   replaceActiveGroup: (group: ActiveGroupPayload) => void
   applyAssistantDelta: (messageId: string, delta: string) => void
   applyThinkingDelta: (messageId: string, delta: string) => void
@@ -85,6 +105,7 @@ type ThreadStore = {
   appendTimelineMessage: (message: TimelineMessage) => void
   applySnapshotDelta: (delta: ThreadSnapshotDelta) => void
   reconcileOptimisticMessage: (clientMessageId: string, serverMessage: TimelineMessage) => void
+  recordMessageInGroup: (groupId: string, message: TimelineMessage) => void
   buildSendPayload: (input: string, contentBlocks?: ContentBlock[]) => SendPayload | null
   incrementUnread: (groupId: string) => void
   resetUnread: (groupId: string) => void
@@ -116,12 +137,27 @@ const emptyCatalogs = Object.fromEntries(
   ]),
 ) as unknown as Record<Provider, ProviderCatalog>
 
+// AC-14c: title 为 null / 空 / 旧占位格式时，fallback 到与 AC-08 失败回退一致的 `新会话 {createdAtLabel}`
+const LEGACY_PLACEHOLDER_PATTERN = /·\s*未命名\s*$/
+function fallbackTitle(title: string | null | undefined, createdAtLabel: string): string {
+  const t = (title ?? "").trim()
+  if (!t || LEGACY_PLACEHOLDER_PATTERN.test(t)) return `新会话 ${createdAtLabel}`
+  return t
+}
+
 function normalizeSessionGroups(groups: SessionGroupSummary[]): SessionListItem[] {
   return groups.map((group) => ({
     id: group.id,
-    title: group.title,
+    roomId: group.roomId ?? null,
+    title: fallbackTitle(group.title, group.createdAtLabel),
+    updatedAt: group.updatedAt,
     updatedAtLabel: group.updatedAtLabel,
+    createdAt: group.createdAt,
+    createdAtLabel: group.createdAtLabel,
     projectTag: group.projectTag,
+    titleLockedAt: group.titleLockedAt ?? null,
+    participants: group.participants ?? [],
+    messageCount: group.messageCount ?? 0,
     previews: group.previews,
   }))
 }
@@ -302,6 +338,22 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   timeline: [],
   invocationStats: [],
   unreadCounts: {},
+  archiveStateVersion: 0,
+  bumpArchiveStateVersion: () => {
+    set((state) => ({ archiveStateVersion: state.archiveStateVersion + 1 }))
+  },
+  clearActiveGroupIfMatches: (groupId) => {
+    set((state) => {
+      if (state.activeGroupId !== groupId) return state
+      return {
+        activeGroupId: null,
+        activeGroup: null,
+        timeline: [],
+        providers: emptyProviders,
+        invocationStats: [],
+      }
+    })
+  },
   bootstrap: async () => {
     // Bootstrap stitches together the static provider catalog and the latest session list before selecting a room.
     const [groupsPayload, providersPayload] = await Promise.all([
@@ -386,6 +438,17 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   replaceSessionGroups: (groups) => {
     set({ sessionGroups: normalizeSessionGroups(groups) })
   },
+  applyTitleUpdate: (groupId, title, titleLockedAt) => {
+    set((state) => ({
+      sessionGroups: state.sessionGroups.map((g) =>
+        g.id === groupId ? { ...g, title, titleLockedAt } : g,
+      ),
+      activeGroup:
+        state.activeGroup && state.activeGroup.id === groupId
+          ? { ...state.activeGroup, title }
+          : state.activeGroup,
+    }))
+  },
   replaceActiveGroup: (group) => {
     set((state) => ({
       activeGroup: {
@@ -407,6 +470,16 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       }
       return { timeline: [...state.timeline, message] }
     })
+  },
+  recordMessageInGroup: (groupId, message) => {
+    set((state) => ({
+      sessionGroups: applyMessageToSessionGroups(state.sessionGroups, groupId, {
+        provider: message.provider,
+        alias: message.alias,
+        content: message.content,
+        createdAt: message.createdAt,
+      }),
+    }))
   },
   applyAssistantDelta: (messageId, delta) => {
     const existing = pendingDeltas.get(messageId) ?? {}

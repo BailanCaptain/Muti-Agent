@@ -470,3 +470,25 @@ git commit -m "docs(F022): Phase 1 完成标记（AC-01~04 ✅）"
 ## 下一步
 
 Plan done → **worktree 创建隔离环境** → **tdd 执行 Task 1~5** → **quality-gate 自检** → **acceptance-guardian 独立验收**。
+
+---
+
+## 实施备注（2026-04-19 补充）
+
+**路径变更 — Plan 文字 vs 实际落点**
+
+Plan 原文以 `packages/api/src/db/sqlite.ts` 的 `SqliteStore` + `packages/api/src/db/repositories/session-repository.ts` 的 legacy `SessionRepository` 作为修改目标。实际实施时发现：
+
+- `server.ts:62-63` 生产代码通过 `packages/api/src/db/repositories/index.ts` 的 barrel export 消费 `DrizzleSessionRepository`（别名为 `SessionRepository`）
+- Legacy `session-repository.ts` 在生产链路零引用
+
+因此 Phase 1 的实际落点：
+- `packages/api/src/db/schema.ts` — drizzle schema 加 `roomId` 列（对应 plan Task 1 Step 1）
+- `packages/api/src/db/sqlite.ts` — 保留 CREATE TABLE / ALTER migration（F011 双路 migrate 幂等）
+- `packages/api/src/db/drizzle-instance.ts` — `backfillRoomIds()` 实际实现（对应 plan Task 4 Step 3，但方法挂在 drizzle 入口）
+- `packages/api/src/db/repositories/session-repository-drizzle.ts` — `allocateNextRoomId()` + `createSessionGroup` 接入 roomId（对应 plan Task 2/Task 3，但类是 `DrizzleSessionRepository`）
+- 测试落在 `drizzle-instance.test.ts` + `session-repository-drizzle.test.ts`
+
+AC 实质覆盖与 plan 一致，仅类/文件名不同。
+
+**Tech debt（后续 Phase）**：清理 legacy `session-repository.ts` + `sqlite.ts` 中已零引用的旧路径，归并到 drizzle 单一实现。不阻塞 F022，单开 refactor PR。

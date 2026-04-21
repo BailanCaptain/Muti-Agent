@@ -41,18 +41,59 @@ export function registerThreadRoutes(
     return { groupId };
   });
 
+  // F022 Phase 3.5: 支持 title 手动重命名（AC-14g）+ projectTag 清/设（AC-14h）。
+  // body 任一字段都允许独立更新；两者都缺才 400。
   app.patch("/api/session-groups/:id", async (request: FastifyRequest, reply: FastifyReply) => {
     const params = request.params as { id: string };
-    const body = request.body as { projectTag?: string | null };
+    const body = request.body as { projectTag?: string | null; title?: string };
 
-    if (body.projectTag === undefined) {
+    if (body.projectTag === undefined && body.title === undefined) {
       reply.code(400);
-      return { error: "缺少 projectTag 字段。" };
+      return { error: "缺少 projectTag 或 title 字段。" };
     }
 
-    options.sessions.updateSessionGroupProjectTag(params.id, body.projectTag ?? null);
+    if (body.title !== undefined) {
+      const trimmed = body.title.trim();
+      if (trimmed.length === 0 || trimmed.length > 40) {
+        reply.code(400);
+        return { error: "title 长度需在 1-40 字之间。" };
+      }
+      options.sessions.renameSessionGroup(params.id, trimmed);
+    }
+
+    if (body.projectTag !== undefined) {
+      options.sessions.updateSessionGroupProjectTag(params.id, body.projectTag ?? null);
+    }
+
     return { ok: true };
   });
+
+  // F022 Phase 3.5 (AC-14i): 归档
+  app.post("/api/session-groups/:id/archive", async (request: FastifyRequest) => {
+    const params = request.params as { id: string };
+    options.sessions.archiveSessionGroup(params.id);
+    return { ok: true };
+  });
+
+  // F022 Phase 3.5 (AC-14i/j): 恢复归档或软删
+  app.post("/api/session-groups/:id/restore", async (request: FastifyRequest) => {
+    const params = request.params as { id: string };
+    options.sessions.restoreSessionGroup(params.id);
+    return { ok: true };
+  });
+
+  // F022 Phase 3.5 (AC-14j): 软删 — 铁律：不提供物理删除，只支持恢复
+  app.delete("/api/session-groups/:id", async (request: FastifyRequest) => {
+    const params = request.params as { id: string };
+    options.sessions.softDeleteSessionGroup(params.id);
+    return { ok: true };
+  });
+
+  // F022 Phase 3.5 (AC-14i/j): 归档列表 — 含归档和已删（前端合并展示）。
+  // 路径单独命名避免与 GET /api/session-groups/:groupId 参数冲突。
+  app.get("/api/archived-session-groups", async () => ({
+    sessionGroups: options.sessions.listArchivedSessionGroups(),
+  }));
 
   app.get("/api/session-groups/:groupId", async (request) => {
     const params = request.params as { groupId: string };

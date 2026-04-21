@@ -12,6 +12,7 @@ import { useSettingsStore } from "@/components/stores/settings-store"
 import { useDecisionBoardStore } from "@/components/stores/decision-board-store"
 import { useDecisionStore } from "@/components/stores/decision-store"
 import { useThreadStore } from "@/components/stores/thread-store"
+import { dispatchArchiveStateChanged } from "@/components/stores/archive-event-handler"
 import { PROVIDER_ALIASES, type BlockedDispatchAttempt } from "@multi-agent/shared"
 import { connectRealtime } from "@/components/ws/client"
 import { BrowserPanel } from "@/components/preview/browser-panel"
@@ -45,6 +46,10 @@ export default function HomePage() {
   const replaceActiveGroup = useThreadStore((state) => state.replaceActiveGroup)
   const applySnapshotDelta = useThreadStore((state) => state.applySnapshotDelta)
   const reconcileOptimisticMessage = useThreadStore((state) => state.reconcileOptimisticMessage)
+  const recordMessageInGroup = useThreadStore((state) => state.recordMessageInGroup)
+  const applyTitleUpdate = useThreadStore((state) => state.applyTitleUpdate)
+  const bumpArchiveStateVersion = useThreadStore((state) => state.bumpArchiveStateVersion)
+  const clearActiveGroupIfMatches = useThreadStore((state) => state.clearActiveGroupIfMatches)
   const setStatus = useChatStore((state) => state.setStatus)
   const setSocketState = useSettingsStore((state) => state.setSocketState)
   const incrementUnread = useThreadStore((state) => state.incrementUnread)
@@ -119,6 +124,9 @@ export default function HomePage() {
         }
 
         if (event.type === "message.created") {
+          if (event.payload.sessionGroupId) {
+            recordMessageInGroup(event.payload.sessionGroupId, event.payload.message)
+          }
           if (event.payload.sessionGroupId && !isCurrentSession(event.payload.sessionGroupId)) {
             incrementUnread(event.payload.sessionGroupId)
           } else if (event.payload.clientMessageId) {
@@ -177,6 +185,26 @@ export default function HomePage() {
           return
         }
 
+        if (event.type === "session.title_updated") {
+          applyTitleUpdate(
+            event.payload.sessionGroupId,
+            event.payload.title,
+            event.payload.titleLockedAt,
+          )
+          return
+        }
+
+        // F022 Phase 3.5 (review P2 follow-up): 归档/软删/恢复广播 dispatch
+        // 已抽到 dispatchArchiveStateChanged 纯函数（components/stores/archive-event-handler.ts），
+        // 两条分支由 archive-event-handler.test.ts 覆盖。
+        if (event.type === "session.archive_state_changed") {
+          dispatchArchiveStateChanged(event.payload, {
+            bumpArchiveStateVersion,
+            clearActiveGroupIfMatches,
+          })
+          return
+        }
+
         if (event.type === "status") {
           if (event.payload.sessionGroupId && !isCurrentSession(event.payload.sessionGroupId)) return
           setStatus(event.payload.message)
@@ -188,6 +216,9 @@ export default function HomePage() {
   }, [
     addDecisionRequest,
     appendTimelineMessage,
+    applyTitleUpdate,
+    bumpArchiveStateVersion,
+    clearActiveGroupIfMatches,
     incrementUnread,
     applyAssistantDelta,
     applyThinkingDelta,
@@ -195,6 +226,7 @@ export default function HomePage() {
     openPreview,
     receiveBoardFlush,
     removeBoardItem,
+    recordMessageInGroup,
     removeDecisionRequest,
     replaceActiveGroup,
     selectSessionGroup,

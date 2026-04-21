@@ -286,3 +286,325 @@ test("searchMemories finds by keyword", async () => {
     safeCleanup(tempDir)
   }
 })
+
+// ==== F022 Phase 1: ROOM ID 生成 + 存储 ====
+
+test("F022 AC-01/02: createSessionGroup 为第一个 session 分配 R-001 并持久化", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup("first")
+    const group = repo.getSessionGroupById(groupId) as { roomId?: string | null }
+    assert.equal(group.roomId, "R-001", "第一个 session 应分配 R-001")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F022 AC-01: createSessionGroup 连续创建全局递增 R-001 → R-002 → R-003", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const g1 = repo.createSessionGroup("a")
+    const g2 = repo.createSessionGroup("b")
+    const g3 = repo.createSessionGroup("c")
+    const r1 = (repo.getSessionGroupById(g1) as { roomId?: string }).roomId
+    const r2 = (repo.getSessionGroupById(g2) as { roomId?: string }).roomId
+    const r3 = (repo.getSessionGroupById(g3) as { roomId?: string }).roomId
+    assert.equal(r1, "R-001")
+    assert.equal(r2, "R-002")
+    assert.equal(r3, "R-003")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F022 AC-01/04: createSessionGroup 接续已有最大序号（seed R-005 → 新分配 R-006）", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close, raw } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    // 手工种一条 R-005 的历史数据（绕过 createSessionGroup）
+    raw
+      .prepare(
+        "INSERT INTO session_groups (id, room_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run("uuid-seed", "R-005", "seed", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z")
+
+    const newId = repo.createSessionGroup("after-seed")
+    const roomId = (repo.getSessionGroupById(newId) as { roomId?: string }).roomId
+    assert.equal(roomId, "R-006")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F022 AC-01: room_id 格式在超过 999 后自然扩位（seed R-1234 → R-1235）", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close, raw } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    raw
+      .prepare(
+        "INSERT INTO session_groups (id, room_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run("uuid-big", "R-1234", "big", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z")
+
+    const newId = repo.createSessionGroup("after-big")
+    const roomId = (repo.getSessionGroupById(newId) as { roomId?: string }).roomId
+    assert.equal(roomId, "R-1235")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F022 AC-02: createSessionGroupWithDefaults 也分配 roomId", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroupWithDefaults(
+      { codex: null, claude: null, gemini: null },
+      "with-defaults",
+    )
+    const roomId = (repo.getSessionGroupById(groupId) as { roomId?: string }).roomId
+    assert.equal(roomId, "R-001")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F022 AC-02: listSessionGroups 返回结果含 roomId", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    repo.createSessionGroup("x")
+    repo.createSessionGroup("y")
+    const list = repo.listSessionGroups() as Array<{ roomId?: string | null }>
+    assert.equal(list.length, 2)
+    for (const item of list) {
+      assert.match(item.roomId ?? "", /^R-\d{3,}$/)
+    }
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F022-P2 updateSessionGroupTitle writes new title and bumps updatedAt", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup()
+    const before = repo.getSessionGroupById(groupId)
+    assert.ok(before)
+    const originalUpdatedAt = before.updatedAt
+
+    // Ensure clock ticks before update so updatedAt changes.
+    await new Promise((r) => setTimeout(r, 10))
+
+    repo.updateSessionGroupTitle(groupId, "学习 Drizzle")
+
+    const after = repo.getSessionGroupById(groupId)
+    assert.ok(after)
+    assert.equal(after.title, "学习 Drizzle")
+    assert.ok(after.updatedAt >= originalUpdatedAt, "updatedAt should advance")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F022-P2 updateSessionGroupTitle is no-op for unknown id (does not throw)", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    // Should not throw; drizzle UPDATE with 0 rows affected is silent.
+    repo.updateSessionGroupTitle("does-not-exist", "whatever")
+    assert.equal(repo.getSessionGroupById("does-not-exist"), undefined)
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F022-P3 AC-12: listSessionGroups participants 只含真正发过消息的 provider", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup("room with msgs")
+    repo.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const threads = repo.listThreadsByGroup(groupId)
+    const claudeThread = threads.find((t) => t.provider === "claude")!
+    const codexThread = threads.find((t) => t.provider === "codex")!
+    repo.appendMessage(claudeThread.id, "user", "hi")
+    repo.appendMessage(codexThread.id, "assistant", "ok")
+    // gemini thread 存在但无消息
+    const list = repo.listSessionGroups() as Array<{
+      id: string
+      participants?: string[]
+      messageCount?: number
+    }>
+    const row = list.find((g) => g.id === groupId)
+    assert.ok(row, "group row should be in list")
+    assert.deepEqual([...(row.participants ?? [])].sort(), ["claude", "codex"])
+    assert.equal(row.messageCount, 2)
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F022-P3 AC-15: listSessionGroups 返回 messageCount=0 + participants=[] for empty group", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup("empty room")
+    const list = repo.listSessionGroups() as Array<{
+      id: string
+      participants?: string[]
+      messageCount?: number
+    }>
+    const row = list.find((g) => g.id === groupId)
+    assert.ok(row)
+    assert.equal(row.messageCount, 0)
+    assert.deepEqual(row.participants, [])
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+// F022 Phase 3.5 (review P1-1): listSessionGroupsForBackfill
+test("review P1-1: listSessionGroupsForBackfill 不分页，扫描 >200 条活跃会话", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    // listSessionGroups 默认 limit=200 → backfill 老路径会漏掉第 201 条
+    const total = 210
+    for (let i = 0; i < total; i++) repo.createSessionGroup(`Room ${i}`)
+
+    const rows = repo.listSessionGroupsForBackfill()
+    assert.equal(rows.length, total, `应该返回全部 ${total} 条，不受 200 分页限制`)
+    assert.ok(
+      rows.every((r) => typeof r.id === "string"),
+      "每行都有 id",
+    )
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("review P1-1: listSessionGroupsForBackfill 过滤软删，不过滤归档", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const active = repo.createSessionGroup("active")
+    const archived = repo.createSessionGroup("archived")
+    const deleted = repo.createSessionGroup("soft-deleted")
+    repo.archiveSessionGroup(archived)
+    repo.softDeleteSessionGroup(deleted)
+
+    const ids = repo.listSessionGroupsForBackfill().map((r) => r.id)
+    assert.ok(ids.includes(active), "活跃会话在")
+    assert.ok(ids.includes(archived), "归档会话仍应被 backfill — 归档≠不命名")
+    assert.ok(!ids.includes(deleted), "软删会话不应 backfill — 已被用户标记删除")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("review P1-2: title_backfill_attempts 达到 MAX 后 backfill 跳过（防 Haiku 死循环）", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const stuck = repo.createSessionGroup("haiku-keeps-failing")
+    const fresh = repo.createSessionGroup("fresh")
+
+    // 模拟 SessionTitler fallback 3 次
+    for (let i = 0; i < DrizzleSessionRepository.MAX_TITLE_BACKFILL_ATTEMPTS; i++) {
+      repo.incrementTitleBackfillAttempts(stuck)
+    }
+
+    const ids = repo.listSessionGroupsForBackfill().map((r) => r.id)
+    assert.ok(!ids.includes(stuck), "attempts ≥ MAX 的会话永久跳过")
+    assert.ok(ids.includes(fresh), "新会话仍应扫入队列")
+
+    // 重置后重新进入扫描（例如用户手动 rename 后清锁）
+    repo.resetTitleBackfillAttempts(stuck)
+    const after = repo.listSessionGroupsForBackfill().map((r) => r.id)
+    assert.ok(after.includes(stuck), "reset 后回到扫描队列")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})

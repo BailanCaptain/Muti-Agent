@@ -1,47 +1,54 @@
 "use client"
 
-import { useThreadStore } from "@/components/stores/thread-store"
-import {
-  Archive,
-  Pencil,
-  Pin,
-  Tag,
-  Trash2,
-} from "lucide-react"
+import { Archive, Check, Eraser, Pencil, Pin, Tag, Trash2 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
+
+import { ConfirmDialog } from "./confirm-dialog"
 
 type SessionContextMenuProps = {
   x: number
   y: number
   groupId: string
   isPinned: boolean
+  hasProjectTag: boolean
   onClose: () => void
   onTogglePin: (groupId: string) => void
+  onRequestRename: (groupId: string) => void
+  onSetProjectTag: (groupId: string, tag: string | null) => Promise<void>
+  onClearProjectTag: (groupId: string) => Promise<void>
+  onArchive: (groupId: string) => Promise<void>
+  onDelete: (groupId: string) => Promise<void>
 }
-
-const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
 
 export function SessionContextMenu({
   x,
   y,
   groupId,
   isPinned,
+  hasProjectTag,
   onClose,
   onTogglePin,
+  onRequestRename,
+  onSetProjectTag,
+  onClearProjectTag,
+  onArchive,
+  onDelete,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   const [showTagInput, setShowTagInput] = useState(false)
   const [tagValue, setTagValue] = useState("")
-  const replaceSessionGroups = useThreadStore((s) => s.replaceSessionGroups)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
-  // Close on outside click or Escape
   useEffect(() => {
     function handleClick(e: MouseEvent) {
+      if (confirmingDelete) return
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         onClose()
       }
     }
     function handleKey(e: KeyboardEvent) {
+      if (confirmingDelete) return
       if (e.key === "Escape") onClose()
     }
     document.addEventListener("mousedown", handleClick)
@@ -50,9 +57,8 @@ export function SessionContextMenu({
       document.removeEventListener("mousedown", handleClick)
       document.removeEventListener("keydown", handleKey)
     }
-  }, [onClose])
+  }, [onClose, confirmingDelete])
 
-  // Adjust position so menu doesn't overflow viewport
   const style: React.CSSProperties = {
     position: "fixed",
     left: x,
@@ -65,57 +71,82 @@ export function SessionContextMenu({
     onClose()
   }, [groupId, onTogglePin, onClose])
 
+  const handleRename = useCallback(() => {
+    onRequestRename(groupId)
+    onClose()
+  }, [groupId, onRequestRename, onClose])
+
   const handleSetTag = useCallback(async () => {
     const tag = tagValue.trim() || null
-    try {
-      await fetch(`${baseUrl}/api/session-groups/${groupId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectTag: tag }),
-      })
-      // Refresh session groups
-      const res = await fetch(`${baseUrl}/api/bootstrap`)
-      const data = (await res.json()) as { sessionGroups: Array<{ id: string; title: string; updatedAtLabel: string; projectTag?: string; previews: Array<{ provider: string; alias: string; text: string }> }> }
-      replaceSessionGroups(data.sessionGroups as Parameters<typeof replaceSessionGroups>[0])
-    } catch (err) {
-      console.error("[session-context-menu] update project tag error", err)
-    }
+    await onSetProjectTag(groupId, tag)
     onClose()
-  }, [groupId, tagValue, onClose, replaceSessionGroups])
+  }, [groupId, tagValue, onSetProjectTag, onClose])
 
+  const handleClearTag = useCallback(async () => {
+    await onClearProjectTag(groupId)
+    onClose()
+  }, [groupId, onClearProjectTag, onClose])
 
-  return (
+  const handleArchive = useCallback(async () => {
+    await onArchive(groupId)
+    onClose()
+  }, [groupId, onArchive, onClose])
+
+  // AC-14j: 软删二次确认（铁律：不提供物理删除）
+  const handleDelete = useCallback(() => {
+    setConfirmingDelete(true)
+  }, [])
+
+  const handleConfirmDelete = useCallback(async () => {
+    setConfirmingDelete(false)
+    await onDelete(groupId)
+    onClose()
+  }, [groupId, onDelete, onClose])
+
+  const handleCancelDelete = useCallback(() => {
+    setConfirmingDelete(false)
+    onClose()
+  }, [onClose])
+
+  if (typeof document === "undefined") return null
+
+  return createPortal(
     <div ref={menuRef} style={style}>
-      <div className="min-w-[180px] rounded-lg border border-slate-200/30 bg-white/90 backdrop-blur-lg py-1 shadow-xl">
-        {/* Pin / Unpin */}
+      <div className="min-w-[200px] rounded-lg border border-amber-200/60 bg-white py-1 shadow-2xl ring-1 ring-black/5">
         <MenuItem
           icon={<Pin className="h-3.5 w-3.5" />}
           label={isPinned ? "取消置顶" : "置顶"}
           onClick={handlePin}
         />
 
-        {/* Rename — not yet implemented */}
         <MenuItem
           icon={<Pencil className="h-3.5 w-3.5" />}
-          label="重命名（即将推出）"
-          disabled
-          onClick={onClose}
+          label="重命名"
+          onClick={handleRename}
         />
 
-        {/* Set project tag */}
         {showTagInput ? (
-          <div className="px-2 py-1.5">
+          <div className="flex items-center gap-1.5 px-2 py-1.5">
+            <Tag className="h-3.5 w-3.5 shrink-0 text-amber-500" />
             <input
               autoFocus
-              className="w-full rounded border border-slate-200/60 bg-white/60 px-2 py-1 text-xs text-slate-700 outline-none focus:border-amber-500"
+              className="min-w-0 flex-1 rounded border border-amber-300 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-400/40"
               onChange={(e) => setTagValue(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void handleSetTag()
                 if (e.key === "Escape") setShowTagInput(false)
               }}
-              placeholder="项目标签（留空清除）..."
+              placeholder="如 F022，回车保存"
               value={tagValue}
             />
+            <button
+              aria-label="保存标签"
+              className="shrink-0 inline-flex h-6 w-6 items-center justify-center rounded bg-amber-500 text-white transition hover:bg-amber-600"
+              onClick={() => void handleSetTag()}
+              type="button"
+            >
+              <Check className="h-3.5 w-3.5" />
+            </button>
           </div>
         ) : (
           <MenuItem
@@ -125,31 +156,44 @@ export function SessionContextMenu({
           />
         )}
 
-        {/* Divider */}
+        {hasProjectTag && (
+          <MenuItem
+            icon={<Eraser className="h-3.5 w-3.5" />}
+            label="清除项目标签"
+            onClick={handleClearTag}
+          />
+        )}
+
         <div className="my-1 border-t border-slate-200/40" />
 
-        {/* Archive — not yet implemented */}
         <MenuItem
           icon={<Archive className="h-3.5 w-3.5" />}
-          label="归档（即将推出）"
-          disabled
-          onClick={onClose}
+          label="归档"
+          onClick={handleArchive}
         />
 
-        {/* Delete — not yet implemented (Iron Law: data is sacred) */}
         <MenuItem
           icon={<Trash2 className="h-3.5 w-3.5" />}
-          label="删除（即将推出）"
+          label="删除"
           danger
-          disabled
-          onClick={onClose}
+          onClick={handleDelete}
         />
       </div>
-    </div>
+
+      <ConfirmDialog
+        cancelLabel="取消"
+        confirmLabel="删除"
+        danger
+        description="会话将被软删除，可随时在左侧栏底部「归档列表」中恢复（铁律：不提供物理删除）。"
+        onCancel={handleCancelDelete}
+        onConfirm={handleConfirmDelete}
+        open={confirmingDelete}
+        title="确定软删除此会话？"
+      />
+    </div>,
+    document.body,
   )
 }
-
-/* ── Menu item ── */
 
 function MenuItem({
   icon,
