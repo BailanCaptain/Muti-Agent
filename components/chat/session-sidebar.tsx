@@ -232,8 +232,11 @@ export function SessionSidebar() {
   )
 
   // 会话被移出可见列表（归档/软删）后，若正好是当前选中，则跳到下一条，
-  // 没有下一条退回前一条；一条都不剩就清 activeGroupId。避免详情面板残留指向
-  // 一个已不可见会话造成"删了还在显示"的错觉。
+  // 没有下一条退回前一条；一条都不剩就清 active 全部字段（activeGroup/timeline/
+  // providers/invocationStats）。清全量而非只清 activeGroupId，是为了让 buildSendPayload
+  // 因 providers[*].threadId 为空串而返回 null，阻断 composer 还能触发 optimistic send
+  // 的路径；否则后到的 ws session.archive_state_changed 会因 activeGroupId 已是 null
+  // 而 no-op，留下孤儿 timeline/providers。
   const switchAwayIfActive = useCallback(
     async (removedId: string) => {
       const state = useThreadStore.getState()
@@ -244,7 +247,7 @@ export function SessionSidebar() {
       if (next) {
         await selectGroup(next.id)
       } else {
-        useThreadStore.setState({ activeGroupId: null })
+        useThreadStore.getState().clearActiveGroupIfMatches(removedId)
       }
     },
     [selectGroup],

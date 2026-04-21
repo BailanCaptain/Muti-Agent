@@ -73,6 +73,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const groupKey = threadState.activeGroupId ?? ""
     const pending = state.pendingImages[groupKey] ?? []
 
+    // Active session guard：会话被归档/软删后，switchAwayIfActive 或 ws
+    // session.archive_state_changed 会清空 activeGroupId；此时显式拒发，避免 optimistic
+    // append 污染已失效会话。服务端 isSessionGroupSendable 是最后一道防线。
+    if (!threadState.activeGroupId) {
+      set({ status: "当前没有可用会话，请在左侧选择或新建一个会话" })
+      return
+    }
+
     const pendingPlaceholder = pending.length > 0
       ? [{ type: "image" as const, url: "pending", alt: "" }]
       : undefined
