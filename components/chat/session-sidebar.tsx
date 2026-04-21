@@ -117,6 +117,10 @@ export function SessionSidebar() {
   const selectGroup = useThreadStore((state) => state.selectSessionGroup)
   const replaceSessionGroups = useThreadStore((state) => state.replaceSessionGroups)
   const unreadCounts = useThreadStore((state) => state.unreadCounts)
+  // F022 Phase 3.5 (review P2 follow-up): 服务端归档/软删/恢复事件到达时 bump。
+  // 本 sidebar useEffect watch 变化后重刷主列表 + 归档列表（若展开），让另一个
+  // 已连接客户端也能看到状态变化，不再靠手动刷新。
+  const archiveStateVersion = useThreadStore((state) => state.archiveStateVersion)
   const anyProviderRunning = useThreadStore((state) =>
     Object.values(state.providers).some((p) => p.running)
   )
@@ -299,6 +303,19 @@ export function SessionSidebar() {
   useEffect(() => {
     setPinned(loadPinned())
   }, [])
+
+  // F022 Phase 3.5 (review P2 follow-up): archiveStateVersion 变化 → 另一个
+  // 客户端执行了 archive/softDelete/restore。主列表必刷；归档列表仅在展开时刷。
+  // 初始 0 也会触发一次，但两个 fetch 都是幂等读取，成本可接受。
+  const isInitialArchiveVersionRef = useRef(true)
+  useEffect(() => {
+    if (isInitialArchiveVersionRef.current) {
+      isInitialArchiveVersionRef.current = false
+      return
+    }
+    void reloadSessionGroups()
+    if (archivedOpen) void reloadArchived()
+  }, [archiveStateVersion, reloadSessionGroups, reloadArchived, archivedOpen])
 
   const togglePin = useCallback(
     (groupId: string) => {

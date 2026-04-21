@@ -79,6 +79,11 @@ type ThreadStore = {
   timeline: TimelineMessage[]
   invocationStats: InvocationStats[]
   unreadCounts: Record<string, number>
+  // F022 Phase 3.5 (review P2 follow-up): 服务端收到 archive/softDelete/restore
+  // 后广播 session.archive_state_changed；sidebar 订阅这个 version 变化重刷主列表
+  // + 归档列表。多端/多标签场景下不再看陈旧态。
+  archiveStateVersion: number
+  bumpArchiveStateVersion: () => void
   bootstrap: () => Promise<void>
   createSessionGroup: () => Promise<void>
   selectSessionGroup: (groupId: string) => Promise<void>
@@ -329,6 +334,10 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   timeline: [],
   invocationStats: [],
   unreadCounts: {},
+  archiveStateVersion: 0,
+  bumpArchiveStateVersion: () => {
+    set((state) => ({ archiveStateVersion: state.archiveStateVersion + 1 }))
+  },
   bootstrap: async () => {
     // Bootstrap stitches together the static provider catalog and the latest session list before selecting a room.
     const [groupsPayload, providersPayload] = await Promise.all([

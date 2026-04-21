@@ -47,6 +47,7 @@ export default function HomePage() {
   const reconcileOptimisticMessage = useThreadStore((state) => state.reconcileOptimisticMessage)
   const recordMessageInGroup = useThreadStore((state) => state.recordMessageInGroup)
   const applyTitleUpdate = useThreadStore((state) => state.applyTitleUpdate)
+  const bumpArchiveStateVersion = useThreadStore((state) => state.bumpArchiveStateVersion)
   const setStatus = useChatStore((state) => state.setStatus)
   const setSocketState = useSettingsStore((state) => state.setSocketState)
   const incrementUnread = useThreadStore((state) => state.incrementUnread)
@@ -191,6 +192,15 @@ export default function HomePage() {
           return
         }
 
+        // F022 Phase 3.5 (review P2 follow-up): 归档/软删/恢复广播。
+        // 发起操作的那个标签页靠 sidebar 本地 reload 自愈；这里专为"另一个
+        // 已连接客户端"准备 —— bump 一个 version 让 sidebar effect 重 fetch
+        // 主列表 + 归档列表。
+        if (event.type === "session.archive_state_changed") {
+          bumpArchiveStateVersion()
+          return
+        }
+
         if (event.type === "status") {
           if (event.payload.sessionGroupId && !isCurrentSession(event.payload.sessionGroupId)) return
           setStatus(event.payload.message)
@@ -203,6 +213,7 @@ export default function HomePage() {
     addDecisionRequest,
     appendTimelineMessage,
     applyTitleUpdate,
+    bumpArchiveStateVersion,
     incrementUnread,
     applyAssistantDelta,
     applyThinkingDelta,
