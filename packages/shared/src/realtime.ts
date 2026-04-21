@@ -428,6 +428,17 @@ export type RealtimeServerEvent =
         titleLockedAt: string | null
       }
     }
+  | {
+      // F022 Phase 3.5 (review P2-3): archive / soft-delete / restore broadcast.
+      // 多端/多标签 sidebar 需要同步主列表与归档列表的增减；没有这个事件
+      // 另一个已连接客户端会看到陈旧的"已删会话还在""已恢复不出现"状态。
+      type: "session.archive_state_changed"
+      payload: {
+        sessionGroupId: string
+        archivedAt: string | null
+        deletedAt: string | null
+      }
+    }
 
 /**
  * F002: A single question held by the Decision Board, sent to the frontend

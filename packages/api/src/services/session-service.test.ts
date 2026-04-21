@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { Provider } from "@multi-agent/shared"
+import type { Provider, RealtimeServerEvent } from "@multi-agent/shared"
 import { SessionService } from "./session-service"
 
 type ThreadRecord = {
@@ -269,6 +269,107 @@ test("F022-P3.5 AC-14a: SessionService.listSessionGroups 透传 updatedAt（ISO�
   const [row] = service.listSessionGroups()
   assert.ok(row)
   assert.equal(row.updatedAt, "2026-04-20T06:00:00.000Z")
+})
+
+// --- review P2-3: archive/softDelete/restore 广播 session.archive_state_changed ---
+
+function makeArchiveRepo(initial: {
+  archivedAt?: string | null
+  deletedAt?: string | null
+} = {}) {
+  const state = {
+    archivedAt: initial.archivedAt ?? null,
+    deletedAt: initial.deletedAt ?? null,
+  }
+  const calls: { op: string; id: string }[] = []
+  return {
+    repo: {
+      reconcileLegacyDefaultModels: () => {},
+      getSessionGroupById: (groupId: string) => ({
+        id: groupId,
+        title: "t",
+        updatedAt: "2026-04-20T06:00:00Z",
+        projectTag: null,
+        archivedAt: state.archivedAt,
+        deletedAt: state.deletedAt,
+      }),
+      listThreadsByGroup: () => [],
+      listMessages: () => [],
+      listMessagesSince: () => [],
+      listRecentMessages: () => [],
+      createSessionGroup: () => "g",
+      ensureDefaultThreads: () => {},
+      listSessionGroups: () => [],
+      archiveSessionGroup: (id: string) => {
+        calls.push({ op: "archive", id })
+        state.archivedAt = "2026-04-20T07:00:00Z"
+      },
+      softDeleteSessionGroup: (id: string) => {
+        calls.push({ op: "softDelete", id })
+        state.deletedAt = "2026-04-20T08:00:00Z"
+      },
+      restoreSessionGroup: (id: string) => {
+        calls.push({ op: "restore", id })
+        state.archivedAt = null
+        state.deletedAt = null
+      },
+    },
+    calls,
+    state,
+  }
+}
+
+test("review P2-3: archiveSessionGroup 广播 session.archive_state_changed（archivedAt 非空）", () => {
+  const { repo } = makeArchiveRepo()
+  const service = new SessionService(repo as never, [])
+  const events: RealtimeServerEvent[] = []
+  service.setBroadcaster((e) => events.push(e))
+
+  service.archiveSessionGroup("g1")
+
+  const archiveEvents = events.filter((e) => e.type === "session.archive_state_changed")
+  assert.equal(archiveEvents.length, 1)
+  assert.equal(archiveEvents[0]!.payload.sessionGroupId, "g1")
+  assert.ok(archiveEvents[0]!.payload.archivedAt, "archivedAt 应为非空时间戳")
+  assert.equal(archiveEvents[0]!.payload.deletedAt, null)
+})
+
+test("review P2-3: softDeleteSessionGroup 广播 session.archive_state_changed（deletedAt 非空）", () => {
+  const { repo } = makeArchiveRepo()
+  const service = new SessionService(repo as never, [])
+  const events: RealtimeServerEvent[] = []
+  service.setBroadcaster((e) => events.push(e))
+
+  service.softDeleteSessionGroup("g1")
+
+  const archiveEvents = events.filter((e) => e.type === "session.archive_state_changed")
+  assert.equal(archiveEvents.length, 1)
+  assert.equal(archiveEvents[0]!.payload.sessionGroupId, "g1")
+  assert.ok(archiveEvents[0]!.payload.deletedAt, "deletedAt 应为非空时间戳")
+})
+
+test("review P2-3: restoreSessionGroup 广播 session.archive_state_changed（两个时间戳都清零）", () => {
+  const { repo } = makeArchiveRepo({
+    archivedAt: "2026-04-20T07:00:00Z",
+    deletedAt: "2026-04-20T08:00:00Z",
+  })
+  const service = new SessionService(repo as never, [])
+  const events: RealtimeServerEvent[] = []
+  service.setBroadcaster((e) => events.push(e))
+
+  service.restoreSessionGroup("g1")
+
+  const archiveEvents = events.filter((e) => e.type === "session.archive_state_changed")
+  assert.equal(archiveEvents.length, 1)
+  assert.equal(archiveEvents[0]!.payload.archivedAt, null)
+  assert.equal(archiveEvents[0]!.payload.deletedAt, null)
+})
+
+test("review P2-3: 未 setBroadcaster 时 archive 不抛异常", () => {
+  const { repo } = makeArchiveRepo()
+  const service = new SessionService(repo as never, [])
+  // 不调用 setBroadcaster — 模拟 API server 还没 wire 上的启动窗口。
+  assert.doesNotThrow(() => service.archiveSessionGroup("g1"))
 })
 
 test("F022-P3 AC-15: SessionService.listSessionGroups 对缺失 participants/messageCount 提供默认值", () => {

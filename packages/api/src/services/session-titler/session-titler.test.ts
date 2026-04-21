@@ -21,8 +21,15 @@ function makeLogger() {
 
 function makeRepo(initial: { id: string; title: string; roomId: string | null }) {
   let current = { ...initial }
+  let attempts = 0
   const updateSpy = mock.fn((id: string, title: string) => {
     if (id === current.id) current = { ...current, title }
+  })
+  const incSpy = mock.fn((_id: string) => {
+    attempts += 1
+  })
+  const resetSpy = mock.fn((_id: string) => {
+    attempts = 0
   })
   return {
     repo: {
@@ -38,9 +45,14 @@ function makeRepo(initial: { id: string; title: string; roomId: string | null })
             }
           : undefined,
       updateSessionGroupTitle: updateSpy,
+      incrementTitleBackfillAttempts: incSpy,
+      resetTitleBackfillAttempts: resetSpy,
     },
     updateSpy,
+    incSpy,
+    resetSpy,
     peekTitle: () => current.title,
+    peekAttempts: () => attempts,
   }
 }
 
@@ -409,5 +421,52 @@ describe("SessionTitler", () => {
     await titler.flushPending()
     assert.equal(runSpy.mock.calls.length, 0)
     assert.equal(updateSpy.mock.calls.length, 0)
+  })
+
+  // F022 Phase 3.5 (review P1-2)
+  it("review P1-2: Haiku 成功时重置 title_backfill_attempts", async () => {
+    const { repo, resetSpy, incSpy } = makeRepo({
+      id: SID,
+      title: "新会话 2026-04-20",
+      roomId: ROOM,
+    })
+    const { haiku } = makeHaiku({ ok: true, text: "D-讨论 TDD" })
+    const { logger } = makeLogger()
+    const titler = new SessionTitler({
+      repo,
+      haiku,
+      logger,
+      debounceMs: 5,
+      buildPrompt: () => "p",
+      dateFormatter: () => "2026-04-20",
+    })
+    titler.schedule(SID)
+    await titler.flushPending()
+    assert.equal(resetSpy.mock.calls.length, 1, "success 分支必须 reset 计数")
+    assert.equal(resetSpy.mock.calls[0].arguments[0], SID)
+    assert.equal(incSpy.mock.calls.length, 0, "success 分支不应 increment")
+  })
+
+  it("review P1-2: Haiku 失败 fallback 时累加 title_backfill_attempts", async () => {
+    const { repo, incSpy, resetSpy } = makeRepo({
+      id: SID,
+      title: "新会话 2026-04-20",
+      roomId: ROOM,
+    })
+    const { haiku } = makeHaiku({ ok: false, error: "timeout" })
+    const { logger } = makeLogger()
+    const titler = new SessionTitler({
+      repo,
+      haiku,
+      logger,
+      debounceMs: 5,
+      buildPrompt: () => "p",
+      dateFormatter: () => "2026-04-20",
+    })
+    titler.schedule(SID)
+    await titler.flushPending()
+    assert.equal(incSpy.mock.calls.length, 1, "fallback 必须 increment — 防 backfill 死循环")
+    assert.equal(incSpy.mock.calls[0].arguments[0], SID)
+    assert.equal(resetSpy.mock.calls.length, 0, "fallback 分支不应 reset")
   })
 })

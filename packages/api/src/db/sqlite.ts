@@ -97,6 +97,7 @@ export class SqliteStore {
         title_locked_at TEXT,
         archived_at TEXT,
         deleted_at TEXT,
+        title_backfill_attempts INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -289,6 +290,12 @@ export class SqliteStore {
       {
         name: "F022-session-groups-add-deleted-at",
         sql: "ALTER TABLE session_groups ADD COLUMN deleted_at TEXT",
+      },
+      // F022 Phase 3.5 (review P1-2): Haiku 失败计数，backfill 过 N 次永久跳过，
+      // 防止 Haiku 不可用时重启风暴。
+      {
+        name: "F022-session-groups-add-title-backfill-attempts",
+        sql: "ALTER TABLE session_groups ADD COLUMN title_backfill_attempts INTEGER NOT NULL DEFAULT 0",
       },
     ]
     for (const m of alters) {

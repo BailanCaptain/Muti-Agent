@@ -43,6 +43,12 @@ function hydrateMessage(row: typeof messages.$inferSelect): MessageRecord {
 }
 
 export class DrizzleSessionRepository {
+  // F022 Phase 3.5 (review P1-2): Haiku 命名失败的 session 最多重试 N 次；
+  // 超过后 backfill 永久跳过，防止 Haiku 不可用时重启风暴。
+  // 手动重命名（titleLockedAt）会直接让 SessionTitler.skip.locked，不需要清 attempts。
+  // 若未来提供"重新命名"入口想恢复 Haiku，应同步在对应 service 层调 resetTitleBackfillAttempts。
+  static readonly MAX_TITLE_BACKFILL_ATTEMPTS = 3
+
   constructor(private readonly db: DrizzleDb) {}
 
   runTx<T>(fn: () => T): T {
@@ -250,6 +256,38 @@ export class DrizzleSessionRepository {
       .update(sessionGroups)
       .set({ archivedAt: null, deletedAt: null, updatedAt: now })
       .where(eq(sessionGroups.id, groupId))
+      .run()
+  }
+
+  // F022 Phase 3.5 (review P1-1/P1-2): title backfill 专用扫描。
+  // - 不分页：listSessionGroups 默认 200 会让历史规模大时漏扫老会话
+  // - 只过滤软删（deleted_at）；归档会话允许 backfill（归档≠不命名）
+  // - 过滤 title_backfill_attempts < MAX：防止 Haiku 永久挂时每次启动风暴
+  // - 只取 id + title 两列，前端永远不消费这条路径
+  listSessionGroupsForBackfill(): Array<{ id: string; title: string | null }> {
+    const rows = this.db
+      .select({ id: sessionGroups.id, title: sessionGroups.title })
+      .from(sessionGroups)
+      .where(
+        sql`deleted_at IS NULL AND title_backfill_attempts < ${DrizzleSessionRepository.MAX_TITLE_BACKFILL_ATTEMPTS}`,
+      )
+      .all()
+    return rows.map((r) => ({ id: r.id, title: r.title }))
+  }
+
+  incrementTitleBackfillAttempts(id: string): void {
+    this.db
+      .update(sessionGroups)
+      .set({ titleBackfillAttempts: sql`title_backfill_attempts + 1` })
+      .where(eq(sessionGroups.id, id))
+      .run()
+  }
+
+  resetTitleBackfillAttempts(id: string): void {
+    this.db
+      .update(sessionGroups)
+      .set({ titleBackfillAttempts: 0 })
+      .where(eq(sessionGroups.id, id))
       .run()
   }
 

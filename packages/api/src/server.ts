@@ -488,10 +488,12 @@ export async function createApiServer(options: {
   // Gate with MULTI_AGENT_SKIP_TITLE_BACKFILL=1 for tests / ops.
   if (process.env.MULTI_AGENT_SKIP_TITLE_BACKFILL !== "1") {
     const t = setTimeout(() => {
+      // review P1-1: listSessionGroups 默认 limit=200 + 过滤归档/软删会让历史数据规模大时
+      // 漏扫老会话。专用扫描方法 listSessionGroupsForBackfill 不分页 + 只过滤软删 +
+      // 过滤 title_backfill_attempts < MAX。
       void backfillHistoricalTitles(
         {
-          listSessionGroups: () =>
-            repository.listSessionGroups().map((g) => ({ id: g.id, title: g.title })),
+          listSessionGroups: () => repository.listSessionGroupsForBackfill(),
         },
         sessionTitler,
         { logger: createLogger("title-backfill") },

@@ -49,6 +49,10 @@ export interface SessionTitlerRepo {
     | { id: string; roomId: string | null; title: string; titleLockedAt?: string | null }
     | undefined
   updateSessionGroupTitle(id: string, title: string): void
+  // F022 Phase 3.5 (review P1-2): Haiku 失败计数。
+  // success → reset 0；fallback → +1；backfill 过 MAX 跳过。
+  incrementTitleBackfillAttempts(id: string): void
+  resetTitleBackfillAttempts(id: string): void
 }
 
 export interface SessionTitlerDeps {
@@ -155,6 +159,8 @@ export class SessionTitler {
     if (result.ok) {
       const title = enforceTitlePrefix(result.text)
       repo.updateSessionGroupTitle(sessionGroupId, title)
+      // P1-2: 成功命名 → 清零失败计数（未来如果 title 又被擦成默认也允许重扫）
+      repo.resetTitleBackfillAttempts(sessionGroupId)
       emit?.({
         type: "session.title_updated",
         payload: { sessionGroupId, title, titleLockedAt: null },
@@ -174,6 +180,9 @@ export class SessionTitler {
 
     const fallback = `D-新会话 ${(dateFormatter ?? defaultDateFormatter)()}`
     repo.updateSessionGroupTitle(sessionGroupId, fallback)
+    // P1-2: 失败 fallback 写的是 isDefaultTitle 识别为默认的格式 —
+    // 不累加就会被下次重启再次扫入 backfill 队列 → Haiku 挂时永久风暴。
+    repo.incrementTitleBackfillAttempts(sessionGroupId)
     emit?.({
       type: "session.title_updated",
       payload: { sessionGroupId, title: fallback, titleLockedAt: null },

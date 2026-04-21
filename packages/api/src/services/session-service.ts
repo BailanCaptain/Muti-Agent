@@ -412,16 +412,35 @@ export class SessionService {
   // F022 Phase 3.5 (AC-14i)
   archiveSessionGroup(groupId: string) {
     this.repository.archiveSessionGroup(groupId)
+    this.emitArchiveStateChanged(groupId)
   }
 
   // F022 Phase 3.5 (AC-14j) — 软删
   softDeleteSessionGroup(groupId: string) {
     this.repository.softDeleteSessionGroup(groupId)
+    this.emitArchiveStateChanged(groupId)
   }
 
   // F022 Phase 3.5 (AC-14i/j) — 恢复：清 archived_at 和 deleted_at
   restoreSessionGroup(groupId: string) {
     this.repository.restoreSessionGroup(groupId)
+    this.emitArchiveStateChanged(groupId)
+  }
+
+  // F022 Phase 3.5 (review P2-3): 广播归档/软删/恢复状态变更 —
+  // 多端场景下让其他已连接客户端同步主列表 ↔ 归档列表，不再依赖手动刷新。
+  private emitArchiveStateChanged(groupId: string) {
+    if (!this.emit) return
+    const row = this.repository.getSessionGroupById(groupId)
+    if (!row) return
+    this.emit({
+      type: "session.archive_state_changed",
+      payload: {
+        sessionGroupId: groupId,
+        archivedAt: row.archivedAt ?? null,
+        deletedAt: row.deletedAt ?? null,
+      },
+    })
   }
 
   updateThread(threadId: string, model: string | null, nativeSessionId: string | null, sopBookmark?: string | null, lastFillRatio?: number | null) {

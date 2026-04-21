@@ -10,6 +10,10 @@ export const sessionGroups = sqliteTable("session_groups", {
   // F022 Phase 3.5: 归档 / 软删（AC-14i/j）— 与主列表互斥，归档列表合并展示。
   archivedAt: text("archived_at"),
   deletedAt: text("deleted_at"),
+  // F022 Phase 3.5 (review P1-2): Haiku 命名失败计数 — backfill 过 3 次永久跳过，
+  // 防止 Haiku 永久不可用时每次启动都对同批会话重试形成后台风暴。
+  // 成功命名重置 0；手动 rename 也重置 0（用户意图重新开放命名）。
+  titleBackfillAttempts: integer("title_backfill_attempts").notNull().default(0),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 })

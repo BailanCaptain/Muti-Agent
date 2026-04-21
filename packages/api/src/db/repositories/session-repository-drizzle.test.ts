@@ -526,3 +526,85 @@ test("F022-P3 AC-15: listSessionGroups 返回 messageCount=0 + participants=[] f
     safeCleanup(tempDir)
   }
 })
+
+// F022 Phase 3.5 (review P1-1): listSessionGroupsForBackfill
+test("review P1-1: listSessionGroupsForBackfill 不分页，扫描 >200 条活跃会话", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    // listSessionGroups 默认 limit=200 → backfill 老路径会漏掉第 201 条
+    const total = 210
+    for (let i = 0; i < total; i++) repo.createSessionGroup(`Room ${i}`)
+
+    const rows = repo.listSessionGroupsForBackfill()
+    assert.equal(rows.length, total, `应该返回全部 ${total} 条，不受 200 分页限制`)
+    assert.ok(
+      rows.every((r) => typeof r.id === "string"),
+      "每行都有 id",
+    )
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("review P1-1: listSessionGroupsForBackfill 过滤软删，不过滤归档", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const active = repo.createSessionGroup("active")
+    const archived = repo.createSessionGroup("archived")
+    const deleted = repo.createSessionGroup("soft-deleted")
+    repo.archiveSessionGroup(archived)
+    repo.softDeleteSessionGroup(deleted)
+
+    const ids = repo.listSessionGroupsForBackfill().map((r) => r.id)
+    assert.ok(ids.includes(active), "活跃会话在")
+    assert.ok(ids.includes(archived), "归档会话仍应被 backfill — 归档≠不命名")
+    assert.ok(!ids.includes(deleted), "软删会话不应 backfill — 已被用户标记删除")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("review P1-2: title_backfill_attempts 达到 MAX 后 backfill 跳过（防 Haiku 死循环）", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const stuck = repo.createSessionGroup("haiku-keeps-failing")
+    const fresh = repo.createSessionGroup("fresh")
+
+    // 模拟 SessionTitler fallback 3 次
+    for (let i = 0; i < DrizzleSessionRepository.MAX_TITLE_BACKFILL_ATTEMPTS; i++) {
+      repo.incrementTitleBackfillAttempts(stuck)
+    }
+
+    const ids = repo.listSessionGroupsForBackfill().map((r) => r.id)
+    assert.ok(!ids.includes(stuck), "attempts ≥ MAX 的会话永久跳过")
+    assert.ok(ids.includes(fresh), "新会话仍应扫入队列")
+
+    // 重置后重新进入扫描（例如用户手动 rename 后清锁）
+    repo.resetTitleBackfillAttempts(stuck)
+    const after = repo.listSessionGroupsForBackfill().map((r) => r.id)
+    assert.ok(after.includes(stuck), "reset 后回到扫描队列")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
