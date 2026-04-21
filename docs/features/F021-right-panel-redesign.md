@@ -1,9 +1,10 @@
 ---
 id: F021
 title: 右侧面板重设计 — 观测带 + 智能体列表 + 两级配置（全局默认/会话专属）+ Side-Drawer
-status: in-progress
+status: done
 owner: 黄仁勋
 created: 2026-04-19
+completed: 2026-04-21
 ---
 
 # F021 — 右侧面板重设计
@@ -106,6 +107,7 @@ created: 2026-04-19
 | 2026-04-20 | Phase 1–3 实现完成（AC-01~AC-15 全绿，后端 862 + 前端 42 测试通过，`pnpm build` 绿）；进 Phase 4 独立验收 |
 | 2026-04-21 | Phase 4 验收中发现聊天气泡 / 右面板 pill 不跟随会话 resolved model → 新增 Phase 5（AC-19/20/21）；实现完成后小孙人工验收通过，请范德彪 code review（AC-17）|
 | 2026-04-21 | 范德彪二轮扩大范围 review 提 2 P1 + 1 P2 → `d749074` 字段级 merge + 清 pending + Tab 同步闭环；residual risk `2c06753` Drizzle 定向回归 → 二轮放行，AC-17 通过 |
+| 2026-04-21 | Squash merge 到 dev（commit `e21316d`）—— AC-01~AC-21 全绿，前端 77/77 + 后端 961/961 + typecheck 0 |
 
 ## Links
 
