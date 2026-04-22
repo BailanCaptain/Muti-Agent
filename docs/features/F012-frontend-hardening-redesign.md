@@ -103,6 +103,23 @@ created: 2026-04-14
       - `parseAssistantDelta` 的 `if (event.thought) return ""` 防御也可以删（真相源是本地 session 文件，不是 stdout 事件）
     - 时序边界：多轮 resume 时要按**消息文本**精准匹配到对应那条 assistant 消息，不能取最后一条（可能是更旧或更新的）
   - 验证方式：Claude 和 Codex 各跑一次复杂提示，Gemini 用复杂提示跑一次后确认前端"深度思考"折叠块里能看到 subject/description 拼接内容
+
+  **第 3 轮续作（2026-04-22，小孙投诉"乱码"排查）**——d5c24bc + 6190a3b 合入后仍未达成，根因：
+
+    - **路径拼接错位**（d5c24bc 原始引入、6190a3b 未触及）：
+      - `gemini-session-reader.ts:31-38` 拼 `session-<完整 sessionId>.json`
+      - **Gemini CLI 真实产物是两种格式**（实盘 `~/.gemini/tmp/multi-agent/chats/` 对照）：
+        - **老格式（平铺）**：`session-<startTime>-<sessionId 前 8 位>.json`（文件内 `sessionId` 是完整 UUID，等于我们 `MULTI_AGENT_NATIVE_SESSION_ID`）
+        - **新格式（UUID 子目录）**：`<chat-uuid>/<short-sid>.json`（文件内 `sessionId` 是短字符串如 `"hr5vby"`，与我们传入的 UUID 不直接对等）
+      - 结果：`readFile` 必然 ENOENT → `return []` → 前端气泡空白
+    - **测试自欺**（踩 LL-015）：`gemini-session-reader.test.ts` 用 mock-fs 写固定路径 `session-fixture-abc-123.json`，路径格式是**测试自造的**、和 CLI 真实产物脱钩
+    - **修法**（本轮执行）：
+      - 改用**扫目录 + 读文件内 `sessionId` 字段精确匹配**：
+        - 扫 `chats/*.json`（老格式）+ `chats/<uuid-dir>/*.json`（新格式）
+        - 按 mtime 降序取前 N 候选，逐个 `JSON.parse` + 比对 `parsed.sessionId === sessionId`
+        - 命中即取 `messages.filter(type==='gemini').at(-1).thoughts`
+      - **端到端测试不 mock fs**：tmp 目录下真建两种布局的 fixture，真 `readdir/readFile`，防 LL-015 复发
+    - **Open question**：新格式的"short sid" 与 `nativeSessionId` UUID 的对应关系——修之前先跑一轮真 Gemini 抓现场文件对账（15 min），如果 CLI 写回的 nativeSessionId 是 UUID 但文件内是 short sid，要改匹配字段/加二级索引
 - [x] AC-21: **权限全放开 + 废弃 F005 审批系统**（村长决定简化方案）：
   - Bug A — 三个 CLI 的权限请求都不走我们的前端审批：
     - Claude：没传 `--permission-mode`，默认交互式 → stdin 已关 → 卡死
@@ -252,6 +269,7 @@ pnpm dev
 | 2026-04-16 | 编译教训 | 改了 TS 源码没编译到 dist — 运行 8 小时旧代码未生效。增加编译验证步骤 |
 | 2026-04-16 | 测试更新 | 新增 19 个测试（reasoning 6 + skill detection 13），全量 562 绿 |
 | 2026-04-18 | 自我再纠正 | Gemini thinking "无原生输出"结论推翻：CLI 在 `~/.gemini/tmp/<projectDir>/chats/session-*.json` 持久化 `thoughts:[{subject,description}]` 数组。AC-20 重开 Gemini 子项，AC-23 含 Gemini 验证。触发：小孙实测 clowder-ai Gemini 能显示 thinking + Codex 查源 + 自验本地 session 文件 |
+| 2026-04-22 | AC-20 Gemini 第 3 轮 | d5c24bc + 6190a3b 合入后仍未达成。本轮根因：路径拼接错位（`session-<sid>.json` 两种真实格式都不匹配）+ 测试 mock-fs 自欺（踩 LL-015）。修法：改为扫目录 + 读文件内 `sessionId` 字段精确匹配，端到端测试不 mock fs。触发：小孙投诉"乱码"追查（副线路副产品：Claude thinking `display:"omitted"` 根因定位，沉淀 LL-024）|
 
 ## Links
 

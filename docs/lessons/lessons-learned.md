@@ -557,3 +557,36 @@
   - `docs/bugReport/B014-enametoolong-regression.md`（B014 复发记录）
 - 原理（可选）：外部参照是有价值的——它能避免在真空中设计（LL-004）。但"对齐"和"照搬"不同。对齐需要验证两个项目的约束空间是否重叠；照搬只需要复制代码。当约束不重叠时（平台不同、规模不同、历史包袱不同），照搬外部选型就是把别人不存在的问题引入自己的项目。正确的对齐姿势是：先理解对方为什么这么做，再验证那个"为什么"在我们这里是否成立。
 - 关联：LL-004（根因距离）、B008（原始 ENAMETOOLONG）、B014（复发记录）、`docs/features/F012-frontend-hardening-redesign.md` AC-26
+
+### LL-024: 第三方 CLI/SDK 行为异常先查官方文档，禁止靠本地实测 + 推理定论
+- 状态：validated
+- 更新时间：2026-04-22
+
+- 坑：用户报告"Claude 推理气泡空白"后，基于本地实测连续下 3 次错误结论：
+  ① "CLI 从没吐过明文 thinking" → 被数据库里 157 条 >500 字符历史真推理推翻
+  ② "CLI 某个版本悄悄关了明文" → 无版本证据，纯推理
+  ③ "上游 CLI 产品设计就是只回签名" → 搬出 `docs/runtime-events/ANALYSIS.md` 当权威背书
+  用户怒问"先去查一下官方文档不行吗"——一查 Anthropic Messages API `extended-thinking` 文档立刻发现 `display: "summarized" | "omitted"` 参数，再查 Claude Code GitHub Issue #49708 / #49268 即锁定真因：**Opus 4.7 上线时服务端默认从 "summarized" 翻到 "omitted"，Claude Code CLI harness 未显式传 "summarized"**。实测切回 Opus 4.6 / Sonnet 4.6 立刻复现明文（thinking_delta=7/4，Opus 4.7=0），闭环。
+- 根因：
+  ① 把"本地实测没看到"当成"事实不存在"——样本偏差当定论；
+  ② 跨模型 / 跨版本 / 跨 SDK 的**默认参数差异**无法靠客户端实测穷尽；
+  ③ 跳过了"这件事有没有官方 spec"的第一问，直接进入推理模式；
+  ④ 误把仓库里旧的 ANALYSIS.md 结论当成"权威"，没核对后续版本。
+- 触发条件：
+  - 第三方工具（CLI / SDK / 库）行为不符预期，尤其是"以前能用、现在不行"
+  - 跨模型、跨版本、跨 SDK 的行为差异
+  - 本地可复现但找不到控制开关
+- 修复：先按官方 docs + 官方 GitHub Issues 定位真因，再用实测**验证**假设（模型对照矩阵：Opus 4.7 vs Opus 4.6 vs Sonnet 4.6）。
+- 防护：
+  - 诊断外部工具异常，**强制第一步**：(1) 官方 docs；(2) 官方 GitHub Issues；(3) `--help` / 源码；(4) WebSearch "工具名 + 关键词"。本地实测只用来**验证**已知行为，不用来**推断**未知行为。
+  - 下结论前自问三句："这件事有没有官方 spec？我读过吗？它的默认值在我的模型/版本上是什么？"任一未答不出结论。
+  - 禁用"我实测没看到" 作为"不存在"的证据——只能说"在我这个参数组合下没观测到"。
+  - 仓库内部分析文档（ANALYSIS.md / 过往 bug report）过了 1 周以上须先做时效性验证（对齐 LL-001），不能直接搬结论。
+- 来源锚点：
+  - `memory/feedback_check_official_docs_first.md`
+  - Anthropic Docs — Extended thinking: https://platform.claude.com/docs/en/build-with-claude/extended-thinking
+  - Claude Code GitHub Issue #49708 — thinking empty despite showThinkingSummaries
+  - Claude Code GitHub Issue #49268 — harness doesn't set display: "summarized"
+  - 本次对话：2026-04-22 03:00 前后，用户质问"你先去查一下官方文档不行吗"
+- 原理：客户端可观察行为 = **服务端默认 × 客户端显式参数 × 模型档位**的笛卡尔积。任何一维默认值翻转都能让"昨天的经验"失效；仅靠客户端实测只能测 1×1×1 的切片，无法推断其他切片。所以诊断必须从 spec（服务端/SDK 协议）出发，实测只是**验证分支**。
+- 关联：LL-001（时效性验证）、LL-015（对真实 CLI 输出写 parser）、LL-023（"别人这么写"不是 rationale）、`memory/feedback_verify_before_yield.md`
