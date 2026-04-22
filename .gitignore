@@ -31,5 +31,6 @@ packages/api/data/
 .worktree-ports.json
 reference-code/
 docs/runtime-events/
+data/threads/
 scripts/record-events.*
 scripts/analyze-events.*
