@@ -158,4 +158,5 @@ completed: 2026-04-11
 
 - **Evolved from**: 无直接前序 Feature。继承 B003/B004 暴露出来的 A2A 管线脆弱性。
 - **Blocks**: 未来所有依赖"跨 agent 自动协作"的 Feature（review 自动化、SOP 自动推进、并行讨论收敛）
+- **Evolved to**: **F026（A2A 可靠通信层）** — 2026-04-22 立项。基于全量 DB 扫描（R-184 双消息偶发、P5 空壳 10.84%、P6 窜房间 14.38%）+ Clowder 源码逆向，定位到本 feature 的 `return-path` 启动新 invocation 是 R-184 双消息根因（抄 Clowder worklist 抄错）。F026 将废除 `return-path.ts` 的 new-invocation 路径，改为同一 routeSerial 内 `worklist[++index]` 续推，同一 turn 不产生两行 DB message。
 - **Related**: F002 Decision Board（settlement detector 需与续写/回程协同，不能把续写中的 turn 当 settled）· F019 Skill 告示牌（状态机 + sopStageHint 注入，与 next_dispatch 正交）

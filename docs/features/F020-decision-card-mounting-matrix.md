@@ -140,5 +140,5 @@ F002 Decision Board 上线后在 B007 里暴露三类问题，其中根因 C（U
 
 - **Evolved from**: F002（Decision Board 一期）
 - **Blocks**: 无
-- **Related**: F006, F012
+- **Related**: F006, F012, **F026（A2A 可靠通信层）** — F026 的 DiscussionCoordinator 是本 feature "多人讨论收敛后弹"决策卡片的触发源，两者 Phase 5 协同
 - **Supersedes**: B007

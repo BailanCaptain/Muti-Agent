@@ -8,6 +8,8 @@ created: 2026-04-14
 
 # F015 — DispatchOrchestrator 状态持久化
 
+> **⚠️ Superseded by F026（2026-04-22）** — F026「A2A 可靠通信层」的不变量 I4（Registry 持久化 + CAS 状态转移 + STALE 阈值清理）完全超集覆盖本 feature 范围。本 feature spec 未开动，已从 ROADMAP 活跃表移除，相关需求在 F026 Phase 4 实现。本文件归档保留供追溯。
+
 **Created**: 2026-04-14
 
 ## Why
@@ -107,3 +109,4 @@ pnpm typecheck && pnpm test
 - **Depends on**: F011（drizzle schema 和迁移体系）
 - **Resolves**: B009/B011 的调度层根因
 - **Parallel**: F017（跨房间协作感知）
+- **Superseded by**: **F026（A2A 可靠通信层）** — 2026-04-22。F026 以"A2A = durable work item"为北极星，I4 不变量（Registry 持久化 + CAS 状态转移 + STALE 阈值清理）完全覆盖本 feature 范围。本 feature spec 未开动，关停归档。
