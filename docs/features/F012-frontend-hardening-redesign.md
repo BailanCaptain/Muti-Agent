@@ -89,7 +89,7 @@ created: 2026-04-14
     - 参考：clowder-ai `codex-event-transform.ts:254-262` 用同样的事件格式，**已跑通**
     - clowder-ai 用 `model_reasoning_effort` 配置（我们也有），reasoning 作为完整 item 返回
     - 需用复杂提示实测确认 reasoning 事件能触发
-  - [ ] **Gemini CLI：本地 session 文件回读方案**（2026-04-18 翻案，原结论"做不到"错误）
+  - [x] **Gemini CLI：本地 session 文件回读方案**（2026-04-18 翻案，原结论"做不到"错误；第 3 轮 27c8744 合入后达成，见 Timeline）
     - 真相：Gemini CLI 执行后会把完整会话写到 `~/.gemini/tmp/<projectDir>/chats/session-<sessionId>.json`，每条 `type === 'gemini'` 的消息带 `thoughts: [{ subject, description }]` 数组 —— **thinking 数据一直都在硬盘上**
     - 证据：自验 `~/.gemini/tmp/multi-agent/chats/` 从 2026-03-19 起就有 session 文件、`~/.gemini/tmp/clowder-ai/chats/session-2026-04-18T08-31-8c6f6e07.json` 肉眼看到 `thoughts` 数组内容（subject: "Analyzing User Requests" / "Considering Initial Response" / ...）
     - 实现路径（参考 clowder-ai 新版本 GeminiAgentService，本地 reference-code/clowder-ai 副本停在 2026-03-30 `50012c7`，不含此功能，需要拉最新）：
@@ -270,6 +270,7 @@ pnpm dev
 | 2026-04-16 | 测试更新 | 新增 19 个测试（reasoning 6 + skill detection 13），全量 562 绿 |
 | 2026-04-18 | 自我再纠正 | Gemini thinking "无原生输出"结论推翻：CLI 在 `~/.gemini/tmp/<projectDir>/chats/session-*.json` 持久化 `thoughts:[{subject,description}]` 数组。AC-20 重开 Gemini 子项，AC-23 含 Gemini 验证。触发：小孙实测 clowder-ai Gemini 能显示 thinking + Codex 查源 + 自验本地 session 文件 |
 | 2026-04-22 | AC-20 Gemini 第 3 轮 | d5c24bc + 6190a3b 合入后仍未达成。本轮根因：路径拼接错位（`session-<sid>.json` 两种真实格式都不匹配）+ 测试 mock-fs 自欺（踩 LL-015）。修法：改为扫目录 + 读文件内 `sessionId` 字段精确匹配，端到端测试不 mock fs。触发：小孙投诉"乱码"追查（副线路副产品：Claude thinking `display:"omitted"` 根因定位，沉淀 LL-024）|
+| 2026-04-22 | AC-20 Gemini 第 3 轮 merged (27c8744) | squash merge 合入 dev（本地 ff-only，gh 不可用）。Reviewer 范德彪 PASS · 小孙 UI ACK · quality-gate 1042/1042 测试绿。AC-20 Gemini 子项打勾；AC-23 三端整体手动验证仍 open（仅 Gemini 单端已覆盖）|
 
 ## Links
 
