@@ -590,3 +590,30 @@
   - 本次对话：2026-04-22 03:00 前后，用户质问"你先去查一下官方文档不行吗"
 - 原理：客户端可观察行为 = **服务端默认 × 客户端显式参数 × 模型档位**的笛卡尔积。任何一维默认值翻转都能让"昨天的经验"失效；仅靠客户端实测只能测 1×1×1 的切片，无法推断其他切片。所以诊断必须从 spec（服务端/SDK 协议）出发，实测只是**验证分支**。
 - 关联：LL-001（时效性验证）、LL-015（对真实 CLI 输出写 parser）、LL-023（"别人这么写"不是 rationale）、`memory/feedback_verify_before_yield.md`
+
+### LL-025: Worktree 清不掉 / file busy — 按 CommandLine 过滤找孤儿 tsx watch
+- 状态：validated
+- 更新时间：2026-04-22
+
+- 坑：`git worktree remove` 报 `Device or resource busy`（`.runtime/worktree-preview/data/multi-agent.sqlite` 被占），`netstat -ano | grep LISTEN | grep :<port>` 查不到、`taskkill` 按端口找不到任何 PID，看起来"没进程"，清不了。
+- 根因：worktree preview 的 `tsx watch packages/api/src/index.ts` 子进程在 preview 主脚本异常退出（或 node_modules 被先删）后**孤儿化**——HTTP server 早已失效，故 `netstat` 无 LISTEN；但 Node 进程仍活着，仍持 SQLite 文件 handle，Windows 不让删 `.sqlite/-shm/-wal`，连带 worktree 整体清不掉。
+- 触发条件：
+  - Windows + worktree preview 模式（F024）
+  - preview 主脚本未把 SIGINT/SIGTERM cascade 到 tsx watch 子进程
+  - merge-gate 5a 清副产物时 file busy
+- 修复：按 worktree 路径过滤 CommandLine 找孤儿 PID 再 kill。
+  ```powershell
+  Get-WmiObject Win32_Process -Filter "Name='node.exe'" `
+    | Where-Object { $_.CommandLine -like '*{worktree-name}*' } `
+    | Select-Object ProcessId,CommandLine
+  ```
+  拿到 PID 后 `taskkill //F //PID {pid}`，然后再 `rm -rf .runtime` / `git worktree remove`。
+- 防护：
+  - merge-gate SKILL.md 5a-0 「深度兜底」指向本 LL
+  - **TD**：`scripts/worktree-preview.ts` SIGINT handler 应 cascade 到 tsx watch 子进程（`child.kill('SIGTERM')` + 等 exit），根治孤儿化
+  - 诊断顺序：① `netstat LISTEN` → 找不到别放弃 ② `Get-WmiObject` 按 CommandLine 过滤 ③ 任一步找到 PID 即 `taskkill //F`；禁止直接 `git worktree remove --force`（违反 Iron Law 1）
+- 来源锚点：
+  - `multi-agent-skills/merge-gate/SKILL.md` § 5a-0 深度兜底
+  - 本次对话：2026-04-22 F012 AC-20 第 3 轮合入 worktree 清理（3 个 tsx PID 80220/83796/84060 全靠 WMI 定位）
+- 原理：`netstat` 只暴露持有监听 socket 的进程；Node 子进程的 HTTP server 可以先崩但进程主循环（watch/FS handles）仍活。file busy 的真实所有者必须按"什么进程持有这个路径的 handle"查——Windows 下无 `lsof`，要么装 `handle.exe`（需 admin），要么走 WMI CommandLine 反推（本 PID 唯一可靠路径）。
+- 关联：LL-020（"汇报"不等于"验证"——kill 后必须再跑一次 rm 确认）、F024（worktree preview 基础设施）、`multi-agent-skills/merge-gate/SKILL.md`
