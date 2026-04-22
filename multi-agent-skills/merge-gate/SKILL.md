@@ -118,6 +118,19 @@ taskkill //F //PID {pid}
 # 孤儿化会留 .env*.backup-by-preview 和 .worktree-ports.json 残留，由 5a 补清
 ```
 
+**深度兜底**（netstat 查不到 LISTEN 但 `rm` / `git worktree remove` 仍报 file busy）：
+孤儿 `tsx watch` 可能 HTTP server 已挂但 node 进程仍持 SQLite file handle；此时 `netstat` 无 LISTEN、`taskkill` 查不到端口。
+走 CommandLine 过滤找 PID（Windows PowerShell）：
+```powershell
+Get-WmiObject Win32_Process -Filter "Name='node.exe'" `
+  | Where-Object { $_.CommandLine -like '*{worktree-name}*' } `
+  | Select-Object ProcessId,CommandLine
+# 拿到 PID 后 taskkill //F //PID {pid}
+```
+**Why**：worktree preview 的 tsx watch 子进程在父进程异常退出时可能孤儿化，HTTP server 已失效但 file handle 仍占；只用 netstat 找不出来。**2026-04-22 F012 AC-20 合入时实战踩过**（3 个 tsx watch PID 全靠 WMI CommandLine 过滤才定位）。
+
+**TD（preview 脚本根治）**：`scripts/worktree-preview.ts` 的 SIGINT handler 当前未正确 cascade 到 tsx watch 子进程，应补 `child.kill('SIGTERM')` + 等待 exit。
+
 ### 5a. 副产物清理（必做）
 
 `git worktree remove` 遇到 untracked/modified 文件会拒绝，必须先清。**禁用 `--force`**——`.runtime/uploads` 可能含持久化数据，`--force` 会静默销毁，违反数据神圣铁律。
