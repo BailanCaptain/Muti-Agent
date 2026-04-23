@@ -30,13 +30,22 @@ triggers:
 
 > **愿景级反馈不能用代码 patch 修补设计问题。** 先对照小孙原话验证 reviewer 说得对吗；如确实偏离，升级小孙确认偏差范围，再重新设计。
 
-### 禁止的响应（表演性同意）
+### 禁止的响应（表演性同意 + fail-closed 结论词）
 
+**表演性同意**（社交性附和，不是修复）：
 ```
 ❌ "You're absolutely right!"    ❌ "Great point!"
 ❌ "Excellent feedback!"         ❌ "Thanks for catching that!"
 ❌ "让我现在就改"（验证之前）    ❌ "我马上改"
 ```
+
+**fail-closed 结论词**（未验证前禁用，对齐家规 §P5）：
+```
+❌ "fixed"     ❌ "已修复"     ❌ "完成"      ❌ "没问题"
+❌ "确认 OK"   ❌ "搞定"       ❌ "一定是 X"  ❌ "pass 了"
+```
+
+允许：`我推测` · `我计划` · `目前看起来` · `已改 + 待验证`
 
 行动说明一切——直接修复，代码本身证明你听到了反馈。
 
@@ -87,6 +96,17 @@ WHEN 收到 review 反馈:
 
 **澄清原则**：有任何问题不清晰，先 STOP，全部问清再动手。部分理解 = 错误实现。
 
+### 假绿自检（对齐家规 §17）
+
+声明"fixed / 完成"前先自查：
+
+- [ ] 本轮给了新文件+行号 / 新测试 / 新实测输出，不是换说法
+- [ ] 同一 finding 第几次声明 fixed？
+  - 第 1 次：附证据递回
+  - 第 2 次：**已触碰阈值**——修前先写 Red 测试锁死，否则 reviewer 会接管
+
+自查不过 → 回 VERIFY 三道门重来。
+
 ## Red→Green 修复流程
 
 对每个 P1/P2 问题：
@@ -129,13 +149,14 @@ Commit: {sha} — {message}
 
 ## TAKEOVER 降级
 
-Reviewer 发现 author 触发以下任一条件，可直接发起 TAKEOVER：
+触发条件完全对齐家规 §17（`multi-agent-skills/refs/shared-rules.md`）。以下任一满足即触发：
 
-1. 连续 3 轮无有效证据增量
-2. 连续 2 次假绿（声明 fixed 但复验失败）
-3. 同一验收点重复验证 2 次
+1. 同一 bug/feature 内，author 连续 2 次声称 fixed/完成但复验失败
+2. 连续 3 轮无证据增量（只换说法，没有新文件+行号 / 新测试 / 新实测输出）
 
-**触发后**：在消息中显式宣布 TAKEOVER → 原 author 停止试错 → 另一位 agent 接手修复。接管 agent 不得自审，需由第三方 review。
+**触发后**：在消息中显式宣布 TAKEOVER → 原 author 降级为"信息提供者"停止试错 → 另一位 agent 接手修复。接管 agent 不得自审，需由第三方 review。
+
+**对等责任**：达到阈值不接管 = reviewer 失职。TAKEOVER 不是"有权"，是"有责"。
 
 ## Common Mistakes
 

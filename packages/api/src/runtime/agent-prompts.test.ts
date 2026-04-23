@@ -1,6 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { AGENT_SYSTEM_PROMPTS, buildSystemPromptWithHints } from "./agent-prompts"
+import fs from "node:fs"
+import {
+  AGENT_SYSTEM_PROMPTS,
+  buildSystemPromptWithHints,
+  __resetSharedRulesCacheForTest
+} from "./agent-prompts"
 
 test("AGENT_SYSTEM_PROMPTS contains prompts for all providers", () => {
   assert.ok(AGENT_SYSTEM_PROMPTS.claude.length > 0)
@@ -57,5 +62,36 @@ test("buildSystemPromptWithHints works for all three providers", () => {
     })
     assert.ok(out.startsWith(AGENT_SYSTEM_PROMPTS[provider]), `${provider}: base preserved`)
     assert.ok(out.endsWith("SOP: F019 stage=review → load skill: code-review"), `${provider}: hint appended`)
+  }
+})
+
+// Hot-reload contract (R-198 P1): AGENT_SYSTEM_PROMPTS must re-read shared-rules.md
+// at access time so editing the file + merging takes effect without API restart.
+test("AGENT_SYSTEM_PROMPTS reflects runtime shared-rules.md mutation (hot reload, R-198)", () => {
+  const marker = `HOT_RELOAD_MARKER_${Date.now()}_${Math.random().toString(36).slice(2)}`
+  const originalReadFileSync = fs.readFileSync
+
+  __resetSharedRulesCacheForTest()
+
+  // Monkeypatch fs.readFileSync only for shared-rules.md; leave every other read alone.
+  ;(fs as any).readFileSync = (filePath: any, options?: any) => {
+    if (typeof filePath === "string" && filePath.endsWith("shared-rules.md")) {
+      return `# Stubbed rules\n${marker}\n`
+    }
+    return originalReadFileSync.call(fs, filePath, options)
+  }
+
+  try {
+    for (const provider of ["claude", "codex", "gemini"] as const) {
+      const prompt = AGENT_SYSTEM_PROMPTS[provider]
+      assert.ok(
+        prompt.includes(marker),
+        `${provider}: AGENT_SYSTEM_PROMPTS must reflect current shared-rules.md content, ` +
+          `not a module-load snapshot. Missing marker=${marker}.`
+      )
+    }
+  } finally {
+    ;(fs as any).readFileSync = originalReadFileSync
+    __resetSharedRulesCacheForTest()
   }
 })

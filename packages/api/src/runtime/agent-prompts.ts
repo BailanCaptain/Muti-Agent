@@ -26,7 +26,7 @@ const L0_DIGEST = `## 家规（shared-rules.md 摘要）
 - P2 共创伙伴，不是木头人（自主跑 SOP，不每步问）
 - P3 方向正确 > 执行速度（不确定就停-搜-问-确认）
 - P4 每个概念只在一处定义
-- P5 可验证才算完成（先红后绿）
+- P5 可验证才算完成 — **Fail-closed 证据契约**：未拿出本轮实际证据（文件路径+行号 / 测试输出 / 截图 / 实测命令输出）前禁用「fixed/完成/没问题/确认/一定是」结论词；拿不出只能说「还没查完」继续查。UX/前端变更必须浏览器实操+截图。
 
 **诚实原则**：
 - 不确定时明确说不知道
@@ -40,10 +40,11 @@ const L0_DIGEST = `## 家规（shared-rules.md 摘要）
 - Skill 强制触发 / Review 先红后绿 / P1P2 不留存 / 交接五件套
 - @ 是路由指令不是装饰，行首才生效，用真实人名不是 provider 代号
 - 不冒充他人 / commit 带 \`[昵称/模型 🐾]\` 签名
+- **§17 TAKEOVER 协议**：author 在同一 bug/feature 连续 2 次声称 fixed 但复验失败 / 连续 3 轮无证据增量（无新文件+行号 / 新测试 / 新实测输出）→ reviewer **有责**在当前 thread 显式宣布 TAKEOVER，原 author 降级为信息提供者，另一位 agent 接手修复。达到阈值不接管 = reviewer 失职。
 
 **Skill 路由**：交接→cross-role-handoff · 写计划→writing-plans · 开 worktree→worktree · 写代码/TDD→tdd · 自检→quality-gate · 独立验收→acceptance-guardian · 做 code review→code-review · 请 review→requesting-review · 收 review 修复→receiving-review · merge→merge-gate · feature/bugfix→feat-lifecycle · brainstorm→collaborative-thinking · bug/调试→debugging · scope偏了/流程改进→self-evolution
 
-**回答纪律**：先写结论再动手验证 · 连续 >10 次 shell 停下来总结 · 每完成子步骤写文字交代进展 · 预算告警立即收尾
+**回答纪律**：先汇报现状+验证计划（未验证前禁用 fixed/完成/没问题/确认 结论词） · 连续 >10 次 shell 停下来总结 · 每完成子步骤写文字交代进展 · 预算告警立即收尾
 `.trim();
 
 const DECISION_ESCALATION_RULES = `
@@ -153,6 +154,12 @@ export function loadSharedRules(): string {
   }
 }
 
+/** @internal test-only — reset the 60s file cache so mocked fs.readFileSync takes effect immediately. */
+export function __resetSharedRulesCacheForTest(): void {
+  _sharedRulesCache = null;
+  _sharedRulesCacheTime = 0;
+}
+
 // ── Prompt Builders ─────────────────────────────────────────────────
 
 function buildTeammateRoster(current: Provider): string {
@@ -226,13 +233,43 @@ function buildBasePrompt(provider: Provider): string {
 }
 
 /**
- * 每个 agent 的硬编码 system prompt，针对每个 provider 预计算身份 + 家规 + 名册。
+ * 每个 agent 的 system prompt，**每次属性访问都重新 build**（Proxy），
+ * 以便 `shared-rules.md` 在运行时被修改后，新 prompt 可以在 60s 文件缓存 TTL 内生效，
+ * 无需重启 API 进程。caller 端保持 `AGENT_SYSTEM_PROMPTS[provider]` 写法不变。
+ *
+ * R-198: 此前是 module-load 时预计算的 const，`loadSharedRules()` 的 60s TTL
+ * 因此形同虚设；合入家规改动后必须重启进程才能生效。
  */
-export const AGENT_SYSTEM_PROMPTS: Record<Provider, string> = {
-  claude: buildBasePrompt("claude"),
-  codex: buildBasePrompt("codex"),
-  gemini: buildBasePrompt("gemini")
-};
+const _AGENT_PROMPT_KEYS: readonly Provider[] = ["claude", "codex", "gemini"];
+
+export const AGENT_SYSTEM_PROMPTS: Record<Provider, string> = new Proxy(
+  {} as Record<Provider, string>,
+  {
+    get(_target, prop: string | symbol) {
+      if (typeof prop === "string" && (_AGENT_PROMPT_KEYS as readonly string[]).includes(prop)) {
+        return buildBasePrompt(prop as Provider);
+      }
+      return undefined;
+    },
+    has(_target, prop) {
+      return typeof prop === "string" && (_AGENT_PROMPT_KEYS as readonly string[]).includes(prop);
+    },
+    ownKeys() {
+      return [..._AGENT_PROMPT_KEYS];
+    },
+    getOwnPropertyDescriptor(_target, prop) {
+      if (typeof prop === "string" && (_AGENT_PROMPT_KEYS as readonly string[]).includes(prop)) {
+        return {
+          enumerable: true,
+          configurable: true,
+          writable: false,
+          value: buildBasePrompt(prop as Provider)
+        };
+      }
+      return undefined;
+    }
+  }
+);
 
 /**
  * F019 P3: Per-invocation 告示牌 context passed by cli-orchestrator.
