@@ -32,6 +32,10 @@ interface Candidate {
   mtimeMs: number;
 }
 
+function isSessionFile(name: string): boolean {
+  return name.endsWith(".json") || name.endsWith(".jsonl");
+}
+
 async function collectCandidates(chatsDir: string): Promise<Candidate[]> {
   let entries: Dirent[];
   try {
@@ -43,13 +47,13 @@ async function collectCandidates(chatsDir: string): Promise<Candidate[]> {
   const out: Candidate[] = [];
   for (const ent of entries) {
     const entryPath = join(chatsDir, ent.name);
-    if (ent.isFile() && ent.name.endsWith(".json")) {
+    if (ent.isFile() && isSessionFile(ent.name)) {
       const st = await stat(entryPath).catch(() => null);
       if (st) out.push({ path: entryPath, mtimeMs: st.mtimeMs });
     } else if (ent.isDirectory()) {
       const sub = await readdir(entryPath).catch(() => [] as string[]);
       for (const name of sub) {
-        if (!name.endsWith(".json")) continue;
+        if (!isSessionFile(name)) continue;
         const p = join(entryPath, name);
         const st = await stat(p).catch(() => null);
         if (st) out.push({ path: p, mtimeMs: st.mtimeMs });
@@ -57,6 +61,37 @@ async function collectCandidates(chatsDir: string): Promise<Candidate[]> {
     }
   }
   return out;
+}
+
+function extractThoughtsFromJsonl(
+  raw: string,
+  sessionId: string,
+): GeminiThought[] | null {
+  const lines = raw.split("\n").filter((l) => l.length > 0);
+  if (lines.length === 0) return null;
+
+  let header: { sessionId?: string } | null = null;
+  try {
+    header = JSON.parse(lines[0]);
+  } catch {
+    return null;
+  }
+  if (!header || header.sessionId !== sessionId) return null;
+
+  let lastGemini: GeminiSessionMessage | null = null;
+  for (let i = 1; i < lines.length; i++) {
+    let evt: GeminiSessionMessage;
+    try {
+      evt = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    if (evt && evt.type === "gemini") lastGemini = evt;
+  }
+  if (!lastGemini) return [];
+
+  const thoughts = Array.isArray(lastGemini.thoughts) ? lastGemini.thoughts : [];
+  return thoughts.filter((t) => t && (t.subject || t.description));
 }
 
 export async function readGeminiThoughtsFromSession(
@@ -77,6 +112,13 @@ export async function readGeminiThoughtsFromSession(
     } catch {
       continue;
     }
+
+    if (c.path.endsWith(".jsonl")) {
+      const hit = extractThoughtsFromJsonl(raw, sessionId);
+      if (hit === null) continue;
+      return hit;
+    }
+
     let parsed: GeminiSessionFile;
     try {
       parsed = JSON.parse(raw);

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { readGeminiThoughtsFromSession, formatGeminiThoughts } from "./gemini-session-reader";
 
 const FIXTURE_PATH = join(__dirname, "__fixtures__", "gemini-session-sample.json");
+const JSONL_FIXTURE_PATH = join(__dirname, "__fixtures__", "gemini-session-sample.jsonl");
 
 function makeHome(): string {
   return mkdtempSync(join(tmpdir(), "gemini-session-test-"));
@@ -159,6 +160,129 @@ describe("readGeminiThoughtsFromSession — real CLI layouts", () => {
       projectDir: "multi-agent",
     });
     assert.deepEqual(thoughts, []);
+  });
+
+  it("jsonl layout: reads thoughts from per-line events matching sessionId (CLI ≥ 04-23)", async () => {
+    const home = makeHome();
+    const chats = chatsDirOf(home, "multi-agent");
+    const sid = "fixture-jsonl-xyz";
+    const raw = readFileSync(JSONL_FIXTURE_PATH, "utf8");
+    writeFileSync(
+      join(chats, `session-2026-04-23T12-34-${sid.slice(0, 8)}.jsonl`),
+      raw,
+    );
+
+    const thoughts = await readGeminiThoughtsFromSession(sid, {
+      home,
+      projectDir: "multi-agent",
+    });
+    assert.equal(thoughts.length, 2);
+    assert.equal(thoughts[0].subject, "Analyzing User Request");
+    assert.equal(thoughts[1].subject, "Planning Response Structure");
+  });
+
+  it("jsonl layout: returns [] when sessionId header does not match", async () => {
+    const home = makeHome();
+    const chats = chatsDirOf(home, "multi-agent");
+    writeFileSync(
+      join(chats, "session-2026-04-23T12-34-noise001.jsonl"),
+      readFileSync(JSONL_FIXTURE_PATH, "utf8"),
+    );
+
+    const thoughts = await readGeminiThoughtsFromSession("different-sid", {
+      home,
+      projectDir: "multi-agent",
+    });
+    assert.deepEqual(thoughts, []);
+  });
+
+  it("jsonl layout: skips malformed / partial event lines without throwing", async () => {
+    const home = makeHome();
+    const chats = chatsDirOf(home, "multi-agent");
+    const sid = "jsonl-partial-ok";
+    const content = [
+      JSON.stringify({ sessionId: sid, kind: "main" }),
+      "{ not-json garbage",
+      "",
+      JSON.stringify({ id: "u1", type: "user", content: "hi" }),
+      '{"id":"g-partial","type":"gemini","thoughts":[{"subject":"half',
+      JSON.stringify({
+        id: "g1",
+        type: "gemini",
+        thoughts: [
+          { subject: "Recovered", description: "after partial line" },
+        ],
+      }),
+    ].join("\n");
+    writeFileSync(
+      join(chats, "session-2026-04-23T12-34-partial1.jsonl"),
+      content,
+    );
+
+    const thoughts = await readGeminiThoughtsFromSession(sid, {
+      home,
+      projectDir: "multi-agent",
+    });
+    assert.equal(thoughts.length, 1);
+    assert.equal(thoughts[0].subject, "Recovered");
+  });
+
+  it("jsonl layout: picks last gemini event when multiple exist", async () => {
+    const home = makeHome();
+    const chats = chatsDirOf(home, "multi-agent");
+    const sid = "jsonl-multi-turn";
+    const content = [
+      JSON.stringify({ sessionId: sid, kind: "main" }),
+      JSON.stringify({
+        id: "g1",
+        type: "gemini",
+        thoughts: [{ subject: "FirstTurn", description: "stale" }],
+      }),
+      JSON.stringify({ id: "u2", type: "user", content: "follow up" }),
+      JSON.stringify({
+        id: "g2",
+        type: "gemini",
+        thoughts: [{ subject: "LastTurn", description: "fresh" }],
+      }),
+    ].join("\n");
+    writeFileSync(
+      join(chats, "session-2026-04-23T12-40-multi111.jsonl"),
+      content,
+    );
+
+    const thoughts = await readGeminiThoughtsFromSession(sid, {
+      home,
+      projectDir: "multi-agent",
+    });
+    assert.equal(thoughts.length, 1);
+    assert.equal(thoughts[0].subject, "LastTurn");
+  });
+
+  it("mixed .json + .jsonl in same chats dir: each format is read independently", async () => {
+    const home = makeHome();
+    const legacySid = "legacy-sid-1111-2222-3333-444444444444";
+    stageLegacy(home, "multi-agent", legacySid);
+
+    const chats = chatsDirOf(home, "multi-agent");
+    const newSid = "fixture-jsonl-xyz";
+    writeFileSync(
+      join(chats, "session-2026-04-23T12-34-newer001.jsonl"),
+      readFileSync(JSONL_FIXTURE_PATH, "utf8"),
+    );
+
+    const legacyThoughts = await readGeminiThoughtsFromSession(legacySid, {
+      home,
+      projectDir: "multi-agent",
+    });
+    assert.equal(legacyThoughts.length, 2);
+    assert.equal(legacyThoughts[0].subject, "Analyzing User Request");
+
+    const jsonlThoughts = await readGeminiThoughtsFromSession(newSid, {
+      home,
+      projectDir: "multi-agent",
+    });
+    assert.equal(jsonlThoughts.length, 2);
+    assert.equal(jsonlThoughts[0].subject, "Analyzing User Request");
   });
 
   it("skips unparseable JSON files without throwing", async () => {
