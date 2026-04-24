@@ -110,6 +110,7 @@ const CONTEXT_WINDOW_FALLBACKS: ReadonlyArray<{ match: RegExp; window: number }>
   { match: /^claude-(opus|sonnet|haiku)-4/i, window: 200_000 },
   { match: /^claude-/i, window: 200_000 },
   // OpenAI reasoning 家族
+  { match: /^gpt-5\.5/i, window: 1_000_000 },
   { match: /^gpt-5/i, window: 400_000 },
   { match: /^gpt-4/i, window: 128_000 },
   { match: /^o3/i, window: 200_000 }
