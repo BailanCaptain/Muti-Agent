@@ -271,6 +271,7 @@ pnpm dev
 | 2026-04-18 | 自我再纠正 | Gemini thinking "无原生输出"结论推翻：CLI 在 `~/.gemini/tmp/<projectDir>/chats/session-*.json` 持久化 `thoughts:[{subject,description}]` 数组。AC-20 重开 Gemini 子项，AC-23 含 Gemini 验证。触发：小孙实测 clowder-ai Gemini 能显示 thinking + Codex 查源 + 自验本地 session 文件 |
 | 2026-04-22 | AC-20 Gemini 第 3 轮 | d5c24bc + 6190a3b 合入后仍未达成。本轮根因：路径拼接错位（`session-<sid>.json` 两种真实格式都不匹配）+ 测试 mock-fs 自欺（踩 LL-015）。修法：改为扫目录 + 读文件内 `sessionId` 字段精确匹配，端到端测试不 mock fs。触发：小孙投诉"乱码"追查（副线路副产品：Claude thinking `display:"omitted"` 根因定位，沉淀 LL-024）|
 | 2026-04-22 | AC-20 Gemini 第 3 轮 merged (27c8744) | squash merge 合入 dev（本地 ff-only，gh 不可用）。Reviewer 范德彪 PASS · 小孙 UI ACK · quality-gate 1042/1042 测试绿。AC-20 Gemini 子项打勾；AC-23 三端整体手动验证仍 open（仅 Gemini 单端已覆盖）|
+| 2026-04-24 | AC-20 Gemini jsonl 兼容 merged (ad24771) | Gemini CLI 从 2026-04-23 起把 session 文件格式 `.json` → `.jsonl`（每行一事件），reader 只扫 `.json` 致新 session 全部 miss、thinking 气泡空。修法：`collectCandidates` 扩到 `.json`/`.jsonl` + `extractThoughtsFromJsonl` 逐行解析首行 header + 事件流、取最后一条 `type:"gemini"` 的 thoughts，容错 skip 坏行。新增 5 个 jsonl 用例（17/17 绿），pre-commit typecheck+docs+biome+全量测试通过。小孙 CVO 直接放行走 merge-gate，跳过 quality-gate/acceptance-guardian/peer review。本地 ff-only，gh 不可用 |
 
 ## Links
 
