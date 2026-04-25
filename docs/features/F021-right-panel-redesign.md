@@ -1,10 +1,11 @@
 ---
 id: F021
 title: 右侧面板重设计 — 观测带 + 智能体列表 + 两级配置（全局默认/会话专属）+ Side-Drawer
-status: done
+status: in-progress
 owner: 黄仁勋
 created: 2026-04-19
-completed: 2026-04-21
+first_completed: 2026-04-21
+reopened: 2026-04-22
 ---
 
 # F021 — 右侧面板重设计
@@ -78,6 +79,45 @@ completed: 2026-04-21
 - [x] AC-20: 后端消息表新增 `messages.model` snapshot 列（ALTER 迁移 `F021-messages-add-model`），assistant 消息 append 时把本次 resolved model 冻结写入该列
 - [x] AC-21: 聊天气泡 pill 读取 `message.model` snapshot；旧消息（pre-F021 / user / connector 消息）fallback 到 `thread.currentModel`；改会话覆盖后只影响新气泡，历史气泡保持原样（小孙 2026-04-21 人工验收通过）
 
+### Phase 6：上下文窗口 + Seal 阈值齿轮可配 + fillRatio 实时观测（reopened 2026-04-22）
+
+> **Why（小孙原话，2026-04-22）**：
+> "seal阈值我觉得很有必要，比如模型更新了，上下文窗口变大了，我们每次都需要修改代码出个commit来做吗，比如我长任务，我需要你们注意力集中，防止漂移，难道我又要替代改吗"
+> "我应该可以跟齿轮一样 既可以全局，又可以本次会话"
+> "就在这个feature里面做"
+
+**根因**：当前 `packages/shared/src/constants.ts` 把两张本质应是"运行参数"的表写死在代码里 ——
+1. `CONTEXT_WINDOW_FALLBACKS`（model → window）：模型版本升级（如 Opus 4.7 200k → 1M）必须改代码 + commit
+2. `SEAL_THRESHOLDS_BY_PROVIDER`（per-provider warn/action 阈值）：长任务希望"早 seal 防漂移"必须改代码 + commit
+
+F018 已经把 seal 改造为 reference-only 接力（ThreadMemory rolling + Bootstrap 7 区段 + sanitizeHandoffBody），early seal 代价已经很低，应该把"什么时候 seal"的决策权交给用户而不是绑死代码。
+
+**What**：
+- 复用 F021 已有的两层 overrides 表（`global_overrides` + `session_overrides`）各加 2 列
+- 取值三层 fallback：**会话覆盖 → 全局默认 → 代码 fallback**（任一层删除自动回退下一层，永不导致系统不可用）
+- `constants.ts` 两张表保留作为代码 fallback 兜底
+- 前端齿轮两 Tab 各加两个 input（最大窗口 + Seal 阈值百分比）+ observation-bar 加 fillRatio 实时进度条
+
+**明确不在 scope**（其他 8 处架构内常量留代码）：
+- `MAX_BOOTSTRAP_TOKENS = 2000` / Bootstrap 工具段占比 25%
+- ThreadMemory cap `max(1200, min(3000, prompt*3%))`
+- `MAX_AUTO_RESUMES = 2` / `DEFAULT_MAX_MESSAGES = 20` / `BLOAT_DROP_THRESHOLD = 0.4`
+- `CHARS_PER_TOKEN = 4` / continuation-guard 短消息门槛
+
+理由：这些是架构内参数，调错代价隐蔽（影响接力质量但用户感知不到），不适合暴露给齿轮。
+
+**Acceptance Criteria**：
+
+- [ ] AC-22: SQLite 迁移：`global_overrides` 加 `context_window INTEGER` + `seal_pct REAL`；`session_overrides` 加 `context_window INTEGER` + `seal_pct REAL`（NULL = 继承上一层）
+- [ ] AC-23: 后端 `computeSealDecision(provider, usage, threadId, sessionId)` 改签名，按"会话 → 全局 → 代码 fallback"三层取值；返回的 `warn` 自动 = `action - 0.05`（UI 只暴露 action，不暴露 warn）
+- [ ] AC-24: 后端新增 `resolveContextWindow(model, threadId, sessionId)` 走同样三层取值；保留 `getContextWindowForModel` 作为代码 fallback 内部调用
+- [ ] AC-25: 前端齿轮 **Global Defaults Tab** 加 per-provider 两个 input：「最大窗口」(number, tokens) + 「Seal 阈值」(0-100%)；Inherit/Override badge 跟 model 一致
+- [ ] AC-26: 前端齿轮 **Session Overrides Tab** 加同样两个 input；scope **thread-level**（一条聊天线一直生效，跨多次 seal/新 native session 仍激进）—— 与 F021 model/effort 的 session-level 行为不同，需独立确认 store key
+- [ ] AC-27: 前端 **observation-bar** 加 fillRatio 实时进度条：每 provider 一行 `▓▓░░ XX% (used/window) 距 seal Y%`；超过 warn 阈值变黄、超过 action 变红
+- [ ] AC-28: Fallback 链路集成测试：删 session 覆盖 → 自动回退全局；删全局默认 → 自动回退代码 fallback；任一层独立可用
+- [ ] AC-29: 校验：`0.3 ≤ seal_pct ≤ 1.0`、`context_window > 0`；非法值前端拒绝保存 + 后端 reject
+- [ ] AC-30: 小孙端到端验收：(a) 全局调 Claude 阈值到 50% → 验证 seal 提早 (b) 切某 thread 设 60% → 验证只此 thread 生效，新 thread 仍走全局默认 (c) observation-bar 进度条与实际 fillRatio 对得上
+
 ## Dependencies
 
 - 依赖现有 `status-panel.tsx` / `AgentConfigProvider` / 会话状态 store
@@ -108,6 +148,7 @@ completed: 2026-04-21
 | 2026-04-21 | Phase 4 验收中发现聊天气泡 / 右面板 pill 不跟随会话 resolved model → 新增 Phase 5（AC-19/20/21）；实现完成后小孙人工验收通过，请范德彪 code review（AC-17）|
 | 2026-04-21 | 范德彪二轮扩大范围 review 提 2 P1 + 1 P2 → `d749074` 字段级 merge + 清 pending + Tab 同步闭环；residual risk `2c06753` Drizzle 定向回归 → 二轮放行，AC-17 通过 |
 | 2026-04-21 | Squash merge 到 dev（commit `e21316d`）—— AC-01~AC-21 全绿，前端 77/77 + 后端 961/961 + typecheck 0 |
+| 2026-04-22 | **Reopened** — 小孙发起 seal 阈值 + 上下文窗口齿轮可配讨论（"模型升级要改代码 commit / 长任务防漂移"），追加 Phase 6（AC-22~AC-30）；按 feat-lifecycle 重开规则 status: done → in-progress |
 
 ## Links
 
