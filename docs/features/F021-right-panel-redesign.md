@@ -1,11 +1,13 @@
 ---
 id: F021
 title: 右侧面板重设计 — 观测带 + 智能体列表 + 两级配置（全局默认/会话专属）+ Side-Drawer
-status: in-progress
+status: done
 owner: 黄仁勋
 created: 2026-04-19
 first_completed: 2026-04-21
 reopened: 2026-04-22
+recompleted: 2026-04-26
+completed: 2026-04-26
 ---
 
 # F021 — 右侧面板重设计
@@ -164,6 +166,7 @@ F018 已经把 seal 改造为 reference-only 接力（ThreadMemory rolling + Boo
 | 2026-04-22 | **Reopened** — 小孙发起 seal 阈值 + 上下文窗口齿轮可配讨论（"模型升级要改代码 commit / 长任务防漂移"），追加 Phase 6（AC-22~AC-30）；按 feat-lifecycle 重开规则 status: done → in-progress |
 | 2026-04-25 | Task 1–6 + AC-28/29 全部 commit；preview 验收时小孙发现两个盲区：①agent-card 与 ObservationBar 进度条信息冗余 ②seal 真触发时无显眼反馈（status 一行轻量易错过）→ 追加 AC-31/AC-32（Task 7：去冗余 + 持久化 system-notice 消息 + sealed badge）|
 | 2026-04-26 | Phase 6 完工验收：范德彪 code review APPROVED（含 P1/P2 修复 commit `51ba650`：full snapshot 派生 sealed + agent-card detail 改 `(剩余 N%)`）；小孙 AC-30 端到端验收 PASS；worktree-report.md 落档 `.agents/acceptance/F021/20260426T105700Z/`，进 merge-gate |
+| 2026-04-26 | Squash merge 到 dev（commit `04e6b53` `feat(F021-P6): 上下文窗口/Seal 阈值齿轮可配 + fillRatio 实时观测 + seal 感知`）；worktree + `feat/F021-phase6-context-config` 分支销毁；F021 全周期收尾，AC-01~AC-32 全绿，status: done |
 
 ## Links
 
