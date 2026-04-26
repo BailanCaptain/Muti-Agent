@@ -18,6 +18,15 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
 
   const [model, setModel] = useState(sessionOverride?.model ?? "")
   const [effort, setEffort] = useState(sessionOverride?.effort ?? "")
+  // F021 Phase 6: contextWindow + sealPct（UI 用百分比 string）
+  const [contextWindow, setContextWindow] = useState(
+    sessionOverride?.contextWindow != null ? String(sessionOverride.contextWindow) : "",
+  )
+  const [sealPctPercent, setSealPctPercent] = useState(
+    sessionOverride?.sealPct != null
+      ? String(Math.round(sessionOverride.sealPct * 100))
+      : "",
+  )
 
   // F021 P2 (范德彪 二轮 review): 切 provider 或 sessionConfig 异步到达时，
   // 本地输入必须重新同步到 store 的 sessionOverride —— 否则抽屉内切齿轮 /
@@ -25,7 +34,21 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
   useEffect(() => {
     setModel(sessionOverride?.model ?? "")
     setEffort(sessionOverride?.effort ?? "")
-  }, [provider, sessionOverride?.model, sessionOverride?.effort])
+    setContextWindow(
+      sessionOverride?.contextWindow != null ? String(sessionOverride.contextWindow) : "",
+    )
+    setSealPctPercent(
+      sessionOverride?.sealPct != null
+        ? String(Math.round(sessionOverride.sealPct * 100))
+        : "",
+    )
+  }, [
+    provider,
+    sessionOverride?.model,
+    sessionOverride?.effort,
+    sessionOverride?.contextWindow,
+    sessionOverride?.sealPct,
+  ])
   const applyStatus = useSaveStatus({ idle: "应用到当前会话" })
   const pendingStatus = useSaveStatus({ idle: "挂起到下一轮" })
   const clearStatus = useSaveStatus({
@@ -40,6 +63,17 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
 
   const hasModelOverride = Boolean(sessionOverride?.model)
   const hasEffortOverride = Boolean(sessionOverride?.effort)
+  const hasContextWindowOverride = sessionOverride?.contextWindow != null
+  const hasSealPctOverride = sessionOverride?.sealPct != null
+
+  const buildPayload = () => ({
+    model,
+    effort,
+    contextWindow:
+      contextWindow.trim() === "" ? undefined : Number(contextWindow),
+    sealPct:
+      sealPctPercent.trim() === "" ? undefined : Number(sealPctPercent) / 100,
+  })
 
   return (
     <div className="space-y-3">
@@ -87,6 +121,58 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
         </select>
       </Field>
 
+      <Field
+        label="最大窗口"
+        badge={hasContextWindowOverride ? "override" : "inherit"}
+        inheritValue={globalOverride?.contextWindow != null ? String(globalOverride.contextWindow) : null}
+      >
+        <input
+          id={`session-context-window-${provider}`}
+          aria-label="最大窗口"
+          type="number"
+          min={1}
+          step={1}
+          value={contextWindow}
+          onChange={(e) => setContextWindow(e.target.value)}
+          placeholder={
+            globalOverride?.contextWindow != null
+              ? String(globalOverride.contextWindow)
+              : "模型默认"
+          }
+          className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] text-slate-900 outline-none transition focus:border-indigo-400"
+        />
+      </Field>
+
+      <Field
+        label="Seal 阈值"
+        badge={hasSealPctOverride ? "override" : "inherit"}
+        inheritValue={
+          globalOverride?.sealPct != null
+            ? `${Math.round(globalOverride.sealPct * 100)}%`
+            : null
+        }
+      >
+        <div className="flex items-center gap-2">
+          <input
+            id={`session-seal-pct-${provider}`}
+            aria-label="Seal 阈值"
+            type="number"
+            min={30}
+            max={100}
+            step={1}
+            value={sealPctPercent}
+            onChange={(e) => setSealPctPercent(e.target.value)}
+            placeholder={
+              globalOverride?.sealPct != null
+                ? String(Math.round(globalOverride.sealPct * 100))
+                : "代码默认"
+            }
+            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] text-slate-900 outline-none transition focus:border-indigo-400"
+          />
+          <span className="text-[12px] text-slate-500">%</span>
+        </div>
+      </Field>
+
       {isRunning && (
         <div className="flex gap-2 rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-800">
           <span className="text-[13px] leading-none">⏱</span>
@@ -105,7 +191,9 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
           disabled={anyBusy || isRunning}
           aria-busy={applyStatus.status === "saving"}
           onClick={() =>
-            void applyStatus.run(() => setSessionOverride(provider, { model, effort }, false))
+            void applyStatus.run(() =>
+              setSessionOverride(provider, buildPayload(), false),
+            )
           }
           className={`flex-1 rounded-[10px] px-3 py-2.5 text-[12px] font-semibold transition disabled:cursor-not-allowed ${
             applyStatus.status === "saved"
@@ -121,7 +209,9 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
             disabled={anyBusy}
             aria-busy={pendingStatus.status === "saving"}
             onClick={() =>
-              void pendingStatus.run(() => setSessionOverride(provider, { model, effort }, true))
+              void pendingStatus.run(() =>
+                setSessionOverride(provider, buildPayload(), true),
+              )
             }
             className={`flex-1 rounded-[10px] px-3 py-2.5 text-[12px] font-semibold transition disabled:opacity-50 ${
               pendingStatus.status === "saved"
@@ -142,7 +232,13 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
           void clearStatus.run(async () => {
             setModel("")
             setEffort("")
-            await setSessionOverride(provider, { model: "", effort: "" }, false)
+            setContextWindow("")
+            setSealPctPercent("")
+            await setSessionOverride(
+              provider,
+              { model: "", effort: "", contextWindow: undefined, sealPct: undefined },
+              false,
+            )
           })
         }
         className={`w-full rounded-[10px] border px-3 py-2 text-[11px] transition disabled:opacity-50 ${
@@ -165,7 +261,7 @@ function Field({
 }: {
   label: string
   badge: "override" | "inherit"
-  inheritValue?: string | null
+  inheritValue?: string | null | undefined
   children: React.ReactNode
 }) {
   return (

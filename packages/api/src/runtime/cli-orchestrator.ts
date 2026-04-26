@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { Provider, TokenUsageSnapshot, ToolEvent } from "@multi-agent/shared";
 import { SEAL_THRESHOLDS_BY_PROVIDER, getContextWindowForModel } from "@multi-agent/shared";
+import type { ResolvedSealThresholds } from "./seal-config-resolver";
 import {
   findSessionId,
   parseEventModel,
@@ -48,6 +49,21 @@ export type RunTurnOptions = {
   onToolEvent?: (event: ToolEvent) => void;
   onLivenessWarning?: (warning: LivenessWarning) => void;
   onUsageSnapshot?: (snapshot: TokenUsageSnapshot) => void;
+  /**
+   * F021 Phase 6: User-resolved seal thresholds (会话覆盖 → 全局 → 代码 fallback).
+   * When omitted, computeSealDecision falls back to SEAL_THRESHOLDS_BY_PROVIDER.
+   * message-service is responsible for calling resolveSealThresholds and passing
+   * the resolved value here.
+   */
+  sealThresholds?: ResolvedSealThresholds;
+  /**
+   * F021 Phase 6: User-set context window override (session > global). When set,
+   * trumps both the CLI's self-reported window and the model-prefix fallback.
+   * Reasoning: user override expresses an explicit intent ("model upgraded, the
+   * real window is 2M now") and shouldn't be silently overridden by stale CLI
+   * mappings.
+   */
+  contextWindowOverride?: number;
   /**
    * Test hook: override the provider-keyed runtime adapter with a specific
    * instance. Production callers should omit this — the provider field selects
@@ -203,10 +219,12 @@ export function runTurn(options: RunTurnOptions) {
         }
 
         if (usageRaw) {
-          // Resolve contextWindow: prefer the value the CLI echoed; fall back to the
-          // per-model lookup; give up if neither is available (can't compute fillRatio
-          // without a window, and guessing here would cause false-positive seals).
-          const windowTokens = usageRaw.contextWindow ?? getContextWindowForModel(currentModel);
+          // F021 Phase 6: user override (session > global) trumps CLI self-report and model fallback.
+          // Falls back through user → CLI echoed → model prefix table.
+          const windowTokens =
+            options.contextWindowOverride
+            ?? usageRaw.contextWindow
+            ?? getContextWindowForModel(currentModel);
           if (windowTokens && windowTokens > 0 && usageRaw.totalTokens > 0) {
             const snapshot: TokenUsageSnapshot = {
               usedTokens: usageRaw.totalTokens,
@@ -255,7 +273,7 @@ export function runTurn(options: RunTurnOptions) {
         rawStderr: output.rawStderr,
         exitCode: output.exitCode,
         usage: latestUsage,
-        sealDecision: computeSealDecision(options.provider, latestUsage),
+        sealDecision: computeSealDecision(options.provider, latestUsage, options.sealThresholds),
         stopReason: latestStopReason ?? output.stopReason,
         toolEvents,
       };
@@ -265,12 +283,13 @@ export function runTurn(options: RunTurnOptions) {
 
 export function computeSealDecision(
   provider: Provider,
-  usage: TokenUsageSnapshot | null
+  usage: TokenUsageSnapshot | null,
+  resolvedThresholds?: ResolvedSealThresholds
 ): SealDecision | null {
   if (!usage) {
     return null;
   }
-  const thresholds = SEAL_THRESHOLDS_BY_PROVIDER[provider];
+  const thresholds = resolvedThresholds ?? SEAL_THRESHOLDS_BY_PROVIDER[provider];
   const fillRatio = Math.min(usage.usedTokens / usage.windowTokens, 1.0);
   if (fillRatio >= thresholds.action) {
     return { shouldSeal: true, reason: "threshold", fillRatio, usage };

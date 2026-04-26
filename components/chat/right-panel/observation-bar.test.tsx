@@ -44,4 +44,16 @@ describe("ObservationBar", () => {
     const link = screen.getByRole("link", { name: /会话链/ }) as HTMLAnchorElement
     expect(link.getAttribute("href")).toBe("/rooms/r-abc/sessions")
   })
+
+  it("AC-31: never renders seal-progress-list (info moved to agent-card tooltip)", () => {
+    const { container } = render(
+      <ObservationBar
+        messages={0}
+        evidence={0}
+        followUp={0}
+        sessionChainHref="/sessions"
+      />,
+    )
+    expect(container.querySelector('[data-testid="seal-progress-list"]')).toBeNull()
+  })
 })

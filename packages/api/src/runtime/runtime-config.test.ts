@@ -105,3 +105,121 @@ test("saveRuntimeConfig trims whitespace on write", () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// F021 Phase 6: AgentOverride 扩 contextWindow + sealPct
+//   contextWindow: 整数 > 0
+//   sealPct: 0.3 ≤ x ≤ 1.0（warn 自动 = action - 0.05，UI 只暴露 action）
+
+test("F021 P6: sanitize accepts contextWindow as positive integer", () => {
+  const { configPath, dir } = tmpConfigPath()
+  try {
+    writeFileSync(configPath, JSON.stringify({ claude: { contextWindow: 1_000_000 } }), "utf8")
+    assert.deepEqual(loadRuntimeConfig(configPath), { claude: { contextWindow: 1_000_000 } })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("F021 P6: sanitize floors fractional contextWindow", () => {
+  const { configPath, dir } = tmpConfigPath()
+  try {
+    writeFileSync(configPath, JSON.stringify({ codex: { contextWindow: 999_999.7 } }), "utf8")
+    assert.deepEqual(loadRuntimeConfig(configPath), { codex: { contextWindow: 999_999 } })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("F021 P6: sanitize rejects contextWindow <= 0 and non-finite", () => {
+  const { configPath, dir } = tmpConfigPath()
+  try {
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        claude: { contextWindow: 0 },
+        codex: { contextWindow: -1 },
+        gemini: { contextWindow: "1000000" },
+      }),
+      "utf8",
+    )
+    assert.deepEqual(loadRuntimeConfig(configPath), {})
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("F021 P6: sanitize accepts sealPct in [0.3, 1.0]", () => {
+  const { configPath, dir } = tmpConfigPath()
+  try {
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        claude: { sealPct: 0.3 },
+        codex: { sealPct: 0.65 },
+        gemini: { sealPct: 1.0 },
+      }),
+      "utf8",
+    )
+    assert.deepEqual(loadRuntimeConfig(configPath), {
+      claude: { sealPct: 0.3 },
+      codex: { sealPct: 0.65 },
+      gemini: { sealPct: 1.0 },
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("F021 P6: sanitize rejects sealPct out of [0.3, 1.0]", () => {
+  const { configPath, dir } = tmpConfigPath()
+  try {
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        claude: { sealPct: 0.29 },
+        codex: { sealPct: 1.01 },
+        gemini: { sealPct: "0.5" },
+      }),
+      "utf8",
+    )
+    assert.deepEqual(loadRuntimeConfig(configPath), {})
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("F021 P6: sanitize preserves sibling fields when only one P6 field set", () => {
+  const { configPath, dir } = tmpConfigPath()
+  try {
+    saveRuntimeConfig(
+      {
+        claude: { model: "claude-opus-4-7", contextWindow: 2_000_000 },
+        codex: { effort: "high", sealPct: 0.5 },
+      },
+      configPath,
+    )
+    assert.deepEqual(loadRuntimeConfig(configPath), {
+      claude: { model: "claude-opus-4-7", contextWindow: 2_000_000 },
+      codex: { effort: "high", sealPct: 0.5 },
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("F021 P6: sanitize keeps entry when only contextWindow or sealPct present (no model/effort)", () => {
+  const { configPath, dir } = tmpConfigPath()
+  try {
+    writeFileSync(
+      configPath,
+      JSON.stringify({ claude: { contextWindow: 500_000 }, codex: { sealPct: 0.7 } }),
+      "utf8",
+    )
+    assert.deepEqual(loadRuntimeConfig(configPath), {
+      claude: { contextWindow: 500_000 },
+      codex: { sealPct: 0.7 },
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

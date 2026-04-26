@@ -17,7 +17,7 @@ export type ProviderThreadRecord = {
   updatedAt: string
 }
 
-export type MessageType = "progress" | "final" | "a2a_handoff" | "connector"
+export type MessageType = "progress" | "final" | "a2a_handoff" | "connector" | "system_notice"
 
 export type ConnectorSourceRecord = {
   kind: "multi_mention_result"

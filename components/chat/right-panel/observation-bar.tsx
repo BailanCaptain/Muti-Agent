@@ -5,7 +5,12 @@ type Props = {
   sessionChainHref: string
 }
 
-export function ObservationBar({ messages, evidence, followUp, sessionChainHref }: Props) {
+export function ObservationBar({
+  messages,
+  evidence,
+  followUp,
+  sessionChainHref,
+}: Props) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between px-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
@@ -17,10 +22,12 @@ export function ObservationBar({ messages, evidence, followUp, sessionChainHref 
           会话链 →
         </a>
       </div>
-      <div className="grid grid-cols-3 divide-x divide-slate-200/70 rounded-[16px] border border-slate-200/80 bg-gradient-to-br from-white to-slate-50/60 px-2 py-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-        <Metric label="消息" value={messages} />
-        <Metric label="证据" value={evidence} />
-        <Metric label="跟进" value={followUp} />
+      <div className="rounded-[16px] border border-slate-200/80 bg-gradient-to-br from-white to-slate-50/60 px-2 py-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+        <div className="grid grid-cols-3 divide-x divide-slate-200/70">
+          <Metric label="消息" value={messages} />
+          <Metric label="证据" value={evidence} />
+          <Metric label="跟进" value={followUp} />
+        </div>
       </div>
     </div>
   )

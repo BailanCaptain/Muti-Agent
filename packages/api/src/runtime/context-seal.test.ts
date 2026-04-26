@@ -189,3 +189,47 @@ test("computeSealDecision: fillRatio is clamped at 1.0 even when used exceeds wi
   assert.equal(decision?.fillRatio, 1.0);
   assert.equal(decision?.shouldSeal, true);
 });
+
+// ── F021 Phase 6: computeSealDecision 接受 user-resolved thresholds ──────────
+
+test("F021 P6 computeSealDecision: custom thresholds (action=0.5) seals at 50% fillRatio", () => {
+  // 用户在齿轮里把 claude action 阈值调到 50%，warn 自动 = 45%
+  // 110k / 200k = 0.55 > 0.5 → 提早 seal
+  const decision = computeSealDecision(
+    "claude",
+    snapshot(110_000, 200_000),
+    { warn: 0.45, action: 0.5 },
+  );
+  assert.equal(decision?.shouldSeal, true);
+  assert.equal(decision?.reason, "threshold");
+});
+
+test("F021 P6 computeSealDecision: custom thresholds — warn 区间", () => {
+  // action=0.5, warn=0.45；fillRatio=0.47 → warn (不 seal 但提示)
+  const decision = computeSealDecision(
+    "claude",
+    snapshot(94_000, 200_000),
+    { warn: 0.45, action: 0.5 },
+  );
+  assert.equal(decision?.shouldSeal, false);
+  assert.equal(decision?.reason, "warn");
+});
+
+test("F021 P6 computeSealDecision: custom thresholds — below warn 静默", () => {
+  // action=0.5, warn=0.45；fillRatio=0.4 → null
+  const decision = computeSealDecision(
+    "claude",
+    snapshot(80_000, 200_000),
+    { warn: 0.45, action: 0.5 },
+  );
+  assert.equal(decision?.shouldSeal, false);
+  assert.equal(decision?.reason, null);
+});
+
+test("F021 P6 computeSealDecision: thresholds undefined keeps fallback to SEAL_THRESHOLDS_BY_PROVIDER", () => {
+  // 不传 thresholds，行为完全等同二参版本（向后兼容）
+  const decision = computeSealDecision("claude", snapshot(180_000, 200_000));
+  // claude action=0.9, fillRatio=0.9 → seal
+  assert.equal(decision?.shouldSeal, true);
+  assert.equal(decision?.reason, "threshold");
+});

@@ -25,6 +25,7 @@ type ProviderView = {
   sopPhase?: string | null
   sopNext?: string | null
   fillRatio?: number | null
+  sealed?: boolean
 }
 
 type DispatchState = {
@@ -120,6 +121,18 @@ export class SessionService {
     return groupId
   }
 
+  // F021 Phase 6 (AC-32) review fix: full snapshot 和 delta 共用同一套 sealed 派生，
+  // 否则刷新页面/重选会话只走 full snapshot 时 sealed badge 丢失。
+  private deriveSealed(threadId: string): boolean {
+    const recentMsgs = this.repository.listRecentMessages(threadId, 10)
+    const lastSystemNotice = recentMsgs.find((m) => m.messageType === "system_notice")
+    const lastUserMsg = recentMsgs.find((m) => m.role === "user")
+    return Boolean(
+      lastSystemNotice &&
+        (!lastUserMsg || lastSystemNotice.createdAt > lastUserMsg.createdAt),
+    )
+  }
+
   getActiveGroup(
     groupId: string,
     runningThreadIds: Set<string>,
@@ -165,6 +178,7 @@ export class SessionService {
             sopPhase,
             sopNext,
             fillRatio: thread.lastFillRatio ?? null,
+            sealed: this.deriveSealed(thread.id),
           },
         ]
       }),
@@ -240,7 +254,8 @@ export class SessionService {
             sopNext = bm.nextExpectedAction ?? null
           } catch { /* ignore malformed JSON */ }
         }
-        const recentMsgs = this.repository.listRecentMessages(thread.id, 1)
+        // F021 Phase 6 (AC-32): sealed 复用 deriveSealed helper，与 full snapshot 同源。
+        const recentMsgs = this.repository.listRecentMessages(thread.id, 10)
         const lastMsg = recentMsgs[0]
         return [
           thread.provider,
@@ -255,6 +270,7 @@ export class SessionService {
             sopPhase,
             sopNext,
             fillRatio: thread.lastFillRatio ?? null,
+            sealed: this.deriveSealed(thread.id),
           },
         ]
       }),
@@ -351,6 +367,13 @@ export class SessionService {
     groupRole: "header" | "member" | "convergence" | null = null,
   ) {
     return this.repository.appendMessage(threadId, "assistant", content, "", "connector", connectorSource, groupId, groupRole)
+  }
+
+  // F021 Phase 6 (AC-32): seal 触发 → 持久化系统通知到 thread 消息流。
+  // role 沿用 "assistant"（schema enum），messageType="system_notice" 让前端
+  // timeline-panel 走专属分支（SystemNoticeBubble），与普通 assistant final 区分。
+  appendSystemNoticeMessage(threadId: string, content: string) {
+    return this.repository.appendMessage(threadId, "assistant", content, "", "system_notice")
   }
 
   overwriteMessage(messageId: string, updates: { content?: string; thinking?: string; toolEvents?: string; contentBlocks?: string }) {
@@ -477,7 +500,7 @@ export class SessionService {
     content: string,
     thinking: string,
     createdAt: string,
-    messageType: "progress" | "final" | "a2a_handoff" | "connector" = "final",
+    messageType: "progress" | "final" | "a2a_handoff" | "connector" | "system_notice" = "final",
     connectorSource?: ConnectorSource,
     groupId?: string | null,
     groupRole?: "header" | "member" | "convergence" | null,

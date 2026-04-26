@@ -5,6 +5,10 @@ import { useSettingsModalStore } from "@/components/stores/settings-modal-store"
 import { useSettingsStore } from "@/components/stores/settings-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import type { Provider } from "@multi-agent/shared"
+import {
+  SEAL_THRESHOLDS_BY_PROVIDER,
+  getContextWindowForModel,
+} from "@multi-agent/shared"
 import { Settings } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { FoldControls } from "./fold-controls"
@@ -53,14 +57,27 @@ export function StatusPanel() {
 
   const agents: AgentListItem[] = useMemo(
     () =>
-      providerEntries.map(([provider, card]) => ({
-        provider,
-        alias: card.alias,
-        model: resolveDisplayModel(provider, sessionConfig, globalConfig, card.currentModel),
-        running: card.running,
-        hasSessionOverride: Boolean(sessionConfig[provider]),
-        fillRatio: card.fillRatio ?? null,
-      })),
+      providerEntries.map(([provider, card]) => {
+        const sessionPct = sessionConfig[provider]?.sealPct
+        const globalPct = globalConfig[provider]?.sealPct
+        const fallback = SEAL_THRESHOLDS_BY_PROVIDER[provider]
+        const actionPct = sessionPct ?? globalPct ?? fallback.action
+        const window =
+          sessionConfig[provider]?.contextWindow ??
+          globalConfig[provider]?.contextWindow ??
+          getContextWindowForModel(card.currentModel)
+        return {
+          provider,
+          alias: card.alias,
+          model: resolveDisplayModel(provider, sessionConfig, globalConfig, card.currentModel),
+          running: card.running,
+          hasSessionOverride: Boolean(sessionConfig[provider]),
+          fillRatio: card.fillRatio ?? null,
+          window: window ?? null,
+          actionPct,
+          sealed: card.sealed ?? false,
+        }
+      }),
     [providerEntries, sessionConfig, globalConfig],
   )
 

@@ -22,7 +22,7 @@ type MessageRow = {
   content: string
   thinking: string
   createdAt: string
-  messageType: "final" | "progress" | "a2a_handoff" | "connector"
+  messageType: "final" | "progress" | "a2a_handoff" | "connector" | "system_notice"
   connectorSource: string | null
   groupId: string | null
   groupRole: string | null
@@ -80,6 +80,7 @@ function makeMessage(
   content: string,
   createdAt: string,
   role: "user" | "assistant" = "assistant",
+  messageType: MessageRow["messageType"] = "final",
 ): MessageRow {
   return {
     id,
@@ -88,7 +89,7 @@ function makeMessage(
     content,
     thinking: "",
     createdAt,
-    messageType: "final",
+    messageType,
     connectorSource: null,
     groupId: null,
     groupRole: null,
@@ -191,6 +192,89 @@ test("isFirstSnapshot returns true before first call, false after", () => {
   assert.equal(service.isFirstSnapshot("group-1"), true)
   service.getActiveGroupDelta("group-1", new Set(), undefined)
   assert.equal(service.isFirstSnapshot("group-1"), false)
+})
+
+test("F021-P6 AC-32: getActiveGroupDelta sets sealed=true when last system_notice is newer than last user msg", () => {
+  const threads = [makeThread("claude")]
+  const messages = [
+    makeMessage("thread-claude", "u1", "hello", "2026-04-25T08:00:00Z", "user", "final"),
+    makeMessage("thread-claude", "a1", "hi", "2026-04-25T08:00:01Z", "assistant", "final"),
+    makeMessage("thread-claude", "n1", "封存通知", "2026-04-25T08:00:02Z", "assistant", "system_notice"),
+  ]
+  const repo = createMockRepository(threads, messages)
+  const service = new SessionService(repo as never, [])
+
+  const delta = service.getActiveGroupDelta("group-1", new Set(), undefined)
+  assert.equal(delta.providers.claude?.sealed, true)
+})
+
+test("F021-P6 AC-32: getActiveGroupDelta sealed=false when user msg arrives after system_notice", () => {
+  const threads = [makeThread("claude")]
+  const messages = [
+    makeMessage("thread-claude", "u1", "hello", "2026-04-25T08:00:00Z", "user", "final"),
+    makeMessage("thread-claude", "n1", "封存通知", "2026-04-25T08:00:01Z", "assistant", "system_notice"),
+    makeMessage("thread-claude", "u2", "续命", "2026-04-25T08:00:02Z", "user", "final"),
+  ]
+  const repo = createMockRepository(threads, messages)
+  const service = new SessionService(repo as never, [])
+
+  const delta = service.getActiveGroupDelta("group-1", new Set(), undefined)
+  assert.equal(delta.providers.claude?.sealed, false)
+})
+
+test("F021-P6 AC-32: getActiveGroupDelta sealed=false when no system_notice exists", () => {
+  const threads = [makeThread("claude")]
+  const messages = [
+    makeMessage("thread-claude", "u1", "hello", "2026-04-25T08:00:00Z", "user", "final"),
+    makeMessage("thread-claude", "a1", "hi", "2026-04-25T08:00:01Z", "assistant", "final"),
+  ]
+  const repo = createMockRepository(threads, messages)
+  const service = new SessionService(repo as never, [])
+
+  const delta = service.getActiveGroupDelta("group-1", new Set(), undefined)
+  assert.equal(delta.providers.claude?.sealed, false)
+})
+
+// AC-32 review fix: full snapshot 也要派生 sealed，否则刷新页面/重选会话 badge 消失。
+test("F021-P6 AC-32 (review fix): getActiveGroup sets sealed=true when last system_notice is newer than last user msg", () => {
+  const threads = [makeThread("claude")]
+  const messages = [
+    makeMessage("thread-claude", "u1", "hello", "2026-04-25T08:00:00Z", "user", "final"),
+    makeMessage("thread-claude", "a1", "hi", "2026-04-25T08:00:01Z", "assistant", "final"),
+    makeMessage("thread-claude", "n1", "封存通知", "2026-04-25T08:00:02Z", "assistant", "system_notice"),
+  ]
+  const repo = createMockRepository(threads, messages)
+  const service = new SessionService(repo as never, [])
+
+  const view = service.getActiveGroup("group-1", new Set(), undefined)
+  assert.equal(view.providers.claude?.sealed, true)
+})
+
+test("F021-P6 AC-32 (review fix): getActiveGroup sealed=false when user msg arrives after system_notice", () => {
+  const threads = [makeThread("claude")]
+  const messages = [
+    makeMessage("thread-claude", "u1", "hello", "2026-04-25T08:00:00Z", "user", "final"),
+    makeMessage("thread-claude", "n1", "封存通知", "2026-04-25T08:00:01Z", "assistant", "system_notice"),
+    makeMessage("thread-claude", "u2", "续命", "2026-04-25T08:00:02Z", "user", "final"),
+  ]
+  const repo = createMockRepository(threads, messages)
+  const service = new SessionService(repo as never, [])
+
+  const view = service.getActiveGroup("group-1", new Set(), undefined)
+  assert.equal(view.providers.claude?.sealed, false)
+})
+
+test("F021-P6 AC-32 (review fix): getActiveGroup sealed=false when no system_notice exists", () => {
+  const threads = [makeThread("claude")]
+  const messages = [
+    makeMessage("thread-claude", "u1", "hello", "2026-04-25T08:00:00Z", "user", "final"),
+    makeMessage("thread-claude", "a1", "hi", "2026-04-25T08:00:01Z", "assistant", "final"),
+  ]
+  const repo = createMockRepository(threads, messages)
+  const service = new SessionService(repo as never, [])
+
+  const view = service.getActiveGroup("group-1", new Set(), undefined)
+  assert.equal(view.providers.claude?.sealed, false)
 })
 
 test("getActiveGroupDelta with empty thread returns empty newMessages and empty preview", () => {

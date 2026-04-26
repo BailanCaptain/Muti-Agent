@@ -14,12 +14,29 @@ export function GlobalDefaultsTab({ provider }: Props) {
 
   const [model, setModel] = useState(override?.model ?? "")
   const [effort, setEffort] = useState(override?.effort ?? "")
+  // F021 Phase 6: contextWindow + sealPct (UI 用百分比 string，保存时 / 100 还原 fraction)
+  const [contextWindow, setContextWindow] = useState(
+    override?.contextWindow != null ? String(override.contextWindow) : "",
+  )
+  const [sealPctPercent, setSealPctPercent] = useState(
+    override?.sealPct != null ? String(Math.round(override.sealPct * 100)) : "",
+  )
 
   // F021 P2 (范德彪 二轮 review): 切 provider 或异步到达的 override 必须同步到 input。
   useEffect(() => {
     setModel(override?.model ?? "")
     setEffort(override?.effort ?? "")
-  }, [provider, override?.model, override?.effort])
+    setContextWindow(override?.contextWindow != null ? String(override.contextWindow) : "")
+    setSealPctPercent(
+      override?.sealPct != null ? String(Math.round(override.sealPct * 100)) : "",
+    )
+  }, [
+    provider,
+    override?.model,
+    override?.effort,
+    override?.contextWindow,
+    override?.sealPct,
+  ])
   const save = useSaveStatus({ idle: "保存全局默认" })
 
   const providerCatalog = catalog?.[provider]
@@ -68,12 +85,57 @@ export function GlobalDefaultsTab({ provider }: Props) {
         </select>
       </Field>
 
+      <Field label="最大窗口">
+        <input
+          id={`global-context-window-${provider}`}
+          aria-label="最大窗口"
+          type="number"
+          min={1}
+          step={1}
+          value={contextWindow}
+          onChange={(e) => setContextWindow(e.target.value)}
+          placeholder="使用模型默认"
+          className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] text-slate-900 outline-none transition focus:border-indigo-400"
+        />
+      </Field>
+
+      <Field label="Seal 阈值">
+        <div className="flex items-center gap-2">
+          <input
+            id={`global-seal-pct-${provider}`}
+            aria-label="Seal 阈值"
+            type="number"
+            min={30}
+            max={100}
+            step={1}
+            value={sealPctPercent}
+            onChange={(e) => setSealPctPercent(e.target.value)}
+            placeholder="使用代码默认"
+            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] text-slate-900 outline-none transition focus:border-indigo-400"
+          />
+          <span className="text-[12px] text-slate-500">%</span>
+        </div>
+      </Field>
+
       <div className="flex gap-2 pt-1">
         <button
           type="button"
           disabled={save.isBusy}
           aria-busy={save.status === "saving"}
-          onClick={() => void save.run(() => setGlobalOverride(provider, { model, effort }))}
+          onClick={() =>
+            void save.run(() =>
+              setGlobalOverride(provider, {
+                model,
+                effort,
+                contextWindow:
+                  contextWindow.trim() === "" ? undefined : Number(contextWindow),
+                sealPct:
+                  sealPctPercent.trim() === ""
+                    ? undefined
+                    : Number(sealPctPercent) / 100,
+              }),
+            )
+          }
           className={`flex-1 rounded-[10px] px-3 py-2.5 text-[12px] font-semibold transition disabled:cursor-not-allowed ${
             save.status === "saved"
               ? "bg-emerald-600 text-white disabled:bg-emerald-600 disabled:text-white"

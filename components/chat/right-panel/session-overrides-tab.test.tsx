@@ -199,4 +199,96 @@ describe("SessionOverridesTab", () => {
       expect(screen.getByRole("button", { name: "清除覆盖" })).toBeInTheDocument()
     })
   })
+
+  // F021 Phase 6: contextWindow + sealPct Field（AC-26 thread-level）
+  describe("F021 P6: contextWindow + sealPct fields", () => {
+    it("renders 最大窗口 input with global as placeholder when session not set", () => {
+      useRuntimeConfigStore.setState({
+        config: { claude: { contextWindow: 1_000_000 } },
+        sessionConfig: {},
+      })
+      render(<SessionOverridesTab provider="claude" isRunning={false} />)
+      const win = screen.getByLabelText("最大窗口") as HTMLInputElement
+      expect(win.value).toBe("")
+      // 继承 badge 显示全局值
+      expect(screen.getByText(/继承.*1000000/)).toBeTruthy()
+    })
+
+    it("renders Seal 阈值 input with current session sealPct as percent", () => {
+      useRuntimeConfigStore.setState({
+        config: { claude: { sealPct: 0.7 } },
+        sessionConfig: { claude: { sealPct: 0.55 } },
+      })
+      render(<SessionOverridesTab provider="claude" isRunning={false} />)
+      const seal = screen.getByLabelText("Seal 阈值") as HTMLInputElement
+      expect(seal.value).toBe("55")
+    })
+
+    it("apply button sends contextWindow + sealPct (sealPct % → fraction)", () => {
+      const setSessionOverride = vi.fn().mockResolvedValue(undefined)
+      useRuntimeConfigStore.setState({ setSessionOverride } as never)
+
+      render(<SessionOverridesTab provider="claude" isRunning={false} />)
+      fireEvent.change(screen.getByLabelText("最大窗口"), {
+        target: { value: "2000000" },
+      })
+      fireEvent.change(screen.getByLabelText("Seal 阈值"), {
+        target: { value: "60" },
+      })
+      fireEvent.click(screen.getByRole("button", { name: "应用到当前会话" }))
+
+      expect(setSessionOverride).toHaveBeenCalledWith(
+        "claude",
+        {
+          model: "",
+          effort: "",
+          contextWindow: 2_000_000,
+          sealPct: 0.6,
+        },
+        false,
+      )
+    })
+
+    it("挂起到下一轮 button (running) sends P6 fields too", () => {
+      const setSessionOverride = vi.fn().mockResolvedValue(undefined)
+      useRuntimeConfigStore.setState({ setSessionOverride } as never)
+      render(<SessionOverridesTab provider="claude" isRunning={true} />)
+      fireEvent.change(screen.getByLabelText("最大窗口"), {
+        target: { value: "1500000" },
+      })
+      fireEvent.click(screen.getByRole("button", { name: "挂起到下一轮" }))
+
+      expect(setSessionOverride).toHaveBeenCalledWith(
+        "claude",
+        {
+          model: "",
+          effort: "",
+          contextWindow: 1_500_000,
+          sealPct: undefined,
+        },
+        true,
+      )
+    })
+
+    it("clear button clears P6 fields too (回落到全局)", () => {
+      const setSessionOverride = vi.fn().mockResolvedValue(undefined)
+      useRuntimeConfigStore.setState({
+        sessionConfig: { claude: { contextWindow: 2_000_000, sealPct: 0.5 } },
+        setSessionOverride,
+      } as never)
+      render(<SessionOverridesTab provider="claude" isRunning={false} />)
+      fireEvent.click(screen.getByRole("button", { name: "清除覆盖" }))
+
+      expect(setSessionOverride).toHaveBeenCalledWith(
+        "claude",
+        {
+          model: "",
+          effort: "",
+          contextWindow: undefined,
+          sealPct: undefined,
+        },
+        false,
+      )
+    })
+  })
 })

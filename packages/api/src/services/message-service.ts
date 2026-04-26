@@ -45,6 +45,9 @@ import type { SOPBookmark } from "../orchestrator/sop-bookmark"
 import { POLICY_FULL, POLICY_GUARDIAN, POLICY_INDEPENDENT } from "../orchestrator/context-policy"
 import { classifyFailure } from "../runtime/failure-classifier"
 import { loadRuntimeConfig, resolveEffectiveOverride } from "../runtime/runtime-config"
+import { resolveSealThresholds } from "../runtime/seal-config-resolver"
+import { resolveContextWindow } from "../runtime/context-window-resolver"
+import type { AgentOverride, RuntimeConfig } from "../runtime/runtime-config"
 import type { DecisionManager } from "../orchestrator/decision-manager"
 import type { SkillRegistry } from "../skills/registry"
 import { applySlashCommandHint } from "../skills/slash-route"
@@ -826,17 +829,22 @@ export class MessageService {
     // appending the assistant placeholder, so the message row carries the
     // correct snapshot for the chat bubble pill. Order: snapshot → resolve →
     // append. The same snapshot is later emitted on invocation.started.
-    const sessionSnapshot = this.sessions.flushSessionPending(thread.sessionGroupId) as Record<
-      string,
-      { model?: string; effort?: string }
-    >
+    const sessionSnapshot = this.sessions.flushSessionPending(thread.sessionGroupId) as RuntimeConfig
     const hasSessionSnapshot = Object.keys(sessionSnapshot).length > 0
-    const globalOverride = loadRuntimeConfig()[thread.provider]
-    const snapshotForProvider = sessionSnapshot[thread.provider]
+    const globalConfig = loadRuntimeConfig()
+    const globalOverride = globalConfig[thread.provider]
+    const snapshotForProvider: AgentOverride | undefined = sessionSnapshot[thread.provider]
     // F021 P1 (范德彪 review): merge at field granularity so a session snapshot
     // that only sets `effort` still inherits `model` from the global override.
     const runtimeOverride = resolveEffectiveOverride(snapshotForProvider, globalOverride)
     const resolvedModel = runtimeOverride?.model ?? thread.currentModel
+    // F021 Phase 6: 三层 seal 阈值（会话 → 全局 → 代码 fallback）。
+    // 用户在齿轮里调 sealPct 时这里立刻生效，不再绑死 SEAL_THRESHOLDS_BY_PROVIDER。
+    const sealThresholds = resolveSealThresholds(thread.provider, globalConfig, sessionSnapshot)
+    // F021 Phase 6: contextWindow 用户层 override（CLI 报告/代码 fallback 仍由 cli-orchestrator 内部接管）。
+    const contextWindowOverride =
+      sessionSnapshot[thread.provider]?.contextWindow
+      ?? globalConfig[thread.provider]?.contextWindow
 
     const assistant = this.sessions.appendAssistantMessage(
       thread.id,
@@ -1003,6 +1011,8 @@ export class MessageService {
       callbackToken: identity.callbackToken,
       model: resolvedModel,
       effort: runtimeOverride?.effort ?? null,
+      sealThresholds,
+      contextWindowOverride,
       nativeSessionId: thread.nativeSessionId,
       userMessage,
       onAssistantDelta: (delta: string) => {
@@ -1304,13 +1314,28 @@ export class MessageService {
           // the real sealed id regardless of intermediate mutations.
           sealedSessionId = result.nativeSessionId
           effectiveSessionId = null
+          const sealMessage = `${thread.alias} 上下文已用 ${pct}%，自动封存，下一轮开新 session。`
           options.emit({
             type: "status",
             payload: {
               sessionGroupId: thread.sessionGroupId,
-              message: `${thread.alias} 上下文已用 ${pct}%，自动封存，下一轮开新 session。`,
+              message: sealMessage,
             },
           })
+          // F021 Phase 6 (AC-32): 持久化系统通知到 thread 消息流，让 seal 在历史
+          // 时间轴里有显眼锚点；status 一行短促易错过，但消息流不会丢。
+          const sealNotice = this.sessions.appendSystemNoticeMessage(thread.id, sealMessage)
+          const sealTimeline = this.sessions.toTimelineMessage(thread.id, sealNotice.id)
+          if (sealTimeline) {
+            options.emit({
+              type: "message.created",
+              payload: {
+                threadId: thread.id,
+                sessionGroupId: thread.sessionGroupId,
+                message: sealTimeline,
+              },
+            })
+          }
         } else if (result.sealDecision.reason === "warn") {
           options.emit({
             type: "status",
@@ -1480,7 +1505,15 @@ export class MessageService {
           if (digest) {
             const { appendSession } = await import("./thread-memory")
             const existing = this.sessions.getThreadMemory(thread.id)
-            const contextWindow = getContextWindowForModel(thread.currentModel) ?? 200_000
+            // F021 Phase 6: ThreadMemory cap 走三层取值（CLI 报告这里没有，传 null）
+            const contextWindow =
+              resolveContextWindow(
+                thread.provider,
+                globalConfig,
+                sessionSnapshot,
+                null,
+                thread.currentModel,
+              ) ?? 200_000
             const updated = appendSession(existing, digest, contextWindow)
             this.sessions.setThreadMemory(thread.id, updated)
           }

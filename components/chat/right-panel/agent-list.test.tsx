@@ -72,6 +72,86 @@ describe("AgentList", () => {
     expect(screen.getByText("待运行")).toBeTruthy()
   })
 
+  it("AC-31: shows inline detail used/total (剩余 X%) next to bar — always visible, not hover", () => {
+    const agents = [
+      {
+        provider: "claude" as const,
+        alias: "黄仁勋",
+        model: "claude-opus-4-7",
+        running: false,
+        fillRatio: 0.42,
+        window: 200_000,
+        actionPct: 0.9,
+      },
+    ]
+    render(<AgentList agents={agents} />)
+    const detail = screen.getByTestId("agent-context-detail")
+    expect(detail).toBeTruthy()
+    expect(detail.getAttribute("data-provider")).toBe("claude")
+    // used = round(0.42 * 200000) = 84000 → 84k；window = 200k
+    expect(detail.textContent).toMatch(/84k\s*\/\s*200k/)
+    // AC-31 review fix: 显示距 seal 阈值的剩余空间 = round(actionPct*100 - fillRatio*100) = 48
+    expect(detail.textContent).toMatch(/\(剩余\s*48%\)/)
+    // Regression guard: must NOT be hover-only (no opacity-0 / group-hover classes)
+    const cls = detail.getAttribute("class") ?? ""
+    expect(cls).not.toMatch(/opacity-0/)
+    expect(cls).not.toMatch(/group-hover/)
+  })
+
+  it("AC-31 review fix: detail clamps remaining at 0 when fillRatio exceeds actionPct", () => {
+    // 已超过 seal 阈值（防御边界——理论上 seal trigger 已封存，但保护渲染）
+    const agents = [
+      {
+        provider: "claude" as const,
+        alias: "黄仁勋",
+        model: "claude-opus-4-7",
+        running: false,
+        fillRatio: 0.95,
+        window: 200_000,
+        actionPct: 0.9,
+      },
+    ]
+    render(<AgentList agents={agents} />)
+    const detail = screen.getByTestId("agent-context-detail")
+    expect(detail.textContent).toMatch(/\(剩余\s*0%\)/)
+  })
+
+  it("AC-31: detail not rendered when fillRatio is null (no data yet)", () => {
+    const agents = [
+      {
+        provider: "claude" as const,
+        alias: "黄仁勋",
+        model: "claude-opus-4-7",
+        running: false,
+        fillRatio: null,
+      },
+    ]
+    render(<AgentList agents={agents} />)
+    expect(screen.queryByTestId("agent-context-detail")).toBeNull()
+  })
+
+  it("AC-32: shows 已封存 badge when sealed=true (until next user turn)", () => {
+    const agents = [
+      {
+        provider: "claude" as const,
+        alias: "黄仁勋",
+        model: "claude-opus-4-7",
+        running: false,
+        sealed: true,
+      },
+    ]
+    render(<AgentList agents={agents} />)
+    const badge = screen.getByTestId("agent-sealed-badge")
+    expect(badge).toBeTruthy()
+    expect(badge.getAttribute("data-provider")).toBe("claude")
+    expect(badge.textContent).toMatch(/已封存/)
+  })
+
+  it("AC-32: no 已封存 badge when sealed is false/undefined", () => {
+    render(<AgentList agents={sampleAgents} />)
+    expect(screen.queryByTestId("agent-sealed-badge")).toBeNull()
+  })
+
   it("stop button is icon-only (no 停止 text node) so running/idle rows keep same width", () => {
     const onStopClick = vi.fn()
     render(<AgentList agents={sampleAgents} onStopClick={onStopClick} />)

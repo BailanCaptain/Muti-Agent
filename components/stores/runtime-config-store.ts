@@ -7,9 +7,34 @@ export type ModelEntry = { name: string; label: string }
 export type AgentCatalog = { models: ModelEntry[]; efforts: string[] }
 export type ModelCatalog = Record<Provider, AgentCatalog>
 
-export type AgentOverride = { model?: string; effort?: string }
+export type AgentOverride = {
+  model?: string
+  effort?: string
+  contextWindow?: number
+  sealPct?: number
+}
 export type RuntimeConfig = Partial<Record<Provider, AgentOverride>>
 export type SessionRuntimeConfig = Partial<Record<Provider, AgentOverride>>
+
+export const SEAL_PCT_MIN = 0.3
+export const SEAL_PCT_MAX = 1.0
+
+function isValidContextWindow(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+}
+
+function isValidSealPct(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= SEAL_PCT_MIN &&
+    value <= SEAL_PCT_MAX
+  )
+}
+
+function hasAnyField(o: AgentOverride): boolean {
+  return Boolean(o.model || o.effort) || o.contextWindow !== undefined || o.sealPct !== undefined
+}
 
 type RuntimeConfigStore = {
   catalog: ModelCatalog | null
@@ -44,6 +69,12 @@ function cleanOverride(override: AgentOverride): AgentOverride {
   const cleaned: AgentOverride = {}
   if (override.model?.trim()) cleaned.model = override.model.trim()
   if (override.effort?.trim()) cleaned.effort = override.effort.trim()
+  if (isValidContextWindow(override.contextWindow)) {
+    cleaned.contextWindow = Math.floor(override.contextWindow)
+  }
+  if (isValidSealPct(override.sealPct)) {
+    cleaned.sealPct = override.sealPct
+  }
   return cleaned
 }
 
@@ -53,7 +84,7 @@ function writeOverride(
   cleaned: AgentOverride,
 ): SessionRuntimeConfig {
   const next: SessionRuntimeConfig = { ...target }
-  if (cleaned.model || cleaned.effort) {
+  if (hasAnyField(cleaned)) {
     next[provider] = cleaned
   } else {
     delete next[provider]
@@ -74,7 +105,7 @@ function mergeOverridesFieldwise(
   const merged: SessionRuntimeConfig = {}
   for (const provider of providers) {
     const combined: AgentOverride = { ...active[provider], ...pending[provider] }
-    if (combined.model || combined.effort) merged[provider] = combined
+    if (hasAnyField(combined)) merged[provider] = combined
   }
   return merged
 }

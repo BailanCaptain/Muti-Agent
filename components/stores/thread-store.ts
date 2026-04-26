@@ -26,6 +26,7 @@ type ProviderCardState = {
   sopPhase?: string | null
   sopNext?: string | null
   fillRatio?: number | null
+  sealed?: boolean
 }
 
 type ActiveGroupPayload = {

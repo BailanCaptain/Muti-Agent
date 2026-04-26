@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
+import { validateRuntimeConfigInput } from "../runtime/runtime-config"
 
 type SessionRuntimeConfig = Record<string, unknown>
 
@@ -65,6 +66,19 @@ export function registerSessionRuntimeConfigRoutes(
       if (hasPending && !isPlainObject(body.pending)) {
         reply.code(400)
         return { error: "pending must be a plain object." }
+      }
+
+      // F021 Phase 6 — AC-29: 同一道字段校验（contextWindow / sealPct / model / effort）
+      const errors: string[] = []
+      if (hasConfig) {
+        for (const e of validateRuntimeConfigInput(body.config)) errors.push(`config.${e}`)
+      }
+      if (hasPending) {
+        for (const e of validateRuntimeConfigInput(body.pending)) errors.push(`pending.${e}`)
+      }
+      if (errors.length > 0) {
+        reply.code(400)
+        return { error: "Invalid session runtime config payload.", errors }
       }
 
       const group = deps.sessions.getSessionGroupById(id)

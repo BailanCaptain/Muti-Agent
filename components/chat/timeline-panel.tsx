@@ -10,6 +10,7 @@ import { ConnectorBubble } from "./connector-bubble"
 import { InlineDecisionBoard } from "./decision-board-modal"
 import { DecisionCard } from "./decision-card"
 import { MessageBubble } from "./message-bubble"
+import { SystemNoticeBubble } from "./system-notice-bubble"
 
 type GroupedItem =
   | { type: "single"; message: TimelineMessage }
@@ -186,6 +187,8 @@ export function TimelinePanel() {
                     />
                   ) : item.data.message.messageType === "connector" ? (
                     <ConnectorBubble message={item.data.message} />
+                  ) : item.data.message.messageType === "system_notice" ? (
+                    <SystemNoticeBubble message={item.data.message} />
                   ) : (
                     <MessageBubble
                       message={item.data.message}

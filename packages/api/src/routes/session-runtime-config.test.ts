@@ -223,3 +223,61 @@ test("F021 SessionRepository.setSessionRuntimeConfig round-trips JSON", async ()
     })
   })
 })
+
+// F021 Phase 6 — AC-29 边界校验：会话覆盖 PUT 也走同一道校验
+test("AC-29 PUT /api/sessions/:id/runtime-config rejects invalid sealPct in config with 400", async () => {
+  await withTempRepo(async (repo) => {
+    const groupId = repo.createSessionGroup("Test Room")
+    const app = Fastify()
+    registerSessionRuntimeConfigRoutes(app, { sessions: repo })
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/sessions/${groupId}/runtime-config`,
+      payload: { config: { claude: { sealPct: 1.5 } } },
+    })
+    await app.close()
+    assert.equal(res.statusCode, 400)
+    const body = res.json() as { errors?: string[] }
+    assert.ok(
+      body.errors?.some((e) => e.includes("sealPct")),
+      `errors should mention sealPct: ${JSON.stringify(body.errors)}`,
+    )
+  })
+})
+
+test("AC-29 PUT /api/sessions/:id/runtime-config rejects invalid contextWindow in pending with 400", async () => {
+  await withTempRepo(async (repo) => {
+    const groupId = repo.createSessionGroup("Test Room")
+    const app = Fastify()
+    registerSessionRuntimeConfigRoutes(app, { sessions: repo })
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/sessions/${groupId}/runtime-config`,
+      payload: { pending: { codex: { contextWindow: 0 } } },
+    })
+    await app.close()
+    assert.equal(res.statusCode, 400)
+    const body = res.json() as { errors?: string[] }
+    assert.ok(
+      body.errors?.some((e) => e.includes("contextWindow")),
+      `errors should mention contextWindow: ${JSON.stringify(body.errors)}`,
+    )
+  })
+})
+
+test("AC-29 PUT /api/sessions/:id/runtime-config accepts valid contextWindow + sealPct", async () => {
+  await withTempRepo(async (repo) => {
+    const groupId = repo.createSessionGroup("Test Room")
+    const app = Fastify()
+    registerSessionRuntimeConfigRoutes(app, { sessions: repo })
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/sessions/${groupId}/runtime-config`,
+      payload: {
+        config: { claude: { contextWindow: 1_500_000, sealPct: 0.6 } },
+      },
+    })
+    await app.close()
+    assert.equal(res.statusCode, 200)
+  })
+})

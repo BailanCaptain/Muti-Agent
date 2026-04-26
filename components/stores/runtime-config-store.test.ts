@@ -273,6 +273,92 @@ describe("runtime-config-store session layer", () => {
     expect(useRuntimeConfigStore.getState().loadError).toBeTruthy()
   })
 
+  // F021 Phase 6: AgentOverride 扩 contextWindow + sealPct
+  // store 必须把这两字段一并 round-trip：cleanOverride 保留有效值，
+  // writeOverride 的 has-any 判断把它们算"有内容"，mergeOverridesFieldwise 字段级合并。
+
+  it("F021 P6: setGlobalOverride round-trips contextWindow + sealPct", async () => {
+    const calls: FetchCall[] = []
+    globalThis.fetch = mockFetch(
+      { ok: true, config: { claude: { contextWindow: 1_000_000, sealPct: 0.5 } } },
+      calls,
+    ) as typeof fetch
+
+    await useRuntimeConfigStore.getState().setGlobalOverride("claude", {
+      contextWindow: 1_000_000,
+      sealPct: 0.5,
+    })
+
+    expect(useRuntimeConfigStore.getState().config).toEqual({
+      claude: { contextWindow: 1_000_000, sealPct: 0.5 },
+    })
+    const body = JSON.parse(String(calls[0]?.init?.body))
+    expect(body.config).toEqual({
+      claude: { contextWindow: 1_000_000, sealPct: 0.5 },
+    })
+  })
+
+  it("F021 P6: setSessionOverride writes contextWindow-only entry without dropping it", async () => {
+    useRuntimeConfigStore.setState({ activeSessionId: "session-p6" })
+    const calls: FetchCall[] = []
+    globalThis.fetch = mockFetch(
+      { ok: true, config: { gemini: { contextWindow: 2_000_000 } }, pending: {} },
+      calls,
+    ) as typeof fetch
+
+    await useRuntimeConfigStore
+      .getState()
+      .setSessionOverride("gemini", { contextWindow: 2_000_000 }, false)
+
+    expect(useRuntimeConfigStore.getState().sessionConfig).toEqual({
+      gemini: { contextWindow: 2_000_000 },
+    })
+  })
+
+  it("F021 P6: cleanOverride drops invalid contextWindow (<=0, non-finite) and sealPct (out of [0.3,1.0])", async () => {
+    // setGlobalOverride 接受 raw 值，cleanOverride 必须过滤掉非法的；
+    // 结果：本次保存等于"清掉这个 provider"（has-any 全部 false）。
+    const calls: FetchCall[] = []
+    globalThis.fetch = mockFetch({ ok: true, config: {} }, calls) as typeof fetch
+
+    await useRuntimeConfigStore.getState().setGlobalOverride("claude", {
+      contextWindow: -1,
+      sealPct: 0.1,
+    })
+
+    const body = JSON.parse(String(calls[0]?.init?.body))
+    expect(body.config).toEqual({})
+    expect(useRuntimeConfigStore.getState().config).toEqual({})
+  })
+
+  it("F021 P6: flushPendingToSession merges contextWindow + sealPct field-wise within a provider", async () => {
+    useRuntimeConfigStore.setState({
+      activeSessionId: "session-flush-p6",
+      sessionConfig: { claude: { model: "claude-opus-4-7", contextWindow: 1_000_000 } },
+      pendingConfig: { claude: { sealPct: 0.55 } },
+    })
+    const calls: FetchCall[] = []
+    globalThis.fetch = mockFetch(
+      {
+        ok: true,
+        config: {
+          claude: { model: "claude-opus-4-7", contextWindow: 1_000_000, sealPct: 0.55 },
+        },
+      },
+      calls,
+    ) as typeof fetch
+
+    await useRuntimeConfigStore.getState().flushPendingToSession("session-flush-p6")
+
+    expect(useRuntimeConfigStore.getState().sessionConfig).toEqual({
+      claude: { model: "claude-opus-4-7", contextWindow: 1_000_000, sealPct: 0.55 },
+    })
+    const body = JSON.parse(String(calls[0]?.init?.body))
+    expect(body.config).toEqual({
+      claude: { model: "claude-opus-4-7", contextWindow: 1_000_000, sealPct: 0.55 },
+    })
+  })
+
   it("setSessionOverride with empty override clears entry (回落到全局)", async () => {
     useRuntimeConfigStore.setState({
       activeSessionId: "session-clear",

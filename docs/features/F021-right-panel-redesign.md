@@ -108,15 +108,28 @@ F018 已经把 seal 改造为 reference-only 接力（ThreadMemory rolling + Boo
 
 **Acceptance Criteria**：
 
-- [ ] AC-22: SQLite 迁移：`global_overrides` 加 `context_window INTEGER` + `seal_pct REAL`；`session_overrides` 加 `context_window INTEGER` + `seal_pct REAL`（NULL = 继承上一层）
-- [ ] AC-23: 后端 `computeSealDecision(provider, usage, threadId, sessionId)` 改签名，按"会话 → 全局 → 代码 fallback"三层取值；返回的 `warn` 自动 = `action - 0.05`（UI 只暴露 action，不暴露 warn）
-- [ ] AC-24: 后端新增 `resolveContextWindow(model, threadId, sessionId)` 走同样三层取值；保留 `getContextWindowForModel` 作为代码 fallback 内部调用
-- [ ] AC-25: 前端齿轮 **Global Defaults Tab** 加 per-provider 两个 input：「最大窗口」(number, tokens) + 「Seal 阈值」(0-100%)；Inherit/Override badge 跟 model 一致
-- [ ] AC-26: 前端齿轮 **Session Overrides Tab** 加同样两个 input；scope **thread-level**（一条聊天线一直生效，跨多次 seal/新 native session 仍激进）—— 与 F021 model/effort 的 session-level 行为不同，需独立确认 store key
-- [ ] AC-27: 前端 **observation-bar** 加 fillRatio 实时进度条：每 provider 一行 `▓▓░░ XX% (used/window) 距 seal Y%`；超过 warn 阈值变黄、超过 action 变红
-- [ ] AC-28: Fallback 链路集成测试：删 session 覆盖 → 自动回退全局；删全局默认 → 自动回退代码 fallback；任一层独立可用
-- [ ] AC-29: 校验：`0.3 ≤ seal_pct ≤ 1.0`、`context_window > 0`；非法值前端拒绝保存 + 后端 reject
-- [ ] AC-30: 小孙端到端验收：(a) 全局调 Claude 阈值到 50% → 验证 seal 提早 (b) 切某 thread 设 60% → 验证只此 thread 生效，新 thread 仍走全局默认 (c) observation-bar 进度条与实际 fillRatio 对得上
+- [x] AC-22: SQLite 迁移：`global_overrides` 加 `context_window INTEGER` + `seal_pct REAL`；`session_overrides` 加 `context_window INTEGER` + `seal_pct REAL`（NULL = 继承上一层）
+- [x] AC-23: 后端 `computeSealDecision(provider, usage, threadId, sessionId)` 改签名，按"会话 → 全局 → 代码 fallback"三层取值；返回的 `warn` 自动 = `action - 0.05`（UI 只暴露 action，不暴露 warn）
+- [x] AC-24: 后端新增 `resolveContextWindow(model, threadId, sessionId)` 走同样三层取值；保留 `getContextWindowForModel` 作为代码 fallback 内部调用
+- [x] AC-25: 前端齿轮 **Global Defaults Tab** 加 per-provider 两个 input：「最大窗口」(number, tokens) + 「Seal 阈值」(0-100%)；Inherit/Override badge 跟 model 一致
+- [x] AC-26: 前端齿轮 **Session Overrides Tab** 加同样两个 input；scope **thread-level**（一条聊天线一直生效，跨多次 seal/新 native session 仍激进）—— 与 F021 model/effort 的 session-level 行为不同，需独立确认 store key
+- [x] AC-27: 前端 **observation-bar** 加 fillRatio 实时进度条：每 provider 一行 `▓▓░░ XX% (used/window) 距 seal Y%`；超过 warn 阈值变黄、超过 action 变红
+- [x] AC-28: Fallback 链路集成测试：删 session 覆盖 → 自动回退全局；删全局默认 → 自动回退代码 fallback；任一层独立可用
+- [x] AC-29: 校验：`0.3 ≤ seal_pct ≤ 1.0`、`context_window > 0`；非法值前端拒绝保存 + 后端 reject
+- [x] AC-30: 小孙端到端验收：(a) 全局调 Claude 阈值到 50% → 验证 seal 提早 (b) 切某 thread 设 60% → 验证只此 thread 生效，新 thread 仍走全局默认 (c) observation-bar 进度条与实际 fillRatio 对得上
+- [x] AC-31（去冗余）: 删 ObservationBar 里 SealProgress 行；agent-card「上下文 ▓▓░░ 45%」加 hover tooltip 显示 `已用 12k / 100k · 距 seal 25%`（信息回填，不丢内容）
+- [x] AC-32（seal 感知）: seal 触发 → 后端往该 thread 持久化一条 system-notice 消息（role="assistant" + messageType="system_notice"）+ ws 推 message.created；前端 timeline-panel 加 `messageType === "system_notice"` 分支渲染 SystemNoticeBubble（橙色横幅，居中宽幅，role=note）；agent-card 同时显示「已封存 · 待重启」徽章直到下一轮 user 消息（派生于消息流，无新状态字段）
+
+### Phase 6 Corrigendum（plan 阶段对照真实代码后修正，2026-04-25）
+
+写 AC 时基于错误的代码假设（"两层 overrides 表"），plan 阶段对照真实代码修正：
+
+| AC | 原描述 | 真实代码 | 修正实施路径 |
+|---|---|---|---|
+| AC-22 | `global_overrides` / `session_overrides` 表加列（SQLite 迁移） | 不存在这两张表。全局 = JSON 文件 `multi-agent.runtime-config.json`；会话 = `session_groups.runtime_config TEXT`（整段 JSON） | **无 schema 迁移**。扩 `AgentOverride` TypeScript 类型加 `contextWindow?: number; sealPct?: number`，前后端 sanitize 同步扩，JSON round-trip 自动支持 |
+| AC-26 | scope 是否 thread-level "需独立确认 store key" | `session_groups.runtime_config` 本身就是 thread/session_group 级（一条聊天线一直生效） | thread-level scope **天然满足**，不需要新 store key |
+
+实施按修正后路径走（详见 `docs/plans/F021-phase6-context-config-plan.md`）。
 
 ## Dependencies
 
@@ -149,6 +162,8 @@ F018 已经把 seal 改造为 reference-only 接力（ThreadMemory rolling + Boo
 | 2026-04-21 | 范德彪二轮扩大范围 review 提 2 P1 + 1 P2 → `d749074` 字段级 merge + 清 pending + Tab 同步闭环；residual risk `2c06753` Drizzle 定向回归 → 二轮放行，AC-17 通过 |
 | 2026-04-21 | Squash merge 到 dev（commit `e21316d`）—— AC-01~AC-21 全绿，前端 77/77 + 后端 961/961 + typecheck 0 |
 | 2026-04-22 | **Reopened** — 小孙发起 seal 阈值 + 上下文窗口齿轮可配讨论（"模型升级要改代码 commit / 长任务防漂移"），追加 Phase 6（AC-22~AC-30）；按 feat-lifecycle 重开规则 status: done → in-progress |
+| 2026-04-25 | Task 1–6 + AC-28/29 全部 commit；preview 验收时小孙发现两个盲区：①agent-card 与 ObservationBar 进度条信息冗余 ②seal 真触发时无显眼反馈（status 一行轻量易错过）→ 追加 AC-31/AC-32（Task 7：去冗余 + 持久化 system-notice 消息 + sealed badge）|
+| 2026-04-26 | Phase 6 完工验收：范德彪 code review APPROVED（含 P1/P2 修复 commit `51ba650`：full snapshot 派生 sealed + agent-card detail 改 `(剩余 N%)`）；小孙 AC-30 端到端验收 PASS；worktree-report.md 落档 `.agents/acceptance/F021/20260426T105700Z/`，进 merge-gate |
 
 ## Links
 

@@ -81,7 +81,7 @@ export type TimelineMessage = {
   role: "user" | "assistant"
   content: string
   thinking?: string
-  messageType: "progress" | "final" | "a2a_handoff" | "connector"
+  messageType: "progress" | "final" | "a2a_handoff" | "connector" | "system_notice"
   connectorSource?: ConnectorSource
   /** Inline confirmation cards embedded in this message bubble */
   inlineConfirmations?: InlineConfirmation[]
@@ -157,6 +157,9 @@ export type ProviderThreadView = {
   sopPhase?: string | null
   sopNext?: string | null
   fillRatio?: number | null
+  // F021 Phase 6 (AC-32): seal 触发后置 true，直到该 thread 收到下一条 user 消息复位。
+  // 派生于消息流——最新 system_notice 之后是否还有 user 消息。
+  sealed?: boolean
 }
 
 export type ThreadSnapshotDelta = {
