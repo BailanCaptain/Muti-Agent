@@ -402,10 +402,11 @@ export async function createApiServer(options: {
         emit: broadcaster.broadcast,
       })
     },
-    // F018 P5 AC6.3: recall_similar_context backend — semantic search + decay
-    // returns sanitized reference-only 闭合段 formatted text (formatRecallResults)
-    // plus raw hits for introspection.
-    searchRecall: async ({ threadId, query, topK }) => {
+    // F018 P5 AC6.3 + B019 review-2 (LL-023 scope 对齐):
+    // recall_similar_context backend — semantic search + decay
+    // scope: sessionGroup 内所有 threads (clowder-ai thread 等价层)
+    // 返回 sanitized reference-only 闭合段格式 + raw hits 给 introspection.
+    searchRecall: async ({ threadIds, query, topK }) => {
       // Codex P5 Round 1 MEDIUM: log distinct failure types so operators can
       // differentiate 'model still loading' / 'SQLite lock' / 'schema drift'
       // from a genuine 'no matches' outcome. Response shape stays stable
@@ -413,14 +414,14 @@ export async function createApiServer(options: {
       try {
         const hits = await embeddingService.searchSimilarFromDb(
           query,
-          [threadId],
+          threadIds,
           topK,
           new Set(),
         )
         return { text: formatRecallResults(hits), hits }
       } catch (err) {
         app.log.warn(
-          { err, threadId, queryLen: query.length, topK },
+          { err, threadIds, queryLen: query.length, topK },
           "F018 recall backend error (degraded to empty response)",
         )
         return { text: "(no relevant context found)", hits: [] }

@@ -61,6 +61,22 @@ Step 0.5: DELIVERY COMPLETENESS CHECK
      → 扩展：通过
      → 重写：说明绕路了（Spike 除外），回去重做
 
+Step 0.6: EXTERNAL OBSERVABILITY CHECK（涉及 DB / 文件 / log / 队列时）
+  feature 涉及"外部可观测状态"——DB 写入 / 文件落地 / runtime log warn 计数 /
+  消息发送 / 队列入队 / 表行数等——必须过这一关。
+  ① 这个 feature 完成后，外部最直接能看到什么变化？
+     - DB 写入  → 跑 `SELECT COUNT(*) FROM <table>` 看行数
+     - 文件落地 → `ls -la <path>` 看大小 / `find` 看路径
+     - log 计数 → `grep -c <pattern> <log>` 看错误数变化
+     - 队列    → peek 看消息
+  ② 想不出"外部最直接能看到什么" → feature 没真正交付，回去补 AC
+  ③ "外部观测"在 wiring 改造后没真跑过 → 自检视为未完成
+  ④ 修空壳的 feature（Why 写"修 X 虚标"的）必须在 AC 里加一条
+     "merge 后 7 天内真去查 X 同位证据"（仅 tests pass / review 过 不算证物）
+
+  依据：B019（F018 模块六 wiring 全对但 huggingface.co 撞墙永降级，
+  738 tests 绿 + 14 轮 review 全过、message_embeddings 表 0 行 1 周 0 写入）→ LL-030
+
 Step 1: FIND — 找 spec/plan 文档
   - feature doc (docs/features/Fxxx.md)
   - implementation plan (docs/plans/)

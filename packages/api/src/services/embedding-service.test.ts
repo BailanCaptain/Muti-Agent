@@ -569,3 +569,151 @@ describe("formatRecallResults (F018 AC6.4 — reference-only 闭合标签)", () 
     }
   })
 })
+
+// B019: 默认 pipelineLoader 必须离线优先 — 不撞 huggingface.co:443
+// transformers.js v3 用 global env 单例配置（module-level，跨测试共享），
+// 必须 snapshot/restore 既有 process.env.EMBEDDING_ALLOW_REMOTE 也有 trEnv 三个字段，
+// 否则会污染同 process 后续测试（Codex review P2 #3）。
+async function withEnvSnapshot<T>(fn: () => Promise<T>): Promise<T> {
+  const procEnv = process.env.EMBEDDING_ALLOW_REMOTE
+  const { env: trEnv } = await import("@huggingface/transformers")
+  const trSnapshot = {
+    localModelPath: trEnv.localModelPath,
+    allowRemoteModels: trEnv.allowRemoteModels,
+    allowLocalModels: trEnv.allowLocalModels,
+  }
+  try {
+    return await fn()
+  } finally {
+    if (procEnv === undefined) delete process.env.EMBEDDING_ALLOW_REMOTE
+    else process.env.EMBEDDING_ALLOW_REMOTE = procEnv
+    trEnv.localModelPath = trSnapshot.localModelPath
+    trEnv.allowRemoteModels = trSnapshot.allowRemoteModels
+    trEnv.allowLocalModels = trSnapshot.allowLocalModels
+  }
+}
+
+describe("B019: default pipelineLoader is offline-first", () => {
+  it("default pipelineLoader sets localModelPath, allowRemoteModels=false (no EMBEDDING_ALLOW_REMOTE)", () =>
+    withEnvSnapshot(async () => {
+      delete process.env.EMBEDDING_ALLOW_REMOTE
+      const svc = new EmbeddingService({}) // 不注 pipelineLoader → 走默认实现
+      const ok = await svc.ensureModel()
+      assert.equal(ok, true, "ensureModel succeeds with local weights in models/")
+
+      const { env } = await import("@huggingface/transformers")
+      assert.equal(env.allowRemoteModels, false, "EMBEDDING_ALLOW_REMOTE unset → allowRemoteModels=false")
+      assert.equal(env.allowLocalModels, true, "always allow local models")
+      assert.match(
+        env.localModelPath ?? "",
+        /[\/\\]models[\/\\]?$/,
+        `localModelPath must end with /models, got: ${env.localModelPath}`,
+      )
+    }))
+
+  it("EMBEDDING_ALLOW_REMOTE=true allows remote fallback (dev escape hatch)", () =>
+    withEnvSnapshot(async () => {
+      process.env.EMBEDDING_ALLOW_REMOTE = "true"
+      const svc = new EmbeddingService({})
+      await svc.ensureModel()
+
+      const { env } = await import("@huggingface/transformers")
+      assert.equal(env.allowRemoteModels, true, "EMBEDDING_ALLOW_REMOTE=true → allowRemoteModels=true")
+    }))
+
+  it("default pipelineLoader produces a 384-dim feature-extraction pipeline (sanity)", () =>
+    withEnvSnapshot(async () => {
+      delete process.env.EMBEDDING_ALLOW_REMOTE
+      const svc = new EmbeddingService({})
+      const ok = await svc.ensureModel()
+      assert.equal(ok, true)
+
+      const vec = await svc.generateEmbedding("hello world")
+      assert.ok(vec, "generateEmbedding returned non-null")
+      assert.equal(vec!.length, 384, "all-MiniLM-L6-v2 outputs 384-dim")
+    }))
+
+  it("semantic similarity is plausible (cat~feline > cat~physics)", () =>
+    withEnvSnapshot(async () => {
+      // 守 quantized int8 推理质量 — 离线加载的权重不能因为 dtype 选错或文件损坏
+      // 退化到不可用。语义相似度 floor 0.5 + cat 与 feline 必须 > cat 与 physics。
+      delete process.env.EMBEDDING_ALLOW_REMOTE
+      const svc = new EmbeddingService({})
+      await svc.ensureModel()
+
+      const a = await svc.generateEmbedding("the cat sat on the mat")
+      const b = await svc.generateEmbedding("a feline rested on a rug")
+      const c = await svc.generateEmbedding("quantum chromodynamics in particle physics")
+      assert.ok(a && b && c, "all three embeddings non-null")
+
+      const simAB = cosineSimilarity(a!, b!)
+      const simAC = cosineSimilarity(a!, c!)
+      assert.ok(simAB > 0.5, `cat ~ feline cosine ${simAB.toFixed(4)} > 0.5`)
+      assert.ok(
+        simAB > simAC,
+        `cat ~ feline (${simAB.toFixed(4)}) must beat cat ~ physics (${simAC.toFixed(4)})`,
+      )
+    }))
+
+  it("Codex review P2 #4: EMBEDDING_ALLOW_REMOTE=true logs a startup warn (dev escape hatch alarm)", () =>
+    withEnvSnapshot(async () => {
+      const warns: Array<{ obj: unknown; msg?: string }> = []
+      process.env.EMBEDDING_ALLOW_REMOTE = "true"
+      const svc = new EmbeddingService({
+        logger: { warn: (obj, msg) => warns.push({ obj, msg }) },
+      })
+      await svc.ensureModel()
+
+      const escapeHatchWarn = warns.find((w) => {
+        if (typeof w.obj !== "object" || w.obj === null) return false
+        return "envVar" in w.obj && (w.obj as { envVar: string }).envVar === "EMBEDDING_ALLOW_REMOTE"
+      })
+      assert.ok(
+        escapeHatchWarn,
+        `expected warn with envVar=EMBEDDING_ALLOW_REMOTE; got: ${warns.map((w) => JSON.stringify(w.obj)).join(" | ")}`,
+      )
+      assert.match(
+        escapeHatchWarn?.msg ?? "",
+        /production|dev/i,
+        `warn msg must mention production / dev context; got: ${escapeHatchWarn?.msg}`,
+      )
+    }))
+
+  it("Codex review P2 #4: EMBEDDING_ALLOW_REMOTE unset → no escape-hatch warn", () =>
+    withEnvSnapshot(async () => {
+      const warns: Array<{ obj: unknown; msg?: string }> = []
+      delete process.env.EMBEDDING_ALLOW_REMOTE
+      const svc = new EmbeddingService({
+        logger: { warn: (obj, msg) => warns.push({ obj, msg }) },
+      })
+      await svc.ensureModel()
+
+      const escapeHatchWarn = warns.find((w) => {
+        if (typeof w.obj !== "object" || w.obj === null) return false
+        return "envVar" in w.obj && (w.obj as { envVar: string }).envVar === "EMBEDDING_ALLOW_REMOTE"
+      })
+      assert.equal(escapeHatchWarn, undefined, "no escape-hatch warn when env unset")
+    }))
+
+  it("Codex review P2 #3: withEnvSnapshot restores transformers global env after test", async () => {
+    const { env: trEnv } = await import("@huggingface/transformers")
+    const before = {
+      localModelPath: trEnv.localModelPath,
+      allowRemoteModels: trEnv.allowRemoteModels,
+      allowLocalModels: trEnv.allowLocalModels,
+    }
+
+    // 跑一个会改 trEnv 三字段的子操作
+    await withEnvSnapshot(async () => {
+      process.env.EMBEDDING_ALLOW_REMOTE = "true"
+      const svc = new EmbeddingService({})
+      await svc.ensureModel() // 默认 pipelineLoader 改 trEnv 三字段
+      assert.equal(trEnv.allowRemoteModels, true, "inside snapshot: trEnv mutated")
+    })
+
+    // 跑完 withEnvSnapshot 后，trEnv 必须恢复
+    assert.equal(trEnv.localModelPath, before.localModelPath, "localModelPath restored")
+    assert.equal(trEnv.allowRemoteModels, before.allowRemoteModels, "allowRemoteModels restored")
+    assert.equal(trEnv.allowLocalModels, before.allowLocalModels, "allowLocalModels restored")
+  })
+})

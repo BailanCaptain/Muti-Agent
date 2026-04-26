@@ -54,8 +54,10 @@ export function registerCallbackRoutes(
     triggerMention?: (sessionGroupId: string, params: { targetAlias: string; taskSnippet: string; sourceProvider: import("@multi-agent/shared").Provider; invocationId: string }) => Promise<void> | void
     getMemories?: (sessionGroupId: string, keyword?: string) => { memories: Array<{ id: string; summary: string; keywords: string; createdAt: string }> }
     // F018 P5 AC6.3: semantic recall tool backend
+    // B019 review-2 (LL-023 scope 对齐): scope 从单 thread 扩到 sessionGroup
+    // 内所有 threads (clowder-ai thread = 我们 sessionGroup, 抄实现没抄语义层级)
     searchRecall?: (params: {
-      threadId: string
+      threadIds: string[]
       query: string
       topK: number
     }) => Promise<{
@@ -296,7 +298,11 @@ export function registerCallbackRoutes(
     }
 
     if (options.searchRecall) {
-      const result = await options.searchRecall({ threadId: thread.id, query: q, topK })
+      // B019 review-2: scope = sessionGroup 内所有 threads
+      // (clowder-ai thread 等价我们 sessionGroup, F018 抄实现没抄语义层级 → LL-023 修复)
+      const groupThreads = options.repository.listThreadsByGroup(thread.sessionGroupId)
+      const threadIds = groupThreads.map((t) => t.id)
+      const result = await options.searchRecall({ threadIds, query: q, topK })
       // Codex P5 Round 1 HIGH #1: the endpoint is the last boundary before recall
       // data reaches the agent. Sanitize hits[].chunkText regardless of whether
       // searchRecall already did — Codex/Gemini direct-fetch path only sees hits,

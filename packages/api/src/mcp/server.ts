@@ -309,7 +309,7 @@ export function getTools() {
     {
       name: "recall_similar_context",
       description:
-        "按语义相似度在当前 thread 的历史消息中召回相关片段。适用于需要旧细节但不确定在哪的情况 —— 宁可调一次也不要瞎编。返回 reference-only 闭合段格式，只作参考。",
+        "按语义相似度在当前 ROOM（含本 ROOM 内所有协作 agent thread 的历史，不只是你自己）召回相关消息片段。适用于需要 ROOM 内历史细节但不确定在哪的情况 —— 宁可调一次也不要瞎编。返回 reference-only 闭合段格式，只作参考。与 get_room_context 区别：get_room_context 按时序拿近期对话，recall_similar_context 按语义相似度精准匹配（适合查旧话题、跨 thread 找细节）。",
       inputSchema: {
         type: "object",
         properties: {

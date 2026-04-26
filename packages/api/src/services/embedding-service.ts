@@ -7,6 +7,7 @@
 //
 // 铁律：embedding 生成失败 / 模型加载失败 静默降级；不阻塞主流程
 
+import path from "node:path"
 import type { SqliteStore } from "../db/sqlite"
 
 export type EmbeddingRecord = {
@@ -161,8 +162,26 @@ export class EmbeddingService {
     this.pipelineLoader =
       deps.pipelineLoader ??
       (async () => {
-        const { pipeline } = await import("@huggingface/transformers")
-        return pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2")
+        const { pipeline, env } = await import("@huggingface/transformers")
+        // B019: 离线优先 — 不撞 huggingface.co:443。
+        // models/ 在 monorepo root，此文件位于 packages/api/src/services/，向上 4 层。
+        // 编译后路径为 packages/api/dist/services/，向上 4 层仍是 root。
+        const projectRoot = path.resolve(__dirname, "../../../..")
+        env.localModelPath = path.join(projectRoot, "models")
+        const allowRemote = process.env.EMBEDDING_ALLOW_REMOTE === "true"
+        env.allowRemoteModels = allowRemote
+        env.allowLocalModels = true
+        // B019 review P2 #4: dev escape hatch 误开生产会回到 B019 现象（撞 huggingface.co
+        // 永降级）。每次启动 ensureModel 时打一次明确 warn 提醒 operators。
+        if (allowRemote) {
+          this.logger.warn(
+            { stage: "ensureModel", envVar: "EMBEDDING_ALLOW_REMOTE" },
+            "B019 dev escape hatch enabled (EMBEDDING_ALLOW_REMOTE=true): allowing remote model fallback. NOT for production — unset in prod.",
+          )
+        }
+        // dtype: 'q8' 匹配 commit 进仓库的 onnx/model_quantized.onnx (~22MB int8)。
+        // 默认 fp32 会找 onnx/model.onnx (~80MB)，仓库不带。
+        return pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", { dtype: "q8" })
       })
     this.logger = deps.logger ?? { warn: () => {} }
   }

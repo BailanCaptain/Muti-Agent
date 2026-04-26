@@ -110,10 +110,14 @@ test("GET /api/callbacks/recall-similar-context calls searchRecall and returns f
   const invocations = new InvocationRegistry<{ cancel: () => void }>()
   const identity = invocations.createInvocation("thread-1", "agent-1")
 
-  let calledWith: { threadId: string; query: string; topK: number } | null = null
+  let calledWith: { threadIds: string[]; query: string; topK: number } | null = null
   registerCallbackRoutes(app, {
     repository: {
       getThreadById: () => ({ id: "thread-1", sessionGroupId: "group-1" }),
+      listThreadsByGroup: () => [
+        { id: "thread-1", sessionGroupId: "group-1", provider: "claude" },
+        { id: "thread-2", sessionGroupId: "group-1", provider: "codex" },
+      ],
     } as never,
     sessions: {} as never,
     broadcaster: { broadcast: () => {} },
@@ -135,7 +139,9 @@ test("GET /api/callbacks/recall-similar-context calls searchRecall and returns f
     url: `/api/callbacks/recall-similar-context?invocationId=${encodeURIComponent(identity.invocationId)}&callbackToken=${encodeURIComponent(identity.callbackToken)}&query=${encodeURIComponent("backup strategy")}&topK=3`,
   })
   assert.equal(response.statusCode, 200)
-  assert.equal(calledWith!.threadId, "thread-1")
+  // B019 review-2 (clowder-ai 语义对齐): callback 应传 sessionGroup 内所有 threads，
+  // 不只是发起 thread (clowder-ai thread = 我们 sessionGroup, scope 错位修复)
+  assert.deepEqual(calledWith!.threadIds, ["thread-1", "thread-2"])
   assert.equal(calledWith!.query, "backup strategy")
   assert.equal(calledWith!.topK, 3)
   const body = response.json() as { text: string; hits: unknown[] }
@@ -153,6 +159,7 @@ test("GET /api/callbacks/recall-similar-context defaults topK=5 when omitted", a
   registerCallbackRoutes(app, {
     repository: {
       getThreadById: () => ({ id: "thread-1", sessionGroupId: "group-1" }),
+      listThreadsByGroup: () => [{ id: "thread-1", sessionGroupId: "group-1", provider: "claude" }],
     } as never,
     sessions: {} as never,
     broadcaster: { broadcast: () => {} },
@@ -173,6 +180,52 @@ test("GET /api/callbacks/recall-similar-context defaults topK=5 when omitted", a
   await app.close()
 })
 
+test("B019 review-2 (LL-023 scope 对齐): recall scope = sessionGroup 内所有 threads, 不只是发起 thread", async () => {
+  // F018 模块六抄 clowder-ai 的 thread 级 recall，但 clowder-ai thread 多 cat 共享，
+  // 等价我们 sessionGroup。直接抄实现没抄语义层级 → 我们这边召回只查单 agent thread，
+  // 错位。修复：handler resolve sessionGroupId → all threads, searchRecall 传数组。
+  const app = Fastify()
+  const invocations = new InvocationRegistry<{ cancel: () => void }>()
+  const identity = invocations.createInvocation("thread-claude", "agent-claude")
+
+  let capturedThreadIds: string[] = []
+  registerCallbackRoutes(app, {
+    repository: {
+      getThreadById: () => ({ id: "thread-claude", sessionGroupId: "room-001" }),
+      listThreadsByGroup: (sgid: string) => {
+        assert.equal(sgid, "room-001", "handler must resolve from invocation thread's sessionGroup")
+        return [
+          { id: "thread-claude", sessionGroupId: "room-001", provider: "claude" },
+          { id: "thread-codex", sessionGroupId: "room-001", provider: "codex" },
+          { id: "thread-gemini", sessionGroupId: "room-001", provider: "gemini" },
+        ]
+      },
+    } as never,
+    sessions: {} as never,
+    broadcaster: { broadcast: () => {} },
+    getRunningThreadIds: () => new Set<string>(),
+    invocations,
+    isSessionGroupCancelled: () => false,
+    searchRecall: async (params) => {
+      capturedThreadIds = params.threadIds
+      return { text: "ok", hits: [] }
+    },
+  })
+
+  await app.inject({
+    method: "GET",
+    url: `/api/callbacks/recall-similar-context?invocationId=${encodeURIComponent(identity.invocationId)}&callbackToken=${encodeURIComponent(identity.callbackToken)}&query=room-level-recall`,
+  })
+
+  // 必须包含同 sessionGroup 内全部 3 个 threads (clowder-ai thread 等价)
+  assert.deepEqual(
+    capturedThreadIds.sort(),
+    ["thread-claude", "thread-codex", "thread-gemini"],
+    "scope must be sessionGroup-level (clowder-ai thread equivalent)",
+  )
+  await app.close()
+})
+
 test("GET /api/callbacks/recall-similar-context: hits[].chunkText MUST be sanitized by endpoint (Codex P5 HIGH #1)", async () => {
   // Codex: 'Agent-facing recall endpoint re-exposes unsanitized historical text
   // through hits'. Claude MCP only forwards text, but Codex/Gemini fetch directly
@@ -185,6 +238,7 @@ test("GET /api/callbacks/recall-similar-context: hits[].chunkText MUST be saniti
   registerCallbackRoutes(app, {
     repository: {
       getThreadById: () => ({ id: "thread-1", sessionGroupId: "group-1" }),
+      listThreadsByGroup: () => [{ id: "thread-1", sessionGroupId: "group-1", provider: "claude" }],
     } as never,
     sessions: {} as never,
     broadcaster: { broadcast: () => {} },
@@ -228,6 +282,7 @@ test("GET /api/callbacks/recall-similar-context returns 400 when query is empty"
   registerCallbackRoutes(app, {
     repository: {
       getThreadById: () => ({ id: "thread-1", sessionGroupId: "group-1" }),
+      listThreadsByGroup: () => [{ id: "thread-1", sessionGroupId: "group-1", provider: "claude" }],
     } as never,
     sessions: {} as never,
     broadcaster: { broadcast: () => {} },
@@ -252,6 +307,7 @@ test("GET /api/callbacks/recall-similar-context returns 401 for bad invocation i
   registerCallbackRoutes(app, {
     repository: {
       getThreadById: () => ({ id: "thread-1", sessionGroupId: "group-1" }),
+      listThreadsByGroup: () => [{ id: "thread-1", sessionGroupId: "group-1", provider: "claude" }],
     } as never,
     sessions: {} as never,
     broadcaster: { broadcast: () => {} },

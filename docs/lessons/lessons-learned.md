@@ -617,3 +617,33 @@
   - 本次对话：2026-04-22 F012 AC-20 第 3 轮合入 worktree 清理（3 个 tsx PID 80220/83796/84060 全靠 WMI 定位）
 - 原理：`netstat` 只暴露持有监听 socket 的进程；Node 子进程的 HTTP server 可以先崩但进程主循环（watch/FS handles）仍活。file busy 的真实所有者必须按"什么进程持有这个路径的 handle"查——Windows 下无 `lsof`，要么装 `handle.exe`（需 admin），要么走 WMI CommandLine 反推（本 PID 唯一可靠路径）。
 - 关联：LL-020（"汇报"不等于"验证"——kill 后必须再跑一次 rm 确认）、F024（worktree preview 基础设施）、`multi-agent-skills/merge-gate/SKILL.md`
+
+### LL-030: 修空壳的 feature 自己空壳 — 二阶虚标
+- 状态：validated
+- 更新时间：2026-04-25
+
+- 坑：F018（2026-04-17 立项 → 2026-04-18 完成）的全部立项动机就是修 F007 模块五本地 embedding 虚标 ——「AC5.2 表没建 / AC5.5 context-assembler 零调用，'代码全在生产调用 0'」。F018 P5 把模块六 Embedding Recall 后端"完整接入"声称 done，738/738 tests 绿、Codex review 跨 Phase 累计 14 轮全过、acceptance-guardian 通过、ROADMAP 移入已完成。**1 周后**（2026-04-25）小孙质疑"真的跑了吗"，黄仁勋实测 `SELECT COUNT(*) FROM message_embeddings` = 0（1856 条 messages、零 embedding 写入），`.runtime/api.log` 36 条 `model-not-ready` warn。**修空壳的 feature 自己空壳了**。
+- 根因（流程层，不是个人疏漏）：
+  1. **AC checkbox 视为真相源**：spec checkbox `[x]` 在 self-check / acceptance / review 三道门里都没绑定"实际外部观测证物"
+  2. **"post-merge 验证"是逃生口**：F018 AC9.1（跨 agent 验证 recall 真实使用能找到历史）+ AC9.2（embedding 落库一周抽查）标 "post-merge" 后无人回头补，全仓 grep 0 SQL/curl 命中
+  3. **测试 pass ≠ 端到端可观测**：738 tests 全用 DI mock pipelineLoader，0 个测试**真去查 message_embeddings 行数**或**真发条消息看 recall hits**。LL-022 覆盖"UI 呈现"测试金字塔倒置，但本 LL 把同一命题扩到 backend wiring：**测试 ≠ production 生效**
+  4. **修空壳的 feature 没把"对镜检查"硬化为自己的验收门**：F018 立项动机直接写在 `Why` 章节"F007 Step 7/8 未接入 → 虚标 ✅"，但立项时没把"merge 后 7 天必须真去查表"作为 F018 自己的 AC，导致同型空壳二阶递归
+- 触发条件：
+  - feature 涉及"外部可观测状态"（DB 写入 / 文件落地 / runtime log warn 计数 / 消息发送 / 队列入队）
+  - AC 标 "post-merge 跨 agent / 手工验证" / "上线后手工项"
+  - 全套测试 pass + review 过 + acceptance-guardian 过
+  - 但 merge 后 7+ 天无任何 SELECT / curl / grep / count 证物
+- 修复（流程级）：
+  - 立 EP-001（accepted, 2026-04-25 小孙选 B 方案）— 最小杠杆只改 quality-gate
+  - **quality-gate skill** 加 Step 0.6 「EXTERNAL OBSERVABILITY CHECK」：涉及 DB/文件/log/队列时，自检必须含一行外部观测数（SELECT COUNT / ls 大小 / grep -c / 队列 peek）。**修空壳的 feature**（Why 写"修 X 虚标"的）必须在 AC 里加一条"merge 后 7 天内真去查 X 同位证据"
+  - shared-rules.md **不动**（小孙判断"7 天补齐 / 外部观测"是程序员守则级，进 shared-rules 会稀释硬规则池密度；如未来 acceptance-guardian / merge-gate 也需要再升级）
+- 防护：
+  - 本 LL 在 EP-001 落地后引用 shared-rules / quality-gate 的硬规则
+  - B019 自身（修 F018 二阶虚标）必须 dogfood 本规则——merge 时 Timeline 含 SELECT COUNT + log warn 计数 + recall hits 数
+- 来源锚点：
+  - 触发 bug：`docs/bugReport/B019-f018-embedding-huggingface-offline.md`
+  - 同型空壳前序：`docs/features/F007-context-compression-optimization.md`（F007 模块五）
+  - 二阶受害者：`docs/features/F018-context-resume-rebuild.md`（F018 模块六，全 AC 5/5 Phase 738 tests 绿但 production 调用 0）
+  - 本次实测：黄仁勋 2026-04-25 query message_embeddings 表得 0 行
+- 原理：feature 立项动机本身已经在告诉你"上一代是怎么烂的"，但流程没把这个"反面教材"自动转成"本代的硬验收门"。结果就是同型病变换载体复发——F007 是"代码 wiring 没接"，F018 是"代码 wiring 接了但模型加载层挂"，外观不同、本质都是"AC 全 ✅ but 外部观测 0"。LL-004（同层第三次打补丁上抛架构）覆盖了"反复修同一根因"的横向递归，本 LL 覆盖"修虚标的 feature 自己虚标"的纵向递归——根因不在哪一层代码，在**验证链没延伸到外部可观测**。
+- 关联：LL-004（同层第三次打补丁）、LL-018（源码 vs 产物）、LL-020（汇报 vs 验证）、LL-022（测试金字塔在 UI 呈现倒置 — 本 LL 是 backend wiring 版）、`docs/evolution-proposals/EP-001-post-merge-evidence-7d-deadline.md`、`memory/feedback_measure_before_assert.md`

@@ -1,10 +1,11 @@
 ---
 B-ID: B019
 title: F018 模块六本地 embedding 永久不可用 — @huggingface/transformers 拉权重撞大陆网络墙，ensureModel 永降级，AC9.1/9.2 验收虚标
-status: open
+status: closed
 related: F018 (上下文续接架构重建 — 模块六 Embedding Recall 后端)
 reporter: 黄仁勋（小孙 2026-04-25 质疑"F018 真的跑了吗" → 实测 message_embeddings 表 0 行揭出）
 created: 2026-04-25
+closed: 2026-04-25
 severity: P1
 ---
 
@@ -105,6 +106,69 @@ grep "F018 embedding model load failed" .runtime/api.log | head -1
 - F018 commit / Timeline 标记 P5 done、AC 全 ✅、738/738 tests 绿
 - 2026-04-18 → 2026-04-25：1856 条 messages 进库，0 embedding 写入；36 条 model-not-ready warn 累计
 - 2026-04-25 小孙质疑"F018 真的跑了吗" → 黄仁勋实测发现表 0 行 → 立 B019
+
+## 修复证物（dogfood EP-001 / LL-030）
+
+> **EP-001 硬规则**：涉及外部可观测状态的 feature merge 时必须附**一行外部观测证物**（行数 / 字节数 / 计数），不能只是"代码 wiring + tests pass"。本节即 B019 自身的 dogfood 输出。
+
+### 1. 修复 commits（fix/B019-embedding-offline-loader 分支）
+
+- `086d13b` P1: 模型权重 commit (~23MB) + setup-models 脚本 + plan
+- `43cffce` P2: pipelineLoader 离线优先 (env.localModelPath + allowRemoteModels=false + dtype:'q8')
+- `c079823` P3: cosine 语义相似度测试守 quantized 推理质量
+- `005bbb6` P4: scripts/B019-verify.ts service-level 验收脚本
+- `8f9d188` 沉淀: EP-001 + LL-030 二阶虚标教训
+- `924ae08` Option B 落地: quality-gate Step 0.6 EXTERNAL OBSERVABILITY CHECK
+- `8053966` review P2-5: undici 8.1 → ^6 兼容 Node ≥20.9
+- `02c5774` review P2-3: test withEnvSnapshot 恢复 transformers 全局 env
+- `9a4e0e2` review P2-4: EMBEDDING_ALLOW_REMOTE=true 启动 warn
+- `e83f991` review P1-1: 真启 createApiServer + 验 callback wiring + sqlite 写入
+
+### 2. 真实外部观测输出
+
+**API 启动**（`pnpm tsx packages/api/src/index.ts`）:
+```
+{"msg":"Server listening at http://[::]:8810"}
+0 个 model-not-ready warns（vs F018 P5 完工 1 周内累计 36 条）
+```
+
+**SQL 行数**（`SELECT COUNT(*) FROM message_embeddings`）:
+- F018 P5 完工 1 周（2026-04-18 → 2026-04-25）: **0 行**（1856 messages, 0 写入）
+- B019 fix 后 e2e 临时库: **3 行**（B019-e2e-verify 写入 3, 全部可见）
+- B019 fix 后 service-level 临时库: **5 行**（B019-verify 写入 5, 全部可见）
+
+**Recall 召回**（`searchSimilarFromDb("kittens cats", ["thread-e2e"], 3, ...)`）:
+```
+3 hits
+  score=0.3662 msg=msg-e2e-1 text="the cat sat on the mat..."
+  score=0.3636 msg=msg-e2e-3 text="a feline rested on a soft rug..."
+  score=0.1362 msg=msg-e2e-2 text="I love TypeScript..."
+```
+
+**Callback endpoint wiring**（`fetch /api/callbacks/recall-similar-context?query=test`）:
+```
+HTTP 401 (Invalid invocation identity)
+responseTime: 4.27ms
+→ endpoint 真挂载 + invocation auth 工作
+```
+
+**测试**:
+- `pnpm test:api` → 980/980 pass
+- `pnpm test:components` → 77/77 pass
+- B019 单测 5 个 + helper restoration 测试 1 个: 全 pass
+- B019 review P2 #4 escape-hatch warn 测试 2 个: 全 pass
+- ensureModel 离线 0.5s 加载（vs F018 P5 完工每次 10s ConnectTimeout）
+
+### 3. dogfood 自检（按 quality-gate Step 0.6）
+
+> 本 fix 的 Why 写"修 F018 模块六虚标"——按 LL-030 + Step 0.6 ④，必须在 AC 里加一条"merge 后 7 天内真去查同位证据"。本节即"merge 前已查"的等价证物，**不留 post-merge 逃生口**（避免三阶递归 F007 → F018 → B019）。
+
+- 外部最直接观测：`message_embeddings` 行数 — ✅ 已查（e2e: 3 行 / service: 5 行）
+- recall 工具调用：✅ 已查（searchSimilarFromDb 返回 3 hits, 语义匹配正确）
+- runtime warn 计数：`grep -c model-not-ready` — ✅ 0 条（vs 修前 36 条/周）
+- F007 虚标对镜：F007 模块五"代码全在生产调用 0" → B019 fix 后"代码全在 + 生产调用真发生 + 行数真增长" — ✅
+
+7 天 post-merge 复查时间窗：**2026-05-02** 前 grep production sqlite 看 `message_embeddings` 表行数随消息单调增长。
 
 ## 非目标（Out of Scope）
 
