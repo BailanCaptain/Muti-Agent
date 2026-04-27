@@ -12,41 +12,6 @@ const PROVIDER_LABELS: Record<Provider, string> = {
   gemini: "Google"
 };
 
-/**
- * L0 家规摘要 —— 从 multi-agent-skills/refs/shared-rules.md 手工编译而来。
- * 单一真相源是 shared-rules.md，本常量是其压缩版，随 system prompt 注入每次调用。
- * 修改 shared-rules.md 后记得同步更新此常量。
- */
-const L0_DIGEST = `## 家规（shared-rules.md 摘要）
-
-**团队**：小孙（产品/CVO）· 黄仁勋（主架构 / 核心开发） · 范德彪（Code Review / 安全 / 测试 / 工程实现） · 桂芬（视觉设计师 / 创意师 / 前端体验）。我们是平等合作伙伴，不说"你们"。
-
-**第一性原理**：
-- P1 终态优先，不绕路（Phase N 产物在 N+1 必须还在）
-- P2 共创伙伴，不是木头人（自主跑 SOP，不每步问）
-- P3 方向正确 > 执行速度（不确定就停-搜-问-确认）
-- P4 每个概念只在一处定义
-- P5 可验证才算完成 — **Fail-closed 证据契约**：未拿出本轮实际证据（文件路径+行号 / 测试输出 / 截图 / 实测命令输出）前禁用「fixed/完成/没问题/确认/一定是」结论词；拿不出只能说「还没查完」继续查。UX/前端变更必须浏览器实操+截图。
-
-**诚实原则**：
-- 不确定时明确说不知道
-- 不能编造不存在的或者没有真正来源的信息
-
-**铁律**：
-- 数据神圣不可删（禁止 flush/drop/rm 任何持久化存储）
-- 进程自保（禁止 kill 父进程、禁止运行时改 config）
-- 网络边界（禁止访问不属于本服务的 localhost 端口）
-- **关键前提不确定时，强制停止硬猜，优先提问** — 任务依赖的前提未验证或信息冲突时，先问清楚再动手
-- Skill 强制触发 / Review 先红后绿 / P1P2 不留存 / 交接五件套
-- @ 是路由指令不是装饰，行首才生效，用真实人名不是 provider 代号
-- 不冒充他人 / commit 带 \`[昵称/模型 🐾]\` 签名
-- **§17 TAKEOVER 协议**：author 在同一 bug/feature 连续 2 次声称 fixed 但复验失败 / 连续 3 轮无证据增量（无新文件+行号 / 新测试 / 新实测输出）→ reviewer **有责**在当前 thread 显式宣布 TAKEOVER，原 author 降级为信息提供者，另一位 agent 接手修复。达到阈值不接管 = reviewer 失职。
-
-**Skill 路由**：交接→cross-role-handoff · 写计划→writing-plans · 开 worktree→worktree · 写代码/TDD→tdd · 自检→quality-gate · 独立验收→acceptance-guardian · 做 code review→code-review · 请 review→requesting-review · 收 review 修复→receiving-review · merge→merge-gate · feature/bugfix→feat-lifecycle · brainstorm→collaborative-thinking · bug/调试→debugging · scope偏了/流程改进→self-evolution
-
-**回答纪律**：先汇报现状+验证计划（未验证前禁用 fixed/完成/没问题/确认 结论词） · 连续 >10 次 shell 停下来总结 · 每完成子步骤写文字交代进展 · 预算告警立即收尾
-`.trim();
-
 const DECISION_ESCALATION_RULES = `
 ## 分歧点规则（[分歧点] 使用条件）
 以下三个条件**同时满足**时才用 \`[分歧点]\` 标记，缺一不弹：
@@ -134,7 +99,10 @@ const SHARED_RULES_CACHE_TTL_MS = 60_000; // 60 seconds
 
 /**
  * Load shared-rules.md at runtime with a file cache that refreshes every 60 seconds.
- * Returns empty string if file doesn't exist.
+ *
+ * B022 fail-closed: 找不到或无法读取 shared-rules.md 时**抛错**，不再静默降级。
+ * 项目方向是 fail-closed 证据契约，静默 fallback 会导致 agent 用过期家规继续工作
+ * 且 drift 难以发现（详见 docs/bugReport/B022-prompt-injection-redundancy-l0-digest-drift.md）。
  */
 export function loadSharedRules(): string {
   const now = Date.now();
@@ -143,15 +111,20 @@ export function loadSharedRules(): string {
   }
 
   const rulesPath = path.resolve(__dirname, "../../../../multi-agent-skills/refs/shared-rules.md");
+  let content: string;
   try {
-    _sharedRulesCache = fs.readFileSync(rulesPath, "utf-8");
-    _sharedRulesCacheTime = now;
-    return _sharedRulesCache;
-  } catch {
-    _sharedRulesCache = "";
-    _sharedRulesCacheTime = now;
-    return "";
+    content = fs.readFileSync(rulesPath, "utf-8");
+  } catch (err) {
+    const cause = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `[B022 fail-closed] Cannot load shared-rules.md from ${rulesPath} — ` +
+        "家规真相源缺失，拒绝构建 system prompt（避免 agent 跑无家规护栏）。" +
+        `Cause: ${cause}`
+    );
   }
+  _sharedRulesCache = content;
+  _sharedRulesCacheTime = now;
+  return content;
 }
 
 /** @internal test-only — reset the 60s file cache so mocked fs.readFileSync takes effect immediately. */
@@ -196,11 +169,9 @@ function buildBasePrompt(provider: Provider): string {
   const me = AGENT_PROFILES[provider];
   const providerLabel = PROVIDER_LABELS[provider];
 
-  // Use runtime shared-rules.md when available, fall back to L0_DIGEST
+  // B022: shared-rules.md 是单一真相源；loadSharedRules 在文件缺失时 fail-closed 抛错。
   const sharedRules = loadSharedRules();
-  const rulesBlock = sharedRules
-    ? `## 家规（shared-rules.md 运行时加载）\n\n${sharedRules}`
-    : L0_DIGEST;
+  const rulesBlock = `## 家规（shared-rules.md 运行时加载）\n\n${sharedRules}`;
 
   return [
     "# Multi-Agent SystemPrompt",

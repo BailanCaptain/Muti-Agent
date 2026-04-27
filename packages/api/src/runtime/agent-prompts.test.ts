@@ -65,6 +65,34 @@ test("buildSystemPromptWithHints works for all three providers", () => {
   }
 })
 
+// B022 fail-closed: loadSharedRules must throw when shared-rules.md is missing,
+// no longer silently fall back to L0_DIGEST (which has been deleted).
+test("AGENT_SYSTEM_PROMPTS throws when shared-rules.md is unreadable (B022 fail-closed)", () => {
+  const originalReadFileSync = fs.readFileSync
+
+  __resetSharedRulesCacheForTest()
+
+  ;(fs as any).readFileSync = (filePath: any, options?: any) => {
+    if (typeof filePath === "string" && filePath.endsWith("shared-rules.md")) {
+      const e: NodeJS.ErrnoException = new Error("ENOENT: no such file or directory")
+      e.code = "ENOENT"
+      throw e
+    }
+    return originalReadFileSync.call(fs, filePath, options)
+  }
+
+  try {
+    assert.throws(
+      () => AGENT_SYSTEM_PROMPTS.claude,
+      /B022 fail-closed.*shared-rules\.md/,
+      "must surface a fail-closed error mentioning B022 + shared-rules.md, not silently degrade"
+    )
+  } finally {
+    ;(fs as any).readFileSync = originalReadFileSync
+    __resetSharedRulesCacheForTest()
+  }
+})
+
 // Hot-reload contract (R-198 P1): AGENT_SYSTEM_PROMPTS must re-read shared-rules.md
 // at access time so editing the file + merging takes effect without API restart.
 test("AGENT_SYSTEM_PROMPTS reflects runtime shared-rules.md mutation (hot reload, R-198)", () => {
