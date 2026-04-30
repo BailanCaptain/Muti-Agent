@@ -82,10 +82,16 @@ export async function assemblePrompt(
       // lines (SYSTEM:/IMPORTANT:) or forged closing tags; sanitize before
       // injecting into the system prompt.
       const sanitized = sanitizeHandoffBody(summary)
-      if (sanitized) {
+      // B-fix: rolling summary 注入 system prompt 前硬截断到 8K，防止 claude CLI
+      // `--append-system-prompt` 撞 Windows CreateProcess 32767 字符上限（ENAMETOOLONG）。
+      // 仅 claude-runtime 把 system prompt 走 argv，codex/gemini 走 stdin 不爆。
+      const capped = sanitized.length > 8000
+        ? sanitized.slice(0, 8000) + "\n…（摘要超长已截断，详细历史请用 recall_similar_context 按需查询）"
+        : sanitized
+      if (capped) {
         systemParts.push("")
         systemParts.push("## 本房间摘要")
-        systemParts.push(sanitized)
+        systemParts.push(capped)
         systemParts.push("请参考上述背景信息继续协作。")
       }
     }
