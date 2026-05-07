@@ -92,6 +92,38 @@ test("appendMessage + listMessages round-trip", async () => {
   }
 })
 
+// Regression: F011 设的 default limit=1000 在长 thread (>1000 条) 上 ASC + LIMIT
+// 截掉了最新消息，导致前端 timeline 看不到刚发的消息。无显式 limit 时必须返回全部。
+test("listMessages without limit returns ALL messages even when count > 1000", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup("Test")
+    repo.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const thread = repo.listThreadsByGroup(groupId).find((t) => t.provider === "codex")
+    assert.ok(thread)
+
+    for (let i = 0; i < 1001; i += 1) {
+      repo.appendMessage(thread.id, "user", `msg-${i}`)
+    }
+
+    const all = repo.listMessages(thread.id)
+    assert.equal(all.length, 1001, `expected 1001, got ${all.length}`)
+    assert.equal(all[1000].content, "msg-1000", "newest message must be present")
+
+    const capped = repo.listMessages(thread.id, 500)
+    assert.equal(capped.length, 500, "explicit limit still honored")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
 test("connector messages round-trip with connectorSource JSON", async () => {
   const { createDrizzleDb } = await import("../drizzle-instance")
   const { DrizzleSessionRepository } = await import("./session-repository-drizzle")

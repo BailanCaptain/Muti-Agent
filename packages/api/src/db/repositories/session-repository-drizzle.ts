@@ -483,14 +483,19 @@ export class DrizzleSessionRepository {
     return rows[0] as ProviderThreadRecord | undefined
   }
 
-  listMessages(threadId: string, limit = 1000): MessageRecord[] {
-    const rows = this.db
+  listMessages(threadId: string, limit?: number): MessageRecord[] {
+    // F011 originally added `limit = 1000` as a memory guard, but every caller
+    // ("getActiveGroup", "context-assembler", "chain-starter-resolver", titler …)
+    // wants the FULL conversation. Combined with `ORDER BY createdAt ASC` this
+    // silently truncated the NEWEST messages once a thread crossed 1000, so the
+    // UI stopped showing fresh user/assistant messages. Default is now unlimited;
+    // callers needing a cap pass it explicitly.
+    const query = this.db
       .select()
       .from(messages)
       .where(eq(messages.threadId, threadId))
       .orderBy(asc(messages.createdAt))
-      .limit(limit)
-      .all()
+    const rows = limit !== undefined ? query.limit(limit).all() : query.all()
     return rows.map(hydrateMessage)
   }
 
