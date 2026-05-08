@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { MemoryService } from "./memory-service"
 import type { SessionMemoryRecord } from "../db/sqlite"
+import { MemoryService } from "./memory-service"
 
 function createMockRepository(overrides: Record<string, unknown> = {}) {
   const threads = [
@@ -25,7 +25,18 @@ function createMockRepository(overrides: Record<string, unknown> = {}) {
     },
   ]
 
-  const messagesByThread: Record<string, Array<{ id: string; threadId: string; role: string; content: string; thinking: string; messageType: string; createdAt: string }>> = {
+  const messagesByThread: Record<
+    string,
+    Array<{
+      id: string
+      threadId: string
+      role: string
+      content: string
+      thinking: string
+      messageType: string
+      createdAt: string
+    }>
+  > = {
     "thread-1": [
       {
         id: "msg-1",
@@ -96,7 +107,6 @@ function createMockRepository(overrides: Record<string, unknown> = {}) {
     ...overrides,
   } as never
 }
-
 
 test("summarizeSession generates summary from messages", () => {
   const repo = createMockRepository()

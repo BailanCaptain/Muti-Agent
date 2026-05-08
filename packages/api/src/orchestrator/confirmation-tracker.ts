@@ -36,7 +36,7 @@ export class ConfirmationTracker {
   ): boolean {
     const list = this.items.get(sessionGroupId)
     if (!list) return false
-    const item = list.find(i => i.id === confirmationId)
+    const item = list.find((i) => i.id === confirmationId)
     if (!item || item.status !== "pending") return false
     item.status = "resolved"
     item.resolvedBy = resolution.resolvedBy
@@ -50,7 +50,7 @@ export class ConfirmationTracker {
   defer(sessionGroupId: string, confirmationId: string): boolean {
     const list = this.items.get(sessionGroupId)
     if (!list) return false
-    const item = list.find(i => i.id === confirmationId)
+    const item = list.find((i) => i.id === confirmationId)
     if (!item || item.status !== "pending") return false
     item.status = "deferred"
     return true
@@ -60,14 +60,14 @@ export class ConfirmationTracker {
    * Get all unresolved items for a session group.
    */
   getUnresolved(sessionGroupId: string): PendingConfirmationItem[] {
-    return (this.items.get(sessionGroupId) ?? []).filter(i => i.status === "pending")
+    return (this.items.get(sessionGroupId) ?? []).filter((i) => i.status === "pending")
   }
 
   /**
    * Get all deferred items for a session group.
    */
   getDeferred(sessionGroupId: string): PendingConfirmationItem[] {
-    return (this.items.get(sessionGroupId) ?? []).filter(i => i.status === "deferred")
+    return (this.items.get(sessionGroupId) ?? []).filter((i) => i.status === "deferred")
   }
 
   /**
@@ -83,7 +83,7 @@ export class ConfirmationTracker {
   importFromPhase(sessionGroupId: string, items: PendingConfirmationItem[]): void {
     const list = this.items.get(sessionGroupId) ?? []
     for (const item of items) {
-      if (!list.some(existing => existing.id === item.id)) {
+      if (!list.some((existing) => existing.id === item.id)) {
         list.push(item)
       }
     }

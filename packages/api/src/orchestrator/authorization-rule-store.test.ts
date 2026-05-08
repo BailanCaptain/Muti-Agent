@@ -1,5 +1,5 @@
-import { describe, it, beforeEach } from "node:test"
 import assert from "node:assert/strict"
+import { beforeEach, describe, it } from "node:test"
 import { createDrizzleDb } from "../db/drizzle-instance"
 import { AuthorizationRuleRepository } from "../db/repositories"
 import { AuthorizationRuleStore } from "./authorization-rule-store"
@@ -33,7 +33,11 @@ describe("AuthorizationRuleStore", () => {
   it("thread-scoped rule takes precedence over global", () => {
     store.addRule({ provider: "codex", action: "npm *", scope: "global", decision: "allow" })
     store.addRule({
-      provider: "codex", action: "npm *", scope: "thread", decision: "deny", threadId: "t1",
+      provider: "codex",
+      action: "npm *",
+      scope: "thread",
+      decision: "deny",
+      threadId: "t1",
     })
     assert.equal(store.match("codex", "npm test", "t1")?.decision, "deny")
     assert.equal(store.match("codex", "npm test", "t2")?.decision, "allow")
@@ -56,7 +60,12 @@ describe("AuthorizationRuleStore", () => {
   })
 
   it("removeRule deletes a rule", () => {
-    const rule = store.addRule({ provider: "codex", action: "npm *", scope: "global", decision: "allow" })
+    const rule = store.addRule({
+      provider: "codex",
+      action: "npm *",
+      scope: "global",
+      decision: "allow",
+    })
     assert.equal(store.match("codex", "npm test", "t1")?.decision, "allow")
     store.removeRule(rule.id)
     assert.equal(store.match("codex", "npm test", "t1"), null)
@@ -64,7 +73,13 @@ describe("AuthorizationRuleStore", () => {
 
   it("listRules returns all rules", () => {
     store.addRule({ provider: "codex", action: "npm *", scope: "global", decision: "allow" })
-    store.addRule({ provider: "claude", action: "edit_file", scope: "thread", decision: "deny", threadId: "t1" })
+    store.addRule({
+      provider: "claude",
+      action: "edit_file",
+      scope: "thread",
+      decision: "deny",
+      threadId: "t1",
+    })
     const rules = store.listRules()
     assert.equal(rules.length, 2)
   })

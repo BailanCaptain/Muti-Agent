@@ -45,9 +45,7 @@ export class MetricsService {
   }
 
   getLastGauge(name: string, filterTags?: Tags): number | null {
-    const matching = this.gauges.filter(
-      (g) => g.name === name && tagsMatch(g.tags, filterTags),
-    )
+    const matching = this.gauges.filter((g) => g.name === name && tagsMatch(g.tags, filterTags))
     if (matching.length === 0) return null
     return matching[matching.length - 1].value
   }

@@ -141,7 +141,10 @@ const INIT_SQL = `
     tool_events TEXT NOT NULL DEFAULT '[]',
     content_blocks TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
-    model TEXT
+    model TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    retry_reasons TEXT NOT NULL DEFAULT '[]',
+    a2a_call_id TEXT
   );
 
   CREATE TABLE IF NOT EXISTS invocations (
@@ -226,8 +229,33 @@ const INIT_SQL = `
     updated_by TEXT NOT NULL
   );
 
+  -- F026 P5 in-flight · a2a_calls 表挪到 drizzle INIT_SQL 自闭环。
+  -- 历史上 SqliteStore.ctor 建过一份（同 IF NOT EXISTS，幂等无副作用）；
+  -- 但 drizzle 路径的 listMessages LEFT JOIN a2a_calls 必须保证建表完成才能跑。
+  -- 与 sqlite.ts L274 保持一致；CHECK 状态机沿用六态。
+  CREATE TABLE IF NOT EXISTS a2a_calls (
+    call_id TEXT PRIMARY KEY,
+    parent_call_id TEXT,
+    root_call_id TEXT NOT NULL,
+    issuer_id TEXT NOT NULL,
+    convener_id TEXT NOT NULL,
+    on_behalf_of TEXT,
+    reply_to TEXT NOT NULL,
+    deadline_at TEXT NOT NULL,
+    join_set_id TEXT,
+    status TEXT NOT NULL CHECK (status IN ('pending','working','done','failed','timeout','cancelled')),
+    envelope_version TEXT NOT NULL DEFAULT 'v1',
+    session_group_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
   CREATE INDEX IF NOT EXISTS idx_messages_thread_id ON messages(thread_id);
   CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+  -- F026 P5 T0 · idx_messages_a2a_call_id 不放这里（INIT_SQL 内）：老库 messages 已存在
+  -- CREATE TABLE 跳过、a2a_call_id 列要等 MIGRATIONS 的 ALTER TABLE 才会有；INIT_SQL 内
+  -- CREATE INDEX 引用尚未建好的列会 throw，比 ALTER 跑得早 → 启动崩。
+  -- 索引建立挪到 MIGRATIONS 数组 a2a_call_id ALTER 之后（幂等的 CREATE INDEX IF NOT EXISTS）。
   CREATE INDEX IF NOT EXISTS idx_threads_session_group_id ON threads(session_group_id);
   CREATE INDEX IF NOT EXISTS idx_agent_events_invocation_id ON agent_events(invocation_id);
   CREATE INDEX IF NOT EXISTS idx_agent_events_thread_id ON agent_events(thread_id);
@@ -298,6 +326,25 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
     name: "F021-messages-add-model",
     sql: "ALTER TABLE messages ADD COLUMN model TEXT;",
   },
+  // F026 P3.1: assistant final 派发协议 retry 兜底层
+  {
+    name: "F026-P3.1-messages-add-retry-count",
+    sql: "ALTER TABLE messages ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;",
+  },
+  {
+    name: "F026-P3.1-messages-add-retry-reasons",
+    sql: "ALTER TABLE messages ADD COLUMN retry_reasons TEXT NOT NULL DEFAULT '[]';",
+  },
+  // F026 P5 T0 · messages.a2a_call_id —— 前端 10 原语 LEFT JOIN a2a_calls 入口
+  {
+    name: "F026-P5-T0-messages-add-a2a-call-id",
+    sql: "ALTER TABLE messages ADD COLUMN a2a_call_id TEXT;",
+  },
+  // 索引必须 ALTER 之后建：老库时 INIT_SQL CREATE TABLE 跳过、列要 ALTER 才有
+  {
+    name: "F026-P5-T0-messages-idx-a2a-call-id",
+    sql: "CREATE INDEX IF NOT EXISTS idx_messages_a2a_call_id ON messages(a2a_call_id);",
+  },
 ]
 
 function runMigrations(adapter: ReturnType<typeof createNodeSqliteAdapter>): void {
@@ -319,9 +366,7 @@ function runMigrations(adapter: ReturnType<typeof createNodeSqliteAdapter>): voi
 // 最大序号。旧库 ALTER 路径不带 UNIQUE，回填后由 CREATE UNIQUE INDEX 补齐。
 function backfillRoomIds(adapter: ReturnType<typeof createNodeSqliteAdapter>): void {
   const pending = adapter
-    .prepare(
-      "SELECT id FROM session_groups WHERE room_id IS NULL ORDER BY created_at ASC, id ASC",
-    )
+    .prepare("SELECT id FROM session_groups WHERE room_id IS NULL ORDER BY created_at ASC, id ASC")
     .all() as Array<{ id: string }>
 
   if (pending.length > 0) {
@@ -350,9 +395,7 @@ function backfillRoomIds(adapter: ReturnType<typeof createNodeSqliteAdapter>): v
   // 重复 CREATE UNIQUE INDEX 会造成同列两份索引 — 每次写都要维护两遍。
   // 只在还没有任何 UNIQUE 单列索引覆盖 room_id 时建命名索引（补旧库 ALTER 路径）。
   if (!hasUniqueIndexOnColumn(adapter, "session_groups", "room_id")) {
-    adapter.exec(
-      "CREATE UNIQUE INDEX idx_session_groups_room_id ON session_groups(room_id)",
-    )
+    adapter.exec("CREATE UNIQUE INDEX idx_session_groups_room_id ON session_groups(room_id)")
   }
 }
 
@@ -366,9 +409,9 @@ function hasUniqueIndexOnColumn(
     .all(table) as Array<{ name: string; isUnique: number }>
   for (const idx of indexes) {
     if (idx.isUnique !== 1) continue
-    const cols = adapter
-      .prepare("SELECT name FROM pragma_index_info(?)")
-      .all(idx.name) as Array<{ name: string }>
+    const cols = adapter.prepare("SELECT name FROM pragma_index_info(?)").all(idx.name) as Array<{
+      name: string
+    }>
     if (cols.length === 1 && cols[0].name === column) return true
   }
   return false

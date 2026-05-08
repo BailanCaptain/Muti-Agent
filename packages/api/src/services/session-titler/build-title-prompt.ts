@@ -20,6 +20,11 @@ export function buildTitlePromptFromRecentMessages(
       if (m.messageType !== "final") continue
       const content = (m.content ?? "").trim()
       if (!content) continue
+      // F026 P2 v2 Step 7: `[Call: @x ...]` 起头的 final 是 MCP/assistant
+      // 派发指令（旧 a2a_handoff/_mcp 已退役统一为 final），跳过避免污染
+      // Haiku 标题。与 session-service.ts:appendAssistantMessage 双保险：
+      // 那里在 schedule 时跳过；这里在重扫历史 / backfill 时再跳一次。
+      if (content.startsWith("[Call:")) continue
       collected.push({ createdAt: m.createdAt, role: m.role, content })
     }
   }

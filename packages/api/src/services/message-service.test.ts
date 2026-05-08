@@ -45,14 +45,9 @@ function createThreads(): ThreadRecord[] {
   ]
 }
 
-type SendableState =
-  | { sendable: true }
-  | { sendable: false; reason: "archived" | "deleted" }
+type SendableState = { sendable: true } | { sendable: false; reason: "archived" | "deleted" }
 
-function createSessionsStub(
-  threads: ThreadRecord[],
-  opts: { sendable?: SendableState } = {},
-) {
+function createSessionsStub(threads: ThreadRecord[], opts: { sendable?: SendableState } = {}) {
   return {
     isSessionGroupSendable: (_groupId: string): SendableState =>
       opts.sendable ?? { sendable: true },
@@ -129,7 +124,12 @@ function createSessionsStub(
       },
     }),
     isFirstSnapshot: () => true,
-    getActiveGroupDelta: () => ({ newMessages: [], removedMessageIds: [], providers: {}, invocationStats: [] }),
+    getActiveGroupDelta: () => ({
+      newMessages: [],
+      removedMessageIds: [],
+      providers: {},
+      invocationStats: [],
+    }),
   }
 }
 
@@ -254,7 +254,7 @@ test("handleAgentPublicMessage emits a dispatch-blocked event when the group bar
   await messageService.handleAgentPublicMessage({
     threadId: "thread-codex",
     messageId: "message-1",
-    content: "@Designer please continue",
+    content: "[Call: @Designer please continue]",
     invocationId: "invocation-1",
     emit: (event) => {
       events.push(event)
@@ -366,10 +366,7 @@ test("review P1: handleSendMessage rejects when session group is archived", () =
     `status 应提示归档原因，实际: ${status.payload.message}`,
   )
   // 没有真正写入消息 — 不应看到 message.created
-  assert.ok(
-    !events.some((e) => e.type === "message.created"),
-    "归档会话不应落库 message.created",
-  )
+  assert.ok(!events.some((e) => e.type === "message.created"), "归档会话不应落库 message.created")
 })
 
 test("review P1: handleSendMessage rejects when session group is soft-deleted", () => {
@@ -399,10 +396,7 @@ test("review P1: handleSendMessage rejects when session group is soft-deleted", 
     status.payload.message.includes("删除") || status.payload.message.includes("deleted"),
     `status 应提示删除原因，实际: ${status.payload.message}`,
   )
-  assert.ok(
-    !events.some((e) => e.type === "message.created"),
-    "软删会话不应落库 message.created",
-  )
+  assert.ok(!events.some((e) => e.type === "message.created"), "软删会话不应落库 message.created")
 })
 
 // ── F002: Decision Board integration ─────────────────────────────────
@@ -842,10 +836,7 @@ test("handleDecisionBoardRespond with skipped=true still consumes entries and em
   })
 
   assert.equal(messageService.getPendingFlushEntries("group-1"), undefined)
-  assert.equal(
-    broadcasts.filter((e) => e.type === "decision.board_item_resolved").length,
-    1,
-  )
+  assert.equal(broadcasts.filter((e) => e.type === "decision.board_item_resolved").length, 1)
 })
 
 test("handleDecisionBoardRespond is a no-op when no flush is pending", async () => {
@@ -879,20 +870,17 @@ test("buildDecisionSummary writes converged items as '已收敛' not '未决定'
     makeEntry({
       id: "e-div",
       question: "需要 Redis 吗？",
-      options: [{ id: "A", label: "是" }, { id: "B", label: "否" }],
+      options: [
+        { id: "A", label: "是" },
+        { id: "B", label: "否" },
+      ],
       converged: false,
     }),
   ]
   const summary = messageService.buildDecisionSummary(entries, [
     { itemId: "e-div", choice: { kind: "option", optionId: "A" } },
   ])
-  assert.ok(
-    summary.includes("已收敛"),
-    "converged item must be labeled 已收敛",
-  )
-  assert.ok(
-    !summary.includes("未决定"),
-    "converged item must NOT be labeled 未决定",
-  )
+  assert.ok(summary.includes("已收敛"), "converged item must be labeled 已收敛")
+  assert.ok(!summary.includes("未决定"), "converged item must NOT be labeled 未决定")
   assert.ok(summary.includes("是"), "divergent item decision must appear")
 })

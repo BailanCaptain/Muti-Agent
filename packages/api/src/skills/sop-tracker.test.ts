@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import os from "node:os"
 import path from "node:path"
 import test from "node:test"
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs"
-import os from "node:os"
 import { SkillRegistry } from "./registry.js"
 import { SopTracker } from "./sop-tracker.js"
 

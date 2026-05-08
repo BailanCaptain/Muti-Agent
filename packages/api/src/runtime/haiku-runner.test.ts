@@ -1,7 +1,7 @@
-import { describe, it, mock } from "node:test"
 import assert from "node:assert/strict"
-import { EventEmitter } from "node:events"
 import type { ChildProcess } from "node:child_process"
+import { EventEmitter } from "node:events"
+import { describe, it, mock } from "node:test"
 import { createHaikuRunner } from "./haiku-runner"
 
 type FakeSpawnOpts = { code: number | null; stdout?: string; delayMs?: number; spawnError?: Error }
@@ -88,7 +88,11 @@ describe("HaikuRunner", () => {
     const { spawn, killSpy } = fakeSpawn({ code: 0, stdout: "done", delayMs: 6000 })
     const r = createHaikuRunner({ spawn })
     const res = await r.runPrompt("x")
-    assert.equal(res.ok, true, `should not timeout at 6s; default must be >= 10000ms. got error=${res.error}`)
+    assert.equal(
+      res.ok,
+      true,
+      `should not timeout at 6s; default must be >= 10000ms. got error=${res.error}`,
+    )
     assert.equal(killSpy.mock.calls.length, 0, "should not kill when response arrives at 6s")
   })
 
@@ -108,7 +112,10 @@ describe("HaikuRunner", () => {
     }) as any
     const r = createHaikuRunner({ spawn })
     await r.runPrompt("my prompt text")
-    assert.ok(capturedArgs.includes("--print"), `args should include --print, got: ${capturedArgs.join(" ")}`)
+    assert.ok(
+      capturedArgs.includes("--print"),
+      `args should include --print, got: ${capturedArgs.join(" ")}`,
+    )
     assert.ok(capturedArgs.includes("--model"))
     const modelIdx = capturedArgs.indexOf("--model")
     assert.equal(capturedArgs[modelIdx + 1], "claude-haiku-4-5")

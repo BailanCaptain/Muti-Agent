@@ -1,1 +1,1 @@
-export * from "../db/repositories";
+export * from "../db/repositories"

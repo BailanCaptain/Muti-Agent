@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { appendSession, type ThreadMemory } from "./thread-memory"
+import { type ThreadMemory, appendSession } from "./thread-memory"
 import type { ExtractiveDigestV1 } from "./transcript-writer"
 
 const makeDigest = (
@@ -31,7 +31,10 @@ describe("appendSession (F018 AC2)", () => {
       1,
     )
     const result = appendSession(null, digest, 180000)
-    assert.match(result.summary, /Session #1.*10:00-10:15.*15min.*edit.*bash.*a\.ts.*b\.ts.*1 errors/)
+    assert.match(
+      result.summary,
+      /Session #1.*10:00-10:15.*15min.*edit.*bash.*a\.ts.*b\.ts.*1 errors/,
+    )
     assert.equal(result.sessionCount, 1)
     assert.equal(result.lastUpdatedAt, "2026-04-17T10:15:00Z")
   })

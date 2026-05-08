@@ -19,10 +19,7 @@ test("schema exports all 11 tables (F018 messageEmbeddings + F019 workflowSop)",
   ]
 
   for (const name of expectedTables) {
-    assert.ok(
-      (schema as Record<string, unknown>)[name],
-      `schema should export '${name}'`,
-    )
+    assert.ok((schema as Record<string, unknown>)[name], `schema should export '${name}'`)
   }
 })
 
@@ -108,4 +105,13 @@ test("workflow_sop table has F019 state machine columns", async () => {
   assert.ok(cols.version, "workflowSop should have version (optimistic lock)")
   assert.ok(cols.updatedAt, "workflowSop should have updatedAt")
   assert.ok(cols.updatedBy, "workflowSop should have updatedBy")
+})
+
+// F026 P5 T0 · messages.a2a_call_id 关联键 — 前端 10 原语 LEFT JOIN a2a_calls 入口。
+// 老 message 不带 a2a 派发的为 null（向后兼容）。
+test("F026 P5 T0: messages table has nullable a2aCallId column", async () => {
+  const schema = await import("./schema")
+  const { getTableColumns } = await import("drizzle-orm")
+  const cols = getTableColumns(schema.messages)
+  assert.ok(cols.a2aCallId, "messages should have a2aCallId column (F026 P5 T0)")
 })

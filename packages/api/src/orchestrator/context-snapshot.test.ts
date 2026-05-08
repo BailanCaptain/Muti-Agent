@@ -81,10 +81,58 @@ test("buildContextSnapshot returns empty array if trigger not found", () => {
   assert.equal(result.length, 0)
 })
 
+// ── F026-P3 Task4 · 单条 content 同 cap 头尾保护（M5 防二次截）─────────
+test("F026-P3 · buildContextSnapshot 单条超 maxContentChars 走头尾保护，DB 原文不动", () => {
+  const longContent = "HEAD_SENTINEL_" + "x".repeat(100_000) + "_TAIL_SENTINEL"
+  const msgs = [
+    makeMsg(1, { content: "short" }),
+    makeMsg(2, { content: longContent }),
+    makeMsg(3, { content: "short" }),
+  ]
+  const result = buildContextSnapshot(msgs, threadMeta, {
+    sessionGroupId: "group-1",
+    triggerMessageId: "msg-3",
+    maxContentChars: 4096, // 测试用小 cap 触发截断
+  })
+
+  // 短消息不动
+  assert.equal(result[0].content, "short")
+  assert.equal(result[2].content, "short")
+
+  // 长消息：头尾都保留，且总长接近 cap（不是 100k+）
+  assert.match(result[1].content, /HEAD_SENTINEL_/)
+  assert.match(result[1].content, /_TAIL_SENTINEL/)
+  assert.match(result[1].content, /省略\s*\d+\s*字/)
+  assert.ok(
+    result[1].content.length < 100_000,
+    `截断后应该远小于原 100k+，实际 ${result[1].content.length}`,
+  )
+
+  // DB 红线：传入的原始 RawMessage.content 不可被改
+  assert.equal(msgs[1].content, longContent)
+})
+
+test("F026-P3 · buildContextSnapshot 不传 maxContentChars 时默认 16k tokens × 4 = 64k chars", () => {
+  // 50k chars < 64k 默认 cap → 不截
+  const content50k = "A".repeat(50_000)
+  // 80k chars > 64k 默认 cap → 截
+  const content80k = "B".repeat(80_000)
+  const msgs = [makeMsg(1, { content: content50k }), makeMsg(2, { content: content80k })]
+  const result = buildContextSnapshot(msgs, threadMeta, {
+    sessionGroupId: "group-1",
+    triggerMessageId: "msg-2",
+  })
+
+  assert.equal(result[0].content, content50k, "50k 应保持原样（< 64k 默认 cap）")
+  assert.notEqual(result[1].content, content80k, "80k 应被截（> 64k 默认 cap）")
+  assert.match(result[1].content, /省略\s*\d+\s*字/)
+})
+
 // ── extractTaskSnippet ───────────────────────────────────────────────
 
 test("extractTaskSnippet extracts sentence containing @mention", () => {
-  const content = "我觉得这个方案不错，大家辛苦了。@范德彪 请帮忙review一下这段新写的代码逻辑。然后我们合入主分支。"
+  const content =
+    "我觉得这个方案不错，大家辛苦了。@范德彪 请帮忙review一下这段新写的代码逻辑。然后我们合入主分支。"
   const result = extractTaskSnippet(content, "范德彪")
   assert.equal(result, "@范德彪 请帮忙review一下这段新写的代码逻辑")
 })

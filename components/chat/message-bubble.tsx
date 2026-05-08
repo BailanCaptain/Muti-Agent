@@ -2,15 +2,36 @@
 
 import { useFoldStore, useIsMessageFolded } from "@/components/stores/fold-store"
 import { useSettingsStore } from "@/components/stores/settings-store"
-import { formatTokenCount } from "@/lib/format"
 import { normalizeMessageToBlocks } from "@/lib/blocks"
-import type { DecisionRequest, Provider, ToolEvent, TimelineMessage } from "@multi-agent/shared"
-import { thinkingTheme, bubbleTheme, PROVIDER_ACCENT } from "../theme"
-import { ChevronDown, ChevronRight, Copy, Plug, Trash2, Wrench, Zap } from "lucide-react"
+import { formatTokenCount } from "@/lib/format"
+import type {
+  DecisionRequest,
+  DispatchValidationRetryReason,
+  Provider,
+  TimelineMessage,
+  ToolEvent,
+} from "@multi-agent/shared"
+import {
+  AlertCircle,
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Plug,
+  Trash2,
+  Wrench,
+  Zap,
+} from "lucide-react"
 import { memo, useState } from "react"
+import { PROVIDER_ACCENT, bubbleTheme, thinkingTheme } from "../theme"
 import { BlockRenderer } from "./block-renderer"
 import { CollapsibleBlock } from "./collapsible-block"
 import { DecisionCard } from "./decision-card"
+import {
+  DispatchRetryProgressCard,
+  DispatchRetryStreamingLock,
+  useDispatchRetryStreamingLock,
+} from "./dispatch-retry-progress-card"
 import { MarkdownMessage } from "./markdown-message"
 import { ProviderAvatar } from "./provider-avatar"
 
@@ -19,7 +40,11 @@ interface MessageBubbleProps {
   inlineDecisions?: DecisionRequest[]
   onDecisionRespond?: (
     requestId: string,
-    decisions: Array<{ optionId: string; verdict: "approved" | "rejected" | "modified"; modification?: string }>,
+    decisions: Array<{
+      optionId: string
+      verdict: "approved" | "rejected" | "modified"
+      modification?: string
+    }>,
     userInput?: string,
   ) => void
   onDelete?: (id: string) => void
@@ -46,10 +71,14 @@ export function buildFoldedPreview(content: string): string {
   return plain.length > 80 ? `${plain.slice(0, 80)}…` : plain || "（空内容）"
 }
 
-const THINKING_NOISE_RE = /^(Reading (prompt|additional input) from stdin.*|YOLO mode is enabled.*|All tool calls will be automatically approved.*|Loaded cached credentials.*|Using model:.*|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z?\s+(ERROR|WARN|INFO|DEBUG|TRACE)\s.*|Tip:.*|\[runtime\].*|codex_core.*|failed to stat skills entry.*)$/gm
+const THINKING_NOISE_RE =
+  /^(Reading (prompt|additional input) from stdin.*|YOLO mode is enabled.*|All tool calls will be automatically approved.*|Loaded cached credentials.*|Using model:.*|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z?\s+(ERROR|WARN|INFO|DEBUG|TRACE)\s.*|Tip:.*|\[runtime\].*|codex_core.*|failed to stat skills entry.*)$/gm
 
 function cleanThinking(raw: string): string {
-  return raw.replace(THINKING_NOISE_RE, "").replace(/\n{3,}/g, "\n\n").trim()
+  return raw
+    .replace(THINKING_NOISE_RE, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
 }
 
 function BrainIcon({ className }: { className?: string }) {
@@ -110,7 +139,10 @@ function cleanMcpToolName(name: string): string {
 
 /* ── Tool Events summary (light-themed) ── */
 
-function ToolEventsSummary({ toolEvents, cleanName }: { toolEvents: ToolEvent[]; cleanName?: (name: string) => string }) {
+function ToolEventsSummary({
+  toolEvents,
+  cleanName,
+}: { toolEvents: ToolEvent[]; cleanName?: (name: string) => string }) {
   const completed = toolEvents.filter((e) => e.type === "tool_result")
   const errors = completed.filter((e) => e.status === "error")
   return (
@@ -119,8 +151,11 @@ function ToolEventsSummary({ toolEvents, cleanName }: { toolEvents: ToolEvent[];
         .filter((e) => e.type === "tool_use")
         .map((e, i) => {
           const result = toolEvents.find(
-            (r, j) => r.type === "tool_result" && j > toolEvents.indexOf(e) &&
-              (j === toolEvents.indexOf(e) + 1 || !toolEvents.slice(toolEvents.indexOf(e) + 1, j).some((x) => x.type === "tool_use")),
+            (r, j) =>
+              r.type === "tool_result" &&
+              j > toolEvents.indexOf(e) &&
+              (j === toolEvents.indexOf(e) + 1 ||
+                !toolEvents.slice(toolEvents.indexOf(e) + 1, j).some((x) => x.type === "tool_use")),
           )
           const isError = result?.status === "error"
           const displayName = cleanName ? cleanName(e.toolName) : e.toolName
@@ -131,10 +166,10 @@ function ToolEventsSummary({ toolEvents, cleanName }: { toolEvents: ToolEvent[];
             >
               <Wrench className="h-3 w-3 shrink-0 text-slate-400" />
               <span className="font-medium">{displayName}</span>
-              {e.toolInput && (
-                <span className="truncate text-slate-400">{e.toolInput}</span>
-              )}
-              <span className={`ml-auto shrink-0 text-[10px] font-medium ${isError ? "text-red-500" : "text-emerald-500"}`}>
+              {e.toolInput && <span className="truncate text-slate-400">{e.toolInput}</span>}
+              <span
+                className={`ml-auto shrink-0 text-[10px] font-medium ${isError ? "text-red-500" : "text-emerald-500"}`}
+              >
                 {result ? (isError ? "失败" : "完成") : "运行中..."}
               </span>
             </div>
@@ -175,9 +210,72 @@ function MessageMeta({ message }: { message: TimelineMessage }) {
   )
 }
 
+/* ── F026 P3.1: 派发协议 retry badge / 硬警示 ── */
+
+const DISPATCH_RETRY_EXHAUSTED_THRESHOLD = 3
+
+const DISPATCH_RETRY_REASON_LABEL: Record<DispatchValidationRetryReason, string> = {
+  nested_call_tag: "嵌套 [Call:]",
+  naked_at_with_real_teammate: "行首裸 @ 缺 [Call:] 包装",
+}
+
+function DispatchRetryBadge({
+  retryCount,
+  retryReasons,
+}: {
+  retryCount: number
+  retryReasons: DispatchValidationRetryReason[]
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const exhausted = retryCount >= DISPATCH_RETRY_EXHAUSTED_THRESHOLD
+
+  if (exhausted) return null // 兜底警示走 banner（DispatchRetryExhaustedBanner），不再贴小 badge
+
+  return (
+    <button
+      type="button"
+      onClick={() => setExpanded((v) => !v)}
+      className="rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 transition hover:bg-amber-100"
+      title={`派发协议自动重写 ${retryCount} 次`}
+    >
+      <AlertTriangle className="mr-0.5 inline-block h-2.5 w-2.5" />
+      重写 {retryCount} 次
+      {expanded && retryReasons.length > 0
+        ? ` · ${retryReasons.map((r) => DISPATCH_RETRY_REASON_LABEL[r] ?? r).join(" / ")}`
+        : ""}
+    </button>
+  )
+}
+
+function DispatchRetryExhaustedBanner({
+  retryCount,
+  retryReasons,
+}: {
+  retryCount: number
+  retryReasons: DispatchValidationRetryReason[]
+}) {
+  const reasonText =
+    retryReasons.length > 0
+      ? retryReasons.map((r) => DISPATCH_RETRY_REASON_LABEL[r] ?? r).join(" / ")
+      : "派发协议反复写错"
+  return (
+    <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-[12px] text-rose-700">
+      <AlertCircle className="mr-1 inline-block h-3.5 w-3.5" />
+      派发协议反复写错（已重试 {retryCount} 次） — 派发未触发，请手动 @ 触发 ·
+      <span className="ml-1 text-rose-600/80">原因：{reasonText}</span>
+    </div>
+  )
+}
+
 /* ── Main Card ── */
 
-export const MessageBubble = memo(function MessageBubble({ message, inlineDecisions, onDecisionRespond, onDelete, onCopy }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({
+  message,
+  inlineDecisions,
+  onDecisionRespond,
+  onDelete,
+  onCopy,
+}: MessageBubbleProps) {
   const showThinking = useSettingsStore((state) => state.showThinking)
   const isUser = message.role === "user"
   const avatarIdentity = isUser ? "user" : message.provider
@@ -189,10 +287,16 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
   const isFolded = foldable && folded
 
   const isStreaming = message.messageType === "progress"
+  // F026 P3.1 · AC-22: retry 期间锁住 content 渲染，避免用户看到"从头流"诡异感
+  const retryLock = useDispatchRetryStreamingLock(message.id)
   const cleanedThinking = !isUser && message.thinking ? cleanThinking(message.thinking) : ""
   const hasThinking = !isUser && cleanedThinking && showThinking
   const allToolEvents = (!isUser && message.toolEvents) || []
-  const { mcp: mcpEvents, skill: skillToolEvents, tool: regularToolEvents } = classifyToolEvents(allToolEvents)
+  const {
+    mcp: mcpEvents,
+    skill: skillToolEvents,
+    tool: regularToolEvents,
+  } = classifyToolEvents(allToolEvents)
   const hasToolEvents = regularToolEvents.length > 0
   const hasMcpEvents = mcpEvents.length > 0
   const hasSkillEvents = skillToolEvents.length > 0
@@ -244,6 +348,13 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
                   输出中...
                 </span>
               )}
+              {/* F026 P3.1: 派发协议 retry badge — header 显眼 */}
+              {message.retryCount !== undefined && message.retryCount > 0 && (
+                <DispatchRetryBadge
+                  retryCount={message.retryCount}
+                  retryReasons={message.retryReasons ?? []}
+                />
+              )}
             </div>
           </div>
           <span className="text-[10px] text-slate-400">{formatClock(message.createdAt)}</span>
@@ -254,10 +365,26 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
               title={isFolded ? "展开消息" : "折叠消息"}
               type="button"
             >
-              {isFolded ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              {isFolded ? (
+                <ChevronRight className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" />
+              )}
             </button>
           )}
         </div>
+
+        {/* F026 P3.1 · AC-14: 派发协议 retry 实时进度卡（assistant final 入库前显示） */}
+        <DispatchRetryProgressCard messageId={message.id} />
+
+        {/* F026 P3.1: 派发协议 retry 耗尽 → 红 banner 硬警示 */}
+        {message.retryCount !== undefined &&
+          message.retryCount >= DISPATCH_RETRY_EXHAUSTED_THRESHOLD && (
+            <DispatchRetryExhaustedBanner
+              retryCount={message.retryCount}
+              retryReasons={message.retryReasons ?? []}
+            />
+          )}
 
         {isFolded ? (
           <button
@@ -323,12 +450,19 @@ export const MessageBubble = memo(function MessageBubble({ message, inlineDecisi
               </div>
             )}
 
-            {/* Content — always visible */}
+            {/* Content — always visible (AC-22: retry 期间用占位锁替换) */}
             <div className="px-4 py-3 text-sm text-slate-700">
-              <BlockRenderer
-                blocks={normalizeMessageToBlocks(message).filter((b) => b.kind !== "thinking")}
-                provider={message.provider}
-              />
+              {retryLock.isLocked ? (
+                <DispatchRetryStreamingLock
+                  attemptIndex={retryLock.attemptIndex}
+                  maxAttempts={retryLock.maxAttempts}
+                />
+              ) : (
+                <BlockRenderer
+                  blocks={normalizeMessageToBlocks(message).filter((b) => b.kind !== "thinking")}
+                  provider={message.provider}
+                />
+              )}
             </div>
 
             {/* Inline Decisions */}

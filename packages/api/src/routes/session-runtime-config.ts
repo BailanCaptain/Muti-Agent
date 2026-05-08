@@ -25,10 +25,7 @@ export function registerSessionRuntimeConfigRoutes(
 ) {
   app.get(
     "/api/sessions/:id/runtime-config",
-    async (
-      request: FastifyRequest<{ Params: { id: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
       const { id } = request.params
       const group = deps.sessions.getSessionGroupById(id)
       if (!group) {
@@ -43,10 +40,7 @@ export function registerSessionRuntimeConfigRoutes(
 
   app.put(
     "/api/sessions/:id/runtime-config",
-    async (
-      request: FastifyRequest<{ Params: { id: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
       const { id } = request.params
       const body = request.body as { config?: unknown; pending?: unknown } | null
       if (!body || typeof body !== "object") {
@@ -88,8 +82,10 @@ export function registerSessionRuntimeConfigRoutes(
       }
 
       try {
-        if (hasConfig) deps.sessions.setSessionRuntimeConfig(id, body.config as Record<string, unknown>)
-        if (hasPending) deps.sessions.setSessionPendingConfig(id, body.pending as Record<string, unknown>)
+        if (hasConfig)
+          deps.sessions.setSessionRuntimeConfig(id, body.config as Record<string, unknown>)
+        if (hasPending)
+          deps.sessions.setSessionPendingConfig(id, body.pending as Record<string, unknown>)
       } catch (error) {
         reply.code(500)
         return {

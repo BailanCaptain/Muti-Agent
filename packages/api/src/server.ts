@@ -2,17 +2,20 @@ import crypto from "node:crypto"
 import { mkdirSync } from "node:fs"
 import path from "node:path"
 import cors from "@fastify/cors"
-import type { CorsOrigin } from "./config"
 import multipart from "@fastify/multipart"
 import fastifyStatic from "@fastify/static"
 import websocket from "@fastify/websocket"
 import { PROVIDER_ALIASES } from "@multi-agent/shared"
 import Fastify from "fastify"
-import { AuthorizationRuleRepository, SessionRepository } from "./db/repositories"
-import { createDrizzleDb } from "./db/drizzle-instance"
+import type { CorsOrigin } from "./config"
 import { ensurePreMigrationBackup } from "./db/backup"
+import { createDrizzleDb } from "./db/drizzle-instance"
+import { AuthorizationRuleRepository, SessionRepository } from "./db/repositories"
+import { DrizzleWorkflowSopRepository } from "./db/repositories/workflow-sop-repository"
 import { AppEventBus } from "./events/event-bus"
+import { createLogger, setRootLogger } from "./lib/logger"
 import { registerMcpServer } from "./mcp/server"
+import { installA2AGateway } from "./orchestrator/a2a-gateway-bootstrap"
 import { ApprovalManager } from "./orchestrator/approval-manager"
 import { AuthorizationRuleStore } from "./orchestrator/authorization-rule-store"
 import { ChainStarterResolver } from "./orchestrator/chain-starter-resolver"
@@ -21,35 +24,61 @@ import { DecisionManager } from "./orchestrator/decision-manager"
 import { DispatchOrchestrator } from "./orchestrator/dispatch"
 import { InvocationRegistry } from "./orchestrator/invocation-registry"
 import { SettlementDetector } from "./orchestrator/settlement-detector"
+import { collectRuntimePorts } from "./preview/port-validator"
+import { PreviewGateway } from "./preview/preview-gateway"
+import { resolveUploadUrl } from "./preview/resolve-upload-url"
+import { captureScreenshot } from "./preview/screenshot-service"
 import { registerAuthorizationRoutes } from "./routes/authorization"
 import { registerCallbackRoutes } from "./routes/callbacks"
+import { registerDebugA2ARoutes } from "./routes/debug-a2a"
 import { registerDecisionBoardRoutes } from "./routes/decision-board"
 import { registerMessageRoutes } from "./routes/messages"
+import { registerPreviewRoutes } from "./routes/preview"
 import { registerRuntimeConfigRoutes } from "./routes/runtime-config"
 import { registerSessionRuntimeConfigRoutes } from "./routes/session-runtime-config"
 import { registerThreadRoutes } from "./routes/threads"
 import { registerUploadRoutes } from "./routes/uploads"
-import { registerPreviewRoutes } from "./routes/preview"
 import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
-import { PreviewGateway } from "./preview/preview-gateway"
-import { collectRuntimePorts } from "./preview/port-validator"
-import { resolveUploadUrl } from "./preview/resolve-upload-url"
-import { captureScreenshot } from "./preview/screenshot-service"
+import { createHaikuRunner } from "./runtime/haiku-runner"
 import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
 import { awaitRunsToStop } from "./runtime/shutdown"
 import { MemoryService } from "./services/memory-service"
 import { MessageService } from "./services/message-service"
-import { WorkflowSopService } from "./services/workflow-sop-service"
-import { DrizzleWorkflowSopRepository } from "./db/repositories/workflow-sop-repository"
 import { SessionService } from "./services/session-service"
-import { SessionTitler } from "./services/session-titler/session-titler"
 import { buildTitlePromptFromRecentMessages } from "./services/session-titler/build-title-prompt"
+import { SessionTitler } from "./services/session-titler/session-titler"
 import { backfillHistoricalTitles } from "./services/session-titler/title-backfill"
-import { createHaikuRunner } from "./runtime/haiku-runner"
+import { WorkflowSopService } from "./services/workflow-sop-service"
 import { SkillRegistry } from "./skills/registry"
 import { SopTracker } from "./skills/sop-tracker"
-import { createLogger, setRootLogger } from "./lib/logger"
+
+/**
+ * F026 R-073 · MCP `trigger_mention` 派发 payload 构造器。
+ *
+ * 把 MCP 程序化派发拼成 `[Call: @<alias> <snippet>]` 严协议格式，
+ * dispatch.ts assistant 路径 (F026-P3 方案 X / commit 99d7d9e) 识别后
+ * 走标准 directTurn → worklist 续推。
+ *
+ * F026 P2 v2 Step 7 (clean-cut)：messageType 从 `a2a_handoff_mcp` 改为 `final`，
+ * MCP 程序化派发产出与 assistant 自写 [Call:] 通路统一为 final，前端
+ * timeline-panel 等价渲染（MessageBubble，非 ConnectorBubble）。老 union
+ * 标识符 `a2a_handoff` / `a2a_handoff_mcp` 在 DB schema 保留作历史兼容
+ * (Q2=[B])，不再用于新写入。titler 触发由 messageType 判定改为内容前缀
+ * 判定（`[Call:` 起头跳过），见 session-service.ts:appendAssistantMessage。
+ *
+ * 修复前 (R-073) content=`@桂芬 任务X` + messageType=`a2a_handoff` → 严协议
+ * 关卡 mentions=[] → 派发链静默死亡 → 桂芬 thread 0 新消息。
+ */
+export function buildMcpDispatchPayload(
+  targetAlias: string,
+  taskSnippet: string,
+): { content: string; messageType: "final" } {
+  return {
+    content: `[Call: @${targetAlias} ${taskSnippet}]`,
+    messageType: "final",
+  }
+}
 
 export async function createApiServer(options: {
   apiBaseUrl: string
@@ -102,15 +131,79 @@ export async function createApiServer(options: {
   const { SqliteStore } = await import("./db/sqlite")
   const { EmbeddingService, formatRecallResults } = await import("./services/embedding-service")
   const embeddingStore = new SqliteStore(options.sqlitePath)
+  // F026 P3 sibling-guard · WorklistRegistry 提前创建，传给 installA2AGateway
+  // 让 a2a-gateway 反查 caller 的 sibling 集合 —— planBetaDispatch / planAssistantCallTagDispatch
+  // 都在 openCall 之前命中即拒（reason=sibling-cross-call）。
+  const { WorklistRegistry } = await import("./orchestrator/worklist-registry")
+  const worklistRegistry = new WorklistRegistry({ db: embeddingStore.db })
+  // F026 · server 启动路径必须装 A2A Gateway hook 才会走 call-registry +
+  // envelope 路径；没装 hook 时 dispatch 退回旧 regex 路由，CallRegistry 不写表。
+  const { registry: callRegistry } = installA2AGateway(dispatch, {
+    db: embeddingStore.db,
+    aliases: PROVIDER_ALIASES,
+    // F026 P5 T2 · 灰区可观测：a2a-gateway user 路径 classifyMention gray 命中 →
+    // broadcaster.broadcast(mention.gray_zone) → 前端 /debug/a2a (F10) 订阅渲染。
+    broadcaster: { broadcast: (event) => broadcaster.broadcast(event) },
+    worklistRegistry,
+  })
+  // F026 P1 Wiring + P4 T1 · scan stuck rows → timeout (双档 STALE)：
+  //   - working 状态超 deadline_at 转 timeout（processing STALE）
+  //   - pending 状态超 A2A_PENDING_STALE_MS from createdAt 转 timeout（queued STALE，默认 60s）
+  // 30s cadence 不变；clamp [1s, 10min] · 越界回落 60s + 启动告警。
+  const A2A_TIMEOUT_SCAN_INTERVAL_MS = 30_000
+  const A2A_PENDING_STALE_MS = ((): number => {
+    const raw = Number(process.env.A2A_PENDING_STALE_MS ?? 60_000)
+    if (!Number.isFinite(raw) || raw < 1_000 || raw > 600_000) {
+      app.log.warn(
+        { raw: process.env.A2A_PENDING_STALE_MS },
+        "F026 P4 T1 A2A_PENDING_STALE_MS out of [1s, 10min], fallback 60s",
+      )
+      return 60_000
+    }
+    return raw
+  })()
+  const a2aTimeoutScanTimer = setInterval(() => {
+    try {
+      callRegistry.timeoutScan({ stalePendingMs: A2A_PENDING_STALE_MS })
+    } catch (err) {
+      app.log.warn({ err }, "F026 P1+P4 timeoutScan failed (non-fatal)")
+    }
+  }, A2A_TIMEOUT_SCAN_INTERVAL_MS)
+  a2aTimeoutScanTimer.unref?.()
+  app.addHook("onClose", async () => {
+    clearInterval(a2aTimeoutScanTimer)
+  })
   const embeddingService = new EmbeddingService({
     store: embeddingStore,
     // Codex P5 Round 2 MEDIUM: propagate Fastify logger so model-load /
     // inference failures surface to operators instead of being swallowed.
     logger: { warn: (obj, msg) => app.log.warn(obj, msg) },
   })
-  const messages = new MessageService(sessions, dispatch, invocations, eventBus, options.apiBaseUrl)
+  const messages = new MessageService(
+    sessions,
+    dispatch,
+    invocations,
+    eventBus,
+    options.apiBaseUrl,
+  )
   messages.setTranscriptWriter(transcriptWriter)
   messages.setEmbeddingService(embeddingService)
+  // F026 P1 Wiring · advance/settle the call_registry row at runThreadTurn's
+  // three exits (done / failed / timeout). Without this hook the registry is
+  // an island — see docs/plans/F026-p1-wiring-debt-plan.md.
+  const { A2ALifecycleService } = await import("./services/a2a-lifecycle")
+  const a2aLifecycle = new A2ALifecycleService(callRegistry)
+  messages.setA2ALifecycle(a2aLifecycle)
+  // F026 P2 v2 · 树形 worklist executor wire —— registerForDispatch / onChildFinished
+  // / cascade settle / root-only 续推派发回调。setWorklistExecutor 内部接 setOnDoneContinuation
+  // → dispatchWorklistContinuation。WorklistRegistry 已在 installA2AGateway 之前创建
+  // （F026 P3 sibling-guard 需要透传给 a2a-gateway）。
+  const { WorklistExecutor } = await import("./services/worklist-executor")
+  const worklistExecutor = new WorklistExecutor({
+    callRegistry,
+    worklistRegistry,
+  })
+  messages.setWorklistExecutor(worklistExecutor)
   const memoryService = new MemoryService(repository)
   const authRuleRepo = new AuthorizationRuleRepository(drizzleDb)
   const ruleStore = new AuthorizationRuleStore(authRuleRepo)
@@ -304,7 +397,8 @@ export async function createApiServer(options: {
     sessions,
     getRunningThreadIds: () => new Set(invocations.keys()),
     stopThread: (threadId) => messages.cancelThreadChain(threadId, broadcaster.broadcast),
-    stopAgent: (threadId, agentId) => messages.cancelSingleAgent(threadId, agentId, broadcaster.broadcast),
+    stopAgent: (threadId, agentId) =>
+      messages.cancelSingleAgent(threadId, agentId, broadcaster.broadcast),
     redisSummary,
     getDispatchState: (groupId) => ({
       hasPendingDispatches: dispatch.hasQueuedDispatches(groupId),
@@ -317,6 +411,7 @@ export async function createApiServer(options: {
   registerSessionRuntimeConfigRoutes(app, { sessions: repository })
   registerAuthorizationRoutes(app, { approvals, ruleStore })
   registerDecisionBoardRoutes(app, { messageService: messages, decisions })
+  registerDebugA2ARoutes(app, { callRegistry })
   registerUploadRoutes(app, uploadsDir)
 
   const previewGatewayPort = Number(process.env.PREVIEW_GATEWAY_PORT ?? 0)
@@ -327,9 +422,14 @@ export async function createApiServer(options: {
   try {
     await previewGateway.start()
   } catch (err) {
-    app.log.warn({ err }, "Preview gateway failed to start — screenshot preview will be unavailable")
+    app.log.warn(
+      { err },
+      "Preview gateway failed to start — screenshot preview will be unavailable",
+    )
   }
-  app.addHook("onClose", async () => { await previewGateway.stop() })
+  app.addHook("onClose", async () => {
+    await previewGateway.stop()
+  })
 
   registerPreviewRoutes(app, {
     gatewayPort: previewGateway.actualPort,
@@ -355,9 +455,7 @@ export async function createApiServer(options: {
     getTaskStatus: (sessionGroupId, agentId) => {
       const statuses = dispatch.getAgentStatuses(sessionGroupId)
       return {
-        agents: agentId
-          ? statuses.filter((s) => s.agentId === agentId)
-          : statuses,
+        agents: agentId ? statuses.filter((s) => s.agentId === agentId) : statuses,
       }
     },
     createTask: (sessionGroupId, params) => {
@@ -373,8 +471,11 @@ export async function createApiServer(options: {
     triggerMention: async (sessionGroupId, params) => {
       const thread = sessions.findThreadByGroupAndProvider(sessionGroupId, params.sourceProvider)
       if (!thread) return
-      const content = `@${params.targetAlias} ${params.taskSnippet}`
-      const persisted = sessions.appendAssistantMessage(thread.id, content, "", "a2a_handoff")
+      const { content, messageType } = buildMcpDispatchPayload(
+        params.targetAlias,
+        params.taskSnippet,
+      )
+      const persisted = sessions.appendAssistantMessage(thread.id, content, "", messageType)
       await messages.handleAgentPublicMessage({
         threadId: thread.id,
         messageId: persisted.id,
@@ -396,12 +497,6 @@ export async function createApiServer(options: {
       })
       return { selectedIds }
     },
-    parallelThink: async (sessionGroupId, params) => {
-      return messages.handleParallelThink(sessionGroupId, {
-        ...params,
-        emit: broadcaster.broadcast,
-      })
-    },
     // F018 P5 AC6.3 + B019 review-2 (LL-023 scope 对齐):
     // recall_similar_context backend — semantic search + decay
     // scope: sessionGroup 内所有 threads (clowder-ai thread 等价层)
@@ -412,12 +507,7 @@ export async function createApiServer(options: {
       // from a genuine 'no matches' outcome. Response shape stays stable
       // (graceful degradation per 铁律), but the log carries diagnostics.
       try {
-        const hits = await embeddingService.searchSimilarFromDb(
-          query,
-          threadIds,
-          topK,
-          new Set(),
-        )
+        const hits = await embeddingService.searchSimilarFromDb(query, threadIds, topK, new Set())
         return { text: formatRecallResults(hits), hits }
       } catch (err) {
         app.log.warn(

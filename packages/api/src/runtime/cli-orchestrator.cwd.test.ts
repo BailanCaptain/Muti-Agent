@@ -1,15 +1,15 @@
-import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
+import { describe, it } from "node:test"
 import {
-  BaseCliRuntime,
   type AgentRunInput,
+  BaseCliRuntime,
   type RuntimeCommand,
   type RuntimeDependencies,
 } from "./base-runtime"
-import { ProcessLivenessProbe } from "./liveness-probe"
 import { runTurn } from "./cli-orchestrator"
+import { ProcessLivenessProbe } from "./liveness-probe"
 
 class FakeChildProcess extends EventEmitter {
   readonly stdout = new PassThrough()
@@ -93,7 +93,7 @@ describe("F023 Task 7 — cli-orchestrator 必须为 runtime 显式传 cwd = pro
     assert.equal(
       rt.capturedInput?.cwd,
       process.cwd(),
-      "cli-orchestrator must forward process.cwd() as AgentRunInput.cwd — 相对路径 .mcp.json 才会解析到当前 worktree dist"
+      "cli-orchestrator must forward process.cwd() as AgentRunInput.cwd — 相对路径 .mcp.json 才会解析到当前 worktree dist",
     )
   })
 
@@ -104,7 +104,7 @@ describe("F023 Task 7 — cli-orchestrator 必须为 runtime 显式传 cwd = pro
       assert.equal(
         rt.capturedInput?.cwd,
         process.cwd(),
-        `provider=${provider} must receive cwd=process.cwd()`
+        `provider=${provider} must receive cwd=process.cwd()`,
       )
     }
   })

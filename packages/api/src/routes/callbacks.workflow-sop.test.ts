@@ -1,10 +1,13 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import Fastify, { type FastifyInstance } from "fastify"
+import {
+  FeatureIdMismatchError,
+  OptimisticLockError,
+} from "../db/repositories/workflow-sop-repository"
 import { InvocationRegistry } from "../orchestrator/invocation-registry"
-import { registerCallbackRoutes } from "./callbacks"
 import type { UpdateSopInput, WorkflowSop } from "../services/workflow-sop-types"
-import { FeatureIdMismatchError, OptimisticLockError } from "../db/repositories/workflow-sop-repository"
+import { registerCallbackRoutes } from "./callbacks"
 
 interface TestHarness {
   app: FastifyInstance

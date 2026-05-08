@@ -1,0 +1,32 @@
+
+
+结论先说：我按 `code-review` 做这次审查，重点看两件事是不是一起成立：B016 修复是否真消除了错误的 `[rate limited]` 展示，以及 `phase1-header` 删行后是否和当前产品规则、测试基线一致。先读 review skill、看工作区 diff 和相关测试，再给 findings。
+
+我先锁定本次审查范围，不碰工作区里其它未提交文档。下一步只看 `claude-runtime` 和 `phase1-header` 的实际 diff、相关上下文，以及测试是否真的覆盖到这次行为变更。
+
+现在在核对上下文耦合点：`phase1-header` 不是孤立字符串，得确认删掉这条规则后没有别的测试或 prompt 组装逻辑仍然依赖它；`claude-runtime` 则要确认新文案不会被别处特殊匹配。随后我会跑受影响测试做补证。
+
+我发现一个可能的结构性点：仓库里的历史 feature/bug 文档明确把“不要加载全文”当成过往修复项。如果这次删行是产品决策而不是误删，代码本身没问题，但需要确认文档是否允许随之漂移；我先把相关上下文读清楚再决定它算 finding 还是 open question。
+
+阶段性结论：当前代码层面我还没看到明确 bug，唯一需要压实的是验证面。`phase1-header` 删行和历史文档并不直接冲突，因为 F010 的 AC-10 本来就允许“补回约束”或“更新测试对齐当前行为”；`claude-runtime` 的新逻辑也暂时没看到下游消费者依赖旧文案。现在跑受影响测试和 gate 做最后确认。
+
+受影响测试和 `typecheck` 都是绿的。我再补一层全量回归，确认这次提交不是“局部绿、全局破”。
+
+代码审查结论已经基本成形：本次 diff 里我没找到会阻塞合入的行为回归。还差最后一件事，把行号和全量回归结论钉牢，然后我会把 review 结果同步给 @黄仁勋。
+
+我把 review 结果回给 @黄仁勋，方便他继续推进 dev。内容只带结论、证据和剩余风险，不展开无关细节。
+
+未发现明确 bug / 回归风险。
+
+我核对了这次变更的两个点：`[packages/api/src/runtime/claude-runtime.ts](/C:/Users/-/Desktop/Multi-Agent/packages/api/src/runtime/claude-runtime.ts:180)` 现在按 `status` 区分 quota heartbeat 和真实告警，和 `B016` 的修复目标一致；`[packages/api/src/runtime/claude-runtime.test.ts](/C:/Users/-/Desktop/Multi-Agent/packages/api/src/runtime/claude-runtime.test.ts:69)` 覆盖了 `allowed`、缺省、非 `allowed`、顶层 `status` 这 4 个关键分支。`[packages/api/src/orchestrator/phase1-header.ts](/C:/Users/-/Desktop/Multi-Agent/packages/api/src/orchestrator/phase1-header.ts:9)` 的删行也已由 `[phase1-header.test.ts](/C:/Users/-/Desktop/Multi-Agent/packages/api/src/orchestrator/phase1-header.test.ts:18)` 对齐，`context-assembler` 相关测试仍通过，没看到 prompt 装配回归。
+
+验证上，我本地跑过受影响测试和 `pnpm typecheck`，均为绿色；额外跑全量 `pnpm test` 时有 6 个失败，但都在 `scripts/mount-skills.test.ts`，原因是当前这台 Windows 机器没有 `bash`，属于环境问题，不是这次 diff 引入的 finding。review 结果我已经同步给 `@黄仁勋`：PASS，可继续推 `dev`。
+@???
+review ??????????? bug / ?????
+
+- B016?`packages/api/src/runtime/claude-runtime.ts:180` ??? status ?? quota heartbeat ??????`allowed` / ?? status ? drop?? allowed ?????????`claude-runtime.test.ts` ??? 4 ??????
+- phase1-header?????????????`phase1-header.test.ts` ??????????`context-assembler.test.ts` ?????? header ?? Phase 1 content-channel ??????????
+- ??????`pnpm exec tsx --test packages/api/src/runtime/claude-runtime.test.ts` 20/20 ??`pnpm exec tsx --test packages/api/src/orchestrator/phase1-header.test.ts packages/api/src/orchestrator/context-assembler.test.ts` 16/16 ??`pnpm typecheck` ??
+- ??????????? `pnpm test` ?? 6 ??????? `scripts/mount-skills.test.ts`?????? Windows ???? `bash`???? diff ???????? review finding?
+
+???PASS?????? dev?

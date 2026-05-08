@@ -73,10 +73,10 @@ test("sanitize drops empty strings, unknown agents, and non-object entries", () 
 
 test("F021 P1: resolveEffectiveOverride merges session over global at field granularity", () => {
   // session only has effort, global only has model → merge, don't pick object
-  assert.deepEqual(
-    resolveEffectiveOverride({ effort: "high" }, { model: "claude-sonnet-4-6" }),
-    { model: "claude-sonnet-4-6", effort: "high" },
-  )
+  assert.deepEqual(resolveEffectiveOverride({ effort: "high" }, { model: "claude-sonnet-4-6" }), {
+    model: "claude-sonnet-4-6",
+    effort: "high",
+  })
 })
 
 test("F021 P1: resolveEffectiveOverride session field wins when both set", () => {

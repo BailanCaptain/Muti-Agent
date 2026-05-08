@@ -1,24 +1,24 @@
-export const PROVIDERS = ["codex", "claude", "gemini"] as const;
+export const PROVIDERS = ["codex", "claude", "gemini"] as const
 
-export type Provider = (typeof PROVIDERS)[number];
+export type Provider = (typeof PROVIDERS)[number]
 
 /**
  * Agent 档案 —— 每个 provider 的身份、角色、协作信息。
  * 单一真相源：修改此文件 = prompt / 路由 / UI 同步更新。
  */
 export type AgentProfile = {
-  provider: Provider;
+  provider: Provider
   /** 人名（也是 @ 路由的唯一别名，也是 UI 展示的 label） */
-  name: string;
+  name: string
   /** 角色定位 */
-  role: string;
+  role: string
   /** 性格特质（帮助 agent 保持回答风格一致） */
-  personality: string;
+  personality: string
   /** 擅长什么（写进队友名册） */
-  strengths: string;
+  strengths: string
   /** 协作注意事项（写进队友名册） */
-  caution: string;
-};
+  caution: string
+}
 
 export const AGENT_PROFILES: Record<Provider, AgentProfile> = {
   claude: {
@@ -27,7 +27,7 @@ export const AGENT_PROFILES: Record<Provider, AgentProfile> = {
     role: "主架构师 / 核心开发",
     personality: "深度思考、严谨架构、注重长期设计",
     strengths: "架构决策、代码设计、技术选型、code review",
-    caution: "不确定时必须问，不能硬猜"
+    caution: "不确定时必须问，不能硬猜",
   },
   codex: {
     provider: "codex",
@@ -35,7 +35,7 @@ export const AGENT_PROFILES: Record<Provider, AgentProfile> = {
     role: "Code Review / 安全 / 测试 / 工程实现",
     personality: "严谨执行、挑战假设、直言不讳",
     strengths: "重构、实现、测试、自动化脚本、代码审查",
-    caution: "控制工具调用轮次，先输出结论再动手验证"
+    caution: "控制工具调用轮次，先输出结论再动手验证",
   },
   gemini: {
     provider: "gemini",
@@ -43,29 +43,25 @@ export const AGENT_PROFILES: Record<Provider, AgentProfile> = {
     role: "视觉设计师 / 创意师 / 前端体验",
     personality: "热血活泼、创意丰富、表达力强",
     strengths: "UI 交互、视觉设计、前端实现、可视化",
-    caution: "@ 后面必须写真实人名，不是文件路径、不是 provider 代号"
-  }
-};
+    caution: "@ 后面必须写真实人名，不是文件路径、不是 provider 代号",
+  },
+}
 
 /**
  * 真人用户（产品负责人）档案。
  */
 export type HumanOwnerProfile = {
-  name: string;
-  role: string;
+  name: string
+  role: string
   /** 什么情况下应该 @ 问 ta */
-  whenToAsk: readonly string[];
-};
+  whenToAsk: readonly string[]
+}
 
 export const HUMAN_OWNER: HumanOwnerProfile = {
   name: "小孙",
   role: "产品负责人 / CVO",
-  whenToAsk: [
-    "需求边界 / 优先级 / 产品目标",
-    "方向不确定的重大决策",
-    "P0 不可逆操作前的最后确认"
-  ]
-};
+  whenToAsk: ["需求边界 / 优先级 / 产品目标", "方向不确定的重大决策", "P0 不可逆操作前的最后确认"],
+}
 
 /**
  * 向后兼容：provider → 主名 简单映射。
@@ -74,8 +70,8 @@ export const HUMAN_OWNER: HumanOwnerProfile = {
 export const PROVIDER_ALIASES: Record<Provider, string> = {
   codex: AGENT_PROFILES.codex.name,
   claude: AGENT_PROFILES.claude.name,
-  gemini: AGENT_PROFILES.gemini.name
-};
+  gemini: AGENT_PROFILES.gemini.name,
+}
 
 /**
  * 预防性 session seal 阈值。
@@ -92,10 +88,10 @@ export const SEAL_THRESHOLDS_BY_PROVIDER: Record<Provider, { warn: number; actio
   // threw away the native session id. Direct-turn history injection now makes seals
   // cheaper (history survives via prompt), but we'd rather avoid unnecessary seals
   // entirely since Gemini's 1M window has plenty of headroom before real degradation.
-  gemini: { warn: 0.70, action: 0.80 },
+  gemini: { warn: 0.7, action: 0.8 },
   codex: { warn: 0.75, action: 0.85 },
-  claude: { warn: 0.80, action: 0.90 }
-};
+  claude: { warn: 0.8, action: 0.9 },
+}
 
 /**
  * CLI 不一定在事件里回显 contextWindowSize（尤其是 Codex 的 turn.completed 只给 usage）。
@@ -113,19 +109,19 @@ const CONTEXT_WINDOW_FALLBACKS: ReadonlyArray<{ match: RegExp; window: number }>
   { match: /^gpt-5\.5/i, window: 1_000_000 },
   { match: /^gpt-5/i, window: 400_000 },
   { match: /^gpt-4/i, window: 128_000 },
-  { match: /^o3/i, window: 200_000 }
-];
+  { match: /^o3/i, window: 200_000 },
+]
 
 export function getContextWindowForModel(model: string | null | undefined): number | null {
   if (!model) {
-    return null;
+    return null
   }
   for (const { match, window } of CONTEXT_WINDOW_FALLBACKS) {
     if (match.test(model)) {
-      return window;
+      return window
     }
   }
-  return null;
+  return null
 }
 
 /**
@@ -135,7 +131,7 @@ export function getContextWindowForModel(model: string | null | undefined): numb
  * source=exact 表示 windowTokens 来自 CLI 自己的事件，approx 表示来自 model 兜底表。
  */
 export type TokenUsageSnapshot = {
-  usedTokens: number;
-  windowTokens: number;
-  source: "exact" | "approx";
-};
+  usedTokens: number
+  windowTokens: number
+  source: "exact" | "approx"
+}

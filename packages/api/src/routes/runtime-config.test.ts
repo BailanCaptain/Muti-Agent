@@ -174,7 +174,10 @@ test("AC-29 PUT /api/runtime-config aggregates multiple errors across providers"
     await app.close()
     assert.equal(res.statusCode, 400)
     const body = res.json() as { errors?: string[] }
-    assert.ok(body.errors && body.errors.length >= 2, `expected ≥2 errors, got ${JSON.stringify(body.errors)}`)
+    assert.ok(
+      body.errors && body.errors.length >= 2,
+      `expected ≥2 errors, got ${JSON.stringify(body.errors)}`,
+    )
   })
 })
 

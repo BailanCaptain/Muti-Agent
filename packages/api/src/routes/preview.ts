@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto"
 import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import type { FastifyInstance } from "fastify"
 import type { RealtimeServerEvent } from "@multi-agent/shared"
-import { validatePort } from "../preview/port-validator"
+import type { FastifyInstance } from "fastify"
 import { createLogger } from "../lib/logger"
+import { validatePort } from "../preview/port-validator"
 
 const log = createLogger("preview-routes")
 
@@ -25,13 +25,10 @@ export function registerPreviewRoutes(app: FastifyInstance, opts: PreviewRouteOp
     return { available: gatewayAvailable, gatewayPort }
   })
 
-  app.post<{ Body: { port: number; host?: string } }>(
-    "/api/preview/validate-port",
-    async (req) => {
-      const { port, host } = req.body
-      return validatePort(port, { host, gatewaySelfPort: gatewayPort, runtimePorts })
-    },
-  )
+  app.post<{ Body: { port: number; host?: string } }>("/api/preview/validate-port", async (req) => {
+    const { port, host } = req.body
+    return validatePort(port, { host, gatewaySelfPort: gatewayPort, runtimePorts })
+  })
 
   app.post<{ Body: { port: number; path?: string; sessionGroupId?: string } }>(
     "/api/preview/auto-open",

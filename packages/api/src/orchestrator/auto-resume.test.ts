@@ -1,19 +1,25 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { shouldAutoResume, buildAutoResumeMessage } from "./auto-resume"
-import type { SOPBookmark } from "./sop-bookmark"
 import type { ThreadMemory } from "../services/thread-memory"
+import { buildAutoResumeMessage, shouldAutoResume } from "./auto-resume"
+import type { SOPBookmark } from "./sop-bookmark"
 
 describe("shouldAutoResume", () => {
   const activeBookmark: SOPBookmark = {
-    skill: "tdd", phase: "red", lastCompletedStep: "wrote test",
-    nextExpectedAction: "implement", blockingQuestion: null,
+    skill: "tdd",
+    phase: "red",
+    lastCompletedStep: "wrote test",
+    nextExpectedAction: "implement",
+    blockingQuestion: null,
     updatedAt: "2026-04-13T10:00:00Z",
   }
 
   const emptyBookmark: SOPBookmark = {
-    skill: null, phase: null, lastCompletedStep: "",
-    nextExpectedAction: "", blockingQuestion: null,
+    skill: null,
+    phase: null,
+    lastCompletedStep: "",
+    nextExpectedAction: "",
+    blockingQuestion: null,
     updatedAt: "2026-04-13T10:00:00Z",
   }
 
@@ -78,8 +84,11 @@ describe("shouldAutoResume", () => {
 
 describe("buildAutoResumeMessage", () => {
   const bookmark: SOPBookmark = {
-    skill: "tdd", phase: "red", lastCompletedStep: "wrote test",
-    nextExpectedAction: "minimal implementation", blockingQuestion: null,
+    skill: "tdd",
+    phase: "red",
+    lastCompletedStep: "wrote test",
+    nextExpectedAction: "minimal implementation",
+    blockingQuestion: null,
     updatedAt: "2026-04-13T10:00:00Z",
   }
 
@@ -99,8 +108,10 @@ describe("buildAutoResumeMessage", () => {
   it("includes lastCompletedStep in resume message (Bug 2)", () => {
     const bm: SOPBookmark = { ...bookmark, lastCompletedStep: "wrote failing test for auth" }
     const msg = buildAutoResumeMessage(bm, 1, 2)
-    assert.ok(msg.includes("last=wrote failing test for auth"),
-      "resume message must include last= field so agent knows what was already done")
+    assert.ok(
+      msg.includes("last=wrote failing test for auth"),
+      "resume message must include last= field so agent knows what was already done",
+    )
   })
 
   it("contains suppress-follow-up hard guard against restating / re-answering history (B015)", () => {

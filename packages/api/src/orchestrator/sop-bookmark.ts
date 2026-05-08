@@ -7,11 +7,21 @@ export type SOPBookmark = {
   updatedAt: string
 }
 
-export function extractSOPBookmark(agentOutput: string, currentSopStage: string | null): SOPBookmark {
+export function extractSOPBookmark(
+  agentOutput: string,
+  currentSopStage: string | null,
+): SOPBookmark {
   const now = new Date().toISOString()
 
   if (!currentSopStage) {
-    return { skill: null, phase: null, lastCompletedStep: "", nextExpectedAction: "", blockingQuestion: null, updatedAt: now }
+    return {
+      skill: null,
+      phase: null,
+      lastCompletedStep: "",
+      nextExpectedAction: "",
+      blockingQuestion: null,
+      updatedAt: now,
+    }
   }
 
   if (currentSopStage.startsWith("completed:")) {

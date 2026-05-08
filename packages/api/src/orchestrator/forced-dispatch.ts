@@ -31,13 +31,8 @@ export type ForcedDispatchPlan = {
  *  - the LLM already mentioned the resolved alias on a line-start (manual
  *    hand-off) — in which case the natural path will deliver it.
  */
-export function planForcedDispatch(
-  input: PlanForcedDispatchInput,
-): ForcedDispatchPlan | null {
-  const targetProvider = resolveReviewerProvider(
-    input.sourceProvider,
-    input.nextDispatch.target,
-  )
+export function planForcedDispatch(input: PlanForcedDispatchInput): ForcedDispatchPlan | null {
+  const targetProvider = resolveReviewerProvider(input.sourceProvider, input.nextDispatch.target)
   if (!targetProvider) return null
 
   const targetAlias = input.resolveTargetAlias(targetProvider)
@@ -47,10 +42,7 @@ export function planForcedDispatch(
     return null
   }
 
-  const substituted = input.nextDispatch.promptTemplate.replace(
-    /%TARGET%/g,
-    targetAlias,
-  )
+  const substituted = input.nextDispatch.promptTemplate.replace(/%TARGET%/g, targetAlias)
   const syntheticContent = substituted.trimStart().startsWith(`@${targetAlias}`)
     ? substituted
     : `@${targetAlias} ${substituted}`
@@ -64,7 +56,5 @@ export function planForcedDispatch(
 
 function alreadyMentionedAtLineStart(content: string, alias: string): boolean {
   const needle = `@${alias}`
-  return content
-    .split(/\r?\n/)
-    .some((line) => line.trimStart().startsWith(needle))
+  return content.split(/\r?\n/).some((line) => line.trimStart().startsWith(needle))
 }

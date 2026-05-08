@@ -1,16 +1,16 @@
-import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
+import { describe, it } from "node:test"
+import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts"
 import {
-  BaseCliRuntime,
   type AgentRunInput,
+  BaseCliRuntime,
   type RuntimeCommand,
   type RuntimeDependencies,
 } from "./base-runtime"
-import { ProcessLivenessProbe } from "./liveness-probe"
 import { runTurn } from "./cli-orchestrator"
-import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts"
+import { ProcessLivenessProbe } from "./liveness-probe"
 
 class FakeChildProcess extends EventEmitter {
   readonly stdout = new PassThrough()
@@ -121,7 +121,10 @@ describe("runTurn — sopStageHint injection into MULTI_AGENT_SYSTEM_PROMPT", ()
       sopStageHint: { featureId: "F019", stage: "impl", suggestedSkill: "tdd" },
     }).promise
     const sp = rt.capturedInput?.env?.MULTI_AGENT_SYSTEM_PROMPT ?? ""
-    assert.ok(sp.startsWith("caller base prompt with its own content"), "caller base preserved as prefix")
+    assert.ok(
+      sp.startsWith("caller base prompt with its own content"),
+      "caller base preserved as prefix",
+    )
     assert.ok(sp.endsWith("\n\nSOP: F019 stage=impl → load skill: tdd"), "hint appended")
   })
 

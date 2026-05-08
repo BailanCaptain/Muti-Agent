@@ -15,6 +15,11 @@ export type InvocationIdentity = {
 type InvocationState<T extends ActiveInvocation> = InvocationIdentity & {
   run?: T
   expiryTimer?: ReturnType<typeof globalThis.setTimeout>
+  // F026 P1 T5 post-final lockout: once the invocation's final assistant
+  // message has been persisted, this is set to the wall-clock timestamp.
+  // Callbacks read it via isFinalEmitted() to hard-noop late post_message
+  // calls (the "美化重发" path that prefix-dedup cannot catch).
+  finalEmittedAt?: number
 }
 
 export class InvocationRegistry<T extends ActiveInvocation> {
@@ -114,6 +119,31 @@ export class InvocationRegistry<T extends ActiveInvocation> {
       }
     }
     return invocationIds
+  }
+
+  // F026 P1 T5: mark this invocation as having emitted its final assistant
+  // message. Subsequent post_message callbacks for the same invocation must
+  // be hard-rejected (post-final lockout). Idempotent — re-calling does not
+  // shift the timestamp.
+  markFinalEmitted(invocationId: string) {
+    const invocation = this.identities.get(invocationId)
+    if (!invocation) {
+      return
+    }
+    if (invocation.finalEmittedAt === undefined) {
+      invocation.finalEmittedAt = Date.now()
+    }
+  }
+
+  // F026 P1 T5: returns true iff markFinalEmitted has been called for this
+  // invocation. Returns false for unknown ids (caller can safely treat as
+  // "not yet final" — verifyInvocation will already have rejected stale ids).
+  isFinalEmitted(invocationId: string): boolean {
+    const invocation = this.identities.get(invocationId)
+    if (!invocation) {
+      return false
+    }
+    return invocation.finalEmittedAt !== undefined
   }
 
   invalidateInvocation(invocationId: string) {

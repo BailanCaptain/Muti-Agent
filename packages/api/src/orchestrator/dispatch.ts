@@ -1,13 +1,50 @@
 import crypto from "node:crypto"
 import type { Provider } from "@multi-agent/shared"
-import type { ContextMessage } from "./context-snapshot"
 import type { SessionService } from "../services/session-service"
+import type { ContextMessage } from "./context-snapshot"
 import {
   type MentionMatchMode,
+  type MentionSourceRole,
   type ProviderAliases,
+  resolveCallTagMentions,
   resolveMention,
   resolveMentions,
 } from "./mention-router"
+
+/**
+ * F026 · A2A gateway hook contract.
+ *
+ * When a hook is registered via `setA2AGatewayHook()`, dispatch delegates
+ * mention resolution to the hook (3-layer mention router + on-behalf
+ * inference + rate-limit + `call-registry.openCall` → envelope). Without
+ * an installed hook, dispatch falls back to the classic regex-based
+ * `resolveMentions` path (回归基线保护)。
+ */
+export interface A2AGatewayPlanInput {
+  sourceAgentId: string
+  sourceReplyTo: string
+  messageId: string
+  content: string
+  sessionGroupId: string
+  parentInvocationId: string | null
+  /**
+   * F026 acceptance-guardian R-204 · parent invocation 处理过的 dispatchedCallId,
+   * 由 dispatch.enqueuePublicMentions 从 invocationContexts 反查后传入,
+   * a2a-gateway-bootstrap 直接桥接到 openCall.parentCallId, 接通 call tree。
+   */
+  parentCallId: string | null
+  /** F026 方案 X · "assistant" → 仅识别 [Call:] tag；"user"/未传 → 现有路径 */
+  sourceRole?: MentionSourceRole
+}
+
+export interface A2AGatewayPlanResult {
+  mentions: Array<{ provider: Provider; alias: string; callId: string }>
+  blockedByGateway: Array<{ provider: Provider; alias: string; reason: string }>
+}
+
+export interface A2AGatewayHook {
+  planMentions(input: A2AGatewayPlanInput): A2AGatewayPlanResult
+}
 
 export type { ContextMessage } from "./context-snapshot"
 
@@ -16,6 +53,12 @@ export type InvocationContext = {
   sessionGroupId: string
   sourceProvider: Provider
   parentInvocationId: string | null
+  /**
+   * F026 acceptance-guardian R-204 · 这个 invocation 正在处理的 a2a callId
+   * (runThreadTurn options.dispatchedCallId 透传)。enqueuePublicMentions 反查它
+   * 作为下游 mention 的 parentCallId 传给 gateway hook —— 接通 call tree。
+   */
+  dispatchedCallId?: string | null
 }
 
 type InvocationCanceller = {
@@ -39,7 +82,11 @@ export type QueueEntry = {
   contextSnapshot: ContextMessage[]
   parentInvocationId: string | null
   hopIndex: number
-  parallelGroupId: string | null
+  /**
+   * F026 Phase 2 · callId from the A2A gateway when flag-on path is taken.
+   * Undefined for legacy / flag-off dispatches.
+   */
+  callId?: string
 }
 
 export type BlockedDispatch = {
@@ -51,9 +98,21 @@ export type BlockedDispatch = {
   taskSnippet: string
 }
 
+export type GatewayBlocked = {
+  provider: Provider
+  alias: string
+  reason: string
+}
+
 export type EnqueueMentionsResult = {
   queued: QueueEntry[]
   blocked: BlockedDispatch[]
+  /**
+   * F026 Phase 2 · gray-zone / rate-limit blocks from the A2A gateway
+   * (hook path only). Surfaced for observability; dispatch itself takes no
+   * further action on these entries.
+   */
+  blockedByGateway?: GatewayBlocked[]
 }
 
 export class DispatchOrchestrator {
@@ -68,11 +127,23 @@ export class DispatchOrchestrator {
   private readonly cancelledSessionGroups = new Set<string>()
   private readonly runningSlots = new Map<string, Set<Provider>>()
 
+  private a2aGateway?: A2AGatewayHook
+
   constructor(
     private readonly sessions: SessionService,
     private readonly aliases: ProviderAliases,
     private readonly registry?: InvocationCanceller,
   ) {}
+
+  /**
+   * F026 · install the A2A gateway hook. With a hook installed, subsequent
+   * `enqueuePublicMentions` calls route mention resolution through it
+   * (call-registry + envelope + rate-limit). Without an installed hook,
+   * dispatch falls back to the classic regex path.
+   */
+  setA2AGatewayHook(hook: A2AGatewayHook): void {
+    this.a2aGateway = hook
+  }
 
   resolveThread(threadId: string) {
     return this.sessions.findThread(threadId)
@@ -143,24 +214,24 @@ export class DispatchOrchestrator {
     return this.runningSlots.get(sessionGroupId)?.has(provider) ?? false
   }
 
-  getAgentStatuses(sessionGroupId: string): Array<{ agentId: string; provider: Provider; running: boolean; queueDepth: number }> {
+  getAgentStatuses(
+    sessionGroupId: string,
+  ): Array<{ agentId: string; provider: Provider; running: boolean; queueDepth: number }> {
     const queue = this.queues.get(sessionGroupId) ?? []
     const queueCounts = new Map<Provider, number>()
     for (const entry of queue) {
       queueCounts.set(entry.to.provider, (queueCounts.get(entry.to.provider) ?? 0) + 1)
     }
 
-    return (Object.entries(this.aliases) as Array<[Provider, string]>).map(
-      ([provider, alias]) => {
-        const agentId = alias.startsWith("@") ? alias.slice(1) : alias
-        return {
-          agentId,
-          provider,
-          running: this.isSlotBusy(sessionGroupId, provider),
-          queueDepth: queueCounts.get(provider) ?? 0,
-        }
-      },
-    )
+    return (Object.entries(this.aliases) as Array<[Provider, string]>).map(([provider, alias]) => {
+      const agentId = alias.startsWith("@") ? alias.slice(1) : alias
+      return {
+        agentId,
+        provider,
+        running: this.isSlotBusy(sessionGroupId, provider),
+        queueDepth: queueCounts.get(provider) ?? 0,
+      }
+    })
   }
 
   enqueuePublicMentions(options: {
@@ -172,16 +243,77 @@ export class DispatchOrchestrator {
     content: string
     matchMode?: MentionMatchMode
     parentInvocationId?: string | null
+    /**
+     * F026 R-204 follow-up · caller 显式透传当前 invocation 处理的 callId,
+     * 绕开 invocationContexts 反查（final flow 在 releaseInvocation 之后才派发,
+     * 反查必拿到 undefined → null parent → 子 a2a_calls 全 orphan root）。
+     * 当 explicit param 缺省时回落到反查（callbacks progress 路径仍然 work）。
+     */
+    parentCallId?: string | null
     buildSnapshot?: () => ContextMessage[]
     extractSnippet?: (content: string, targetAlias: string) => string
-    createParallelGroup?: (targetProviders: Provider[]) => { id: string }
   }): EnqueueMentionsResult {
-    const mentions = resolveMentions(options.content, this.aliases, options.matchMode)
-    if (!mentions.length) {
-      return { queued: [], blocked: [] }
+    // F026 · gateway path. With hook installed, delegate mention resolution
+    // to the gateway (3-layer mention router + on-behalf + rate-limit +
+    // call-registry.openCall). Downstream dedup/hop/slot constraints still
+    // apply — gateway is upstream filter, not a bypass. Without a hook,
+    // fall back to classic regex path.
+    const useGateway = this.a2aGateway !== undefined
+    // F026 方案 X · 双契约 source role 推断：sourceAlias === "user" → user 路径
+    // （保持现有 line-start/anywhere 行为）；其他值（agent alias）→ assistant 路径
+    // （只识别 [Call: @X 描述] tag，自由文本 @ 不派发）。
+    const sourceRole: MentionSourceRole = options.sourceAlias === "user" ? "user" : "assistant"
+    let mentions: Array<{ provider: Provider; alias: string }>
+    let gatewayCallIds: Map<Provider, string> | undefined
+    let blockedByGateway: GatewayBlocked[] | undefined
+
+    if (useGateway) {
+      // F026 R-204 follow-up · 桥接 parentCallId 优先级：
+      //   ① caller 显式 options.parentCallId（final flow / return-path 用，绕 release 时序）
+      //   ② invocationContexts 反查（callbacks progress 路径用，invocation 还活着）
+      //   ③ null（user 直派 / classic path / 都没有时的 root call）
+      //
+      // 历史 bug (R-204 commit 4614c13)：只实现 ② 反查，但 message-service final flow
+      // 在 releaseInvocation 之后 200 行才调 enqueuePublicMentions，反查必空 → 0/275
+      // a2a_calls.parent_call_id 真接通。本次加 ① 显式参数绕开时序敏感。
+      const parentContext = options.parentInvocationId
+        ? this.invocationContexts.get(options.parentInvocationId)
+        : null
+      const parentCallId =
+        options.parentCallId ?? parentContext?.dispatchedCallId ?? null
+
+      const plan = this.a2aGateway!.planMentions({
+        sourceAgentId: options.sourceAlias,
+        sourceReplyTo: `${options.sourceProvider}:${options.sourceAlias}`,
+        messageId: options.messageId,
+        content: options.content,
+        sessionGroupId: options.sessionGroupId,
+        parentInvocationId: options.parentInvocationId ?? null,
+        parentCallId,
+        sourceRole,
+      })
+      mentions = plan.mentions.map((m) => ({ provider: m.provider, alias: m.alias }))
+      gatewayCallIds = new Map(plan.mentions.map((m) => [m.provider, m.callId]))
+      if (plan.blockedByGateway.length > 0) {
+        blockedByGateway = plan.blockedByGateway
+      }
+    } else if (sourceRole === "assistant") {
+      // F026 方案 X · gateway 关 / hook 未装时 fallback：assistant 仍走 [Call:] 强契约
+      // 而非旧 line-start，保证 dev / preview 行为一致（worktree preview 默认 ON gateway）。
+      const tags = resolveCallTagMentions(options.content, this.aliases)
+      mentions = tags.map((t) => ({ provider: t.provider, alias: t.alias }))
+    } else {
+      mentions = resolveMentions(options.content, this.aliases, options.matchMode)
     }
 
-    const extractSnippet = options.extractSnippet ?? ((c: string, _alias: string) => c.slice(0, 200))
+    if (!mentions.length) {
+      const empty: EnqueueMentionsResult = { queued: [], blocked: [] }
+      if (blockedByGateway) empty.blockedByGateway = blockedByGateway
+      return empty
+    }
+
+    const extractSnippet =
+      options.extractSnippet ?? ((c: string, _alias: string) => c.slice(0, 200))
 
     if (this.cancelledSessionGroups.has(options.sessionGroupId)) {
       const userInitiatedFanOut = options.sourceAlias === "user" && mentions.length >= 2
@@ -208,8 +340,7 @@ export class DispatchOrchestrator {
     }
 
     const dedupKey = options.parentInvocationId ?? options.rootMessageId
-    const alreadyTriggered =
-      this.invocationTriggered.get(dedupKey) ?? new Set<Provider>()
+    const alreadyTriggered = this.invocationTriggered.get(dedupKey) ?? new Set<Provider>()
     const currentHopCount = this.rootHopCounts.get(options.rootMessageId) ?? 0
     const remainingHops = Math.max(0, DispatchOrchestrator.MAX_HOPS - currentHopCount)
     if (remainingHops <= 0) {
@@ -268,21 +399,20 @@ export class DispatchOrchestrator {
         contextSnapshot: buildSnapshot(),
         parentInvocationId,
         hopIndex: currentHopCount + queued.length,
-        parallelGroupId: null,
+        callId: gatewayCallIds?.get(mention.provider),
       })
     }
 
     if (!queued.length) {
-      return { queued: [], blocked: [] }
+      const empty: EnqueueMentionsResult = { queued: [], blocked: [] }
+      if (blockedByGateway) empty.blockedByGateway = blockedByGateway
+      return empty
     }
 
-    // Fan-out detection: if single message mentions 2+ providers, create a parallel group
-    if (queued.length >= 2 && options.createParallelGroup) {
-      const group = options.createParallelGroup(queued.map((e) => e.to.provider))
-      for (const entry of queued) {
-        entry.parallelGroupId = group.id
-      }
-    }
+    // F026 P2 clean-cut · 多 @ 路径不再 fan-out 进 ParallelGroup 状态机：
+    // 每个 mention 是独立 QueueEntry，独立 callId（gateway 路径），独立
+    // worklist 续推。"all done" 由 worklist registry + SettlementDetector
+    // 接管。
 
     this.invocationTriggered.set(dedupKey, alreadyTriggered)
     this.rootHopCounts.set(options.rootMessageId, currentHopCount + queued.length)
@@ -291,7 +421,9 @@ export class DispatchOrchestrator {
     queue.push(...queued)
     this.queues.set(options.sessionGroupId, queue)
 
-    return { queued, blocked: [] }
+    const result: EnqueueMentionsResult = { queued, blocked: [] }
+    if (blockedByGateway) result.blockedByGateway = blockedByGateway
+    return result
   }
 
   cancelSessionGroup(sessionGroupId: string) {
@@ -337,7 +469,10 @@ export class DispatchOrchestrator {
     return this.cancelledSessionGroups.has(sessionGroupId)
   }
 
-  takeNextQueuedDispatch(sessionGroupId: string): QueueEntry | null {
+  takeNextQueuedDispatch(
+    sessionGroupId: string,
+    opts?: { isProviderBusy?: (provider: Provider) => boolean },
+  ): QueueEntry | null {
     if (this.cancelledSessionGroups.has(sessionGroupId)) {
       return null
     }
@@ -347,14 +482,20 @@ export class DispatchOrchestrator {
       return null
     }
 
+    // F026 P0 silent-drop fix (R-013 场景5): isProviderBusy 让调用方注入 invocations.has
+    // 这层 busy 信号。entry 被 take 出后若发现 thread 已有 active invocation，runThreadTurn
+    // 在 message-service.ts:817 会 silently return null —— entry 永久丢失。
+    // 把这层判定提前到 take 这一步，busy 时 entry 留在 queue，等 invocation 结束自然回到
+    // flushDispatchQueue 重新尝试。
     for (let i = 0; i < queue.length; i++) {
-      if (!this.isSlotBusy(sessionGroupId, queue[i].to.provider)) {
-        const [entry] = queue.splice(i, 1)
-        if (!queue.length) {
-          this.queues.delete(sessionGroupId)
-        }
-        return entry
+      const provider = queue[i].to.provider
+      if (this.isSlotBusy(sessionGroupId, provider)) continue
+      if (opts?.isProviderBusy?.(provider)) continue
+      const [entry] = queue.splice(i, 1)
+      if (!queue.length) {
+        this.queues.delete(sessionGroupId)
       }
+      return entry
     }
 
     return null // all targets are busy

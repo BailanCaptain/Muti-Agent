@@ -56,7 +56,12 @@ export class SessionService {
           null,
       },
       gemini: {
-        from: ["gemini-3.1-pro", "gemini-3-flash", "gemini-3.1-pro-preview", "gemini-3-flash-preview"],
+        from: [
+          "gemini-3.1-pro",
+          "gemini-3-flash",
+          "gemini-3.1-pro-preview",
+          "gemini-3-flash-preview",
+        ],
         to:
           this.providerProfiles.find((profile) => profile.provider === "gemini")?.currentModel ??
           null,
@@ -128,8 +133,7 @@ export class SessionService {
     const lastSystemNotice = recentMsgs.find((m) => m.messageType === "system_notice")
     const lastUserMsg = recentMsgs.find((m) => m.role === "user")
     return Boolean(
-      lastSystemNotice &&
-        (!lastUserMsg || lastSystemNotice.createdAt > lastUserMsg.createdAt),
+      lastSystemNotice && (!lastUserMsg || lastSystemNotice.createdAt > lastUserMsg.createdAt),
     )
   }
 
@@ -157,11 +161,17 @@ export class SessionService {
         let sopNext: string | null = null
         if (thread.sopBookmark) {
           try {
-            const bm = JSON.parse(thread.sopBookmark) as { skill?: string; phase?: string; nextExpectedAction?: string }
+            const bm = JSON.parse(thread.sopBookmark) as {
+              skill?: string
+              phase?: string
+              nextExpectedAction?: string
+            }
             sopSkill = bm.skill ?? null
             sopPhase = bm.phase ?? null
             sopNext = bm.nextExpectedAction ?? null
-          } catch { /* ignore malformed JSON */ }
+          } catch {
+            /* ignore malformed JSON */
+          }
         }
         const msgs = threadMessages.get(thread.id) ?? []
         const lastMsg = msgs[msgs.length - 1]
@@ -188,29 +198,43 @@ export class SessionService {
     const timeline = threads
       .flatMap((thread) =>
         (threadMessages.get(thread.id) ?? []).map((message) => {
-            const parsedCB = JSON.parse(message.contentBlocks || "[]")
-            return this.mapTimelineMessage(
-              thread,
-              message.id,
-              message.role,
-              message.content,
-              message.thinking,
-              message.createdAt,
-              message.messageType,
-              message.connectorSource ?? undefined,
-              message.groupId,
-              message.groupRole,
-              JSON.parse(message.toolEvents || "[]") as ToolEvent[],
-              parsedCB.length ? parsedCB : undefined,
-              message.model,
-            )
-          }),
+          const parsedCB = JSON.parse(message.contentBlocks || "[]")
+          return this.mapTimelineMessage(
+            thread,
+            message.id,
+            message.role,
+            message.content,
+            message.thinking,
+            message.createdAt,
+            message.messageType,
+            message.connectorSource ?? undefined,
+            message.groupId,
+            message.groupRole,
+            JSON.parse(message.toolEvents || "[]") as ToolEvent[],
+            parsedCB.length ? parsedCB : undefined,
+            message.model,
+            message.retryCount,
+            message.retryReasons,
+            // F026 P5 T0 · 透传 LEFT JOIN a2a_calls 协议字段
+            {
+              a2aCallId: message.a2aCallId,
+              a2aParentCallId: message.a2aParentCallId,
+              a2aRootCallId: message.a2aRootCallId,
+              a2aOnBehalfOf: message.a2aOnBehalfOf,
+              a2aConvenerId: message.a2aConvenerId,
+              a2aCallStatus: message.a2aCallStatus,
+              a2aDeadlineAt: message.a2aDeadlineAt,
+            },
+          )
+        }),
       )
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
     const tTimeline = performance.now()
 
     const total = tTimeline - t0
-    console.log(`[perf] getActiveGroup(${groupId.slice(0, 8)}): group+threads=${(tThreads - t0).toFixed(1)}ms messages=${(tMessages - tThreads).toFixed(1)}ms providers=${(tProviders - tMessages).toFixed(1)}ms timeline=${(tTimeline - tProviders).toFixed(1)}ms total=${total.toFixed(1)}ms`)
+    console.log(
+      `[perf] getActiveGroup(${groupId.slice(0, 8)}): group+threads=${(tThreads - t0).toFixed(1)}ms messages=${(tMessages - tThreads).toFixed(1)}ms providers=${(tProviders - tMessages).toFixed(1)}ms timeline=${(tTimeline - tProviders).toFixed(1)}ms total=${total.toFixed(1)}ms`,
+    )
     perfCollector.record("getActiveGroup", total)
     perfCollector.record("getActiveGroup.group+threads", tThreads - t0)
     perfCollector.record("getActiveGroup.messages", tMessages - tThreads)
@@ -248,11 +272,17 @@ export class SessionService {
         let sopNext: string | null = null
         if (thread.sopBookmark) {
           try {
-            const bm = JSON.parse(thread.sopBookmark) as { skill?: string; phase?: string; nextExpectedAction?: string }
+            const bm = JSON.parse(thread.sopBookmark) as {
+              skill?: string
+              phase?: string
+              nextExpectedAction?: string
+            }
             sopSkill = bm.skill ?? null
             sopPhase = bm.phase ?? null
             sopNext = bm.nextExpectedAction ?? null
-          } catch { /* ignore malformed JSON */ }
+          } catch {
+            /* ignore malformed JSON */
+          }
         }
         // F021 Phase 6 (AC-32): sealed 复用 deriveSealed helper，与 full snapshot 同源。
         const recentMsgs = this.repository.listRecentMessages(thread.id, 10)
@@ -276,34 +306,46 @@ export class SessionService {
       }),
     ) as Record<string, ProviderView>
 
-    const newMessages = threads.flatMap((thread) => {
-      const msgs = lastTimestamp
-        ? this.repository.listMessagesSince(thread.id, lastTimestamp)
-        : this.repository.listMessages(thread.id)
-      return msgs.map((message) => {
-        const parsedCB = JSON.parse(message.contentBlocks || "[]")
-        return this.mapTimelineMessage(
-          thread,
-          message.id,
-          message.role,
-          message.content,
-          message.thinking,
-          message.createdAt,
-          message.messageType,
-          message.connectorSource ?? undefined,
-          message.groupId,
-          message.groupRole,
-          JSON.parse(message.toolEvents || "[]") as ToolEvent[],
-          parsedCB.length ? parsedCB : undefined,
-          message.model,
-        )
+    const newMessages = threads
+      .flatMap((thread) => {
+        const msgs = lastTimestamp
+          ? this.repository.listMessagesSince(thread.id, lastTimestamp)
+          : this.repository.listMessages(thread.id)
+        return msgs.map((message) => {
+          const parsedCB = JSON.parse(message.contentBlocks || "[]")
+          return this.mapTimelineMessage(
+            thread,
+            message.id,
+            message.role,
+            message.content,
+            message.thinking,
+            message.createdAt,
+            message.messageType,
+            message.connectorSource ?? undefined,
+            message.groupId,
+            message.groupRole,
+            JSON.parse(message.toolEvents || "[]") as ToolEvent[],
+            parsedCB.length ? parsedCB : undefined,
+            message.model,
+            message.retryCount,
+            message.retryReasons,
+            // F026 P5 T0 · delta 路径也要透传 a2a 字段
+            {
+              a2aCallId: message.a2aCallId,
+              a2aParentCallId: message.a2aParentCallId,
+              a2aRootCallId: message.a2aRootCallId,
+              a2aOnBehalfOf: message.a2aOnBehalfOf,
+              a2aConvenerId: message.a2aConvenerId,
+              a2aCallStatus: message.a2aCallStatus,
+              a2aDeadlineAt: message.a2aDeadlineAt,
+            },
+          )
+        })
       })
-    }).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 
     if (newMessages.length > 0) {
-      const latest = newMessages.reduce((a, b) =>
-        a.createdAt > b.createdAt ? a : b,
-      )
+      const latest = newMessages.reduce((a, b) => (a.createdAt > b.createdAt ? a : b))
       this.lastSentTimestamps.set(groupId, latest.createdAt)
     }
 
@@ -336,21 +378,54 @@ export class SessionService {
   }
 
   appendUserMessage(threadId: string, content: string, contentBlocks = "[]") {
-    return this.repository.appendMessage(threadId, "user", content, "", "final", null, null, null, "[]", contentBlocks)
+    return this.repository.appendMessage(
+      threadId,
+      "user",
+      content,
+      "",
+      "final",
+      null,
+      null,
+      null,
+      "[]",
+      contentBlocks,
+    )
   }
 
   appendAssistantMessage(
     threadId: string,
     content: string,
     thinking = "",
-    messageType: "progress" | "final" | "a2a_handoff" = "final",
+    messageType: "progress" | "final" = "final",
     groupId: string | null = null,
     groupRole: "header" | "member" | "convergence" | null = null,
     toolEvents = "[]",
     model: string | null = null,
+    a2aCallId: string | null = null,
   ) {
-    const result = this.repository.appendMessage(threadId, "assistant", content, thinking, messageType, null, groupId, groupRole, toolEvents, "[]", model)
-    if (messageType === "final" && this.sessionTitler) {
+    const result = this.repository.appendMessage(
+      threadId,
+      "assistant",
+      content,
+      thinking,
+      messageType,
+      null,
+      groupId,
+      groupRole,
+      toolEvents,
+      "[]",
+      model,
+      a2aCallId,
+    )
+    // F026 P2 v2 Step 7: titler 触发由 messageType 判定改为内容前缀判定。
+    // `[Call: @x ...]` 起头的 final 是 MCP / assistant 派发指令（旧 union
+    // 标识符 a2a_handoff / a2a_handoff_mcp 已退役统一为 final），它们不属
+    // 用户可见 final，不应作为 Haiku 标题计算源。
+    if (
+      messageType === "final" &&
+      !content.trimStart().startsWith("[Call:") &&
+      this.sessionTitler
+    ) {
       const thread = this.repository.getThreadById(threadId)
       if (thread?.sessionGroupId) {
         this.sessionTitler.schedule(thread.sessionGroupId)
@@ -365,8 +440,22 @@ export class SessionService {
     connectorSource: ConnectorSource,
     groupId: string | null = null,
     groupRole: "header" | "member" | "convergence" | null = null,
+    a2aCallId: string | null = null,
   ) {
-    return this.repository.appendMessage(threadId, "assistant", content, "", "connector", connectorSource, groupId, groupRole)
+    return this.repository.appendMessage(
+      threadId,
+      "assistant",
+      content,
+      "",
+      "connector",
+      connectorSource,
+      groupId,
+      groupRole,
+      "[]",
+      "[]",
+      null,
+      a2aCallId,
+    )
   }
 
   // F021 Phase 6 (AC-32): seal 触发 → 持久化系统通知到 thread 消息流。
@@ -376,8 +465,42 @@ export class SessionService {
     return this.repository.appendMessage(threadId, "assistant", content, "", "system_notice")
   }
 
-  overwriteMessage(messageId: string, updates: { content?: string; thinking?: string; toolEvents?: string; contentBlocks?: string }) {
+  overwriteMessage(
+    messageId: string,
+    updates: {
+      content?: string
+      thinking?: string
+      toolEvents?: string
+      contentBlocks?: string
+      retryCount?: number
+      retryReasons?: string
+    },
+  ) {
     this.repository.overwriteMessage(messageId, updates)
+  }
+
+  /**
+   * F026 P3.1: 派发协议 retry 事件持久化（dispatch_validation_retry）。
+   * 与 buildDispatchRetryAgentEventRow 配合使用，message-service 入库前命中即调用。
+   */
+  appendAgentEvent(record: {
+    id: string
+    invocationId: string
+    threadId: string
+    agentId: string
+    eventType: string
+    payload: string
+    createdAt: string
+  }) {
+    this.repository.appendAgentEvent(record)
+  }
+
+  /**
+   * F026 P11 · 暴露给 message-service 在 final flush 时读现存 content_blocks
+   * 做 derive+merge（保留 image 块），不要回填覆盖独立路径写入的块。
+   */
+  getContentBlocksJson(messageId: string): string | null {
+    return this.repository.getContentBlocksJson(messageId)
   }
 
   appendContentBlock(messageId: string, block: import("@multi-agent/shared").ContentBlock) {
@@ -410,6 +533,18 @@ export class SessionService {
       JSON.parse(message.toolEvents || "[]") as ToolEvent[],
       parsedContentBlocks.length ? parsedContentBlocks : undefined,
       message.model,
+      message.retryCount,
+      message.retryReasons,
+      // F026 P5 T0 · 把 LEFT JOIN 出来的 a2a_calls 字段透传到 mapper
+      {
+        a2aCallId: message.a2aCallId,
+        a2aParentCallId: message.a2aParentCallId,
+        a2aRootCallId: message.a2aRootCallId,
+        a2aOnBehalfOf: message.a2aOnBehalfOf,
+        a2aConvenerId: message.a2aConvenerId,
+        a2aCallStatus: message.a2aCallStatus,
+        a2aDeadlineAt: message.a2aDeadlineAt,
+      },
     )
   }
 
@@ -484,7 +619,13 @@ export class SessionService {
     })
   }
 
-  updateThread(threadId: string, model: string | null, nativeSessionId: string | null, sopBookmark?: string | null, lastFillRatio?: number | null) {
+  updateThread(
+    threadId: string,
+    model: string | null,
+    nativeSessionId: string | null,
+    sopBookmark?: string | null,
+    lastFillRatio?: number | null,
+  ) {
     this.repository.updateThread(threadId, {
       currentModel: model,
       nativeSessionId,
@@ -500,13 +641,30 @@ export class SessionService {
     content: string,
     thinking: string,
     createdAt: string,
-    messageType: "progress" | "final" | "a2a_handoff" | "connector" | "system_notice" = "final",
+    messageType:
+      | "progress"
+      | "final"
+      | "a2a_handoff"
+      | "a2a_handoff_mcp"
+      | "connector"
+      | "system_notice" = "final",
     connectorSource?: ConnectorSource,
     groupId?: string | null,
     groupRole?: "header" | "member" | "convergence" | null,
     toolEvents?: ToolEvent[],
     contentBlocks?: ContentBlock[],
     messageModel: string | null = null,
+    retryCount: number = 0,
+    retryReasonsJson: string = "[]",
+    a2aMeta: {
+      a2aCallId?: string | null
+      a2aParentCallId?: string | null
+      a2aRootCallId?: string | null
+      a2aOnBehalfOf?: string | null
+      a2aConvenerId?: string | null
+      a2aCallStatus?: string | null
+      a2aDeadlineAt?: string | null
+    } = {},
   ): TimelineMessage {
     const isConnector = messageType === "connector"
     return {
@@ -530,6 +688,34 @@ export class SessionService {
       // F021 Phase 5: prefer per-message snapshot. Fallback to thread.currentModel
       // for legacy rows persisted before the messages.model column existed.
       model: role === "user" ? null : (messageModel ?? thread.currentModel),
+      // F026 P3.1: 派发协议 retry 计数 + 原因（assistant final 入库前 hook 写入）
+      retryCount: retryCount > 0 ? retryCount : undefined,
+      retryReasons: (() => {
+        if (retryCount === 0) return undefined
+        try {
+          const parsed = JSON.parse(retryReasonsJson)
+          return Array.isArray(parsed) && parsed.length > 0
+            ? (parsed as import("@multi-agent/shared").DispatchValidationRetryReason[])
+            : undefined
+        } catch {
+          return undefined
+        }
+      })(),
+      // F026 P5 T0 · A2A 协议字段（LEFT JOIN a2a_calls 取自 mapper 入参；
+      //   不带 a2aCallId 的老消息 / 非 a2a 派发，所有字段为 undefined → 前端不渲染原语）
+      a2aCallId: a2aMeta.a2aCallId ?? undefined,
+      a2aParentCallId: a2aMeta.a2aParentCallId ?? undefined,
+      a2aRootCallId: a2aMeta.a2aRootCallId ?? undefined,
+      a2aOnBehalfOf: a2aMeta.a2aOnBehalfOf ?? undefined,
+      a2aConvenerId: a2aMeta.a2aConvenerId ?? undefined,
+      a2aCallStatus: a2aMeta.a2aCallStatus ?? undefined,
+      a2aDeadlineAt: a2aMeta.a2aDeadlineAt ?? undefined,
+      // displayMode 从 envelope-builder.ts:30 同款 derive：parentCallId 非空 → nested
+      a2aDisplayMode: a2aMeta.a2aCallId
+        ? a2aMeta.a2aParentCallId
+          ? "nested"
+          : "inline"
+        : undefined,
       createdAt,
     }
   }

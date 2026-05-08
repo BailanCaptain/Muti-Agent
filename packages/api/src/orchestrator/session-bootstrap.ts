@@ -66,7 +66,8 @@ function buildToolsSection(recallTools: string[]): string {
     )
   }
   const header = "[Session Recall — Available Tools]\n"
-  const footer = "Use these tools when you need details from previous sessions.\n[/Session Recall — Available Tools]\n"
+  const footer =
+    "Use these tools when you need details from previous sessions.\n[/Session Recall — Available Tools]\n"
   const budgetForLines = TOOLS_SECTION_TOKEN_CAP - estimateTokens(header + footer)
 
   const kept: string[] = []

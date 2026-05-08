@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { ContextMessage } from "./context-snapshot"
 import { DispatchOrchestrator } from "./dispatch"
-import type { QueueEntry, BlockedDispatch } from "./dispatch"
+import type { BlockedDispatch, QueueEntry } from "./dispatch"
 
 function createSessionsStub() {
   const threads = [
@@ -58,7 +58,7 @@ test("dedupes the same target provider across different messages within one root
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-1",
-    content: "@桂芬 请接手",
+    content: "[Call: @桂芬 请接手]",
     matchMode: "anywhere",
     buildSnapshot: stubBuildSnapshot,
     extractSnippet: stubExtractSnippet,
@@ -70,7 +70,7 @@ test("dedupes the same target provider across different messages within one root
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-1",
-    content: "@桂芬 请继续",
+    content: "[Call: @桂芬 请继续]",
     matchMode: "line-start",
     buildSnapshot: stubBuildSnapshot,
     extractSnippet: stubExtractSnippet,
@@ -94,7 +94,7 @@ test("cancels a session group barrier, clears queued hops, and blocks later ment
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-1",
-    content: "@桂芬 请接手",
+    content: "[Call: @桂芬 请接手]",
     matchMode: "anywhere",
     buildSnapshot: stubBuildSnapshot,
     extractSnippet: stubExtractSnippet,
@@ -107,7 +107,7 @@ test("cancels a session group barrier, clears queued hops, and blocks later ment
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-1",
-    content: "@桂芬 继续",
+    content: "[Call: @桂芬 继续]",
     matchMode: "line-start",
     buildSnapshot: stubBuildSnapshot,
     extractSnippet: stubExtractSnippet,
@@ -225,7 +225,7 @@ test("enforces MAX_HOPS and blocks the 16th mention", () => {
       sourceProvider: "root" as any,
       sourceAlias: "Root",
       rootMessageId: rootId,
-      content: `@p${i} go`,
+      content: `[Call: @p${i} go]`,
       matchMode: "line-start",
       buildSnapshot: stubBuildSnapshot,
       extractSnippet: stubExtractSnippet,
@@ -240,7 +240,7 @@ test("enforces MAX_HOPS and blocks the 16th mention", () => {
     sourceProvider: "root" as any,
     sourceAlias: "Root",
     rootMessageId: rootId,
-    content: "@p16 stop",
+    content: "[Call: @p16 stop]",
     matchMode: "line-start",
     buildSnapshot: stubBuildSnapshot,
     extractSnippet: stubExtractSnippet,
@@ -262,7 +262,7 @@ test("QueueEntry carries structured from/to identity", () => {
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-1",
-    content: "@桂芬 请接手任务",
+    content: "[Call: @桂芬 请接手任务]",
     matchMode: "anywhere",
     buildSnapshot: stubBuildSnapshot,
     extractSnippet: stubExtractSnippet,
@@ -300,7 +300,7 @@ test("hopIndex increments per chain depth", () => {
     sourceProvider: "root" as any,
     sourceAlias: "Root",
     rootMessageId: "root-1",
-    content: "@p0 go",
+    content: "[Call: @p0 go]",
     matchMode: "line-start",
     buildSnapshot: stubBuildSnapshot,
     extractSnippet: stubExtractSnippet,
@@ -315,7 +315,7 @@ test("hopIndex increments per chain depth", () => {
     sourceProvider: "p0" as any,
     sourceAlias: "Agent0",
     rootMessageId: "root-1",
-    content: "@p1 continue",
+    content: "[Call: @p1 continue]",
     matchMode: "line-start",
     buildSnapshot: stubBuildSnapshot,
     extractSnippet: stubExtractSnippet,
@@ -330,7 +330,7 @@ test("hopIndex increments per chain depth", () => {
     sourceProvider: "p1" as any,
     sourceAlias: "Agent1",
     rootMessageId: "root-1",
-    content: "@p2 finish",
+    content: "[Call: @p2 finish]",
     matchMode: "line-start",
     buildSnapshot: stubBuildSnapshot,
     extractSnippet: stubExtractSnippet,
@@ -350,7 +350,7 @@ test("parentInvocationId is null for user-initiated, non-null for agent-initiate
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-1",
-    content: "@桂芬 请处理",
+    content: "[Call: @桂芬 请处理]",
     matchMode: "anywhere",
     parentInvocationId: null,
     buildSnapshot: stubBuildSnapshot,
@@ -368,7 +368,7 @@ test("parentInvocationId is null for user-initiated, non-null for agent-initiate
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-2",
-    content: "@黄仁勋 请 review",
+    content: "[Call: @黄仁勋 请 review]",
     matchMode: "line-start",
     parentInvocationId: "inv-abc-123",
     buildSnapshot: stubBuildSnapshot,
@@ -391,7 +391,7 @@ test("BlockedDispatch includes reason field with group_cancelled", () => {
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-1",
-    content: "@桂芬 请接手",
+    content: "[Call: @桂芬 请接手]",
     matchMode: "anywhere",
     buildSnapshot: stubBuildSnapshot,
     extractSnippet: stubExtractSnippet,
@@ -435,7 +435,7 @@ test("QueueEntry includes contextSnapshot from buildSnapshot callback", () => {
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-1",
-    content: "@桂芬 请接手",
+    content: "[Call: @桂芬 请接手]",
     matchMode: "anywhere",
     buildSnapshot: () => mockSnapshot,
     extractSnippet: (c: string) => c,
@@ -444,7 +444,7 @@ test("QueueEntry includes contextSnapshot from buildSnapshot callback", () => {
   assert.equal(result.queued.length, 1)
   const entry = result.queued[0] as QueueEntry
   assert.deepEqual(entry.contextSnapshot, mockSnapshot)
-  assert.equal(entry.taskSnippet, "@桂芬 请接手")
+  assert.equal(entry.taskSnippet, "[Call: @桂芬 请接手]")
 })
 
 // ===== Phase 2: Per-Slot Concurrency & Invocation-Scoped Dedup =====
@@ -460,7 +460,7 @@ test("takeNextQueuedDispatch skips busy provider and returns next available", ()
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-1",
-    content: "@桂芬 @黄仁勋 请接手",
+    content: "[Call: @桂芬 请接手] [Call: @黄仁勋 请接手]",
     matchMode: "anywhere",
     buildSnapshot: stubBuildSnapshot,
     extractSnippet: stubExtractSnippet,
@@ -473,6 +473,66 @@ test("takeNextQueuedDispatch skips busy provider and returns next available", ()
   const next = dispatch.takeNextQueuedDispatch("group-1")
   assert.ok(next)
   assert.equal(next.to.provider, "claude")
+})
+
+test("F026-P0 silent-drop: isProviderBusy keeps entry in queue when invocation is active", () => {
+  // R-013 场景5 回归保护：当目标 thread 已有 active invocation（invocations.has === true）
+  // 时，takeNextQueuedDispatch 必须跳过该 entry 而不是 take 出后让 runThreadTurn return null
+  // 导致 entry 永久丢失。
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+  dispatch.registerUserRoot("root-1", "group-1")
+
+  dispatch.enqueuePublicMentions({
+    messageId: "msg-1",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    sourceAlias: "范德彪",
+    rootMessageId: "root-1",
+    content: "[Call: @黄仁勋 请回复]",
+    matchMode: "anywhere",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+
+  // 第一次 take：黄仁勋"忙"（invocation 还在跑），entry 必须留在 queue
+  const busyAttempt = dispatch.takeNextQueuedDispatch("group-1", {
+    isProviderBusy: (p) => p === "claude",
+  })
+  assert.equal(busyAttempt, null, "busy provider 不能 take 出 entry")
+  assert.equal(dispatch.hasQueuedDispatches("group-1"), true, "entry 必须留在 queue")
+
+  // 第二次 take：黄仁勋"释放"了，entry 必须能拿到
+  const freeAttempt = dispatch.takeNextQueuedDispatch("group-1", {
+    isProviderBusy: (_p) => false,
+  })
+  assert.ok(freeAttempt, "释放后必须能 take 出 entry")
+  assert.equal(freeAttempt!.to.provider, "claude")
+})
+
+test("F026-P0 silent-drop: isProviderBusy 跳过 busy 的同时仍能 take 其他可用 provider", () => {
+  const dispatch = new DispatchOrchestrator(createSessionsStub() as never, defaultAliases)
+  dispatch.registerUserRoot("root-1", "group-1")
+
+  dispatch.enqueuePublicMentions({
+    messageId: "msg-1",
+    sessionGroupId: "group-1",
+    sourceProvider: "codex",
+    sourceAlias: "范德彪",
+    rootMessageId: "root-1",
+    content: "[Call: @黄仁勋 请并行] [Call: @桂芬 请并行]",
+    matchMode: "anywhere",
+    buildSnapshot: stubBuildSnapshot,
+    extractSnippet: stubExtractSnippet,
+  })
+
+  // 黄仁勋忙，桂芬应该能被 take
+  const next = dispatch.takeNextQueuedDispatch("group-1", {
+    isProviderBusy: (p) => p === "claude",
+  })
+  assert.ok(next)
+  assert.equal(next!.to.provider, "gemini")
+  // 黄仁勋的 entry 仍在 queue
+  assert.equal(dispatch.hasQueuedDispatches("group-1"), true)
 })
 
 test("per-slot lock allows different providers to run concurrently", () => {
@@ -508,7 +568,7 @@ test("invocation-scoped dedup: same provider in different invocation chains is a
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-1",
-    content: "@桂芬 请接手",
+    content: "[Call: @桂芬 请接手]",
     matchMode: "anywhere",
     parentInvocationId: "inv-A",
     buildSnapshot: stubBuildSnapshot,
@@ -522,7 +582,7 @@ test("invocation-scoped dedup: same provider in different invocation chains is a
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-1",
-    content: "@桂芬 请继续",
+    content: "[Call: @桂芬 请继续]",
     matchMode: "anywhere",
     parentInvocationId: "inv-B",
     buildSnapshot: stubBuildSnapshot,
@@ -544,7 +604,7 @@ test("invocation-scoped dedup: same provider in same invocation chain is blocked
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-1",
-    content: "@桂芬 请接手",
+    content: "[Call: @桂芬 请接手]",
     matchMode: "anywhere",
     parentInvocationId: "inv-A",
     buildSnapshot: stubBuildSnapshot,
@@ -558,7 +618,7 @@ test("invocation-scoped dedup: same provider in same invocation chain is blocked
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-1",
-    content: "@桂芬 请继续",
+    content: "[Call: @桂芬 请继续]",
     matchMode: "anywhere",
     parentInvocationId: "inv-A",
     buildSnapshot: stubBuildSnapshot,
@@ -630,7 +690,7 @@ test("agent-initiated multi-mention still skips sourceProvider", () => {
     sourceProvider: "codex",
     sourceAlias: "范德彪",
     rootMessageId: "root-1",
-    content: "@范德彪 @黄仁勋 @桂芬",
+    content: "[Call: @范德彪 fan out] [Call: @黄仁勋 fan out] [Call: @桂芬 fan out]",
     matchMode: "anywhere",
     parentInvocationId: "inv-A",
     buildSnapshot: stubBuildSnapshot,

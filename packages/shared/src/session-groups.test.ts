@@ -17,7 +17,14 @@ const makeGroup = (over: Partial<SessionGroupSummary> = {}): SessionGroupSummary
   ...over,
 })
 
-const msg = (over: Partial<{ provider: "claude" | "codex" | "gemini"; alias: string; content: string; createdAt: string }> = {}) => ({
+const msg = (
+  over: Partial<{
+    provider: "claude" | "codex" | "gemini"
+    alias: string
+    content: string
+    createdAt: string
+  }> = {},
+) => ({
   provider: "claude" as const,
   alias: "黄仁勋",
   content: "hi",

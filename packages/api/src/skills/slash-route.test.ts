@@ -94,10 +94,6 @@ test("resolveSlashSkillHint does NOT fire for mid-flow messages that mention ski
   ]
   const r = loadedRegistry()
   for (const c of contents) {
-    assert.equal(
-      resolveSlashSkillHint(c, r),
-      null,
-      `must not fire on non-slash content: ${c}`,
-    )
+    assert.equal(resolveSlashSkillHint(c, r), null, `must not fire on non-slash content: ${c}`)
   }
 })

@@ -21,10 +21,7 @@ test("backupDatabase creates a timestamped copy of the database file", async () 
       path.basename(backupPath).startsWith("test.backup-"),
       `backup filename should start with 'test.backup-', got: ${path.basename(backupPath)}`,
     )
-    assert.ok(
-      backupPath.endsWith(".sqlite"),
-      "backup should keep the .sqlite extension",
-    )
+    assert.ok(backupPath.endsWith(".sqlite"), "backup should keep the .sqlite extension")
 
     const original = fs.readFileSync(dbPath)
     const backup = fs.readFileSync(backupPath)
@@ -37,10 +34,7 @@ test("backupDatabase creates a timestamped copy of the database file", async () 
 test("backupDatabase throws if source file does not exist", async () => {
   const { backupDatabase } = await import("./backup")
 
-  assert.throws(
-    () => backupDatabase("/nonexistent/path/db.sqlite"),
-    /ENOENT|no such file/i,
-  )
+  assert.throws(() => backupDatabase("/nonexistent/path/db.sqlite"), /ENOENT|no such file/i)
 })
 
 test("ensurePreMigrationBackup skips when DB does not exist", async () => {

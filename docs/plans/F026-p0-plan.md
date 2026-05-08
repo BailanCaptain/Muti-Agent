@@ -1,13 +1,21 @@
-# F026 P0 — A2A 可靠通信层 · P0 阶段实施计划
+# F026 P0（Phase 0）— A2A 止血三件事 · Phase 0 实施计划
 
-**Feature:** F026 — `docs/features/F026-a2a-reliability-layer.md`
-**Goal:** 三天内做掉 P0 三件事——前端并发 @ 立即可用 / 后端 Broadcaster 强隔离 / Replay Harness 骨架与 R-185 fuzz 与 callbacks 业务失败冒泡——**不引入新对象、不改主干 message-service**，全部是局部修补 + 测试基建。
+> **Round 2 后定位更新（2026-04-23）**：小孙 Design Gate 拍板 F026 v2 后，本 plan 的 P0 重新定位为 **Phase 0 · 止血**，与协议重做解耦。
+>
+> - **Phase 0（本 plan）**：三天局部修补 —— 前端并发 @ / Broadcaster 隔离 / Replay Harness / trigger_mention 失败冒泡 / assistant role 守卫（Task 6）。**与协议重做不冲突**，保留。
+> - **Phase 1（新 plan）**：`docs/plans/F026-phase1-plan.md` —— 2 周落地 Round 2 协议地基（call-registry + envelope-builder + mention-router 三层 + on-behalf 反推 + a2a_calls 扩字段）。**Task 6 的 assistant role 守卫在 Phase 1 落地三层 fail-closed 后被替代**（Phase 0 止血机制保留到 Phase 1 末切换）。
+> - **协议依据**：ADR-002 / ADR-003 / ADR-004（`docs/adrs/`）。
+> - **Round 2 讨论收敛**：`docs/discussions/F026-design-discussion-round-2.md`。
+
+**Feature:** F026 v2 — `docs/features/F026-a2a-reliability-layer.md`
+**Goal:** 三天内做掉 Phase 0 三件事——前端并发 @ 立即可用 / 后端 Broadcaster 强隔离 / Replay Harness 骨架与 R-185 fuzz 与 callbacks 业务失败冒泡——**不引入新对象、不改主干 message-service**，全部是局部修补 + 测试基建。
 **Acceptance Criteria（覆盖 F026 spec 中可在 P0 闭环的子集）：**
 - 场景 1（小孙连发两条 @）Day 1 可用 → 对应 F026 AC「场景 1 · 并发 @」
 - I3 Broadcaster 后端强隔离（fuzz 10000 条 0 泄漏）→ 对应 F026 AC「I3」
 - M2 R-185 chunk 边界 fuzz 用例落库 → 对应 F026 AC「M2 R-185」
 - P14 trigger_mention 业务失败冒泡 error event → 对应 F026 AC「P14」
 - Replay Harness 骨架（仅骨架 + R-185 一个用例，其它症状用例由 P1+ 持续填充）
+- **Task 6 · agent 正文 @ 短路（2026-04-23 根治方案热修）**：`mention-router.ts` 对 assistant role 直接返回空 → 对应 F026 AC「I1 agent 正文 0 派发」+ 止血 2026-04-22 房间两次误派发
 
 **不在 P0 范围（明确）：**
 - 不动 `message-service.ts`、`return-path.ts`、`dispatch.ts` 主干
@@ -31,6 +39,7 @@
 | Day 3 Replay Harness 选型 | A node:test 直接驱动 / B 单独 vitest workspace | **A** | 仓内已统一 node:test，新增 vitest = 双跑 = 维护税；harness 只是 fixture 加载器 + assertion helper |
 | Day 3 R-185 fuzz 范围 | A 仅 codex-runtime decode round-trip / B 把 claude-runtime 也带上 | **A** | R-185 现场证据指向 Codex chunk 边界（spec 已定位 `codex-runtime.ts:240-266`）；Claude 链路无证据，YAGNI |
 | trigger_mention 失败冒泡 | A 抛异常返 5xx / B `{ ok:false, error }` 200 / C 200 但 emit `error` event | **C** | HTTP 200 已是合约不能改；emit error 让前端 console 显形，是 F026 P14 AC 的最小满足 |
+| **Task 6 热修范围**（2026-04-23 新增） | A 仅 assistant role 短路 / B 同时做 Markdown-AST / C 同时做反循环 30s 抑制 | **A** | A 是最小热修（~5 行 + 单测），2h 能落；B/C 是 P1 工作量（AST 切换 + 反循环表 + prompt 教育各 0.5-1 天）。Task 6 只为止血 2026-04-22 两次误派发 + 为 P1 完整根治打桩。agent prompt 的"派发必须调 trigger_mention"教育也**留 P1**（P0 agent 暂时失去"正文 @ 交接"能力，可接受，因为当前实证是"乱派发"比"漏派发"更痛） |
 
 ---
 
@@ -629,9 +638,143 @@ git commit -m "fix(F026-p0): surface trigger_mention business failures (P14) [�
 
 ---
 
-## Task 5 · 收尾：quality-gate + 自验
+## Task 6 · 根治方案热修：agent 正文 @ 短路（2026-04-23 新增）
 
-**Step 5.1 — 全量测试 + lint + typecheck**
+**Goal**：止血 2026-04-22 两次房间 A2A 误派发。`mention-router.ts` 对 assistant role 消息直接返回空派发结果，agent 要 A2A 必须走 MCP `trigger_mention` 工具。改动 ≤ 5 行 + 6 条单测，2h 落地。
+
+**Files：**
+- `packages/api/src/orchestrator/mention-router.ts`（加 role 守卫）
+- `packages/api/src/orchestrator/dispatch.ts`（可选：调用点守卫，若 mention-router 已短路可省）
+- `packages/api/src/orchestrator/mention-router.test.ts`（新建）
+- **`packages/api/src/orchestrator/mention-router.role-guard.test.ts`**（根治方案专属 red-case fixture）
+
+**不在 Task 6 范围（P1 接）：**
+- ❌ Markdown-AST 解析（code block / inline code / blockquote / table）——P1 I1 做
+- ❌ 反循环抑制 30s / 单消息去重 / traceId——P1 I7 做
+- ❌ `trigger_mention` reason 字段必填——P1 I6 做
+- ❌ Agent prompt 强教"派发必须调工具"——P1 做（prompt 教育 0.5 天）
+- ❌ F026-p0 worktree 里范德彪的 4 个脏文件——他自清，Task 6 只 add 自己的文件
+
+### Step 6.1 — TDD Red：房间现场翻车 fixture
+
+新建 `mention-router.role-guard.test.ts`：
+
+```ts
+import { describe, it } from "node:test"
+import assert from "node:assert/strict"
+import { resolveMentions } from "./mention-router"
+
+const aliases = { claude: "黄仁勋", codex: "范德彪", gemini: "桂芬" } as const
+
+describe("mention-router · role-guard (F026 I1 根治)", () => {
+  // Red Case 1：2026-04-22 15:30 代码块示例翻车
+  it("assistant 消息内代码块里的 @ 不派发", () => {
+    const text = "下面是示例：\n```\n@范德彪 请接手 P0 Task 3\n@桂芬 请看视觉稿\n```"
+    const mentions = resolveMentions(text, aliases, "line-start", { role: "assistant" })
+    assert.equal(mentions.length, 0)
+  })
+
+  // Red Case 2：2026-04-22 16:05 Markdown 粗体装饰翻车
+  it("assistant 消息内 **@xxx** 引用式不派发", () => {
+    const text = "**@范德彪** 刚才的任务你接得挺快嘛，P14 的 MCP 桥修好后记得把错误码吐给我"
+    const mentions = resolveMentions(text, aliases, "line-start", { role: "assistant" })
+    assert.equal(mentions.length, 0)
+  })
+
+  // Red Case 3：assistant 反问式
+  it("assistant 消息内『需要我 @xxx 吗』不派发（向来就不）", () => {
+    const text = "小孙，需要我 @范德彪 @桂芬 吗？"
+    const mentions = resolveMentions(text, aliases, "line-start", { role: "assistant" })
+    assert.equal(mentions.length, 0)
+  })
+
+  // Red Case 4：assistant 段落起行 @ — 以前会派发，根治后不派发
+  it("assistant 段落起行 @ 也不派发（根治新行为）", () => {
+    const text = "先说结论。\n\n@范德彪 你觉得这个方案 ok 吗？"
+    const mentions = resolveMentions(text, aliases, "line-start", { role: "assistant" })
+    assert.equal(mentions.length, 0)
+  })
+
+  // Green Case 1：user 正文代码块内 @ 仍按现有 anywhere 模式（P1 AST 再精细）
+  it("user 消息正文 @ 仍然派发", () => {
+    const text = "@范德彪 看下这个 bug"
+    const mentions = resolveMentions(text, aliases, "anywhere", { role: "user" })
+    assert.equal(mentions.length, 1)
+    assert.equal(mentions[0].provider, "codex")
+  })
+
+  // Green Case 2：role 缺省时按当前行为（向后兼容）
+  it("role 未提供时回退到原行为", () => {
+    const text = "@范德彪 test"
+    const mentions = resolveMentions(text, aliases, "line-start")
+    assert.equal(mentions.length, 1)
+  })
+})
+```
+
+**预期**：跑之前 test 会全红（resolveMentions 签名还没加 role 参数）。确认后进 Step 6.2。
+
+### Step 6.2 — TDD Green：mention-router 加 role 守卫
+
+在 `mention-router.ts` 的 `resolveMentions` 签名里加第四个可选参数 `options?: { role?: "user" | "assistant" | "system" }`，函数体开头短路：
+
+```ts
+export function resolveMentions(
+  content: string,
+  aliases: ProviderAliases,
+  mode: MentionMatchMode = "line-start",
+  options?: { role?: "user" | "assistant" | "system" },
+): MentionMatch[] {
+  // F026 I1 根治：assistant 正文 @ 一律不派发，要派发必须调 trigger_mention MCP 工具
+  if (options?.role === "assistant") return []
+  // ... 原有逻辑不变
+}
+```
+
+然后在 `dispatch.ts` 调用 `resolveMentions` 的地方（`enqueueMentionsFromText` 第 179 行）把上游 message 的 role 传下来——若当前调用上下文已有 role 信息，直接透传；若没有，给调用者加一个 `options.role` 参数。
+
+**跑测试**：
+
+```bash
+pnpm exec tsx --test packages/api/src/orchestrator/mention-router.role-guard.test.ts
+pnpm exec tsx --test packages/api/src/orchestrator/mention-router.test.ts   # 若已有
+pnpm exec tsx --test packages/api/src/orchestrator/dispatch.test.ts         # 回归
+```
+
+全绿后进 Step 6.3。
+
+### Step 6.3 — 集成点确认：所有 mention-router 调用点传 role
+
+grep 所有 `resolveMentions(` 调用：
+
+```bash
+grep -rn "resolveMentions\|resolveMention\b" packages/api/src
+```
+
+每个调用点必须能答清"这是 user 消息还是 assistant 消息"。如果调用处 role 信息缺失（比如 `message-service.ts` 里某个分支），走两条路：
+- A. 从调用方上溯补 role
+- B. 调用点已有 message 对象 → 直接读 `message.role`
+
+Task 6 不动 message-service 主干，仅在 `dispatch.ts` / `a2a-chain.ts` 这一层把 role 往下传。
+
+### Step 6.4 — Commit
+
+```bash
+git add packages/api/src/orchestrator/mention-router.ts \
+        packages/api/src/orchestrator/mention-router.role-guard.test.ts \
+        packages/api/src/orchestrator/dispatch.ts \
+        docs/features/F026-a2a-reliability-layer.md \
+        docs/plans/F026-p0-plan.md
+git commit -m "fix(F026-P0 Task6): assistant 正文 @ 短路（I1 根治 · 止血 2026-04-22 误派发） [黄仁勋/Opus-47 🐾]"
+```
+
+**⚠️ 注意**：`git add` 精确到文件，不要 `git add .` / `git add -A`——避免带上范德彪的 4 个脏文件（`mcp/server.*`、`routes/callbacks.*`），那是他自己的事。
+
+---
+
+## Task 7 · 收尾：quality-gate + 自验
+
+**Step 7.1 — 全量测试 + lint + typecheck**
 
 ```bash
 pnpm --filter @multi-agent/api test
@@ -640,17 +783,18 @@ pnpm typecheck
 pnpm lint
 ```
 
-**Step 5.2 — 三个证据截图入 worktree 本地**
+**Step 7.2 — 四个证据截图入 worktree 本地**
 
 - `day1-concurrent-mention.png`（A 房间 streaming 时 B 房间能发 @）
 - `day2-isolation.png`（tab2 WS frame 数 0）
 - `day3-tests-green.png`（terminal 截 a2a-replay/R185 + ws.broadcast-isolation + callbacks.trigger-mention-error 全绿）
+- **`task6-role-guard-green.png`**（terminal 截 `mention-router.role-guard.test.ts` 全绿 · 2026-04-22 两次翻车 red-case 归 0）
 
-**Step 5.3 — 进 quality-gate skill**
+**Step 7.3 — 进 quality-gate skill**
 
-P0 不进 acceptance-guardian（依据 `feedback_skip_acceptance_guardian_for_test_infra`：测试基建类 AC 即命令，quality-gate 已等价验收 R-185 + ws-isolation + callbacks-error；Day 1 的体感场景已在 Step 1.6 浏览器实测覆盖）。
+P0 不进 acceptance-guardian（依据 `feedback_skip_acceptance_guardian_for_test_infra`：测试基建类 AC 即命令，quality-gate 已等价验收 R-185 + ws-isolation + callbacks-error + Task 6 role-guard；Day 1 的体感场景已在 Step 1.6 浏览器实测覆盖）。
 
-**Step 5.4 — 进 requesting-review，@范德彪 review**
+**Step 7.4 — 进 requesting-review，@范德彪 review**
 
 P0 不合 dev（依据 `feedback_feature_completion_before_merge`）。Phase 级中间 commit 留 worktree，等 P1+ 全部完成或小孙明确 OK 再 merge。
 

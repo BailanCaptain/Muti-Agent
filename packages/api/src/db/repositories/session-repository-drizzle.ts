@@ -1,17 +1,17 @@
 import crypto from "node:crypto"
 import type { Provider } from "@multi-agent/shared"
 import { PROVIDERS, PROVIDER_ALIASES } from "@multi-agent/shared"
-import { eq, desc, asc, like, or, and, sql } from "drizzle-orm"
+import { and, asc, desc, eq, like, or, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
-import { mergeRuntimeConfigFieldwise } from "./runtime-config-merge"
 import {
-  sessionGroups,
-  threads,
-  messages,
-  invocations,
+  a2aCalls,
   agentEvents,
+  invocations,
+  messages,
+  sessionGroups,
   sessionMemories,
   tasks,
+  threads,
 } from "../schema"
 import type {
   ConnectorSourceRecord,
@@ -21,10 +21,39 @@ import type {
   ProviderThreadRecord,
   SessionMemoryRecord,
 } from "../sqlite"
+import { mergeRuntimeConfigFieldwise } from "./runtime-config-merge"
 
 type DrizzleDb = BetterSQLite3Database<typeof import("../schema")>
 
-function hydrateMessage(row: typeof messages.$inferSelect): MessageRecord {
+// F026 P5 in-flight · drizzle 路径补 LEFT JOIN a2a_calls 后的合并行类型。
+// 4 个 list* 方法显式 select 同一份字段集（messages 全列 + a2a_calls 6 个协议列），
+// 然后统一过 hydrateMessage。LEFT JOIN 时 a2a_calls 无匹配 → 6 字段为 null（非 a2a 消息正常态）。
+type MessageRowWithA2a = {
+  id: string
+  threadId: string
+  role: string
+  content: string
+  thinking: string
+  messageType: string
+  connectorSource: string | null
+  groupId: string | null
+  groupRole: string | null
+  toolEvents: string
+  contentBlocks: string
+  createdAt: string
+  model: string | null
+  retryCount: number
+  retryReasons: string
+  a2aCallId: string | null
+  a2aParentCallId: string | null
+  a2aRootCallId: string | null
+  a2aOnBehalfOf: string | null
+  a2aConvenerId: string | null
+  a2aCallStatus: string | null
+  a2aDeadlineAt: string | null
+}
+
+function hydrateMessage(row: MessageRowWithA2a): MessageRecord {
   return {
     id: row.id,
     threadId: row.threadId,
@@ -41,8 +70,42 @@ function hydrateMessage(row: typeof messages.$inferSelect): MessageRecord {
     contentBlocks: row.contentBlocks ?? "[]",
     createdAt: row.createdAt,
     model: row.model ?? null,
+    retryCount: row.retryCount ?? 0,
+    retryReasons: row.retryReasons ?? "[]",
+    a2aCallId: row.a2aCallId ?? null,
+    a2aParentCallId: row.a2aParentCallId ?? null,
+    a2aRootCallId: row.a2aRootCallId ?? null,
+    a2aOnBehalfOf: row.a2aOnBehalfOf ?? null,
+    a2aConvenerId: row.a2aConvenerId ?? null,
+    a2aCallStatus: row.a2aCallStatus ?? null,
+    a2aDeadlineAt: row.a2aDeadlineAt ?? null,
   }
 }
+
+const MESSAGE_WITH_A2A_SELECT = {
+  id: messages.id,
+  threadId: messages.threadId,
+  role: messages.role,
+  content: messages.content,
+  thinking: messages.thinking,
+  messageType: messages.messageType,
+  connectorSource: messages.connectorSource,
+  groupId: messages.groupId,
+  groupRole: messages.groupRole,
+  toolEvents: messages.toolEvents,
+  contentBlocks: messages.contentBlocks,
+  createdAt: messages.createdAt,
+  model: messages.model,
+  retryCount: messages.retryCount,
+  retryReasons: messages.retryReasons,
+  a2aCallId: messages.a2aCallId,
+  a2aParentCallId: a2aCalls.parentCallId,
+  a2aRootCallId: a2aCalls.rootCallId,
+  a2aOnBehalfOf: a2aCalls.onBehalfOf,
+  a2aConvenerId: a2aCalls.convenerId,
+  a2aCallStatus: a2aCalls.status,
+  a2aDeadlineAt: a2aCalls.deadlineAt,
+} as const
 
 export class DrizzleSessionRepository {
   // F022 Phase 3.5 (review P1-2): Haiku 命名失败的 session 最多重试 N 次；
@@ -103,7 +166,7 @@ export class DrizzleSessionRepository {
       .orderBy(desc(sessionGroups.updatedAt))
       .limit(limit)
       .all()
-      .map(r => r.id)
+      .map((r) => r.id)
 
     if (groupIds.length === 0) return []
 
@@ -120,12 +183,19 @@ export class DrizzleSessionRepository {
         updatedAt: sessionGroups.updatedAt,
         provider: threads.provider,
         alias: threads.alias,
-        lastMessage: sql<string | null>`(SELECT content FROM messages WHERE thread_id = ${threads.id} ORDER BY created_at DESC LIMIT 1)`,
+        lastMessage: sql<
+          string | null
+        >`(SELECT content FROM messages WHERE thread_id = ${threads.id} ORDER BY created_at DESC LIMIT 1)`,
         msgCount: sql<number>`(SELECT COUNT(*) FROM messages WHERE thread_id = ${threads.id})`,
       })
       .from(sessionGroups)
       .leftJoin(threads, eq(threads.sessionGroupId, sessionGroups.id))
-      .where(sql`${sessionGroups.id} IN (${sql.join(groupIds.map(id => sql`${id}`), sql`, `)})`)
+      .where(
+        sql`${sessionGroups.id} IN (${sql.join(
+          groupIds.map((id) => sql`${id}`),
+          sql`, `,
+        )})`,
+      )
       .orderBy(desc(sessionGroups.updatedAt), asc(threads.provider))
       .all()
 
@@ -214,9 +284,10 @@ export class DrizzleSessionRepository {
   // F021 Phase 2.2 / 3.3: per-session runtime-config overrides.
   // Stored as JSON blob `{active, pending}`; legacy flat blobs read as
   // `{active: <flat>, pending: {}}` so existing rows keep working.
-  private readRuntimeConfigBlob(
-    groupId: string,
-  ): { active: Record<string, unknown>; pending: Record<string, unknown> } {
+  private readRuntimeConfigBlob(groupId: string): {
+    active: Record<string, unknown>
+    pending: Record<string, unknown>
+  } {
     const rows = this.db
       .select({ runtimeConfig: sessionGroups.runtimeConfig })
       .from(sessionGroups)
@@ -288,22 +359,14 @@ export class DrizzleSessionRepository {
   }
 
   // F022 Phase 3.5 (AC-14g): manual=true 时写 title_locked_at，SessionTitler 跳过覆盖。
-  updateSessionGroupTitle(
-    groupId: string,
-    title: string,
-    opts: { manual?: boolean } = {},
-  ) {
+  updateSessionGroupTitle(groupId: string, title: string, opts: { manual?: boolean } = {}) {
     const now = new Date().toISOString()
     const patch: { title: string; updatedAt: string; titleLockedAt?: string } = {
       title,
       updatedAt: now,
     }
     if (opts.manual) patch.titleLockedAt = now
-    this.db
-      .update(sessionGroups)
-      .set(patch)
-      .where(eq(sessionGroups.id, groupId))
-      .run()
+    this.db.update(sessionGroups).set(patch).where(eq(sessionGroups.id, groupId)).run()
   }
 
   // F022 Phase 3.5 (AC-14i)
@@ -383,7 +446,7 @@ export class DrizzleSessionRepository {
       .orderBy(desc(sessionGroups.updatedAt))
       .limit(limit)
       .all()
-    return rows.map(r => ({
+    return rows.map((r) => ({
       id: r.id,
       roomId: r.roomId ?? null,
       title: r.title,
@@ -430,8 +493,10 @@ export class DrizzleSessionRepository {
     }
   }
 
-
-  createSessionGroupWithDefaults(defaults: Record<Provider, string | null>, title?: string): string {
+  createSessionGroupWithDefaults(
+    defaults: Record<Provider, string | null>,
+    title?: string,
+  ): string {
     const roomId = this.allocateNextRoomId()
     return this.db.transaction((tx) => {
       const now = new Date().toISOString()
@@ -465,21 +530,16 @@ export class DrizzleSessionRepository {
   }
 
   listThreadsByGroup(sessionGroupId: string): ProviderThreadRecord[] {
-    return (this.db
+    return this.db
       .select()
       .from(threads)
       .where(eq(threads.sessionGroupId, sessionGroupId))
       .orderBy(asc(threads.provider))
-      .all()) as ProviderThreadRecord[]
+      .all() as ProviderThreadRecord[]
   }
 
   getThreadById(threadId: string): ProviderThreadRecord | undefined {
-    const rows = this.db
-      .select()
-      .from(threads)
-      .where(eq(threads.id, threadId))
-      .limit(1)
-      .all()
+    const rows = this.db.select().from(threads).where(eq(threads.id, threadId)).limit(1).all()
     return rows[0] as ProviderThreadRecord | undefined
   }
 
@@ -490,31 +550,36 @@ export class DrizzleSessionRepository {
     // silently truncated the NEWEST messages once a thread crossed 1000, so the
     // UI stopped showing fresh user/assistant messages. Default is now unlimited;
     // callers needing a cap pass it explicitly.
+    // F026 P13 · `, messages.rowid` 显式 tiebreaker — 同 ms 多条 message 保插入顺序
+    // F026 P5 in-flight · LEFT JOIN a2a_calls hydrate 6 协议字段（前端 AtPill 反查必需）
     const query = this.db
-      .select()
+      .select(MESSAGE_WITH_A2A_SELECT)
       .from(messages)
+      .leftJoin(a2aCalls, eq(a2aCalls.callId, messages.a2aCallId))
       .where(eq(messages.threadId, threadId))
-      .orderBy(asc(messages.createdAt))
+      .orderBy(asc(messages.createdAt), sql`messages.rowid ASC`)
     const rows = limit !== undefined ? query.limit(limit).all() : query.all()
     return rows.map(hydrateMessage)
   }
 
   listMessagesSince(threadId: string, sinceTimestamp: string): MessageRecord[] {
     const rows = this.db
-      .select()
+      .select(MESSAGE_WITH_A2A_SELECT)
       .from(messages)
+      .leftJoin(a2aCalls, eq(a2aCalls.callId, messages.a2aCallId))
       .where(and(eq(messages.threadId, threadId), sql`${messages.createdAt} > ${sinceTimestamp}`))
-      .orderBy(asc(messages.createdAt))
+      .orderBy(asc(messages.createdAt), sql`messages.rowid ASC`)
       .all()
     return rows.map(hydrateMessage)
   }
 
   listRecentMessages(threadId: string, limit: number): MessageRecord[] {
     const rows = this.db
-      .select()
+      .select(MESSAGE_WITH_A2A_SELECT)
       .from(messages)
+      .leftJoin(a2aCalls, eq(a2aCalls.callId, messages.a2aCallId))
       .where(eq(messages.threadId, threadId))
-      .orderBy(desc(messages.createdAt))
+      .orderBy(desc(messages.createdAt), sql`messages.rowid DESC`)
       .limit(limit)
       .all()
     return rows.map(hydrateMessage)
@@ -532,6 +597,7 @@ export class DrizzleSessionRepository {
     toolEvents = "[]",
     contentBlocks = "[]",
     model: string | null = null,
+    a2aCallId: string | null = null,
   ): MessageRecord {
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
@@ -550,6 +616,15 @@ export class DrizzleSessionRepository {
       contentBlocks,
       createdAt: now,
       model,
+      retryCount: 0,
+      retryReasons: "[]",
+      a2aCallId,
+      a2aParentCallId: null,
+      a2aRootCallId: null,
+      a2aOnBehalfOf: null,
+      a2aConvenerId: null,
+      a2aCallStatus: null,
+      a2aDeadlineAt: null,
     }
 
     this.db
@@ -568,6 +643,7 @@ export class DrizzleSessionRepository {
         contentBlocks,
         createdAt: now,
         model,
+        a2aCallId,
       })
       .run()
 
@@ -575,28 +651,60 @@ export class DrizzleSessionRepository {
     return message
   }
 
-  overwriteMessage(messageId: string, updates: { content?: string; thinking?: string; toolEvents?: string; contentBlocks?: string }) {
+  overwriteMessage(
+    messageId: string,
+    updates: {
+      content?: string
+      thinking?: string
+      toolEvents?: string
+      contentBlocks?: string
+      retryCount?: number
+      retryReasons?: string
+    },
+  ) {
     this.db.transaction((tx) => {
       const current = tx
-      .select({ content: messages.content, thinking: messages.thinking, toolEvents: messages.toolEvents, contentBlocks: messages.contentBlocks })
+        .select({
+          content: messages.content,
+          thinking: messages.thinking,
+          toolEvents: messages.toolEvents,
+          contentBlocks: messages.contentBlocks,
+          retryCount: messages.retryCount,
+          retryReasons: messages.retryReasons,
+        })
+        .from(messages)
+        .where(eq(messages.id, messageId))
+        .limit(1)
+        .all()
+
+      if (current.length === 0) return
+
+      tx.update(messages)
+        .set({
+          content: updates.content ?? current[0].content,
+          thinking: updates.thinking ?? current[0].thinking,
+          toolEvents: updates.toolEvents ?? current[0].toolEvents,
+          contentBlocks: updates.contentBlocks ?? current[0].contentBlocks,
+          retryCount: updates.retryCount ?? current[0].retryCount,
+          retryReasons: updates.retryReasons ?? current[0].retryReasons,
+        })
+        .where(eq(messages.id, messageId))
+        .run()
+    })
+  }
+
+  /**
+   * F026 P11 · 单独读 content_blocks JSON（不走 listMessages 全量 hydrate）。
+   * 用于 message-service final flush 时 derive + merge 现存 image / 其他独立块。
+   */
+  getContentBlocksJson(messageId: string): string | null {
+    const rows = this.db
+      .select({ contentBlocks: messages.contentBlocks })
       .from(messages)
       .where(eq(messages.id, messageId))
       .limit(1)
       .all()
-
-    if (current.length === 0) return
-
-      tx
-      .update(messages)
-      .set({
-        content: updates.content ?? current[0].content,
-        thinking: updates.thinking ?? current[0].thinking,
-        toolEvents: updates.toolEvents ?? current[0].toolEvents,
-        contentBlocks: updates.contentBlocks ?? current[0].contentBlocks,
-      })
-      .where(eq(messages.id, messageId))
-      .run()
-    })
+    return rows[0]?.contentBlocks ?? null
   }
 
   appendContentBlock(messageId: string, block: { type: string; [key: string]: unknown }) {
@@ -613,8 +721,7 @@ export class DrizzleSessionRepository {
       const blocks = JSON.parse(current[0].contentBlocks || "[]") as unknown[]
       blocks.push(block)
 
-      tx
-        .update(messages)
+      tx.update(messages)
         .set({ contentBlocks: JSON.stringify(blocks) })
         .where(eq(messages.id, messageId))
         .run()
@@ -653,9 +760,7 @@ export class DrizzleSessionRepository {
     const rows = this.db
       .select()
       .from(invocations)
-      .where(
-        and(eq(invocations.id, invocationId), eq(invocations.callbackToken, callbackToken)),
-      )
+      .where(and(eq(invocations.id, invocationId), eq(invocations.callbackToken, callbackToken)))
       .limit(1)
       .all()
     return rows[0]
@@ -782,46 +887,44 @@ export class DrizzleSessionRepository {
     replacements: Record<Provider, { from: string[]; to: string | null }>,
   ) {
     this.db.transaction((tx) => {
-    const updatedAt = new Date().toISOString()
+      const updatedAt = new Date().toISOString()
 
-    for (const provider of PROVIDERS) {
-      const replacement = replacements[provider]
-      if (!replacement?.to || !replacement.from.length) continue
+      for (const provider of PROVIDERS) {
+        const replacement = replacements[provider]
+        if (!replacement?.to || !replacement.from.length) continue
 
-      tx
-        .update(threads)
-        .set({ currentModel: replacement.to, updatedAt })
-        .where(
-          and(
-            eq(threads.provider, provider),
-            sql`${threads.currentModel} IN (${sql.join(
-              replacement.from.map((v) => sql`${v}`),
-              sql`, `,
-            )})`,
-          ),
-        )
-        .run()
-    }
+        tx.update(threads)
+          .set({ currentModel: replacement.to, updatedAt })
+          .where(
+            and(
+              eq(threads.provider, provider),
+              sql`${threads.currentModel} IN (${sql.join(
+                replacement.from.map((v) => sql`${v}`),
+                sql`, `,
+              )})`,
+            ),
+          )
+          .run()
+      }
     })
-}
+  }
 
   private touchThread(threadId: string, updatedAt: string) {
     this.db.transaction((tx) => {
       tx.update(threads).set({ updatedAt }).where(eq(threads.id, threadId)).run()
 
       const row = tx
-      .select({ sessionGroupId: threads.sessionGroupId })
-      .from(threads)
-      .where(eq(threads.id, threadId))
-      .limit(1)
-      .all()
+        .select({ sessionGroupId: threads.sessionGroupId })
+        .from(threads)
+        .where(eq(threads.id, threadId))
+        .limit(1)
+        .all()
 
       if (row.length > 0) {
-        tx
-        .update(sessionGroups)
-        .set({ updatedAt })
-        .where(eq(sessionGroups.id, row[0].sessionGroupId))
-        .run()
+        tx.update(sessionGroups)
+          .set({ updatedAt })
+          .where(eq(sessionGroups.id, row[0].sessionGroupId))
+          .run()
       }
     })
   }
@@ -870,27 +973,19 @@ export class DrizzleSessionRepository {
     return rows[0] ?? null
   }
 
-
-  listAllMessagesForGroup(sessionGroupId: string, limit = 1000): Array<MessageRecord & { alias: string }> {
+  listAllMessagesForGroup(
+    sessionGroupId: string,
+    limit = 1000,
+  ): Array<MessageRecord & { alias: string }> {
+    // F026 P5 in-flight · 同样补 LEFT JOIN a2a_calls — 群级 timeline 也走 envelope 协议字段
     const rows = this.db
       .select({
-        id: messages.id,
-        threadId: messages.threadId,
-        role: messages.role,
-        content: messages.content,
-        thinking: messages.thinking,
-        messageType: messages.messageType,
-        connectorSource: messages.connectorSource,
-        groupId: messages.groupId,
-        groupRole: messages.groupRole,
-        toolEvents: messages.toolEvents,
-        contentBlocks: messages.contentBlocks,
-        createdAt: messages.createdAt,
-        model: messages.model,
+        ...MESSAGE_WITH_A2A_SELECT,
         alias: threads.alias,
       })
       .from(messages)
       .innerJoin(threads, eq(messages.threadId, threads.id))
+      .leftJoin(a2aCalls, eq(a2aCalls.callId, messages.a2aCallId))
       .where(eq(threads.sessionGroupId, sessionGroupId))
       .orderBy(asc(messages.createdAt))
       .limit(limit)
@@ -942,6 +1037,15 @@ export class DrizzleSessionRepository {
       })
       .run()
 
-    return { id, sessionGroupId, assignee, description, priority, status: "pending" as const, createdBy, createdAt: now }
+    return {
+      id,
+      sessionGroupId,
+      assignee,
+      description,
+      priority,
+      status: "pending" as const,
+      createdBy,
+      createdAt: now,
+    }
   }
 }

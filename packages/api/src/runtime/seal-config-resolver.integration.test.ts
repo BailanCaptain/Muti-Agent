@@ -1,16 +1,12 @@
 import assert from "node:assert/strict"
-import test from "node:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import test from "node:test"
 import { SEAL_THRESHOLDS_BY_PROVIDER, getContextWindowForModel } from "@multi-agent/shared"
-import {
-  type RuntimeConfig,
-  loadRuntimeConfig,
-  saveRuntimeConfig,
-} from "./runtime-config"
-import { resolveSealThresholds, WARN_GAP_FROM_ACTION } from "./seal-config-resolver"
 import { resolveContextWindow } from "./context-window-resolver"
+import { type RuntimeConfig, loadRuntimeConfig, saveRuntimeConfig } from "./runtime-config"
+import { WARN_GAP_FROM_ACTION, resolveSealThresholds } from "./seal-config-resolver"
 
 // F021 Phase 6 — AC-28 Fallback 链路集成测试
 //
@@ -131,15 +127,9 @@ test("AC-28 matrix [window] case 1: both unset → CLI/fallback chain", () => {
     const global = setGlobal(gp, undefined)
     const session = sessionRoundTrip(undefined)
     // 无 CLI 报告 → 走 model fallback
-    assert.equal(
-      resolveContextWindow(PROVIDER, global, session, undefined, MODEL),
-      FALLBACK_WINDOW,
-    )
+    assert.equal(resolveContextWindow(PROVIDER, global, session, undefined, MODEL), FALLBACK_WINDOW)
     // 有 CLI 报告 → CLI 赢 fallback
-    assert.equal(
-      resolveContextWindow(PROVIDER, global, session, 800_000, MODEL),
-      800_000,
-    )
+    assert.equal(resolveContextWindow(PROVIDER, global, session, 800_000, MODEL), 800_000)
   } finally {
     cleanup()
   }
@@ -150,10 +140,7 @@ test("AC-28 matrix [window] case 2: global only → global beats CLI + fallback"
   try {
     const global = setGlobal(gp, { claude: { contextWindow: 2_000_000 } })
     const session = sessionRoundTrip(undefined)
-    assert.equal(
-      resolveContextWindow(PROVIDER, global, session, 800_000, MODEL),
-      2_000_000,
-    )
+    assert.equal(resolveContextWindow(PROVIDER, global, session, 800_000, MODEL), 2_000_000)
   } finally {
     cleanup()
   }
@@ -164,10 +151,7 @@ test("AC-28 matrix [window] case 3: both set → session wins", () => {
   try {
     const global = setGlobal(gp, { claude: { contextWindow: 2_000_000 } })
     const session = sessionRoundTrip({ claude: { contextWindow: 3_000_000 } })
-    assert.equal(
-      resolveContextWindow(PROVIDER, global, session, 800_000, MODEL),
-      3_000_000,
-    )
+    assert.equal(resolveContextWindow(PROVIDER, global, session, 800_000, MODEL), 3_000_000)
   } finally {
     cleanup()
   }
@@ -179,10 +163,7 @@ test("AC-28 matrix [window] case 4: delete global, keep session → session valu
     setGlobal(gp, { claude: { contextWindow: 2_000_000 } })
     const global = setGlobal(gp, undefined)
     const session = sessionRoundTrip({ claude: { contextWindow: 3_000_000 } })
-    assert.equal(
-      resolveContextWindow(PROVIDER, global, session, undefined, MODEL),
-      3_000_000,
-    )
+    assert.equal(resolveContextWindow(PROVIDER, global, session, undefined, MODEL), 3_000_000)
   } finally {
     cleanup()
   }
@@ -193,10 +174,7 @@ test("AC-28 matrix [window] case 5: delete session, keep global → global value
   try {
     const global = setGlobal(gp, { claude: { contextWindow: 2_000_000 } })
     const session = sessionRoundTrip({})
-    assert.equal(
-      resolveContextWindow(PROVIDER, global, session, undefined, MODEL),
-      2_000_000,
-    )
+    assert.equal(resolveContextWindow(PROVIDER, global, session, undefined, MODEL), 2_000_000)
   } finally {
     cleanup()
   }
@@ -208,10 +186,7 @@ test("AC-28 matrix [window] case 6: delete both → CLI/fallback restored", () =
     setGlobal(gp, { claude: { contextWindow: 2_000_000 } })
     const global = setGlobal(gp, undefined)
     const session = sessionRoundTrip({})
-    assert.equal(
-      resolveContextWindow(PROVIDER, global, session, undefined, MODEL),
-      FALLBACK_WINDOW,
-    )
+    assert.equal(resolveContextWindow(PROVIDER, global, session, undefined, MODEL), FALLBACK_WINDOW)
   } finally {
     cleanup()
   }
@@ -222,10 +197,7 @@ test("AC-28 cross-field independence: setting only sealPct does not change windo
   try {
     const global = setGlobal(gp, { claude: { sealPct: 0.5 } })
     const session = sessionRoundTrip(undefined)
-    assert.equal(
-      resolveContextWindow(PROVIDER, global, session, undefined, MODEL),
-      FALLBACK_WINDOW,
-    )
+    assert.equal(resolveContextWindow(PROVIDER, global, session, undefined, MODEL), FALLBACK_WINDOW)
     assert.equal(resolveSealThresholds(PROVIDER, global, session).action, 0.5)
   } finally {
     cleanup()
@@ -238,10 +210,7 @@ test("AC-28 cross-field independence: setting only contextWindow does not change
     const global = setGlobal(gp, { claude: { contextWindow: 2_000_000 } })
     const session = sessionRoundTrip(undefined)
     assert.deepEqual(resolveSealThresholds(PROVIDER, global, session), FALLBACK_SEAL)
-    assert.equal(
-      resolveContextWindow(PROVIDER, global, session, undefined, MODEL),
-      2_000_000,
-    )
+    assert.equal(resolveContextWindow(PROVIDER, global, session, undefined, MODEL), 2_000_000)
   } finally {
     cleanup()
   }
@@ -255,10 +224,7 @@ test("AC-28 round-trip preserves both fields together on disk", () => {
     })
     const session = sessionRoundTrip({ claude: { sealPct: 0.45 } })
     // session 只覆盖 sealPct，contextWindow 仍取全局
-    assert.equal(
-      resolveContextWindow(PROVIDER, global, session, undefined, MODEL),
-      1_500_000,
-    )
+    assert.equal(resolveContextWindow(PROVIDER, global, session, undefined, MODEL), 1_500_000)
     assert.equal(resolveSealThresholds(PROVIDER, global, session).action, 0.45)
   } finally {
     cleanup()

@@ -93,10 +93,16 @@ describe("sanitizeHandoffBody", () => {
       "the INSTRUCTION manual is outdated",
     ].join("\n")
     const out = sanitizeHandoffBody(input)
-    assert.ok(out.includes("Most important: backup the database first"), "mid-line 'important:' must stay")
+    assert.ok(
+      out.includes("Most important: backup the database first"),
+      "mid-line 'important:' must stay",
+    )
     assert.ok(out.includes("error summary — note: retry succeeded"), "mid-line 'note:' must stay")
     assert.ok(out.includes("see SYSTEM status panel for details"), "mid-line 'SYSTEM' must stay")
-    assert.ok(out.includes("the INSTRUCTION manual is outdated"), "mid-line 'INSTRUCTION' must stay")
+    assert.ok(
+      out.includes("the INSTRUCTION manual is outdated"),
+      "mid-line 'INSTRUCTION' must stay",
+    )
   })
 
   it("AC4.4: leading whitespace before directive keyword still triggers removal", () => {

@@ -18,10 +18,5 @@ export function resolveContextWindow(
 ): number | null {
   const sessionWin = sessionConfig?.[provider]?.contextWindow
   const globalWin = globalConfig?.[provider]?.contextWindow
-  return (
-    sessionWin ??
-    globalWin ??
-    cliReportedWindow ??
-    getContextWindowForModel(model)
-  )
+  return sessionWin ?? globalWin ?? cliReportedWindow ?? getContextWindowForModel(model)
 }

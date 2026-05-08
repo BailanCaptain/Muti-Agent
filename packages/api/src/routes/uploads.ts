@@ -2,8 +2,8 @@ import type { FastifyInstance } from "fastify"
 import "@fastify/multipart"
 import { randomUUID } from "node:crypto"
 import { createWriteStream, unlinkSync } from "node:fs"
-import { pipeline } from "node:stream/promises"
 import path from "node:path"
+import { pipeline } from "node:stream/promises"
 import { createLogger } from "../lib/logger"
 
 const log = createLogger("uploads")
@@ -42,7 +42,9 @@ export function registerUploadRoutes(app: FastifyInstance, uploadsDir: string) {
     await pipeline(file.file, createWriteStream(dest))
 
     if (file.file.truncated) {
-      try { unlinkSync(dest) } catch {}
+      try {
+        unlinkSync(dest)
+      } catch {}
       return reply.status(413).send({ error: "file too large" })
     }
 

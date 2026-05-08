@@ -46,7 +46,6 @@ skills:
       - "写代码"
       - "执行已定方案"
     agents: [claude, codex, gemini]
-    requires_mcp: ["parallel_think"]
     next: []
     sop_step: null
     slashCommands:

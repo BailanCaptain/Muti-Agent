@@ -15,8 +15,6 @@
 
 import { eq } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
-import type * as schema from "../schema"
-import { workflowSop } from "../schema"
 import type {
   ResumeCapsule,
   SopChecks,
@@ -24,6 +22,8 @@ import type {
   UpdateSopInput,
   WorkflowSop,
 } from "../../services/workflow-sop-types"
+import type * as schema from "../schema"
+import { workflowSop } from "../schema"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
 
@@ -98,11 +98,7 @@ export class DrizzleWorkflowSopRepository {
     // Omitting input.featureId always defaults to the authoritative value.
     const expectedFeatureId = existing?.featureId ?? input.backlogItemId
     if (input.featureId !== undefined && input.featureId !== expectedFeatureId) {
-      throw new FeatureIdMismatchError(
-        input.backlogItemId,
-        expectedFeatureId,
-        input.featureId,
-      )
+      throw new FeatureIdMismatchError(input.backlogItemId, expectedFeatureId, input.featureId)
     }
 
     const now = new Date().toISOString()
@@ -171,7 +167,10 @@ export class DrizzleWorkflowSopRepository {
   private hydrate(row: typeof workflowSop.$inferSelect): WorkflowSop {
     let resumeCapsule: ResumeCapsule
     try {
-      resumeCapsule = { ...EMPTY_RESUME, ...(JSON.parse(row.resumeCapsule) as Partial<ResumeCapsule>) }
+      resumeCapsule = {
+        ...EMPTY_RESUME,
+        ...(JSON.parse(row.resumeCapsule) as Partial<ResumeCapsule>),
+      }
     } catch {
       resumeCapsule = EMPTY_RESUME
     }

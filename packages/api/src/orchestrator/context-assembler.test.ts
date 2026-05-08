@@ -1,44 +1,49 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { assembleDirectTurnPrompt, assemblePrompt } from "./context-assembler"
-import type { ContextMessage } from "./context-snapshot"
-import { POLICY_FULL, POLICY_GUARDIAN, POLICY_INDEPENDENT } from "./context-policy"
 import { ACCEPTANCE_GUARDIAN_PROMPT } from "../runtime/agent-prompts"
-import { buildPhase1Header } from "./phase1-header"
+import { assembleDirectTurnPrompt, assemblePrompt } from "./context-assembler"
+import { POLICY_FULL, POLICY_GUARDIAN } from "./context-policy"
+import type { ContextMessage } from "./context-snapshot"
 
 // ── Guardian mode ───────────────────────────────────────────────────────
 
 test("guardianMode replaces system prompt with ACCEPTANCE_GUARDIAN_PROMPT", async () => {
-  const result = await assemblePrompt({
-    provider: "claude",
-    threadId: "t1",
-    sessionGroupId: "sg1",
-    nativeSessionId: null,
-    policy: POLICY_GUARDIAN,
-    task: "[acceptance-guardian] 请验收 F001\n\n## AC\n- [ ] 用户能登录",
-    roomSnapshot: [],
-    sourceAlias: "范德彪",
-    targetAlias: "黄仁勋",
-    guardianMode: true,
-  }, null)
+  const result = await assemblePrompt(
+    {
+      provider: "claude",
+      threadId: "t1",
+      sessionGroupId: "sg1",
+      nativeSessionId: null,
+      policy: POLICY_GUARDIAN,
+      task: "[acceptance-guardian] 请验收 F001\n\n## AC\n- [ ] 用户能登录",
+      roomSnapshot: [],
+      sourceAlias: "范德彪",
+      targetAlias: "黄仁勋",
+      guardianMode: true,
+    },
+    null,
+  )
 
   assert.equal(result.systemPrompt, ACCEPTANCE_GUARDIAN_PROMPT)
 })
 
 test("guardianMode passes task as-is without A2A wrapping", async () => {
   const task = "[acceptance-guardian] 请验收 F001\n\n## AC\n- [ ] 用户能登录"
-  const result = await assemblePrompt({
-    provider: "claude",
-    threadId: "t1",
-    sessionGroupId: "sg1",
-    nativeSessionId: null,
-    policy: POLICY_GUARDIAN,
-    task,
-    roomSnapshot: [],
-    sourceAlias: "范德彪",
-    targetAlias: "黄仁勋",
-    guardianMode: true,
-  }, null)
+  const result = await assemblePrompt(
+    {
+      provider: "claude",
+      threadId: "t1",
+      sessionGroupId: "sg1",
+      nativeSessionId: null,
+      policy: POLICY_GUARDIAN,
+      task,
+      roomSnapshot: [],
+      sourceAlias: "范德彪",
+      targetAlias: "黄仁勋",
+      guardianMode: true,
+    },
+    null,
+  )
 
   // Content should be the raw task, not wrapped with [A2A 协作请求] headers
   assert.equal(result.content, task)
@@ -47,21 +52,36 @@ test("guardianMode passes task as-is without A2A wrapping", async () => {
 })
 
 test("guardianMode strips all context injection", async () => {
-  const result = await assemblePrompt({
-    provider: "claude",
-    threadId: "t1",
-    sessionGroupId: "sg1",
-    nativeSessionId: null,
-    policy: POLICY_GUARDIAN,
-    task: "验收 F001",
-    roomSnapshot: [
-      { id: "msg-1", agentId: "黄仁勋", role: "assistant" as const, content: "我完成了实现", createdAt: "2026-01-01T00:00:00Z" },
-      { id: "msg-2", agentId: "范德彪", role: "assistant" as const, content: "收到", createdAt: "2026-01-01T00:00:01Z" },
-    ],
-    sourceAlias: "范德彪",
-    targetAlias: "黄仁勋",
-    guardianMode: true,
-  }, null)
+  const result = await assemblePrompt(
+    {
+      provider: "claude",
+      threadId: "t1",
+      sessionGroupId: "sg1",
+      nativeSessionId: null,
+      policy: POLICY_GUARDIAN,
+      task: "验收 F001",
+      roomSnapshot: [
+        {
+          id: "msg-1",
+          agentId: "黄仁勋",
+          role: "assistant" as const,
+          content: "我完成了实现",
+          createdAt: "2026-01-01T00:00:00Z",
+        },
+        {
+          id: "msg-2",
+          agentId: "范德彪",
+          role: "assistant" as const,
+          content: "收到",
+          createdAt: "2026-01-01T00:00:01Z",
+        },
+      ],
+      sourceAlias: "范德彪",
+      targetAlias: "黄仁勋",
+      guardianMode: true,
+    },
+    null,
+  )
 
   // No room context leaks
   assert.ok(!result.content.includes("我完成了实现"))
@@ -73,61 +93,26 @@ test("guardianMode strips all context injection", async () => {
 // ── Normal mode (no guardian) ───────────────────────────────────────────
 
 test("normal mode uses AGENT_SYSTEM_PROMPTS and wraps content", async () => {
-  const result = await assemblePrompt({
-    provider: "claude",
-    threadId: "t1",
-    sessionGroupId: "sg1",
-    nativeSessionId: null,
-    policy: POLICY_FULL,
-    task: "实现登录功能",
-    roomSnapshot: [],
-    sourceAlias: "user",
-    targetAlias: "黄仁勋",
-  }, null)
+  const result = await assemblePrompt(
+    {
+      provider: "claude",
+      threadId: "t1",
+      sessionGroupId: "sg1",
+      nativeSessionId: null,
+      policy: POLICY_FULL,
+      task: "实现登录功能",
+      roomSnapshot: [],
+      sourceAlias: "user",
+      targetAlias: "黄仁勋",
+    },
+    null,
+  )
 
   // System prompt contains identity
   assert.ok(result.systemPrompt.includes("黄仁勋"))
   // Content is wrapped with A2A headers
   assert.ok(result.content.includes("[用户请求]"))
   assert.ok(result.content.includes("你是 黄仁勋"))
-})
-
-// ── F019 P4: Mode B transport — phase1-header lives on CONTENT channel ──
-
-test("Mode B: phase1HeaderText appears in assembled content (not systemPrompt)", async () => {
-  // Counterpart to cli-orchestrator.sop-hint.test.ts: sopStageHint rides
-  // on MULTI_AGENT_SYSTEM_PROMPT env, phase1-header rides on user content.
-  // This test pins the content-channel half of the Mode B replay guarantee.
-  const phase1 = buildPhase1Header(3)
-  const result = await assemblePrompt({
-    provider: "claude",
-    threadId: "t1",
-    sessionGroupId: "sg1",
-    nativeSessionId: "existing-session", // skip Bootstrap prelude noise
-    policy: POLICY_INDEPENDENT,
-    task: "你们讨论一下 X",
-    roomSnapshot: [],
-    sourceAlias: "user",
-    targetAlias: "黄仁勋",
-    phase1HeaderText: phase1,
-  }, null)
-
-  // phase1 header must land in content (the user-message channel)
-  assert.ok(
-    result.content.includes("[当前模式：并行独立思考 · Phase 1]"),
-    `phase1 header must be in content, got tail: ${result.content.slice(-200)}`,
-  )
-  // systemPrompt must NOT contain phase1 — they travel on separate channels
-  assert.ok(
-    !result.systemPrompt.includes("[当前模式：并行独立思考 · Phase 1]"),
-    "phase1 header must NOT leak into systemPrompt",
-  )
-  // systemPrompt must NOT contain a SOP line — that's injected by cli-orchestrator,
-  // not by assemblePrompt (tested separately in cli-orchestrator.sop-hint.test.ts)
-  assert.ok(
-    !result.systemPrompt.includes("SOP:"),
-    "assemblePrompt must not synthesize an SOP line",
-  )
 })
 
 // ── POLICY_GUARDIAN shape ───────────────────────────────────────────────
@@ -137,7 +122,6 @@ test("POLICY_GUARDIAN has all context injection disabled", () => {
   assert.equal(POLICY_GUARDIAN.injectSelfHistory, false)
   assert.equal(POLICY_GUARDIAN.injectSharedHistory, false)
   assert.equal(POLICY_GUARDIAN.injectPreamble, false)
-  assert.equal(POLICY_GUARDIAN.phase1Header, false)
 })
 
 // ── F018 架构契约变更：直接 turn 不再主动注入 roomSnapshot 原对话 ───────
@@ -171,16 +155,19 @@ test("F018 AC5.3/5.4: direct turn content contains the task but NOT raw roomSnap
     },
   ]
 
-  const result = await assembleDirectTurnPrompt({
-    provider: "claude",
-    threadId: "t-f004",
-    sessionGroupId: "sg-f004",
-    nativeSessionId: "sess-abc",
-    task: "继续推进",
-    sourceAlias: "user",
-    targetAlias: "黄仁勋",
-    roomSnapshot,
-  }, null)
+  const result = await assembleDirectTurnPrompt(
+    {
+      provider: "claude",
+      threadId: "t-f004",
+      sessionGroupId: "sg-f004",
+      nativeSessionId: "sess-abc",
+      task: "继续推进",
+      sourceAlias: "user",
+      targetAlias: "黄仁勋",
+      roomSnapshot,
+    },
+    null,
+  )
 
   // task 保留
   assert.match(result.content, /继续推进/)
@@ -193,24 +180,27 @@ test("F018 AC5.3/5.4: direct turn content contains the task but NOT raw roomSnap
 // F018 P3 AC3.5 — SessionBootstrap 新 session 注入
 
 test("F018 AC3.5: new session (nativeSessionId=null) injects SessionBootstrap prelude", async () => {
-  const result = await assemblePrompt({
-    provider: "claude",
-    threadId: "t1",
-    sessionGroupId: "sg1",
-    nativeSessionId: null,
-    policy: POLICY_FULL,
-    task: "继续做 backup 功能",
-    roomSnapshot: [],
-    sourceAlias: "user",
-    targetAlias: "黄仁勋",
-    sessionChainIndex: 3,
-    threadMemory: {
-      summary: "Session #2 (09:00-09:15, 15min): edit. Files: a.ts. 0 errors.",
-      sessionCount: 2,
-      lastUpdatedAt: "2026-04-17T09:15:00Z",
+  const result = await assemblePrompt(
+    {
+      provider: "claude",
+      threadId: "t1",
+      sessionGroupId: "sg1",
+      nativeSessionId: null,
+      policy: POLICY_FULL,
+      task: "继续做 backup 功能",
+      roomSnapshot: [],
+      sourceAlias: "user",
+      targetAlias: "黄仁勋",
+      sessionChainIndex: 3,
+      threadMemory: {
+        summary: "Session #2 (09:00-09:15, 15min): edit. Files: a.ts. 0 errors.",
+        sessionCount: 2,
+        lastUpdatedAt: "2026-04-17T09:15:00Z",
+      },
+      recallTools: ["recall_similar_context"],
     },
-    recallTools: ["recall_similar_context"],
-  }, null)
+    null,
+  )
 
   // Bootstrap prelude must be present
   assert.match(result.content, /\[Session Continuity — Session #3\]/)
@@ -224,20 +214,23 @@ test("F018 AC3.5: new session (nativeSessionId=null) injects SessionBootstrap pr
 })
 
 test("F018 AC3.5: resumed session (nativeSessionId set) does NOT inject Bootstrap", async () => {
-  const result = await assemblePrompt({
-    provider: "claude",
-    threadId: "t1",
-    sessionGroupId: "sg1",
-    nativeSessionId: "sess-abc",
-    policy: POLICY_FULL,
-    task: "继续",
-    roomSnapshot: [],
-    sourceAlias: "user",
-    targetAlias: "黄仁勋",
-    sessionChainIndex: 3,
-    threadMemory: null,
-    recallTools: ["recall_similar_context"],
-  }, null)
+  const result = await assemblePrompt(
+    {
+      provider: "claude",
+      threadId: "t1",
+      sessionGroupId: "sg1",
+      nativeSessionId: "sess-abc",
+      policy: POLICY_FULL,
+      task: "继续",
+      roomSnapshot: [],
+      sourceAlias: "user",
+      targetAlias: "黄仁勋",
+      sessionChainIndex: 3,
+      threadMemory: null,
+      recallTools: ["recall_similar_context"],
+    },
+    null,
+  )
 
   // No Bootstrap identity section when resuming an existing native session
   assert.ok(!result.content.includes("[Session Continuity"))
@@ -263,26 +256,26 @@ test("F018 AC5.5: new session prompt must NOT contain raw [收到]/[你]: dialog
       createdAt: "2026-04-11T00:00:01.000Z",
     },
   ]
-  const result = await assemblePrompt({
-    provider: "claude",
-    threadId: "t1",
-    sessionGroupId: "sg1",
-    nativeSessionId: null, // 新 session，走 Bootstrap 路径
-    policy: POLICY_FULL,
-    task: "继续",
-    roomSnapshot,
-    sourceAlias: "user",
-    targetAlias: "黄仁勋",
-    sessionChainIndex: 1,
-  }, null)
+  const result = await assemblePrompt(
+    {
+      provider: "claude",
+      threadId: "t1",
+      sessionGroupId: "sg1",
+      nativeSessionId: null, // 新 session，走 Bootstrap 路径
+      policy: POLICY_FULL,
+      task: "继续",
+      roomSnapshot,
+      sourceAlias: "user",
+      targetAlias: "黄仁勋",
+      sessionChainIndex: 1,
+    },
+    null,
+  )
 
   // 新架构：不再有原对话重灌片段
   assert.ok(!result.content.includes("[收到]"), "禁止出现 [收到] 原对话标记")
   assert.ok(!result.content.includes("[你]:"), "禁止出现 [你]: 原对话标记")
-  assert.ok(
-    !result.content.includes("--- 你之前的发言"),
-    "禁止出现 --- 你之前的发言 --- 分节",
-  )
+  assert.ok(!result.content.includes("--- 你之前的发言"), "禁止出现 --- 你之前的发言 --- 分节")
   assert.ok(!result.content.includes("--- 近期对话"), "禁止出现 --- 近期对话 --- 分节")
   assert.ok(
     !result.content.includes("请帮我备份数据库"),
@@ -298,17 +291,20 @@ test("F018 AC5.6: F007 rolling summary must be sanitized before system-prompt in
     getOrCreateSummary: async () => maliciousSummary,
   } as unknown as Parameters<typeof assemblePrompt>[1]
 
-  const result = await assemblePrompt({
-    provider: "claude",
-    threadId: "t1",
-    sessionGroupId: "sg1",
-    nativeSessionId: "sess-abc", // resumed session: Bootstrap skipped, summary sink active
-    policy: POLICY_FULL,
-    task: "task",
-    roomSnapshot: [],
-    sourceAlias: "user",
-    targetAlias: "黄仁勋",
-  }, stubMemoryService)
+  const result = await assemblePrompt(
+    {
+      provider: "claude",
+      threadId: "t1",
+      sessionGroupId: "sg1",
+      nativeSessionId: "sess-abc", // resumed session: Bootstrap skipped, summary sink active
+      policy: POLICY_FULL,
+      task: "task",
+      roomSnapshot: [],
+      sourceAlias: "user",
+      targetAlias: "黄仁勋",
+    },
+    stubMemoryService,
+  )
 
   // SYSTEM: 行必须被 sanitize 剥离；合法内容保留
   assert.ok(!/^\s*SYSTEM:/m.test(result.systemPrompt), "SYSTEM: directive must be stripped")
@@ -317,20 +313,120 @@ test("F018 AC5.6: F007 rolling summary must be sanitized before system-prompt in
 })
 
 test("F018 AC3.5: new session without bootstrap inputs skips injection (backwards compat)", async () => {
-  const result = await assemblePrompt({
-    provider: "claude",
-    threadId: "t1",
-    sessionGroupId: "sg1",
-    nativeSessionId: null,
-    policy: POLICY_FULL,
-    task: "do something",
-    roomSnapshot: [],
-    sourceAlias: "user",
-    targetAlias: "黄仁勋",
-    // 未传 sessionChainIndex / threadMemory / recallTools
-  }, null)
+  const result = await assemblePrompt(
+    {
+      provider: "claude",
+      threadId: "t1",
+      sessionGroupId: "sg1",
+      nativeSessionId: null,
+      policy: POLICY_FULL,
+      task: "do something",
+      roomSnapshot: [],
+      sourceAlias: "user",
+      targetAlias: "黄仁勋",
+      // 未传 sessionChainIndex / threadMemory / recallTools
+    },
+    null,
+  )
 
   // No Bootstrap injection if caller didn't supply required inputs — avoids
   // breaking existing callers that don't yet pass bootstrap metadata.
   assert.ok(!result.content.includes("[Session Continuity"))
+})
+
+// ── F026-P3 Task6 · cold-target burst injection ─────────────────────
+
+const baseColdInput = {
+  provider: "claude" as const,
+  threadId: "t1",
+  sessionGroupId: "sg1",
+  policy: POLICY_FULL,
+  task: "请评价这首诗",
+  roomSnapshot: [] as readonly ContextMessage[],
+  targetAlias: "桂芬",
+}
+
+test("F026-P3 cold-target · injects burst+tombstone when target cold (A2A path)", async () => {
+  const result = await assemblePrompt(
+    {
+      ...baseColdInput,
+      sourceAlias: "黄仁勋",
+      nativeSessionId: null,
+      threadMemory: null,
+      previousDigest: null,
+      coldTargetBurst: {
+        burstSection: "[Burst — 最近 5 条相关讨论]\n[assistant·黄仁勋·12:00] foo\n[/Burst]",
+        tombstoneSection: "[Tombstone] 此前省略 50 条 ... [/Tombstone]",
+      },
+    },
+    null,
+  )
+
+  assert.match(result.content, /\[Burst — 最近/)
+  assert.match(result.content, /\[Tombstone\]/)
+
+  // 注入位置：burst 必须在 [A2A 协作请求 from ...] 之前
+  const burstIdx = result.content.indexOf("[Burst")
+  const headerIdx = result.content.indexOf("[A2A 协作请求")
+  assert.ok(burstIdx >= 0 && headerIdx >= 0)
+  assert.ok(burstIdx < headerIdx, "burst must precede A2A header")
+})
+
+test("F026-P3 cold-target · injects burst when target cold AND source=user (user-mention path)", async () => {
+  const result = await assemblePrompt(
+    {
+      ...baseColdInput,
+      sourceAlias: "user",
+      nativeSessionId: null,
+      threadMemory: null,
+      previousDigest: null,
+      coldTargetBurst: {
+        burstSection: "[Burst — 最近 3 条相关讨论]\n[user·user·12:00] hi\n[/Burst]",
+        tombstoneSection: null,
+      },
+    },
+    null,
+  )
+
+  assert.match(result.content, /\[Burst — 最近/)
+  // 注入位置：burst 在 [用户请求] 之前
+  const burstIdx = result.content.indexOf("[Burst")
+  const headerIdx = result.content.indexOf("[用户请求]")
+  assert.ok(burstIdx >= 0 && headerIdx >= 0)
+  assert.ok(burstIdx < headerIdx, "burst must precede 用户请求 header")
+})
+
+test("F026-P3 cold-target · NO burst when coldTargetBurst not provided (caller decides cold-target gate)", async () => {
+  const result = await assemblePrompt(
+    {
+      ...baseColdInput,
+      sourceAlias: "黄仁勋",
+      nativeSessionId: null,
+      threadMemory: null,
+      previousDigest: null,
+      // coldTargetBurst 未传 → 不注入（callsite 自己判定 cold-target）
+    },
+    null,
+  )
+
+  assert.ok(!result.content.includes("[Burst"))
+  assert.ok(!result.content.includes("[Tombstone"))
+})
+
+test("F026-P3 cold-target · tombstoneSection=null 时只注入 burst，不注入 tombstone", async () => {
+  const result = await assemblePrompt(
+    {
+      ...baseColdInput,
+      sourceAlias: "黄仁勋",
+      nativeSessionId: null,
+      coldTargetBurst: {
+        burstSection: "[Burst — 最近 5 条相关讨论]\nfoo\n[/Burst]",
+        tombstoneSection: null,
+      },
+    },
+    null,
+  )
+
+  assert.match(result.content, /\[Burst/)
+  assert.ok(!result.content.includes("[Tombstone"))
 })

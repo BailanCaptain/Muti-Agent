@@ -6,9 +6,9 @@ import { encodeMessage, getTools, handleToolCall, parseFrame } from "./server.js
 // getTools tests
 // ---------------------------------------------------------------------------
 
-test("getTools returns 14 tools", () => {
+test("getTools returns 13 tools", () => {
   const tools = getTools()
-  assert.equal(tools.length, 14, `Expected 14 tools, got ${tools.length}`)
+  assert.equal(tools.length, 13, `Expected 13 tools, got ${tools.length}`)
   const names = tools.map((t) => t.name).sort()
   assert.deepEqual(names, [
     "create_task",
@@ -16,7 +16,6 @@ test("getTools returns 14 tools", () => {
     "get_room_context",
     "get_room_summary",
     "get_task_status",
-    "parallel_think",
     "post_message",
     "recall_similar_context",
     "request_decision",
@@ -126,11 +125,12 @@ test("handleToolCall dispatches get_task_status", async () => {
 
 test("handleToolCall dispatches create_task with correct args", async () => {
   await assert.rejects(
-    () => handleToolCall("create_task", {
-      assignee: "agent-1",
-      description: "Fix the bug",
-      priority: "high",
-    }),
+    () =>
+      handleToolCall("create_task", {
+        assignee: "agent-1",
+        description: "Fix the bug",
+        priority: "high",
+      }),
     (err: Error) => {
       assert.ok(err.message.includes("ECONNREFUSED"), `Expected ECONNREFUSED, got: ${err.message}`)
       return true
@@ -140,10 +140,11 @@ test("handleToolCall dispatches create_task with correct args", async () => {
 
 test("handleToolCall dispatches trigger_mention with correct args", async () => {
   await assert.rejects(
-    () => handleToolCall("trigger_mention", {
-      targetAgentId: "designer",
-      taskSnippet: "Review the UI",
-    }),
+    () =>
+      handleToolCall("trigger_mention", {
+        targetAgentId: "designer",
+        taskSnippet: "Review the UI",
+      }),
     (err: Error) => {
       assert.ok(err.message.includes("ECONNREFUSED"), `Expected ECONNREFUSED, got: ${err.message}`)
       return true

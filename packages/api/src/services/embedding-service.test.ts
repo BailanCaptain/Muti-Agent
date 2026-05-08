@@ -5,10 +5,10 @@ import { join } from "node:path"
 import { describe, it } from "node:test"
 import { SqliteStore } from "../db/sqlite"
 import {
-  cosineSimilarity,
-  EmbeddingService,
-  searchByEmbedding,
   type EmbeddingRecord,
+  EmbeddingService,
+  cosineSimilarity,
+  searchByEmbedding,
 } from "./embedding-service"
 
 function makeStore(): { store: SqliteStore; dir: string } {
@@ -52,10 +52,34 @@ describe("cosineSimilarity", () => {
 
 describe("searchByEmbedding", () => {
   const records: EmbeddingRecord[] = [
-    { messageId: "m1", threadId: "t1", chunkText: "架构设计讨论", embedding: [1, 0, 0], createdAt: "2026-04-13T09:00:00Z" },
-    { messageId: "m2", threadId: "t1", chunkText: "bug 修复", embedding: [0, 1, 0], createdAt: "2026-04-13T10:00:00Z" },
-    { messageId: "m3", threadId: "t1", chunkText: "测试编写", embedding: [0, 0, 1], createdAt: "2026-04-13T11:00:00Z" },
-    { messageId: "m4", threadId: "t1", chunkText: "另一个架构话题", embedding: [0.9, 0.1, 0], createdAt: "2026-04-13T08:00:00Z" },
+    {
+      messageId: "m1",
+      threadId: "t1",
+      chunkText: "架构设计讨论",
+      embedding: [1, 0, 0],
+      createdAt: "2026-04-13T09:00:00Z",
+    },
+    {
+      messageId: "m2",
+      threadId: "t1",
+      chunkText: "bug 修复",
+      embedding: [0, 1, 0],
+      createdAt: "2026-04-13T10:00:00Z",
+    },
+    {
+      messageId: "m3",
+      threadId: "t1",
+      chunkText: "测试编写",
+      embedding: [0, 0, 1],
+      createdAt: "2026-04-13T11:00:00Z",
+    },
+    {
+      messageId: "m4",
+      threadId: "t1",
+      chunkText: "另一个架构话题",
+      embedding: [0.9, 0.1, 0],
+      createdAt: "2026-04-13T08:00:00Z",
+    },
   ]
 
   it("returns top-k most similar records", () => {
@@ -602,7 +626,11 @@ describe("B019: default pipelineLoader is offline-first", () => {
       assert.equal(ok, true, "ensureModel succeeds with local weights in models/")
 
       const { env } = await import("@huggingface/transformers")
-      assert.equal(env.allowRemoteModels, false, "EMBEDDING_ALLOW_REMOTE unset → allowRemoteModels=false")
+      assert.equal(
+        env.allowRemoteModels,
+        false,
+        "EMBEDDING_ALLOW_REMOTE unset → allowRemoteModels=false",
+      )
       assert.equal(env.allowLocalModels, true, "always allow local models")
       assert.match(
         env.localModelPath ?? "",
@@ -618,7 +646,11 @@ describe("B019: default pipelineLoader is offline-first", () => {
       await svc.ensureModel()
 
       const { env } = await import("@huggingface/transformers")
-      assert.equal(env.allowRemoteModels, true, "EMBEDDING_ALLOW_REMOTE=true → allowRemoteModels=true")
+      assert.equal(
+        env.allowRemoteModels,
+        true,
+        "EMBEDDING_ALLOW_REMOTE=true → allowRemoteModels=true",
+      )
     }))
 
   it("default pipelineLoader produces a 384-dim feature-extraction pipeline (sanity)", () =>
@@ -666,7 +698,9 @@ describe("B019: default pipelineLoader is offline-first", () => {
 
       const escapeHatchWarn = warns.find((w) => {
         if (typeof w.obj !== "object" || w.obj === null) return false
-        return "envVar" in w.obj && (w.obj as { envVar: string }).envVar === "EMBEDDING_ALLOW_REMOTE"
+        return (
+          "envVar" in w.obj && (w.obj as { envVar: string }).envVar === "EMBEDDING_ALLOW_REMOTE"
+        )
       })
       assert.ok(
         escapeHatchWarn,
@@ -690,7 +724,9 @@ describe("B019: default pipelineLoader is offline-first", () => {
 
       const escapeHatchWarn = warns.find((w) => {
         if (typeof w.obj !== "object" || w.obj === null) return false
-        return "envVar" in w.obj && (w.obj as { envVar: string }).envVar === "EMBEDDING_ALLOW_REMOTE"
+        return (
+          "envVar" in w.obj && (w.obj as { envVar: string }).envVar === "EMBEDDING_ALLOW_REMOTE"
+        )
       })
       assert.equal(escapeHatchWarn, undefined, "no escape-hatch warn when env unset")
     }))

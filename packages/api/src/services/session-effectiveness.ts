@@ -15,14 +15,12 @@
  * separately by failure-classifier (B017 Bug 3), not here.
  */
 export function computeEffectiveSessionId(args: {
-  content: string;
-  resultExitCode: number | null;
-  resultSessionId: string | null;
-  threadSessionId: string | null;
+  content: string
+  resultExitCode: number | null
+  resultSessionId: string | null
+  threadSessionId: string | null
 }): string | null {
   const isEmptyAndAbnormal =
-    !args.content.trim() &&
-    args.resultExitCode !== null &&
-    args.resultExitCode !== 0;
-  return isEmptyAndAbnormal ? null : args.resultSessionId;
+    !args.content.trim() && args.resultExitCode !== null && args.resultExitCode !== 0
+  return isEmptyAndAbnormal ? null : args.resultSessionId
 }

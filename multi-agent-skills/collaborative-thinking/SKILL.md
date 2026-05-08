@@ -43,8 +43,6 @@ triggers:
 - C. 不确定性高（多种可行方案，无明显最优）
 - D. 信息差大（需要不同角色补充盲区）
 
-调 `parallel_think` MCP tool 前必须带搜索证据（`searchEvidenceRefs`）。
-
 **成本警告**：并行 token 消耗是单 agent N 倍（N = 参与 agent 数）。实现细节不值得开并行。
 
 **6 阶段流程**：
@@ -63,7 +61,8 @@ Phase 6: 村长反馈 + 最终确认 → 进入 Mode C
 - 展示推理链："我为什么这么想"，不只给结论
 - 标注不确定性：区分确信的结论和猜测
 
-实现方式：`parallel_think` MCP tool 或村长分别 @ 各 agent 并强调"先独立思考"。
+实现方式：村长分别 @ 各 agent 并强调"先独立思考"。
+（F026 P2 v2 Step 4 已退役 `parallel_think` MCP tool — 改由 prompt 引导达成 Phase 1 独立性。）
 
 **Phase 2 触发**：各方基本一致 → 跳过；存在明显分歧 → 需要（限 2-3 轮）；村长说"够了" → 跳过。
 
@@ -114,7 +113,7 @@ Phase 6: 村长反馈 + 最终确认 → 进入 Mode C
 |---------|-----|
 | Mode A 一次问多个问题 | 拆成多条，每条只问一件事 |
 | Mode A 没提备选方案就直接设计 | 先 2-3 个方案 + tradeoffs，再推荐 |
-| Mode B Phase 1 让 agent 看到彼此回答 | parallel_think 或分别 @ 并强调独立思考 |
+| Mode B Phase 1 让 agent 看到彼此回答 | 分别 @ 并强调独立思考（`parallel_think` 已退役 · F026 P2 v2 Step 4） |
 | Mode B 综合时抹平分歧 | 分歧必须保留 + 标注各方理由 |
 | Mode B 跳过 Phase 5 审阅 | 综合可能误读观点，原作者必须确认 |
 | Mode C 三件套"感觉没有就跳过" | 必须显式回答每一项"有/没有" |

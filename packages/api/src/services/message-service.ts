@@ -1,65 +1,128 @@
+import type { DatabaseSync } from "node:sqlite"
 import type {
   ConnectorSource,
   Provider,
   RealtimeClientEvent,
   RealtimeServerEvent,
 } from "@multi-agent/shared"
-import { perfCollector } from "../lib/perf-collector"
 import { PROVIDER_ALIASES, getContextWindowForModel } from "@multi-agent/shared"
 import type { AppEventBus } from "../events/event-bus"
+import { createLogger } from "../lib/logger"
+import { perfCollector } from "../lib/perf-collector"
+import { A2AChainRegistry } from "../orchestrator/a2a-chain"
+import { DEFAULT_A2A_CALL_DEADLINE_MS } from "../orchestrator/a2a-gateway"
+import {
+  type DecisionItemParsed,
+  extractDecisionItems,
+  extractWithdrawals,
+} from "../orchestrator/aggregate-result"
 import type { ApprovalManager } from "../orchestrator/approval-manager"
+import {
+  MAX_AUTO_RESUMES,
+  buildAutoResumeMessage,
+  shouldAutoResume,
+} from "../orchestrator/auto-resume"
+import {
+  DEFAULT_BURST_CONFIG,
+  buildTombstone,
+  detectRecentBurst,
+  formatBurstSection,
+  formatTombstone,
+} from "../orchestrator/burst-context"
+import type { ChainStarterResolver } from "../orchestrator/chain-starter-resolver"
+import {
+  type AssemblePromptResult,
+  assembleDirectTurnPrompt,
+  assemblePrompt,
+} from "../orchestrator/context-assembler"
+import { POLICY_FULL, POLICY_GUARDIAN } from "../orchestrator/context-policy"
 import type { ContextMessage } from "../orchestrator/context-snapshot"
 import { buildContextSnapshot, extractTaskSnippet } from "../orchestrator/context-snapshot"
+import type { DecisionBoard, DecisionBoardEntry } from "../orchestrator/decision-board"
+import type { DecisionManager } from "../orchestrator/decision-manager"
 import type {
   DispatchOrchestrator,
   EnqueueMentionsResult,
   QueueEntry,
 } from "../orchestrator/dispatch"
-import type { InvocationRegistry } from "../orchestrator/invocation-registry"
-import {
-  type DecisionItemParsed,
-  extractDecisionItems,
-  extractWithdrawals,
-  generateAggregatedResult,
-} from "../orchestrator/aggregate-result"
-import type { DecisionBoard, DecisionBoardEntry } from "../orchestrator/decision-board"
-import type { SettlementDetector } from "../orchestrator/settlement-detector"
-import type { ChainStarterResolver } from "../orchestrator/chain-starter-resolver"
-import { type ParallelGroup, ParallelGroupRegistry } from "../orchestrator/parallel-group"
-import { buildPhase1Header } from "../orchestrator/phase1-header"
-import { buildPhase2Turn } from "../orchestrator/phase2-header"
-import { runTurn } from "../runtime/cli-orchestrator"
-import { runContinuationLoop } from "../runtime/continuation-loop"
-import { A2AChainRegistry } from "../orchestrator/a2a-chain"
-import { planReturnPathDispatch } from "../orchestrator/return-path"
-import { planForcedDispatch } from "../orchestrator/forced-dispatch"
-import {
-  assemblePrompt,
-  assembleDirectTurnPrompt,
-  type AssemblePromptResult,
-} from "../orchestrator/context-assembler"
-import { extractSOPBookmark } from "../orchestrator/sop-bookmark"
-import { shouldAutoResume, buildAutoResumeMessage, MAX_AUTO_RESUMES } from "../orchestrator/auto-resume"
 import { detectFBloat } from "../orchestrator/fbloat-detector"
+import { planForcedDispatch } from "../orchestrator/forced-dispatch"
+import type { InvocationRegistry } from "../orchestrator/invocation-registry"
+
+import {
+  buildForwardExtractSnippet,
+  buildReturnPathExtractSnippet,
+} from "../orchestrator/return-path-payload"
+import type { SettlementDetector } from "../orchestrator/settlement-detector"
+import { extractSOPBookmark } from "../orchestrator/sop-bookmark"
 import type { SOPBookmark } from "../orchestrator/sop-bookmark"
-import { POLICY_FULL, POLICY_GUARDIAN, POLICY_INDEPENDENT } from "../orchestrator/context-policy"
+import { buildWorklistContinuationPrompt } from "../orchestrator/worklist-continuation"
+import { runTurn } from "../runtime/cli-orchestrator"
+import { resolveContextWindow } from "../runtime/context-window-resolver"
+import { runContinuationLoop } from "../runtime/continuation-loop"
 import { classifyFailure } from "../runtime/failure-classifier"
 import { loadRuntimeConfig, resolveEffectiveOverride } from "../runtime/runtime-config"
-import { resolveSealThresholds } from "../runtime/seal-config-resolver"
-import { resolveContextWindow } from "../runtime/context-window-resolver"
 import type { AgentOverride, RuntimeConfig } from "../runtime/runtime-config"
-import type { DecisionManager } from "../orchestrator/decision-manager"
+import { resolveSealThresholds } from "../runtime/seal-config-resolver"
 import type { SkillRegistry } from "../skills/registry"
 import { applySlashCommandHint } from "../skills/slash-route"
 import type { SopTracker } from "../skills/sop-tracker"
+import type { A2ALifecycleService } from "./a2a-lifecycle"
+import type { WorklistExecutor } from "./worklist-executor"
+import {
+  buildCorrectionPrompt,
+  decideRetryAction,
+  resolveMaxDispatchRetries,
+} from "./dispatch-retry-coordinator"
+import {
+  buildDispatchRetryAgentEventRow,
+  buildDispatchRetryEventId,
+  buildDispatchRetryRealtimeEvent,
+} from "./dispatch-retry-event"
+import { deriveContentBlocks, mergeDerivedWithExistingBlocks } from "./content-blocks-derive"
 import type { MemoryService } from "./memory-service"
-import type { WorkflowSopService as WorkflowSopServiceType } from "./workflow-sop-service"
-import type { SessionService } from "./session-service"
 import { computeEffectiveSessionId } from "./session-effectiveness"
-import { createLogger } from "../lib/logger"
+import type { SessionService } from "./session-service"
+import type { WorkflowSopService as WorkflowSopServiceType } from "./workflow-sop-service"
 
 type ActiveRun = ReturnType<typeof runTurn>
 type EmitEvent = (event: RealtimeServerEvent) => void
+
+/**
+ * F026-P3 Task7 · cold-target burst 兜底判定 + 组装。
+ *
+ * cold-target = 下游 agent 没有 nativeSessionId（无 CLI resume）AND SessionBootstrap
+ * 内 threadMemory == null AND previousDigest == null（真冷启）。
+ * 触发与"上游来源"无关 — user @ 与 agent @ 都同等覆盖。
+ *
+ * 命中时，用 roomSnapshot 作为 burst 池（detectRecentBurst 切最近紧密对话），
+ * omitted → tombstone 占位。返回 undefined = 不命中（caller 不传 coldTargetBurst）。
+ */
+export function tryBuildColdTargetBurst(args: {
+  nativeSessionId: string | null
+  threadMemoryEmpty: boolean
+  previousDigestEmpty: boolean
+  roomSnapshot: readonly ContextMessage[]
+}): { burstSection: string; tombstoneSection: string | null } | undefined {
+  const isColdTarget =
+    args.nativeSessionId === null && args.threadMemoryEmpty && args.previousDigestEmpty
+  if (!isColdTarget) return undefined
+  if (args.roomSnapshot.length === 0) return undefined
+
+  const { burst, omitted } = detectRecentBurst(args.roomSnapshot, DEFAULT_BURST_CONFIG)
+  if (burst.length === 0) return undefined
+
+  const burstSection = formatBurstSection(burst)
+  const tombstone = buildTombstone(omitted, "thread", DEFAULT_BURST_CONFIG)
+  const tombstoneSection = tombstone
+    ? formatTombstone(tombstone, {
+        headMsgId: omitted[0]?.id,
+        tailMsgId: omitted[omitted.length - 1]?.id,
+      })
+    : null
+
+  return { burstSection, tombstoneSection }
+}
 
 const STDERR_NOISE_PATTERNS = [
   /^YOLO mode is enabled/i,
@@ -165,10 +228,64 @@ function extractPromptFromActivityChunk(chunk: string) {
   return promptLikeLines.join("\n").slice(0, 1200)
 }
 
+/**
+ * F026 P5 in-flight (R-104) · LLM 主链路 + MCP/CLI hook 共用的 connector header 写入。
+ *
+ * 给每条 enqueueResult.queued entry 在 target thread 写一行 messageType=connector
+ * message + emit message.created。前端 ConnectorBubble / AtPill / OriginCapsule
+ * 三组件共依赖这条 connector message 作为载体。
+ *
+ * 抽出原因：原 :797-833 only-served handleAgentPublicMessage（MCP trigger_mention
+ * + agent CLI onPublicMessage hook 入口），LLM 主链路 runThreadTurn final flush
+ * enqueuePublicMentions 不经过它 → R-104 timeline 4/4 final 0 connector → 三组件
+ * 无载体。两条派发入口共用此 helper 杜绝写入逻辑不对称。
+ */
+export function writeConnectorHeadersForQueue(
+  sessions: SessionService,
+  enqueueResult: EnqueueMentionsResult,
+  emit: (event: RealtimeServerEvent) => void,
+): void {
+  for (const entry of enqueueResult.queued) {
+    const targetThread = sessions.findThreadByGroupAndProvider(
+      entry.sessionGroupId,
+      entry.to.provider,
+    )
+    if (!targetThread) continue
+
+    const a2aConnectorSource: ConnectorSource = {
+      kind: "multi_mention_result",
+      label: "A2A 协助",
+      fromAlias: entry.from.agentId,
+      toAlias: entry.to.agentId,
+      targets: [entry.to.provider],
+    }
+    const a2aConnector = sessions.appendConnectorMessage(
+      targetThread.id,
+      "",
+      a2aConnectorSource,
+      entry.id,
+      "header",
+      // F026 P5 T0 · 派发处把 a2a callId 写回 message,让 listMessages 可以
+      // LEFT JOIN a2a_calls 出 onBehalfOf / parentCallId / status / displayMode 等协议字段。
+      entry.callId ?? null,
+    )
+    const a2aTimeline = sessions.toTimelineMessage(targetThread.id, a2aConnector.id)
+    if (a2aTimeline) {
+      emit({
+        type: "message.created",
+        payload: {
+          threadId: targetThread.id,
+          sessionGroupId: entry.sessionGroupId,
+          message: a2aTimeline,
+        },
+      })
+    }
+  }
+}
+
 export class MessageService {
   private readonly log = createLogger("message-service")
   private readonly flushingGroups = new Set<string>()
-  private readonly parallelGroups = new ParallelGroupRegistry()
   private approvals: ApprovalManager | null = null
   private decisions: DecisionManager | null = null
   private skillRegistry: SkillRegistry | null = null
@@ -182,9 +299,18 @@ export class MessageService {
   private settlementDetector: SettlementDetector | null = null
   private chainStarterResolver: ChainStarterResolver | null = null
   private broadcast: EmitEvent | null = null
+  // F026 P1 Wiring · settle/advance hook. When unset, every call is a noop —
+  // unit tests that don't wire call-registry stay green without scaffolding.
+  private a2aLifecycle: A2ALifecycleService | null = null
+  // F026 P2 v2 · 树形 worklist 续推执行器。setWorklistExecutor() 缺省时所有 mention
+  // enqueue 后续推注册全 noop —— 老路径 / 单测不 wire 时无副作用。
+  private worklistExecutor: WorklistExecutor | null = null
   private readonly chainRegistry = new A2AChainRegistry()
   private readonly pendingBoardFlushes = new Map<string, DecisionBoardEntry[]>()
-  private readonly streamingFlushers = new Map<string, { sessionGroupId: string; flush: () => void }>()
+  private readonly streamingFlushers = new Map<
+    string,
+    { sessionGroupId: string; flush: () => void }
+  >()
 
   constructor(
     private readonly sessions: SessionService,
@@ -246,6 +372,132 @@ export class MessageService {
 
   setChainStarterResolver(resolver: ChainStarterResolver) {
     this.chainStarterResolver = resolver
+  }
+
+  /**
+   * F026 P1 Wiring · install the A2A lifecycle hook (call-registry advance/settle).
+   * Without this, message-service runs identically to pre-P1 — registry remains
+   * an island as before. server.ts wires this once at startup; tests opt in.
+   */
+  setA2ALifecycle(svc: A2ALifecycleService) {
+    this.a2aLifecycle = svc
+  }
+
+  /**
+   * F026 P2 v2 · 注入树形 worklist executor + 配 root settle 时的续推派发回调。
+   *
+   * - registerForDispatch: enqueue mention 后调，把派发的 children 写到 a2a_worklists 树
+   * - onChildFinished: invocation.finished 后调，cascade settle 上推
+   * - onDoneContinuation: root worklist settle 时由 executor 触发，本服务接管派续推
+   */
+  setWorklistExecutor(svc: WorklistExecutor) {
+    this.worklistExecutor = svc
+    svc.setOnDoneContinuation((args) => {
+      const ctx = args.continuationContext as
+        | { emit: EmitEvent; rootMessageId: string }
+        | undefined
+      if (!ctx) return
+      this.dispatchWorklistContinuation({
+        parentCallId: args.parentCallId,
+        childAliases: args.childAliases,
+        emit: ctx.emit,
+        rootMessageId: ctx.rootMessageId,
+      })
+    })
+  }
+
+  /**
+   * F026 P2 v2 · root worklist settle 触发的 parent 续推派发。
+   *
+   * cb 来自 WorklistExecutor.onChildFinished cascade settle 路径。本方法负责：
+   *   1. 反查 parent call → replyTo / sessionGroupId
+   *   2. 找 parent thread by provider
+   *   3. 建续推 child call 挂在 user-root 下（user 视角等 parent 整合）
+   *   4. 合成续推 prompt（buildWorklistContinuationPrompt 1B.6 多 alias 版本）
+   *   5. fire-and-forget runThreadTurn 续推
+   *
+   * Defensive：lookup / 派发任一步失败 → log.warn + 静默返回。
+   */
+  private dispatchWorklistContinuation(input: {
+    parentCallId: string
+    childAliases: string[]
+    emit: EmitEvent
+    rootMessageId: string
+  }): void {
+    const lifecycle = this.a2aLifecycle
+    if (!lifecycle) return
+    if (input.childAliases.length === 0) return
+
+    const parentCallRow = lifecycle.getCall(input.parentCallId)
+    if (!parentCallRow) {
+      this.log.warn(
+        { parentCallId: input.parentCallId },
+        "F026 P2 v2 worklist continuation: parent call row missing — skip",
+      )
+      return
+    }
+
+    const replyTo = parentCallRow.replyTo
+    const colonIdx = replyTo.indexOf(":")
+    const providerStr = colonIdx >= 0 ? replyTo.slice(0, colonIdx) : replyTo
+    const provider = providerStr as Provider
+
+    const parentThread = this.sessions.findThreadByGroupAndProvider(
+      parentCallRow.sessionGroupId,
+      provider,
+    )
+    if (!parentThread) {
+      this.log.warn(
+        {
+          parentCallId: input.parentCallId,
+          provider,
+          sessionGroupId: parentCallRow.sessionGroupId,
+        },
+        "F026 P2 v2 worklist continuation: parent thread not found — skip",
+      )
+      return
+    }
+
+    let continuationCallId: string | undefined
+    try {
+      continuationCallId = lifecycle.openCall({
+        parentCallId: parentCallRow.rootCallId,
+        issuerAlias: "user",
+        sessionGroupId: parentCallRow.sessionGroupId,
+        deadlineAt: new Date(Date.now() + DEFAULT_A2A_CALL_DEADLINE_MS).toISOString(),
+        convenerAlias: "user",
+        replyTo: replyTo,
+      })
+    } catch (err) {
+      this.log.warn(
+        { err, rootCallId: parentCallRow.rootCallId },
+        "F026 P2 v2 worklist continuation: openCall failed — skip",
+      )
+      return
+    }
+
+    const prompt = buildWorklistContinuationPrompt({
+      childAliases: input.childAliases,
+    })
+
+    input.emit({
+      type: "status",
+      payload: {
+        sessionGroupId: parentCallRow.sessionGroupId,
+        message: `A2A 续推 — ${input.childAliases.join("、")} → ${parentThread.alias}`,
+      },
+    })
+
+    void this.runThreadTurn({
+      threadId: parentThread.id,
+      content: prompt,
+      emit: input.emit,
+      rootMessageId: input.rootMessageId,
+      parentInvocationId: null,
+      dispatchedCallId: continuationCallId,
+    }).catch((err) => {
+      this.log.error({ err }, "F026 P2 v2 worklist continuation runThreadTurn rejected")
+    })
   }
 
   /**
@@ -331,9 +583,7 @@ export class MessageService {
     sessionGroupId: string
     decisions: Array<{
       itemId: string
-      choice:
-        | { kind: "option"; optionId: string }
-        | { kind: "custom"; text: string }
+      choice: { kind: "option"; optionId: string } | { kind: "custom"; text: string }
     }>
     skipped?: boolean
   }): Promise<void> {
@@ -358,15 +608,16 @@ export class MessageService {
     const emit: EmitEvent = (event) => broadcast?.(event)
 
     const userMessage = this.sessions.appendUserMessage(target.threadId, summary)
-    const rootMessageId = this.dispatch.registerUserRoot(
-      userMessage.id,
-      payload.sessionGroupId,
-    )
+    const rootMessageId = this.dispatch.registerUserRoot(userMessage.id, payload.sessionGroupId)
     const userTimeline = this.sessions.toTimelineMessage(target.threadId, userMessage.id)
     if (userTimeline) {
       emit({
         type: "message.created",
-        payload: { threadId: target.threadId, sessionGroupId: payload.sessionGroupId, message: userTimeline },
+        payload: {
+          threadId: target.threadId,
+          sessionGroupId: payload.sessionGroupId,
+          message: userTimeline,
+        },
       })
     }
 
@@ -391,9 +642,7 @@ export class MessageService {
     entries: DecisionBoardEntry[],
     decisions: Array<{
       itemId: string
-      choice:
-        | { kind: "option"; optionId: string }
-        | { kind: "custom"; text: string }
+      choice: { kind: "option"; optionId: string } | { kind: "custom"; text: string }
     }>,
   ): string {
     const lines = ["产品已就以下问题作出决定："]
@@ -446,17 +695,17 @@ export class MessageService {
    * provider is executing a turn).
    */
   hasRunningTurn(sessionGroupId: string): boolean {
-    return this.dispatch
-      .getAgentStatuses(sessionGroupId)
-      .some((status) => status.running)
+    return this.dispatch.getAgentStatuses(sessionGroupId).some((status) => status.running)
   }
 
   /**
-   * SettlementDetector signal: is any parallel group (Phase 1 fan-out or
-   * its Phase 2 serial discussion) still active for this session group?
+   * F002 SettlementDetector signal compat stub. F026 P2 clean-cut Step 3
+   * 删 ParallelGroupRegistry 后永远 false —— 多 @ 路径已改走 worklist 续推 +
+   * SettlementDetector 余下 3 项 signal（hasQueuedDispatches / hasRunningTurn /
+   * hasContinuationInFlight）判定 settle。保留 export 名兼容 F002 信号 1 接口。
    */
-  hasActiveParallelGroupInSession(sessionGroupId: string): boolean {
-    return this.parallelGroups.hasAnyActiveInSession(sessionGroupId)
+  hasActiveParallelGroupInSession(_sessionGroupId: string): boolean {
+    return false
   }
 
   handleClientEvent(event: RealtimeClientEvent, emit: EmitEvent) {
@@ -512,7 +761,10 @@ export class MessageService {
 
     emit({
       type: "status",
-      payload: { sessionGroupId: thread.sessionGroupId, message: `正在停止 ${thread.alias} 房间内的待执行协作任务。` },
+      payload: {
+        sessionGroupId: thread.sessionGroupId,
+        message: `正在停止 ${thread.alias} 房间内的待执行协作任务。`,
+      },
     })
     this.emitThreadSnapshot(thread.sessionGroupId, emit)
     return true
@@ -553,7 +805,10 @@ export class MessageService {
 
     emit({
       type: "status",
-      payload: { sessionGroupId: thread.sessionGroupId, message: `已停止 ${targetThread.alias} 的运行。` },
+      payload: {
+        sessionGroupId: thread.sessionGroupId,
+        message: `已停止 ${targetThread.alias} 的运行。`,
+      },
     })
     this.emitThreadSnapshot(thread.sessionGroupId, emit)
     return true
@@ -588,56 +843,15 @@ export class MessageService {
       matchMode: "line-start",
       parentInvocationId: options.invocationId,
       buildSnapshot: () => this.captureSnapshot(thread.sessionGroupId, options.messageId),
-      extractSnippet: (c, alias) => extractTaskSnippet(c, alias),
-      createParallelGroup: (targetProviders) => {
-        const group = this.parallelGroups.create({
-          parentMessageId: options.messageId,
-          originatorAgentId: thread.alias,
-          originatorProvider: thread.provider,
-          targetProviders,
-          joinBehavior: "notify_originator",
-          initiatedBy: "agent",
-          sessionGroupId: thread.sessionGroupId,
-        })
-        this.parallelGroups.start(group.id)
-        return group
-      },
+      // F026-P3 Task3 · return-path：agent 公共消息的完整原文派发到下游（如 4195 字 review），
+      // 走 buildReturnPathPayload 16k token cap + 头尾保留 + msg_id 引用。
+      extractSnippet: buildReturnPathExtractSnippet(options.messageId),
     })
     this.emitBlockedDispatches(enqueueResult, options.emit)
 
-    // A2A single dispatch: emit "A2A 协助" header connector for each
-    // agent-initiated single-target dispatch (no parallelGroupId).
-    for (const entry of enqueueResult.queued) {
-      if (!entry.parallelGroupId) {
-        const targetThread = this.sessions.findThreadByGroupAndProvider(
-          thread.sessionGroupId,
-          entry.to.provider,
-        )
-        if (targetThread) {
-          const a2aConnectorSource: ConnectorSource = {
-            kind: "multi_mention_result",
-            label: "A2A 协助",
-            fromAlias: thread.alias,
-            toAlias: entry.to.agentId,
-            targets: [entry.to.provider],
-          }
-          const a2aConnector = this.sessions.appendConnectorMessage(
-            targetThread.id,
-            "",
-            a2aConnectorSource,
-            entry.id,
-            "header",
-          )
-          const a2aTimeline = this.sessions.toTimelineMessage(targetThread.id, a2aConnector.id)
-          if (a2aTimeline) {
-            options.emit({
-              type: "message.created",
-              payload: { threadId: targetThread.id, sessionGroupId: thread.sessionGroupId, message: a2aTimeline },
-            })
-          }
-        }
-      }
-    }
+    // A2A 协助 header connector — 见 module-level writeConnectorHeadersForQueue。
+    // F026 P5 in-flight (R-104)：MCP/CLI hook 与 LLM 主链路 final flush 共用此 helper。
+    writeConnectorHeadersForQueue(this.sessions, enqueueResult, options.emit)
 
     await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
   }
@@ -646,7 +860,10 @@ export class MessageService {
     event: Extract<RealtimeClientEvent, { type: "send_message" }>,
     emit: EmitEvent,
   ) {
-    this.log.info({ provider: event.payload.provider, content: event.payload.content.slice(0, 80) }, "user message received")
+    this.log.info(
+      { provider: event.payload.provider, content: event.payload.content.slice(0, 80) },
+      "user message received",
+    )
     const thread = this.dispatch.resolveThread(event.payload.threadId)
     if (!thread) {
       emit({
@@ -686,8 +903,21 @@ export class MessageService {
     const contentBlocksJson = event.payload.contentBlocks?.length
       ? JSON.stringify(event.payload.contentBlocks)
       : "[]"
-    const userMessage = this.sessions.appendUserMessage(thread.id, event.payload.content, contentBlocksJson)
+    const userMessage = this.sessions.appendUserMessage(
+      thread.id,
+      event.payload.content,
+      contentBlocksJson,
+    )
     const rootMessageId = this.dispatch.registerUserRoot(userMessage.id, thread.sessionGroupId)
+    // F026 P2 Step 1A.2 · 建 user-root call —— call tree 的源点。R-080 实证 user 入口
+    // 不建 root call → mention 派发的 child call 全是 orphan root，链尾闭环时无锚点
+    // 回追 user，续推机制（Step 1B）也没 attach 点。lifecycle 缺省 (单元测试 / 旧
+    // 路径不 wire) 时 ?. 跳过，对老行为零影响。
+    const userRootCallId = this.a2aLifecycle?.openRootCall({
+      issuerAlias: "user",
+      sessionGroupId: thread.sessionGroupId,
+      deadlineAt: new Date(Date.now() + DEFAULT_A2A_CALL_DEADLINE_MS).toISOString(),
+    })
     const userTimeline = this.sessions.toTimelineMessage(thread.id, userMessage.id)
     if (userTimeline) {
       emit({
@@ -714,45 +944,28 @@ export class MessageService {
       content: event.payload.content,
       matchMode: "anywhere",
       parentInvocationId: null,
+      // F026 P2 Step 1A.2 · 透 user-root callId 给 gateway，让 mention 派发出的
+      // child call 真正挂在 user-root 下（而不是各自做 orphan root）。gateway 没 wire
+      // 或 A2A_CALL_TREE_ENABLED=0 时 dispatch 内部走 fallback resolveMentions，
+      // 该参数被忽略，老行为不变。
+      parentCallId: userRootCallId ?? null,
       buildSnapshot: () => this.captureSnapshot(thread.sessionGroupId, userMessage.id),
       extractSnippet: (c, alias) => extractTaskSnippet(c, alias),
-      createParallelGroup: (targetProviders) => {
-        const group = this.parallelGroups.create({
-          parentMessageId: userMessage.id,
-          originatorAgentId: thread.alias,
-          originatorProvider: thread.provider,
-          targetProviders,
-          joinBehavior: "notify_originator",
-          initiatedBy: "user",
-          sessionGroupId: thread.sessionGroupId,
-        })
-        this.parallelGroups.start(group.id)
-
-        // Emit Phase 1 header connector at the START of the parallel group
-        const phase1ConnectorSource: ConnectorSource = {
-          kind: "multi_mention_result",
-          label: "并行独立思考",
-          targets: targetProviders,
-        }
-        const phase1Connector = this.sessions.appendConnectorMessage(
-          thread.id,
-          "",
-          phase1ConnectorSource,
-          group.id,
-          "header",
-        )
-        const phase1Timeline = this.sessions.toTimelineMessage(thread.id, phase1Connector.id)
-        if (phase1Timeline) {
-          emit({
-            type: "message.created",
-            payload: { threadId: thread.id, sessionGroupId: thread.sessionGroupId, message: phase1Timeline },
-          })
-        }
-
-        return group
-      },
     })
     this.emitBlockedDispatches(enqueueResult, emit)
+
+    // F026 P2 v2 review#1 (范德彪 P1): user 入口的 fan-out 也要注册 root worklist。
+    // 之前 registerForDispatch 唯一生产调用在 final flow（agent turn 结束派 child），
+    // user 第一次 @A @B 不写 root worklist → onChildFinished
+    // findActiveByParentCallId(userRootCallId) 找不到 → cascade 死锁、续推不触发。
+    // userRootCallId 缺省（lifecycle 不 wire）时 registerForDispatch 内部 return null。
+    if (userRootCallId && enqueueResult.queued.length > 0) {
+      this.worklistExecutor?.registerForDispatch({
+        parentCallId: userRootCallId,
+        sessionGroupId: thread.sessionGroupId,
+        queued: enqueueResult.queued,
+      })
+    }
 
     // If the panel thread's provider joined the parallel group (user @'d 2+ agents including
     // this one), skip directTurn — queueFlush will dispatch it as part of the fan-out,
@@ -775,12 +988,33 @@ export class MessageService {
     // in system prompt + CLI-native skill discovery.
     const effectiveContent = applySlashCommandHint(event.payload.content, this.skillRegistry)
 
+    // F026 P2 Step 1A.2 · directTurn 路径下 thread agent 自己回复不走 a2a-gateway,
+    // 必须在 runThreadTurn 调用前自建 child call 挂在 user-root 下，并把 callId
+    // 透 dispatchedCallId 给 runThreadTurn —— advance/settle/cleanup-timer
+    // 全链路要靠它。lifecycle / userRootCallId 缺省时跳过（老行为）。
+    //
+    // F026 P2 Step 1A.2 修补：replyTo 必须显式指向 thread agent (provider:alias),
+    // 不能回落到 issuerAlias="user" —— 续推派发反查 replyTo 解析 provider 时若拿到
+    // "user" 字面量则不是合法 Provider 值，findThreadByGroupAndProvider → null →
+    // 续推派发死链。replyTo 必须正确指向 thread agent 才能让续推接通 parent thread。
+    const directTurnCallId =
+      this.a2aLifecycle && userRootCallId
+        ? this.a2aLifecycle.openCall({
+            parentCallId: userRootCallId,
+            issuerAlias: "user",
+            sessionGroupId: thread.sessionGroupId,
+            deadlineAt: new Date(Date.now() + DEFAULT_A2A_CALL_DEADLINE_MS).toISOString(),
+            replyTo: `${thread.provider}:${thread.alias}`,
+          })
+        : undefined
+
     // The user's message was sent to a specific thread — run that thread's turn concurrently with queued dispatches.
     const directTurn = this.runThreadTurn({
       threadId: thread.id,
       content: effectiveContent,
       emit,
       rootMessageId,
+      dispatchedCallId: directTurnCallId,
     })
     const queueFlush = this.flushDispatchQueue(thread.sessionGroupId, emit)
     await Promise.allSettled([directTurn, queueFlush])
@@ -806,6 +1040,13 @@ export class MessageService {
     groupRole?: "header" | "member" | "convergence" | null
     /** Counter for seal auto-resume (prevents infinite loops) */
     autoResumeCount?: number
+    /**
+     * F026 P1 Wiring · the gateway-issued call_id this turn is settling.
+     * Set when this turn was triggered via the A2A queue (flag-on path).
+     * Undefined for user direct turns and classic / flag-off dispatches.
+     * On undefined, every lifecycle call is a noop — see A2ALifecycleService.
+     */
+    dispatchedCallId?: string
   }): Promise<{ messageId: string; content: string } | null> {
     const thread = this.dispatch.resolveThread(options.threadId)
     if (!thread) {
@@ -815,12 +1056,18 @@ export class MessageService {
       })
       return null
     }
-    this.log.info({ threadId: thread.id, agentId: thread.alias, provider: thread.provider }, "turn started")
+    this.log.info(
+      { threadId: thread.id, agentId: thread.alias, provider: thread.provider },
+      "turn started",
+    )
 
     if (this.invocations.has(thread.id)) {
       options.emit({
         type: "status",
-        payload: { sessionGroupId: thread.sessionGroupId, message: `${thread.alias} 已经在运行中。` },
+        payload: {
+          sessionGroupId: thread.sessionGroupId,
+          message: `${thread.alias} 已经在运行中。`,
+        },
       })
       return null
     }
@@ -829,7 +1076,9 @@ export class MessageService {
     // appending the assistant placeholder, so the message row carries the
     // correct snapshot for the chat bubble pill. Order: snapshot → resolve →
     // append. The same snapshot is later emitted on invocation.started.
-    const sessionSnapshot = this.sessions.flushSessionPending(thread.sessionGroupId) as RuntimeConfig
+    const sessionSnapshot = this.sessions.flushSessionPending(
+      thread.sessionGroupId,
+    ) as RuntimeConfig
     const hasSessionSnapshot = Object.keys(sessionSnapshot).length > 0
     const globalConfig = loadRuntimeConfig()
     const globalOverride = globalConfig[thread.provider]
@@ -843,8 +1092,8 @@ export class MessageService {
     const sealThresholds = resolveSealThresholds(thread.provider, globalConfig, sessionSnapshot)
     // F021 Phase 6: contextWindow 用户层 override（CLI 报告/代码 fallback 仍由 cli-orchestrator 内部接管）。
     const contextWindowOverride =
-      sessionSnapshot[thread.provider]?.contextWindow
-      ?? globalConfig[thread.provider]?.contextWindow
+      sessionSnapshot[thread.provider]?.contextWindow ??
+      globalConfig[thread.provider]?.contextWindow
 
     const assistant = this.sessions.appendAssistantMessage(
       thread.id,
@@ -855,6 +1104,10 @@ export class MessageService {
       options.groupRole ?? null,
       "[]",
       resolvedModel,
+      // F026 acceptance-guardian R-204 · target agent 写 final message 时绑定 a2aCallId,
+      // 让 listMessages LEFT JOIN a2a_calls 出 onBehalfOf / parentCallId / displayMode
+      // —— 前端 P5 视觉原语 (ConnectorBubble / Visual Silo / 折叠群组) 入口。
+      options.dispatchedCallId ?? null,
     )
     this.dispatch.attachMessageToRoot(assistant.id, options.rootMessageId)
     const assistantTimeline = this.sessions.toTimelineMessage(thread.id, assistant.id)
@@ -871,7 +1124,11 @@ export class MessageService {
 
     const identity = this.invocations.createInvocation(thread.id, thread.alias)
     const dispatchContextTtlMs = Math.max(0, new Date(identity.expiresAt).getTime() - Date.now())
+    // F026 P1 Wiring · TTL fire = invocation never released by happy/error path
+    // (e.g. CLI hung past deadline). Treat as timeout for the call-registry row
+    // so pendingOf() doesn't show ghost work forever.
     const dispatchCleanupTimer = globalThis.setTimeout(() => {
+      this.a2aLifecycle?.settleTimeout(options.dispatchedCallId)
       this.dispatch.releaseInvocation(identity.invocationId)
     }, dispatchContextTtlMs)
     dispatchCleanupTimer.unref?.()
@@ -880,7 +1137,14 @@ export class MessageService {
       sessionGroupId: thread.sessionGroupId,
       sourceProvider: thread.provider,
       parentInvocationId: options.parentInvocationId ?? null,
+      // F026 acceptance-guardian R-204 · 透传 dispatchedCallId 进 invocation context,
+      // 让下游 enqueuePublicMentions 能桥接到 a2a-gateway parentCallId,
+      // 接通 call tree —— 下游 P5 视觉原语 + R-066 sibling 收敛依赖此。
+      dispatchedCallId: options.dispatchedCallId ?? null,
     })
+    // F026 P1 Wiring · agent has the slot and is about to spawn the CLI →
+    // pending → working. Noop when no callId (classic / direct user turn).
+    this.a2aLifecycle?.advance(options.dispatchedCallId)
     this.chainRegistry.register({
       invocationId: identity.invocationId,
       threadId: thread.id,
@@ -938,11 +1202,16 @@ export class MessageService {
     // baked in — the API is the authoritative history source.
     let assembledDirectTurn: AssemblePromptResult | null = null
     if (!options.systemPrompt) {
-      const roomSnapshot = this.captureSnapshot(
-        thread.sessionGroupId,
-        options.rootMessageId,
-      )
-      const parsedBookmark = thread.sopBookmark ? (() => { try { return JSON.parse(thread.sopBookmark) } catch { return null } })() : null
+      const roomSnapshot = this.captureSnapshot(thread.sessionGroupId, options.rootMessageId)
+      const parsedBookmark = thread.sopBookmark
+        ? (() => {
+            try {
+              return JSON.parse(thread.sopBookmark)
+            } catch {
+              return null
+            }
+          })()
+        : null
       // F018 P4 AC3.5 wiring: when starting a new session, pass bootstrap metadata
       // so assemblePrompt injects SessionBootstrap prelude (reference-only + Do NOT guess).
       // F018 P4 (Codex HIGH #2 fix): Feed the most recent sealed digest as
@@ -950,6 +1219,14 @@ export class MessageService {
       const previousDigest = this.transcriptWriter
         ? await this.transcriptWriter.readLatestDigest(thread.id).catch(() => null)
         : null
+      const directTurnThreadMemory = this.sessions.getThreadMemory(thread.id)
+      // F026-P3 Task7 · user-mention 路径 cold-target burst 兜底
+      const directTurnColdBurst = tryBuildColdTargetBurst({
+        nativeSessionId: thread.nativeSessionId,
+        threadMemoryEmpty: directTurnThreadMemory == null,
+        previousDigestEmpty: previousDigest == null,
+        roomSnapshot,
+      })
       assembledDirectTurn = await assembleDirectTurnPrompt(
         {
           provider: thread.provider,
@@ -963,9 +1240,10 @@ export class MessageService {
           sopBookmark: parsedBookmark,
           lastFillRatio: thread.lastFillRatio ?? undefined,
           sessionChainIndex: this.sessions.getSessionChainIndex(thread.id),
-          threadMemory: this.sessions.getThreadMemory(thread.id),
+          threadMemory: directTurnThreadMemory,
           previousDigest,
           recallTools: [],
+          coldTargetBurst: directTurnColdBurst,
         },
         this.memoryService,
       )
@@ -1000,176 +1278,182 @@ export class MessageService {
       at: string
     }> = []
 
-    const createRun = (userMessage: string) => runTurn({
-      systemPrompt,
-      sopStageHint,
-      invocationId: identity.invocationId,
-      threadId: thread.id,
-      provider: thread.provider,
-      agentId: thread.alias,
-      apiBaseUrl: this.apiBaseUrl,
-      callbackToken: identity.callbackToken,
-      model: resolvedModel,
-      effort: runtimeOverride?.effort ?? null,
-      sealThresholds,
-      contextWindowOverride,
-      nativeSessionId: thread.nativeSessionId,
-      userMessage,
-      onAssistantDelta: (delta: string) => {
-        assistantContent += delta
-        options.emit({
-          type: "assistant_delta",
-          payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, delta },
-        })
-        const now = Date.now()
-        if (now - lastContentFlushAt >= CONTENT_FLUSH_INTERVAL_MS) {
-          lastContentFlushAt = now
+    const createRun = (userMessage: string, sessionIdOverride?: string | null) =>
+      runTurn({
+        systemPrompt,
+        sopStageHint,
+        invocationId: identity.invocationId,
+        threadId: thread.id,
+        provider: thread.provider,
+        agentId: thread.alias,
+        apiBaseUrl: this.apiBaseUrl,
+        callbackToken: identity.callbackToken,
+        model: resolvedModel,
+        effort: runtimeOverride?.effort ?? null,
+        sealThresholds,
+        contextWindowOverride,
+        nativeSessionId: sessionIdOverride ?? thread.nativeSessionId,
+        userMessage,
+        onAssistantDelta: (delta: string) => {
+          assistantContent += delta
+          options.emit({
+            type: "assistant_delta",
+            payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, delta },
+          })
+          const now = Date.now()
+          if (now - lastContentFlushAt >= CONTENT_FLUSH_INTERVAL_MS) {
+            lastContentFlushAt = now
+            this.sessions.overwriteMessage(assistant.id, {
+              content: assistantContent,
+              thinking,
+              toolEvents: toolEventsJson,
+            })
+          }
+        },
+        onSession: (sid: string) => {
+          // F018 P4 (fix Codex HIGH #1): Track the live session id so first-ever
+          // sessions (where thread.nativeSessionId starts null) still attribute
+          // their tool events to a real sessionId. If events arrived before the
+          // id was known, backfill them now.
+          liveSessionId = sid
+          if (this.transcriptWriter && pendingToolEvents.length > 0) {
+            for (const buffered of pendingToolEvents) {
+              this.transcriptWriter.recordEvent({
+                sessionId: sid,
+                threadId: thread.id,
+                event: buffered.event,
+                at: buffered.at,
+                invocationId: identity.invocationId,
+              })
+            }
+            pendingToolEvents.length = 0
+          }
+        },
+        onModel: () => {},
+        onToolActivity: (line: string) => {
+          thinking += `${line}\n`
+          options.emit({
+            type: "assistant_thinking_delta",
+            payload: {
+              sessionGroupId: thread.sessionGroupId,
+              messageId: assistant.id,
+              delta: `${line}\n`,
+            },
+          })
+        },
+        onToolEvent: (event) => {
+          const parsed = JSON.parse(toolEventsJson) as unknown[]
+          parsed.push(event)
+          toolEventsJson = JSON.stringify(parsed)
+          options.emit({
+            type: "assistant_tool_event",
+            payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, event },
+          })
+          // Persist toolEvents immediately so reconnecting clients don't lose tool steps
           this.sessions.overwriteMessage(assistant.id, {
-            content: assistantContent,
+            toolEvents: toolEventsJson,
+          })
+          // F018 P4 AC1.3 集成: buffer tool event for TranscriptWriter's extractive digest.
+          // TranscriptWriter extractors look for: event.toolName (invocations),
+          // event.path (filesTouched), event.type==="error" + event.message (errors).
+          // sessionId 来源（按优先级）：liveSessionId (onSession 捕获的最新) →
+          // thread.nativeSessionId (CLI 继承) → 都没有则暂存到 pendingToolEvents
+          // 等 onSession 回填（修 Codex HIGH #1：首次 session 事件不能丢）
+          if (this.transcriptWriter) {
+            const transcriptSessionId = liveSessionId ?? thread.nativeSessionId
+            const at = new Date().toISOString()
+            if (transcriptSessionId) {
+              this.transcriptWriter.recordEvent({
+                sessionId: transcriptSessionId,
+                threadId: thread.id,
+                event: event as Record<string, unknown>,
+                at,
+                invocationId: identity.invocationId,
+              })
+            } else {
+              // 暂存，等 onSession 回填
+              pendingToolEvents.push({ event: event as Record<string, unknown>, at })
+            }
+          }
+        },
+        onLivenessWarning: (warning) => {
+          // Surface liveness issues as status messages so the user sees *why* a turn is dragging on
+          // before (or after) we force-kill. Soft warnings are informational; suspected_stall is a
+          // heads-up that we're about to terminate the process.
+          const seconds = Math.round(warning.silenceDurationMs / 1000)
+          const isStall = warning.level === "suspected_stall"
+          const label = isStall
+            ? `${thread.alias} 已沉默 ${seconds}s（${warning.state}），判定为卡住，即将强制终止`
+            : `${thread.alias} 已沉默 ${seconds}s（${warning.state}），持续观察中`
+          options.emit({
+            type: "status",
+            payload: { sessionGroupId: thread.sessionGroupId, message: label },
+          })
+        },
+        onActivity: (activity) => {
+          this.events.emit({
+            type: "invocation.activity",
+            invocationId: identity.invocationId,
+            threadId: thread.id,
+            agentId: thread.alias,
+            stream: activity.stream,
+            chunk: activity.chunk,
+            status: activity.stream === "stdout" ? "replying" : "thinking",
+            createdAt: activity.at,
+          })
+
+          if (activity.stream === "stderr" && !promptRequestedByCli) {
+            stderrLineBuf += stripAnsi(activity.chunk)
+            const parts = stderrLineBuf.split("\n")
+            stderrLineBuf = parts.pop() ?? ""
+            if (parts.length > 0) {
+              const cleanedChunk = filterStderrNoise(parts.join("\n") + "\n")
+              if (cleanedChunk.trim()) {
+                thinking += cleanedChunk
+                options.emit({
+                  type: "assistant_thinking_delta",
+                  payload: {
+                    sessionGroupId: thread.sessionGroupId,
+                    messageId: assistant.id,
+                    delta: cleanedChunk,
+                  },
+                })
+              }
+            }
+          }
+
+          if (promptRequestedByCli || activity.stream !== "stderr") {
+            return
+          }
+
+          const prompt = extractPromptFromActivityChunk(activity.chunk)
+          if (!prompt) {
+            return
+          }
+
+          promptRequestedByCli = prompt
+          this.sessions.overwriteMessage(assistant.id, {
+            content: prompt,
             thinking,
             toolEvents: toolEventsJson,
           })
-        }
-      },
-      onSession: (sid: string) => {
-        // F018 P4 (fix Codex HIGH #1): Track the live session id so first-ever
-        // sessions (where thread.nativeSessionId starts null) still attribute
-        // their tool events to a real sessionId. If events arrived before the
-        // id was known, backfill them now.
-        liveSessionId = sid
-        if (this.transcriptWriter && pendingToolEvents.length > 0) {
-          for (const buffered of pendingToolEvents) {
-            this.transcriptWriter.recordEvent({
-              sessionId: sid,
-              threadId: thread.id,
-              event: buffered.event,
-              at: buffered.at,
-              invocationId: identity.invocationId,
-            })
-          }
-          pendingToolEvents.length = 0
-        }
-      },
-      onModel: () => {},
-      onToolActivity: (line: string) => {
-        thinking += `${line}\n`
-        options.emit({
-          type: "assistant_thinking_delta",
-          payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, delta: `${line}\n` },
-        })
-      },
-      onToolEvent: (event) => {
-        const parsed = JSON.parse(toolEventsJson) as unknown[]
-        parsed.push(event)
-        toolEventsJson = JSON.stringify(parsed)
-        options.emit({
-          type: "assistant_tool_event",
-          payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, event },
-        })
-        // Persist toolEvents immediately so reconnecting clients don't lose tool steps
-        this.sessions.overwriteMessage(assistant.id, {
-          toolEvents: toolEventsJson,
-        })
-        // F018 P4 AC1.3 集成: buffer tool event for TranscriptWriter's extractive digest.
-        // TranscriptWriter extractors look for: event.toolName (invocations),
-        // event.path (filesTouched), event.type==="error" + event.message (errors).
-        // sessionId 来源（按优先级）：liveSessionId (onSession 捕获的最新) →
-        // thread.nativeSessionId (CLI 继承) → 都没有则暂存到 pendingToolEvents
-        // 等 onSession 回填（修 Codex HIGH #1：首次 session 事件不能丢）
-        if (this.transcriptWriter) {
-          const transcriptSessionId = liveSessionId ?? thread.nativeSessionId
-          const at = new Date().toISOString()
-          if (transcriptSessionId) {
-            this.transcriptWriter.recordEvent({
-              sessionId: transcriptSessionId,
-              threadId: thread.id,
-              event: event as Record<string, unknown>,
-              at,
-              invocationId: identity.invocationId,
-            })
-          } else {
-            // 暂存，等 onSession 回填
-            pendingToolEvents.push({ event: event as Record<string, unknown>, at })
-          }
-        }
-      },
-      onLivenessWarning: (warning) => {
-        // Surface liveness issues as status messages so the user sees *why* a turn is dragging on
-        // before (or after) we force-kill. Soft warnings are informational; suspected_stall is a
-        // heads-up that we're about to terminate the process.
-        const seconds = Math.round(warning.silenceDurationMs / 1000)
-        const isStall = warning.level === "suspected_stall"
-        const label = isStall
-          ? `${thread.alias} 已沉默 ${seconds}s（${warning.state}），判定为卡住，即将强制终止`
-          : `${thread.alias} 已沉默 ${seconds}s（${warning.state}），持续观察中`
-        options.emit({
-          type: "status",
-          payload: { sessionGroupId: thread.sessionGroupId, message: label },
-        })
-      },
-      onActivity: (activity) => {
-        this.events.emit({
-          type: "invocation.activity",
-          invocationId: identity.invocationId,
-          threadId: thread.id,
-          agentId: thread.alias,
-          stream: activity.stream,
-          chunk: activity.chunk,
-          status: activity.stream === "stdout" ? "replying" : "thinking",
-          createdAt: activity.at,
-        })
+          options.emit({
+            type: "status",
+            payload: {
+              sessionGroupId: thread.sessionGroupId,
+              message: `${thread.alias} 需要你的确认。当前运行已暂停，请回复以继续。`,
+            },
+          })
+          this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
 
-        if (activity.stream === "stderr" && !promptRequestedByCli) {
-          stderrLineBuf += stripAnsi(activity.chunk)
-          const parts = stderrLineBuf.split("\n")
-          stderrLineBuf = parts.pop() ?? ""
-          if (parts.length > 0) {
-            const cleanedChunk = filterStderrNoise(parts.join("\n") + "\n")
-            if (cleanedChunk.trim()) {
-              thinking += cleanedChunk
-              options.emit({
-                type: "assistant_thinking_delta",
-                payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, delta: cleanedChunk },
-              })
-            }
-          }
-        }
-
-        if (promptRequestedByCli || activity.stream !== "stderr") {
-          return
-        }
-
-        const prompt = extractPromptFromActivityChunk(activity.chunk)
-        if (!prompt) {
-          return
-        }
-
-        promptRequestedByCli = prompt
-        this.sessions.overwriteMessage(assistant.id, {
-          content: prompt,
-          thinking,
-          toolEvents: toolEventsJson,
-        })
-        options.emit({
-          type: "status",
-          payload: {
-            sessionGroupId: thread.sessionGroupId,
-            message: `${thread.alias} 需要你的确认。当前运行已暂停，请回复以继续。`,
-          },
-        })
-        this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
-
-        run?.cancel()
-      },
-    })
+          run?.cancel()
+        },
+      })
 
     // F003/P2: mark the session group as having a continuation in flight so
     // SettlementDetector does not prematurely declare "settled" between two
     // continuation turns. Cleared in `finally`.
-    this.settlementDetector?.markContinuationInFlight(
-      thread.sessionGroupId,
-      identity.invocationId,
-    )
+    this.settlementDetector?.markContinuationInFlight(thread.sessionGroupId, identity.invocationId)
 
     this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
 
@@ -1185,7 +1469,10 @@ export class MessageService {
         emitStatus: (message) => {
           options.emit({
             type: "status",
-            payload: { sessionGroupId: thread.sessionGroupId, message: `${thread.alias}：${message}` },
+            payload: {
+              sessionGroupId: thread.sessionGroupId,
+              message: `${thread.alias}：${message}`,
+            },
           })
         },
         onIterationContent: (accumulated) => {
@@ -1199,11 +1486,279 @@ export class MessageService {
         },
       })
       const result = loopResult.lastResult
-      const accumulatedContent = loopResult.accumulatedContent
+      // F026 P3.1: 派发协议 retry 路径会用 retry 后的 content 覆盖原 accumulatedContent
+      let accumulatedContent = loopResult.accumulatedContent
+
+      // F026 P3.1 · 派发协议 retry 兜底层（gate + retry + 兜底）
+      // 在 markFinalEmitted（lockout）+ enqueuePublicMentions（派发）之前评估，
+      // 命中即拒收当前 final，给 LLM 一次/两次重写机会；耗尽则 final 兜底入库
+      // 并跳过 enqueuePublicMentions（派发未触发，前端贴红条提示手动 @）。
+      let dispatchRetryExhausted = false
+      let dispatchRetryFinalRetryCount = 0
+      const dispatchRetryReasons: import("@multi-agent/shared").DispatchValidationRetryReason[] = []
+      if (!promptRequestedByCli && accumulatedContent.trim()) {
+        const maxAttempts = resolveMaxDispatchRetries(process.env)
+        let attemptIndex = 1
+        let workingContent = accumulatedContent
+        // 仅 claude provider 走 retry spawn（resume 路径）；codex/gemini fail-closed 一次即兜底
+        const supportsRetry = thread.provider === "claude"
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const decision = decideRetryAction({
+            content: workingContent,
+            aliases: PROVIDER_ALIASES,
+            attemptIndex,
+            priorReasons: dispatchRetryReasons,
+            maxAttempts,
+          })
+          if (decision.action === "accept") {
+            dispatchRetryFinalRetryCount = decision.retryCount
+            // dispatchRetryReasons 已是 priorReasons 的拷贝，保留
+            accumulatedContent = workingContent
+            // F026 P3.1 · AC-21: 之前发过至少一次 retrying（即 retryCount>0）→ 发 settled 收尾
+            // 让前端进度卡按 store 协议主动清；不再依赖 message.created 兜底（早于此 emit）。
+            if (decision.retryCount > 0) {
+              const settledPayload = {
+                sessionGroupId: thread.sessionGroupId,
+                threadId: thread.id,
+                invocationId: identity.invocationId,
+                agentId: thread.alias,
+                messageId: assistant.id,
+                attemptIndex,
+                maxAttempts,
+                reason: decision.retryReasons.at(-1) ?? ("nested_call_tag" as const),
+                originalText: workingContent.slice(0, 200),
+                status: "settled" as const,
+                occurredAt: new Date().toISOString(),
+                // F026 P4 follow-up · retry-badge-realtime fix:
+                // 把终值带给前端，让 thread store 同步 message.retryCount/retryReasons,
+                // badge 不必等刷新走 thread_snapshot 才出现。
+                retryCount: decision.retryCount,
+                retryReasons: [...decision.retryReasons],
+              }
+              try {
+                this.sessions.appendAgentEvent(
+                  buildDispatchRetryAgentEventRow(settledPayload, {
+                    id: buildDispatchRetryEventId({
+                      invocationId: identity.invocationId,
+                      attemptIndex,
+                      status: "settled",
+                    }),
+                  }),
+                )
+              } catch (err) {
+                this.log.warn(
+                  { err, invocationId: identity.invocationId },
+                  "F026-P3.1 AC-21: failed to persist dispatch_validation_retry settled event (non-fatal)",
+                )
+              }
+              options.emit(buildDispatchRetryRealtimeEvent(settledPayload))
+            }
+            break
+          }
+          if (decision.action === "exhaust") {
+            dispatchRetryExhausted = true
+            dispatchRetryFinalRetryCount = decision.retryCount
+            dispatchRetryReasons.length = 0
+            dispatchRetryReasons.push(...decision.retryReasons)
+            // emit exhausted 事件 + 持久化 + skip 派发
+            const exhaustedPayload = {
+              sessionGroupId: thread.sessionGroupId,
+              threadId: thread.id,
+              invocationId: identity.invocationId,
+              agentId: thread.alias,
+              messageId: assistant.id,
+              attemptIndex,
+              maxAttempts,
+              reason: decision.reason,
+              originalText: workingContent.slice(0, 200),
+              status: "exhausted" as const,
+              occurredAt: new Date().toISOString(),
+              // F026 P4 follow-up · retry-badge-realtime fix（同 settled 分支同因）
+              retryCount: decision.retryCount,
+              retryReasons: [...decision.retryReasons],
+            }
+            try {
+              this.sessions.appendAgentEvent(
+                buildDispatchRetryAgentEventRow(exhaustedPayload, {
+                  id: buildDispatchRetryEventId({
+                    invocationId: identity.invocationId,
+                    attemptIndex,
+                    status: "exhausted",
+                  }),
+                }),
+              )
+            } catch (err) {
+              this.log.warn(
+                { err, invocationId: identity.invocationId },
+                "F026-P3.1: failed to persist dispatch_validation_retry exhausted event (non-fatal)",
+              )
+            }
+            options.emit(buildDispatchRetryRealtimeEvent(exhaustedPayload))
+            accumulatedContent = workingContent
+            break
+          }
+          // decision.action === "retry"
+          dispatchRetryReasons.push(decision.reason)
+          // emit retrying 事件
+          const retryingPayload = {
+            sessionGroupId: thread.sessionGroupId,
+            threadId: thread.id,
+            invocationId: identity.invocationId,
+            agentId: thread.alias,
+            messageId: assistant.id,
+            attemptIndex,
+            maxAttempts,
+            reason: decision.reason,
+            originalText: workingContent.slice(0, 200),
+            status: "retrying" as const,
+            occurredAt: new Date().toISOString(),
+          }
+          try {
+            this.sessions.appendAgentEvent(
+              buildDispatchRetryAgentEventRow(retryingPayload, {
+                id: buildDispatchRetryEventId({
+                  invocationId: identity.invocationId,
+                  attemptIndex,
+                  status: "retrying",
+                }),
+              }),
+            )
+          } catch (err) {
+            this.log.warn(
+              { err, invocationId: identity.invocationId },
+              "F026-P3.1: failed to persist dispatch_validation_retry retrying event (non-fatal)",
+            )
+          }
+          options.emit(buildDispatchRetryRealtimeEvent(retryingPayload))
+
+          if (!supportsRetry) {
+            // 非 claude provider：不支持 retry spawn，直接 exhaust 兜底
+            dispatchRetryExhausted = true
+            dispatchRetryFinalRetryCount = maxAttempts
+            const nonClaudeExhaustedPayload = {
+              sessionGroupId: thread.sessionGroupId,
+              threadId: thread.id,
+              invocationId: identity.invocationId,
+              agentId: thread.alias,
+              messageId: assistant.id,
+              attemptIndex,
+              maxAttempts,
+              reason: decision.reason,
+              originalText: workingContent.slice(0, 200),
+              status: "exhausted" as const,
+              occurredAt: new Date().toISOString(),
+              // F026 P3.1 review#2 fix: retrying 已让前端 resetAssistantStream 清空气泡，
+              // 非 Claude 兜底路径没有后续 delta，必须把完整兜底内容带上让前端回填。
+              finalContent: workingContent,
+              // F026 P4 follow-up · retry-badge-realtime fix:
+              // 非 Claude 兜底退到 maxAttempts；reasons 用累积的 dispatchRetryReasons
+              // (此次 decision.reason 已 push 进去，line 1449)。
+              retryCount: maxAttempts,
+              retryReasons: [...dispatchRetryReasons],
+            }
+            try {
+              this.sessions.appendAgentEvent(
+                buildDispatchRetryAgentEventRow(nonClaudeExhaustedPayload, {
+                  id: buildDispatchRetryEventId({
+                    invocationId: identity.invocationId,
+                    attemptIndex,
+                    status: "exhausted",
+                  }),
+                }),
+              )
+            } catch (err) {
+              this.log.warn(
+                { err, invocationId: identity.invocationId },
+                "F026-P3.1: failed to persist non-Claude dispatch_validation_retry exhausted event (non-fatal)",
+              )
+            }
+            options.emit(buildDispatchRetryRealtimeEvent(nonClaudeExhaustedPayload))
+            accumulatedContent = workingContent
+            break
+          }
+
+          // 实际 spawn retry：复用 createRun 闭包，传 correctionPrompt 替代 user message
+          // 注意：assistantContent 闭包变量被 retry 流写入；retry 前清空避免与 bad content 拼接
+          assistantContent = ""
+          const correctionPrompt = buildCorrectionPrompt({
+            reason: decision.reason,
+            originalText: workingContent,
+            attemptIndex: decision.nextAttemptIndex,
+            maxAttempts,
+          })
+          let retryResult: import("../runtime/cli-orchestrator").RunTurnResult
+          try {
+            const retryHandle = createRun(correctionPrompt, liveSessionId ?? result.nativeSessionId)
+            retryResult = await retryHandle.promise
+          } catch (err) {
+            this.log.warn(
+              { err, invocationId: identity.invocationId },
+              "F026-P3.1: dispatch retry spawn failed → exhaust 兜底",
+            )
+            dispatchRetryExhausted = true
+            dispatchRetryFinalRetryCount = attemptIndex
+            accumulatedContent = workingContent
+            // F026 P3.1 · AC-21: spawn 失败兜底也必须 emit exhausted，否则进度卡卡死
+            const spawnFailedExhaustedPayload = {
+              sessionGroupId: thread.sessionGroupId,
+              threadId: thread.id,
+              invocationId: identity.invocationId,
+              agentId: thread.alias,
+              messageId: assistant.id,
+              attemptIndex,
+              maxAttempts,
+              reason: decision.reason,
+              originalText: workingContent.slice(0, 200),
+              status: "exhausted" as const,
+              occurredAt: new Date().toISOString(),
+              // F026 P3.1 review#2 fix: spawn 失败兜底同样无后续 delta，
+              // 必须带完整 workingContent 让前端 restoreAssistantContent 回填气泡。
+              finalContent: workingContent,
+              // F026 P4 follow-up · retry-badge-realtime fix:
+              // spawn 失败止于第 attemptIndex 次（含本次 retrying 的 reason，已在 1449 push）。
+              retryCount: attemptIndex,
+              retryReasons: [...dispatchRetryReasons],
+            }
+            try {
+              this.sessions.appendAgentEvent(
+                buildDispatchRetryAgentEventRow(spawnFailedExhaustedPayload, {
+                  id: buildDispatchRetryEventId({
+                    invocationId: identity.invocationId,
+                    attemptIndex,
+                    status: "exhausted",
+                  }),
+                }),
+              )
+            } catch (persistErr) {
+              this.log.warn(
+                { err: persistErr, invocationId: identity.invocationId },
+                "F026-P3.1 AC-21: failed to persist spawn-failed exhausted event (non-fatal)",
+              )
+            }
+            options.emit(buildDispatchRetryRealtimeEvent(spawnFailedExhaustedPayload))
+            break
+          }
+          workingContent = retryResult.content
+          if (retryResult.nativeSessionId) {
+            liveSessionId = retryResult.nativeSessionId
+          }
+          attemptIndex = decision.nextAttemptIndex
+        }
+
+        // 持久化 retry_count + retry_reasons 到 messages 行
+        if (dispatchRetryFinalRetryCount > 0 || dispatchRetryReasons.length > 0) {
+          this.sessions.overwriteMessage(assistant.id, {
+            content: accumulatedContent,
+            retryCount: dispatchRetryFinalRetryCount,
+            retryReasons: JSON.stringify(dispatchRetryReasons),
+          })
+        }
+      }
 
       // F018 P5 AC6.2: fire-and-forget embedding generation for this assistant
-      // message so recall_similar_context can find it later by semantic similarity.
-      // Failures (model unavailable / disk error) are silently ignored per 铁律.
+      // message. Placed after retry gate so the embedding indexes the final
+      // (possibly rewritten) content, not the pre-retry version.
       if (this.embeddingService && accumulatedContent.trim().length > 0) {
         this.embeddingService
           .generateAndStore(assistant.id, thread.id, accumulatedContent)
@@ -1215,7 +1770,21 @@ export class MessageService {
           })
       }
 
+      // F026 P1 Wiring · T5 post-final lockout. accumulatedContent has been
+      // persisted onto the assistant message above; mark the invocation as
+      // final-emitted so any subsequent MCP `post_message` from the same
+      // invocation is hard-rejected by callbacks.ts (R-205 + R-048 双发根因).
+      // The flag must be set before releaseInvocation, because revoke clears
+      // the identity entry — but invocation is still authenticatable on the
+      // wire until that release completes.
+      this.invocations.markFinalEmitted(identity.invocationId)
+
       this.invocations.detachRun(thread.id)
+      // F026 P1 Wiring · normal turn completion. Settle done before releasing so
+      // pendingOf() reflects the final state by the time return-path fires.
+      // CLI exit code !== 0 still settles `done` here — failure classification
+      // happens downstream and doesn't (yet) flow back into call-registry status.
+      this.a2aLifecycle?.settleDone(options.dispatchedCallId)
       this.releaseInvocation(identity.invocationId, dispatchCleanupTimer)
       // F004: only clear the native session when the CLI actually failed (exitCode !== 0).
       // Pre-F004 any empty response with an unchanged session id nuked the session —
@@ -1354,7 +1923,10 @@ export class MessageService {
           result.fBloatDetected = true
           options.emit({
             type: "status",
-            payload: { sessionGroupId: thread.sessionGroupId, message: `${thread.alias} CLI 内部压缩检测到（token 突降 ${Math.round(bloat.dropRatio * 100)}%），下轮将强制重注入 system prompt。` },
+            payload: {
+              sessionGroupId: thread.sessionGroupId,
+              message: `${thread.alias} CLI 内部压缩检测到（token 突降 ${Math.round(bloat.dropRatio * 100)}%），下轮将强制重注入 system prompt。`,
+            },
           })
           this.memoryService?.invalidateSummary(thread.sessionGroupId)
         }
@@ -1371,12 +1943,26 @@ export class MessageService {
 
       this.streamingFlushers.delete(flushKey)
       const lastFillRatio = result.sealDecision?.fillRatio
-      this.sessions.updateThread(thread.id, result.currentModel, effectiveSessionId, undefined, lastFillRatio)
+      this.sessions.updateThread(
+        thread.id,
+        result.currentModel,
+        effectiveSessionId,
+        undefined,
+        lastFillRatio,
+      )
       if (!promptRequestedByCli) {
+        // F026 P11 · 派生 content_blocks（thinking + text）merge 现存独立块（image）
+        const existingBlocksJson = this.sessions.getContentBlocksJson(assistant.id)
+        const derivedBlocks = deriveContentBlocks({
+          content: accumulatedContent || "",
+          thinking,
+        })
+        const mergedBlocks = mergeDerivedWithExistingBlocks(existingBlocksJson, derivedBlocks)
         this.sessions.overwriteMessage(assistant.id, {
           content: accumulatedContent || "[empty response]",
           thinking,
           toolEvents: toolEventsJson,
+          contentBlocks: JSON.stringify(mergedBlocks),
         })
       }
 
@@ -1384,12 +1970,7 @@ export class MessageService {
       // instead of emitting decision.request directly. SettlementDetector
       // will flush the board once the discussion settles.
       if (!promptRequestedByCli && accumulatedContent.trim()) {
-        this.collectDecisionsIntoBoard(
-          thread,
-          assistant.id,
-          accumulatedContent,
-          options.emit,
-        )
+        this.collectDecisionsIntoBoard(thread, assistant.id, accumulatedContent, options.emit)
       }
 
       this.events.emit({
@@ -1402,8 +1983,15 @@ export class MessageService {
         createdAt: new Date().toISOString(),
       })
 
-      let enqueueResultForReturnPath: EnqueueMentionsResult | null = null
-      if (!promptRequestedByCli && accumulatedContent.trim() && !options.suppressOutboundDispatch) {
+      let enqueueResultForWorklist: EnqueueMentionsResult | null = null
+      // F026 P3.1: dispatchRetryExhausted=true → 派发协议反复写错，已提示用户手动 @
+      // 这里 skip 全部 enqueuePublicMentions，避免 stale [Call:] 字面量被错派
+      if (
+        !promptRequestedByCli &&
+        accumulatedContent.trim() &&
+        !options.suppressOutboundDispatch &&
+        !dispatchRetryExhausted
+      ) {
         const enqueueResult = this.dispatch.enqueuePublicMentions({
           messageId: assistant.id,
           sessionGroupId: thread.sessionGroupId,
@@ -1413,52 +2001,52 @@ export class MessageService {
           content: accumulatedContent,
           matchMode: "line-start",
           parentInvocationId: identity.invocationId,
+          // F026 R-204 follow-up · final flow 在 line 1685 releaseInvocation 之后才派发,
+          // invocationContexts.get(parentInvocationId) 已 delete → 反查空。直传
+          // dispatchedCallId 让 gateway 接通 child a2a_calls.parent_call_id（DB 0/275 实证）。
+          parentCallId: options.dispatchedCallId ?? null,
           buildSnapshot: () => this.captureSnapshot(thread.sessionGroupId, assistant.id),
-          extractSnippet: (c, alias) => extractTaskSnippet(c, alias),
+          // CLI 流出 accumulatedContent（agent 完整输出回流），走 buildReturnPathPayload
+          // 16k token cap + 头尾保留 + msg_id 引用，防止长 review 被砍中段 finding。
+          extractSnippet: buildReturnPathExtractSnippet(assistant.id),
         })
         this.emitBlockedDispatches(enqueueResult, options.emit)
-        enqueueResultForReturnPath = enqueueResult
+        // F026 P5 in-flight (R-104)：LLM 主链路 final flush 派发 [Call:@X] 时
+        // 必须写 connector header,否则前端 ConnectorBubble / AtPill / OriginCapsule
+        // 三组件无载体（R-104 timeline 4/4 final 0 connector 反证）。
+        writeConnectorHeadersForQueue(this.sessions, enqueueResult, options.emit)
+        enqueueResultForWorklist = enqueueResult
       }
 
-      // F003/P3: if the child reply has no outbound mention but we can still
-      // see the parent in the chain registry on the same root, synthesize a
-      // return-path dispatch so the parent continues its flow without waiting
-      // on the user to manually @ it back.
-      if (
-        !promptRequestedByCli &&
-        accumulatedContent.trim() &&
-        !options.suppressOutboundDispatch
-      ) {
-        const activeSkillName =
-          this.skillRegistry?.match(accumulatedContent)[0]?.skill.name ?? null
-        const returnPlan = planReturnPathDispatch({
-          chainRegistry: this.chainRegistry,
-          childInvocationId: identity.invocationId,
-          childContent: accumulatedContent,
-          queuedOutboundMentionCount: enqueueResultForReturnPath?.queued.length ?? 0,
-          currentRootMessageId: options.rootMessageId,
-          activeSkillName,
+      // F026 P2 v2 wire 顺序（关键）：必须先 registerForDispatch（child worklist 入树），
+      // 再 onChildFinished（cascade settle）。否则 cascade 看不到 child active，会过早
+      // settle root。
+      //
+      // registerForDispatch：当前 turn reply 含 outbound [Call:@X] 时，把派发的 children
+      // 写到 a2a_worklists 树（parentWorklistId 反查 grandparent worklist）。enqueue 没
+      // 走 / queued 空 → noop。
+      if (enqueueResultForWorklist && enqueueResultForWorklist.queued.length > 0) {
+        this.worklistExecutor?.registerForDispatch({
+          parentCallId: options.dispatchedCallId ?? null,
+          sessionGroupId: thread.sessionGroupId,
+          queued: enqueueResultForWorklist.queued,
         })
-        if (returnPlan) {
-          options.emit({
-            type: "status",
-            payload: {
-              sessionGroupId: returnPlan.parentSessionGroupId,
-              message: `A2A 回程 — ${returnPlan.childAlias} → ${returnPlan.parentAlias}`,
-            },
-          })
-          // Fire-and-forget: runThreadTurn resolves on its own thread lifecycle.
-          void this.runThreadTurn({
-            threadId: returnPlan.parentThreadId,
-            content: returnPlan.prompt,
-            emit: options.emit,
-            rootMessageId: options.rootMessageId,
-            parentInvocationId: null,
-          }).catch((err) => {
-            this.log.error({ err }, "A2A return-turn unhandled rejection")
-          })
-        }
       }
+
+      // onChildFinished：本 invocation 是某个 worklist 的 child item 完成。markItemStatus →
+      // tryCascadeSettle bottom-up；若 root settle 命中则触发 onDoneContinuation 回调
+      // (本服务 dispatchWorklistContinuation)。dispatchedCallId 缺省 / executor 不 wire
+      // / 找不到对应 worklist → 全 noop。
+      this.worklistExecutor?.onChildFinished({
+        childCallId: options.dispatchedCallId ?? null,
+        childAlias: thread.alias,
+        childContent: accumulatedContent,
+        ok: result.exitCode === 0 && !dispatchRetryExhausted,
+        continuationContext: {
+          emit: options.emit,
+          rootMessageId: options.rootMessageId,
+        },
+      })
 
       // SOP advancement: if a skill was active, advance to next stage
       // (and force-dispatch to the next target when nextDispatch is defined).
@@ -1474,6 +2062,9 @@ export class MessageService {
         assistantMessageId: assistant.id,
         rootMessageId: options.rootMessageId,
         parentInvocationId: identity.invocationId,
+        // F026 R-204 follow-up · 同 final flow,SOP 合成派发也在 release 之后,
+        // 直传 dispatchedCallId 让 SOP 自动交接生成的 child a2a_calls 接通 call tree。
+        dispatchedCallId: options.dispatchedCallId ?? null,
         emit: options.emit,
       })
 
@@ -1482,7 +2073,13 @@ export class MessageService {
       const bookmark = extractSOPBookmark(accumulatedContent, sopStage)
       const bookmarkJson = bookmark.skill ? JSON.stringify(bookmark) : null
       if (bookmarkJson) {
-        this.sessions.updateThread(thread.id, result.currentModel, effectiveSessionId, bookmarkJson, lastFillRatio)
+        this.sessions.updateThread(
+          thread.id,
+          result.currentModel,
+          effectiveSessionId,
+          bookmarkJson,
+          lastFillRatio,
+        )
       }
 
       this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
@@ -1539,7 +2136,10 @@ export class MessageService {
           )
           options.emit({
             type: "status",
-            payload: { sessionGroupId: thread.sessionGroupId, message: `记忆重组中，自动续接 (${resumeCount + 1}/${MAX_AUTO_RESUMES})` },
+            payload: {
+              sessionGroupId: thread.sessionGroupId,
+              message: `记忆重组中，自动续接 (${resumeCount + 1}/${MAX_AUTO_RESUMES})`,
+            },
           })
           const resumeResult = await this.runThreadTurn({
             threadId: thread.id,
@@ -1549,7 +2149,10 @@ export class MessageService {
             autoResumeCount: resumeCount + 1,
           })
           if (resumeResult) {
-            return { messageId: resumeResult.messageId, content: accumulatedContent + resumeResult.content }
+            return {
+              messageId: resumeResult.messageId,
+              content: accumulatedContent + resumeResult.content,
+            }
           }
         }
       }
@@ -1559,12 +2162,40 @@ export class MessageService {
       this.log.error({ err: error, threadId: thread.id, agentId: thread.alias }, "turn failed")
       this.streamingFlushers.delete(flushKey)
       this.invocations.detachRun(thread.id)
+      // F026 P1 Wiring · turn threw. Settle failed before release so the
+      // call-registry row is in a terminal state for any waiting parent.
+      this.a2aLifecycle?.settleFailed(options.dispatchedCallId)
+      // F026 P2 v2 review#2 (范德彪 P1): catch 路径只 settle call 不 settle worklist —
+      // child call 标 failed 但 worklist item 仍 pending → cascade 看到 pending 永远不 drain
+      // → root worklist 死锁，续推不触发。这里调 onChildFinished({ ok: false }) 走 halt 路径
+      // (worklist-executor: failed 直接 settle 自身，不 cascade，不续推) 让父链不悬空。
+      this.worklistExecutor?.onChildFinished({
+        childCallId: options.dispatchedCallId ?? null,
+        childAlias: thread.alias,
+        childContent: "",
+        ok: false,
+        continuationContext: {
+          emit: options.emit,
+          rootMessageId: options.rootMessageId,
+        },
+      })
       this.releaseInvocation(identity.invocationId, dispatchCleanupTimer)
       const message = error instanceof Error ? error.message : "Unknown error"
+      // F026 P11 · 错误终态也派生 content_blocks（保 thinking + error text 结构）
+      const existingErrorBlocksJson = this.sessions.getContentBlocksJson(assistant.id)
+      const derivedErrorBlocks = deriveContentBlocks({
+        content: `Error: ${message}`,
+        thinking,
+      })
+      const mergedErrorBlocks = mergeDerivedWithExistingBlocks(
+        existingErrorBlocksJson,
+        derivedErrorBlocks,
+      )
       this.sessions.overwriteMessage(assistant.id, {
         content: `Error: ${message}`,
         thinking,
         toolEvents: toolEventsJson,
+        contentBlocks: JSON.stringify(mergedErrorBlocks),
       })
       // Reactive self-heal: match the error message against known failure signatures so
       // we clear session only when doing so actually helps, and give the user a concrete
@@ -1587,7 +2218,10 @@ export class MessageService {
 
       options.emit({
         type: "status",
-        payload: { sessionGroupId: thread.sessionGroupId, message: `${thread.alias}：${classification.userMessage}` },
+        payload: {
+          sessionGroupId: thread.sessionGroupId,
+          message: `${thread.alias}：${classification.userMessage}`,
+        },
       })
       this.emitThreadSnapshot(thread.sessionGroupId, options.emit)
       await this.flushDispatchQueue(thread.sessionGroupId, options.emit)
@@ -1616,7 +2250,17 @@ export class MessageService {
         const batch: Array<{ entry: QueueEntry; threadId: string }> = []
 
         while (true) {
-          const next = this.dispatch.takeNextQueuedDispatch(sessionGroupId)
+          // F026 P0 silent-drop fix: isProviderBusy 让 dispatch 在 take 阶段就跳过
+          // "thread 已有 active invocation" 的 provider —— 否则 entry 会被 take 出来后
+          // 在 runThreadTurn (message-service.ts:817) 因 invocations.has === true 被
+          // silent-drop（R-013 场景5：黄仁勋自己的 directTurn 还没结束，子调用回程
+          // 派发到黄仁勋时 entry 永远丢失）。
+          const next = this.dispatch.takeNextQueuedDispatch(sessionGroupId, {
+            isProviderBusy: (provider) => {
+              const t = this.sessions.findThreadByGroupAndProvider(sessionGroupId, provider)
+              return !!t && this.invocations.has(t.id)
+            },
+          })
           if (!next) break
 
           const targetThread = this.sessions.findThreadByGroupAndProvider(
@@ -1634,24 +2278,14 @@ export class MessageService {
 
         await Promise.allSettled(
           batch.map(async ({ entry, threadId }) => {
-            let slotReleased = false
             try {
-              // Determine policy: Phase 1 parallel group → INDEPENDENT, else FULL
-              const modeBGroup = entry.parallelGroupId
-                ? this.parallelGroups.get(entry.parallelGroupId)
-                : undefined
-              const phase1HeaderText = modeBGroup
-                ? buildPhase1Header(modeBGroup.participantProviders.length)
-                : undefined
               const a2aProvider = entry.to.provider as import("@multi-agent/shared").Provider
 
               // F019 P4: keyword-injection layer removed. Guardian mode
               // detection now queries skillRegistry directly for acceptance-
               // guardian / vision-guardian — without going through the
-              // (deleted) buildSkillHintLine string. Phase 1 independent
-              // thinking still wins over guardian mode (keeps Mode B
-              // independence guarantee).
-              const guardianCandidateNames = phase1HeaderText || !this.skillRegistry
+              // (deleted) buildSkillHintLine string.
+              const guardianCandidateNames = !this.skillRegistry
                 ? []
                 : this.skillRegistry
                     .match(entry.taskSnippet, a2aProvider)
@@ -1662,7 +2296,13 @@ export class MessageService {
 
               const targetThread = this.dispatch.resolveThread(threadId)
               const a2aBookmark = targetThread?.sopBookmark
-                ? (() => { try { return JSON.parse(targetThread.sopBookmark) } catch { return null } })()
+                ? (() => {
+                    try {
+                      return JSON.parse(targetThread.sopBookmark)
+                    } catch {
+                      return null
+                    }
+                  })()
                 : null
               // F018 P4 AC3.5 wiring: A2A path also feeds SessionBootstrap metadata
               // so Bootstrap prelude fires on new-session A2A invocations.
@@ -1671,77 +2311,64 @@ export class MessageService {
                 !isGuardianMode && this.transcriptWriter
                   ? await this.transcriptWriter.readLatestDigest(threadId).catch(() => null)
                   : null
-              const assembled = await assemblePrompt({
-                provider: entry.to.provider as import("@multi-agent/shared").Provider,
-                threadId,
-                sessionGroupId,
-                nativeSessionId: targetThread?.nativeSessionId ?? null,
-                policy: isGuardianMode
-                  ? POLICY_GUARDIAN
-                  : entry.parallelGroupId ? POLICY_INDEPENDENT : POLICY_FULL,
-                task: entry.taskSnippet,
-                roomSnapshot: entry.contextSnapshot,
-                sourceAlias: entry.from.agentId,
-                targetAlias: entry.to.agentId,
-                phase1HeaderText,
-                sopBookmark: a2aBookmark,
-                lastFillRatio: targetThread?.lastFillRatio ?? undefined,
-                guardianMode: isGuardianMode,
-                sessionChainIndex: isGuardianMode ? undefined : this.sessions.getSessionChainIndex(threadId),
-                threadMemory: isGuardianMode ? undefined : this.sessions.getThreadMemory(threadId),
-                previousDigest: a2aPreviousDigest,
-                recallTools: isGuardianMode ? undefined : [],
-              }, this.memoryService)
+              const a2aThreadMemory = isGuardianMode
+                ? null
+                : this.sessions.getThreadMemory(threadId)
+              // F026-P3 Task7 · A2A 路径 cold-target burst 兜底（guardian 模式跳过：guardian
+              // 走零上下文，注入 burst 反而违反 guardian 契约）
+              const a2aColdBurst = isGuardianMode
+                ? undefined
+                : tryBuildColdTargetBurst({
+                    nativeSessionId: targetThread?.nativeSessionId ?? null,
+                    threadMemoryEmpty: a2aThreadMemory == null,
+                    previousDigestEmpty: a2aPreviousDigest == null,
+                    roomSnapshot: entry.contextSnapshot,
+                  })
+              const assembled = await assemblePrompt(
+                {
+                  provider: entry.to.provider as import("@multi-agent/shared").Provider,
+                  threadId,
+                  sessionGroupId,
+                  nativeSessionId: targetThread?.nativeSessionId ?? null,
+                  policy: isGuardianMode ? POLICY_GUARDIAN : POLICY_FULL,
+                  task: entry.taskSnippet,
+                  roomSnapshot: entry.contextSnapshot,
+                  sourceAlias: entry.from.agentId,
+                  targetAlias: entry.to.agentId,
+                  sopBookmark: a2aBookmark,
+                  lastFillRatio: targetThread?.lastFillRatio ?? undefined,
+                  guardianMode: isGuardianMode,
+                  sessionChainIndex: isGuardianMode
+                    ? undefined
+                    : this.sessions.getSessionChainIndex(threadId),
+                  threadMemory: a2aThreadMemory ?? undefined,
+                  previousDigest: a2aPreviousDigest,
+                  recallTools: isGuardianMode ? undefined : [],
+                  coldTargetBurst: a2aColdBurst,
+                },
+                this.memoryService,
+              )
 
-              // Determine groupId/groupRole for collapsible groups:
-              // - Phase 1 parallel group → member of that group
-              // - A2A single dispatch (no parallelGroupId) → member of the dispatch entry's A2A group
-              const dispatchGroupId = entry.parallelGroupId ?? entry.id
+              // F026 P2 clean-cut · 多 @ 不再 fan-out 进 ParallelGroup；每个
+              // entry 是独立 A2A 派发，groupId 用 entry.id 作为单元集合标识。
+              const dispatchGroupId = entry.id
               const dispatchGroupRole = "member" as const
 
-              const turnResult = await this.runThreadTurn({
+              await this.runThreadTurn({
                 threadId,
                 content: assembled.content,
                 systemPrompt: assembled.systemPrompt,
                 emit,
                 rootMessageId: entry.rootMessageId,
                 parentInvocationId: entry.parentInvocationId,
-                suppressOutboundDispatch: !!entry.parallelGroupId,
                 groupId: dispatchGroupId,
                 groupRole: dispatchGroupRole,
+                // F026 P1 Wiring · forward gateway callId so the turn's
+                // lifecycle hooks (advance/settle) hit the right registry row.
+                dispatchedCallId: entry.callId,
               })
-
-              // Parallel group join: mark this provider done with its real reply.
-              if (entry.parallelGroupId) {
-                const joinResult = this.parallelGroups.markCompleted(
-                  entry.parallelGroupId,
-                  entry.to.provider,
-                  {
-                    messageId: turnResult?.messageId ?? "",
-                    content: turnResult?.content ?? "",
-                  },
-                )
-                if (joinResult?.allDone) {
-                  // Release slot BEFORE Phase 2 / fan-in — those call
-                  // runThreadTurn on THIS same provider (the last to complete)
-                  // and user-followup paths use getBusyStatus which checks
-                  // the slot. Holding it here would deadlock both.
-                  this.dispatch.releaseSlot(sessionGroupId, entry.to.provider)
-                  slotReleased = true
-                  await this.handleParallelGroupAllDone(
-                    sessionGroupId,
-                    joinResult.group,
-                    emit,
-                  )
-                  this.parallelGroups.markAggregationDone(entry.parallelGroupId)
-                  this.parallelGroups.remove(entry.parallelGroupId)
-                  this.settlementDetector?.notifyStateChange(sessionGroupId)
-                }
-              }
             } finally {
-              if (!slotReleased) {
-                this.dispatch.releaseSlot(sessionGroupId, entry.to.provider)
-              }
+              this.dispatch.releaseSlot(sessionGroupId, entry.to.provider)
             }
           }),
         )
@@ -1831,7 +2458,9 @@ export class MessageService {
       // seed the timestamp tracker so next call goes delta
       this.sessions.getActiveGroupDelta(sessionGroupId, runningThreadIds, dispatchState)
       const total = performance.now() - t0
-      console.log(`[perf] emitThreadSnapshot(${sessionGroupId.slice(0, 8)}): FULL flush=${(tFlush - t0).toFixed(1)}ms getActiveGroup=${(tGroup - tFlush).toFixed(1)}ms total=${total.toFixed(1)}ms`)
+      console.log(
+        `[perf] emitThreadSnapshot(${sessionGroupId.slice(0, 8)}): FULL flush=${(tFlush - t0).toFixed(1)}ms getActiveGroup=${(tGroup - tFlush).toFixed(1)}ms total=${total.toFixed(1)}ms`,
+      )
       perfCollector.record("emitThreadSnapshot", total)
       perfCollector.record("emitThreadSnapshot.flush", tFlush - t0)
       perfCollector.record("emitThreadSnapshot.getActiveGroup", tGroup - tFlush)
@@ -1844,7 +2473,9 @@ export class MessageService {
       const tDelta = performance.now()
       emit({ type: "thread_snapshot_delta", payload: delta })
       const total = performance.now() - t0
-      console.log(`[perf] emitThreadSnapshot(${sessionGroupId.slice(0, 8)}): DELTA flush=${(tFlush - t0).toFixed(1)}ms getDelta=${(tDelta - tFlush).toFixed(1)}ms newMsgs=${delta.newMessages.length} total=${total.toFixed(1)}ms`)
+      console.log(
+        `[perf] emitThreadSnapshot(${sessionGroupId.slice(0, 8)}): DELTA flush=${(tFlush - t0).toFixed(1)}ms getDelta=${(tDelta - tFlush).toFixed(1)}ms newMsgs=${delta.newMessages.length} total=${total.toFixed(1)}ms`,
+      )
       perfCollector.record("emitThreadSnapshot.delta", total)
     }
   }
@@ -1883,37 +2514,65 @@ export class MessageService {
     const threadMeta = new Map(threads.map((t) => [t.id, { provider: t.provider, alias: t.alias }]))
     const allMessages = threads.flatMap((t) => {
       const msgs = this.sessions.listThreadMessages?.(t.id) ?? []
-      return msgs.map((m: { id: string; role: string; content: string; toolEvents?: string; createdAt: string }) => {
-        const raw: { id: string; threadId: string; role: "user" | "assistant"; content: string; createdAt: string; toolEventsSummary?: string } = {
-          id: m.id,
-          threadId: t.id,
-          role: m.role as "user" | "assistant",
-          content: m.content,
-          createdAt: m.createdAt,
-        }
-        if (m.toolEvents && m.toolEvents !== "[]") {
-          try {
-            const events = JSON.parse(m.toolEvents) as { toolName?: string; status?: string; toolInput?: string; content?: string }[]
-            if (events.length > 0) {
-              raw.toolEventsSummary = events
-                .map((e) => {
-                  const base = `${e.toolName ?? "unknown"}(${e.status ?? "?"})`
-                  if (e.status === "error" && e.content) {
-                    return `${base}: ${e.content.slice(0, 200)}`
-                  }
-                  if (e.toolInput) {
-                    return `${base}: ${e.toolInput.slice(0, 100)}`
-                  }
-                  return base
-                })
-                .join(", ")
+      return msgs.map(
+        (m: {
+          id: string
+          role: string
+          content: string
+          toolEvents?: string
+          createdAt: string
+        }) => {
+          const raw: {
+            id: string
+            threadId: string
+            role: "user" | "assistant"
+            content: string
+            createdAt: string
+            toolEventsSummary?: string
+          } = {
+            id: m.id,
+            threadId: t.id,
+            role: m.role as "user" | "assistant",
+            content: m.content,
+            createdAt: m.createdAt,
+          }
+          if (m.toolEvents && m.toolEvents !== "[]") {
+            try {
+              const events = JSON.parse(m.toolEvents) as {
+                toolName?: string
+                status?: string
+                toolInput?: string
+                content?: string
+              }[]
+              if (events.length > 0) {
+                raw.toolEventsSummary = events
+                  .map((e) => {
+                    const base = `${e.toolName ?? "unknown"}(${e.status ?? "?"})`
+                    if (e.status === "error" && e.content) {
+                      return `${base}: ${e.content.slice(0, 200)}`
+                    }
+                    if (e.toolInput) {
+                      return `${base}: ${e.toolInput.slice(0, 100)}`
+                    }
+                    return base
+                  })
+                  .join(", ")
+              }
+            } catch {
+              /* malformed JSON — skip */
             }
-          } catch { /* malformed JSON — skip */ }
-        }
-        return raw
-      })
+          }
+          return raw
+        },
+      )
     })
-    return [...buildContextSnapshot(allMessages, threadMeta, { sessionGroupId, triggerMessageId, maxMessages: 40 })]
+    return [
+      ...buildContextSnapshot(allMessages, threadMeta, {
+        sessionGroupId,
+        triggerMessageId,
+        maxMessages: 40,
+      }),
+    ]
   }
 
   private getBusyStatus(threadId: string, sessionGroupId: string) {
@@ -1927,145 +2586,6 @@ export class MessageService {
     return null
   }
 
-  /**
-   * Agent 主动触发的多 agent 并行思考。
-   * 创建 ParallelGroup → 向每个 target agent 派发同一 question → 收集回复 → 回调 callbackTo。
-   */
-  async handleParallelThink(
-    sessionGroupId: string,
-    params: {
-      targets: string[]
-      question: string
-      callbackTo: string
-      sourceProvider: import("@multi-agent/shared").Provider
-      invocationId: string
-      context?: string
-      timeoutMinutes?: number
-      idempotencyKey?: string
-      emit: EmitEvent
-    },
-  ): Promise<{ ok: true; groupId: string }> {
-    const { PROVIDER_ALIASES } = await import("@multi-agent/shared")
-
-    // Resolve target aliases to providers
-    const targetProviders: import("@multi-agent/shared").Provider[] = []
-    for (const alias of params.targets) {
-      const provider = Object.entries(PROVIDER_ALIASES).find(
-        ([, a]) => a === alias,
-      )?.[0] as import("@multi-agent/shared").Provider | undefined
-      if (provider) targetProviders.push(provider)
-    }
-
-    if (!targetProviders.length) {
-      return { ok: true, groupId: "none" }
-    }
-
-    // Resolve callbackTo provider
-    const callbackToProvider = Object.entries(PROVIDER_ALIASES).find(
-      ([, a]) => a === params.callbackTo,
-    )?.[0] as import("@multi-agent/shared").Provider | undefined
-
-    // Create parallel group with state machine
-    const group = this.parallelGroups.create({
-      parentMessageId: params.invocationId,
-      originatorAgentId: params.callbackTo,
-      originatorProvider: params.sourceProvider,
-      targetProviders,
-      joinBehavior: "notify_originator",
-      callbackTo: callbackToProvider ?? params.sourceProvider,
-      question: params.question,
-      timeoutMinutes: params.timeoutMinutes,
-      idempotencyKey: params.idempotencyKey,
-      initiatedBy: "agent",
-      sessionGroupId,
-    })
-
-    this.parallelGroups.start(group.id)
-
-    // Emit Phase 1 header connector for agent-initiated parallel think
-    const agentSourceThread = this.sessions.findThreadByGroupAndProvider(sessionGroupId, params.sourceProvider)
-    if (agentSourceThread) {
-      const phase1ConnectorSource: ConnectorSource = {
-        kind: "multi_mention_result",
-        label: "并行独立思考",
-        targets: targetProviders,
-      }
-      const phase1Connector = this.sessions.appendConnectorMessage(
-        agentSourceThread.id,
-        "",
-        phase1ConnectorSource,
-        group.id,
-        "header",
-      )
-      const phase1Timeline = this.sessions.toTimelineMessage(agentSourceThread.id, phase1Connector.id)
-      if (phase1Timeline) {
-        params.emit({
-          type: "message.created",
-          payload: { threadId: agentSourceThread.id, sessionGroupId, message: phase1Timeline },
-        })
-      }
-    }
-
-    // Start timeout: on expiry, fill placeholders and run allDone handler
-    // (agent-initiated → aggregate delivered directly to callbackTo).
-    this.parallelGroups.startTimeout(group.id, () => {
-      this.parallelGroups.handleTimeout(group.id)
-      const timedOutGroup = this.parallelGroups.get(group.id)
-      if (timedOutGroup) {
-        void this.handleParallelGroupAllDone(sessionGroupId, timedOutGroup, params.emit).finally(
-          () => this.parallelGroups.remove(group.id),
-        )
-      }
-    })
-
-    // Build prompt with context. Reuse buildPhase1Header so agent-initiated
-    // parallel_think shares the same Phase 1 independence rules as the
-    // user-mention fan-out path (message-service:619-625).
-    const contextLine = params.context ? `\n\n背景信息：${params.context}` : ""
-    const phase1Header = buildPhase1Header(targetProviders.length)
-    const prompt = `${phase1Header}\n\n问题：${params.question}${contextLine}`
-
-    // Use source thread to create a root message for dispatch tracking
-    const sourceThread = this.sessions.findThreadByGroupAndProvider(sessionGroupId, params.sourceProvider)
-    const rootMessageId = sourceThread
-      ? this.sessions.appendUserMessage(sourceThread.id, prompt).id
-      : crypto.randomUUID()
-
-    // Fan out in parallel; each provider's reply feeds markCompleted.
-    // When all participants are done, run the shared allDone handler
-    // (agent-initiated → aggregate goes directly to group.callbackTo).
-    // F019 P4: the old skill-hint keyword injection that Mode B had to dodge
-    // is gone; Phase 1 header alone is the independence contract.
-    for (const provider of targetProviders) {
-      const thread = this.sessions.findThreadByGroupAndProvider(sessionGroupId, provider)
-      if (!thread) continue
-
-      void (async () => {
-        const turnResult = await this.runThreadTurn({
-          threadId: thread.id,
-          content: prompt,
-          emit: params.emit,
-          rootMessageId,
-          parentInvocationId: params.invocationId,
-          groupId: group.id,
-          groupRole: "member",
-        })
-        const joinResult = this.parallelGroups.markCompleted(group.id, provider, {
-          messageId: turnResult?.messageId ?? "",
-          content: turnResult?.content ?? "",
-        })
-        if (joinResult?.allDone) {
-          await this.handleParallelGroupAllDone(sessionGroupId, joinResult.group, params.emit)
-          this.parallelGroups.markAggregationDone(group.id)
-          this.parallelGroups.remove(group.id)
-        }
-      })().catch((err) => {
-        this.log.error({ err, provider }, "parallel group member turn unhandled rejection")
-      })
-    }
-
-    return { ok: true, groupId: group.id }
-  }
 
   /**
    * Present a multi-choice decision card to the user.
@@ -2075,7 +2595,12 @@ export class MessageService {
     kind: "multi_choice" | "fan_in_selector"
     title: string
     description?: string
-    options: Array<{ id: string; label: string; description?: string; provider?: import("@multi-agent/shared").Provider }>
+    options: Array<{
+      id: string
+      label: string
+      description?: string
+      provider?: import("@multi-agent/shared").Provider
+    }>
     sessionGroupId: string
     sourceProvider?: import("@multi-agent/shared").Provider
     sourceAlias?: string
@@ -2084,424 +2609,10 @@ export class MessageService {
     if (!this.decisions) return []
     const response = await this.decisions.request(params)
     return response.decisions
-      .filter(d => d.verdict === "approved" || d.verdict === "modified")
-      .map(d => d.optionId)
+      .filter((d) => d.verdict === "approved" || d.verdict === "modified")
+      .map((d) => d.optionId)
   }
 
-  /**
-   * Parallel group terminal handler (allDone / timeout).
-   *
-   * - user  → compact Phase 2 header, run serial discussion, pop fan-in card
-   * - agent → emit Phase 1 aggregate bubble, route to group.callbackTo
-   */
-  private async handleParallelGroupAllDone(
-    sessionGroupId: string,
-    group: ParallelGroup,
-    emit: EmitEvent,
-  ): Promise<void> {
-    const { PROVIDER_ALIASES } = await import("@multi-agent/shared")
-
-    const aggregate = generateAggregatedResult(
-      { question: group.question, completedResults: group.completedResults },
-      PROVIDER_ALIASES,
-    )
-
-    const originatorThread = this.sessions.findThreadByGroupAndProvider(
-      sessionGroupId,
-      group.originatorProvider,
-    )
-
-    if (group.initiatedBy === "user") {
-      // User-initiated: don't emit the Phase 1 aggregate bubble (it duplicates
-      // each agent's individual reply already visible in the timeline). Just
-      // drop a compact Phase 2 header before the serial discussion starts.
-      await this.emitPhase2HeaderConnector(originatorThread, group, emit)
-      await this.runPhase2SerialDiscussion(sessionGroupId, group, aggregate, emit)
-      await this.selectFanInAndNotify(sessionGroupId, group, emit)
-    } else {
-      // Agent-initiated (parallel_think tool): the callback agent did NOT
-      // participate, so it has no context in its CLI session. It still needs
-      // the full aggregate, and the bubble helps the user follow along.
-      if (originatorThread) {
-        const connectorSource: ConnectorSource = {
-          kind: "multi_mention_result",
-          label: "并行思考结果",
-          initiator: group.originatorProvider,
-          targets: group.participantProviders,
-        }
-        const connectorMessage = this.sessions.appendConnectorMessage(
-          originatorThread.id,
-          aggregate,
-          connectorSource,
-        )
-        const timelineMessage = this.sessions.toTimelineMessage(
-          originatorThread.id,
-          connectorMessage.id,
-        )
-        if (timelineMessage) {
-          emit({
-            type: "message.created",
-            payload: { threadId: originatorThread.id, sessionGroupId, message: timelineMessage },
-          })
-        }
-      }
-      this.notifyCallbackAgent(sessionGroupId, group, aggregate, emit)
-    }
-  }
-
-  /**
-   * Run Phase 2 serial discussion: PHASE2_ROUNDS rounds × N agents, in
-   * participantProviders order. If an agent fails or returns empty, it's
-   * skipped in later rounds and the discussion continues with the rest.
-   */
-  private async runPhase2SerialDiscussion(
-    sessionGroupId: string,
-    group: ParallelGroup,
-    phase1Aggregate: string,
-    emit: EmitEvent,
-  ): Promise<void> {
-    // SKILL says 2-3 rounds. Default to 3 so agents get one round to react
-    // to others' reactions. If everyone's signaled [consensus], we stop early.
-    const PHASE2_ROUNDS = 3
-    const skipped = new Set<import("@multi-agent/shared").Provider>()
-    const consensusSignaled = new Set<import("@multi-agent/shared").Provider>()
-
-    emit({
-      type: "status",
-      payload: { sessionGroupId, message: `开始串行讨论（${PHASE2_ROUNDS} 轮）` },
-    })
-
-    for (let round = 1; round <= PHASE2_ROUNDS; round++) {
-      for (const provider of group.participantProviders) {
-        if (skipped.has(provider)) continue
-
-        const thread = this.sessions.findThreadByGroupAndProvider(sessionGroupId, provider)
-        if (!thread) {
-          skipped.add(provider)
-          continue
-        }
-
-        const prompt = buildPhase2Turn({
-          agentAlias: thread.alias,
-          round,
-          totalRounds: PHASE2_ROUNDS,
-          phase1Aggregate,
-          priorReplies: group.phase2Replies,
-          aliases: PROVIDER_ALIASES,
-        })
-
-        const phase2GroupId = `${group.id}_phase2`
-        let turnResult: { messageId: string; content: string } | null = null
-        try {
-          turnResult = await this.runThreadTurn({
-            threadId: thread.id,
-            content: prompt,
-            emit,
-            rootMessageId: group.parentMessageId,
-            suppressOutboundDispatch: true,
-            groupId: phase2GroupId,
-            groupRole: "member",
-          })
-        } catch (err) {
-          this.log.error({ err, threadId: thread.id, provider }, "parallel think turn failed")
-          turnResult = null
-        }
-
-        if (!turnResult || !turnResult.content.trim()) {
-          skipped.add(provider)
-          continue
-        }
-
-        this.parallelGroups.addPhase2Reply(group.id, {
-          round,
-          provider,
-          messageId: turnResult.messageId,
-          content: turnResult.content,
-        })
-
-        // Track per-round consensus signal. Reset next round so the signal
-        // has to be repeated — prevents a stale signal ending the discussion
-        // after someone else raises a new point.
-        if (/\[consensus\]\s*$/i.test(turnResult.content.trim())) {
-          consensusSignaled.add(provider)
-        }
-      }
-
-      // Early termination: from round 2 onward, if every still-active agent
-      // signaled consensus THIS round, the discussion has converged.
-      if (round >= 2) {
-        const activeProviders = group.participantProviders.filter((p) => !skipped.has(p))
-        const allConsensus =
-          activeProviders.length > 0 && activeProviders.every((p) => consensusSignaled.has(p))
-        if (allConsensus) {
-          this.decisionBoard?.markAllConverged(sessionGroupId)
-          emit({
-            type: "status",
-            payload: { sessionGroupId, message: `串行讨论已在第 ${round} 轮达成共识，提前结束` },
-          })
-          break
-        }
-      }
-      consensusSignaled.clear()
-    }
-  }
-
-  /**
-   * Compact Phase 2 header bubble placed in the timeline BEFORE the serial
-   * discussion starts. It's a visual marker/separator — no transcript. The
-   * individual agent replies stream in naturally as regular bubbles under it.
-   */
-  private async emitPhase2HeaderConnector(
-    originatorThread: { id: string } | null,
-    group: ParallelGroup,
-    emit: EmitEvent,
-  ): Promise<void> {
-    if (!originatorThread) return
-
-    // Header-only marker: the bubble header (label + participant avatars)
-    // already conveys the info. No body content — the individual agent
-    // replies appear below as normal bubbles in the timeline.
-    const connectorSource: ConnectorSource = {
-      kind: "multi_mention_result",
-      label: "串行讨论",
-      targets: group.participantProviders,
-    }
-    const phase2GroupId = `${group.id}_phase2`
-    const connectorMessage = this.sessions.appendConnectorMessage(
-      originatorThread.id,
-      "",
-      connectorSource,
-      phase2GroupId,
-      "header",
-    )
-    const timelineMessage = this.sessions.toTimelineMessage(
-      originatorThread.id,
-      connectorMessage.id,
-    )
-    if (timelineMessage) {
-      emit({
-        type: "message.created",
-        payload: { threadId: originatorThread.id, sessionGroupId: group.sessionGroupId, message: timelineMessage },
-      })
-    }
-  }
-
-  /**
-   * Post-discussion user-input card. Lets the user pick a synthesizer,
-   * type a follow-up instruction, or both. Routing:
-   *   - option + text    → synthesizer runs with aggregate + user's instruction
-   *   - option only      → synthesizer runs with default synthesis prompt
-   *   - text only        → user's text becomes a new user message in the
-   *                        originator thread; normal @-routing takes over
-   *   - neither          → no-op (status only)
-   */
-  private async selectFanInAndNotify(
-    sessionGroupId: string,
-    group: ParallelGroup,
-    emit: EmitEvent,
-  ): Promise<void> {
-    // Options scoped to this group's participants only — not all providers,
-    // and not 村长 (no self-synthesis option).
-    const options = group.participantProviders.map((p) => ({
-      id: p,
-      label: PROVIDER_ALIASES[p],
-      description: `由 ${PROVIDER_ALIASES[p]} 综合各方观点`,
-      provider: p,
-    }))
-
-    if (!this.decisions) return
-
-    const boardEntries = this.decisionBoard?.getPending(sessionGroupId) ?? []
-    const convergedItems = boardEntries.filter((e) => e.converged)
-    const divergentItems = boardEntries.filter((e) => !e.converged)
-
-    const descParts: string[] = [
-      "讨论已完成。选一个 agent 综合各方观点，或直接输入你的想法/下一步指令（两者可以都填）。",
-    ]
-    if (convergedItems.length > 0) {
-      descParts.push(
-        `\n\n✅ 团队已收敛观点：\n${convergedItems.map((i) => `- ${i.question}`).join("\n")}`,
-      )
-    }
-    if (divergentItems.length > 0) {
-      descParts.push(
-        `\n\n⚠️ 未收敛分歧点（需要你决定）：\n${divergentItems.map((i) => `- ${i.question}`).join("\n")}`,
-      )
-    }
-    const description = descParts.join("")
-
-    const response = await this.decisions.request({
-      kind: "fan_in_selector",
-      title: "下一步",
-      description,
-      options,
-      sessionGroupId,
-      multiSelect: false,
-      allowTextInput: true,
-      textInputPlaceholder:
-        divergentItems.length > 0
-          ? "回应上面的分歧点，或给综合者的指令…"
-          : "想让谁做什么？或留给选定的综合者的额外指令…",
-      timeoutMs: 10 * 60 * 1000,
-    })
-
-    const approvedDecision = response.decisions.find(d => d.verdict === "approved" || d.verdict === "modified")
-    const selectedProvider = (approvedDecision?.optionId) as
-      | import("@multi-agent/shared").Provider
-      | undefined
-    const userInput = response.userInput.trim()
-
-    if (selectedProvider) {
-      group.callbackTo = selectedProvider
-      await this.runSynthesizerTurn(sessionGroupId, group, userInput, emit)
-      return
-    }
-
-    if (userInput) {
-      // No synthesizer picked — user just wants to steer. Route their text
-      // through the normal chat path so @-mentions and panel routing apply.
-      await this.injectUserFollowUp(sessionGroupId, group, userInput, emit)
-      return
-    }
-
-    emit({
-      type: "status",
-      payload: { sessionGroupId, message: "未选择综合者，讨论结果已归档" },
-    })
-  }
-
-  /**
-   * Collect `[拍板]` questions from Phase 1 results + Phase 2 replies, deduped
-   * by question text, minus any `[撤销拍板]` withdrawals. Returns only items
-   * that are still unresolved after the full discussion.
-   */
-  private collectPendingDecisionItems(group: ParallelGroup): string[] {
-    const seen = new Set<string>()
-    const questions: string[] = []
-    const withdrawn = new Set<string>()
-
-    const collectWithdrawals = (content: string) => {
-      for (const w of extractWithdrawals(content)) {
-        withdrawn.add(w)
-      }
-    }
-
-    for (const provider of group.participantProviders) {
-      const reply = group.completedResults.get(provider)
-      if (reply) collectWithdrawals(reply.content)
-    }
-    for (const reply of group.phase2Replies) {
-      collectWithdrawals(reply.content)
-    }
-
-    const push = (candidates: DecisionItemParsed[]) => {
-      for (const c of candidates) {
-        if (seen.has(c.question)) continue
-        const isWithdrawn = [...withdrawn].some((w) => c.question.includes(w))
-        if (isWithdrawn) continue
-        seen.add(c.question)
-        questions.push(c.question)
-      }
-    }
-
-    for (const provider of group.participantProviders) {
-      const reply = group.completedResults.get(provider)
-      if (reply) push(extractDecisionItems(reply.content))
-    }
-    for (const reply of group.phase2Replies) {
-      push(extractDecisionItems(reply.content))
-    }
-    return questions
-  }
-
-  /**
-   * Run the chosen synthesizer with a MINIMAL prompt. The synthesizer is one
-   * of the parallel participants — its CLI native session already contains
-   * Phase 1 + all Phase 2 prompts/replies, so we don't re-dump the aggregate.
-   */
-  private async runSynthesizerTurn(
-    sessionGroupId: string,
-    group: ParallelGroup,
-    userInstruction: string,
-    emit: EmitEvent,
-  ): Promise<void> {
-    if (!group.callbackTo) return
-
-    const callbackThread = this.sessions.findThreadByGroupAndProvider(
-      sessionGroupId,
-      group.callbackTo,
-    )
-    if (!callbackThread) return
-
-    const prompt = userInstruction
-      ? `${userInstruction}\n\n（请基于刚才并行+串行讨论的上下文回答；你已经看到过所有人的观点）`
-      : "请综合刚才并行+串行讨论的各方观点，整理共识、分歧和行动项。你已经看到过所有人的观点。"
-    const rootMessage = this.sessions.appendUserMessage(callbackThread.id, prompt)
-
-    await this.runThreadTurn({
-      threadId: callbackThread.id,
-      content: prompt,
-      emit,
-      rootMessageId: rootMessage.id,
-      suppressOutboundDispatch: true,
-    })
-  }
-
-  /**
-   * User typed free text without picking a synthesizer. Post it as a user
-   * message in the originator thread and let normal @-routing handle it.
-   */
-  private async injectUserFollowUp(
-    sessionGroupId: string,
-    group: ParallelGroup,
-    userInput: string,
-    emit: EmitEvent,
-  ): Promise<void> {
-    const originatorThread = this.sessions.findThreadByGroupAndProvider(
-      sessionGroupId,
-      group.originatorProvider,
-    )
-    if (!originatorThread) return
-
-    await this.handleSendMessage(
-      {
-        type: "send_message",
-        payload: {
-          threadId: originatorThread.id,
-          provider: originatorThread.provider,
-          content: userInput,
-          alias: originatorThread.alias,
-        },
-      },
-      emit,
-    )
-  }
-
-  private notifyCallbackAgent(
-    sessionGroupId: string,
-    group: ParallelGroup,
-    aggregate: string,
-    emit: EmitEvent,
-  ): void {
-    if (!group.callbackTo) return
-
-    const callbackThread = this.sessions.findThreadByGroupAndProvider(
-      sessionGroupId,
-      group.callbackTo,
-    )
-    if (!callbackThread) return
-
-    const prompt = `${aggregate}\n请综合以上各方观点，整理共识、分歧和行动项。`
-    const rootMessage = this.sessions.appendUserMessage(callbackThread.id, prompt)
-
-    this.runThreadTurn({
-      threadId: callbackThread.id,
-      content: prompt,
-      emit,
-      rootMessageId: rootMessage.id,
-      suppressOutboundDispatch: true,
-    })
-  }
 
   private advanceSopIfNeeded(input: {
     sessionGroupId: string
@@ -2515,6 +2626,8 @@ export class MessageService {
     assistantMessageId: string
     rootMessageId: string
     parentInvocationId: string
+    /** F026 R-204 follow-up · 透传 final flow 父 callId,SOP 合成派发用作 parent_call_id。 */
+    dispatchedCallId?: string | null
     emit: EmitEvent
   }): void {
     if (!this.skillRegistry || !this.sopTracker) return
@@ -2535,7 +2648,10 @@ export class MessageService {
         this.sopTracker.setStage(input.sessionGroupId, `completed:${skill.name}`)
         input.emit({
           type: "status",
-          payload: { sessionGroupId: input.sessionGroupId, message: `SOP 完成 ${skill.name}，等待新任务。` },
+          payload: {
+            sessionGroupId: input.sessionGroupId,
+            message: `SOP 完成 ${skill.name}，等待新任务。`,
+          },
         })
         break
       }
@@ -2544,7 +2660,10 @@ export class MessageService {
         this.sopTracker.setStage(input.sessionGroupId, `completed:${skill.name}`)
         input.emit({
           type: "status",
-          payload: { sessionGroupId: input.sessionGroupId, message: `SOP 链完成（${skill.name}），等待新任务。` },
+          payload: {
+            sessionGroupId: input.sessionGroupId,
+            message: `SOP 链完成（${skill.name}），等待新任务。`,
+          },
         })
         break
       }
@@ -2555,7 +2674,10 @@ export class MessageService {
         : ""
       input.emit({
         type: "status",
-        payload: { sessionGroupId: input.sessionGroupId, message: `SOP 推进到 ${advancement.nextStage}。${skillSuggestion}` },
+        payload: {
+          sessionGroupId: input.sessionGroupId,
+          message: `SOP 推进到 ${advancement.nextStage}。${skillSuggestion}`,
+        },
       })
 
       // F003/P4-3: if the skill declared a next_dispatch and the LLM's reply
@@ -2592,6 +2714,9 @@ export class MessageService {
             content: plan.syntheticContent,
             matchMode: "line-start",
             parentInvocationId: input.parentInvocationId,
+            // F026 R-204 follow-up · SOP 合成派发同 final flow 时序,直传 dispatchedCallId
+            // 让 child a2a_calls.parent_call_id 接通 call tree。
+            parentCallId: input.dispatchedCallId ?? null,
             buildSnapshot: () =>
               this.captureSnapshot(input.sessionGroupId, input.assistantMessageId),
             extractSnippet: (c, alias) => extractTaskSnippet(c, alias),

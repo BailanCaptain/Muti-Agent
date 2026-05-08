@@ -1,22 +1,30 @@
-import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import { describe, it } from "node:test"
 import { buildTitlePromptFromRecentMessages } from "./build-title-prompt"
 
 type Msg = { createdAt: string; role: string; content: string; messageType: string }
 
 function makeRepo(messages: Msg[]) {
   return {
-    listThreadsByGroup: (_id: string) => [
-      { id: "t1", provider: "claude", alias: "claude" },
-    ],
+    listThreadsByGroup: (_id: string) => [{ id: "t1", provider: "claude", alias: "claude" }],
     listMessages: (_threadId: string) => messages,
   } as unknown as Parameters<typeof buildTitlePromptFromRecentMessages>[1]
 }
 
 describe("buildTitlePromptFromRecentMessages (AC-14d/14e prefix classification)", () => {
   const repo = makeRepo([
-    { createdAt: "2026-04-20T00:00:00Z", role: "user", content: "帮我写个登录页", messageType: "final" },
-    { createdAt: "2026-04-20T00:00:01Z", role: "assistant", content: "好的，先做 form", messageType: "final" },
+    {
+      createdAt: "2026-04-20T00:00:00Z",
+      role: "user",
+      content: "帮我写个登录页",
+      messageType: "final",
+    },
+    {
+      createdAt: "2026-04-20T00:00:01Z",
+      role: "assistant",
+      content: "好的，先做 form",
+      messageType: "final",
+    },
   ])
 
   it("includes classification labels F/B/D/Q", () => {

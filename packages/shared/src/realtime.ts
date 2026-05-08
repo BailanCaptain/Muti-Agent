@@ -45,7 +45,7 @@ export type InlineConfirmation = {
 export type PendingConfirmationItem = {
   id: string
   raisedBy: Provider
-  raisedInPhase: "phase1" | "phase2" | "normal"
+  raisedInPhase: "normal"
   question: string
   options?: string[]
   status: "pending" | "resolved" | "deferred"
@@ -81,7 +81,7 @@ export type TimelineMessage = {
   role: "user" | "assistant"
   content: string
   thinking?: string
-  messageType: "progress" | "final" | "a2a_handoff" | "connector" | "system_notice"
+  messageType: "progress" | "final" | "a2a_handoff" | "a2a_handoff_mcp" | "connector" | "system_notice"
   connectorSource?: ConnectorSource
   /** Inline confirmation cards embedded in this message bubble */
   inlineConfirmations?: InlineConfirmation[]
@@ -94,6 +94,22 @@ export type TimelineMessage = {
   outputTokens?: number
   cachedPercent?: number
   model: string | null
+  /** F026 P3.1: 派发协议 retry 次数（assistant final 入库前 hook 的 retry 计数） */
+  retryCount?: number
+  /** F026 P3.1: retry reason JSON 数组的解析结果（按尝试顺序） */
+  retryReasons?: DispatchValidationRetryReason[]
+  /** F026 P5 T0 · 关联到 a2a_calls 的 call_id（仅 a2a 派发产生的 connector message 写入） */
+  a2aCallId?: string | null
+  /** F026 P5 T0 · LEFT JOIN a2a_calls 取协议字段（用于 F2 溯源胶囊 / F3 超时墓碑 / F4 折叠群组等） */
+  a2aParentCallId?: string | null
+  a2aRootCallId?: string | null
+  a2aOnBehalfOf?: string | null
+  a2aConvenerId?: string | null
+  /** a2a_calls.status: pending / working / done / failed / timeout / cancelled */
+  a2aCallStatus?: string | null
+  a2aDeadlineAt?: string | null
+  /** F026 P5 T0 · derived from a2aParentCallId（envelope-builder.ts:30 同款 derive） */
+  a2aDisplayMode?: "inline" | "nested" | "background"
   createdAt: string
 }
 
@@ -304,6 +320,13 @@ export type RealtimeClientEvent =
         userInput?: string
       }
     }
+  | {
+      // F026 P0 Day2 · client 告知 server 当前房间订阅，server 侧 broadcast 按 sessionGroupId 强过滤
+      type: "subscribe"
+      payload: {
+        sessionGroupId: string
+      }
+    }
 
 export type RealtimeServerEvent =
   | {
@@ -450,6 +473,154 @@ export type RealtimeServerEvent =
         deletedAt: string | null
       }
     }
+  | {
+      // F026 P3.1: 派发协议 retry 兜底实时进度卡。
+      // assistant final 写入前 detectInvalidDispatch 命中 → 拒收 + agent retry。
+      // status="retrying" 表示正在重写，"settled" 表示 retry 后合规已入库（清进度卡），
+      // "exhausted" 表示 MAX_DISPATCH_RETRIES 耗尽即将兜底入库（banner 接管）。
+      // 前端订阅渲染：「🔄 黄仁勋 派发格式不合契约，正在重写...（第 N 次 / 最多 3 次）」
+      type: "dispatch.validation_retry"
+      payload: DispatchValidationRetryPayload
+    }
+  | {
+      // F026 P5 T2: mention-router Layer 3 灰区可观测事件（spec I1' / line 74 / 269 / 390）。
+      // a2a-gateway user 路径上 classifyMention 判定 gray-zone（fail-closed 不派）时广播。
+      // /debug/a2a 视图（F10）订阅本事件做"为什么没派给 X"溯源；agent_events 表持久化挪 T4
+      // （schema 加 nullable invocation_id 后写入），本事件 T2 仅 WS 广播。
+      type: "mention.gray_zone"
+      payload: MentionGrayZonePayload
+    }
+  | {
+      // F026 P5 T4: CallRegistry mutation (openCall / advance / settle) 后广播。
+      // payload 携带 rootCallId 下未结算 sibling pendingSet。前端 F1 @pill 状态机
+      // / F6 状态 Pulse / F10 /debug/a2a 视图据此实时刷新派发状态可视化。
+      type: "pending.change"
+      payload: PendingChangePayload
+    }
+
+/**
+ * F026 P3.1: 派发协议 retry 事件 payload。
+ *
+ * 与 agent_events 表 row.payload (JSON.stringify 后) 同结构 + 与 WS broadcast event 同结构，
+ * 让 frontend 既能从 WS 实时订阅，也能从历史 agent_events 拉取相同形态。
+ */
+export type DispatchValidationRetryReason = "nested_call_tag" | "naked_at_with_real_teammate"
+
+/**
+ * F026 P3.1 · retry 进度卡生命周期：
+ *   - retrying : 已发现不合规，正在让 LLM 重写（前端进度卡可见）
+ *   - settled  : 重写后合规，final 已入库（前端清进度卡）
+ *   - exhausted: MAX_DISPATCH_RETRIES 耗尽，已兜底入库（前端清进度卡，banner 红条接管）
+ *
+ * AC-21 (2026-04-29): retrying 之后必须有 settled / exhausted 收尾事件，否则进度卡卡死。
+ */
+export type DispatchValidationRetryStatus = "retrying" | "settled" | "exhausted"
+
+export type DispatchValidationRetryPayload = {
+  sessionGroupId: string
+  threadId: string
+  invocationId: string
+  agentId: string
+  /** assistant 占位 message id（前端用以把进度卡贴在该气泡上方） */
+  messageId: string
+  /** 1-indexed: 第 N 次重试 */
+  attemptIndex: number
+  /** MAX_DISPATCH_RETRIES (default 3) */
+  maxAttempts: number
+  reason: DispatchValidationRetryReason
+  /** 拒收的 final 文本片段（首 200 字，足以让用户判断 LLM 写错了什么） */
+  originalText: string
+  status: DispatchValidationRetryStatus
+  /** ISO timestamp */
+  occurredAt: string
+  /**
+   * F026 P3.1 review#2 fix · status="exhausted" 专用：兜底入库的完整 final 内容。
+   * retrying 触发前端 resetAssistantStream 把气泡 content 清空，等待 retry delta；
+   * 但 exhausted 后没有新 delta，必须让前端用这份内容把气泡填回去，否则刷新前一直空白。
+   * retrying / settled 不带（settled 走 message.created → reconcileOptimisticMessage 回填）。
+   */
+  finalContent?: string
+  /**
+   * F026 P4 follow-up · retry-badge-realtime fix:
+   * settled / exhausted 终态时携带 retry 终值。前端 thread store 直接同步到对应 message
+   * 的 retryCount/retryReasons，让"重写 N 次" badge / 红 banner 不再依赖刷新页面走
+   * thread_snapshot 才能渲染。retrying 阶段不携带（attemptIndex 已表达进度）。
+   */
+  retryCount?: number
+  retryReasons?: DispatchValidationRetryReason[]
+}
+
+/**
+ * F026 P5 T4: CallRegistry pending_change 事件 payload。
+ *
+ * 每次 mutation (openCall / advance / settle) 后由 CallRegistry.emitPendingChange 计算并发出。
+ * pendingSet = 当前 rootCallId 下未结算的 sibling alias[]（不含 root 自身）。
+ * 前端订阅：
+ *   - F1 @pill 状态机六态（sending → ack → working → done | timeout | error）
+ *   - F6 状态 Pulse「👂 正在听取 @X @Y」
+ *   - F10 /debug/a2a 视图实时刷新树状态色
+ *
+ * F026 review#4 fix（A'）· settled 终态增量：
+ *   pendingSet 只装 pending/working，settle/timeout 后 entry 直接消失。前端 AtPill
+ *   命不中 pendingByRoot 时 fallback 到 message envelope snapshot，但 envelope 不重发，
+ *   snapshot 仍是 pending → AtPill 卡在 ack/working 不进 done/timeout/error。
+ *   修复方案：emitPendingChange 在 row 已 terminal 时附带 settled = [{callId, alias, status}]。
+ *   timeoutScan 同步改为 SELECT-then-UPDATE 后逐个 emit（之前完全不 emit）。
+ *   前端 thread-store 据此维护 settledByRoot terminal cache，AtPill 反查链路：
+ *     pendingByRoot 命中 → settledByRoot 命中 → snapshot fallback。
+ */
+export type PendingChangePayload = {
+  sessionGroupId: string
+  rootCallId: string
+  /** = rootCallId 当 mutation 发生在 root 自身；否则 = parent 链上一层 callId */
+  parentCallId: string
+  pendingSet: Array<{
+    callId: string
+    /** issuer alias（"黄仁勋" / "桂芬" / "范德彪" / "user:小孙" 等） */
+    alias: string
+    status: "pending" | "working"
+  }>
+  /**
+   * F026 review#4 fix · 当前 emit 触发的 mutation 把哪些 call settle 到了 terminal 状态。
+   * settle 路径：含被 settle 的 callId（单元素）。
+   * timeoutScan 路径：每个被超时的 call 各 emit 一次（settled 单元素，per-call emit）。
+   * openCall / advance / CAS noop：缺省（不在 terminal）。
+   */
+  settled?: Array<{
+    callId: string
+    alias: string
+    status: "done" | "failed" | "timeout" | "cancelled"
+  }>
+  /** ISO timestamp */
+  occurredAt: string
+}
+
+/**
+ * F026 P5 T2: mention-router Layer 3 灰区命中事件 payload。
+ *
+ * spec I1' / line 74 / 269 / 390：a2a-gateway 在 user 路径 classifyMention 判定为
+ * gray-zone（fail-closed 不派 + 日志）时 emit。前端 /debug/a2a 视图（F10）订阅本事件
+ * 做"为什么没派给 X"溯源；agent_events 表持久化挪 T4（schema 改 nullable invocation_id
+ * 后写入）。decision 字段固定 "skip"——P5 决策日志：删 5 条规则集风险大，只补观测。
+ */
+export type MentionGrayZonePayload = {
+  sessionGroupId: string
+  threadId?: string
+  /** randomUUID — 给 /debug/a2a 视图做唯一定位（不与 a2a_calls.call_id 关联） */
+  traceId: string
+  /** issuer / source agent alias 或 user id */
+  source: string
+  sourceMessageId: string
+  /** classifyMention 命中的 gray target alias（如 "桂芬"） */
+  target: string
+  /** target provider id（"claude" / "codex" / "gemini"），用于前端 ProviderAvatar */
+  targetProvider: string
+  /** 静默拒派原文片段（首 200 字） */
+  contentSample: string
+  decision: "skip"
+  /** ISO timestamp */
+  occurredAt: string
+}
 
 /**
  * F002: A single question held by the Decision Board, sent to the frontend

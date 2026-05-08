@@ -1,5 +1,13 @@
 # Collaborative-Thinking 结构化修复计划
 
+> **⚠️ OBSOLETED · 2026-05-06**
+> 整文件被 **F026 P2 Clean-Cut**（`docs/plans/F026-P2-clean-cut-plan.md`）取代。
+> 本计划基于 ParallelGroup / parallel_think / phase1-header / phase2-header /
+> DiscussionCoordinator 五件套结构化讨论模型设计；P2 Clean-Cut 已整套删除
+> 这五件套（Step 3-5 / commits `bc99441` `040e3c1`），collaborative-thinking
+> Mode B 改由「村长分别 @ 各 agent + prompt 引导独立思考」实现。
+> 本文档仅作历史参考，不再执行。
+
 **状态**: 待实现
 **日期**: 2026-04-05
 **负责**: 黄仁勋（Claude）

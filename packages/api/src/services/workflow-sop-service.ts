@@ -15,9 +15,9 @@
 
 import type { DrizzleWorkflowSopRepository } from "../db/repositories/workflow-sop-repository"
 import {
-  SOP_STAGES,
   type CheckStatus,
   type ResumeCapsule,
+  SOP_STAGES,
   type SopChecks,
   type SopStage,
   type UpdateSopInput,
@@ -68,9 +68,7 @@ export function validateUpdateSopBody(raw: unknown): UpdateSopInput {
   }
   const backlogItemId = rawBacklog.trim()
   if (!backlogItemId) {
-    throw new WorkflowSopValidationError(
-      "backlogItemId must be a non-empty, non-whitespace string",
-    )
+    throw new WorkflowSopValidationError("backlogItemId must be a non-empty, non-whitespace string")
   }
 
   // featureId: optional, trim, non-empty if present

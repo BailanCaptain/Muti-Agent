@@ -13,13 +13,7 @@
  * Canonical feature lifecycle phases. Matches clowder-ai F073 P4.
  * Kept as a string union — DB stores TEXT; services validate.
  */
-export type SopStage =
-  | "kickoff"
-  | "impl"
-  | "quality_gate"
-  | "review"
-  | "merge"
-  | "completion"
+export type SopStage = "kickoff" | "impl" | "quality_gate" | "review" | "merge" | "completion"
 
 export const SOP_STAGES: readonly SopStage[] = [
   "kickoff",

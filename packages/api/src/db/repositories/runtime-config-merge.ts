@@ -4,10 +4,7 @@ export function mergeRuntimeConfigFieldwise(
   active: Record<string, unknown>,
   pending: Record<string, unknown>,
 ): Record<string, unknown> {
-  const providers = new Set<string>([
-    ...Object.keys(active ?? {}),
-    ...Object.keys(pending ?? {}),
-  ])
+  const providers = new Set<string>([...Object.keys(active ?? {}), ...Object.keys(pending ?? {})])
   const merged: Record<string, unknown> = {}
   for (const provider of providers) {
     const activeEntry = isPlainObject(active?.[provider]) ? active[provider] : {}

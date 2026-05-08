@@ -1,43 +1,50 @@
-import { basename } from "node:path";
-import type { ToolEvent } from "@multi-agent/shared";
-import { BaseCliRuntime, resolveNodeScript, wrapPromptWithInstructions, type AgentRunInput, type RuntimeCommand, type StopReason } from "./base-runtime";
-import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts";
-import { readGeminiThoughtsFromSession, formatGeminiThoughts } from "./gemini-session-reader";
+import { basename } from "node:path"
+import type { ToolEvent } from "@multi-agent/shared"
+import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts"
+import {
+  type AgentRunInput,
+  BaseCliRuntime,
+  type RuntimeCommand,
+  type StopReason,
+  resolveNodeScript,
+  wrapPromptWithInstructions,
+} from "./base-runtime"
+import { formatGeminiThoughts, readGeminiThoughtsFromSession } from "./gemini-session-reader"
 
 function formatGeminiParams(toolName: string, params: Record<string, unknown>): string {
   try {
     if ("command" in params) {
-      return `$ ${String(params.command).split("\n")[0].slice(0, 80)}`;
+      return `$ ${String(params.command).split("\n")[0].slice(0, 80)}`
     }
 
     if ("file_path" in params) {
-      const fp = String(params.file_path);
-      return fp.split(/[/\\]/).slice(-2).join("/");
+      const fp = String(params.file_path)
+      return fp.split(/[/\\]/).slice(-2).join("/")
     }
 
     if ("path" in params) {
-      const p = String(params.path);
-      return p.split(/[/\\]/).slice(-2).join("/");
+      const p = String(params.path)
+      return p.split(/[/\\]/).slice(-2).join("/")
     }
 
     if ("pattern" in params) {
-      return String(params.pattern).slice(0, 40);
+      return String(params.pattern).slice(0, 40)
     }
 
     if ("query" in params) {
-      return String(params.query).slice(0, 60);
+      return String(params.query).slice(0, 60)
     }
 
     // Default: first string value
     for (const value of Object.values(params)) {
       if (typeof value === "string") {
-        return value.slice(0, 60);
+        return value.slice(0, 60)
       }
     }
 
-    return "";
+    return ""
   } catch {
-    return "";
+    return ""
   }
 }
 
@@ -53,13 +60,13 @@ function formatGeminiParams(toolName: string, params: Record<string, unknown>): 
 // GeminiRuntime 因此不覆写 classifyStderrChunk —— 继承 base 的 return null。
 
 export class GeminiRuntime extends BaseCliRuntime {
-  readonly agentId = "gemini";
-  private lastToolSource: "tool" | "mcp" | "skill" = "tool";
-  private readonly sessionDeps: { home?: string; projectDir?: string };
+  readonly agentId = "gemini"
+  private lastToolSource: "tool" | "mcp" | "skill" = "tool"
+  private readonly sessionDeps: { home?: string; projectDir?: string }
 
   constructor(sessionDeps: { home?: string; projectDir?: string } = {}) {
-    super();
-    this.sessionDeps = sessionDeps;
+    super()
+    this.sessionDeps = sessionDeps
   }
 
   /**
@@ -69,42 +76,39 @@ export class GeminiRuntime extends BaseCliRuntime {
    * 把 thoughts 拼成 markdown 作为一条 activity line 推出去，复用 Claude/Codex
    * 既有的 thinking 管道（onToolActivity → assistant_thinking_delta）。
    */
-  async afterRun(
-    ctx: { sessionId: string | null },
-    emit: (line: string) => void,
-  ): Promise<void> {
-    if (!ctx.sessionId) return;
-    const projectDir =
-      this.sessionDeps.projectDir ?? basename(process.cwd()).toLowerCase();
+  async afterRun(ctx: { sessionId: string | null }, emit: (line: string) => void): Promise<void> {
+    if (!ctx.sessionId) return
+    const projectDir = this.sessionDeps.projectDir ?? basename(process.cwd()).toLowerCase()
     const thoughts = await readGeminiThoughtsFromSession(ctx.sessionId, {
       home: this.sessionDeps.home,
       projectDir,
-    });
-    if (thoughts.length === 0) return;
-    const text = formatGeminiThoughts(thoughts);
-    if (text) emit(text);
+    })
+    if (thoughts.length === 0) return
+    const text = formatGeminiThoughts(thoughts)
+    if (text) emit(text)
   }
 
   protected buildCommand(input: AgentRunInput): RuntimeCommand {
     const runtime = resolveNodeScript(
       "@google/gemini-cli",
-      [["dist", "index.js"], ["bundle", "gemini.js"]],
+      [
+        ["dist", "index.js"],
+        ["bundle", "gemini.js"],
+      ],
       "gemini",
-    );
-    const sessionId = input.env?.MULTI_AGENT_NATIVE_SESSION_ID;
+    )
+    const sessionId = input.env?.MULTI_AGENT_NATIVE_SESSION_ID
     // 会话已恢复时模型已有指令，不重复附加，减少每轮 ~500 token 的额外开销。
-    const systemPrompt = input.env?.MULTI_AGENT_SYSTEM_PROMPT || AGENT_SYSTEM_PROMPTS.gemini;
-    const prompt = sessionId
-      ? input.prompt
-      : wrapPromptWithInstructions(systemPrompt, input.prompt);
-    const args = ["--output-format", "stream-json", "--approval-mode", "yolo"];
-    const model = input.env?.MULTI_AGENT_MODEL;
+    const systemPrompt = input.env?.MULTI_AGENT_SYSTEM_PROMPT || AGENT_SYSTEM_PROMPTS.gemini
+    const prompt = sessionId ? input.prompt : wrapPromptWithInstructions(systemPrompt, input.prompt)
+    const args = ["--output-format", "stream-json", "--approval-mode", "yolo"]
+    const model = input.env?.MULTI_AGENT_MODEL
 
     if (model) {
-      args.push("--model", model);
+      args.push("--model", model)
     }
     if (sessionId) {
-      args.push("--resume", sessionId);
+      args.push("--resume", sessionId)
     }
 
     return {
@@ -112,54 +116,58 @@ export class GeminiRuntime extends BaseCliRuntime {
       args: [...runtime.prefixArgs, ...args],
       shell: runtime.shell,
       stdinContent: prompt,
-    };
+    }
   }
 
   private extractErrorMessage(rawError: unknown): string | null {
-    if (typeof rawError === "string") return rawError.trim() || null;
+    if (typeof rawError === "string") return rawError.trim() || null
     if (typeof rawError === "object" && rawError !== null) {
-      const msg = (rawError as Record<string, unknown>).message;
-      return typeof msg === "string" ? msg.trim() || null : null;
+      const msg = (rawError as Record<string, unknown>).message
+      return typeof msg === "string" ? msg.trim() || null : null
     }
-    return null;
+    return null
   }
 
   private isCandidatesCrash(errMsg: string | null): boolean {
-    return !!errMsg?.includes("Cannot read properties of undefined (reading 'candidates')");
+    return !!errMsg?.includes("Cannot read properties of undefined (reading 'candidates')")
   }
 
   parseActivityLine(event: Record<string, unknown>): string | null {
     try {
       if (event.type === "result" && event.status !== "success") {
-        const errMsg = this.extractErrorMessage(event.error);
-        if (this.isCandidatesCrash(errMsg)) return null;
-        if (errMsg) return `[error] ${errMsg}`;
+        const errMsg = this.extractErrorMessage(event.error)
+        if (this.isCandidatesCrash(errMsg)) return null
+        if (errMsg) return `[error] ${errMsg}`
       }
       // Gemini CLI stdout stream 从不输出 thought 事件——thinking 内容通过
       // afterRun() 从本地 session 文件回读。stream 侧只保留 error 提取。
-      return null;
+      return null
     } catch {
-      return null;
+      return null
     }
   }
 
   private isSkillRelatedParams(params: Record<string, unknown>): boolean {
-    const fp = String(params.file_path ?? params.path ?? "");
-    const cmd = String(params.command ?? "");
-    return /multi-agent-skills[\/\\]/i.test(fp) || /multi-agent-skills[\/\\]/i.test(cmd);
+    const fp = String(params.file_path ?? params.path ?? "")
+    const cmd = String(params.command ?? "")
+    return /multi-agent-skills[\/\\]/i.test(fp) || /multi-agent-skills[\/\\]/i.test(cmd)
   }
 
   transformToolEvent(event: Record<string, unknown>): ToolEvent | null {
     try {
       if (event.type === "tool_use") {
-        const toolName = String(event.tool_name ?? "");
-        const params = (event.parameters ?? {}) as Record<string, unknown>;
-        const source = toolName.startsWith("mcp__") || toolName.startsWith("mcp:")
-          ? "mcp" as const
-          : (toolName === "Skill" || toolName === "Agent" || toolName === "activate_skill" || this.isSkillRelatedParams(params))
-            ? "skill" as const
-            : "tool" as const;
-        this.lastToolSource = source;
+        const toolName = String(event.tool_name ?? "")
+        const params = (event.parameters ?? {}) as Record<string, unknown>
+        const source =
+          toolName.startsWith("mcp__") || toolName.startsWith("mcp:")
+            ? ("mcp" as const)
+            : toolName === "Skill" ||
+                toolName === "Agent" ||
+                toolName === "activate_skill" ||
+                this.isSkillRelatedParams(params)
+              ? ("skill" as const)
+              : ("tool" as const)
+        this.lastToolSource = source
         return {
           type: "tool_use",
           toolName,
@@ -167,12 +175,12 @@ export class GeminiRuntime extends BaseCliRuntime {
           status: "started",
           timestamp: new Date().toISOString(),
           source,
-        };
+        }
       }
 
       if (event.type === "tool_result") {
-        const status = event.status as string | undefined;
-        const output = event.output as string | undefined;
+        const status = event.status as string | undefined
+        const output = event.output as string | undefined
         return {
           type: "tool_result",
           toolName: "",
@@ -180,65 +188,65 @@ export class GeminiRuntime extends BaseCliRuntime {
           status: status === "error" ? "error" : "completed",
           timestamp: new Date().toISOString(),
           source: this.lastToolSource,
-        };
+        }
       }
 
-      return null;
+      return null
     } catch {
-      return null;
+      return null
     }
   }
 
-  parseUsage(event: Record<string, unknown>): { totalTokens: number; contextWindow: number | null } | null {
+  parseUsage(
+    event: Record<string, unknown>,
+  ): { totalTokens: number; contextWindow: number | null } | null {
     // Gemini CLI emits a final `{ type: "result", status: "success", stats: {...} }` event
     // at turn close. `stats.total_tokens` is the cumulative usage; `stats.context_window`
     // (when present) is the model's window — use it verbatim because it reflects the
     // exact model variant the CLI routed to, not our guess.
     if (event.type !== "result" || event.status !== "success") {
-      return null;
+      return null
     }
-    const stats = event.stats as Record<string, unknown> | undefined;
+    const stats = event.stats as Record<string, unknown> | undefined
     if (!stats) {
-      return null;
+      return null
     }
-    const total = typeof stats.total_tokens === "number" ? stats.total_tokens : null;
+    const total = typeof stats.total_tokens === "number" ? stats.total_tokens : null
     if (total == null || total <= 0) {
-      return null;
+      return null
     }
     const windowRaw =
       (typeof stats.context_window === "number" ? stats.context_window : undefined) ??
-      (typeof stats.contextWindow === "number" ? stats.contextWindow : undefined);
-    const contextWindow = typeof windowRaw === "number" && windowRaw > 0 ? windowRaw : null;
-    return { totalTokens: total, contextWindow };
+      (typeof stats.contextWindow === "number" ? stats.contextWindow : undefined)
+    const contextWindow = typeof windowRaw === "number" && windowRaw > 0 ? windowRaw : null
+    return { totalTokens: total, contextWindow }
   }
 
   parseStopReason(event: Record<string, unknown>): StopReason | null {
-    if (event.type !== "result") return null;
+    if (event.type !== "result") return null
 
     if (typeof event.status === "string" && event.status !== "success") {
-      const errMsg = this.extractErrorMessage(event.error);
-      if (this.isCandidatesCrash(errMsg)) return "complete";
-      return "aborted";
+      const errMsg = this.extractErrorMessage(event.error)
+      if (this.isCandidatesCrash(errMsg)) return "complete"
+      return "aborted"
     }
 
-    const topLevel =
-      typeof event.finishReason === "string" ? (event.finishReason as string) : null;
-    const stats = event.stats as Record<string, unknown> | undefined;
-    const nested =
-      typeof stats?.finishReason === "string" ? (stats.finishReason as string) : null;
-    const raw = topLevel ?? nested;
-    if (!raw) return null;
+    const topLevel = typeof event.finishReason === "string" ? (event.finishReason as string) : null
+    const stats = event.stats as Record<string, unknown> | undefined
+    const nested = typeof stats?.finishReason === "string" ? (stats.finishReason as string) : null
+    const raw = topLevel ?? nested
+    if (!raw) return null
     switch (raw.toUpperCase()) {
       case "STOP":
       case "END_TURN":
-        return "complete";
+        return "complete"
       case "MAX_TOKENS":
-        return "truncated";
+        return "truncated"
       case "SAFETY":
       case "RECITATION":
-        return "refused";
+        return "refused"
       default:
-        return null;
+        return null
     }
   }
 
@@ -248,40 +256,42 @@ export class GeminiRuntime extends BaseCliRuntime {
     // 回读（拼成 **Subject**/Description 格式），**不能**让 stdout 上的 thought
     // 事件泄漏到 assistant content 正文。删除此防线会导致思考文本混入正文。
     if (event.thought) {
-      return "";
+      return ""
     }
 
     if (typeof event.delta === "string") {
-      return event.delta;
+      return event.delta
     }
 
     if (event.type === "content" && typeof event.value === "string") {
-      return event.value;
-    }
-
-    if (event.type === "message" && event.role === "assistant" && typeof event.content === "string") {
-      return event.content;
+      return event.value
     }
 
     if (
       event.type === "message" &&
-      typeof event.content === "object" &&
-      event.content
+      event.role === "assistant" &&
+      typeof event.content === "string"
     ) {
-      const contentObj = event.content as { text?: string; parts?: Array<{ text?: string }> };
+      return event.content
+    }
+
+    if (event.type === "message" && typeof event.content === "object" && event.content) {
+      const contentObj = event.content as { text?: string; parts?: Array<{ text?: string }> }
       if (Array.isArray(contentObj.parts)) {
-        return contentObj.parts.map(p => (typeof p.text === "string" ? p.text : "")).join("");
+        return contentObj.parts.map((p) => (typeof p.text === "string" ? p.text : "")).join("")
       }
       if (typeof contentObj.text === "string") {
-        return contentObj.text;
+        return contentObj.text
       }
     }
 
     if (Array.isArray(event.candidates)) {
-      const candidates = event.candidates as Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-      const first = candidates[0];
+      const candidates = event.candidates as Array<{
+        content?: { parts?: Array<{ text?: string }> }
+      }>
+      const first = candidates[0]
       if (first?.content?.parts) {
-        return first.content.parts.map(p => (typeof p.text === "string" ? p.text : "")).join("");
+        return first.content.parts.map((p) => (typeof p.text === "string" ? p.text : "")).join("")
       }
     }
 
@@ -291,11 +301,11 @@ export class GeminiRuntime extends BaseCliRuntime {
       event.delta &&
       typeof (event.delta as { text?: string }).text === "string"
     ) {
-      return (event.delta as { text: string }).text;
+      return (event.delta as { text: string }).text
     }
 
-    return "";
+    return ""
   }
 }
 
-export const geminiRuntime = new GeminiRuntime();
+export const geminiRuntime = new GeminiRuntime()

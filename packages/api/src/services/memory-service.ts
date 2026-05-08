@@ -165,7 +165,9 @@ ${conversationText}`
       })
 
       let stdout = ""
-      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString() })
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString()
+      })
       child.on("close", (code) => {
         const text = stdout.trim()
         if (code === 0 && text) resolve(text)
@@ -173,7 +175,10 @@ ${conversationText}`
       })
       child.on("error", () => resolve(extractive))
 
-      const timer = setTimeout(() => { child.kill(); resolve(extractive) }, 30_000)
+      const timer = setTimeout(() => {
+        child.kill()
+        resolve(extractive)
+      }, 30_000)
       child.on("close", () => clearTimeout(timer))
     })
   }
@@ -203,7 +208,11 @@ function buildExtractiveSummary(
   // Extract [分歧点] / [拍板] items (both accepted for backward compat)
   const divergenceItems: string[] = []
   for (const msg of allMessages) {
-    if (msg.content.includes("[分歧点]") || msg.content.includes("[拍板]") || msg.content.includes("【拍板】")) {
+    if (
+      msg.content.includes("[分歧点]") ||
+      msg.content.includes("[拍板]") ||
+      msg.content.includes("【拍板】")
+    ) {
       const speaker = msg.role === "user" ? "用户" : msg.alias
       divergenceItems.push(`[${speaker}]: ${msg.content.slice(0, 300)}`)
     }

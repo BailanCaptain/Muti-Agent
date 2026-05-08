@@ -1,5 +1,5 @@
-import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import { describe, it } from "node:test"
 import { createDrizzleDb } from "../db/drizzle-instance"
 import { AuthorizationRuleRepository } from "../db/repositories"
 import { ApprovalManager } from "./approval-manager"
@@ -8,14 +8,18 @@ import { AuthorizationRuleStore } from "./authorization-rule-store"
 describe("ApprovalManager", () => {
   function createManager(timeoutMs = 500) {
     const emitted: Array<{ type: string; payload: unknown }> = []
-    const emit = (event: { type: string; payload: unknown }) => { emitted.push(event) }
+    const emit = (event: { type: string; payload: unknown }) => {
+      emitted.push(event)
+    }
     const manager = new ApprovalManager(emit as never, undefined, timeoutMs)
     return { manager, emitted }
   }
 
   function createManagerWithRules(timeoutMs = 500) {
     const emitted: Array<{ type: string; payload: unknown }> = []
-    const emit = (event: { type: string; payload: unknown }) => { emitted.push(event) }
+    const emit = (event: { type: string; payload: unknown }) => {
+      emitted.push(event)
+    }
     const { db } = createDrizzleDb(":memory:")
     const repo = new AuthorizationRuleRepository(db)
     const ruleStore = new AuthorizationRuleStore(repo)
@@ -135,7 +139,9 @@ describe("ApprovalManager", () => {
     assert.equal(r2.status, "denied")
 
     const p3Req = emitted.find(
-      (e) => e.type === "approval.request" && (e.payload as { sessionGroupId: string }).sessionGroupId === "group-other",
+      (e) =>
+        e.type === "approval.request" &&
+        (e.payload as { sessionGroupId: string }).sessionGroupId === "group-other",
     )
     assert.ok(p3Req)
     const p3Id = (p3Req.payload as { requestId: string }).requestId
@@ -183,8 +189,8 @@ describe("ApprovalManager", () => {
       reason: "运行测试",
     })
     assert.equal(result.status, "granted")
-    assert.equal(emitted.filter(e => e.type === "approval.request").length, 0)
-    assert.equal(emitted.filter(e => e.type === "approval.auto_granted").length, 1)
+    assert.equal(emitted.filter((e) => e.type === "approval.request").length, 0)
+    assert.equal(emitted.filter((e) => e.type === "approval.auto_granted").length, 1)
   })
 
   it("auto-denies when a matching deny rule exists", async () => {
@@ -274,7 +280,7 @@ describe("ApprovalManager", () => {
       fingerprint: { tool: "edit_file", risk: "medium" },
       reason: "修改文件",
     })
-    const newReqs = emitted.filter(e => e.type === "approval.request")
+    const newReqs = emitted.filter((e) => e.type === "approval.request")
     assert.equal(newReqs.length, 2)
     const reqId2 = (newReqs[1].payload as { requestId: string }).requestId
     manager.respond(reqId2, true, "once")

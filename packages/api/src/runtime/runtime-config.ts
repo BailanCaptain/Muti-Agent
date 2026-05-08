@@ -117,9 +117,7 @@ export function validateRuntimeConfigInput(input: unknown): string[] {
         value < SEAL_PCT_MIN ||
         value > SEAL_PCT_MAX
       ) {
-        errors.push(
-          `${agent}.sealPct must be a number in [${SEAL_PCT_MIN}, ${SEAL_PCT_MAX}]`,
-        )
+        errors.push(`${agent}.sealPct must be a number in [${SEAL_PCT_MIN}, ${SEAL_PCT_MAX}]`)
       }
     }
   }

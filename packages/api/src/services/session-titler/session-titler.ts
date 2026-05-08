@@ -1,5 +1,5 @@
-import type { FastifyBaseLogger } from "fastify"
 import type { RealtimeServerEvent } from "@multi-agent/shared"
+import type { FastifyBaseLogger } from "fastify"
 import type { HaikuRunner } from "../../runtime/haiku-runner"
 import { isDefaultTitle } from "./default-title"
 
@@ -45,9 +45,7 @@ function enforceTitlePrefix(raw: string): string {
 export interface SessionTitlerRepo {
   getSessionGroupById(
     id: string,
-  ):
-    | { id: string; roomId: string | null; title: string; titleLockedAt?: string | null }
-    | undefined
+  ): { id: string; roomId: string | null; title: string; titleLockedAt?: string | null } | undefined
   updateSessionGroupTitle(id: string, title: string): void
   // F022 Phase 3.5 (review P1-2): Haiku 失败计数。
   // success → reset 0；fallback → +1；backfill 过 MAX 跳过。

@@ -8,18 +8,18 @@ async function main() {
     sqlitePath: apiConfig.sqlitePath,
     corsOrigin: apiConfig.corsOrigin,
     redisUrl: apiConfig.redisUrl,
-    uploadsDir: apiConfig.uploadsDir
+    uploadsDir: apiConfig.uploadsDir,
   })
 
   registerGracefulShutdown({
     close: async () => {
       await app.close()
-    }
+    },
   })
 
   await app.listen({
     port: apiConfig.port,
-    host: apiConfig.host
+    host: apiConfig.host,
   })
 }
 

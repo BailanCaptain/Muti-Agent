@@ -2,9 +2,9 @@
 // 闭合段 + sanitize body + 结构化 SOP bookmark 字段），不再裸拼接对话尾。
 // 对齐 P3 SessionBootstrap 的注入哲学 — agent 看到的是"继承但不模仿"的上下文。
 
+import type { ThreadMemory } from "../services/thread-memory"
 import { sanitizeHandoffBody } from "./sanitize-handoff"
 import type { SOPBookmark } from "./sop-bookmark"
-import type { ThreadMemory } from "../services/thread-memory"
 
 export const MAX_AUTO_RESUMES = 2
 

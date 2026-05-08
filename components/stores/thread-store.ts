@@ -3,7 +3,9 @@
 import {
   applyMessageToSessionGroups,
   type ContentBlock,
+  type DispatchValidationRetryReason,
   type InvocationStats,
+  type PendingChangePayload,
   PROVIDERS,
   PROVIDER_ALIASES,
   type Provider,
@@ -14,6 +16,7 @@ import {
   type ToolEvent,
 } from "@multi-agent/shared"
 import { create } from "zustand"
+import { subscribeToRoom } from "@/components/ws/client"
 
 type ProviderCardState = {
   threadId: string
@@ -82,6 +85,33 @@ type ThreadStore = {
   timeline: TimelineMessage[]
   invocationStats: InvocationStats[]
   unreadCounts: Record<string, number>
+  /**
+   * F026 P5 F6 · pendingByRoot — 按 rootCallId 索引的 pendingSet 缓存。
+   *
+   * 后端 CallRegistry 每次 mutation 后 emit `pending_change`（带 rootCallId + 全量
+   * pendingSet）。store 按 rootCallId 覆写 entry，空 set 时删除 key。F6 ListeningPulse
+   * 取 active session 全部 rootCallId 的 pendingSet 合集 dedup by alias 渲染 banner。
+   *
+   * sessionGroupId 切换时由 selectSessionGroup 清空（避免跨房间状态泄漏）。
+   * F1 @ pill 状态机也读这份缓存按 callId 反查 status。
+   */
+  pendingByRoot: Record<string, PendingChangePayload["pendingSet"]>
+  /**
+   * F026 review#4 fix · settledByRoot — terminal cache，按 rootCallId / callId 索引终态。
+   *
+   * 后端 CallRegistry settle / timeoutScan 后 emit pending.change 携带 settled =
+   * [{callId, alias, status: "done"|"failed"|"timeout"|"cancelled"}]。store 累加写入
+   * settledByRoot[rootCallId][callId] = status。AtPill 在 pendingByRoot 命不中时反查
+   * 这里拿终态——connector message envelope 的 a2aCallStatus 是创建瞬间的快照，settle
+   * 后不重发，直接 fallback snapshot 会让 AtPill 卡 ack/working 进不了 done/timeout/error。
+   *
+   * 清理时机（A' 关键）：
+   *   - selectSessionGroup（active group 切换）→ 清空（避免跨房间状态泄漏）
+   *   - replaceActiveGroup（snapshot 重载，新 timeline 已带最新 a2aCallStatus）→ 清空
+   *   不在 root 收口（pendingSet 空 → 删 pendingByRoot[root]）时清——单 child settle
+   *   场景下 settledByRoot 是 AtPill 终态唯一载体，清掉就回落 snapshot=pending = ack。
+   */
+  settledByRoot: Record<string, Record<string, "done" | "failed" | "timeout" | "cancelled">>
   // F022 Phase 3.5 (review P2 follow-up): 服务端收到 archive/softDelete/restore
   // 后广播 session.archive_state_changed；sidebar 订阅这个 version 变化重刷主列表
   // + 归档列表。多端/多标签场景下不再看陈旧态。
@@ -103,6 +133,28 @@ type ThreadStore = {
   replaceActiveGroup: (group: ActiveGroupPayload) => void
   applyAssistantDelta: (messageId: string, delta: string) => void
   applyThinkingDelta: (messageId: string, delta: string) => void
+  /**
+   * F026 P3.1 · AC-22 retry 触发时清空对应 messageId 的 streaming buffer
+   * （pendingDeltas + timeline.content），防止 retry 后新 delta 与旧不合规内容拼接。
+   */
+  resetAssistantStream: (messageId: string) => void
+  /**
+   * F026 P3.1 review#2 fix · status="exhausted" 收尾时把 timeline message content
+   * 用 payload.finalContent 重新填回去——exhausted 后没有新 delta，否则气泡就一直空白。
+   * 同步丢掉残留 pendingDeltas，避免 RAF flush 把旧 delta 拼到回填内容后面。
+   */
+  restoreAssistantContent: (messageId: string, content: string) => void
+  /**
+   * F026 P4 follow-up · retry-badge-realtime fix:
+   * settled / exhausted 收到 dispatch.validation_retry 终态事件时，把 retryCount +
+   * retryReasons 同步到 timeline 对应 message，让 DispatchRetryBadge / ExhaustedBanner
+   * 不刷新就能渲染（之前只入库不广播 → 必须刷新页面走 thread_snapshot 才补字段）。
+   */
+  applyMessageRetryFields: (
+    messageId: string,
+    retryCount: number,
+    retryReasons: DispatchValidationRetryReason[],
+  ) => void
   applyToolEvent: (messageId: string, event: ToolEvent) => void
   applyContentBlock: (messageId: string, block: ContentBlock) => void
   appendTimelineMessage: (message: TimelineMessage) => void
@@ -112,6 +164,11 @@ type ThreadStore = {
   buildSendPayload: (input: string, contentBlocks?: ContentBlock[]) => SendPayload | null
   incrementUnread: (groupId: string) => void
   resetUnread: (groupId: string) => void
+  /**
+   * F026 P5 F6 · 处理 `pending_change` WS 事件 — 按 rootCallId 覆写 pendingByRoot。
+   * 空 pendingSet 时删除 key（避免空状态 banner 抖动）。
+   */
+  applyPendingChange: (payload: PendingChangePayload) => void
 }
 
 const emptyProviders = Object.fromEntries(
@@ -332,6 +389,25 @@ function scheduleDeltaFlush(set: (fn: (state: ThreadStore) => Partial<ThreadStor
   }
 }
 
+/**
+ * F026 P0 Day1 · 并发 @ 解锁（plan A · scope isBusy to active group）
+ *
+ * 旧 isBusy 同时包含 `hasRunningProvider || hasPendingDispatches`，导致：
+ *   当前 group 里 @仁勋 在 streaming → providers.claude.running=true
+ *   → isBusy=true → 小孙无法在同房间发 @范德彪
+ * 但后端 runningSlots 早就是 per-(sessionGroupId, provider) 维度并发，UI 的
+ * hasRunningProvider 锁是多余的。scope 缩到 activeGroup.hasPendingDispatches
+ * （queued 状态）后，"同房间 @ 不同 provider"立刻解锁；同 provider 连发两次
+ * 由后端 runningSlots 处理（queue or reject），UI 不替后端做决策。
+ *
+ * providers[provider].running 仍用于决定是否显示 Stop 按钮（composer.tsx 里单独取）。
+ */
+export function selectIsBusyForActiveGroup(
+  state: Pick<ThreadStore, "activeGroup" | "providers">,
+): boolean {
+  return Boolean(state.activeGroup?.hasPendingDispatches)
+}
+
 export const useThreadStore = create<ThreadStore>((set, get) => ({
   providers: emptyProviders,
   catalogs: emptyCatalogs,
@@ -341,6 +417,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   timeline: [],
   invocationStats: [],
   unreadCounts: {},
+  pendingByRoot: {},
+  settledByRoot: {},
   archiveStateVersion: 0,
   bumpArchiveStateVersion: () => {
     set((state) => ({ archiveStateVersion: state.archiveStateVersion + 1 }))
@@ -392,7 +470,11 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     const payload = await fetchJson<{ activeGroup: ActiveGroupPayload }>(
       `/api/session-groups/${groupId}`,
     )
-    set({ activeGroupId: groupId })
+    // F026 review#4 fix · 切房间清 pendingByRoot + settledByRoot（避免跨房间状态泄漏；
+    // 新 snapshot 自带最新 a2aCallStatus，不需要 terminal cache 兜底）
+    set({ activeGroupId: groupId, pendingByRoot: {}, settledByRoot: {} })
+    // F026 P0 Day2 · 切房间时告知 ws 后端 subscribe 新 group；后端 broadcaster 用 sessionGroupId 强过滤
+    subscribeToRoom(groupId)
     get().replaceActiveGroup(payload.activeGroup)
     get().resetUnread(groupId)
 
@@ -491,6 +573,43 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     pendingDeltas.set(messageId, existing)
     scheduleDeltaFlush(set)
   },
+  resetAssistantStream: (messageId) => {
+    // F026 P3.1 · AC-22: retry 触发清掉 streaming buffer，
+    // 让占位锁解除后看到的是 settled / exhausted 后 overwriteMessage 的最终 content，
+    // 而不是 "旧不合规 + 新合规" 的拼接污染。
+    pendingDeltas.delete(messageId)
+    set((state) => ({
+      timeline: state.timeline.map((msg) =>
+        msg.id === messageId ? { ...msg, content: "" } : msg,
+      ),
+    }))
+  },
+  restoreAssistantContent: (messageId, content) => {
+    // F026 P3.1 review#2 fix · 两条 exhausted 分支没有新 delta；
+    // resetAssistantStream 清空气泡后必须由 payload.finalContent 把 timeline 填回去，
+    // 否则刷新前用户看到空气泡 + 红 banner（兜底入库内容只在数据库里）。
+    pendingDeltas.delete(messageId)
+    set((state) => {
+      if (!state.timeline.some((msg) => msg.id === messageId)) return state
+      return {
+        timeline: state.timeline.map((msg) =>
+          msg.id === messageId ? { ...msg, content } : msg,
+        ),
+      }
+    })
+  },
+  applyMessageRetryFields: (messageId, retryCount, retryReasons) => {
+    set((state) => {
+      if (!state.timeline.some((msg) => msg.id === messageId)) return state
+      return {
+        timeline: state.timeline.map((msg) =>
+          msg.id === messageId
+            ? { ...msg, retryCount, retryReasons: [...retryReasons] }
+            : msg,
+        ),
+      }
+    })
+  },
   applyThinkingDelta: (messageId, delta) => {
     const existing = pendingDeltas.get(messageId) ?? {}
     existing.thinking = (existing.thinking ?? "") + delta
@@ -550,6 +669,29 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       if (!(groupId in state.unreadCounts)) return state
       const { [groupId]: _, ...rest } = state.unreadCounts
       return { unreadCounts: rest }
+    })
+  },
+  applyPendingChange: (payload) => {
+    set((state) => {
+      const nextPending = { ...state.pendingByRoot }
+      if (payload.pendingSet.length === 0) {
+        delete nextPending[payload.rootCallId]
+      } else {
+        nextPending[payload.rootCallId] = payload.pendingSet
+      }
+      // F026 review#4 fix · settled 终态增量累加到 settledByRoot；root 收口（pendingSet
+      // 空）时不清 settledByRoot[root] —— 单 child settle 场景下 terminal cache 是
+      // AtPill 唯一载体，清掉立即 fallback snapshot=pending = ack（P1 还在）。
+      let nextSettled = state.settledByRoot
+      if (payload.settled && payload.settled.length > 0) {
+        nextSettled = { ...state.settledByRoot }
+        const rootEntry = { ...(nextSettled[payload.rootCallId] ?? {}) }
+        for (const s of payload.settled) {
+          rootEntry[s.callId] = s.status
+        }
+        nextSettled[payload.rootCallId] = rootEntry
+      }
+      return { pendingByRoot: nextPending, settledByRoot: nextSettled }
     })
   },
   buildSendPayload: (input, contentBlocks) => {

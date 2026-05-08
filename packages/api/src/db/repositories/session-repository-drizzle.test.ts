@@ -138,14 +138,11 @@ test("connector messages round-trip with connectorSource JSON", async () => {
     const thread = repo.listThreadsByGroup(groupId).find((t) => t.provider === "codex")
     assert.ok(thread)
 
-    const msg = repo.appendMessage(
-      thread.id,
-      "assistant",
-      "结果汇总",
-      "",
-      "connector",
-      { kind: "multi_mention_result", label: "并行", targets: ["claude", "gemini"] },
-    )
+    const msg = repo.appendMessage(thread.id, "assistant", "结果汇总", "", "connector", {
+      kind: "multi_mention_result",
+      label: "并行",
+      targets: ["claude", "gemini"],
+    })
 
     const restored = repo.listMessages(thread.id).find((m) => m.id === msg.id)
     assert.ok(restored)
@@ -323,13 +320,17 @@ test("listSessionGroups returns exactly N complete groups when more than N exist
     }
 
     const groups = repo.listSessionGroups(limit)
-    assert.equal(groups.length, limit, `should return exactly ${limit} groups, got ${groups.length}`)
+    assert.equal(
+      groups.length,
+      limit,
+      `should return exactly ${limit} groups, got ${groups.length}`,
+    )
 
     for (const g of groups) {
       assert.ok(g.previews.length > 0, `group "${g.title}" should have thread previews`)
     }
 
-    const uniqueIds = new Set(groups.map(g => g.id))
+    const uniqueIds = new Set(groups.map((g) => g.id))
     assert.equal(uniqueIds.size, limit, "all returned groups should be distinct")
   } finally {
     close()
@@ -709,6 +710,291 @@ test("F021 P1 DrizzleSessionRepository.flushSessionPending merges per-field with
       claude: { model: "claude-opus-4-7", effort: "low" },
     })
     assert.deepEqual(repo.getSessionPendingConfig(groupId), {})
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+// F026 P5 in-flight · DrizzleSessionRepository LEFT JOIN a2a_calls
+// R-104 实证：messages 表只存 a2a_call_id 一列，前端 AtPill 反查需要 6 个协议字段
+// (parentCallId / rootCallId / onBehalfOf / convenerId / status / deadlineAt) 必须 LEFT JOIN
+// a2a_calls 才能拿到。drizzle 路径四个 list 方法都缺，导致 envelope status 永远 null
+// → AtPill `deriveLiveAtPillStatus` 反查永远落 default → 「派发中」卡死。
+// sqlite-store 路径 SQL 已经写好了，drizzle 抄一份。
+// a2a_calls 表已经在 createDrizzleDb INIT_SQL 内建好，测试无需手动建表。
+
+type A2aCallRow = {
+  callId: string
+  parentCallId: string | null
+  rootCallId: string
+  issuerId: string
+  convenerId: string
+  onBehalfOf: string | null
+  replyTo: string
+  deadlineAt: string
+  status: "pending" | "working" | "done" | "failed" | "timeout" | "cancelled"
+  sessionGroupId: string
+}
+
+function insertA2aCall(
+  raw: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } },
+  fields: A2aCallRow,
+): void {
+  const now = new Date().toISOString()
+  raw
+    .prepare(
+      `INSERT INTO a2a_calls (
+        call_id, parent_call_id, root_call_id, issuer_id, convener_id, on_behalf_of,
+        reply_to, deadline_at, join_set_id, status, envelope_version, session_group_id,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      fields.callId,
+      fields.parentCallId,
+      fields.rootCallId,
+      fields.issuerId,
+      fields.convenerId,
+      fields.onBehalfOf,
+      fields.replyTo,
+      fields.deadlineAt,
+      null, // join_set_id
+      fields.status,
+      "v1",
+      fields.sessionGroupId,
+      now,
+      now,
+    )
+}
+
+test("listMessages LEFT JOIN a2a_calls hydrates 6 protocol fields (R-104 root)", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, raw, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup("R-104 sim")
+    repo.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const thread = repo.listThreadsByGroup(groupId).find((t) => t.provider === "claude")
+    assert.ok(thread)
+
+    const deadline = "2099-01-01T00:00:00.000Z"
+    insertA2aCall(raw, {
+      callId: "call-cc599248",
+      parentCallId: "call-6d1",
+      rootCallId: "call-0f9fd588",
+      issuerId: "黄仁勋",
+      convenerId: "user",
+      onBehalfOf: "user",
+      replyTo: "thread-黄仁勋",
+      deadlineAt: deadline,
+      status: "done",
+      sessionGroupId: groupId,
+    })
+
+    repo.appendMessage(
+      thread.id,
+      "assistant",
+      "派发桂芬",
+      "",
+      "connector",
+      null,
+      null,
+      null,
+      "[]",
+      "[]",
+      null,
+      "call-cc599248",
+    )
+
+    const msgs = repo.listMessages(thread.id)
+    assert.equal(msgs.length, 1)
+    const m = msgs[0]
+    assert.equal(m.a2aCallId, "call-cc599248")
+    assert.equal(m.a2aParentCallId, "call-6d1", "parent_call_id must be LEFT JOIN hydrated")
+    assert.equal(m.a2aRootCallId, "call-0f9fd588", "root_call_id must be LEFT JOIN hydrated")
+    assert.equal(m.a2aOnBehalfOf, "user", "on_behalf_of must be LEFT JOIN hydrated")
+    assert.equal(m.a2aConvenerId, "user", "convener_id must be LEFT JOIN hydrated")
+    assert.equal(m.a2aCallStatus, "done", "status must be LEFT JOIN hydrated (AtPill needs this)")
+    assert.equal(m.a2aDeadlineAt, deadline, "deadline_at must be LEFT JOIN hydrated")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("listMessagesSince LEFT JOIN a2a_calls hydrates 6 protocol fields", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, raw, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup("R-104 sim")
+    repo.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const thread = repo.listThreadsByGroup(groupId).find((t) => t.provider === "claude")
+    assert.ok(thread)
+
+    const deadline = "2099-01-01T00:00:00.000Z"
+    insertA2aCall(raw, {
+      callId: "call-cc599248",
+      parentCallId: null,
+      rootCallId: "call-cc599248",
+      issuerId: "黄仁勋",
+      convenerId: "user",
+      onBehalfOf: null,
+      replyTo: "thread-黄仁勋",
+      deadlineAt: deadline,
+      status: "working",
+      sessionGroupId: groupId,
+    })
+
+    const since = new Date(Date.now() - 1000).toISOString()
+    repo.appendMessage(
+      thread.id,
+      "assistant",
+      "派发桂芬",
+      "",
+      "connector",
+      null,
+      null,
+      null,
+      "[]",
+      "[]",
+      null,
+      "call-cc599248",
+    )
+
+    const msgs = repo.listMessagesSince(thread.id, since)
+    assert.equal(msgs.length, 1)
+    const m = msgs[0]
+    assert.equal(m.a2aCallId, "call-cc599248")
+    assert.equal(m.a2aRootCallId, "call-cc599248")
+    assert.equal(m.a2aCallStatus, "working", "status hydration is the AtPill blocker — must work")
+    assert.equal(m.a2aDeadlineAt, deadline)
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("listRecentMessages LEFT JOIN a2a_calls hydrates 6 protocol fields", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, raw, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup("R-104 sim")
+    repo.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const thread = repo.listThreadsByGroup(groupId).find((t) => t.provider === "claude")
+    assert.ok(thread)
+
+    const deadline = "2099-01-01T00:00:00.000Z"
+    insertA2aCall(raw, {
+      callId: "call-cc599248",
+      parentCallId: "call-parent",
+      rootCallId: "call-root",
+      issuerId: "黄仁勋",
+      convenerId: "user",
+      onBehalfOf: "user",
+      replyTo: "thread-黄仁勋",
+      deadlineAt: deadline,
+      status: "pending",
+      sessionGroupId: groupId,
+    })
+
+    // 多条消息混插，listRecentMessages 限 1 条只看最新
+    repo.appendMessage(thread.id, "user", "first")
+    repo.appendMessage(
+      thread.id,
+      "assistant",
+      "派发桂芬",
+      "",
+      "connector",
+      null,
+      null,
+      null,
+      "[]",
+      "[]",
+      null,
+      "call-cc599248",
+    )
+
+    const msgs = repo.listRecentMessages(thread.id, 1)
+    assert.equal(msgs.length, 1)
+    const m = msgs[0]
+    assert.equal(m.a2aCallId, "call-cc599248")
+    assert.equal(m.a2aParentCallId, "call-parent")
+    assert.equal(m.a2aRootCallId, "call-root")
+    assert.equal(m.a2aCallStatus, "pending")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("listAllMessagesForGroup LEFT JOIN a2a_calls hydrates 6 protocol fields", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, raw, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup("R-104 sim")
+    repo.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const claudeThread = repo.listThreadsByGroup(groupId).find((t) => t.provider === "claude")
+    assert.ok(claudeThread)
+
+    const deadline = "2099-01-01T00:00:00.000Z"
+    insertA2aCall(raw, {
+      callId: "call-cc599248",
+      parentCallId: null,
+      rootCallId: "call-cc599248",
+      issuerId: "黄仁勋",
+      convenerId: "user",
+      onBehalfOf: null,
+      replyTo: "thread-黄仁勋",
+      deadlineAt: deadline,
+      status: "done",
+      sessionGroupId: groupId,
+    })
+
+    repo.appendMessage(
+      claudeThread.id,
+      "assistant",
+      "派发桂芬",
+      "",
+      "connector",
+      null,
+      null,
+      null,
+      "[]",
+      "[]",
+      null,
+      "call-cc599248",
+    )
+
+    const msgs = repo.listAllMessagesForGroup(groupId)
+    const connector = msgs.find((m) => m.messageType === "connector")
+    assert.ok(connector, "connector message should be in group listing")
+    assert.equal(connector.a2aCallId, "call-cc599248")
+    assert.equal(connector.a2aRootCallId, "call-cc599248")
+    assert.equal(
+      connector.a2aCallStatus,
+      "done",
+      "status hydration also required in group-wide listing (group page envelope)",
+    )
   } finally {
     close()
     safeCleanup(tempDir)

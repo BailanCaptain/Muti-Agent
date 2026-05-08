@@ -1,5 +1,5 @@
-import test from "node:test"
 import assert from "node:assert/strict"
+import test from "node:test"
 import { ChainStarterResolver } from "./chain-starter-resolver"
 
 function makeFakeRepo(
@@ -71,9 +71,7 @@ test("ChainStarterResolver returns first assistant after most recent user msg", 
   const resolver = new ChainStarterResolver(repo)
   const target = resolver.resolve({
     sessionGroupId: "g1",
-    boardEntries: [
-      { raisers: [{ threadId: "t-codex", raisedAt: "2026-04-10T10:00:15Z" }] },
-    ],
+    boardEntries: [{ raisers: [{ threadId: "t-codex", raisedAt: "2026-04-10T10:00:15Z" }] }],
   })
   assert.equal(target?.threadId, "t-claude")
   assert.equal(target?.alias, "黄仁勋")
@@ -98,9 +96,7 @@ test("ChainStarterResolver picks earliest assistant when multiple threads starte
   const resolver = new ChainStarterResolver(repo)
   const target = resolver.resolve({
     sessionGroupId: "g1",
-    boardEntries: [
-      { raisers: [{ threadId: "t-gemini", raisedAt: "2026-04-10T10:00:12Z" }] },
-    ],
+    boardEntries: [{ raisers: [{ threadId: "t-gemini", raisedAt: "2026-04-10T10:00:12Z" }] }],
   })
   assert.equal(target?.threadId, "t-codex")
 })

@@ -11,10 +11,7 @@ import type { Provider } from "@multi-agent/shared"
  *
  * Returns null when the target role is unknown.
  */
-export function resolveReviewerProvider(
-  sourceProvider: Provider,
-  target: string,
-): Provider | null {
+export function resolveReviewerProvider(sourceProvider: Provider, target: string): Provider | null {
   if (target !== "reviewer") return null
   switch (sourceProvider) {
     case "claude":

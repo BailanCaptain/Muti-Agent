@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { resolveSealThresholds, WARN_GAP_FROM_ACTION } from "./seal-config-resolver"
 import { SEAL_THRESHOLDS_BY_PROVIDER } from "@multi-agent/shared"
 import type { RuntimeConfig } from "./runtime-config"
+import { WARN_GAP_FROM_ACTION, resolveSealThresholds } from "./seal-config-resolver"
 
 // F021 Phase 6: resolveSealThresholds 三层取值
 //   会话覆盖 → 全局默认 → 代码 fallback (SEAL_THRESHOLDS_BY_PROVIDER)
@@ -10,10 +10,7 @@ import type { RuntimeConfig } from "./runtime-config"
 // fallback 路径：直接返回代码 fallback 原表（保留现状不破坏现有行为）
 
 test("F021 P6 seal-resolver: returns code fallback when both global + session unset", () => {
-  assert.deepEqual(
-    resolveSealThresholds("claude", {}, {}),
-    SEAL_THRESHOLDS_BY_PROVIDER.claude,
-  )
+  assert.deepEqual(resolveSealThresholds("claude", {}, {}), SEAL_THRESHOLDS_BY_PROVIDER.claude)
   assert.deepEqual(
     resolveSealThresholds("codex", undefined, undefined),
     SEAL_THRESHOLDS_BY_PROVIDER.codex,
@@ -55,10 +52,7 @@ test("F021 P6 seal-resolver: warn clamped to >= 0 (action just above gap)", () =
 test("F021 P6 seal-resolver: per-provider isolation — claude override does not affect codex", () => {
   const global: RuntimeConfig = { claude: { sealPct: 0.5 } }
   // codex 没设，仍走 fallback
-  assert.deepEqual(
-    resolveSealThresholds("codex", global, {}),
-    SEAL_THRESHOLDS_BY_PROVIDER.codex,
-  )
+  assert.deepEqual(resolveSealThresholds("codex", global, {}), SEAL_THRESHOLDS_BY_PROVIDER.codex)
   // claude 走 override
   assert.equal(resolveSealThresholds("claude", global, {}).action, 0.5)
 })
@@ -66,8 +60,5 @@ test("F021 P6 seal-resolver: per-provider isolation — claude override does not
 test("F021 P6 seal-resolver: contextWindow override on the same entry does NOT affect seal thresholds", () => {
   const global: RuntimeConfig = { claude: { contextWindow: 2_000_000 } }
   // sealPct 没设，仍走 fallback —— 字段独立
-  assert.deepEqual(
-    resolveSealThresholds("claude", global, {}),
-    SEAL_THRESHOLDS_BY_PROVIDER.claude,
-  )
+  assert.deepEqual(resolveSealThresholds("claude", global, {}), SEAL_THRESHOLDS_BY_PROVIDER.claude)
 })

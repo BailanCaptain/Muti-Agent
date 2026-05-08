@@ -1,10 +1,10 @@
 import http from "node:http"
 import { createGunzip, createInflate } from "node:zlib"
 import httpProxy from "http-proxy"
+import { createLogger } from "../lib/logger"
 import { BRIDGE_SCRIPT } from "./bridge-script"
 import { validatePort } from "./port-validator"
 import { buildWsPatchScript } from "./ws-patch-script"
-import { createLogger } from "../lib/logger"
 
 const log = createLogger("preview-gateway")
 
@@ -44,70 +44,75 @@ export class PreviewGateway {
       }
     })
 
-    this.proxy.on("proxyRes", (proxyRes: http.IncomingMessage, _req: http.IncomingMessage, res: http.ServerResponse) => {
-      delete proxyRes.headers["x-frame-options"]
-      const csp = proxyRes.headers["content-security-policy"]
-      if (typeof csp === "string") {
-        const cleaned = csp
-          .split(";")
-          .filter((d: string) => !d.trim().startsWith("frame-ancestors"))
-          .join(";")
-          .trim()
-        if (cleaned) {
-          proxyRes.headers["content-security-policy"] = cleaned
-        } else {
-          delete proxyRes.headers["content-security-policy"]
+    this.proxy.on(
+      "proxyRes",
+      (proxyRes: http.IncomingMessage, _req: http.IncomingMessage, res: http.ServerResponse) => {
+        delete proxyRes.headers["x-frame-options"]
+        const csp = proxyRes.headers["content-security-policy"]
+        if (typeof csp === "string") {
+          const cleaned = csp
+            .split(";")
+            .filter((d: string) => !d.trim().startsWith("frame-ancestors"))
+            .join(";")
+            .trim()
+          if (cleaned) {
+            proxyRes.headers["content-security-policy"] = cleaned
+          } else {
+            delete proxyRes.headers["content-security-policy"]
+          }
         }
-      }
 
-      const ct = (proxyRes.headers["content-type"] ?? "") as string
-      if (!ct.includes("text/html")) {
-        res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers)
-        proxyRes.pipe(res)
-        return
-      }
-
-      const encoding = (proxyRes.headers["content-encoding"] ?? "") as string
-      if (encoding && encoding !== "gzip" && encoding !== "deflate" && encoding !== "identity") {
-        res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers)
-        proxyRes.pipe(res)
-        return
-      }
-
-      const chunks: Buffer[] = []
-      let stream: NodeJS.ReadableStream = proxyRes
-      if (encoding === "gzip") {
-        stream = proxyRes.pipe(createGunzip())
-      } else if (encoding === "deflate") {
-        stream = proxyRes.pipe(createInflate())
-      }
-
-      stream.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)))
-      stream.on("end", () => {
-        let html = Buffer.concat(chunks).toString("utf-8")
-        const targetPort = (_req as unknown as Record<string, unknown>).__previewTargetPort as number | undefined
-        const wsPatch = targetPort ? buildWsPatchScript(targetPort) : ""
-        const injection = wsPatch + BRIDGE_SCRIPT
-        if (html.includes("</head>")) {
-          html = html.replace("</head>", `${injection}</head>`)
-        } else if (html.includes("<body")) {
-          html = html.replace(/<body([^>]*)>/, `<body$1>${injection}`)
-        } else {
-          html = injection + html
+        const ct = (proxyRes.headers["content-type"] ?? "") as string
+        if (!ct.includes("text/html")) {
+          res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers)
+          proxyRes.pipe(res)
+          return
         }
-        const headers = { ...proxyRes.headers }
-        delete headers["content-encoding"]
-        delete headers["transfer-encoding"]
-        const buf = Buffer.from(html, "utf-8")
-        headers["content-length"] = String(buf.length)
-        res.writeHead(proxyRes.statusCode ?? 200, headers)
-        res.end(buf)
-      })
-      stream.on("error", () => {
-        res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers)
-        res.end(Buffer.concat(chunks))
-      })
-    })
+
+        const encoding = (proxyRes.headers["content-encoding"] ?? "") as string
+        if (encoding && encoding !== "gzip" && encoding !== "deflate" && encoding !== "identity") {
+          res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers)
+          proxyRes.pipe(res)
+          return
+        }
+
+        const chunks: Buffer[] = []
+        let stream: NodeJS.ReadableStream = proxyRes
+        if (encoding === "gzip") {
+          stream = proxyRes.pipe(createGunzip())
+        } else if (encoding === "deflate") {
+          stream = proxyRes.pipe(createInflate())
+        }
+
+        stream.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)))
+        stream.on("end", () => {
+          let html = Buffer.concat(chunks).toString("utf-8")
+          const targetPort = (_req as unknown as Record<string, unknown>).__previewTargetPort as
+            | number
+            | undefined
+          const wsPatch = targetPort ? buildWsPatchScript(targetPort) : ""
+          const injection = wsPatch + BRIDGE_SCRIPT
+          if (html.includes("</head>")) {
+            html = html.replace("</head>", `${injection}</head>`)
+          } else if (html.includes("<body")) {
+            html = html.replace(/<body([^>]*)>/, `<body$1>${injection}`)
+          } else {
+            html = injection + html
+          }
+          const headers = { ...proxyRes.headers }
+          delete headers["content-encoding"]
+          delete headers["transfer-encoding"]
+          const buf = Buffer.from(html, "utf-8")
+          headers["content-length"] = String(buf.length)
+          res.writeHead(proxyRes.statusCode ?? 200, headers)
+          res.end(buf)
+        })
+        stream.on("error", () => {
+          res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers)
+          res.end(Buffer.concat(chunks))
+        })
+      },
+    )
 
     this.server = http.createServer((req, res) => {
       const parsed = this.parseTarget(req)
@@ -127,7 +132,6 @@ export class PreviewGateway {
         res.end(JSON.stringify({ error: validation.reason }))
         return
       }
-
       ;(req as unknown as Record<string, unknown>).__previewTargetPort = parsed.port
 
       const url = new URL(req.url!, `http://${req.headers.host}`)

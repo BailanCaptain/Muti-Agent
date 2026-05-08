@@ -63,10 +63,7 @@ test("parseAssistantDelta reads assistant text from Gemini candidate payloads", 
 // carrying the model's raw thinking text. These must NOT leak into the visible
 // content field — thinking is surfaced via afterRun (session file readback).
 test("parseAssistantDelta filters out thought events (F006 regression guard)", () => {
-  assert.equal(
-    runtime.parseAssistantDelta({ thought: true, delta: "I'm thinking..." }),
-    "",
-  )
+  assert.equal(runtime.parseAssistantDelta({ thought: true, delta: "I'm thinking..." }), "")
   assert.equal(
     runtime.parseAssistantDelta({
       thought: true,

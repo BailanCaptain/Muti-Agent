@@ -1,5 +1,5 @@
-import { describe, it, mock } from "node:test"
 import assert from "node:assert/strict"
+import { describe, it, mock } from "node:test"
 import { backfillHistoricalTitles } from "./title-backfill"
 
 function makeLogger() {
@@ -56,10 +56,14 @@ describe("backfillHistoricalTitles (AC-14b)", () => {
         { id: "c", title: null },
       ],
     }
-    await backfillHistoricalTitles(repo, { runNow: runNowSpy }, {
-      delayMs: 500,
-      sleep: sleepSpy,
-    })
+    await backfillHistoricalTitles(
+      repo,
+      { runNow: runNowSpy },
+      {
+        delayMs: 500,
+        sleep: sleepSpy,
+      },
+    )
     assert.deepEqual(order, ["run:a", "sleep:500", "run:b", "sleep:500", "run:c"])
   })
 
@@ -77,11 +81,15 @@ describe("backfillHistoricalTitles (AC-14b)", () => {
         { id: "c", title: null },
       ],
     }
-    const result = await backfillHistoricalTitles(repo, { runNow: runNowSpy }, {
-      logger,
-      delayMs: 0,
-      sleep: async () => {},
-    })
+    const result = await backfillHistoricalTitles(
+      repo,
+      { runNow: runNowSpy },
+      {
+        logger,
+        delayMs: 0,
+        sleep: async () => {},
+      },
+    )
     assert.equal(runNowSpy.mock.calls.length, 3)
     assert.equal(result.attempted, 3)
     const errs = calls.filter((c) => c.obj.event === "backfill.error")

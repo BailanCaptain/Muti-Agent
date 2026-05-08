@@ -71,11 +71,22 @@ describe("SessionService titler hook (F022-P2)", () => {
     assert.equal(schedule.mock.calls.length, 0)
   })
 
-  it("appendAssistantMessage with messageType=a2a_handoff does NOT trigger titler", () => {
+  // F026 P2 v2 Step 7 (clean-cut) · 旧 a2a_handoff / a2a_handoff_mcp union
+  // 入参已退役（appendAssistantMessage 签名收窄到 progress | final），派发指令
+  // 与普通 final 区分改为内容前缀判定 (`[Call:` 起头)。下面两测覆盖该判定。
+  it("appendAssistantMessage with messageType=final + content '[Call: ...' does NOT trigger titler", () => {
     const repo = makeRepo([makeThread(THREAD, GROUP)])
     const schedule = mock.fn((_id: string) => {})
     const svc = new SessionService(repo as never, [], { schedule })
-    svc.appendAssistantMessage(THREAD, "hi", "", "a2a_handoff")
+    svc.appendAssistantMessage(THREAD, "[Call: @桂芬 看一下视觉]", "", "final")
+    assert.equal(schedule.mock.calls.length, 0)
+  })
+
+  it("appendAssistantMessage final + leading whitespace then [Call: ALSO skipped (trimStart)", () => {
+    const repo = makeRepo([makeThread(THREAD, GROUP)])
+    const schedule = mock.fn((_id: string) => {})
+    const svc = new SessionService(repo as never, [], { schedule })
+    svc.appendAssistantMessage(THREAD, "  \n[Call: @桂芬 看一下视觉]", "", "final")
     assert.equal(schedule.mock.calls.length, 0)
   })
 

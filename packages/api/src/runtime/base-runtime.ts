@@ -1,59 +1,54 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync } from "node:fs";
-import path from "node:path";
-import readline from "node:readline";
-import type { ToolEvent } from "@multi-agent/shared";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process"
+import { existsSync } from "node:fs"
+import path from "node:path"
+import readline from "node:readline"
+import type { ToolEvent } from "@multi-agent/shared"
 import {
-  ProcessLivenessProbe,
   type LivenessProbeConfig,
   type LivenessWarning,
-  type ProcessLivenessProbeDependencies
-} from "./liveness-probe";
+  ProcessLivenessProbe,
+  type ProcessLivenessProbeDependencies,
+} from "./liveness-probe"
 
 export type RuntimeLifecycleConfig = {
-  heartbeatIntervalMs: number;
-  inactivityTimeoutMs: number;
-  shutdownGracePeriodMs: number;
-  livenessSampleIntervalMs: number;
-  livenessSoftWarningMs: number;
-  livenessStallWarningMs: number;
-  livenessBoundedExtensionFactor: number;
-};
+  heartbeatIntervalMs: number
+  inactivityTimeoutMs: number
+  shutdownGracePeriodMs: number
+  livenessSampleIntervalMs: number
+  livenessSoftWarningMs: number
+  livenessStallWarningMs: number
+  livenessBoundedExtensionFactor: number
+}
 
 export type AgentRunInput = {
-  invocationId: string;
-  threadId: string;
-  agentId: string;
-  prompt: string;
-  cwd: string;
-  env?: Record<string, string>;
-  runtime?: Partial<RuntimeLifecycleConfig>;
-};
+  invocationId: string
+  threadId: string
+  agentId: string
+  prompt: string
+  cwd: string
+  env?: Record<string, string>
+  runtime?: Partial<RuntimeLifecycleConfig>
+}
 
-export type StopReason =
-  | "complete"
-  | "truncated"
-  | "refused"
-  | "tool_wait"
-  | "aborted";
+export type StopReason = "complete" | "truncated" | "refused" | "tool_wait" | "aborted"
 
 export type AgentRunOutput = {
-  finalText?: string;
-  rawStdout: string;
-  rawStderr: string;
-  exitCode: number | null;
-  stopReason: StopReason | null;
-};
+  finalText?: string
+  rawStdout: string
+  rawStderr: string
+  exitCode: number | null
+  stopReason: StopReason | null
+}
 
 export interface AgentRuntime {
-  run(input: AgentRunInput): Promise<AgentRunOutput>;
+  run(input: AgentRunInput): Promise<AgentRunOutput>
 }
 
 export type RuntimeCommand = {
-  command: string;
-  args: string[];
-  shell: boolean;
-  cleanup?: () => void | Promise<void>;
+  command: string
+  args: string[]
+  shell: boolean
+  cleanup?: () => void | Promise<void>
   /**
    * When set, the prompt (or any large payload) is written to the child's stdin
    * instead of being passed on the command line. This avoids the Windows
@@ -66,38 +61,38 @@ export type RuntimeCommand = {
    * Each concrete runtime's buildCommand() is responsible for populating this
    * field and omitting the prompt from args when the payload is large.
    */
-  stdinContent?: string;
-};
+  stdinContent?: string
+}
 
 export type RuntimeStreamHooks = {
-  onStdoutLine?: (line: string) => void;
-  onStderrChunk?: (chunk: string) => void;
-  onActivity?: (activity: { stream: "stdout" | "stderr"; at: string; chunk: string }) => void;
-  onLivenessWarning?: (warning: LivenessWarning) => void;
-};
+  onStdoutLine?: (line: string) => void
+  onStderrChunk?: (chunk: string) => void
+  onActivity?: (activity: { stream: "stdout" | "stderr"; at: string; chunk: string }) => void
+  onLivenessWarning?: (warning: LivenessWarning) => void
+}
 
 export type RuntimeExecutionHandle = {
-  cancel: () => void;
-  promise: Promise<AgentRunOutput>;
-};
+  cancel: () => void
+  promise: Promise<AgentRunOutput>
+}
 
 type SpawnLike = (
   command: string,
   args?: readonly string[],
-  options?: Parameters<typeof spawn>[2]
-) => ChildProcessWithoutNullStreams;
+  options?: Parameters<typeof spawn>[2],
+) => ChildProcessWithoutNullStreams
 
 export type RuntimeDependencies = {
-  spawn?: SpawnLike;
-  now?: () => number;
-  setTimeout?: typeof globalThis.setTimeout;
-  clearTimeout?: typeof globalThis.clearTimeout;
-  setInterval?: typeof globalThis.setInterval;
-  clearInterval?: typeof globalThis.clearInterval;
-  platform?: NodeJS.Platform;
-  forceKillProcessTree?: (pid: number) => void;
-  createLivenessProbe?: (pid: number, config: LivenessProbeConfig) => ProcessLivenessProbe;
-};
+  spawn?: SpawnLike
+  now?: () => number
+  setTimeout?: typeof globalThis.setTimeout
+  clearTimeout?: typeof globalThis.clearTimeout
+  setInterval?: typeof globalThis.setInterval
+  clearInterval?: typeof globalThis.clearInterval
+  platform?: NodeJS.Platform
+  forceKillProcessTree?: (pid: number) => void
+  createLivenessProbe?: (pid: number, config: LivenessProbeConfig) => ProcessLivenessProbe
+}
 
 const DEFAULT_RUNTIME_LIFECYCLE: RuntimeLifecycleConfig = {
   heartbeatIntervalMs: 30_000,
@@ -106,58 +101,59 @@ const DEFAULT_RUNTIME_LIFECYCLE: RuntimeLifecycleConfig = {
   livenessSampleIntervalMs: 30_000,
   livenessSoftWarningMs: 90_000,
   livenessStallWarningMs: 180_000,
-  livenessBoundedExtensionFactor: 2.0
-};
+  livenessBoundedExtensionFactor: 2.0,
+}
 
 function readMs(preferred: number | undefined, fallback: string | undefined, defaultValue: number) {
   if (typeof preferred === "number" && Number.isFinite(preferred) && preferred >= 0) {
-    return preferred;
+    return preferred
   }
 
-  const parsed = Number(fallback);
+  const parsed = Number(fallback)
   if (Number.isFinite(parsed) && parsed >= 0) {
-    return parsed;
+    return parsed
   }
 
-  return defaultValue;
+  return defaultValue
 }
 
 function formatRuntimeTimeoutMessage(
   inactivityTimeoutMs: number,
   lastActivityAt: string,
-  reason: "timeout" | "stall" | "dead" = "timeout"
+  reason: "timeout" | "stall" | "dead" = "timeout",
 ) {
-  const seconds = Math.round(inactivityTimeoutMs / 1000);
-  const minutes = inactivityTimeoutMs >= 60_000 ? `（约 ${Math.round(inactivityTimeoutMs / 60_000)} 分钟）` : "";
+  const seconds = Math.round(inactivityTimeoutMs / 1000)
+  const minutes =
+    inactivityTimeoutMs >= 60_000 ? `（约 ${Math.round(inactivityTimeoutMs / 60_000)} 分钟）` : ""
   if (reason === "stall") {
-    return `Agent 进程看起来已卡住（CPU 空转，无新输出 ≥ ${seconds} 秒${minutes}）。最后一次活动时间：${lastActivityAt}。已强制终止，请重试一次。`;
+    return `Agent 进程看起来已卡住（CPU 空转，无新输出 ≥ ${seconds} 秒${minutes}）。最后一次活动时间：${lastActivityAt}。已强制终止，请重试一次。`
   }
   if (reason === "dead") {
-    return `Agent 进程已异常退出。最后一次活动时间：${lastActivityAt}。请重试一次。`;
+    return `Agent 进程已异常退出。最后一次活动时间：${lastActivityAt}。请重试一次。`
   }
-  return `Agent 好像睡着了，已经有 ${seconds} 秒${minutes} 没有新活动。最后一次活动时间：${lastActivityAt}。请检查它的状态或重试一次。`;
+  return `Agent 好像睡着了，已经有 ${seconds} 秒${minutes} 没有新活动。最后一次活动时间：${lastActivityAt}。请检查它的状态或重试一次。`
 }
 
 function formatFastFailMessage(reason: string) {
-  return `Agent CLI 触发已知的致命错误（${reason}），已提前终止避免陷入长时间重试循环。请重试一次。`;
+  return `Agent CLI 触发已知的致命错误（${reason}），已提前终止避免陷入长时间重试循环。请重试一次。`
 }
 
 function defaultForceKillProcessTree(pid: number) {
   const killer = spawn("taskkill", ["/pid", String(pid), "/t", "/f"], {
     shell: true,
     stdio: "ignore",
-    windowsHide: true
-  });
+    windowsHide: true,
+  })
 
-  killer.on("error", () => undefined);
-  killer.unref();
+  killer.on("error", () => undefined)
+  killer.unref()
 }
 
 export function resolveRuntimeLifecycleConfig(
   runtime?: Partial<RuntimeLifecycleConfig>,
-  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): RuntimeLifecycleConfig {
-  const factorRaw = Number(env.MULTI_AGENT_LIVENESS_BOUNDED_EXTENSION_FACTOR);
+  const factorRaw = Number(env.MULTI_AGENT_LIVENESS_BOUNDED_EXTENSION_FACTOR)
   const factor =
     typeof runtime?.livenessBoundedExtensionFactor === "number" &&
     Number.isFinite(runtime.livenessBoundedExtensionFactor) &&
@@ -165,49 +161,49 @@ export function resolveRuntimeLifecycleConfig(
       ? runtime.livenessBoundedExtensionFactor
       : Number.isFinite(factorRaw) && factorRaw > 0
         ? factorRaw
-        : DEFAULT_RUNTIME_LIFECYCLE.livenessBoundedExtensionFactor;
+        : DEFAULT_RUNTIME_LIFECYCLE.livenessBoundedExtensionFactor
   return {
     heartbeatIntervalMs: readMs(
       runtime?.heartbeatIntervalMs,
       env.MULTI_AGENT_HEARTBEAT_INTERVAL_MS,
-      DEFAULT_RUNTIME_LIFECYCLE.heartbeatIntervalMs
+      DEFAULT_RUNTIME_LIFECYCLE.heartbeatIntervalMs,
     ),
     inactivityTimeoutMs: readMs(
       runtime?.inactivityTimeoutMs,
       env.MULTI_AGENT_INACTIVITY_TIMEOUT_MS,
-      DEFAULT_RUNTIME_LIFECYCLE.inactivityTimeoutMs
+      DEFAULT_RUNTIME_LIFECYCLE.inactivityTimeoutMs,
     ),
     shutdownGracePeriodMs: readMs(
       runtime?.shutdownGracePeriodMs,
       env.MULTI_AGENT_SHUTDOWN_GRACE_PERIOD_MS,
-      DEFAULT_RUNTIME_LIFECYCLE.shutdownGracePeriodMs
+      DEFAULT_RUNTIME_LIFECYCLE.shutdownGracePeriodMs,
     ),
     livenessSampleIntervalMs: readMs(
       runtime?.livenessSampleIntervalMs,
       env.MULTI_AGENT_LIVENESS_SAMPLE_INTERVAL_MS,
-      DEFAULT_RUNTIME_LIFECYCLE.livenessSampleIntervalMs
+      DEFAULT_RUNTIME_LIFECYCLE.livenessSampleIntervalMs,
     ),
     livenessSoftWarningMs: readMs(
       runtime?.livenessSoftWarningMs,
       env.MULTI_AGENT_LIVENESS_SOFT_WARNING_MS,
-      DEFAULT_RUNTIME_LIFECYCLE.livenessSoftWarningMs
+      DEFAULT_RUNTIME_LIFECYCLE.livenessSoftWarningMs,
     ),
     livenessStallWarningMs: readMs(
       runtime?.livenessStallWarningMs,
       env.MULTI_AGENT_LIVENESS_STALL_WARNING_MS,
-      DEFAULT_RUNTIME_LIFECYCLE.livenessStallWarningMs
+      DEFAULT_RUNTIME_LIFECYCLE.livenessStallWarningMs,
     ),
-    livenessBoundedExtensionFactor: factor
-  };
+    livenessBoundedExtensionFactor: factor,
+  }
 }
 
 export abstract class BaseCliRuntime implements AgentRuntime {
-  abstract readonly agentId: string;
+  abstract readonly agentId: string
 
   constructor(private readonly dependencies: RuntimeDependencies = {}) {}
 
   run(input: AgentRunInput): Promise<AgentRunOutput> {
-    return this.runStream(input).promise;
+    return this.runStream(input).promise
   }
 
   /**
@@ -222,23 +218,24 @@ export abstract class BaseCliRuntime implements AgentRuntime {
   ): Promise<void> {}
 
   runStream(input: AgentRunInput, hooks: RuntimeStreamHooks = {}): RuntimeExecutionHandle {
-    const command = this.buildCommand(input);
+    const command = this.buildCommand(input)
     const env = {
       ...process.env,
       PYTHONIOENCODING: "utf-8",
       LANG: "en_US.UTF-8",
       CHCP: "65001",
-      ...input.env
-    };
-    const lifecycle = resolveRuntimeLifecycleConfig(input.runtime, env);
-    const spawnProcess = this.dependencies.spawn ?? spawn;
-    const now = this.dependencies.now ?? Date.now;
-    const setTimeoutImpl = this.dependencies.setTimeout ?? globalThis.setTimeout;
-    const clearTimeoutImpl = this.dependencies.clearTimeout ?? globalThis.clearTimeout;
-    const setIntervalImpl = this.dependencies.setInterval ?? globalThis.setInterval;
-    const clearIntervalImpl = this.dependencies.clearInterval ?? globalThis.clearInterval;
-    const platform = this.dependencies.platform ?? process.platform;
-    const forceKillProcessTree = this.dependencies.forceKillProcessTree ?? defaultForceKillProcessTree;
+      ...input.env,
+    }
+    const lifecycle = resolveRuntimeLifecycleConfig(input.runtime, env)
+    const spawnProcess = this.dependencies.spawn ?? spawn
+    const now = this.dependencies.now ?? Date.now
+    const setTimeoutImpl = this.dependencies.setTimeout ?? globalThis.setTimeout
+    const clearTimeoutImpl = this.dependencies.clearTimeout ?? globalThis.clearTimeout
+    const setIntervalImpl = this.dependencies.setInterval ?? globalThis.setInterval
+    const clearIntervalImpl = this.dependencies.clearInterval ?? globalThis.clearInterval
+    const platform = this.dependencies.platform ?? process.platform
+    const forceKillProcessTree =
+      this.dependencies.forceKillProcessTree ?? defaultForceKillProcessTree
     const createLivenessProbe: (pid: number, config: LivenessProbeConfig) => ProcessLivenessProbe =
       this.dependencies.createLivenessProbe ??
       ((pid, config) => {
@@ -246,10 +243,10 @@ export abstract class BaseCliRuntime implements AgentRuntime {
           now,
           setInterval: setIntervalImpl,
           clearInterval: clearIntervalImpl,
-          platform
-        };
-        return new ProcessLivenessProbe(pid, config, probeDeps);
-      });
+          platform,
+        }
+        return new ProcessLivenessProbe(pid, config, probeDeps)
+      })
     // stdio[0] is "pipe" when we need to write stdinContent, "ignore" otherwise.
     // The union type ("pipe" | "ignore") for the tuple's first element confuses TypeScript's
     // spawn overload resolution, so we cast to keep ChildProcessWithoutNullStreams.
@@ -258,29 +255,29 @@ export abstract class BaseCliRuntime implements AgentRuntime {
       cwd: input.cwd,
       env,
       shell: command.shell,
-      stdio: [command.stdinContent !== undefined ? "pipe" : "ignore", "pipe", "pipe"]
-    } as never) as ChildProcessWithoutNullStreams;
+      stdio: [command.stdinContent !== undefined ? "pipe" : "ignore", "pipe", "pipe"],
+    } as never) as ChildProcessWithoutNullStreams
 
     if (command.stdinContent !== undefined && child.stdin) {
-      child.stdin.end(command.stdinContent, "utf-8");
+      child.stdin.end(command.stdinContent, "utf-8")
     }
 
-    let rawStdout = "";
-    let rawStderr = "";
-    let cancelled = false;
-    let timedOut = false;
-    let stalled = false;
-    let deadProcess = false;
-    let fastFailed = false;
-    let turnCompleted = false;
-    let fastFailReason: string | null = null;
-    let settled = false;
-    let terminationStarted = false;
-    let lastActivityMs = now();
-    let lastActivityAt = new Date(lastActivityMs).toISOString();
-    let lastStderrMs = 0; // B010-fix: tracks stderr separately for stall fast-kill
-    let heartbeatTimer: ReturnType<typeof globalThis.setInterval> | undefined;
-    let forceKillTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+    let rawStdout = ""
+    let rawStderr = ""
+    let cancelled = false
+    let timedOut = false
+    let stalled = false
+    let deadProcess = false
+    let fastFailed = false
+    let turnCompleted = false
+    let fastFailReason: string | null = null
+    let settled = false
+    let terminationStarted = false
+    let lastActivityMs = now()
+    let lastActivityAt = new Date(lastActivityMs).toISOString()
+    let lastStderrMs = 0 // B010-fix: tracks stderr separately for stall fast-kill
+    let heartbeatTimer: ReturnType<typeof globalThis.setInterval> | undefined
+    let forceKillTimer: ReturnType<typeof globalThis.setTimeout> | undefined
 
     const probe =
       typeof child.pid === "number"
@@ -288,152 +285,152 @@ export abstract class BaseCliRuntime implements AgentRuntime {
             sampleIntervalMs: lifecycle.livenessSampleIntervalMs,
             softWarningMs: lifecycle.livenessSoftWarningMs,
             stallWarningMs: lifecycle.livenessStallWarningMs,
-            boundedExtensionFactor: lifecycle.livenessBoundedExtensionFactor
+            boundedExtensionFactor: lifecycle.livenessBoundedExtensionFactor,
           })
-        : null;
+        : null
 
     const clearTimers = () => {
       if (heartbeatTimer) {
-        clearIntervalImpl(heartbeatTimer);
-        heartbeatTimer = undefined;
+        clearIntervalImpl(heartbeatTimer)
+        heartbeatTimer = undefined
       }
 
       if (forceKillTimer) {
-        clearTimeoutImpl(forceKillTimer);
-        forceKillTimer = undefined;
+        clearTimeoutImpl(forceKillTimer)
+        forceKillTimer = undefined
       }
 
-      probe?.stop();
-    };
+      probe?.stop()
+    }
 
     // stdout = real activity (the CLI is producing output we can parse).
     // stderr = diagnostic noise; we forward it via hooks but don't treat it as activity,
     // because providers like Gemini spam stderr during 429 retry loops while effectively asleep.
     // The probe is what distinguishes "busy but silent" (extend timeout) from "idle and silent" (kill).
     const recordStdoutActivity = (chunk: string) => {
-      lastActivityMs = now();
-      lastActivityAt = new Date(lastActivityMs).toISOString();
-      probe?.notifyActivity();
-      hooks.onActivity?.({ stream: "stdout", at: lastActivityAt, chunk });
-    };
+      lastActivityMs = now()
+      lastActivityAt = new Date(lastActivityMs).toISOString()
+      probe?.notifyActivity()
+      hooks.onActivity?.({ stream: "stdout", at: lastActivityAt, chunk })
+    }
 
     const forwardStderr = (chunk: string) => {
       // Deliberately NOT touching lastActivityMs here.
-      lastStderrMs = now(); // B010-fix: update stderr timestamp for stall check
-      hooks.onActivity?.({ stream: "stderr", at: new Date(lastStderrMs).toISOString(), chunk });
+      lastStderrMs = now() // B010-fix: update stderr timestamp for stall check
+      hooks.onActivity?.({ stream: "stderr", at: new Date(lastStderrMs).toISOString(), chunk })
 
       // Fast-fail 框架：runtime 通过覆写 classifyStderrChunk() 返回非 null 的
       // { reason } 即视为终止信号，立即 requestTermination。框架本身是通用能力，
       // 但 GeminiRuntime 已不再使用（F004/B006 第三版：retry 循环可自恢复，详见
       // gemini-runtime.ts 顶部注释）。如需新 runtime 启用，在子类覆写 classifyStderrChunk。
       if (!fastFailed && !terminationStarted) {
-        const fastFail = this.classifyStderrChunk(chunk);
+        const fastFail = this.classifyStderrChunk(chunk)
         if (fastFail) {
-          fastFailed = true;
-          fastFailReason = fastFail.reason;
-          rawStderr = `${rawStderr.trimEnd() ? `${rawStderr.trimEnd()}\n` : ""}[runtime] ${formatFastFailMessage(fastFailReason)}\n`;
-          requestTermination();
+          fastFailed = true
+          fastFailReason = fastFail.reason
+          rawStderr = `${rawStderr.trimEnd() ? `${rawStderr.trimEnd()}\n` : ""}[runtime] ${formatFastFailMessage(fastFailReason)}\n`
+          requestTermination()
         }
       }
-    };
+    }
 
     const forceKill = () => {
       if (child.exitCode !== null) {
-        return;
+        return
       }
 
       if (platform === "win32" && typeof child.pid === "number") {
-        forceKillProcessTree(child.pid);
-        return;
+        forceKillProcessTree(child.pid)
+        return
       }
 
       try {
-        child.kill("SIGKILL");
+        child.kill("SIGKILL")
       } catch {
-        return;
+        return
       }
-    };
+    }
 
     const requestTermination = () => {
       if (terminationStarted) {
-        return;
+        return
       }
 
-      terminationStarted = true;
-      clearTimers();
+      terminationStarted = true
+      clearTimers()
 
       try {
-        child.kill("SIGTERM");
+        child.kill("SIGTERM")
       } catch {
-        return;
+        return
       }
 
       if (lifecycle.shutdownGracePeriodMs <= 0) {
-        forceKill();
-        return;
+        forceKill()
+        return
       }
 
       forceKillTimer = setTimeoutImpl(() => {
-        forceKill();
-      }, lifecycle.shutdownGracePeriodMs);
-    };
+        forceKill()
+      }, lifecycle.shutdownGracePeriodMs)
+    }
 
     const promise = new Promise<AgentRunOutput>((resolve, reject) => {
       const lines = readline.createInterface({
         input: child.stdout,
-        crlfDelay: Infinity
-      });
+        crlfDelay: Infinity,
+      })
 
       const settle = (callback: () => void) => {
         if (settled) {
-          return;
+          return
         }
 
-        settled = true;
-        clearTimers();
-        lines.close();
+        settled = true
+        clearTimers()
+        lines.close()
 
         Promise.resolve(command.cleanup?.())
           .catch(() => undefined)
-          .finally(callback);
-      };
+          .finally(callback)
+      }
 
       lines.on("line", (line) => {
-        rawStdout += `${line}\n`;
-        hooks.onStdoutLine?.(line);
-        recordStdoutActivity(line);
+        rawStdout += `${line}\n`
+        hooks.onStdoutLine?.(line)
+        recordStdoutActivity(line)
 
         // B009-B: detect turn.completed to protect against post-turn crashes.
         // If the agent already finished its turn, a later process death should
         // resolve (preserving the response) instead of rejecting.
         if (!turnCompleted) {
           try {
-            const parsed = JSON.parse(line);
+            const parsed = JSON.parse(line)
             if (parsed && parsed.type === "turn.completed") {
-              turnCompleted = true;
+              turnCompleted = true
             }
           } catch {
             // Not JSON — ignore
           }
         }
-      });
+      })
 
       child.stderr.on("data", (chunk) => {
-        const text = chunk.toString("utf-8");
-        rawStderr += text;
-        hooks.onStderrChunk?.(text);
-        forwardStderr(text);
-      });
+        const text = chunk.toString("utf-8")
+        rawStderr += text
+        hooks.onStderrChunk?.(text)
+        forwardStderr(text)
+      })
 
       child.on("error", (error) => {
-        settle(() => reject(error));
-      });
+        settle(() => reject(error))
+      })
 
       child.on("close", (code) => {
         settle(() => {
           if (fastFailed) {
-            reject(new Error(formatFastFailMessage(fastFailReason ?? "unknown")));
-            return;
+            reject(new Error(formatFastFailMessage(fastFailReason ?? "unknown")))
+            return
           }
           if (timedOut || stalled || deadProcess) {
             // B009-B: if the turn already completed successfully, the agent's work
@@ -444,15 +441,17 @@ export abstract class BaseCliRuntime implements AgentRuntime {
                 rawStdout,
                 rawStderr,
                 exitCode: code,
-                stopReason: "complete" as StopReason
-              });
-              return;
+                stopReason: "complete" as StopReason,
+              })
+              return
             }
-            const reason = stalled ? "stall" : deadProcess ? "dead" : "timeout";
+            const reason = stalled ? "stall" : deadProcess ? "dead" : "timeout"
             reject(
-              new Error(formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt, reason))
-            );
-            return;
+              new Error(
+                formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt, reason),
+              ),
+            )
+            return
           }
 
           resolve({
@@ -460,34 +459,34 @@ export abstract class BaseCliRuntime implements AgentRuntime {
             rawStdout,
             rawStderr,
             exitCode: cancelled && code === null ? 0 : code,
-            stopReason: null
-          });
-        });
-      });
+            stopReason: null,
+          })
+        })
+      })
 
-      probe?.start();
+      probe?.start()
 
       if (lifecycle.heartbeatIntervalMs > 0 && lifecycle.inactivityTimeoutMs > 0) {
         heartbeatTimer = setIntervalImpl(() => {
           if (terminationStarted) {
-            return;
+            return
           }
 
           // Forward any liveness warnings the probe has queued since the last tick.
           if (probe) {
             for (const warning of probe.drainWarnings()) {
-              hooks.onLivenessWarning?.(warning);
+              hooks.onLivenessWarning?.(warning)
             }
 
             if (probe.getState() === "dead") {
-              deadProcess = true;
-              rawStderr = `${rawStderr.trimEnd() ? `${rawStderr.trimEnd()}\n` : ""}[runtime] ${formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt, "dead")}\n`;
-              requestTermination();
-              return;
+              deadProcess = true
+              rawStderr = `${rawStderr.trimEnd() ? `${rawStderr.trimEnd()}\n` : ""}[runtime] ${formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt, "dead")}\n`
+              requestTermination()
+              return
             }
           }
 
-          const elapsed = now() - lastActivityMs;
+          const elapsed = now() - lastActivityMs
 
           // Fast-path: probe says the process is idle-silent long enough to be considered stuck.
           // Kill even if inactivityTimeoutMs hasn't elapsed yet — the CPU-flat signal is strong.
@@ -497,22 +496,22 @@ export abstract class BaseCliRuntime implements AgentRuntime {
           // retry loop (10 attempts × ≤30s backoff ≈ 300s max) — not stuck. Killing at 180s
           // would cut the loop short. The regular inactivityTimeoutMs check (below) still
           // uses stdout-only lastActivityMs so the 5-minute watchdog is unaffected.
-          const lastAnyMs = Math.max(lastActivityMs, lastStderrMs);
-          const stallElapsed = now() - lastAnyMs;
+          const lastAnyMs = Math.max(lastActivityMs, lastStderrMs)
+          const stallElapsed = now() - lastAnyMs
           if (
             probe &&
             probe.canClassifySilentState() &&
             stallElapsed >= lifecycle.livenessStallWarningMs &&
             probe.getState() === "idle-silent"
           ) {
-            stalled = true;
-            rawStderr = `${rawStderr.trimEnd() ? `${rawStderr.trimEnd()}\n` : ""}[runtime] ${formatRuntimeTimeoutMessage(lifecycle.livenessStallWarningMs, lastActivityAt, "stall")}\n`;
-            requestTermination();
-            return;
+            stalled = true
+            rawStderr = `${rawStderr.trimEnd() ? `${rawStderr.trimEnd()}\n` : ""}[runtime] ${formatRuntimeTimeoutMessage(lifecycle.livenessStallWarningMs, lastActivityAt, "stall")}\n`
+            requestTermination()
+            return
           }
 
           if (elapsed < lifecycle.inactivityTimeoutMs) {
-            return;
+            return
           }
 
           // Busy-silent: CPU is growing, model is probably thinking. Extend up to the hard cap.
@@ -521,35 +520,35 @@ export abstract class BaseCliRuntime implements AgentRuntime {
             probe.shouldExtendTimeout() &&
             !probe.isHardCapExceeded(elapsed, lifecycle.inactivityTimeoutMs)
           ) {
-            return;
+            return
           }
 
-          timedOut = true;
+          timedOut = true
           rawStderr = rawStderr
             ? `${rawStderr.trimEnd()}\n[runtime] ${formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt)}\n`
-            : `[runtime] ${formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt)}\n`;
-          requestTermination();
-        }, lifecycle.heartbeatIntervalMs);
+            : `[runtime] ${formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt)}\n`
+          requestTermination()
+        }, lifecycle.heartbeatIntervalMs)
       }
-    });
+    })
 
     return {
       cancel() {
-        cancelled = true;
-        requestTermination();
+        cancelled = true
+        requestTermination()
       },
-      promise
-    };
+      promise,
+    }
   }
 
-  protected abstract buildCommand(input: AgentRunInput): RuntimeCommand;
+  protected abstract buildCommand(input: AgentRunInput): RuntimeCommand
 
   parseActivityLine(_event: Record<string, unknown>): string | null {
-    return null;
+    return null
   }
 
   transformToolEvent(_event: Record<string, unknown>): ToolEvent | null {
-    return null;
+    return null
   }
 
   /**
@@ -562,7 +561,7 @@ export abstract class BaseCliRuntime implements AgentRuntime {
    * when asserting per-provider patterns.
    */
   classifyStderrChunk(_chunk: string): { reason: string } | null {
-    return null;
+    return null
   }
 
   /**
@@ -575,8 +574,10 @@ export abstract class BaseCliRuntime implements AgentRuntime {
    * use it verbatim; when it doesn't (Codex/Claude typically don't), return null and let
    * the orchestrator fall back to the model-keyed lookup table.
    */
-  parseUsage(_event: Record<string, unknown>): { totalTokens: number; contextWindow: number | null } | null {
-    return null;
+  parseUsage(
+    _event: Record<string, unknown>,
+  ): { totalTokens: number; contextWindow: number | null } | null {
+    return null
   }
 
   /**
@@ -588,7 +589,7 @@ export abstract class BaseCliRuntime implements AgentRuntime {
    * as "complete", and null + anything else as "aborted".
    */
   parseStopReason(_event: Record<string, unknown>): StopReason | null {
-    return null;
+    return null
   }
 
   /**
@@ -597,59 +598,59 @@ export abstract class BaseCliRuntime implements AgentRuntime {
    * text event" and is accumulated as no-op by the orchestrator.
    */
   parseAssistantDelta(_event: Record<string, unknown>): string {
-    return "";
+    return ""
   }
 
   protected extractFinalText(rawStdout: string) {
-    return rawStdout.trim() || undefined;
+    return rawStdout.trim() || undefined
   }
 }
 
 export function resolveNpmRoot() {
   const candidates = [
     path.join(process.env.APPDATA || "", "npm"),
-    path.join(process.env.USERPROFILE || "", "AppData", "Roaming", "npm")
-  ];
+    path.join(process.env.USERPROFILE || "", "AppData", "Roaming", "npm"),
+  ]
 
-  return candidates.find((candidate) => candidate && existsSync(candidate)) || "";
+  return candidates.find((candidate) => candidate && existsSync(candidate)) || ""
 }
 
 export function resolveNodeScript(
   packageName: string,
   relativeScriptPath: string[] | string[][],
-  fallbackCommand?: string
+  fallbackCommand?: string,
 ) {
-  const npmRoot = resolveNpmRoot();
+  const npmRoot = resolveNpmRoot()
   const candidatePaths = Array.isArray(relativeScriptPath[0])
     ? (relativeScriptPath as string[][])
-    : [relativeScriptPath as string[]];
+    : [relativeScriptPath as string[]]
   const scriptPath = npmRoot
-    ? candidatePaths
+    ? (candidatePaths
         .map((segments) => path.join(npmRoot, "node_modules", packageName, ...segments))
-        .find((candidate) => existsSync(candidate)) ?? ""
-    : "";
+        .find((candidate) => existsSync(candidate)) ?? "")
+    : ""
 
   if (scriptPath && existsSync(scriptPath)) {
     return {
       command: process.execPath,
       prefixArgs: [scriptPath],
-      shell: false
-    };
+      shell: false,
+    }
   }
 
   return {
     command: fallbackCommand ?? packageName,
     prefixArgs: [],
-    shell: true
-  };
+    shell: true,
+  }
 }
 
 export function findSessionId(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") {
-    return null;
+    return null
   }
 
-  const value = payload as Record<string, unknown>;
+  const value = payload as Record<string, unknown>
 
   // B017: skip error-result envelopes. Claude CLI emits
   // `{type:"result", is_error:true, num_turns:0, session_id:"<junk>"}` when
@@ -657,24 +658,24 @@ export function findSessionId(payload: unknown): string | null {
   // id with no jsonl on disk; trusting it makes next --resume repeat the failure
   // forever (observed in thread 8b43322b 2026-04-18 18:38).
   if (value.type === "result" && value.is_error === true) {
-    return null;
+    return null
   }
 
   if (typeof value.session_id === "string" && value.session_id) {
-    return value.session_id;
+    return value.session_id
   }
   if (typeof value.sessionId === "string" && value.sessionId) {
-    return value.sessionId;
+    return value.sessionId
   }
 
   for (const child of Object.values(value)) {
-    const nested = findSessionId(child);
+    const nested = findSessionId(child)
     if (nested) {
-      return nested;
+      return nested
     }
   }
 
-  return null;
+  return null
 }
 
 export function parseEventModel(event: Record<string, unknown>) {
@@ -682,9 +683,9 @@ export function parseEventModel(event: Record<string, unknown>) {
     ? event.model
     : typeof (event.message as { model?: string } | undefined)?.model === "string"
       ? (event.message as { model: string }).model
-      : null;
+      : null
 }
 
 export function wrapPromptWithInstructions(instructions: string, userPrompt: string) {
-  return [instructions.trim(), "", "User request:", userPrompt].join("\n");
+  return [instructions.trim(), "", "User request:", userPrompt].join("\n")
 }

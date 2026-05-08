@@ -1,5 +1,5 @@
-import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import { describe, it } from "node:test"
 import { validatePort } from "./port-validator"
 
 describe("validatePort", () => {
@@ -58,8 +58,10 @@ describe("validatePort", () => {
     assert.ok(result.reason?.includes("excluded"))
   })
 
-  it("rejects API server port (8787 default)", () => {
-    const result = validatePort(8787)
+  it("rejects API server port via excludedPorts", () => {
+    // apiConfig.port varies by env (F024 worktree assigns 8800+ dynamically),
+    // so pass via excludedPorts to keep this test environment-independent.
+    const result = validatePort(8787, { excludedPorts: [8787] })
     assert.strictEqual(result.allowed, false)
   })
 

@@ -48,8 +48,11 @@ describe("extractSOPBookmark", () => {
   it("output mentioning 'review' does NOT change phase when stage is feat-lifecycle", () => {
     const output = "F007 review 三轮通过，德彪放行。已 merge 到 dev。文档已更新。"
     const result = extractSOPBookmark(output, "feat-lifecycle")
-    assert.equal(result.phase, "feat-lifecycle",
-      "phase must be stage name, never regex-detected from natural language")
+    assert.equal(
+      result.phase,
+      "feat-lifecycle",
+      "phase must be stage name, never regex-detected from natural language",
+    )
   })
 
   it("marks phase=completed when sopStage indicates completion", () => {
@@ -62,24 +65,32 @@ describe("extractSOPBookmark", () => {
   it("B014-Bug1: does NOT regex-match 'review' when stage is feat-lifecycle and last 300 chars contain review", () => {
     const output = "F007 全部完成。德彪第三轮 review 通过了。已 merge 到 dev 并推到远程。"
     const result = extractSOPBookmark(output, "feat-lifecycle")
-    assert.notEqual(result.phase, "review",
-      "phase must be the stage name, not regex-detected 'review' from natural language")
+    assert.notEqual(
+      result.phase,
+      "review",
+      "phase must be the stage name, not regex-detected 'review' from natural language",
+    )
     assert.equal(result.skill, "feat-lifecycle")
   })
 
   it("B014-Bug1: does NOT regex-match 'merge' when stage is tdd", () => {
     const output = "测试写完了。merge 后需要补 e2e 场景。"
     const result = extractSOPBookmark(output, "tdd")
-    assert.notEqual(result.phase, "merge",
-      "mentioning 'merge' in output should not override the structured stage")
+    assert.notEqual(
+      result.phase,
+      "merge",
+      "mentioning 'merge' in output should not override the structured stage",
+    )
     assert.equal(result.phase, "tdd")
   })
 
   it("B014-Bug1: lastCompletedStep contains actual output context, not regex snippet", () => {
     const output = "Task 9 UX 完成。全部 10 个 Task 实现完毕，91 测试全绿。"
     const result = extractSOPBookmark(output, "quality-gate")
-    assert.ok(result.lastCompletedStep.includes("91 测试全绿"),
-      "lastCompletedStep should contain meaningful output context")
+    assert.ok(
+      result.lastCompletedStep.includes("91 测试全绿"),
+      "lastCompletedStep should contain meaningful output context",
+    )
   })
 })
 
@@ -101,8 +112,12 @@ describe("formatBookmarkForInjection", () => {
 
   it("returns empty string for null-skill bookmark", () => {
     const bm: SOPBookmark = {
-      skill: null, phase: null, lastCompletedStep: "", nextExpectedAction: "",
-      blockingQuestion: null, updatedAt: "2026-04-13T10:00:00Z",
+      skill: null,
+      phase: null,
+      lastCompletedStep: "",
+      nextExpectedAction: "",
+      blockingQuestion: null,
+      updatedAt: "2026-04-13T10:00:00Z",
     }
     assert.equal(formatBookmarkForInjection(bm), "")
   })

@@ -28,16 +28,36 @@ function buildSessionsStub(threads: ThreadRecord[]) {
     findThread: (id: string) => threads.find((t) => t.id === id) ?? null,
     findThreadByGroupAndProvider: (groupId: string, provider: Provider) =>
       threads.find((t) => t.sessionGroupId === groupId && t.provider === provider) ?? null,
-    listGroupThreads: (groupId: string) =>
-      threads.filter((t) => t.sessionGroupId === groupId),
+    listGroupThreads: (groupId: string) => threads.filter((t) => t.sessionGroupId === groupId),
   }
 }
 
 function makeThreads(): ThreadRecord[] {
   return [
-    { id: "t-codex", sessionGroupId: "g1", provider: "codex", alias: "Coder", currentModel: null, nativeSessionId: null },
-    { id: "t-claude", sessionGroupId: "g1", provider: "claude", alias: "Reviewer", currentModel: null, nativeSessionId: null },
-    { id: "t-gemini", sessionGroupId: "g1", provider: "gemini", alias: "Designer", currentModel: null, nativeSessionId: null },
+    {
+      id: "t-codex",
+      sessionGroupId: "g1",
+      provider: "codex",
+      alias: "Coder",
+      currentModel: null,
+      nativeSessionId: null,
+    },
+    {
+      id: "t-claude",
+      sessionGroupId: "g1",
+      provider: "claude",
+      alias: "Reviewer",
+      currentModel: null,
+      nativeSessionId: null,
+    },
+    {
+      id: "t-gemini",
+      sessionGroupId: "g1",
+      provider: "gemini",
+      alias: "Designer",
+      currentModel: null,
+      nativeSessionId: null,
+    },
   ]
 }
 

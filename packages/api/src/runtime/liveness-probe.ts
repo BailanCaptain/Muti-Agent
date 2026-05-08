@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile } from "node:child_process"
 
 /**
  * CPU-based liveness classification for CLI child processes.
@@ -20,74 +20,74 @@ import { execFile } from "node:child_process";
  * upstream it still behaves better than our current stderr-driven timer.
  */
 
-export type LivenessState = "active" | "busy-silent" | "idle-silent" | "dead";
+export type LivenessState = "active" | "busy-silent" | "idle-silent" | "dead"
 
-export type LivenessWarningLevel = "alive_but_silent" | "suspected_stall";
+export type LivenessWarningLevel = "alive_but_silent" | "suspected_stall"
 
 export type LivenessWarning = {
-  state: LivenessState;
-  level: LivenessWarningLevel;
-  silenceDurationMs: number;
-  cpuTimeMs: number;
-  processAlive: boolean;
-};
+  state: LivenessState
+  level: LivenessWarningLevel
+  silenceDurationMs: number
+  cpuTimeMs: number
+  processAlive: boolean
+}
 
 export type LivenessProbeConfig = {
   /** How often to sample CPU time (ms). Default 60s — long enough that normal CLI idle periods don't noise the log. */
-  sampleIntervalMs: number;
+  sampleIntervalMs: number
   /** Soft warning threshold (ms of silence). Emits alive_but_silent warning. Default 120s. */
-  softWarningMs: number;
+  softWarningMs: number
   /** Stall threshold (ms of silence). Emits suspected_stall warning. Default 180s. */
-  stallWarningMs: number;
+  stallWarningMs: number
   /** Bounded extension factor for busy-silent state (elapsed allowed up to factor * timeoutMs). Default 2.0. */
-  boundedExtensionFactor: number;
-};
+  boundedExtensionFactor: number
+}
 
 const DEFAULT_CONFIG: LivenessProbeConfig = {
   sampleIntervalMs: 60_000,
   softWarningMs: 120_000,
   stallWarningMs: 180_000,
-  boundedExtensionFactor: 2.0
-};
+  boundedExtensionFactor: 2.0,
+}
 
 /** Parse `ps -o cputime=` output (h:mm:ss or mm:ss.SS) to milliseconds. */
 export function parseCpuTime(raw: string): number {
-  const trimmed = raw.trim();
+  const trimmed = raw.trim()
   if (!trimmed) {
-    return 0;
+    return 0
   }
 
-  const parts = trimmed.split(":");
+  const parts = trimmed.split(":")
   if (parts.length === 3) {
-    const [h, m, s] = parts;
-    return (Number(h) * 3600 + Number(m) * 60 + Number(s)) * 1000;
+    const [h, m, s] = parts
+    return (Number(h) * 3600 + Number(m) * 60 + Number(s)) * 1000
   }
 
   if (parts.length === 2) {
-    const [m, s] = parts;
-    return (Number(m) * 60 + Number(s)) * 1000;
+    const [m, s] = parts
+    return (Number(m) * 60 + Number(s)) * 1000
   }
 
-  return 0;
+  return 0
 }
 
 export type ProcessLivenessProbeDependencies = {
-  now?: () => number;
-  setInterval?: typeof globalThis.setInterval;
-  clearInterval?: typeof globalThis.clearInterval;
-  platform?: NodeJS.Platform;
+  now?: () => number
+  setInterval?: typeof globalThis.setInterval
+  clearInterval?: typeof globalThis.clearInterval
+  platform?: NodeJS.Platform
   /** PID existence check. Returns true if pid is alive. */
-  isPidAlive?: (pid: number) => boolean;
+  isPidAlive?: (pid: number) => boolean
   /** Unix CPU sampler — resolves to milliseconds of CPU time. Rejects if the pid is gone. */
-  sampleCpuTime?: (pid: number) => Promise<number>;
-};
+  sampleCpuTime?: (pid: number) => Promise<number>
+}
 
 function defaultIsPidAlive(pid: number): boolean {
   try {
-    process.kill(pid, 0);
-    return true;
+    process.kill(pid, 0)
+    return true
   } catch {
-    return false;
+    return false
   }
 }
 
@@ -95,22 +95,22 @@ function defaultSampleCpuTime(pid: number): Promise<number> {
   return new Promise((resolve, reject) => {
     execFile("ps", ["-o", "cputime=", "-p", String(pid)], (err, stdout) => {
       if (err) {
-        reject(err);
-        return;
+        reject(err)
+        return
       }
-      resolve(parseCpuTime(stdout));
-    });
-  });
+      resolve(parseCpuTime(stdout))
+    })
+  })
 }
 
 /** Parse PowerShell `Get-Process .CPU` output (float seconds) to milliseconds. */
 export function parseCpuTimeSeconds(raw: string): number {
-  const trimmed = raw.trim();
+  const trimmed = raw.trim()
   if (!trimmed) {
-    return 0;
+    return 0
   }
-  const val = parseFloat(trimmed);
-  return Number.isNaN(val) ? 0 : Math.round(val * 1000);
+  const val = parseFloat(trimmed)
+  return Number.isNaN(val) ? 0 : Math.round(val * 1000)
 }
 
 // B010: Windows CPU sampling via PowerShell Get-Process.
@@ -119,85 +119,89 @@ function defaultSampleCpuTimeWindows(pid: number): Promise<number> {
   return new Promise((resolve, reject) => {
     execFile(
       "powershell",
-      ["-NoProfile", "-NonInteractive", "-Command",
-        `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).CPU`],
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).CPU`,
+      ],
       (err, stdout) => {
         if (err) {
-          reject(err);
-          return;
+          reject(err)
+          return
         }
-        const trimmed = stdout.trim();
+        const trimmed = stdout.trim()
         if (!trimmed) {
           // Empty output means the process was not found.
-          reject(new Error(`pid ${pid} not found`));
-          return;
+          reject(new Error(`pid ${pid} not found`))
+          return
         }
-        resolve(parseCpuTimeSeconds(trimmed));
-      }
-    );
-  });
+        resolve(parseCpuTimeSeconds(trimmed))
+      },
+    )
+  })
 }
 
 export class ProcessLivenessProbe {
-  readonly config: LivenessProbeConfig;
-  private readonly pid: number;
-  private readonly now: () => number;
-  private readonly setIntervalImpl: typeof globalThis.setInterval;
-  private readonly clearIntervalImpl: typeof globalThis.clearInterval;
-  private readonly platform: NodeJS.Platform;
-  private readonly isPidAlive: (pid: number) => boolean;
-  private readonly sampleCpuTime: (pid: number) => Promise<number>;
+  readonly config: LivenessProbeConfig
+  private readonly pid: number
+  private readonly now: () => number
+  private readonly setIntervalImpl: typeof globalThis.setInterval
+  private readonly clearIntervalImpl: typeof globalThis.clearInterval
+  private readonly platform: NodeJS.Platform
+  private readonly isPidAlive: (pid: number) => boolean
+  private readonly sampleCpuTime: (pid: number) => Promise<number>
 
-  private timer: ReturnType<typeof globalThis.setInterval> | null = null;
-  private lastActivityAt: number;
-  private currCpuTimeMs = 0;
-  private prevCpuTimeMs = 0;
-  private cpuGrowing = false;
-  private pidAlive = true;
-  private stopped = false;
-  private warningQueue: LivenessWarning[] = [];
-  private softWarningEmitted = false;
-  private stallWarningEmitted = false;
+  private timer: ReturnType<typeof globalThis.setInterval> | null = null
+  private lastActivityAt: number
+  private currCpuTimeMs = 0
+  private prevCpuTimeMs = 0
+  private cpuGrowing = false
+  private pidAlive = true
+  private stopped = false
+  private warningQueue: LivenessWarning[] = []
+  private softWarningEmitted = false
+  private stallWarningEmitted = false
 
   constructor(
     pid: number,
     config: Partial<LivenessProbeConfig> = {},
-    deps: ProcessLivenessProbeDependencies = {}
+    deps: ProcessLivenessProbeDependencies = {},
   ) {
-    this.pid = pid;
-    this.config = { ...DEFAULT_CONFIG, ...config };
-    this.now = deps.now ?? Date.now;
-    this.setIntervalImpl = deps.setInterval ?? globalThis.setInterval;
-    this.clearIntervalImpl = deps.clearInterval ?? globalThis.clearInterval;
-    this.platform = deps.platform ?? process.platform;
-    this.isPidAlive = deps.isPidAlive ?? defaultIsPidAlive;
+    this.pid = pid
+    this.config = { ...DEFAULT_CONFIG, ...config }
+    this.now = deps.now ?? Date.now
+    this.setIntervalImpl = deps.setInterval ?? globalThis.setInterval
+    this.clearIntervalImpl = deps.clearInterval ?? globalThis.clearInterval
+    this.platform = deps.platform ?? process.platform
+    this.isPidAlive = deps.isPidAlive ?? defaultIsPidAlive
     this.sampleCpuTime =
       deps.sampleCpuTime ??
-      (this.platform === "win32" ? defaultSampleCpuTimeWindows : defaultSampleCpuTime);
-    this.lastActivityAt = this.now();
+      (this.platform === "win32" ? defaultSampleCpuTimeWindows : defaultSampleCpuTime)
+    this.lastActivityAt = this.now()
   }
 
   /** Notify the probe that output was received. Resets silence tracking. */
   notifyActivity(): void {
-    this.lastActivityAt = this.now();
-    this.softWarningEmitted = false;
-    this.stallWarningEmitted = false;
+    this.lastActivityAt = this.now()
+    this.softWarningEmitted = false
+    this.stallWarningEmitted = false
   }
 
   getState(): LivenessState {
     if (!this.pidAlive) {
-      return "dead";
+      return "dead"
     }
-    const silenceMs = this.now() - this.lastActivityAt;
+    const silenceMs = this.now() - this.lastActivityAt
     if (silenceMs < this.config.sampleIntervalMs) {
-      return "active";
+      return "active"
     }
-    return this.cpuGrowing ? "busy-silent" : "idle-silent";
+    return this.cpuGrowing ? "busy-silent" : "idle-silent"
   }
 
   /** True if the current state warrants extending the inactivity timeout. */
   shouldExtendTimeout(): boolean {
-    return this.getState() === "busy-silent";
+    return this.getState() === "busy-silent"
   }
 
   /**
@@ -208,75 +212,75 @@ export class ProcessLivenessProbe {
   canClassifySilentState(): boolean {
     // B010: Windows now has CPU sampling via PowerShell Get-Process,
     // so silent-state classification is available on all platforms.
-    return true;
+    return true
   }
 
   /** True if elapsed time has already passed the bounded extension cap. */
   isHardCapExceeded(elapsedMs: number, timeoutMs: number): boolean {
-    return elapsedMs >= this.config.boundedExtensionFactor * timeoutMs;
+    return elapsedMs >= this.config.boundedExtensionFactor * timeoutMs
   }
 
   /** Pull and clear pending warnings. */
   drainWarnings(): LivenessWarning[] {
-    return this.warningQueue.splice(0);
+    return this.warningQueue.splice(0)
   }
 
   start(): void {
     if (this.timer || this.stopped) {
-      return;
+      return
     }
     // Run the first sample immediately so `getState()` can report something useful before the first tick.
-    void this.sampleOnce();
+    void this.sampleOnce()
     this.timer = this.setIntervalImpl(() => {
-      void this.sampleOnce();
-    }, this.config.sampleIntervalMs);
+      void this.sampleOnce()
+    }, this.config.sampleIntervalMs)
     // setInterval returns Timeout on node; .unref exists on it.
-    (this.timer as unknown as { unref?: () => void }).unref?.();
+    ;(this.timer as unknown as { unref?: () => void }).unref?.()
   }
 
   stop(): void {
-    this.stopped = true;
+    this.stopped = true
     if (this.timer) {
-      this.clearIntervalImpl(this.timer);
-      this.timer = null;
+      this.clearIntervalImpl(this.timer)
+      this.timer = null
     }
   }
 
   private async sampleOnce(): Promise<void> {
     if (this.stopped) {
-      return;
+      return
     }
 
     if (!this.isPidAlive(this.pid)) {
-      this.pidAlive = false;
-      return;
+      this.pidAlive = false
+      return
     }
 
     try {
-      const nextCpuMs = await this.sampleCpuTime(this.pid);
-      this.prevCpuTimeMs = this.currCpuTimeMs;
-      this.currCpuTimeMs = nextCpuMs;
-      this.cpuGrowing = this.currCpuTimeMs > this.prevCpuTimeMs;
+      const nextCpuMs = await this.sampleCpuTime(this.pid)
+      this.prevCpuTimeMs = this.currCpuTimeMs
+      this.currCpuTimeMs = nextCpuMs
+      this.cpuGrowing = this.currCpuTimeMs > this.prevCpuTimeMs
     } catch {
       // ps failed — process likely gone between isPidAlive() and here.
-      this.pidAlive = false;
-      return;
+      this.pidAlive = false
+      return
     }
 
-    this.emitSilenceWarnings();
+    this.emitSilenceWarnings()
   }
 
   private emitSilenceWarnings(): void {
-    const silenceMs = this.now() - this.lastActivityAt;
+    const silenceMs = this.now() - this.lastActivityAt
     if (silenceMs >= this.config.stallWarningMs && !this.stallWarningEmitted) {
-      this.stallWarningEmitted = true;
-      this.warningQueue.push(this.makeWarning("suspected_stall", silenceMs));
-      return;
+      this.stallWarningEmitted = true
+      this.warningQueue.push(this.makeWarning("suspected_stall", silenceMs))
+      return
     }
 
     if (silenceMs >= this.config.softWarningMs && !this.softWarningEmitted) {
-      this.softWarningEmitted = true;
-      this.warningQueue.push(this.makeWarning("alive_but_silent", silenceMs));
+      this.softWarningEmitted = true
+      this.warningQueue.push(this.makeWarning("alive_but_silent", silenceMs))
     }
   }
 
@@ -286,7 +290,7 @@ export class ProcessLivenessProbe {
       level,
       silenceDurationMs,
       cpuTimeMs: this.currCpuTimeMs,
-      processAlive: this.pidAlive
-    };
+      processAlive: this.pidAlive,
+    }
   }
 }

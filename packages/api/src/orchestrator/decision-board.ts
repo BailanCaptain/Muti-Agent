@@ -60,9 +60,7 @@ export class DecisionBoard {
 
     const existing = sessionMap.get(questionHash)
     if (existing) {
-      const alreadyRaised = existing.raisers.some(
-        (r) => r.threadId === input.raiser.threadId,
-      )
+      const alreadyRaised = existing.raisers.some((r) => r.threadId === input.raiser.threadId)
       if (!alreadyRaised) {
         existing.raisers.push(input.raiser)
       }

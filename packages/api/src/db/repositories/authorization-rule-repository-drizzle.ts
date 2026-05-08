@@ -1,5 +1,5 @@
 import crypto from "node:crypto"
-import { eq, and, or, desc, sql } from "drizzle-orm"
+import { and, desc, eq, or, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import { authorizationRules } from "../schema"
 
@@ -80,10 +80,7 @@ export class DrizzleAuthorizationRuleRepository {
   }
 
   remove(ruleId: string): boolean {
-    const result = this.db
-      .delete(authorizationRules)
-      .where(eq(authorizationRules.id, ruleId))
-      .run()
+    const result = this.db.delete(authorizationRules).where(eq(authorizationRules.id, ruleId)).run()
     return result.changes > 0
   }
 
@@ -94,8 +91,14 @@ export class DrizzleAuthorizationRuleRepository {
         .from(authorizationRules)
         .where(
           and(
-            or(eq(authorizationRules.provider, filter.provider), eq(authorizationRules.provider, "*")),
-            or(eq(authorizationRules.threadId, filter.threadId), sql`${authorizationRules.threadId} IS NULL`),
+            or(
+              eq(authorizationRules.provider, filter.provider),
+              eq(authorizationRules.provider, "*"),
+            ),
+            or(
+              eq(authorizationRules.threadId, filter.threadId),
+              sql`${authorizationRules.threadId} IS NULL`,
+            ),
           ),
         )
         .orderBy(desc(authorizationRules.createdAt))
@@ -107,7 +110,10 @@ export class DrizzleAuthorizationRuleRepository {
         .select()
         .from(authorizationRules)
         .where(
-          or(eq(authorizationRules.provider, filter.provider), eq(authorizationRules.provider, "*")),
+          or(
+            eq(authorizationRules.provider, filter.provider),
+            eq(authorizationRules.provider, "*"),
+          ),
         )
         .orderBy(desc(authorizationRules.createdAt))
         .all()
@@ -117,11 +123,6 @@ export class DrizzleAuthorizationRuleRepository {
   }
 
   listAll(): AuthorizationRuleRow[] {
-    return this.db
-      .select()
-      .from(authorizationRules)
-      .orderBy(sql`rowid DESC`)
-      .all()
-      .map(toRow)
+    return this.db.select().from(authorizationRules).orderBy(sql`rowid DESC`).all().map(toRow)
   }
 }

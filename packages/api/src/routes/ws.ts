@@ -1,15 +1,19 @@
-import type { FastifyInstance } from "fastify";
-import type { OptionVerdict, RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared";
-import type { ApprovalManager } from "../orchestrator/approval-manager";
-import type { MessageService } from "../services/message-service";
-import { createLogger } from "../lib/logger";
+import type { OptionVerdict, RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared"
+import type { FastifyInstance } from "fastify"
+import { createLogger } from "../lib/logger"
+import type { ApprovalManager } from "../orchestrator/approval-manager"
+import type { MessageService } from "../services/message-service"
+import { extractSessionGroupId, shouldDeliver } from "./ws-routing"
 
-const log = createLogger("ws");
+const log = createLogger("ws")
 
 type SocketLike = {
-  send: (payload: string) => void;
-  on: (event: string, listener: (...args: unknown[]) => void) => void;
-};
+  send: (payload: string) => void
+  on: (event: string, listener: (...args: unknown[]) => void) => void
+}
+
+// F026 P0 Day2 · socket 订阅状态 — 由 client 的 subscribe 事件写入，broadcast 按此过滤
+type SubscribedSocket = SocketLike & { sessionGroupId?: string }
 
 /**
  * Sends a realtime event to a single socket. Returns `true` on success and `false`
@@ -24,89 +28,104 @@ type SocketLike = {
  */
 export function sendSocketEvent(socket: SocketLike, event: RealtimeServerEvent): boolean {
   try {
-    socket.send(JSON.stringify(event));
-    return true;
+    socket.send(JSON.stringify(event))
+    return true
   } catch (err) {
-    log.warn({ err, eventType: event.type }, "socket send failed, evicting");
-    return false;
+    log.warn({ err, eventType: event.type }, "socket send failed, evicting")
+    return false
   }
 }
 
 export type RealtimeBroadcaster = {
-  broadcast: (event: RealtimeServerEvent) => void;
-};
+  broadcast: (event: RealtimeServerEvent) => void
+}
 
 export function registerWsRoute(
   app: FastifyInstance,
   options: {
-    messages: MessageService;
-    broadcaster: RealtimeBroadcaster;
-    approvals?: ApprovalManager;
-    onDecisionRespond?: (requestId: string, decisions: Array<{optionId: string; verdict: OptionVerdict; modification?: string}>, userInput?: string) => void;
-  }
+    messages: MessageService
+    broadcaster: RealtimeBroadcaster
+    approvals?: ApprovalManager
+    onDecisionRespond?: (
+      requestId: string,
+      decisions: Array<{ optionId: string; verdict: OptionVerdict; modification?: string }>,
+      userInput?: string,
+    ) => void
+  },
 ) {
-  const sockets = new Set<SocketLike>();
+  const sockets = new Set<SubscribedSocket>()
 
   options.broadcaster.broadcast = (event) => {
-    // Broadcasts are room-wide fan-out events: snapshots, public callback messages and shared status updates.
-    // sendSocketEvent now swallows exceptions internally and reports success via its return value,
-    // so we no longer need the outer try/catch — we just drop any socket that failed to deliver.
+    // F026 P0 Day2 · I3 sessionGroupId 强过滤：
+    //   - 事件带 groupId → 仅发给订阅相同 group 的 socket（strict mode · 未订阅 socket 拒收）
+    //   - 事件无 groupId → fan-out 所有 socket（legacy 兼容 · 当前仅 status/preview.auto_open 部分形态）
+    const eventGroupId = extractSessionGroupId(event)
     for (const socket of sockets) {
+      if (!shouldDeliver(socket.sessionGroupId, eventGroupId)) continue
       if (!sendSocketEvent(socket, event)) {
-        sockets.delete(socket);
+        sockets.delete(socket)
       }
     }
-  };
+  }
 
   app.route({
     method: "GET",
     url: "/ws",
     handler: async (_request, reply) => {
-      reply.code(426);
-      return { error: "Please connect with WebSocket." };
+      reply.code(426)
+      return { error: "Please connect with WebSocket." }
     },
     wsHandler: (socket) => {
-      sockets.add(socket as SocketLike);
-      log.info({ total: sockets.size }, "client connected");
+      sockets.add(socket as SubscribedSocket)
+      log.info({ total: sockets.size }, "client connected")
 
-      let isAlive = true;
+      let isAlive = true
       const heartbeatInterval = setInterval(() => {
         if (!isAlive) {
-          log.info("heartbeat timeout, terminating connection");
-          clearInterval(heartbeatInterval);
-          sockets.delete(socket as SocketLike);
-          socket.terminate?.();
-          return;
+          log.info("heartbeat timeout, terminating connection")
+          clearInterval(heartbeatInterval)
+          sockets.delete(socket as SubscribedSocket)
+          socket.terminate?.()
+          return
         }
-        isAlive = false;
-        socket.ping?.();
-      }, 30_000);
+        isAlive = false
+        socket.ping?.()
+      }, 30_000)
 
-      socket.on("pong", () => { isAlive = true; });
+      socket.on("pong", () => {
+        isAlive = true
+      })
 
       socket.on("close", () => {
-        clearInterval(heartbeatInterval);
-        sockets.delete(socket as SocketLike);
-        log.info({ total: sockets.size }, "client disconnected");
-      });
+        clearInterval(heartbeatInterval)
+        sockets.delete(socket as SubscribedSocket)
+        log.info({ total: sockets.size }, "client disconnected")
+      })
 
       socket.on("message", async (raw: Buffer) => {
-        let event: RealtimeClientEvent;
+        let event: RealtimeClientEvent
         try {
-          event = JSON.parse(raw.toString()) as RealtimeClientEvent;
+          event = JSON.parse(raw.toString()) as RealtimeClientEvent
         } catch {
-          log.warn("malformed JSON from client, ignoring");
-          return;
+          log.warn("malformed JSON from client, ignoring")
+          return
         }
-        log.debug({ type: event.type }, "client event received");
+        log.debug({ type: event.type }, "client event received")
+
+        if (event.type === "subscribe") {
+          // F026 P0 Day2 · client 切房间时 send subscribe；同 socket 再次订阅覆盖旧值
+          ;(socket as SubscribedSocket).sessionGroupId = event.payload.sessionGroupId
+          log.debug({ sessionGroupId: event.payload.sessionGroupId }, "socket subscribed to group")
+          return
+        }
 
         if (event.type === "approval.respond" && options.approvals) {
           options.approvals.respond(
             event.payload.requestId,
             event.payload.granted,
             event.payload.scope,
-          );
-          return;
+          )
+          return
         }
 
         if (event.type === "decision.respond" && options.onDecisionRespond) {
@@ -114,8 +133,8 @@ export function registerWsRoute(
             event.payload.requestId,
             event.payload.decisions,
             event.payload.userInput,
-          );
-          return;
+          )
+          return
         }
 
         // Direct per-turn emit: bound to a single socket for the whole agent turn.
@@ -123,12 +142,12 @@ export function registerWsRoute(
         // returns false; we evict the socket so later broadcasts skip it, and swallow the result
         // so the message-service processing chain continues even when the client is gone.
         options.messages.handleClientEvent(event, (payload) => {
-          const sock = socket as SocketLike;
+          const sock = socket as SocketLike
           if (!sendSocketEvent(sock, payload)) {
-            sockets.delete(sock);
+            sockets.delete(sock)
           }
-        });
-      });
-    }
-  });
+        })
+      })
+    },
+  })
 }

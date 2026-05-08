@@ -3,6 +3,7 @@
 import { socketClient } from "@/components/ws/client"
 import type { ContentBlock, TimelineMessage } from "@multi-agent/shared"
 import { create } from "zustand"
+import type { SendResult } from "../chat/queue-flush"
 import { useThreadStore } from "./thread-store"
 
 type ChatStore = {
@@ -14,7 +15,9 @@ type ChatStore = {
   setDraft: (groupId: string | null, draft: string | ((current: string) => string)) => void
   addPendingImage: (groupId: string | null, image: { url: string; file: File }) => void
   clearPendingImages: (groupId: string | null) => void
-  sendMessage: (input: string) => Promise<void>
+  // F026 P0 · review P1-2 修复：返回 {accepted, reason?}，让 composer 的排队
+  // flush latch 能在 rejected 时立即清掉 (避免入队消息 validation fail 后 latch 卡死)。
+  sendMessage: (input: string) => Promise<SendResult>
 }
 
 const API_BASE =
@@ -78,7 +81,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // append 污染已失效会话。服务端 isSessionGroupSendable 是最后一道防线。
     if (!threadState.activeGroupId) {
       set({ status: "当前没有可用会话，请在左侧选择或新建一个会话" })
-      return
+      return { accepted: false, reason: "no-active-group" }
     }
 
     const pendingPlaceholder = pending.length > 0
@@ -87,7 +90,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const preValidation = threadState.buildSendPayload(input, pendingPlaceholder)
     if (!preValidation) {
       set({ status: "请用 @ 指定智能体：@黄仁勋 / @范德彪 / @桂芬 / @所有人" })
-      return
+      return { accepted: false, reason: "validation" }
     }
 
     const contentBlocks: ContentBlock[] = []
@@ -106,7 +109,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
 
     const payload = threadState.buildSendPayload(input, contentBlocks.length ? contentBlocks : undefined)
-    if (!payload) return
+    if (!payload) return { accepted: false, reason: "validation" }
 
     const clientMessageId = crypto.randomUUID()
 
@@ -134,5 +137,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
     get().clearPendingImages(groupId)
     set({ status: `Sent to ${payload.alias}` })
+    return { accepted: true }
   },
 }))

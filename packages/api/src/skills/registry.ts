@@ -1,7 +1,7 @@
-import { readFileSync, existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
-import { parse as parseYaml } from "yaml"
 import type { Provider } from "@multi-agent/shared"
+import { parse as parseYaml } from "yaml"
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -191,14 +191,22 @@ export class SkillRegistry {
       // next-exists
       for (const nextSkill of skill.next) {
         if (!this.skills.has(nextSkill)) {
-          errors.push({ ruleId: "next-exists", skillName: name, message: `next 引用 "${nextSkill}" 不在 manifest 中` })
+          errors.push({
+            ruleId: "next-exists",
+            skillName: name,
+            message: `next 引用 "${nextSkill}" 不在 manifest 中`,
+          })
         }
       }
 
       // agents-valid
       for (const agent of skill.agents) {
         if (!VALID_PROVIDERS.includes(agent)) {
-          errors.push({ ruleId: "agents-valid", skillName: name, message: `无效 agent: "${agent}"` })
+          errors.push({
+            ruleId: "agents-valid",
+            skillName: name,
+            message: `无效 agent: "${agent}"`,
+          })
         }
       }
 
@@ -206,7 +214,11 @@ export class SkillRegistry {
       for (const cmd of skill.slashCommands) {
         const lower = cmd.name.toLowerCase()
         if (allSlashNames.has(lower)) {
-          errors.push({ ruleId: "slash-unique", skillName: name, message: `重复 slash command: "${cmd.name}"` })
+          errors.push({
+            ruleId: "slash-unique",
+            skillName: name,
+            message: `重复 slash command: "${cmd.name}"`,
+          })
         }
         allSlashNames.add(lower)
       }

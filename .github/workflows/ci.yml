@@ -69,3 +69,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash scripts/check-docs.sh
+
+  adr-guard:
+    name: ADR-004 Diff Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # merge-base against dev/origin/main requires the full history
+          fetch-depth: 0
+      - name: Run ADR-004 diff guard
+        env:
+          # PRs: diff against the PR base branch (usually origin/dev).
+          # Push-to-dev/main: fall back to origin/dev — the real fork source
+          # for Multi-Agent feature branches (origin/main只到 Initial commit).
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'origin/dev' }}
+        run: bash scripts/ci/check-adr-004-diff.sh

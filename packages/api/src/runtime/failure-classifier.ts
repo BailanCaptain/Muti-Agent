@@ -22,31 +22,31 @@ export type FailureClass =
   /** Auth / credential failure — fresh session won't help, user needs to re-auth. */
   | "auth_failed"
   /** Couldn't match any known pattern. Treat as a transient error. */
-  | "unknown";
+  | "unknown"
 
 export type FailureClassification = {
-  class: FailureClass;
+  class: FailureClass
   /**
    * True if we should drop the thread's native_session_id so the next turn starts fresh.
    * False when resetting the session wouldn't help (auth failure, rate limit against
    * the account as a whole).
    */
-  shouldClearSession: boolean;
+  shouldClearSession: boolean
   /**
    * True if retrying the same prompt is reasonable. False when user must act (wait,
    * re-auth, reduce payload).
    */
-  safeToRetry: boolean;
+  safeToRetry: boolean
   /** Short Chinese sentence to surface in the chat. */
-  userMessage: string;
-};
+  userMessage: string
+}
 
 // Ordered by specificity — stall patterns run first so a stall-killed turn isn't
 // mistaken for "unknown".
 const PATTERNS: Array<{ match: RegExp; cls: FailureClass }> = [
   {
     match: /\[runtime\][^\n]*(卡住|睡着|异常退出)/,
-    cls: "stall_killed"
+    cls: "stall_killed",
   },
   // Capacity / quota / context — checked BEFORE rate_limited on purpose: when the raw
   // stderr carries BOTH "429 too many requests" and "RESOURCE_EXHAUSTED", capacity wins
@@ -57,12 +57,12 @@ const PATTERNS: Array<{ match: RegExp; cls: FailureClass }> = [
   {
     match:
       /(resource[_ ]exhausted|model[_ ]capacity[_ ]exhausted|capacity[_ ]exhausted|quota[_ ](exceeded|exhausted)|context[_ ](window|length)[^\n]{0,40}(exceed|limit|full|too)|token[_ ]limit[^\n]{0,20}exceed|prompt is too long)/i,
-    cls: "context_exhausted"
+    cls: "context_exhausted",
   },
   {
     match:
       /(unauthorized|forbidden|authentication[_ ]failed|invalid[_ ]api[_ ]key|oauth.{0,20}(expired|invalid)|403 forbidden|401 unauthorized)/i,
-    cls: "auth_failed"
+    cls: "auth_failed",
   },
   {
     // B017: three CLI families speak three dialects when --resume can't find
@@ -78,29 +78,26 @@ const PATTERNS: Array<{ match: RegExp; cls: FailureClass }> = [
     // all for future wording drift that still puts "session" first.
     match:
       /(session[^\n]{0,40}(not found|expired|corrupt|invalid|cannot resume|could not resume|does not exist)|no conversation found with session id|no rollout found for thread id|thread\/resume failed|invalid session identifier|error resuming session|error_during_execution)/i,
-    cls: "session_corrupt"
+    cls: "session_corrupt",
   },
   // True account-level RPS: session-agnostic, clearing wouldn't help.
   // Runs AFTER context_exhausted so capacity/quota wording is caught first.
   {
     match: /(too many requests|rpm.{0,10}exceeded|rate[_ ]?limit(?!.*exhausted))/i,
-    cls: "rate_limited"
-  }
-];
+    cls: "rate_limited",
+  },
+]
 
-export function classifyFailure(
-  rawStderr: string,
-  errorMessage: string
-): FailureClassification {
-  const haystack = `${rawStderr}\n${errorMessage}`;
+export function classifyFailure(rawStderr: string, errorMessage: string): FailureClassification {
+  const haystack = `${rawStderr}\n${errorMessage}`
 
   for (const { match, cls } of PATTERNS) {
     if (match.test(haystack)) {
-      return resolve(cls);
+      return resolve(cls)
     }
   }
 
-  return resolve("unknown");
+  return resolve("unknown")
 }
 
 function resolve(cls: FailureClass): FailureClassification {
@@ -110,36 +107,39 @@ function resolve(cls: FailureClass): FailureClassification {
         class: cls,
         shouldClearSession: false,
         safeToRetry: false,
-        userMessage: "上游限流了（配额/QPS 被打满），先等 1-2 分钟再试；session 先保留，等解除限流继续。"
-      };
+        userMessage:
+          "上游限流了（配额/QPS 被打满），先等 1-2 分钟再试；session 先保留，等解除限流继续。",
+      }
     case "session_corrupt":
       return {
         class: cls,
         shouldClearSession: true,
         safeToRetry: true,
-        userMessage: "CLI 说这个 session 找不到或已失效，已自动清空，下一轮会开新 session。"
-      };
+        userMessage: "CLI 说这个 session 找不到或已失效，已自动清空，下一轮会开新 session。",
+      }
     case "context_exhausted":
       return {
         class: cls,
         shouldClearSession: true,
         safeToRetry: true,
-        userMessage: "上游报告容量/配额耗尽（可能是 session 上下文过长，也可能是 Gemini 日配额）。已清空 session，下一轮开新房间带摘要继续；如果仍然失败，通常是日配额，次日恢复。"
-      };
+        userMessage:
+          "上游报告容量/配额耗尽（可能是 session 上下文过长，也可能是 Gemini 日配额）。已清空 session，下一轮开新房间带摘要继续；如果仍然失败，通常是日配额，次日恢复。",
+      }
     case "stall_killed":
       return {
         class: cls,
         shouldClearSession: true,
         safeToRetry: true,
-        userMessage: "进程被判定卡死已强制终止，session 已重置，请重试一次。"
-      };
+        userMessage: "进程被判定卡死已强制终止，session 已重置，请重试一次。",
+      }
     case "auth_failed":
       return {
         class: cls,
         shouldClearSession: false,
         safeToRetry: false,
-        userMessage: "CLI 认证失败（token 过期或无效），请手动重新登录后再试；清 session 也救不了。"
-      };
+        userMessage:
+          "CLI 认证失败（token 过期或无效），请手动重新登录后再试；清 session 也救不了。",
+      }
     case "unknown":
       // F004: preserve session on unrecognized errors. Pre-F004 this cleared the
       // native session "just in case", which wiped the only memory channel whenever
@@ -149,7 +149,7 @@ function resolve(cls: FailureClass): FailureClassification {
         class: cls,
         shouldClearSession: false,
         safeToRetry: true,
-        userMessage: "这一轮出错了，可以直接重试（session 已保留，不会失忆）。"
-      };
+        userMessage: "这一轮出错了，可以直接重试（session 已保留，不会失忆）。",
+      }
   }
 }

@@ -37,8 +37,8 @@ test("DecisionManager.request emits decision.request and the returned promise re
     "DecisionManager MUST NOT route through the Decision Board",
   )
 
-  const requestId = (reqEvent as Extract<RealtimeServerEvent, { type: "decision.request" }>)
-    .payload.requestId
+  const requestId = (reqEvent as Extract<RealtimeServerEvent, { type: "decision.request" }>).payload
+    .requestId
   dm.respond(requestId, [{ optionId: "A", verdict: "approved" }])
 
   const result = await promise

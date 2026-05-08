@@ -58,10 +58,7 @@ test("F021 P6 window-resolver: per-provider isolation — claude override does n
   const global: RuntimeConfig = { claude: { contextWindow: 2_000_000 } }
   // codex 没设 → 走 cli or fallback
   assert.equal(resolveContextWindow("codex", global, undefined, undefined, "gpt-5"), 400_000)
-  assert.equal(
-    resolveContextWindow("codex", global, undefined, 800_000, "gpt-5"),
-    800_000,
-  )
+  assert.equal(resolveContextWindow("codex", global, undefined, 800_000, "gpt-5"), 800_000)
 })
 
 test("F021 P6 window-resolver: sealPct override on same entry does NOT pollute window resolution", () => {

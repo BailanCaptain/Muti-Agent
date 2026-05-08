@@ -22,7 +22,10 @@ type MessageRow = {
   content: string
   thinking: string
   createdAt: string
-  messageType: "final" | "progress" | "a2a_handoff" | "connector" | "system_notice"
+  // F026 P2 v2 Step 7: 旧 a2a_handoff / a2a_handoff_mcp 入参已退役
+  // (appendAssistantMessage 签名收窄到 progress | final)；DB schema MessageType
+  // 仍保留旧标识符兼容历史行 (sqlite.ts:23-25 / mapTimelineMessage)。
+  messageType: "final" | "progress" | "a2a_handoff" | "a2a_handoff_mcp" | "connector" | "system_notice"
   connectorSource: string | null
   groupId: string | null
   groupRole: string | null
@@ -39,8 +42,7 @@ function createMockRepository(threads: ThreadRecord[], messages: MessageRow[]) {
       updatedAt: "2026-01-01T00:00:00Z",
       projectTag: null,
     }),
-    listThreadsByGroup: (groupId: string) =>
-      threads.filter((t) => t.sessionGroupId === groupId),
+    listThreadsByGroup: (groupId: string) => threads.filter((t) => t.sessionGroupId === groupId),
     listMessages: (threadId: string) =>
       messages
         .filter((m) => m.threadId === threadId)
@@ -115,8 +117,11 @@ test("F1: getActiveGroupDelta returns newMessages sorted by createdAt across pro
   const delta = service.getActiveGroupDelta("group-1", new Set(), undefined)
 
   const ids = delta.newMessages.map((m) => m.id)
-  assert.deepEqual(ids, ["m1", "m2", "m3", "m4", "m5"],
-    "newMessages should be sorted by createdAt, not grouped by provider")
+  assert.deepEqual(
+    ids,
+    ["m1", "m2", "m3", "m4", "m5"],
+    "newMessages should be sorted by createdAt, not grouped by provider",
+  )
 })
 
 test("F1: second delta only includes messages after the first delta's latest timestamp", () => {
@@ -138,8 +143,11 @@ test("F1: second delta only includes messages after the first delta's latest tim
 
   const delta2 = service.getActiveGroupDelta("group-1", new Set(), undefined)
   const ids = delta2.newMessages.map((m) => m.id)
-  assert.deepEqual(ids, ["m3", "m4"],
-    "second delta should only contain messages newer than first delta's latest")
+  assert.deepEqual(
+    ids,
+    ["m3", "m4"],
+    "second delta should only contain messages newer than first delta's latest",
+  )
 })
 
 // --- F2 (P1): Provider preview must not be empty when there are no new messages ---
@@ -147,9 +155,7 @@ test("F1: second delta only includes messages after the first delta's latest tim
 test("F2: getActiveGroupDelta preview truncates to 80 chars", () => {
   const threads = [makeThread("codex")]
   const longContent = "A".repeat(200)
-  const messages = [
-    makeMessage("thread-codex", "m1", longContent, "2026-01-01T00:00:01Z"),
-  ]
+  const messages = [makeMessage("thread-codex", "m1", longContent, "2026-01-01T00:00:01Z")]
   const repo = createMockRepository(threads, messages)
   const service = new SessionService(repo as never, [])
 
@@ -173,19 +179,15 @@ test("F2: getActiveGroupDelta preview shows latest message even when no new mess
 
   const codexPreview = delta2.providers.codex?.preview ?? ""
   const claudePreview = delta2.providers.claude?.preview ?? ""
-  assert.ok(codexPreview.length > 0,
-    `codex preview should not be empty, got: "${codexPreview}"`)
-  assert.ok(claudePreview.length > 0,
-    `claude preview should not be empty, got: "${claudePreview}"`)
+  assert.ok(codexPreview.length > 0, `codex preview should not be empty, got: "${codexPreview}"`)
+  assert.ok(claudePreview.length > 0, `claude preview should not be empty, got: "${claudePreview}"`)
 })
 
 // --- F3 (P2): isFirstSnapshot + delta timestamp tracking ---
 
 test("isFirstSnapshot returns true before first call, false after", () => {
   const threads = [makeThread("codex")]
-  const messages = [
-    makeMessage("thread-codex", "m1", "hello", "2026-01-01T00:00:01Z"),
-  ]
+  const messages = [makeMessage("thread-codex", "m1", "hello", "2026-01-01T00:00:01Z")]
   const repo = createMockRepository(threads, messages)
   const service = new SessionService(repo as never, [])
 
@@ -199,7 +201,14 @@ test("F021-P6 AC-32: getActiveGroupDelta sets sealed=true when last system_notic
   const messages = [
     makeMessage("thread-claude", "u1", "hello", "2026-04-25T08:00:00Z", "user", "final"),
     makeMessage("thread-claude", "a1", "hi", "2026-04-25T08:00:01Z", "assistant", "final"),
-    makeMessage("thread-claude", "n1", "封存通知", "2026-04-25T08:00:02Z", "assistant", "system_notice"),
+    makeMessage(
+      "thread-claude",
+      "n1",
+      "封存通知",
+      "2026-04-25T08:00:02Z",
+      "assistant",
+      "system_notice",
+    ),
   ]
   const repo = createMockRepository(threads, messages)
   const service = new SessionService(repo as never, [])
@@ -212,7 +221,14 @@ test("F021-P6 AC-32: getActiveGroupDelta sealed=false when user msg arrives afte
   const threads = [makeThread("claude")]
   const messages = [
     makeMessage("thread-claude", "u1", "hello", "2026-04-25T08:00:00Z", "user", "final"),
-    makeMessage("thread-claude", "n1", "封存通知", "2026-04-25T08:00:01Z", "assistant", "system_notice"),
+    makeMessage(
+      "thread-claude",
+      "n1",
+      "封存通知",
+      "2026-04-25T08:00:01Z",
+      "assistant",
+      "system_notice",
+    ),
     makeMessage("thread-claude", "u2", "续命", "2026-04-25T08:00:02Z", "user", "final"),
   ]
   const repo = createMockRepository(threads, messages)
@@ -241,7 +257,14 @@ test("F021-P6 AC-32 (review fix): getActiveGroup sets sealed=true when last syst
   const messages = [
     makeMessage("thread-claude", "u1", "hello", "2026-04-25T08:00:00Z", "user", "final"),
     makeMessage("thread-claude", "a1", "hi", "2026-04-25T08:00:01Z", "assistant", "final"),
-    makeMessage("thread-claude", "n1", "封存通知", "2026-04-25T08:00:02Z", "assistant", "system_notice"),
+    makeMessage(
+      "thread-claude",
+      "n1",
+      "封存通知",
+      "2026-04-25T08:00:02Z",
+      "assistant",
+      "system_notice",
+    ),
   ]
   const repo = createMockRepository(threads, messages)
   const service = new SessionService(repo as never, [])
@@ -254,7 +277,14 @@ test("F021-P6 AC-32 (review fix): getActiveGroup sealed=false when user msg arri
   const threads = [makeThread("claude")]
   const messages = [
     makeMessage("thread-claude", "u1", "hello", "2026-04-25T08:00:00Z", "user", "final"),
-    makeMessage("thread-claude", "n1", "封存通知", "2026-04-25T08:00:01Z", "assistant", "system_notice"),
+    makeMessage(
+      "thread-claude",
+      "n1",
+      "封存通知",
+      "2026-04-25T08:00:01Z",
+      "assistant",
+      "system_notice",
+    ),
     makeMessage("thread-claude", "u2", "续命", "2026-04-25T08:00:02Z", "user", "final"),
   ]
   const repo = createMockRepository(threads, messages)
@@ -290,17 +320,11 @@ test("getActiveGroupDelta with empty thread returns empty newMessages and empty 
 
 test("getActiveGroupDelta running flag reflects runningThreadIds", () => {
   const threads = [makeThread("codex"), makeThread("claude")]
-  const messages = [
-    makeMessage("thread-codex", "m1", "msg", "2026-01-01T00:00:01Z"),
-  ]
+  const messages = [makeMessage("thread-codex", "m1", "msg", "2026-01-01T00:00:01Z")]
   const repo = createMockRepository(threads, messages)
   const service = new SessionService(repo as never, [])
 
-  const delta = service.getActiveGroupDelta(
-    "group-1",
-    new Set(["thread-codex"]),
-    undefined,
-  )
+  const delta = service.getActiveGroupDelta("group-1", new Set(["thread-codex"]), undefined)
   assert.equal(delta.providers.codex?.running, true)
   assert.equal(delta.providers.claude?.running, false)
 })
@@ -357,10 +381,12 @@ test("F022-P3.5 AC-14a: SessionService.listSessionGroups 透传 updatedAt（ISO�
 
 // --- review P2-3: archive/softDelete/restore 广播 session.archive_state_changed ---
 
-function makeArchiveRepo(initial: {
-  archivedAt?: string | null
-  deletedAt?: string | null
-} = {}) {
+function makeArchiveRepo(
+  initial: {
+    archivedAt?: string | null
+    deletedAt?: string | null
+  } = {},
+) {
   const state = {
     archivedAt: initial.archivedAt ?? null,
     deletedAt: initial.deletedAt ?? null,

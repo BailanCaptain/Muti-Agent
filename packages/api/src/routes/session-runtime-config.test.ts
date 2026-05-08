@@ -167,7 +167,9 @@ test("F021 SessionRepository legacy flat runtime_config is read as active (backw
     // Simulate legacy pre-F021-Phase-3.3 flat shape
     const legacy = JSON.stringify({ claude: { model: "legacy" } })
     ;(
-      repo as unknown as { store: { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } } }
+      repo as unknown as {
+        store: { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }
+      }
     ).store.db
       .prepare("UPDATE session_groups SET runtime_config = ? WHERE id = ?")
       .run(legacy, groupId)

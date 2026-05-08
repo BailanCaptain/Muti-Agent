@@ -22,9 +22,10 @@
     "worktree:staging": "tsx scripts/worktree-staging.ts",
     "mount-skills": "bash scripts/mount-skills.sh",
     "mount-skills:prune": "bash scripts/mount-skills.sh --prune",
-    "check": "pnpm check:skills && pnpm check:docs",
+    "check": "pnpm check:skills && pnpm check:docs && pnpm check:adr004",
     "check:skills": "npx tsx scripts/check-skills.ts",
     "check:docs": "bash scripts/check-docs.sh",
+    "check:adr004": "bash scripts/ci/check-adr-004-diff.sh",
     "prepare": "husky"
   },
   "lint-staged": {

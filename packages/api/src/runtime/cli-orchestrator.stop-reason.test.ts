@@ -1,40 +1,40 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
+import assert from "node:assert/strict"
+import { EventEmitter } from "node:events"
+import { PassThrough } from "node:stream"
+import { describe, it } from "node:test"
 import {
-  BaseCliRuntime,
   type AgentRunInput,
+  BaseCliRuntime,
   type RuntimeCommand,
   type RuntimeDependencies,
   type StopReason,
-} from "./base-runtime";
-import { ProcessLivenessProbe } from "./liveness-probe";
-import { runTurn } from "./cli-orchestrator";
+} from "./base-runtime"
+import { runTurn } from "./cli-orchestrator"
+import { ProcessLivenessProbe } from "./liveness-probe"
 
 class FakeChildProcess extends EventEmitter {
-  readonly stdout = new PassThrough();
-  readonly stderr = new PassThrough();
-  readonly pid = 1234;
-  readonly killCalls: string[] = [];
-  exitCode: number | null = null;
-  killed = false;
+  readonly stdout = new PassThrough()
+  readonly stderr = new PassThrough()
+  readonly pid = 1234
+  readonly killCalls: string[] = []
+  exitCode: number | null = null
+  killed = false
 
   kill(signal: string = "SIGTERM") {
-    this.killCalls.push(signal);
-    this.killed = true;
-    return true;
+    this.killCalls.push(signal)
+    this.killed = true
+    return true
   }
 
   writeLine(obj: unknown) {
-    this.stdout.write(`${JSON.stringify(obj)}\n`);
+    this.stdout.write(`${JSON.stringify(obj)}\n`)
   }
 
   close(code: number | null) {
-    this.exitCode = code;
-    this.stdout.end();
-    this.stderr.end();
-    this.emit("close", code);
+    this.exitCode = code
+    this.stdout.end()
+    this.stderr.end()
+    this.emit("close", code)
   }
 }
 
@@ -46,7 +46,7 @@ function fakeProbeFactory(): RuntimeDependencies["createLivenessProbe"] {
       sampleCpuTime: async () => 0,
       setInterval: (() => ({ unref: () => undefined })) as unknown as typeof globalThis.setInterval,
       clearInterval: (() => undefined) as unknown as typeof globalThis.clearInterval,
-    });
+    })
 }
 
 /**
@@ -54,7 +54,7 @@ function fakeProbeFactory(): RuntimeDependencies["createLivenessProbe"] {
  * to the StopReason we want to verify.
  */
 class ScriptedRuntime extends BaseCliRuntime {
-  readonly agentId = "scripted";
+  readonly agentId = "scripted"
 
   constructor(
     private readonly events: Array<Record<string, unknown>>,
@@ -63,34 +63,34 @@ class ScriptedRuntime extends BaseCliRuntime {
   ) {
     super({
       spawn: () => {
-        const child = new FakeChildProcess();
+        const child = new FakeChildProcess()
         // Schedule events and close on the next tick so the readline pipe is ready.
         setImmediate(() => {
           for (const ev of events) {
-            child.writeLine(ev);
+            child.writeLine(ev)
           }
-          setImmediate(() => child.close(exitCode));
-        });
-        return child as never;
+          setImmediate(() => child.close(exitCode))
+        })
+        return child as never
       },
       platform: "linux",
       createLivenessProbe: fakeProbeFactory(),
-    });
+    })
   }
 
   protected buildCommand(_input: AgentRunInput): RuntimeCommand {
-    return { command: "scripted", args: [], shell: false };
+    return { command: "scripted", args: [], shell: false }
   }
 
   parseStopReason(event: Record<string, unknown>): StopReason | null {
-    return this.mapper(event);
+    return this.mapper(event)
   }
 
   parseAssistantDelta(event: Record<string, unknown>): string {
     if (event.type === "text" && typeof event.value === "string") {
-      return event.value as string;
+      return event.value as string
     }
-    return "";
+    return ""
   }
 }
 
@@ -106,7 +106,7 @@ function baseRunTurnOptions(runtime: BaseCliRuntime) {
     onSession: () => undefined,
     onModel: () => undefined,
     runtime,
-  };
+  }
 }
 
 describe("runTurn stopReason propagation", () => {
@@ -118,17 +118,17 @@ describe("runTurn stopReason propagation", () => {
       ],
       (event) => {
         if (event.type === "result" && event.stop_reason === "max_tokens") {
-          return "truncated";
+          return "truncated"
         }
-        return null;
+        return null
       },
-    );
+    )
 
-    const result = await runTurn(baseRunTurnOptions(runtime)).promise;
-    assert.equal(result.stopReason, "truncated");
-    assert.equal(result.content, "part A");
-    assert.equal(result.exitCode, 0);
-  });
+    const result = await runTurn(baseRunTurnOptions(runtime)).promise
+    assert.equal(result.stopReason, "truncated")
+    assert.equal(result.content, "part A")
+    assert.equal(result.exitCode, 0)
+  })
 
   it("propagates 'complete' stopReason", async () => {
     const runtime = new ScriptedRuntime(
@@ -138,27 +138,24 @@ describe("runTurn stopReason propagation", () => {
       ],
       (event) => {
         if (event.type === "result" && event.stop_reason === "end_turn") {
-          return "complete";
+          return "complete"
         }
-        return null;
+        return null
       },
-    );
+    )
 
-    const result = await runTurn(baseRunTurnOptions(runtime)).promise;
-    assert.equal(result.stopReason, "complete");
-    assert.equal(result.content, "done");
-  });
+    const result = await runTurn(baseRunTurnOptions(runtime)).promise
+    assert.equal(result.stopReason, "complete")
+    assert.equal(result.content, "done")
+  })
 
   it("leaves stopReason null when no terminal event ever seen", async () => {
-    const runtime = new ScriptedRuntime(
-      [{ type: "text", value: "only deltas" }],
-      () => null,
-    );
+    const runtime = new ScriptedRuntime([{ type: "text", value: "only deltas" }], () => null)
 
-    const result = await runTurn(baseRunTurnOptions(runtime)).promise;
-    assert.equal(result.stopReason, null);
-    assert.equal(result.content, "only deltas");
-  });
+    const result = await runTurn(baseRunTurnOptions(runtime)).promise
+    assert.equal(result.stopReason, null)
+    assert.equal(result.content, "only deltas")
+  })
 
   it("keeps the last terminal value when multiple events arrive", async () => {
     // Some providers may emit both a mid-stream message_delta(stop_reason)
@@ -171,13 +168,13 @@ describe("runTurn stopReason propagation", () => {
       ],
       (event) => {
         if (event.type === "marker") {
-          return (event.reason as StopReason) ?? null;
+          return (event.reason as StopReason) ?? null
         }
-        return null;
+        return null
       },
-    );
+    )
 
-    const result = await runTurn(baseRunTurnOptions(runtime)).promise;
-    assert.equal(result.stopReason, "complete");
-  });
-});
+    const result = await runTurn(baseRunTurnOptions(runtime)).promise
+    assert.equal(result.stopReason, "complete")
+  })
+})

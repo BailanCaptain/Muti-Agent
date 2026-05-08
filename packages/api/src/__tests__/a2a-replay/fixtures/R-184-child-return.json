@@ -1,0 +1,26 @@
+{
+  "id": "R-184-child-return",
+  "rootMessageId": "root-1",
+  "parent": {
+    "invocationId": "inv-parent",
+    "threadId": "th-parent",
+    "provider": "claude",
+    "alias": "黄仁勋",
+    "parentInvocationId": null,
+    "rootMessageId": "root-1",
+    "sessionGroupId": "sg-1",
+    "createdAt": 0
+  },
+  "child": {
+    "invocationId": "inv-child",
+    "threadId": "th-child",
+    "provider": "codex",
+    "alias": "范德彪",
+    "parentInvocationId": "inv-parent",
+    "rootMessageId": "root-1",
+    "sessionGroupId": "sg-1",
+    "createdAt": 1
+  },
+  "childContent": "Review done — two P1 findings, details inline.",
+  "queuedOutboundMentionCount": 0
+}

@@ -1,15 +1,15 @@
 import type { Provider } from "@multi-agent/shared"
-import type { ContextPolicy } from "./context-policy"
-import { POLICY_FULL } from "./context-policy"
-import type { ContextMessage } from "./context-snapshot"
-import type { SOPBookmark } from "./sop-bookmark"
-import { formatBookmarkForInjection } from "./sop-bookmark"
-import { buildSessionBootstrap } from "./session-bootstrap"
-import { sanitizeHandoffBody } from "./sanitize-handoff"
-import { AGENT_SYSTEM_PROMPTS, ACCEPTANCE_GUARDIAN_PROMPT } from "../runtime/agent-prompts"
+import { ACCEPTANCE_GUARDIAN_PROMPT, AGENT_SYSTEM_PROMPTS } from "../runtime/agent-prompts"
 import type { MemoryService } from "../services/memory-service"
 import type { ThreadMemory } from "../services/thread-memory"
 import type { ExtractiveDigestV1 } from "../services/transcript-writer"
+import type { ContextPolicy } from "./context-policy"
+import { POLICY_FULL } from "./context-policy"
+import type { ContextMessage } from "./context-snapshot"
+import { sanitizeHandoffBody } from "./sanitize-handoff"
+import { buildSessionBootstrap } from "./session-bootstrap"
+import type { SOPBookmark } from "./sop-bookmark"
+import { formatBookmarkForInjection } from "./sop-bookmark"
 
 export type AssemblePromptInput = {
   provider: Provider
@@ -28,8 +28,6 @@ export type AssemblePromptInput = {
   sourceAlias: string
   /** Target agent's alias (e.g. "黄仁勋") */
   targetAlias: string
-  /** Optional Phase 1 header text */
-  phase1HeaderText?: string
   /** SOP bookmark for cross-seal skill state restoration */
   sopBookmark?: SOPBookmark | null
   /** Last fill ratio for dynamic budget computation */
@@ -44,6 +42,14 @@ export type AssemblePromptInput = {
   recallTools?: string[]
   /** F018 AC3.5: Previous session's extractive digest (from TranscriptWriter) */
   previousDigest?: ExtractiveDigestV1 | null
+  /**
+   * F026-P3 Task6 · cold-target burst 注入位（场景3 ·下游冷启时给 burst+tombstone）。
+   * 触发判定由 callsite 决定（nativeSessionId === null AND threadMemory == null AND
+   * previousDigest == null）；本入参在的 = caller 已经判定要注入。
+   * 注入位置：SessionBootstrap section 之后、[A2A 协作请求]/[用户请求] header 之前。
+   * Source 不限（user → cold 与 agent → cold 同等覆盖）。
+   */
+  coldTargetBurst?: { burstSection: string; tombstoneSection: string | null }
 }
 
 export type AssemblePromptResult = {
@@ -136,20 +142,23 @@ export async function assemblePrompt(
     contentSections.push("")
   }
 
+  // F026-P3 Task6 · cold-target burst 注入（SessionBootstrap 之后 / header 之前）
+  // 触发判定由 callsite 决定（nativeSessionId == null AND threadMemory == null AND
+  // previousDigest == null）；本段在的 = caller 已判定要注入。Source 不限。
+  if (input.coldTargetBurst) {
+    contentSections.push(input.coldTargetBurst.burstSection)
+    if (input.coldTargetBurst.tombstoneSection) {
+      contentSections.push(input.coldTargetBurst.tombstoneSection)
+    }
+    contentSections.push("")
+  }
+
   // Header
   const isUserInitiated = input.sourceAlias === "user"
-  contentSections.push(
-    isUserInitiated ? "[用户请求]" : `[A2A 协作请求 from ${input.sourceAlias}]`,
-  )
+  contentSections.push(isUserInitiated ? "[用户请求]" : `[A2A 协作请求 from ${input.sourceAlias}]`)
   contentSections.push("")
   contentSections.push(`任务: ${input.task}`)
   contentSections.push("")
-
-  // Phase 1 header (independent thinking mode)
-  if (policy.phase1Header && input.phase1HeaderText) {
-    contentSections.push(input.phase1HeaderText)
-    contentSections.push("")
-  }
 
   // F019 P4: skillHint keyword-injection layer removed — SOP direction now
   // comes from sopStageHint in the system prompt (see agent-prompts.ts
@@ -207,6 +216,8 @@ export type AssembleDirectTurnInput = {
   sessionChainIndex?: number
   recallTools?: string[]
   previousDigest?: ExtractiveDigestV1 | null
+  /** F026-P3 Task6 · cold-target burst（user-mention 路径同等覆盖） */
+  coldTargetBurst?: { burstSection: string; tombstoneSection: string | null }
 }
 
 export async function assembleDirectTurnPrompt(
@@ -225,7 +236,6 @@ export async function assembleDirectTurnPrompt(
       roomSnapshot: input.roomSnapshot,
       sourceAlias: input.sourceAlias,
       targetAlias: input.targetAlias,
-      phase1HeaderText: undefined,
       sopBookmark: input.sopBookmark,
       lastFillRatio: input.lastFillRatio,
       guardianMode: false,
@@ -233,6 +243,7 @@ export async function assembleDirectTurnPrompt(
       sessionChainIndex: input.sessionChainIndex,
       recallTools: input.recallTools,
       previousDigest: input.previousDigest,
+      coldTargetBurst: input.coldTargetBurst,
     },
     memoryService,
   )

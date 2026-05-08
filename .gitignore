@@ -34,3 +34,5 @@ docs/runtime-events/
 data/threads/
 scripts/record-events.*
 scripts/analyze-events.*
+*.log
+.env.development.local.backup-by-preview

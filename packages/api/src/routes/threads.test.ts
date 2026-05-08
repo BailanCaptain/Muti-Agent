@@ -12,7 +12,11 @@ function makeSessionsStub(hasPendingDispatches = false) {
       threadId === "thread-1"
         ? { id: "thread-1", sessionGroupId: "group-1", alias: "黄仁勋", nativeSessionId: null }
         : null,
-    getActiveGroup: (groupId: string, _runningIds: Set<string>, dispatchState?: { hasPendingDispatches: boolean; dispatchBarrierActive: boolean }) => ({
+    getActiveGroup: (
+      groupId: string,
+      _runningIds: Set<string>,
+      dispatchState?: { hasPendingDispatches: boolean; dispatchBarrierActive: boolean },
+    ) => ({
       id: groupId,
       title: "Test",
       meta: "",

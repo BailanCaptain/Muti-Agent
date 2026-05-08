@@ -284,7 +284,7 @@ const mdComponents: Components = {
 /*  Output Sanitizer (AC6)                                             */
 /* ------------------------------------------------------------------ */
 
-function sanitizeMarkdown(raw: string): string {
+export function sanitizeMarkdown(raw: string): string {
   // Protect fenced code blocks (``` and ~~~) from sanitization
   const fenceRe = /^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1\s*$/gm
   const blocks: string[] = []
@@ -292,6 +292,18 @@ function sanitizeMarkdown(raw: string): string {
     blocks.push(match)
     return `\x00CODEBLOCK_${blocks.length - 1}\x00`
   })
+
+  // F026 方案 X · 静默渲染 [Call: @X 描述] → @X 描述
+  // [Call:] 是底层派发协议；前端把它脱掉，留下普通 @X 让 highlightMentions 渲染成 pill。
+  // 代码块已在上面 stash；inline code 也需保护（与后端 maskHardNegativeRanges 契约对齐）。
+  const inlineSpans: string[] = []
+  text = text.replace(/`[^`\n]+`/g, (match) => {
+    inlineSpans.push(match)
+    return `\x00INLINECODE_${inlineSpans.length - 1}\x00`
+  })
+  text = stripCallTags(text)
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional null-byte placeholders
+  text = text.replace(/\x00INLINECODE_(\d+)\x00/g, (_, i) => inlineSpans[Number(i)])
 
   text = text.replace(/\r\n/g, '\n')
   text = text.replace(/\n{3,}/g, '\n\n')
@@ -310,6 +322,43 @@ function sanitizeMarkdown(raw: string): string {
   text = text.replace(/\x00CODEBLOCK_(\d+)\x00/g, (_, i) => blocks[Number(i)])
 
   return text
+}
+
+/**
+ * F026 方案 X · 静默渲染 helper（P3.1 loose 版本）
+ *
+ *   [Call: @X 描述]   →  @X 描述
+ *   [Call: @X]        →  @X
+ *   嵌套：[Call: @A ... [Call: @B] ...]  →  @A ... @B ...
+ *     （多 pass 迭代脱壳，先脱内层后脱外层；用户视觉零 [Call:] 字面量）
+ *
+ * 大小写敏感（仅识别字面 "[Call:"，避免误伤普通文本）。
+ * B021 修：允许跨行 description（LLM 实际多行写法）。
+ *
+ * F026 P3.1 解耦设计（plan AC-18）：
+ * 前端 strip 不再共享后端 mention-router resolveCallTagMentions regex。
+ * 后端继续 fail-closed（嵌套外层不派发，避免错派）；
+ * 前端宽松渲染（嵌套也尽量脱干净），用户永远看不到 [Call:] 字面量。
+ * 派发结果通过 retry badge / @ pill 状态徽章传达，而非靠用户看 [Call:] 字符串自行判断。
+ *
+ * 出于演示需要保留 inline code（反引号 `…`） / fenced code block 内的 [Call:]，
+ * 由 sanitizeMarkdown / ReactMarkdown 处理 — 此处只对正文做替换。
+ */
+export function stripCallTags(text: string): string {
+  // 单 pass：匹配 [Call: 到对应 ] 的最短 enclose（[^\]]* 不跨过 ]），
+  // 嵌套时第一遍脱掉的是内层（最内层最先闭合），下一遍再脱外层。
+  const SINGLE_PASS_RE = /\[Call:\s*(@[\p{L}\p{N}._-]+)([^\]]*)\]/gu
+  let out = text
+  // 上限 8 层：远超 LLM 实际嵌套深度（即使脑子糊掉也不会写 9 层 [Call:]）
+  for (let i = 0; i < 8; i++) {
+    const next = out.replace(SINGLE_PASS_RE, (_match, alias, desc) => {
+      const trimmedDesc = (desc as string).replace(/^\s+/, "")
+      return trimmedDesc.length > 0 ? `${alias} ${trimmedDesc}` : (alias as string)
+    })
+    if (next === out) break
+    out = next
+  }
+  return out
 }
 
 /* ------------------------------------------------------------------ */

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
-import test from "node:test"
 import fs from "node:fs"
+import test from "node:test"
 import {
   AGENT_SYSTEM_PROMPTS,
+  __resetSharedRulesCacheForTest,
   buildSystemPromptWithHints,
-  __resetSharedRulesCacheForTest
 } from "./agent-prompts"
 
 test("AGENT_SYSTEM_PROMPTS contains prompts for all providers", () => {
@@ -30,7 +30,10 @@ test("AGENT_SYSTEM_PROMPTS.codex does not include legacy curl-fetch section (F02
 
 test("AGENT_SYSTEM_PROMPTS.gemini does not include legacy curl-fetch section (F023 — MCP 挂载统一后废弃)", () => {
   const prompt = AGENT_SYSTEM_PROMPTS.gemini
-  assert.ok(!prompt.includes(LEGACY_SECTION), "Gemini prompt must not embed legacy curl-fetch guide")
+  assert.ok(
+    !prompt.includes(LEGACY_SECTION),
+    "Gemini prompt must not embed legacy curl-fetch guide",
+  )
   assert.ok(!prompt.includes(LEGACY_NODE_E), "Gemini prompt must not teach manual fetch command")
 })
 
@@ -61,7 +64,10 @@ test("buildSystemPromptWithHints works for all three providers", () => {
       sopStageHint: { featureId: "F019", stage: "review", suggestedSkill: "code-review" },
     })
     assert.ok(out.startsWith(AGENT_SYSTEM_PROMPTS[provider]), `${provider}: base preserved`)
-    assert.ok(out.endsWith("SOP: F019 stage=review → load skill: code-review"), `${provider}: hint appended`)
+    assert.ok(
+      out.endsWith("SOP: F019 stage=review → load skill: code-review"),
+      `${provider}: hint appended`,
+    )
   }
 })
 
@@ -115,7 +121,7 @@ test("AGENT_SYSTEM_PROMPTS reflects runtime shared-rules.md mutation (hot reload
       assert.ok(
         prompt.includes(marker),
         `${provider}: AGENT_SYSTEM_PROMPTS must reflect current shared-rules.md content, ` +
-          `not a module-load snapshot. Missing marker=${marker}.`
+          `not a module-load snapshot. Missing marker=${marker}.`,
       )
     }
   } finally {

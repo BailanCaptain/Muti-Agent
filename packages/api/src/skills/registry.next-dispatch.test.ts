@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
-import test from "node:test"
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs"
-import path from "node:path"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
+import path from "node:path"
+import test from "node:test"
 import { SkillRegistry } from "./registry.js"
 
 function withTempManifest(yaml: string, fn: (manifestPath: string) => void): void {

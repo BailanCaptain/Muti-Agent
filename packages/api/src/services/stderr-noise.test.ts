@@ -1,6 +1,6 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
-import { filterStderrNoise } from "./message-service";
+import assert from "node:assert/strict"
+import { describe, it } from "node:test"
+import { filterStderrNoise } from "./message-service"
 
 describe("filterStderrNoise — Gemini CLI GaxiosError/TLS stack filtering (F012 AC-20)", () => {
   it("strips the full GaxiosError block from Gemini refreshAuth stderr", () => {
@@ -37,24 +37,24 @@ describe("filterStderrNoise — Gemini CLI GaxiosError/TLS stack filtering (F012
   },
   code: 'ECONNRESET',
   Symbol(gaxios-gaxios-error): '6.7.1'
-}`;
+}`
 
-    const out = filterStderrNoise(sample);
+    const out = filterStderrNoise(sample)
     // The whole block is noise — after filtering, nothing meaningful should remain.
-    assert.equal(out.trim(), "");
-  });
+    assert.equal(out.trim(), "")
+  })
 
   it("keeps a genuine user-facing stderr message through", () => {
-    const sample = "Agent: this is a real user-visible message\n";
-    const out = filterStderrNoise(sample);
-    assert.match(out, /Agent: this is a real user-visible message/);
-  });
+    const sample = "Agent: this is a real user-visible message\n"
+    const out = filterStderrNoise(sample)
+    assert.match(out, /Agent: this is a real user-visible message/)
+  })
 
   it("still filters previously-known noise (YOLO, [runtime], etc)", () => {
     const sample = `YOLO mode is enabled
 [runtime] something
 Using model: gemini-2.5-pro
-All tool calls will be automatically approved`;
-    assert.equal(filterStderrNoise(sample).trim(), "");
-  });
-});
+All tool calls will be automatically approved`
+    assert.equal(filterStderrNoise(sample).trim(), "")
+  })
+})

@@ -22,6 +22,8 @@ class SocketClient {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private hasOpenedOnce = false;
   private messageQueue: RealtimeClientEvent[] = [];
+  // F026 P0 Day2 · 记住最后一次订阅的 group，连接/重连 open 时自动重发，保证后端 socket 永远知道当前房间
+  private subscribedGroupId: string | null = null;
 
   connect(callbacks: ConnectCallbacks) {
     this.closedByUser = false;
@@ -47,6 +49,17 @@ class SocketClient {
     }
   }
 
+  /**
+   * F026 P0 Day2 · 用户切房间时调用。幂等：同 groupId 再次订阅无副作用。
+   * socket 未 open 时写入 subscribedGroupId，下一次 open 时自动重放（见 drainQueue 前）。
+   */
+  subscribe(sessionGroupId: string) {
+    this.subscribedGroupId = sessionGroupId;
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify({ type: "subscribe", payload: { sessionGroupId } }));
+    }
+  }
+
   private drainQueue() {
     while (this.messageQueue.length > 0 && this.socket?.readyState === WebSocket.OPEN) {
       const event = this.messageQueue.shift()!;
@@ -65,6 +78,11 @@ class SocketClient {
       this.hasOpenedOnce = true;
       this.reconnectAttempt = 0;
       callbacks.onOpen();
+      // F026 P0 Day2 · open/reconnect 时先把 subscribe 告知后端，之后再 drain 旧队列
+      // 保证任何重连间隔丢失的 subscribe 状态都被恢复（后端 socket 对象是新实例）
+      if (this.subscribedGroupId) {
+        socket.send(JSON.stringify({ type: "subscribe", payload: { sessionGroupId: this.subscribedGroupId } }));
+      }
       this.drainQueue();
       if (wasReconnect) {
         // B001 Fix 2: after dropped frames during the outage, re-sync state from the server.
@@ -114,4 +132,8 @@ export const socketClient = new SocketClient();
 
 export function connectRealtime(callbacks: ConnectCallbacks) {
   return socketClient.connect(callbacks);
+}
+
+export function subscribeToRoom(sessionGroupId: string) {
+  socketClient.subscribe(sessionGroupId);
 }

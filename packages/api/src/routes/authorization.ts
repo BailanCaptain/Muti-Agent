@@ -31,13 +31,7 @@ export function registerAuthorizationRoutes(
       sessionGroupId?: string
       reason?: string
     } | null
-    if (
-      !body ||
-      !body.provider ||
-      !body.action ||
-      !body.scope ||
-      !body.decision
-    ) {
+    if (!body || !body.provider || !body.action || !body.scope || !body.decision) {
       reply.code(400)
       return { error: "Missing required fields: provider, action, scope, decision" }
     }
@@ -61,13 +55,16 @@ export function registerAuthorizationRoutes(
     return { status: "ok", rule }
   })
 
-  app.delete("/api/authorization/rules/:id", async (request: FastifyRequest, reply: FastifyReply) => {
-    const { id } = request.params as { id: string }
-    const removed = options.ruleStore.removeRule(id)
-    if (!removed) {
-      reply.code(404)
-      return { error: "Rule not found" }
-    }
-    return { status: "ok" }
-  })
+  app.delete(
+    "/api/authorization/rules/:id",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { id } = request.params as { id: string }
+      const removed = options.ruleStore.removeRule(id)
+      if (!removed) {
+        reply.code(404)
+        return { error: "Rule not found" }
+      }
+      return { status: "ok" }
+    },
+  )
 }

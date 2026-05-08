@@ -15,7 +15,16 @@ export type SnapshotOptions = {
   sessionGroupId: string
   triggerMessageId: string
   maxMessages?: number
+  /**
+   * F026-P3 Task4 · 单条 content 字符上限（防 M5 二次截掉中段 finding）。
+   * 不传时默认 = A2A_PAYLOAD_MAX_TOKENS_DEFAULT × 4 = 65536 chars。
+   * Callsite 想读 env 动态值，自行传 `getA2APayloadMaxTokens() * 4`。
+   * 超 cap 走 truncateHeadTail（头 60% + 尾 30% + 省略标记）。DB 原文不动。
+   */
+  maxContentChars?: number
 }
+
+const DEFAULT_MAX_CONTENT_CHARS = 16384 * 4 // = A2A_PAYLOAD_MAX_TOKENS_DEFAULT × 4
 
 export type RawMessage = {
   id: string
@@ -52,13 +61,16 @@ export function buildContextSnapshot(
   const upToTrigger = sorted.slice(0, triggerIndex + 1)
   const windowed = upToTrigger.slice(-maxMessages)
 
+  const maxContentChars = options.maxContentChars ?? DEFAULT_MAX_CONTENT_CHARS
+
   const result: ContextMessage[] = windowed.map((m) => {
     const meta = threadMeta.get(m.threadId)
     const msg: ContextMessage = {
       id: m.id,
       role: m.role,
       agentId: m.role === "user" ? "user" : (meta?.alias ?? "unknown"),
-      content: m.content,
+      // F026-P3 Task4 · 单条 content 头尾保护（DB 原文不动 m.content 仅读）
+      content: truncateHeadTail(m.content, maxContentChars),
       createdAt: m.createdAt,
     }
     if (m.toolEventsSummary) {

@@ -21,7 +21,11 @@ export interface HaikuRunner {
   runPrompt(prompt: string, opts?: HaikuRunOptions): Promise<HaikuRunResult>
 }
 
-type SpawnFn = (command: string, args: readonly string[], options?: { shell?: boolean }) => ChildProcess
+type SpawnFn = (
+  command: string,
+  args: readonly string[],
+  options?: { shell?: boolean },
+) => ChildProcess
 
 export interface HaikuRunnerDeps {
   spawn?: SpawnFn

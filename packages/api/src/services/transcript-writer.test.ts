@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, it } from "node:test"
@@ -80,7 +80,10 @@ describe("TranscriptWriter", () => {
       const digest: ExtractiveDigestV1 = JSON.parse(readFileSync(path, "utf8"))
       const serialized = JSON.stringify(digest)
       assert.ok(!serialized.includes("请帮我备份数据库"), "digest must NOT contain raw user text")
-      assert.ok(!serialized.includes("好的，备份步骤"), "digest must NOT contain raw assistant text")
+      assert.ok(
+        !serialized.includes("好的，备份步骤"),
+        "digest must NOT contain raw assistant text",
+      )
     } finally {
       cleanup(dir)
     }

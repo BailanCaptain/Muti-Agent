@@ -39,9 +39,6 @@ describe("resolveUploadUrl", () => {
   })
 
   it("returns url unchanged for non-uploads relative paths", () => {
-    assert.equal(
-      resolveUploadUrl("/api/something", "http://localhost:8801"),
-      "/api/something",
-    )
+    assert.equal(resolveUploadUrl("/api/something", "http://localhost:8801"), "/api/something")
   })
 })

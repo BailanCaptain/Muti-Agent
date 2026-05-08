@@ -1,7 +1,4 @@
-import type {
-  AuthorizationRuleRepository,
-  AuthorizationRuleRow,
-} from "../db/repositories"
+import type { AuthorizationRuleRepository, AuthorizationRuleRow } from "../db/repositories"
 
 function matchAction(pattern: string, action: string): boolean {
   if (pattern === "*") return true
@@ -32,11 +29,7 @@ export class AuthorizationRuleStore {
     return this.ruleRepo.remove(ruleId)
   }
 
-  match(
-    provider: string,
-    action: string,
-    threadId: string,
-  ): AuthorizationRuleRow | null {
+  match(provider: string, action: string, threadId: string): AuthorizationRuleRow | null {
     const rules = this.ruleRepo.listAll()
     let bestThread: AuthorizationRuleRow | null = null
     let bestGlobal: AuthorizationRuleRow | null = null

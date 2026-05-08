@@ -2,7 +2,6 @@ import crypto from "node:crypto"
 import type { Provider } from "@multi-agent/shared"
 import { PROVIDERS, PROVIDER_ALIASES } from "@multi-agent/shared"
 import { perfCollector } from "../../lib/perf-collector"
-import { mergeRuntimeConfigFieldwise } from "./runtime-config-merge"
 import type {
   AgentEventRecord,
   ConnectorSourceRecord,
@@ -13,6 +12,7 @@ import type {
   SessionMemoryRecord,
   SqliteStore,
 } from "../sqlite"
+import { mergeRuntimeConfigFieldwise } from "./runtime-config-merge"
 
 type MessageRow = {
   id: string
@@ -28,17 +28,39 @@ type MessageRow = {
   toolEvents: string
   contentBlocks: string
   createdAt: string
+  retryCount: number | null
+  retryReasons: string | null
+  // F026 P5 T0 · LEFT JOIN a2a_calls 出来的协议字段
+  a2aCallId: string | null
+  a2aParentCallId: string | null
+  a2aRootCallId: string | null
+  a2aOnBehalfOf: string | null
+  a2aConvenerId: string | null
+  a2aCallStatus: string | null
+  a2aDeadlineAt: string | null
 }
 
 function hydrateMessage(row: MessageRow): MessageRecord {
   return {
     ...row,
-    connectorSource: row.connectorSource ? (JSON.parse(row.connectorSource) as ConnectorSourceRecord) : null,
+    connectorSource: row.connectorSource
+      ? (JSON.parse(row.connectorSource) as ConnectorSourceRecord)
+      : null,
     groupId: row.groupId ?? null,
     groupRole: (row.groupRole as MessageRecord["groupRole"]) ?? null,
     toolEvents: row.toolEvents ?? "[]",
     contentBlocks: row.contentBlocks ?? "[]",
     model: row.model ?? null,
+    retryCount: row.retryCount ?? 0,
+    retryReasons: row.retryReasons ?? "[]",
+    // F026 P5 T0 · A2A 关联字段保持 null fallback（老消息 / 非 a2a 派发）
+    a2aCallId: row.a2aCallId ?? null,
+    a2aParentCallId: row.a2aParentCallId ?? null,
+    a2aRootCallId: row.a2aRootCallId ?? null,
+    a2aOnBehalfOf: row.a2aOnBehalfOf ?? null,
+    a2aConvenerId: row.a2aConvenerId ?? null,
+    a2aCallStatus: row.a2aCallStatus ?? null,
+    a2aDeadlineAt: row.a2aDeadlineAt ?? null,
   }
 }
 
@@ -126,14 +148,26 @@ export class SessionRepository {
          LEFT JOIN threads t ON t.session_group_id = sg.id
          ORDER BY sg.updated_at DESC, t.provider ASC`,
       )
-      .all() as Array<SessionGroupRow & { provider: string | null; alias: string | null; lastMessage: string | null }>
+      .all() as Array<
+      SessionGroupRow & {
+        provider: string | null
+        alias: string | null
+        lastMessage: string | null
+      }
+    >
     const tQuery = performance.now()
 
-    const groupMap = new Map<string, {
-      id: string; title: string; projectTag: string | null
-      createdAt: string; updatedAt: string
-      previews: Array<{ provider: Provider; alias: string; text: string }>
-    }>()
+    const groupMap = new Map<
+      string,
+      {
+        id: string
+        title: string
+        projectTag: string | null
+        createdAt: string
+        updatedAt: string
+        previews: Array<{ provider: Provider; alias: string; text: string }>
+      }
+    >()
 
     for (const row of rows) {
       let group = groupMap.get(row.id)
@@ -159,7 +193,9 @@ export class SessionRepository {
 
     const result = Array.from(groupMap.values())
     const total = performance.now() - t0
-    console.log(`[perf] listSessionGroups: ${result.length} groups, query=${(tQuery - t0).toFixed(1)}ms assemble=${(total - (tQuery - t0)).toFixed(1)}ms total=${total.toFixed(1)}ms`)
+    console.log(
+      `[perf] listSessionGroups: ${result.length} groups, query=${(tQuery - t0).toFixed(1)}ms assemble=${(total - (tQuery - t0)).toFixed(1)}ms total=${total.toFixed(1)}ms`,
+    )
     perfCollector.record("listSessionGroups", total)
     perfCollector.record("listSessionGroups.query", tQuery - t0)
     perfCollector.record("listSessionGroups.assemble", total - (tQuery - t0))
@@ -286,7 +322,9 @@ export class SessionRepository {
   }
 
   // F018 P3 AC3.5: ThreadMemory rolling summary persistence
-  getThreadMemory(threadId: string): { summary: string; sessionCount: number; lastUpdatedAt: string } | null {
+  getThreadMemory(
+    threadId: string,
+  ): { summary: string; sessionCount: number; lastUpdatedAt: string } | null {
     const row = this.store.db
       .prepare("SELECT thread_memory FROM threads WHERE id = ? LIMIT 1")
       .get(threadId) as { thread_memory: string | null } | undefined
@@ -325,15 +363,25 @@ export class SessionRepository {
     const t0 = performance.now()
     const rows = this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt, model
-         FROM messages
-         WHERE thread_id = ?
-         ORDER BY created_at ASC`,
+        `SELECT m.id, m.thread_id as threadId, m.role, m.content, m.thinking, m.message_type as messageType, m.connector_source as connectorSource, m.group_id as groupId, m.group_role as groupRole, m.tool_events as toolEvents, m.content_blocks as contentBlocks, m.created_at as createdAt, m.model, m.retry_count as retryCount, m.retry_reasons as retryReasons,
+                m.a2a_call_id as a2aCallId,
+                c.parent_call_id as a2aParentCallId,
+                c.root_call_id as a2aRootCallId,
+                c.on_behalf_of as a2aOnBehalfOf,
+                c.convener_id as a2aConvenerId,
+                c.status as a2aCallStatus,
+                c.deadline_at as a2aDeadlineAt
+         FROM messages m
+         LEFT JOIN a2a_calls c ON c.call_id = m.a2a_call_id
+         WHERE m.thread_id = ?
+         ORDER BY m.created_at ASC, m.rowid ASC`,
       )
       .all(threadId) as MessageRow[]
     const result = rows.map(hydrateMessage)
     const elapsed = performance.now() - t0
-    console.log(`[perf] listMessages(${threadId.slice(0, 8)}): ${rows.length} rows, ${elapsed.toFixed(1)}ms`)
+    console.log(
+      `[perf] listMessages(${threadId.slice(0, 8)}): ${rows.length} rows, ${elapsed.toFixed(1)}ms`,
+    )
     perfCollector.record("listMessages", elapsed)
     return result
   }
@@ -342,10 +390,18 @@ export class SessionRepository {
     return (
       this.store.db
         .prepare(
-          `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt, model
-         FROM messages
-         WHERE thread_id = ? AND created_at > ?
-         ORDER BY created_at ASC`,
+          `SELECT m.id, m.thread_id as threadId, m.role, m.content, m.thinking, m.message_type as messageType, m.connector_source as connectorSource, m.group_id as groupId, m.group_role as groupRole, m.tool_events as toolEvents, m.content_blocks as contentBlocks, m.created_at as createdAt, m.model, m.retry_count as retryCount, m.retry_reasons as retryReasons,
+                m.a2a_call_id as a2aCallId,
+                c.parent_call_id as a2aParentCallId,
+                c.root_call_id as a2aRootCallId,
+                c.on_behalf_of as a2aOnBehalfOf,
+                c.convener_id as a2aConvenerId,
+                c.status as a2aCallStatus,
+                c.deadline_at as a2aDeadlineAt
+         FROM messages m
+         LEFT JOIN a2a_calls c ON c.call_id = m.a2a_call_id
+         WHERE m.thread_id = ? AND m.created_at > ?
+         ORDER BY m.created_at ASC, m.rowid ASC`,
         )
         .all(threadId, sinceTimestamp) as MessageRow[]
     ).map(hydrateMessage)
@@ -354,10 +410,18 @@ export class SessionRepository {
   listRecentMessages(threadId: string, limit: number) {
     const rows = this.store.db
       .prepare(
-        `SELECT id, thread_id as threadId, role, content, thinking, message_type as messageType, connector_source as connectorSource, group_id as groupId, group_role as groupRole, tool_events as toolEvents, content_blocks as contentBlocks, created_at as createdAt, model
-         FROM messages
-         WHERE thread_id = ?
-         ORDER BY created_at DESC
+        `SELECT m.id, m.thread_id as threadId, m.role, m.content, m.thinking, m.message_type as messageType, m.connector_source as connectorSource, m.group_id as groupId, m.group_role as groupRole, m.tool_events as toolEvents, m.content_blocks as contentBlocks, m.created_at as createdAt, m.model, m.retry_count as retryCount, m.retry_reasons as retryReasons,
+                m.a2a_call_id as a2aCallId,
+                c.parent_call_id as a2aParentCallId,
+                c.root_call_id as a2aRootCallId,
+                c.on_behalf_of as a2aOnBehalfOf,
+                c.convener_id as a2aConvenerId,
+                c.status as a2aCallStatus,
+                c.deadline_at as a2aDeadlineAt
+         FROM messages m
+         LEFT JOIN a2a_calls c ON c.call_id = m.a2a_call_id
+         WHERE m.thread_id = ?
+         ORDER BY m.created_at DESC, m.rowid DESC
          LIMIT ?`,
       )
       .all(threadId, limit) as MessageRow[]
@@ -376,6 +440,7 @@ export class SessionRepository {
     toolEvents = "[]",
     contentBlocks = "[]",
     model: string | null = null,
+    a2aCallId: string | null = null,
   ) {
     const message: MessageRecord = {
       id: crypto.randomUUID(),
@@ -391,12 +456,22 @@ export class SessionRepository {
       contentBlocks,
       createdAt: new Date().toISOString(),
       model,
+      retryCount: 0,
+      retryReasons: "[]",
+      a2aCallId,
+      // 以下 7 个字段在 listMessages LEFT JOIN 时填充；INSERT 时仅写 a2a_call_id 一列
+      a2aParentCallId: null,
+      a2aRootCallId: null,
+      a2aOnBehalfOf: null,
+      a2aConvenerId: null,
+      a2aCallStatus: null,
+      a2aDeadlineAt: null,
     }
 
     this.store.db
       .prepare(
-        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, group_id, group_role, tool_events, content_blocks, created_at, model)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, group_id, group_role, tool_events, content_blocks, created_at, model, a2a_call_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -412,30 +487,67 @@ export class SessionRepository {
         message.contentBlocks,
         message.createdAt,
         message.model,
+        a2aCallId,
       )
 
     this.touchThread(threadId, message.createdAt)
     return message
   }
 
-  overwriteMessage(messageId: string, updates: { content?: string; thinking?: string; toolEvents?: string; contentBlocks?: string }) {
+  overwriteMessage(
+    messageId: string,
+    updates: {
+      content?: string
+      thinking?: string
+      toolEvents?: string
+      contentBlocks?: string
+      retryCount?: number
+      retryReasons?: string
+    },
+  ) {
     const current = this.store.db
-      .prepare("SELECT content, thinking, tool_events as toolEvents, content_blocks as contentBlocks FROM messages WHERE id = ? LIMIT 1")
-      .get(messageId) as { content: string; thinking: string; toolEvents: string; contentBlocks: string } | undefined
+      .prepare(
+        "SELECT content, thinking, tool_events as toolEvents, content_blocks as contentBlocks, retry_count as retryCount, retry_reasons as retryReasons FROM messages WHERE id = ? LIMIT 1",
+      )
+      .get(messageId) as
+      | {
+          content: string
+          thinking: string
+          toolEvents: string
+          contentBlocks: string
+          retryCount: number
+          retryReasons: string
+        }
+      | undefined
 
     if (!current) {
       return
     }
 
     this.store.db
-      .prepare("UPDATE messages SET content = ?, thinking = ?, tool_events = ?, content_blocks = ? WHERE id = ?")
+      .prepare(
+        "UPDATE messages SET content = ?, thinking = ?, tool_events = ?, content_blocks = ?, retry_count = ?, retry_reasons = ? WHERE id = ?",
+      )
       .run(
         updates.content ?? current.content,
         updates.thinking ?? current.thinking,
         updates.toolEvents ?? current.toolEvents,
         updates.contentBlocks ?? current.contentBlocks,
+        updates.retryCount ?? current.retryCount,
+        updates.retryReasons ?? current.retryReasons,
         messageId,
       )
+  }
+
+  /**
+   * F026 P11 · 单独读 content_blocks JSON（不走 listMessages 全量 hydrate）。
+   * 用于 message-service final flush 时 derive + merge 现存 image / 其他独立块。
+   */
+  getContentBlocksJson(messageId: string): string | null {
+    const row = this.store.db
+      .prepare("SELECT content_blocks as contentBlocks FROM messages WHERE id = ? LIMIT 1")
+      .get(messageId) as { contentBlocks: string } | undefined
+    return row?.contentBlocks ?? null
   }
 
   appendContentBlock(messageId: string, block: { type: string; [key: string]: unknown }) {
@@ -562,7 +674,12 @@ export class SessionRepository {
 
   updateThread(
     threadId: string,
-    updates: { currentModel?: string | null; nativeSessionId?: string | null; sopBookmark?: string | null; lastFillRatio?: number | null },
+    updates: {
+      currentModel?: string | null
+      nativeSessionId?: string | null
+      sopBookmark?: string | null
+      lastFillRatio?: number | null
+    },
   ) {
     const setClauses: string[] = []
     const params: (string | number | null)[] = []
@@ -590,9 +707,7 @@ export class SessionRepository {
     setClauses.push("updated_at = ?")
     params.push(updatedAt, threadId)
 
-    this.store.db
-      .prepare(`UPDATE threads SET ${setClauses.join(", ")} WHERE id = ?`)
-      .run(...params)
+    this.store.db.prepare(`UPDATE threads SET ${setClauses.join(", ")} WHERE id = ?`).run(...params)
 
     this.touchThread(threadId, updatedAt)
   }
@@ -690,7 +805,13 @@ export class SessionRepository {
     return row ?? null
   }
 
-  createTask(sessionGroupId: string, assignee: string, description: string, createdBy: string, priority = "medium") {
+  createTask(
+    sessionGroupId: string,
+    assignee: string,
+    description: string,
+    createdBy: string,
+    priority = "medium",
+  ) {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
     this.store.db
@@ -699,7 +820,16 @@ export class SessionRepository {
          VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       )
       .run(id, sessionGroupId, assignee, description, priority, createdBy, now, now)
-    return { id, sessionGroupId, assignee, description, priority, status: "pending" as const, createdBy, createdAt: now }
+    return {
+      id,
+      sessionGroupId,
+      assignee,
+      description,
+      priority,
+      status: "pending" as const,
+      createdBy,
+      createdAt: now,
+    }
   }
 
   private getLastMessagePreview(threadId: string) {

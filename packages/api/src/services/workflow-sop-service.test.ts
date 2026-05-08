@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { WorkflowSop, UpdateSopInput } from "./workflow-sop-types"
+import type { UpdateSopInput, WorkflowSop } from "./workflow-sop-types"
 
 /**
  * Minimal fake repo — lets us exercise service behavior without touching SQLite.

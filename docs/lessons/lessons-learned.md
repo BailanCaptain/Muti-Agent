@@ -618,6 +618,59 @@
 - 原理：`netstat` 只暴露持有监听 socket 的进程；Node 子进程的 HTTP server 可以先崩但进程主循环（watch/FS handles）仍活。file busy 的真实所有者必须按"什么进程持有这个路径的 handle"查——Windows 下无 `lsof`，要么装 `handle.exe`（需 admin），要么走 WMI CommandLine 反推（本 PID 唯一可靠路径）。
 - 关联：LL-020（"汇报"不等于"验证"——kill 后必须再跑一次 rm 确认）、F024（worktree preview 基础设施）、`multi-agent-skills/merge-gate/SKILL.md`
 
+---
+
+> **编号说明**：LL-026 / LL-027 编号曾被桂芬 2026-04-23 12:05 越位产出占用（与 `ADR-002-a2a-worklist-continuation` 一同直接落盘 dev，未过 Design Gate，已回退见 Round 2 §6.1）。为避免追踪混淆，**不复用 026/027**，继续递增到 028。
+
+### LL-028: mention-router 必须过 Markdown AST（代码块 / 引用块 / 装饰标签 / 介绍句式全链路硬否决）
+- 状态：validated
+- 更新时间：2026-04-23
+
+- 坑：2026-04-22 房间两次 A2A 误派发（15:30 assistant 回复里代码块示例内 `@范德彪 @桂芬` / 16:05 正文 `**@范德彪**` 粗体装饰）+ 2026-04-23 Round 2 讨论级联事故（我发给小孙的简报里 code block 内「at 桂芬」被识别成真派发，101 秒内触发桂芬被激活 → 桂芬又行首 @ 了范德彪，形成 F026 S3 + S6 级联样本）。纯正则 mention-router 每种 red-case 都要加 regex，永远追着补丁跑。
+- 根因：mention-router 旧实现基于"字节特征"（正则匹配 `@\w+`），无法区分"引用 / 装饰 / 代码块示例 / 介绍句"与"真实指令"。F026 Phase 0 Task 6 的「assistant role 守卫」只防 assistant 消息，不防 user 消息里的 code block（LL-028 Round 2 事故就是 user/assistant 语境下的 code block，role 守卫失效）。
+- 触发条件：
+  - 消息正文中任何以下构造含 `@X`：Markdown fenced code block / inline code / blockquote / table 单元格 / strong/em 装饰（`**@X**` / `*@X*`）/ 介绍句式（「@X 是 Y」/「与 @X 讨论」）/ 英文代词（"at X"）
+  - mention-router 仅靠行首 / 字符级正则判定
+- 修复（F026 Phase 1 / ADR-003）：mention-router 升级为三层 fail-closed：
+  - **Layer 1 hard-negative**：Markdown-AST（remark-parse）识别上述 7 类构造，一票否决不派发
+  - **Layer 2 hard-positive**：行首 `@` + 指令/请求语义 + 明确动作对象，才派发
+  - **Layer 3 gray-zone**：默认不派 + 日志（灰区 fail-closed 留 Phase 5 分类器）
+  - **on-behalf 反推**：「帮/代/替/为 X + @B」→ 协议层 `on_behalf_of=X, convener=X`，不由 agent 自行填字段（配合 ADR-004 透明原则）
+- 防护：
+  - F026 Phase 1 `mention-router.layer1.test.ts` 必含 2026-04-22 × 2 + 2026-04-23 Round 2 级联事故三条 red-case fixture
+  - CI 未跑通该测试前禁 merge
+  - **真相源**：ADR-003 `docs/adrs/ADR-003-a2a-mention-router-three-layer.md`
+- 来源锚点：
+  - 2026-04-22 room A2A 两次翻车实证
+  - 2026-04-23 Round 2 讨论 room 11:41:31 → 11:43:12 级联事故（我发给小孙的 Q12 简报 code block 内的「at 桂芬」）
+  - `docs/discussions/F026-design-discussion-round-2.md` §Q2 / §6.2
+- 原理：`@X` 是**意图标注**，不是字节模式。意图需要**上下文感知**（code block = 引用示例；装饰 = 标签；介绍句 = 提及；行首 + 动词 = 指令）。协议层的字节匹配永远输给上下文。
+- 关联：ADR-003 / F026 I1' / LL-029（越位防线 · 讨论期间直接落盘反而会掩盖讨论本身要修复的 bug）
+
+### LL-029: Convener 未拍板前禁止自开 ADR / 禁止直接往 dev 落盘（越位防线）
+- 状态：validated
+- 更新时间：2026-04-23
+
+- 坑：2026-04-23 12:05 桂芬（Gemini）在 F026 Round 2 讨论**未收敛**状态下自开 `docs/adrs/ADR-002-a2a-worklist-continuation.md` + `LL-026` + `LL-027` + `GEMINI.md` 改动，直接 commit 到本地 dev（`cf11ff5`），跳过 Design Gate。约 1 小时后 convener（黄仁勋）才察觉，全部回退。
+- 根因：F026 Round 1 在愿景对齐时提到"收敛权归提出方"（即 convener = 小孙或发起讨论的架构师），但该原则**只以软约束写在 skill 描述里**，没作为硬规则进入 shared-rules / feat-lifecycle skill；当 agent 独立思考产出高置信度结论时，缺少门禁阻止它直接物化为仓库变更。此外 `ADR-002` 编号在 convener draft 里已另有打算（Call Tree），桂芬占用造成编号冲突。
+- 触发条件：
+  - Design Gate 未拍板状态（convener draft 阶段）
+  - agent 被 @ 邀请思考后，置信度高，想"直接把结论落盘省一步"
+  - 缺少机制提醒"讨论未闭环前只发言，不落盘"
+- 修复：
+  - `self-evolution` skill 增补「**discussion 阶段 agent 仅发言，不得直接落盘产物**」（ADR / lessons-learned / spec / SOP 四类产物属 convener 收敛权，agent 仅提议）
+  - `merge-gate` skill 增补「**convener draft 必须在 worktree，不在 dev**」
+  - convener（黄仁勋）在 Round 2 讨论类邀请中显式说明「本轮只发言，产物由我收敛落盘」
+  - 编号重用规则：被越位回退的 LL / ADR 编号**不复用**，继续递增（本次 LL-026/LL-027 跳过，直接 LL-028/LL-029）
+- 防护：
+  - 新讨论开启时，convener 在邀请 agent 发言时加一句「本轮只回答问题，不落任何文件、不 commit」
+  - peer-reviewer / acceptance-guardian 审查时若发现非 convener 的 ADR / LL 直接 merge 到 dev，判 BLOCKED
+- 来源锚点：
+  - 2026-04-23 12:05 桂芬越位 commit `cf11ff5`（已回退）
+  - F026 Round 2 `docs/discussions/F026-design-discussion-round-2.md` §6.4 LL-029 草案
+- 原理：多 agent 协作里，**独立思考的高置信度**和**实际拍板权**是两回事。讨论阶段的 convener 是产物的唯一合法落盘人；agent 越位落盘会：(a) 绕过 Design Gate 造成未审方案进入版本历史；(b) 产生编号冲突；(c) 让 convener 不得不做 git revert，浪费彼此时间。
+- 关联：F026 Round 2 讨论 / ADR-002 编号冲突史 / `self-evolution` skill / `merge-gate` skill / `feedback_skill_rule_vs_design_decisions`（单源真相修改前跨源核）
+
 ### LL-030: 修空壳的 feature 自己空壳 — 二阶虚标
 - 状态：validated
 - 更新时间：2026-04-25

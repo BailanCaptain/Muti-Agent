@@ -6,9 +6,7 @@ type DecisionBoardRespondBody = {
   sessionGroupId: string
   decisions: Array<{
     itemId: string
-    choice:
-      | { kind: "option"; optionId: string }
-      | { kind: "custom"; text: string }
+    choice: { kind: "option"; optionId: string } | { kind: "custom"; text: string }
   }>
   skipped?: boolean
 }

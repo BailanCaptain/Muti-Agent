@@ -114,7 +114,10 @@ test("match excludes requesting-review when content contains 'review 意见'", (
   const registry = loadedRegistry()
   const results = registry.match("收到了 review 意见，准备修复")
   const names = results.map((r) => r.skill.name)
-  assert.ok(!names.includes("requesting-review"), `requesting-review should be excluded, got: ${names}`)
+  assert.ok(
+    !names.includes("requesting-review"),
+    `requesting-review should be excluded, got: ${names}`,
+  )
   assert.ok(names.includes("receiving-review"), `receiving-review should match, got: ${names}`)
 })
 

@@ -11,6 +11,7 @@ import { useLayoutStore } from "@/components/stores/layout-store"
 import { useSettingsStore } from "@/components/stores/settings-store"
 import { useDecisionBoardStore } from "@/components/stores/decision-board-store"
 import { useDecisionStore } from "@/components/stores/decision-store"
+import { useDispatchRetryStore } from "@/components/stores/dispatch-retry-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { dispatchArchiveStateChanged } from "@/components/stores/archive-event-handler"
 import { PROVIDER_ALIASES, type BlockedDispatchAttempt } from "@multi-agent/shared"
@@ -40,6 +41,9 @@ export default function HomePage() {
   const selectSessionGroup = useThreadStore((state) => state.selectSessionGroup)
   const applyAssistantDelta = useThreadStore((state) => state.applyAssistantDelta)
   const applyThinkingDelta = useThreadStore((state) => state.applyThinkingDelta)
+  const resetAssistantStream = useThreadStore((state) => state.resetAssistantStream)
+  const restoreAssistantContent = useThreadStore((state) => state.restoreAssistantContent)
+  const applyMessageRetryFields = useThreadStore((state) => state.applyMessageRetryFields)
   const applyToolEvent = useThreadStore((state) => state.applyToolEvent)
   const applyContentBlock = useThreadStore((state) => state.applyContentBlock)
   const appendTimelineMessage = useThreadStore((state) => state.appendTimelineMessage)
@@ -50,6 +54,7 @@ export default function HomePage() {
   const applyTitleUpdate = useThreadStore((state) => state.applyTitleUpdate)
   const bumpArchiveStateVersion = useThreadStore((state) => state.bumpArchiveStateVersion)
   const clearActiveGroupIfMatches = useThreadStore((state) => state.clearActiveGroupIfMatches)
+  const applyPendingChange = useThreadStore((state) => state.applyPendingChange)
   const setStatus = useChatStore((state) => state.setStatus)
   const setSocketState = useSettingsStore((state) => state.setSocketState)
   const incrementUnread = useThreadStore((state) => state.incrementUnread)
@@ -134,11 +139,51 @@ export default function HomePage() {
           } else {
             appendTimelineMessage(event.payload.message)
           }
+          // F026 P3.1 · AC-14: assistant final 真正落库后清掉对应进度卡（兜底；
+          // status="exhausted" 已由 store 自身清掉）
+          if (event.payload.message.role === "assistant") {
+            useDispatchRetryStore.getState().clearRetry(event.payload.message.id)
+          }
+          return
+        }
+
+        if (event.type === "dispatch.validation_retry") {
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
+          useDispatchRetryStore.getState().recordRetry(event.payload)
+          // F026 P3.1 · AC-22: retry 触发清掉 streaming buffer，
+          // 避免 retry 后新 delta 与旧不合规 content 拼接污染。settled / exhausted 不需要 reset
+          // （此时已不再产生新 delta，content 由 message.created → reconcileOptimisticMessage 写入）
+          if (event.payload.status === "retrying") {
+            resetAssistantStream(event.payload.messageId)
+          }
+          // F026 P3.1 review#2 fix: 两条 exhausted 分支后端没有新 delta + 不会发 message.created；
+          // resetAssistantStream 清空气泡后必须用 payload.finalContent 把兜底入库内容回填，
+          // 否则刷新前用户只看到空气泡 + 红 banner。
+          if (event.payload.status === "exhausted" && event.payload.finalContent) {
+            restoreAssistantContent(event.payload.messageId, event.payload.finalContent)
+          }
+          // F026 P4 follow-up · retry-badge-realtime fix:
+          // settled / exhausted 终态时把后端送过来的 retry 终值同步到 timeline message,
+          // 让 DispatchRetryBadge / ExhaustedBanner 不刷新就出现（之前只入库不广播）。
+          if (
+            (event.payload.status === "settled" || event.payload.status === "exhausted") &&
+            event.payload.retryCount !== undefined &&
+            event.payload.retryReasons !== undefined
+          ) {
+            applyMessageRetryFields(
+              event.payload.messageId,
+              event.payload.retryCount,
+              event.payload.retryReasons,
+            )
+          }
           return
         }
 
         if (event.type === "thread_snapshot") {
           if (!isCurrentSession(event.payload.sessionGroupId)) return
+          // F026 review#4 fix · 断线重连后 snapshot 重载，清 pendingByRoot/settledByRoot；
+          // 新 timeline 自带最新 a2aCallStatus（LEFT JOIN），terminal cache 不再需要。
+          useThreadStore.setState({ pendingByRoot: {}, settledByRoot: {} })
           replaceActiveGroup(event.payload.activeGroup)
           return
         }
@@ -185,6 +230,15 @@ export default function HomePage() {
           return
         }
 
+        if (event.type === "pending.change") {
+          // F026 P5 F6 · CallRegistry mutation 后 emit pendingSet — 喂 ListeningPulse
+          // banner + F1 AtPill 反查 status。仅当属于当前 active session 时入 store
+          // （selectSessionGroup 切房间时已清空，避免跨房间状态泄漏）。
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
+          applyPendingChange(event.payload)
+          return
+        }
+
         if (event.type === "session.title_updated") {
           applyTitleUpdate(
             event.payload.sessionGroupId,
@@ -222,10 +276,12 @@ export default function HomePage() {
     incrementUnread,
     applyAssistantDelta,
     applyThinkingDelta,
+    resetAssistantStream,
     bootstrap,
     openPreview,
     receiveBoardFlush,
     removeBoardItem,
+    applyPendingChange,
     recordMessageInGroup,
     removeDecisionRequest,
     replaceActiveGroup,

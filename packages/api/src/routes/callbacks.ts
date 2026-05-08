@@ -1,21 +1,63 @@
 import type { RealtimeServerEvent } from "@multi-agent/shared"
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import type { SessionRepository } from "../db/repositories"
+import {
+  FeatureIdMismatchError,
+  OptimisticLockError,
+} from "../db/repositories/workflow-sop-repository"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
 import type { SessionService } from "../services/session-service"
-import type { RealtimeBroadcaster } from "./ws"
 import type { WorkflowSopService } from "../services/workflow-sop-service"
-import {
-  validateUpdateSopBody,
-  WorkflowSopValidationError,
-} from "../services/workflow-sop-service"
+import { WorkflowSopValidationError, validateUpdateSopBody } from "../services/workflow-sop-service"
 import type { UpdateSopInput } from "../services/workflow-sop-types"
-import { FeatureIdMismatchError, OptimisticLockError } from "../db/repositories/workflow-sop-repository"
+import type { RealtimeBroadcaster } from "./ws"
 
 type CallbackBody = {
   invocationId?: string
   callbackToken?: string
   content?: string
+}
+
+// F026 P1 Wiring · T4 dedup constants. Tuned from R-205 evidence: LLM resends
+// happened 8–25s after the natural final, full body re-sent verbatim. 60s window
+// covers observed delays with safety margin; 80-char prefix avoids false hits on
+// short ack-style messages (e.g. "好的我明白了") that LLMs may legitimately repeat.
+const POST_MESSAGE_DEDUP_WINDOW_MS = 60_000
+const POST_MESSAGE_DEDUP_PREFIX_LEN = 200
+const POST_MESSAGE_DEDUP_MIN_LEN = 80
+
+type RecentMessageLike = {
+  id: string
+  role: string
+  content: string
+  createdAt: string
+}
+
+function detectPostMessageResend(
+  recent: ReadonlyArray<RecentMessageLike>,
+  incoming: string,
+  now: number = Date.now(),
+): { id: string } | null {
+  if (incoming.length < POST_MESSAGE_DEDUP_MIN_LEN) {
+    return null
+  }
+  const last = recent.find((m) => m.role === "assistant")
+  if (!last) {
+    return null
+  }
+  const ageMs = now - new Date(last.createdAt).getTime()
+  if (!Number.isFinite(ageMs) || ageMs > POST_MESSAGE_DEDUP_WINDOW_MS || ageMs < 0) {
+    return null
+  }
+  const incomingPrefix = incoming.slice(0, POST_MESSAGE_DEDUP_PREFIX_LEN)
+  const lastPrefix = last.content.slice(0, POST_MESSAGE_DEDUP_PREFIX_LEN)
+  if (incomingPrefix.length < POST_MESSAGE_DEDUP_MIN_LEN) {
+    return null
+  }
+  if (incomingPrefix !== lastPrefix) {
+    return null
+  }
+  return { id: last.id }
 }
 
 function assertInvocation(
@@ -49,10 +91,27 @@ export function registerCallbackRoutes(
       emit: (event: RealtimeServerEvent) => void
     }) => Promise<void> | void
     getRoomSummary?: (sessionGroupId: string) => { summary: string | null }
-    getTaskStatus?: (sessionGroupId: string, agentId?: string) => { agents: Array<{ agentId: string; running: boolean; queueDepth: number }> }
-    createTask?: (sessionGroupId: string, params: { assignee: string; description: string; priority?: string; createdBy: string }) => { ok: true; taskId: string }
-    triggerMention?: (sessionGroupId: string, params: { targetAlias: string; taskSnippet: string; sourceProvider: import("@multi-agent/shared").Provider; invocationId: string }) => Promise<void> | void
-    getMemories?: (sessionGroupId: string, keyword?: string) => { memories: Array<{ id: string; summary: string; keywords: string; createdAt: string }> }
+    getTaskStatus?: (
+      sessionGroupId: string,
+      agentId?: string,
+    ) => { agents: Array<{ agentId: string; running: boolean; queueDepth: number }> }
+    createTask?: (
+      sessionGroupId: string,
+      params: { assignee: string; description: string; priority?: string; createdBy: string },
+    ) => { ok: true; taskId: string }
+    triggerMention?: (
+      sessionGroupId: string,
+      params: {
+        targetAlias: string
+        taskSnippet: string
+        sourceProvider: import("@multi-agent/shared").Provider
+        invocationId: string
+      },
+    ) => Promise<void> | void
+    getMemories?: (
+      sessionGroupId: string,
+      keyword?: string,
+    ) => { memories: Array<{ id: string; summary: string; keywords: string; createdAt: string }> }
     // F018 P5 AC6.3: semantic recall tool backend
     // B019 review-2 (LL-023 scope 对齐): scope 从单 thread 扩到 sessionGroup
     // 内所有 threads (clowder-ai thread = 我们 sessionGroup, 抄实现没抄语义层级)
@@ -64,25 +123,18 @@ export function registerCallbackRoutes(
       text: string
       hits: Array<{ messageId: string; chunkText: string; score: number }>
     }>
-    requestDecision?: (sessionGroupId: string, params: {
-      title: string
-      description?: string
-      options: Array<{ id: string; label: string; description?: string }>
-      multiSelect: boolean
-      sourceProvider: import("@multi-agent/shared").Provider
-      sourceAlias: string
-      anchorMessageId?: string
-    }) => Promise<{ selectedIds: string[] }>
-    parallelThink?: (sessionGroupId: string, params: {
-      targets: string[]
-      question: string
-      callbackTo: string
-      sourceProvider: import("@multi-agent/shared").Provider
-      invocationId: string
-      context?: string
-      timeoutMinutes?: number
-      idempotencyKey?: string
-    }) => Promise<{ ok: true; groupId: string }> | { ok: true; groupId: string }
+    requestDecision?: (
+      sessionGroupId: string,
+      params: {
+        title: string
+        description?: string
+        options: Array<{ id: string; label: string; description?: string }>
+        multiSelect: boolean
+        sourceProvider: import("@multi-agent/shared").Provider
+        sourceAlias: string
+        anchorMessageId?: string
+      },
+    ) => Promise<{ selectedIds: string[] }>
     requestPermission?: (params: {
       invocationId: string
       provider: import("@multi-agent/shared").Provider
@@ -128,9 +180,43 @@ export function registerCallbackRoutes(
       return { error: "Session group has been cancelled." }
     }
 
+    // F026 P1 Wiring · T5 post-final lockout (R-205+R-048 双发根因)
+    // Once the invocation has emitted its final assistant message
+    // (markFinalEmitted called from runThreadTurn try-success), any
+    // subsequent post_message for the same invocation is a violation of
+    // the contract: final is the last word, post_message is for mid-task
+    // progress only. Hard-noop here — no append, no broadcast, no
+    // re-dispatch. This catches "美化重发" cases that prefix-dedup misses
+    // because the LLM rephrased emoji/punctuation. Next @-trigger spawns
+    // a fresh invocation; the lockout flag does not carry over.
+    if (options.invocations.isFinalEmitted(invocation.invocationId)) {
+      return { ok: true, locked: true, reason: "final_already_emitted" }
+    }
+
+    // F026 P1 Wiring · T4 dedup gate (R-205 双消息根因)
+    // LLM occasionally re-sends its already-final answer via MCP `post_message`
+    // (prompt rule violated). Without a hard guard the callback re-persists +
+    // re-dispatches, surfacing as duplicate UI bubbles + repeat @-triggers.
+    // Rule: if the most recent assistant message in this thread shares ≥80-char
+    // prefix and was written within 60s, treat as resend → 200 noop.
+    const incomingTrimmed = body.content.trim()
+    const dedupHit = detectPostMessageResend(
+      options.repository.listRecentMessages?.(thread.id, 1) ?? [],
+      incomingTrimmed,
+    )
+    if (dedupHit) {
+      return { ok: true, deduped: true, messageId: dedupHit.id }
+    }
+
     // Persist first so snapshots and follow-up A2A hops see the same message id and timeline state.
     // Callback messages are intermediate results while the agent is still running.
-    const message = options.repository.appendMessage(thread.id, "assistant", body.content.trim(), "", "progress")
+    const message = options.repository.appendMessage(
+      thread.id,
+      "assistant",
+      incomingTrimmed,
+      "",
+      "progress",
+    )
     const activeGroup = options.sessions.getActiveGroup(
       thread.sessionGroupId,
       options.getRunningThreadIds(),
@@ -219,7 +305,11 @@ export function registerCallbackRoutes(
 
   app.get("/api/callbacks/room-summary", async (request: FastifyRequest, reply: FastifyReply) => {
     const query = request.query as { invocationId?: string; callbackToken?: string }
-    const invocation = assertInvocation(options.invocations, query.invocationId, query.callbackToken)
+    const invocation = assertInvocation(
+      options.invocations,
+      query.invocationId,
+      query.callbackToken,
+    )
 
     if (!invocation) {
       reply.code(401)
@@ -239,92 +329,114 @@ export function registerCallbackRoutes(
     return { summary: null }
   })
 
-  app.get("/api/callbacks/search-memories", async (request: FastifyRequest, reply: FastifyReply) => {
-    const query = request.query as { invocationId?: string; callbackToken?: string; keyword?: string }
-    const invocation = assertInvocation(options.invocations, query.invocationId, query.callbackToken)
+  app.get(
+    "/api/callbacks/search-memories",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const query = request.query as {
+        invocationId?: string
+        callbackToken?: string
+        keyword?: string
+      }
+      const invocation = assertInvocation(
+        options.invocations,
+        query.invocationId,
+        query.callbackToken,
+      )
 
-    if (!invocation) {
-      reply.code(401)
-      return { error: "Invalid invocation identity." }
-    }
+      if (!invocation) {
+        reply.code(401)
+        return { error: "Invalid invocation identity." }
+      }
 
-    if (!query.keyword?.trim()) {
-      reply.code(400)
-      return { error: "keyword is required." }
-    }
+      if (!query.keyword?.trim()) {
+        reply.code(400)
+        return { error: "keyword is required." }
+      }
 
-    const thread = options.repository.getThreadById(invocation.threadId)
-    if (!thread) {
-      reply.code(404)
-      return { error: "Thread not found." }
-    }
+      const thread = options.repository.getThreadById(invocation.threadId)
+      if (!thread) {
+        reply.code(404)
+        return { error: "Thread not found." }
+      }
 
-    if (options.getMemories) {
-      return options.getMemories(thread.sessionGroupId, query.keyword.trim())
-    }
+      if (options.getMemories) {
+        return options.getMemories(thread.sessionGroupId, query.keyword.trim())
+      }
 
-    return { memories: [] }
-  })
+      return { memories: [] }
+    },
+  )
 
   // F018 P5 AC6.3: recall_similar_context backend — semantic search across
   // the current thread's embedding store (time-decayed cosine), returns
   // `text` (reference-only 闭合段 formatted string) + `hits` (raw).
-  app.get("/api/callbacks/recall-similar-context", async (request: FastifyRequest, reply: FastifyReply) => {
-    const query = request.query as {
-      invocationId?: string
-      callbackToken?: string
-      query?: string
-      topK?: string
-    }
-    const invocation = assertInvocation(options.invocations, query.invocationId, query.callbackToken)
-    if (!invocation) {
-      reply.code(401)
-      return { error: "Invalid invocation identity." }
-    }
-
-    const q = query.query?.trim()
-    if (!q) {
-      reply.code(400)
-      return { error: "query is required." }
-    }
-
-    const topKParsed = query.topK ? Number.parseInt(query.topK, 10) : 5
-    const topK = Number.isFinite(topKParsed) && topKParsed > 0 ? Math.min(topKParsed, 10) : 5
-
-    const thread = options.repository.getThreadById(invocation.threadId)
-    if (!thread) {
-      reply.code(404)
-      return { error: "Thread not found." }
-    }
-
-    if (options.searchRecall) {
-      // B019 review-2: scope = sessionGroup 内所有 threads
-      // (clowder-ai thread 等价我们 sessionGroup, F018 抄实现没抄语义层级 → LL-023 修复)
-      const groupThreads = options.repository.listThreadsByGroup(thread.sessionGroupId)
-      const threadIds = groupThreads.map((t) => t.id)
-      const result = await options.searchRecall({ threadIds, query: q, topK })
-      // Codex P5 Round 1 HIGH #1: the endpoint is the last boundary before recall
-      // data reaches the agent. Sanitize hits[].chunkText regardless of whether
-      // searchRecall already did — Codex/Gemini direct-fetch path only sees hits,
-      // not text, so raw historical text would bypass reference-only otherwise.
-      const { sanitizeRecallChunk } = await import("../services/embedding-service")
-      return {
-        text: result.text,
-        hits: result.hits.map((h) => ({
-          ...h,
-          chunkText: sanitizeRecallChunk(h.chunkText),
-        })),
+  app.get(
+    "/api/callbacks/recall-similar-context",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const query = request.query as {
+        invocationId?: string
+        callbackToken?: string
+        query?: string
+        topK?: string
       }
-    }
+      const invocation = assertInvocation(
+        options.invocations,
+        query.invocationId,
+        query.callbackToken,
+      )
+      if (!invocation) {
+        reply.code(401)
+        return { error: "Invalid invocation identity." }
+      }
 
-    // searchRecall not wired (e.g. pre-P5 deploy) → graceful empty response
-    return { text: "(no relevant context found)", hits: [] }
-  })
+      const q = query.query?.trim()
+      if (!q) {
+        reply.code(400)
+        return { error: "query is required." }
+      }
+
+      const topKParsed = query.topK ? Number.parseInt(query.topK, 10) : 5
+      const topK = Number.isFinite(topKParsed) && topKParsed > 0 ? Math.min(topKParsed, 10) : 5
+
+      const thread = options.repository.getThreadById(invocation.threadId)
+      if (!thread) {
+        reply.code(404)
+        return { error: "Thread not found." }
+      }
+
+      if (options.searchRecall) {
+        // B019 review-2: scope = sessionGroup 内所有 threads
+        // (clowder-ai thread 等价我们 sessionGroup, F018 抄实现没抄语义层级 → LL-023 修复)
+        const groupThreads = options.repository.listThreadsByGroup(thread.sessionGroupId)
+        const threadIds = groupThreads.map((t) => t.id)
+        const result = await options.searchRecall({ threadIds, query: q, topK })
+        // Codex P5 Round 1 HIGH #1: the endpoint is the last boundary before recall
+        // data reaches the agent. Sanitize hits[].chunkText regardless of whether
+        // searchRecall already did — Codex/Gemini direct-fetch path only sees hits,
+        // not text, so raw historical text would bypass reference-only otherwise.
+        const { sanitizeRecallChunk } = await import("../services/embedding-service")
+        return {
+          text: result.text,
+          hits: result.hits.map((h) => ({
+            ...h,
+            chunkText: sanitizeRecallChunk(h.chunkText),
+          })),
+        }
+      }
+
+      // searchRecall not wired (e.g. pre-P5 deploy) → graceful empty response
+      return { text: "(no relevant context found)", hits: [] }
+    },
+  )
 
   // --- New A2A callback routes ---
 
   app.get("/api/callbacks/task-status", async (request: FastifyRequest, reply: FastifyReply) => {
-    const query = request.query as { invocationId?: string; callbackToken?: string; agentId?: string }
+    const query = request.query as {
+      invocationId?: string
+      callbackToken?: string
+      agentId?: string
+    }
     const invocation = assertInvocation(
       options.invocations,
       query.invocationId,
@@ -350,7 +462,11 @@ export function registerCallbackRoutes(
   })
 
   app.post("/api/callbacks/create-task", async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as CallbackBody & { assignee?: string; description?: string; priority?: string }
+    const body = request.body as CallbackBody & {
+      assignee?: string
+      description?: string
+      priority?: string
+    }
     const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
 
     if (!invocation) {
@@ -381,40 +497,65 @@ export function registerCallbackRoutes(
     return { ok: true as const, taskId: `task-${Date.now()}` }
   })
 
-  app.post("/api/callbacks/trigger-mention", async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as CallbackBody & { targetAgentId?: string; taskSnippet?: string }
-    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
+  app.post(
+    "/api/callbacks/trigger-mention",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const body = request.body as CallbackBody & { targetAgentId?: string; taskSnippet?: string }
+      const invocation = assertInvocation(
+        options.invocations,
+        body.invocationId,
+        body.callbackToken,
+      )
 
-    if (!invocation) {
-      reply.code(401)
-      return { error: "Invalid invocation identity." }
-    }
+      if (!invocation) {
+        reply.code(401)
+        return { error: "Invalid invocation identity." }
+      }
 
-    if (!body.targetAgentId?.trim() || !body.taskSnippet?.trim()) {
-      reply.code(400)
-      return { error: "targetAgentId and taskSnippet are required." }
-    }
+      if (!body.targetAgentId?.trim() || !body.taskSnippet?.trim()) {
+        reply.code(400)
+        return { error: "targetAgentId and taskSnippet are required." }
+      }
 
-    const thread = options.repository.getThreadById(invocation.threadId)
-    if (!thread) {
-      reply.code(404)
-      return { error: "Thread not found." }
-    }
+      const thread = options.repository.getThreadById(invocation.threadId)
+      if (!thread) {
+        reply.code(404)
+        return { error: "Thread not found." }
+      }
 
-    if (options.triggerMention) {
-      await options.triggerMention(thread.sessionGroupId, {
-        targetAlias: body.targetAgentId.trim(),
-        taskSnippet: body.taskSnippet.trim(),
-        sourceProvider: thread.provider,
-        invocationId: invocation.invocationId,
-      })
-    }
+      if (options.triggerMention) {
+        try {
+          await options.triggerMention(thread.sessionGroupId, {
+            targetAlias: body.targetAgentId.trim(),
+            taskSnippet: body.taskSnippet.trim(),
+            sourceProvider: thread.provider,
+            invocationId: invocation.invocationId,
+          })
+        } catch (err) {
+          // F026 P0 Task4 · P14 痛点：业务失败（目标 alias 不存在 / 派发拒绝）必须冒泡，
+          // HTTP 200 合约不变但 body.ok=false；同时 broadcast status 事件让前端 console 可见。
+          const msg = err instanceof Error ? err.message : String(err)
+          options.broadcaster.broadcast({
+            type: "status",
+            payload: {
+              sessionGroupId: thread.sessionGroupId,
+              message: `trigger_mention 失败：${msg}`,
+            },
+          })
+          return { ok: false as const, error: msg }
+        }
+      }
 
-    return { ok: true }
-  })
+      return { ok: true as const }
+    },
+  )
 
   app.get("/api/callbacks/memory", async (request: FastifyRequest, reply: FastifyReply) => {
-    const query = request.query as { invocationId?: string; callbackToken?: string; keyword?: string }
+    const query = request.query as {
+      invocationId?: string
+      callbackToken?: string
+      keyword?: string
+    }
     const invocation = assertInvocation(
       options.invocations,
       query.invocationId,
@@ -439,259 +580,233 @@ export function registerCallbackRoutes(
     return { memories: [] }
   })
 
-  app.post("/api/callbacks/request-decision", async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as CallbackBody & {
-      title?: string
-      description?: string
-      options?: Array<{ id: string; label: string; description?: string }>
-      multiSelect?: boolean
-      anchorMessageId?: string
-    }
-    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
+  app.post(
+    "/api/callbacks/request-decision",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const body = request.body as CallbackBody & {
+        title?: string
+        description?: string
+        options?: Array<{ id: string; label: string; description?: string }>
+        multiSelect?: boolean
+        anchorMessageId?: string
+      }
+      const invocation = assertInvocation(
+        options.invocations,
+        body.invocationId,
+        body.callbackToken,
+      )
 
-    if (!invocation) {
-      reply.code(401)
-      return { error: "Invalid invocation identity." }
-    }
+      if (!invocation) {
+        reply.code(401)
+        return { error: "Invalid invocation identity." }
+      }
 
-    if (!body.title?.trim() || !body.options?.length) {
-      reply.code(400)
-      return { error: "title and options are required." }
-    }
+      if (!body.title?.trim() || !body.options?.length) {
+        reply.code(400)
+        return { error: "title and options are required." }
+      }
 
-    const thread = options.repository.getThreadById(invocation.threadId)
-    if (!thread) {
-      reply.code(404)
-      return { error: "Thread not found." }
-    }
+      const thread = options.repository.getThreadById(invocation.threadId)
+      if (!thread) {
+        reply.code(404)
+        return { error: "Thread not found." }
+      }
 
-    if (options.requestDecision) {
-      const result = await options.requestDecision(thread.sessionGroupId, {
-        title: body.title.trim(),
-        description: body.description,
-        options: body.options,
-        multiSelect: body.multiSelect ?? false,
-        sourceProvider: thread.provider,
-        sourceAlias: thread.alias,
-        anchorMessageId: body.anchorMessageId,
-      })
-      return { ok: true, selectedIds: result.selectedIds }
-    }
+      if (options.requestDecision) {
+        const result = await options.requestDecision(thread.sessionGroupId, {
+          title: body.title.trim(),
+          description: body.description,
+          options: body.options,
+          multiSelect: body.multiSelect ?? false,
+          sourceProvider: thread.provider,
+          sourceAlias: thread.alias,
+          anchorMessageId: body.anchorMessageId,
+        })
+        return { ok: true, selectedIds: result.selectedIds }
+      }
 
-    return { ok: true, selectedIds: body.options.length > 0 ? [body.options[0].id] : [] }
-  })
+      return { ok: true, selectedIds: body.options.length > 0 ? [body.options[0].id] : [] }
+    },
+  )
 
-  app.post("/api/callbacks/parallel-think", async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as CallbackBody & {
-      targets?: string[]
-      question?: string
-      callbackTo?: string
-      context?: string
-      timeoutMinutes?: number
-      idempotencyKey?: string
-    }
-    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
+  app.post(
+    "/api/callbacks/request-permission",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const body = request.body as CallbackBody & {
+        action?: string
+        reason?: string
+        context?: string
+      }
+      const invocation = assertInvocation(
+        options.invocations,
+        body.invocationId,
+        body.callbackToken,
+      )
 
-    if (!invocation) {
-      reply.code(401)
-      return { error: "Invalid invocation identity." }
-    }
+      if (!invocation) {
+        reply.code(401)
+        return { error: "Invalid invocation identity." }
+      }
 
-    if (!body.targets?.length || !body.question?.trim() || !body.callbackTo?.trim()) {
-      reply.code(400)
-      return { error: "targets, question, and callbackTo are required." }
-    }
+      if (!body.action?.trim() || !body.reason?.trim()) {
+        reply.code(400)
+        return { error: "action and reason are required." }
+      }
 
-    if (body.targets.length > 3) {
-      reply.code(400)
-      return { error: "Maximum 3 targets allowed." }
-    }
+      const thread = options.repository.getThreadById(invocation.threadId)
+      if (!thread) {
+        reply.code(404)
+        return { error: "Thread not found." }
+      }
 
-    const thread = options.repository.getThreadById(invocation.threadId)
-    if (!thread) {
-      reply.code(404)
-      return { error: "Thread not found." }
-    }
+      if (!options.requestPermission) {
+        return { status: "granted" as const }
+      }
 
-    if (options.isSessionGroupCancelled(thread.sessionGroupId)) {
-      reply.code(403)
-      return { error: "Session group has been cancelled." }
-    }
-
-    if (options.parallelThink) {
-      const result = await options.parallelThink(thread.sessionGroupId, {
-        targets: body.targets,
-        question: body.question.trim(),
-        callbackTo: body.callbackTo.trim(),
-        sourceProvider: thread.provider,
+      const result = await options.requestPermission({
         invocationId: invocation.invocationId,
-        context: body.context,
-        timeoutMinutes: body.timeoutMinutes,
-        idempotencyKey: body.idempotencyKey,
-      })
-      return result
-    }
-
-    return { ok: true, groupId: `group-${Date.now()}` }
-  })
-
-  app.post("/api/callbacks/request-permission", async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as CallbackBody & { action?: string; reason?: string; context?: string }
-    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
-
-    if (!invocation) {
-      reply.code(401)
-      return { error: "Invalid invocation identity." }
-    }
-
-    if (!body.action?.trim() || !body.reason?.trim()) {
-      reply.code(400)
-      return { error: "action and reason are required." }
-    }
-
-    const thread = options.repository.getThreadById(invocation.threadId)
-    if (!thread) {
-      reply.code(404)
-      return { error: "Thread not found." }
-    }
-
-    if (!options.requestPermission) {
-      return { status: "granted" as const }
-    }
-
-    const result = await options.requestPermission({
-      invocationId: invocation.invocationId,
-      provider: thread.provider,
-      agentAlias: thread.alias,
-      threadId: thread.id,
-      sessionGroupId: thread.sessionGroupId,
-      action: body.action.trim(),
-      reason: body.reason.trim(),
-      context: body.context?.slice(0, 5000),
-    })
-
-    return result
-  })
-
-  app.post("/api/callbacks/take-screenshot", async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as CallbackBody & { url?: string; alt?: string }
-    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
-
-    if (!invocation) {
-      reply.code(401)
-      return { error: "Invalid invocation identity." }
-    }
-
-    const thread = options.repository.getThreadById(invocation.threadId)
-    if (!thread) {
-      reply.code(404)
-      return { error: "Thread not found." }
-    }
-
-    if (!options.takeScreenshot) {
-      reply.code(501)
-      return { error: "Screenshot capability not configured." }
-    }
-
-    try {
-      const result = await options.takeScreenshot({
+        provider: thread.provider,
+        agentAlias: thread.alias,
         threadId: thread.id,
         sessionGroupId: thread.sessionGroupId,
-        url: body.url,
-        alt: body.alt,
+        action: body.action.trim(),
+        reason: body.reason.trim(),
+        context: body.context?.slice(0, 5000),
       })
+
       return result
-    } catch (err) {
-      reply.code(500)
-      return { error: err instanceof Error ? err.message : "Screenshot failed" }
-    }
-  })
+    },
+  )
+
+  app.post(
+    "/api/callbacks/take-screenshot",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const body = request.body as CallbackBody & { url?: string; alt?: string }
+      const invocation = assertInvocation(
+        options.invocations,
+        body.invocationId,
+        body.callbackToken,
+      )
+
+      if (!invocation) {
+        reply.code(401)
+        return { error: "Invalid invocation identity." }
+      }
+
+      const thread = options.repository.getThreadById(invocation.threadId)
+      if (!thread) {
+        reply.code(404)
+        return { error: "Thread not found." }
+      }
+
+      if (!options.takeScreenshot) {
+        reply.code(501)
+        return { error: "Screenshot capability not configured." }
+      }
+
+      try {
+        const result = await options.takeScreenshot({
+          threadId: thread.id,
+          sessionGroupId: thread.sessionGroupId,
+          url: body.url,
+          alt: body.alt,
+        })
+        return result
+      } catch (err) {
+        reply.code(500)
+        return { error: err instanceof Error ? err.message : "Screenshot failed" }
+      }
+    },
+  )
 
   // F019 P3: WorkflowSop 告示牌 state machine 推进入口（HTTP 通道；MCP
   // 对等工具在 Task 3.4 挂）。auth 同 post-message；失败映射：
   // 401（auth）/ 400（参数）/ 403（越权）/ 404（thread 不存在）/ 409（写冲突）/ 500（DB 错）
-  app.post("/api/callbacks/update-workflow-sop", async (request: FastifyRequest, reply: FastifyReply) => {
-    const rawBody = request.body as (CallbackBody & Record<string, unknown>) | undefined
-    const invocation = assertInvocation(
-      options.invocations,
-      rawBody?.invocationId,
-      rawBody?.callbackToken,
-    )
-    if (!invocation) {
-      reply.code(401)
-      return { error: "Invalid invocation identity." }
-    }
+  app.post(
+    "/api/callbacks/update-workflow-sop",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const rawBody = request.body as (CallbackBody & Record<string, unknown>) | undefined
+      const invocation = assertInvocation(
+        options.invocations,
+        rawBody?.invocationId,
+        rawBody?.callbackToken,
+      )
+      if (!invocation) {
+        reply.code(401)
+        return { error: "Invalid invocation identity." }
+      }
 
-    // F019 review-P2 (Codex Finding 3): full-body validation + normalization at
-    // the boundary. Upstream agents pass untrusted JSON; validateUpdateSopBody
-    // trims IDs, rejects invalid enums, type-checks resumeCapsule/checks/
-    // expectedVersion shapes. The service+repo layers trust their input.
-    let input: UpdateSopInput
-    try {
-      input = validateUpdateSopBody({
-        ...(rawBody ?? {}),
-        // updatedBy is derived from authenticated identity, not caller-supplied
-        updatedBy: invocation.agentId,
-      })
-    } catch (err) {
-      if (err instanceof WorkflowSopValidationError) {
-        reply.code(400)
-        return { error: err.message }
+      // F019 review-P2 (Codex Finding 3): full-body validation + normalization at
+      // the boundary. Upstream agents pass untrusted JSON; validateUpdateSopBody
+      // trims IDs, rejects invalid enums, type-checks resumeCapsule/checks/
+      // expectedVersion shapes. The service+repo layers trust their input.
+      let input: UpdateSopInput
+      try {
+        input = validateUpdateSopBody({
+          ...(rawBody ?? {}),
+          // updatedBy is derived from authenticated identity, not caller-supplied
+          updatedBy: invocation.agentId,
+        })
+      } catch (err) {
+        if (err instanceof WorkflowSopValidationError) {
+          reply.code(400)
+          return { error: err.message }
+        }
+        throw err
       }
-      throw err
-    }
 
-    // F019 review-P1 (Codex Finding 1): thread-scope + session-cancelled guards.
-    // The caller's invocation can only write to the feature its thread is bound
-    // to. Unbound threads and cancelled sessions must be rejected before any
-    // DB write — otherwise any valid callback token could mutate foreign SOP rows.
-    const thread = options.repository.getThreadById(invocation.threadId)
-    if (!thread) {
-      reply.code(404)
-      return { error: "Thread not found." }
-    }
-    if (!thread.backlogItemId) {
-      reply.code(403)
-      return {
-        error: "Thread is not bound to any feature; cannot update workflow SOP.",
+      // F019 review-P1 (Codex Finding 1): thread-scope + session-cancelled guards.
+      // The caller's invocation can only write to the feature its thread is bound
+      // to. Unbound threads and cancelled sessions must be rejected before any
+      // DB write — otherwise any valid callback token could mutate foreign SOP rows.
+      const thread = options.repository.getThreadById(invocation.threadId)
+      if (!thread) {
+        reply.code(404)
+        return { error: "Thread not found." }
       }
-    }
-    if (thread.backlogItemId !== input.backlogItemId) {
-      reply.code(403)
-      return {
-        error: `Thread is bound to "${thread.backlogItemId}", request does not match.`,
+      if (!thread.backlogItemId) {
+        reply.code(403)
+        return {
+          error: "Thread is not bound to any feature; cannot update workflow SOP.",
+        }
       }
-    }
-    if (options.isSessionGroupCancelled(thread.sessionGroupId)) {
-      reply.code(403)
-      return { error: "Session group has been cancelled." }
-    }
+      if (thread.backlogItemId !== input.backlogItemId) {
+        reply.code(403)
+        return {
+          error: `Thread is bound to "${thread.backlogItemId}", request does not match.`,
+        }
+      }
+      if (options.isSessionGroupCancelled(thread.sessionGroupId)) {
+        reply.code(403)
+        return { error: "Session group has been cancelled." }
+      }
 
-    if (!options.workflowSopService) {
-      reply.code(503)
-      return { error: "WorkflowSopService not wired" }
-    }
+      if (!options.workflowSopService) {
+        reply.code(503)
+        return { error: "WorkflowSopService not wired" }
+      }
 
-    try {
-      const sop = options.workflowSopService.upsert(input)
-      return { ok: true, sop }
-    } catch (err) {
-      if (err instanceof OptimisticLockError) {
-        reply.code(409)
-        return { error: err.message }
+      try {
+        const sop = options.workflowSopService.upsert(input)
+        return { ok: true, sop }
+      } catch (err) {
+        if (err instanceof OptimisticLockError) {
+          reply.code(409)
+          return { error: err.message }
+        }
+        if (err instanceof FeatureIdMismatchError) {
+          reply.code(409)
+          return { error: err.message }
+        }
+        if (err instanceof WorkflowSopValidationError) {
+          // Defense-in-depth: service-level validation (e.g. invalid stage) should
+          // have been caught at the boundary, but map to 400 if it slips through.
+          reply.code(400)
+          return { error: err.message }
+        }
+        reply.code(500)
+        return { error: err instanceof Error ? err.message : "update-workflow-sop failed" }
       }
-      if (err instanceof FeatureIdMismatchError) {
-        reply.code(409)
-        return { error: err.message }
-      }
-      if (err instanceof WorkflowSopValidationError) {
-        // Defense-in-depth: service-level validation (e.g. invalid stage) should
-        // have been caught at the boundary, but map to 400 if it slips through.
-        reply.code(400)
-        return { error: err.message }
-      }
-      reply.code(500)
-      return { error: err instanceof Error ? err.message : "update-workflow-sop failed" }
-    }
-  })
+    },
+  )
 }
