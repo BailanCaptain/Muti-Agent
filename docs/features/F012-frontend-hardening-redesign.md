@@ -1,9 +1,10 @@
 ---
 id: F012
 title: 前端加固 + 渲染重构 + DesignSystem — 消息卡片化 + 折叠式工具/推理展示 + 统一设计契约
-status: in-progress
+status: done
 owner: 黄仁勋
 created: 2026-04-14
+completed: 2026-04-15
 ---
 
 # F012 — 前端加固 + 渲染重构 + DesignSystem

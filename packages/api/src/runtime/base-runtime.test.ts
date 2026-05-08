@@ -160,19 +160,23 @@ test("stdout activity keeps the heartbeat alive until the process closes", async
     createLivenessProbe: createFakeProbeFactory(),
   })
 
+  // B023: Windows setTimeout 精度 ~15.6ms，原 delay(12) 实际 15-32ms，
+  // 与 inactivityTimeoutMs=25 的边界冲突导致 Windows 上稳定 fail。
+  // 拉宽到 delay(30) + inactivityTimeoutMs=200 让 timer 精度抖动有充分 buffer，
+  // 同时仍然测出"活动持续触发，timeout 不应该 fire"的行为。
   const handle = runtime.runStream(
     createInput({
-      heartbeatIntervalMs: 10,
-      inactivityTimeoutMs: 25,
+      heartbeatIntervalMs: 20,
+      inactivityTimeoutMs: 200,
       shutdownGracePeriodMs: 5,
       livenessStallWarningMs: 10_000,
     }),
   )
 
   child.stdout.write('{"type":"message"}\n')
-  await delay(12)
+  await delay(30)
   child.stdout.write('{"type":"message"}\n')
-  await delay(12)
+  await delay(30)
   child.close(0)
 
   const result = await handle.promise
@@ -499,14 +503,18 @@ test("stall fast-kill deferred while stderr is active (B010-fix: 429 retry prote
     forceKillProcessTree: () => child.close(null),
   })
 
+  // B023: Windows setTimeout 精度 ~15.6ms，原 30ms stall threshold + 10ms stderr
+  // setInterval 在 Windows 上稳定 fail（30ms < 32ms 两次精度抖动）。
+  // 拉宽到 200ms threshold + 30ms stderr interval + 500ms wait，让 timer 精度
+  // 抖动有 buffer，测试逻辑不变（stderr 持续活动时 stall 不 fire）。
   const handle = runtime.runStream(
     createInput({
-      heartbeatIntervalMs: 5,
+      heartbeatIntervalMs: 20,
       inactivityTimeoutMs: 60_000,
       shutdownGracePeriodMs: 5,
-      livenessSampleIntervalMs: 5,
-      livenessStallWarningMs: 30, // very short stall threshold
-      livenessSoftWarningMs: 15,
+      livenessSampleIntervalMs: 20,
+      livenessStallWarningMs: 200,
+      livenessSoftWarningMs: 100,
     }),
   )
 
@@ -516,14 +524,14 @@ test("stall fast-kill deferred while stderr is active (B010-fix: 429 retry prote
       "\n",
   )
 
-  // Keep spamming stderr every 10ms (simulates 429 retries).
+  // Keep spamming stderr every 30ms (simulates 429 retries).
   // With the fix, this should keep the stall clock from firing.
   const retrySpammer = setInterval(() => {
     child.stderr.write("Attempt N failed with status 429. Retrying...\n")
-  }, 10)
+  }, 30)
 
-  // Wait longer than the stall threshold (30ms) — process should NOT be killed.
-  await delay(80)
+  // Wait longer than the stall threshold (200ms) — process should NOT be killed.
+  await delay(500)
   clearInterval(retrySpammer)
 
   // Now let the process complete normally.
@@ -536,4 +544,117 @@ test("stall fast-kill deferred while stderr is active (B010-fix: 429 retry prote
     0,
     "Gemini should NOT be killed while 429 retries are active on stderr",
   )
+})
+
+// B023 AC5 (review P1-2): idle-silent 期间 inactivityTimeoutMs 不应先于 stallWarningMs 触发杀进程。
+// 范德彪 review: 即使 livenessStallWarningMs 改到 20min，默认 inactivityTimeoutMs=5min 仍会先杀
+// idle-silent 进程（line 520-526 只 busy-silent 走延长分支）。Codex idle-silent 5+ min 是正常的
+// thinking budget 行为，必须由 stallWarningMs 主导杀决定，inactivityTimeoutMs 退化为 probe 不可用
+// 时的兜底。
+test("B023 AC5: idle-silent 在 inactivityTimeoutMs 之后但 stallWarningMs 之前不应被杀", async () => {
+  const child = new FakeChildProcess()
+  const probeFactory: RuntimeDependencies["createLivenessProbe"] = (pid, config) =>
+    new ProcessLivenessProbe(pid, config, {
+      platform: "linux",
+      isPidAlive: () => true,
+      sampleCpuTime: async () => 42, // flat CPU 两次后 → cpuGrowing=false → idle-silent
+    })
+
+  const runtime = new TestRuntime({
+    spawn: () => child as never,
+    platform: "win32",
+    createLivenessProbe: probeFactory,
+    forceKillProcessTree: () => child.close(null),
+  })
+
+  const handle = runtime.runStream(
+    createInput({
+      heartbeatIntervalMs: 20,
+      // inactivityTimeoutMs 故意设短：模拟生产 .env 里的 5min 配置占位
+      inactivityTimeoutMs: 200,
+      shutdownGracePeriodMs: 5,
+      // probe 频繁采样以便快速进入 idle-silent
+      livenessSampleIntervalMs: 20,
+      livenessSoftWarningMs: 50,
+      // stallWarningMs 远大于 inactivityTimeoutMs：这是 B023 现场比例（1200s vs 300s）
+      livenessStallWarningMs: 2_000,
+    }),
+  )
+
+  // 等到 inactivity (200ms) 已过、stall (2000ms) 还远：进程不应被杀
+  await delay(500)
+  child.close(0)
+
+  const result = await handle.promise
+  assert.equal(
+    result.exitCode,
+    0,
+    "idle-silent 期间 inactivityTimeoutMs 不应主导 kill — 必须等 stallWarningMs",
+  )
+})
+
+// B023 AC5: 当 stallWarningMs 真正到达，idle-silent 仍必须被杀（兜底没失效）。
+test("B023 AC5: idle-silent 超过 stallWarningMs 仍会被杀（杀路径未被绕掉）", async () => {
+  const child = new FakeChildProcess()
+  const probeFactory: RuntimeDependencies["createLivenessProbe"] = (pid, config) =>
+    new ProcessLivenessProbe(pid, config, {
+      platform: "linux",
+      isPidAlive: () => true,
+      sampleCpuTime: async () => 42, // flat CPU → idle-silent
+    })
+
+  const runtime = new TestRuntime({
+    spawn: () => child as never,
+    platform: "win32",
+    createLivenessProbe: probeFactory,
+    forceKillProcessTree: () => child.close(null),
+  })
+
+  const handle = runtime.runStream(
+    createInput({
+      heartbeatIntervalMs: 10,
+      inactivityTimeoutMs: 100,
+      shutdownGracePeriodMs: 5,
+      livenessSampleIntervalMs: 10,
+      livenessSoftWarningMs: 30,
+      livenessStallWarningMs: 80, // < inactivityTimeoutMs，让 stall 路径主导
+    }),
+  )
+
+  await assert.rejects(handle.promise, /卡住/)
+})
+
+// B023 AC5 (review P1-2 残余风险): stall 杀进程时 reject error message 必须使用
+// livenessStallWarningMs 的秒数，否则用户看到"无新输出 ≥ 0/5 秒"（来自 inactivityTimeoutMs=100/300_000）
+// 而实际是 stall 阈值才触发，文案严重误导。范德彪复审残余风险。
+test("B023 AC5: stall reject error message 使用 livenessStallWarningMs 而非 inactivityTimeoutMs", async () => {
+  const child = new FakeChildProcess()
+  const probeFactory: RuntimeDependencies["createLivenessProbe"] = (pid, config) =>
+    new ProcessLivenessProbe(pid, config, {
+      platform: "linux",
+      isPidAlive: () => true,
+      sampleCpuTime: async () => 42, // flat CPU → idle-silent
+    })
+
+  const runtime = new TestRuntime({
+    spawn: () => child as never,
+    platform: "win32",
+    createLivenessProbe: probeFactory,
+    forceKillProcessTree: () => child.close(null),
+  })
+
+  const handle = runtime.runStream(
+    createInput({
+      heartbeatIntervalMs: 10,
+      // 选 1234ms：四位数 stall 秒在文案里是 "1 秒"（Math.round），但关键是不和 inactivity 重合
+      inactivityTimeoutMs: 100,
+      shutdownGracePeriodMs: 5,
+      livenessSampleIntervalMs: 10,
+      livenessSoftWarningMs: 30,
+      livenessStallWarningMs: 1500, // = 2 秒（Math.round），与 inactivityTimeoutMs=100 (=0 秒) 区分
+    }),
+  )
+
+  // 期望文案里出现 stall 阈值的秒数（2），而不是 inactivity 阈值的秒数（0）
+  await assert.rejects(handle.promise, /卡住.*≥\s*2\s*秒/)
 })

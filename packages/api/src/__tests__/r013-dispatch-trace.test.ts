@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
+import { existsSync } from "node:fs"
 /**
  * R-013 派发链路实测：用真实 ca57cc4d 范德彪回复 + 真实 dispatch.enqueuePublicMentions
  * 看 enqueue 是否真的产生了一个黄仁勋的 queue entry
+ *
+ * B023 守卫：硬编码 DB 路径指向 F026-p0 worktree 的快照 DB。该 worktree 已被
+ * 清理后此 fixture 消失，整个 describe 改为 skip — 保留诊断脚本价值不阻塞 CI。
  */
 import { describe, test } from "node:test"
 import Database from "better-sqlite3"
@@ -12,7 +16,9 @@ const DB_PATH =
   "C:/Users/-/Desktop/Multi-Agent/.worktrees/F026-p0/.runtime/worktree-preview/data/multi-agent.sqlite"
 const MESSAGE_ID = "ca57cc4d-95ca-482e-b548-51e5efd45122"
 
-describe("R-013 dispatch.enqueuePublicMentions 实测", () => {
+const describeIfDbAvailable = existsSync(DB_PATH) ? describe : describe.skip
+
+describeIfDbAvailable("R-013 dispatch.enqueuePublicMentions 实测", () => {
   const db = new Database(DB_PATH, { readonly: true, fileMustExist: true })
   const row = db
     .prepare("SELECT content, thread_id as threadId FROM messages WHERE id=?")

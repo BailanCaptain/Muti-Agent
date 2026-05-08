@@ -79,6 +79,7 @@ import {
   buildDispatchRetryEventId,
   buildDispatchRetryRealtimeEvent,
 } from "./dispatch-retry-event"
+import { composeFinalContentOnError } from "./compose-final-content-on-error"
 import { deriveContentBlocks, mergeDerivedWithExistingBlocks } from "./content-blocks-derive"
 import type { MemoryService } from "./memory-service"
 import { computeEffectiveSessionId } from "./session-effectiveness"
@@ -2181,10 +2182,16 @@ export class MessageService {
       })
       this.releaseInvocation(identity.invocationId, dispatchCleanupTimer)
       const message = error instanceof Error ? error.message : "Unknown error"
+      // B023 AC1: catch 路径 append 不 overwrite — 保留流式累积的 assistantContent，
+      // 末尾追加 [runtime] 错误信息。修复前直接覆盖导致前端看到内容瞬间消失。
+      const composedContent = composeFinalContentOnError({
+        assistantContent: assistantContent || "",
+        errorMessage: message,
+      })
       // F026 P11 · 错误终态也派生 content_blocks（保 thinking + error text 结构）
       const existingErrorBlocksJson = this.sessions.getContentBlocksJson(assistant.id)
       const derivedErrorBlocks = deriveContentBlocks({
-        content: `Error: ${message}`,
+        content: composedContent,
         thinking,
       })
       const mergedErrorBlocks = mergeDerivedWithExistingBlocks(
@@ -2192,7 +2199,7 @@ export class MessageService {
         derivedErrorBlocks,
       )
       this.sessions.overwriteMessage(assistant.id, {
-        content: `Error: ${message}`,
+        content: composedContent,
         thinking,
         toolEvents: toolEventsJson,
         contentBlocks: JSON.stringify(mergedErrorBlocks),

@@ -100,7 +100,10 @@ const DEFAULT_RUNTIME_LIFECYCLE: RuntimeLifecycleConfig = {
   shutdownGracePeriodMs: 5_000,
   livenessSampleIntervalMs: 30_000,
   livenessSoftWarningMs: 90_000,
-  livenessStallWarningMs: 180_000,
+  // B023 AC5: 180s → 1200s (20min) — Opus 4.7/GPT-5.4 thinking budget 高时
+  // 5min+ silent 是正常的，180s 偶发误杀（DB 实测：范德彪 4a4ca8b3 5/8 02:08
+  // 8min 工作 + 5min silent 被强制 kill）。env override 仍生效。
+  livenessStallWarningMs: 1_200_000,
   livenessBoundedExtensionFactor: 2.0,
 }
 
@@ -446,9 +449,15 @@ export abstract class BaseCliRuntime implements AgentRuntime {
               return
             }
             const reason = stalled ? "stall" : deadProcess ? "dead" : "timeout"
+            // B023 AC5 残余风险（review P1-2）: stall 路径下文案的 "≥ N 秒" 必须取 stall 阈值，
+            // 否则现场 .env 的 inactivityTimeoutMs=300_000 + livenessStallWarningMs=1_200_000 配置下，
+            // 真正 20min stall 杀进程后用户会看到"≥ 300 秒"的错误，与实际行为差 4 倍。
+            const reportedTimeoutMs = stalled
+              ? lifecycle.livenessStallWarningMs
+              : lifecycle.inactivityTimeoutMs
             reject(
               new Error(
-                formatRuntimeTimeoutMessage(lifecycle.inactivityTimeoutMs, lastActivityAt, reason),
+                formatRuntimeTimeoutMessage(reportedTimeoutMs, lastActivityAt, reason),
               ),
             )
             return
@@ -519,6 +528,18 @@ export abstract class BaseCliRuntime implements AgentRuntime {
             probe &&
             probe.shouldExtendTimeout() &&
             !probe.isHardCapExceeded(elapsed, lifecycle.inactivityTimeoutMs)
+          ) {
+            return
+          }
+
+          // B023 AC5: idle-silent 时让 stallWarningMs 主导 kill 决定，
+          // inactivityTimeoutMs 退化为 probe 不可用/已超 stall 阈值时的兜底。
+          // 否则 .env 的 MULTI_AGENT_INACTIVITY_TIMEOUT_MS=300000 会让 5min idle-silent
+          // 先于 livenessStallWarningMs (1200s) 被杀，AC5 真实运行时不生效。
+          if (
+            probe &&
+            probe.getState() === "idle-silent" &&
+            stallElapsed < lifecycle.livenessStallWarningMs
           ) {
             return
           }
@@ -666,6 +687,32 @@ export function findSessionId(payload: unknown): string | null {
   }
   if (typeof value.sessionId === "string" && value.sessionId) {
     return value.sessionId
+  }
+
+  // B023: codex CLI stdout 第一帧是 {type:"thread.started", thread_id:"019e..."}
+  // — 实测 codex 0.128.0 真实 stdout 输出（区别于写到磁盘 rollout jsonl 的
+  // `session_meta` 格式，那是 codex 内部持久化用的，不是 CLI stdout）。
+  // 字段名 thread_id 不是 session_id/sessionId，递归遍历也撞不到。8 周历史漏洞
+  // 修复：见 docs/bugReport/B023-runtime-resilience.md。
+  if (
+    value.type === "thread.started" &&
+    typeof value.thread_id === "string" &&
+    value.thread_id
+  ) {
+    return value.thread_id
+  }
+  // B023: 同时兼容 codex 写到磁盘 rollout jsonl 的 session_meta 格式
+  // ({type:"session_meta", payload:{id:"019e..."}})。stdout 走不到这条但
+  // 留着保险（如果有人把 rollout 内容 pipe 进来或者 codex 未来统一格式）。
+  if (
+    value.type === "session_meta" &&
+    value.payload &&
+    typeof value.payload === "object"
+  ) {
+    const payload = value.payload as Record<string, unknown>
+    if (typeof payload.id === "string" && payload.id) {
+      return payload.id
+    }
   }
 
   for (const child of Object.values(value)) {

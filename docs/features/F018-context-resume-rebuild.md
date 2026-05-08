@@ -101,6 +101,7 @@ F007 只摘 clowder-ai 的 SOP 书签**概念**，丢掉了它背后整套**配�
 - [x] AC3.5 代码路径: `context-assembler.ts` 在 `nativeSessionId === null`（新 session）且 caller 提供 bootstrap metadata（sessionChainIndex / threadMemory / previousDigest / recallTools 任一）时调用 `buildSessionBootstrap` 注入（P3 闭环；SessionRepository 扩 4 方法 + `threads.session_chain_index` 列 idempotent ALTER）
 - [x] AC3.5 生产触发: P4 3a1f492 message-service 两个 assemble 调用点（direct turn + A2A）都传 sessionChainIndex + threadMemory；SessionService pass-through 方法接通到 DrizzleSessionRepository（P3 只接到 raw sqlite 的 bug 在此补齐）
 - [x] AC3.6: 单测覆盖各区段优先级与 drop 顺序（12 bootstrap 单测 + 3 assembler 集成 + 4 Codex review regression）
+- [ ] AC3.7（B023 补 2026-05-08）: codex turn 跑过一次后，thread.native_session_id 应有值（36 字 UUID），下一次 turn 走 `codex exec resume` 而非 fresh `codex exec`。修复 `base-runtime.findSessionId` 适配 codex `session_meta.payload.id` 后必须实机两轮 codex turn 验证（DB 检查 + preview 后端日志含 `--resume <id>` 参数）。修复前 8 周此 AC 路径事实上从未真生效（F018 SessionBootstrap 兜底掩盖）。
 
 ### 模块 4：sanitizeHandoffBody 防注入
 - [x] AC4.1: 导出 `sanitizeHandoffBody(text)` 纯函数
@@ -201,6 +202,7 @@ F007 只摘 clowder-ai 的 SOP 书签**概念**，丢掉了它背后整套**配�
 | 2026-04-18 | **F018 close** — 全部 5 Phase merged（P1 05bcf82 / P2 97d41c2 / P3 0b06710 / P4 c651d89 / P5 e34bcaf）。Codex adversarial-review 跨 Phase 累计 14 轮。AC9.1/9.2 post-merge 跨 agent + 真实 CLI 验证作为上线后手工项。愿景三问自答通过，对照证物表 6/6 匹配。ROADMAP 从活跃移入已完成 |
 | 2026-04-25 | **B019 揭出二阶虚标** — 小孙质疑"F018 真的跑了吗"→ 黄仁勋实测 `SELECT COUNT(*) FROM message_embeddings = 0`（完工 1 周、1856 messages、零写入）+ `.runtime/api.log` 36 条 `huggingface.co:443 ConnectTimeoutError` → ensureModel 永降级 → 模块六生产调用 = 0。AC9.1/9.2 post-merge 验证从未真跑（与 F007 当初虚标 AC5.2/5.5 同病，LL-004 二阶递归）。建 [B019](../bugReport/B019-f018-embedding-huggingface-offline.md)，修复路径走本地权重分发（不依赖 HF Hub 运行时拉取）|
 | 2026-04-25 | **B019 修复合入** — fix/B019-embedding-offline-loader 分支 10 commits（P1-P4 实现 + 沉淀 + 4 条 review 反馈全闭环）。模型权重 commit (~23MB) + pipelineLoader 离线优先 (env.localModelPath + allowRemoteModels=false + dtype:'q8') + scripts/B019-e2e-verify.ts 启 createApiServer 验完整路径。**外部观测证物**（dogfood EP-001）：B019 fix 后 e2e 临时库 `SELECT COUNT(*) FROM message_embeddings = 3` / recall 召回 top score=0.3662 (cat~kittens) / `model-not-ready` warn 0 条 / API listen :8810 ready 0 huggingface 撞墙。Codex 本轮 5 条反馈（2 P1 + 3 P2）全闭环。沉淀 LL-030 + EP-001 + quality-gate Step 0.6 防同型递归。F018 模块六**真生效**。 |
+| 2026-05-08 | **B023 揭出三阶虚标 — codex 8 周从未捕获 native_session_id** — R-105 实证调研发现 F018 落地后 codex 的 thread.native_session_id 实际从未被填值（DB 实测：codex provider 所有行均为空字符串）。根因：`base-runtime.findSessionId` 只匹配 `session_id`/`sessionId` 字段名，**未适配 codex CLI 的 `{type:"session_meta", payload:{id:"019e..."}}` 嵌套格式**（codex 0.114.0 → 0.128.0 一直是这个格式）。codex-runtime.ts 第一版（2026-03-15 commit `fbaf7f4`）就有 resume 三元判断 → 设计意图要 resume，但配套捕获代码漏了 codex 适配。F018 SessionBootstrap 兜底路径（AC3.5 nativeSessionId===null 分支）8 周来一直在掩盖此漏洞，导致 codex 每次 turn 都 fresh 起，token 浪费 + reasoning chain 碎片化。修复见 [B023](../bugReport/B023-runtime-resilience.md)：`findSessionId` 加一条 codex 专用分支识别 `payload.id`。F018 AC3.5 补一条 codex resume 实测 AC（见下）。同型病灶（B019 二阶递归 → B023 三阶递归）：spec checkbox + tests 绿但生产路径未真验证。 |
 
 ## Known Issues
 

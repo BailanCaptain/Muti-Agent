@@ -1,8 +1,12 @@
 import assert from "node:assert/strict"
+import { existsSync } from "node:fs"
 import path from "node:path"
 /**
  * R-013 场景3 诊断: 范德彪实际回复 → resolveMentions / classifyMention 实测
  * 不改源码,只是验证 preview DB 里 ca57cc4d 这条消息在两条派发路径下各自会不会识别出 @黄仁勋
+ *
+ * B023 守卫：硬编码 DB 路径指向 F026-p0 worktree 快照。该 worktree 已被
+ * 清理后此 fixture 消失，整个 describe 改为 skip — 保留诊断脚本价值不阻塞 CI。
  */
 import { describe, test } from "node:test"
 import Database from "better-sqlite3"
@@ -18,7 +22,9 @@ const ALIASES = {
   gemini: "桂芬",
 } as const
 
-describe("R-013 范德彪回复派发诊断", () => {
+const describeIfDbAvailable = existsSync(DB_PATH) ? describe : describe.skip
+
+describeIfDbAvailable("R-013 范德彪回复派发诊断", () => {
   const db = new Database(DB_PATH, { readonly: true, fileMustExist: true })
   const row = db.prepare("SELECT content FROM messages WHERE id=?").get(MESSAGE_ID) as
     | { content: string }
