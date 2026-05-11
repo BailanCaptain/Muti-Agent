@@ -389,3 +389,30 @@ export const promptAudit = sqliteTable(
   },
   (table) => [index("idx_prompt_audit").on(table.alias, table.roomId, table.createdAt)],
 )
+
+// F027 chap 6 · update_wiki MCP 写入流程的 lease 表（path 维度互斥锁）。
+// path 单 PK：同一时刻一个 path 只允许一个未过期 lease。
+// fencing_token 是 wiki_fencing_seq 单调 bigint，写入时 final-CAS 二次校验用。
+// leader_term 来自 compiler_leader.current_term（chap 5 Compiler Leader Lease），
+// P3.5 加 DB 触发器拒绝 leader_term 旧的写入。
+export const wikiLeases = sqliteTable(
+  "wiki_leases",
+  {
+    path: text("path").primaryKey(),
+    fencingToken: text("fencing_token").notNull(),
+    ownerAlias: text("owner_alias").notNull(),
+    acquiredAt: text("acquired_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    leaderTerm: text("leader_term").notNull(),
+    reserved1: text("reserved_1"),
+    reserved2: text("reserved_2"),
+  },
+  (table) => [index("idx_wiki_leases_expires").on(table.expiresAt)],
+)
+
+// F027 chap 6 · 单调 bigint fencing token 序列（single-row sequence 表）。
+// next_value 用 UPDATE ... SET v=v+1 RETURNING 原子推进；TEXT 存避免 32-bit overflow。
+export const wikiFencingSeq = sqliteTable("wiki_fencing_seq", {
+  id: integer("id").primaryKey(), // 强制 = 1（CHECK 在 INIT_SQL 里）
+  nextValue: text("next_value").notNull(), // bigint as decimal string
+})

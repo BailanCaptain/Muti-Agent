@@ -376,6 +376,25 @@ const INIT_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_prompt_audit ON prompt_audit(alias, room_id, created_at);
 
+  -- F027 P3 chap 6 · update_wiki lease 表（path 维度互斥锁）+ 单调 fencing 序列。
+  CREATE TABLE IF NOT EXISTS wiki_leases (
+    path TEXT PRIMARY KEY,
+    fencing_token TEXT NOT NULL,
+    owner_alias TEXT NOT NULL,
+    acquired_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    leader_term TEXT NOT NULL,
+    reserved_1 TEXT,
+    reserved_2 TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_wiki_leases_expires ON wiki_leases(expires_at);
+
+  CREATE TABLE IF NOT EXISTS wiki_fencing_seq (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    next_value TEXT NOT NULL
+  );
+  INSERT OR IGNORE INTO wiki_fencing_seq (id, next_value) VALUES (1, '0');
+
   -- F027 P0 · V16.5.1 F3 实施前置：drizzle 路径补 a2a_calls 4 个索引（与 sqlite.ts:327-330 对齐），
   -- 加复合索引 idx_a2a_calls_session_status_updated（viewfinder §4 高频查询）。
   -- 性能 AC：viewfinder 编译 1000 calls 房间 ≤ 50ms。
