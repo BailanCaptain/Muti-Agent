@@ -127,6 +127,7 @@ test("F027 P0 chap 5: wiki_events 列契约（CAS + fencing + reserved）", asyn
   const schema = await import("./schema")
   const { getTableColumns } = await import("drizzle-orm")
   const cols = getTableColumns(schema.wikiEvents)
+  // 范 review nit: 全列契约 (drift detection)，不只校 CAS/fencing 关键列
   for (const c of [
     "id",
     "ts",
@@ -136,10 +137,16 @@ test("F027 P0 chap 5: wiki_events 列契约（CAS + fencing + reserved）", asyn
     "baseHash",
     "contentHash",
     "attemptedHash",
+    "diffSummary",
+    "sourceMessageIds",
+    "promotionTarget",
+    "reason",
     "fencingToken",
     "leaderTerm",
     "result",
+    "error",
     "state",
+    "resultManifestVersion",
     "reserved1",
     "reserved2",
   ]) {
@@ -156,8 +163,11 @@ test("F027 P0 chap 14: wiki_memories 列契约（type/canonical_owner_path + res
     "type",
     "name",
     "canonicalOwnerPath",
+    "promotionTarget",
     "ttlDays",
     "supersedes",
+    "replacesInBuckets",
+    "sourceMessageIds",
     "contributedBy",
     "crossRefs",
     "dedupDecision",
@@ -211,8 +221,10 @@ test("F027 P0 chap 18: prompt_audit 列契约（V15.1+V15.2 召回字段全 + re
     "totalTokens",
     "cap",
     "partsJson",
+    "notInjectedJson",
     "ironLawsCount",
     "rawText",
+    "sourceEventIds",
     // V15.1
     "recallQueries",
     "recallResults",
