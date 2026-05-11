@@ -168,13 +168,31 @@ export class UpdateWikiService {
       return { status: "internal", eventId: event.id, error: `atomic_write_failed: ${msg}` }
     }
 
-    // [范-r1 P2] 临界区收尾再校 lease：写已落盘但 lease 在 atomic-write 期间被
-    // 抢占的情况（TTL race window），revert 文件 + abort，避免脏数据 + 错误 commit
+    // [范-r1 P2 + 范-r2 P1] 临界区收尾再校 lease：写已落盘但 lease 在 atomic-write
+    // 期间被抢占的情况（TTL race window）。Iron Law 1（数据神圣）要求 revert 必须
+    // 把旧内容 *还原* —— 不能 unlink 抹掉 existing committed content。
     if (!this.cfg.leases.isCurrent(req.path, req.fencingToken, this.nowIso())) {
-      // 回滚：删除本次写入的文件（delete 分支的 revert 拿不回来，但 lease 已抢占
-      // 意味着新 owner 立刻就会重写，临时不一致窗口可接受）
-      if (dispatch.kind !== "delete") {
-        deleteFileIfExists(absPath)
+      try {
+        if (existing === null) {
+          // 之前不存在 → 删掉我们刚写的（write/delete 都是 noop 友好）
+          deleteFileIfExists(absPath)
+        } else {
+          // 之前有内容 → atomic 写回原 existing，**绝不能丢数据**
+          writeFileAtomic(absPath, existing)
+        }
+      } catch (revertErr) {
+        // revert 自己失败：仍 abort 但 reason 标记 revert_failed（observability，
+        // 操作员需要手工 reconcile）。throw 上去会污染 abort 流程。
+        const revertMsg = (revertErr as Error).message
+        this.cfg.events.abort(event.id, {
+          error: `revert_failed: ${revertMsg}`,
+          reason: "lease_changed_after_write_revert_failed",
+        })
+        return {
+          status: "internal",
+          eventId: event.id,
+          error: `revert after stale_token failed: ${revertMsg}`,
+        }
       }
       this.cfg.events.abort(event.id, {
         error: "stale_token",

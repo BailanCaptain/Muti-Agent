@@ -578,6 +578,92 @@ acl:
   }
 })
 
+test("F027 P3 [范-r2 P1]: 临界区 race revert 必须 restore existing 内容（Iron Law 1 数据神圣）", async () => {
+  const { createDrizzleDb } = await import("../db/drizzle-instance")
+  const { WikiEventsRepository } = await import("../db/repositories/wiki-events-repository")
+  const { WikiLeasesRepository } = await import("../db/repositories/wiki-leases-repository")
+  const { compileACL, loadACLConfig } = await import("./acl-engine")
+  const { UpdateWikiService } = await import("./update-wiki-service")
+  const crypto = await import("node:crypto")
+
+  const tempDir = (() => {
+    const runtimeDir = path.join(process.cwd(), ".runtime")
+    fs.mkdirSync(runtimeDir, { recursive: true })
+    return fs.mkdtempSync(path.join(runtimeDir, "r2-revert-existing-"))
+  })()
+  const dbPath = path.join(tempDir, "test.sqlite")
+  const wikiRoot = path.join(tempDir, "wiki-root")
+  fs.mkdirSync(path.join(wikiRoot, "wiki/concepts"), { recursive: true })
+  // 预先有一个 committed 'old' 文件
+  const targetAbs = path.join(wikiRoot, "wiki/concepts/precious.md")
+  fs.writeFileSync(targetAbs, "OLD COMMITTED CONTENT")
+  const sha256 = (s: string) => `sha256:${crypto.createHash("sha256").update(s).digest("hex")}`
+  const oldHash = sha256("OLD COMMITTED CONTENT")
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const events = new WikiEventsRepository(db)
+  const leases = new WikiLeasesRepository(db)
+  const acl = compileACL(
+    loadACLConfig(`
+acl:
+  - path_pattern: 'wiki/concepts/**'
+    allowed_aliases: ['<any-agent>']
+    allowed_actions: [write]
+`),
+  )
+
+  // 包 leases.isCurrent：第 1+2 次（pre-check + final-CAS pre-write）true，
+  // 第 3 次（post-write）false 触发 revert
+  let isCurrentCalls = 0
+  const wrappedLeases: typeof leases = Object.create(leases)
+  wrappedLeases.isCurrent = (p: string, t: string, now?: string) => {
+    isCurrentCalls++
+    if (isCurrentCalls <= 2) return leases.isCurrent.call(leases, p, t, now)
+    return false
+  }
+  const service = new UpdateWikiService({
+    leases: wrappedLeases,
+    events,
+    acl,
+    wikiRoot,
+    leaderTerm: () => "term-1",
+  })
+
+  try {
+    const a = leases.acquireLease({
+      path: "wiki/concepts/precious.md",
+      ownerAlias: "范德彪",
+      ttlSeconds: 30,
+      leaderTerm: "term-1",
+    })
+    const r = service.updateWiki(
+      {
+        path: "wiki/concepts/precious.md",
+        action: "write",
+        baseHash: oldHash,
+        content: "NEW DOOMED",
+        fencingToken: a!.fencingToken,
+      },
+      FAN_CTX,
+    )
+    assert.equal(r.status, "stale_token")
+    // 关键：existing 旧内容必须 restore，不能丢
+    const after = fs.readFileSync(targetAbs, "utf8")
+    assert.equal(
+      after,
+      "OLD COMMITTED CONTENT",
+      "Iron Law 1 数据神圣：revert 必须 restore existing",
+    )
+  } finally {
+    close()
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    } catch {
+      // best effort
+    }
+  }
+})
+
 test("F027 P3 service: leaderTerm 注入到 wiki_events.leader_term", async () => {
   const { service, leases, events, cleanup } = await build()
   try {
