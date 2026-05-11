@@ -31,28 +31,33 @@ async function main() {
   const eventsRepo = new WikiEventsRepository(db)
   const memoriesRepo = new WikiMemoriesRepository(db)
 
-  // 4 type × 2 canonical + 1 draft + 1 deprecated
+  // 5 type × N canonical（含 room — 范-r2 nit1）+ 1 draft + 1 deprecated
+  // canonicalOwnerPath 含 chap 19 子路径让 categorization 跑（rules/concepts/episodes）
   const seedConfigs: Array<{
-    type: "project" | "user" | "feedback" | "work"
+    type: "project" | "user" | "feedback" | "work" | "room"
     name: string
+    pathSuffix: string
     body: string
     contributedBy: string[]
   }> = [
-    { type: "project", name: "Iron Laws", body: "1. 数据神圣不可删\n2. 进程自保\n3. 配置不可变\n4. 网络边界", contributedBy: ["黄仁勋"] },
-    { type: "project", name: "F027 V16.5 architecture", body: "统一记忆架构：wiki entity + 派生视图 + 唯一注入合约 + 自动召回", contributedBy: ["黄仁勋", "范德彪"] },
-    { type: "user", name: "小孙", body: "Multi-Agent 项目 CVO，第一性原理 + 直觉判断", contributedBy: ["黄仁勋"] },
-    { type: "user", name: "范德彪", body: "Codex agent，二轮 review 必走 evidence 实跑", contributedBy: ["黄仁勋"] },
-    { type: "feedback", name: "RLHF sycophancy guard", body: "小孙强质疑时不附和，立刻实测", contributedBy: ["黄仁勋"] },
-    { type: "feedback", name: "Don't pivot on pushback", body: "保持技术判断，用证据说话", contributedBy: ["黄仁勋"] },
-    { type: "work", name: "F027 Phase 1 Week 1 cluster", body: "P0 schema + P1 wiki_events + P10 wiki_memories + P21 manifest 全绿", contributedBy: ["黄仁勋"] },
-    { type: "work", name: "F026 Round 2 closeout", body: "Call Tree + Envelope 双层 11 不变量全绿 (944b7b1)", contributedBy: ["黄仁勋", "范德彪"] },
+    { type: "project", name: "Iron Laws", pathSuffix: "rules/iron-laws.md", body: "1. 数据神圣不可删\n2. 进程自保\n3. 配置不可变\n4. 网络边界", contributedBy: ["黄仁勋"] },
+    { type: "project", name: "Atomic Manifest Protocol", pathSuffix: "concepts/atomic-manifest.md", body: "tmp + fsync + atomic rename，wiki/index/manifest.json 的事务写", contributedBy: ["黄仁勋"] },
+    { type: "project", name: "F027 V16.5 architecture", pathSuffix: "concepts/f027-arch.md", body: "统一记忆架构：wiki entity + 派生视图 + 唯一注入合约 + 自动召回", contributedBy: ["黄仁勋", "范德彪"] },
+    { type: "user", name: "小孙", pathSuffix: "xiaosun.md", body: "Multi-Agent 项目 CVO，第一性原理 + 直觉判断", contributedBy: ["黄仁勋"] },
+    { type: "user", name: "范德彪", pathSuffix: "fandebiao.md", body: "Codex agent，二轮 review 必走 evidence 实跑", contributedBy: ["黄仁勋"] },
+    { type: "feedback", name: "RLHF sycophancy guard", pathSuffix: "rlhf-sycophancy-guard.md", body: "小孙强质疑时不附和，立刻实测", contributedBy: ["黄仁勋"] },
+    { type: "feedback", name: "Don't pivot on pushback", pathSuffix: "dont-pivot-pushback.md", body: "保持技术判断，用证据说话", contributedBy: ["黄仁勋"] },
+    { type: "work", name: "F027 Phase 1 Week 1 cluster", pathSuffix: "f027-w1.md", body: "P0 schema + P1 wiki_events + P10 wiki_memories + P21 manifest 全绿", contributedBy: ["黄仁勋"] },
+    { type: "work", name: "F026 Round 2 closeout", pathSuffix: "f026-r2.md", body: "Call Tree + Envelope 双层 11 不变量全绿 (944b7b1)", contributedBy: ["黄仁勋", "范德彪"] },
+    { type: "room", name: "R-001 F027 立项 Discussion", pathSuffix: "r-001.md", body: "F027 = V16.5 整套立项，Round 2 4 gates GO", contributedBy: ["黄仁勋"] },
+    { type: "room", name: "R-002 F027 Phase 1 Week 1 review", pathSuffix: "r-002.md", body: "范二轮 GO 后 P1/P10/P21 cluster 闭环", contributedBy: ["黄仁勋", "范德彪"] },
   ]
 
   for (const cfg of seedConfigs) {
     const m = memoriesRepo.insert({
       type: cfg.type,
       name: cfg.name,
-      canonicalOwnerPath: `wiki/${cfg.type}/${slug(cfg.name)}.md`,
+      canonicalOwnerPath: `wiki/${cfg.type}/${cfg.pathSuffix}`,
       contributedBy: cfg.contributedBy,
       body: cfg.body,
     })
@@ -105,12 +110,15 @@ async function main() {
     .concat(eventsRepo.getByState("pending", 1000))
   const allMemories = memoriesRepo.listAll()
 
+  // chap 19 YYYYMMDDNN 格式（范-r2 nit2）
+  const now = new Date()
+  const ymd = now.toISOString().slice(0, 10).replace(/-/g, "") // 20260511
   const result = compileWiki({
     wikiRoot,
-    version: "smoke-" + new Date().toISOString().replace(/[:.]/g, "").slice(0, 14),
+    version: `${ymd}01`,
     events: allEvents,
     memories: allMemories,
-    generatedAt: new Date().toISOString(),
+    generatedAt: now.toISOString(),
   })
 
   console.log("=".repeat(72))
@@ -151,13 +159,6 @@ async function main() {
   console.log(`   清理：rm -r ${root}`)
 
   close()
-}
-
-function slug(s: string): string {
-  const base = s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-  if (base.length > 0) return base
-  // 中文/全 unicode 兜底：sha8 防 wiki/user/.md 这种空 slug
-  return Array.from(s).map((c) => c.charCodeAt(0).toString(36)).join("").slice(0, 8) || "x"
 }
 
 main().catch((err) => {
