@@ -265,6 +265,126 @@ const INIT_SQL = `
   CREATE INDEX IF NOT EXISTS idx_embeddings_thread ON message_embeddings(thread_id);
   CREATE INDEX IF NOT EXISTS idx_workflow_sop_feature_id ON workflow_sop(feature_id);
   CREATE INDEX IF NOT EXISTS idx_workflow_sop_stage ON workflow_sop(stage);
+
+  -- F027 P0 · 4 张地基表 (V16.5-final.md chap 5 / 11 / 14 / 18)
+  -- 每表都预留 reserved_1 / reserved_2 TEXT NULL（V16.5.3 风险卡）。
+
+  -- chap 5 · wiki entity 单一提交事件源（PREPARE/WRITE/COMMIT 三阶段）
+  CREATE TABLE IF NOT EXISTS wiki_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    action TEXT NOT NULL,
+    path TEXT NOT NULL,
+    base_hash TEXT,
+    content_hash TEXT,
+    attempted_hash TEXT,
+    diff_summary TEXT,
+    source_message_ids TEXT,
+    promotion_target TEXT,
+    reason TEXT,
+    fencing_token TEXT NOT NULL,
+    leader_term TEXT NOT NULL,
+    result TEXT NOT NULL,
+    error TEXT,
+    state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'committed', 'aborted')),
+    result_manifest_version TEXT,
+    reserved_1 TEXT,
+    reserved_2 TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_wiki_events_path ON wiki_events(path, ts);
+  CREATE INDEX IF NOT EXISTS idx_wiki_events_alias ON wiki_events(alias, ts);
+  CREATE INDEX IF NOT EXISTS idx_wiki_events_state ON wiki_events(state, ts);
+  CREATE INDEX IF NOT EXISTS idx_wiki_events_term ON wiki_events(leader_term);
+
+  -- chap 14 · 6 类记忆桶物理表（type CHECK 5 enum 防漂桶 lint 兜底）
+  CREATE TABLE IF NOT EXISTS wiki_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL CHECK (type IN ('room', 'project', 'user', 'feedback', 'work')),
+    name TEXT NOT NULL,
+    canonical_owner_path TEXT NOT NULL,
+    promotion_target TEXT,
+    ttl_days INTEGER,
+    supersedes TEXT,
+    replaces_in_buckets TEXT,
+    source_message_ids TEXT,
+    contributed_by TEXT NOT NULL,
+    cross_refs TEXT,
+    dedup_decision TEXT,
+    body TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'draft' CHECK (state IN ('draft', 'canonical', 'deprecated')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    reserved_1 TEXT,
+    reserved_2 TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_wiki_memories_type ON wiki_memories(type);
+  CREATE INDEX IF NOT EXISTS idx_wiki_memories_canonical ON wiki_memories(canonical_owner_path);
+  CREATE INDEX IF NOT EXISTS idx_wiki_memories_state ON wiki_memories(state, type);
+
+  -- chap 11 · viewfinder anti-drift decision ledger（append-only + tombstone）
+  CREATE TABLE IF NOT EXISTS room_decisions (
+    decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id TEXT NOT NULL,
+    decided_at TEXT NOT NULL,
+    decided_by TEXT NOT NULL,
+    decision_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    source_message_ids TEXT NOT NULL,
+    source_quote TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    tombstone INTEGER NOT NULL DEFAULT 0,
+    superseded_by INTEGER,
+    fencing_token TEXT NOT NULL,
+    extractor_confidence REAL,
+    coverage_check_passed INTEGER,
+    reserved_1 TEXT,
+    reserved_2 TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_room_decisions ON room_decisions(room_id, decided_at);
+
+  -- chap 18 · prompt 拼装审计（assembler 每次拼装同步写一条）
+  CREATE TABLE IF NOT EXISTS prompt_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    room_id TEXT,
+    scenario TEXT NOT NULL,
+    total_tokens INTEGER NOT NULL,
+    cap INTEGER NOT NULL,
+    parts_json TEXT NOT NULL,
+    not_injected_json TEXT,
+    iron_laws_count INTEGER NOT NULL,
+    raw_text TEXT NOT NULL,
+    source_event_ids TEXT,
+    recall_queries TEXT,
+    recall_results TEXT,
+    recall_total_tokens INTEGER,
+    recall_rejected_reasons TEXT,
+    recall_required INTEGER NOT NULL DEFAULT 0,
+    recall_trigger TEXT,
+    recall_path INTEGER,
+    top_score REAL,
+    recall_satisfied INTEGER NOT NULL DEFAULT 0,
+    escalate_reason TEXT,
+    recall_total_ms INTEGER,
+    recall_critique_calls INTEGER,
+    recall_budget_exceeded INTEGER,
+    agent_session_ref TEXT,
+    reserved_1 TEXT,
+    reserved_2 TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_prompt_audit ON prompt_audit(alias, room_id, created_at);
+
+  -- F027 P0 · V16.5.1 F3 实施前置：drizzle 路径补 a2a_calls 4 个索引（与 sqlite.ts:327-330 对齐），
+  -- 加复合索引 idx_a2a_calls_session_status_updated（viewfinder §4 高频查询）。
+  -- 性能 AC：viewfinder 编译 1000 calls 房间 ≤ 50ms。
+  CREATE INDEX IF NOT EXISTS idx_a2a_calls_parent ON a2a_calls(parent_call_id);
+  CREATE INDEX IF NOT EXISTS idx_a2a_calls_root ON a2a_calls(root_call_id);
+  CREATE INDEX IF NOT EXISTS idx_a2a_calls_status_deadline ON a2a_calls(status, deadline_at);
+  CREATE INDEX IF NOT EXISTS idx_a2a_calls_session_group ON a2a_calls(session_group_id);
+  CREATE INDEX IF NOT EXISTS idx_a2a_calls_session_status_updated
+    ON a2a_calls(session_group_id, status, updated_at);
 `
 
 // F019: Idempotent migrations for old DBs (pre-F019 schema).

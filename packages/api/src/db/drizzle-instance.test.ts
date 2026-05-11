@@ -451,3 +451,383 @@ test("createDrizzleDb can read a database created by node:sqlite (SqliteStore)",
     safeCleanup(tempDir)
   }
 })
+
+// ============================================================================
+// F027 P0 · 4 张地基表 INIT_SQL + 索引 + EXPLAIN ≤ 50ms 验收
+// V16.5-final.md chap 5 (wiki_events) / 11 (room_decisions) / 14 (wiki_memories)
+//                / 18 (prompt_audit) + chap 11 V16.5.1 F3（viewfinder 性能 AC）
+// ============================================================================
+
+function listTables(raw: { prepare: (sql: string) => { all: () => unknown[] } }): Set<string> {
+  const rows = raw
+    .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+    .all() as Array<{ name: string }>
+  return new Set(rows.map((r) => r.name))
+}
+
+function listIndexes(
+  raw: { prepare: (sql: string) => { all: (...a: unknown[]) => unknown[] } },
+  table: string,
+): string[] {
+  const rows = raw.prepare("SELECT name FROM pragma_index_list(?)").all(table) as Array<{
+    name: string
+  }>
+  return rows.map((r) => r.name)
+}
+
+test("F027 P0: 4 张新表 fresh DB 全部建出来 + reserved_1/reserved_2 列存在", async () => {
+  const { createDrizzleDb } = await import("./drizzle-instance")
+  const tempDir = safeTempDir("f027-p0-tables-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+
+  const { raw, close } = createDrizzleDb(dbPath)
+  try {
+    const tables = listTables(raw)
+    for (const t of ["wiki_events", "wiki_memories", "room_decisions", "prompt_audit"]) {
+      assert.ok(tables.has(t), `INIT_SQL should create ${t}`)
+    }
+
+    // reserved_1/reserved_2 列存在性 — 4 张表都有
+    for (const t of ["wiki_events", "wiki_memories", "room_decisions", "prompt_audit"]) {
+      const cols = raw.prepare(`PRAGMA table_info(${t})`).all() as Array<{ name: string }>
+      const colNames = new Set(cols.map((c) => c.name))
+      assert.ok(colNames.has("reserved_1"), `${t} should have reserved_1`)
+      assert.ok(colNames.has("reserved_2"), `${t} should have reserved_2`)
+    }
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F027 P0: 4 张新表的索引按 chap 5/11/14/18 全部建立", async () => {
+  const { createDrizzleDb } = await import("./drizzle-instance")
+  const tempDir = safeTempDir("f027-p0-indexes-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+
+  const { raw, close } = createDrizzleDb(dbPath)
+  try {
+    const expect: Record<string, string[]> = {
+      wiki_events: [
+        "idx_wiki_events_path",
+        "idx_wiki_events_alias",
+        "idx_wiki_events_state",
+        "idx_wiki_events_term",
+      ],
+      wiki_memories: [
+        "idx_wiki_memories_type",
+        "idx_wiki_memories_canonical",
+        "idx_wiki_memories_state",
+      ],
+      room_decisions: ["idx_room_decisions"],
+      prompt_audit: ["idx_prompt_audit"],
+    }
+    for (const [table, expected] of Object.entries(expect)) {
+      const idxs = new Set(listIndexes(raw, table))
+      for (const e of expected) {
+        assert.ok(idxs.has(e), `${table} should have index ${e}`)
+      }
+    }
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F027 P0 chap 14: wiki_memories.type CHECK 拒绝非 5 enum（防漂桶 lint 兜底）", async () => {
+  const { createDrizzleDb } = await import("./drizzle-instance")
+  const tempDir = safeTempDir("f027-p0-check-type-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+
+  const { raw, close } = createDrizzleDb(dbPath)
+  try {
+    const insert = raw.prepare(
+      "INSERT INTO wiki_memories (type, name, canonical_owner_path, contributed_by, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    // 5 个合法 enum 全可入
+    for (const t of ["room", "project", "user", "feedback", "work"]) {
+      insert.run(
+        t,
+        `name-${t}`,
+        `wiki/${t}/x.md`,
+        '["alias"]',
+        "body",
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00Z",
+      )
+    }
+    // 'conversation'（V16.5 chap 14 明示由 messages 表承载，不在 wiki_memories）
+    assert.throws(() => {
+      insert.run(
+        "conversation",
+        "x",
+        "wiki/c/x.md",
+        '["alias"]',
+        "body",
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00Z",
+      )
+    }, /CHECK constraint/i)
+    // 任意非法值
+    assert.throws(() => {
+      insert.run(
+        "garbage",
+        "x",
+        "wiki/c/x.md",
+        '["alias"]',
+        "body",
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00Z",
+      )
+    }, /CHECK constraint/i)
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F027 P0 chap 5: wiki_events.state CHECK + insert/select roundtrip + reserved 默认 NULL", async () => {
+  const { createDrizzleDb } = await import("./drizzle-instance")
+  const tempDir = safeTempDir("f027-p0-wiki-events-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+
+  const { raw, close } = createDrizzleDb(dbPath)
+  try {
+    raw
+      .prepare(
+        "INSERT INTO wiki_events (ts, alias, action, path, fencing_token, leader_term, result) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        "2026-01-01T00:00:00Z",
+        "黄仁勋",
+        "write",
+        "wiki/project/F027.md",
+        "9999",
+        "term-1",
+        "ok",
+      )
+
+    const row = raw
+      .prepare("SELECT state, reserved_1, reserved_2 FROM wiki_events WHERE alias = '黄仁勋'")
+      .get() as { state: string; reserved_1: string | null; reserved_2: string | null }
+    assert.equal(row.state, "pending") // chap 5 PREPARE 阶段默认值
+    assert.equal(row.reserved_1, null)
+    assert.equal(row.reserved_2, null)
+
+    // CHECK 拒绝非法 state
+    assert.throws(() => {
+      raw
+        .prepare(
+          "INSERT INTO wiki_events (ts, alias, action, path, fencing_token, leader_term, result, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          "2026-01-01T00:00:01Z",
+          "x",
+          "write",
+          "wiki/x.md",
+          "1",
+          "t",
+          "ok",
+          "garbage",
+        )
+    }, /CHECK constraint/i)
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F027 P0 chap 11: room_decisions append-only roundtrip + tombstone 默认 0", async () => {
+  const { createDrizzleDb } = await import("./drizzle-instance")
+  const tempDir = safeTempDir("f027-p0-room-decisions-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+
+  const { raw, close } = createDrizzleDb(dbPath)
+  try {
+    raw
+      .prepare(
+        "INSERT INTO room_decisions (room_id, decided_at, decided_by, decision_type, content, source_message_ids, source_quote, source_hash, fencing_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        "R-001",
+        "2026-01-01T00:00:00Z",
+        "小孙",
+        "spec",
+        "go",
+        '["msg-1"]',
+        "原文",
+        "abc",
+        "1",
+      )
+    const row = raw
+      .prepare("SELECT tombstone, superseded_by FROM room_decisions WHERE room_id = 'R-001'")
+      .get() as { tombstone: number; superseded_by: number | null }
+    assert.equal(row.tombstone, 0)
+    assert.equal(row.superseded_by, null)
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F027 P0 chap 18: prompt_audit V15.1+V15.2 召回字段全 + recall_required 默认 0", async () => {
+  const { createDrizzleDb } = await import("./drizzle-instance")
+  const tempDir = safeTempDir("f027-p0-prompt-audit-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+
+  const { raw, close } = createDrizzleDb(dbPath)
+  try {
+    raw
+      .prepare(
+        "INSERT INTO prompt_audit (created_at, alias, scenario, total_tokens, cap, parts_json, iron_laws_count, raw_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        "2026-01-01T00:00:00Z",
+        "黄仁勋",
+        "thread_turn",
+        12000,
+        180000,
+        '[{"name":"identity","tokens":300}]',
+        4,
+        "raw...",
+      )
+    const row = raw
+      .prepare(
+        "SELECT recall_required, recall_satisfied, recall_path, top_score FROM prompt_audit WHERE alias = '黄仁勋'",
+      )
+      .get() as {
+      recall_required: number
+      recall_satisfied: number
+      recall_path: number | null
+      top_score: number | null
+    }
+    assert.equal(row.recall_required, 0)
+    assert.equal(row.recall_satisfied, 0)
+    assert.equal(row.recall_path, null)
+    assert.equal(row.top_score, null)
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+// V16.5.1 F3 实施 AC：viewfinder §4 SQL 必须走索引（不能 SCAN TABLE）。
+// 复合索引 idx_a2a_calls_session_status_updated 是关键。
+test("F027 P0 V16.5.1 F3: viewfinder a2a_calls 查询走索引（不 SCAN TABLE）", async () => {
+  const { createDrizzleDb } = await import("./drizzle-instance")
+  const tempDir = safeTempDir("f027-p0-viewfinder-explain-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+
+  const { raw, close } = createDrizzleDb(dbPath)
+  try {
+    // a2a_calls 复合索引必须存在
+    const idxs = new Set(listIndexes(raw, "a2a_calls"))
+    assert.ok(
+      idxs.has("idx_a2a_calls_session_status_updated"),
+      `a2a_calls should have idx_a2a_calls_session_status_updated; got: ${[...idxs].join(", ")}`,
+    )
+
+    // 插一些数据让 query planner 有选择空间
+    const insertCall = raw.prepare(
+      "INSERT INTO a2a_calls (call_id, root_call_id, issuer_id, convener_id, reply_to, deadline_at, status, session_group_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    for (let i = 0; i < 50; i++) {
+      const status = i % 5 === 0 ? "failed" : i % 4 === 0 ? "pending" : "done"
+      insertCall.run(
+        `call-${i}`,
+        `call-${i}`,
+        "issuer",
+        "convener",
+        "reply",
+        "2026-01-01T01:00:00Z",
+        status,
+        "g_test",
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00Z",
+      )
+    }
+    raw.exec("ANALYZE")
+
+    // V16.5.1 F3 段第二条 SQL（viewfinder failed/timeout 查询）
+    const plan = raw
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT call_id, issuer_id, status
+         FROM a2a_calls
+         WHERE session_group_id = 'g_test'
+           AND status IN ('failed', 'timeout', 'cancelled')
+           AND updated_at > '2025-12-01T00:00:00Z'`,
+      )
+      .all() as Array<{ detail: string }>
+    const detail = plan.map((r) => r.detail).join(" | ")
+    assert.ok(
+      /USING INDEX/i.test(detail),
+      `viewfinder query should USE INDEX, got plan: ${detail}`,
+    )
+    assert.ok(
+      !/SCAN a2a_calls(?! USING)/i.test(detail),
+      `viewfinder query should NOT SCAN a2a_calls without index, got plan: ${detail}`,
+    )
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+// 性能 AC: viewfinder 1000 calls 房间 ≤ 50ms（V16.5 chap 11 / V16.5.1 F3）。
+// 单测 wall-clock 给 200ms 缓冲（CI/Windows 噪声），但走索引是真正的硬约束。
+// 真正的 50ms AC 在 Phase 1 P12 viewfinder 实施时按生产路径量。
+test("F027 P0: 1000 calls viewfinder 查询 wall-clock < 200ms（生产 50ms AC 的单测兜底）", async () => {
+  const { createDrizzleDb } = await import("./drizzle-instance")
+  const tempDir = safeTempDir("f027-p0-viewfinder-perf-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+
+  const { raw, close } = createDrizzleDb(dbPath)
+  try {
+    const insertCall = raw.prepare(
+      "INSERT INTO a2a_calls (call_id, root_call_id, issuer_id, convener_id, reply_to, deadline_at, status, session_group_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    raw.exec("BEGIN")
+    try {
+      for (let i = 0; i < 1000; i++) {
+        const status =
+          i % 10 === 0 ? "failed" : i % 11 === 0 ? "timeout" : i % 5 === 0 ? "pending" : "done"
+        insertCall.run(
+          `call-${i}`,
+          `call-${i}`,
+          "issuer",
+          "convener",
+          "reply",
+          "2026-01-01T01:00:00Z",
+          status,
+          "g_perf",
+          "2026-01-01T00:00:00Z",
+          "2026-01-01T00:00:00Z",
+        )
+      }
+      raw.exec("COMMIT")
+    } catch (err) {
+      raw.exec("ROLLBACK")
+      throw err
+    }
+    raw.exec("ANALYZE")
+
+    const t0 = performance.now()
+    raw
+      .prepare(
+        `SELECT call_id, issuer_id, status
+         FROM a2a_calls
+         WHERE session_group_id = ? AND status IN ('failed', 'timeout', 'cancelled')
+           AND updated_at > '2025-12-01T00:00:00Z'`,
+      )
+      .all("g_perf")
+    const elapsed = performance.now() - t0
+    assert.ok(
+      elapsed < 200,
+      `viewfinder 1000-call query took ${elapsed.toFixed(2)}ms (single-test budget 200ms)`,
+    )
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
