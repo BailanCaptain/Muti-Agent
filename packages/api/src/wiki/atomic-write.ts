@@ -55,7 +55,7 @@ export function writeFileAtomic(targetPath: string, content: string): void {
     fs.closeSync(fd)
   }
 
-  fs.renameSync(tmpPath, targetPath)
+  renameWithRetry(tmpPath, targetPath)
 
   // best-effort dir fsync —— POSIX 要求 rename 这个 dir entry 变更也 flush。
   // Windows 跳过：(a) NTFS metadata journaling 自带 durability，dir fsync 不必要；
@@ -73,6 +73,31 @@ export function writeFileAtomic(targetPath: string, content: string): void {
       // POSIX edge: 极少见 — 跳过
     }
   }
+}
+
+/**
+ * Windows-friendly rename with微 retry —— EPERM/EBUSY 通常是 antivirus / indexer
+ * 在刚 close 的 tmp / target 上短暂 hold handle。POSIX 上几乎不触发，但同样 retry
+ * 一遍是 free 的。最大 5 次 × 10ms = 50ms 阻塞上限，超过仍失败 → 真错误抛出。
+ */
+function renameWithRetry(src: string, dest: string): void {
+  let lastErr: NodeJS.ErrnoException | null = null
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      fs.renameSync(src, dest)
+      return
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException
+      if (e.code !== "EPERM" && e.code !== "EBUSY" && e.code !== "EACCES") throw err
+      lastErr = e
+      // 短暂忙等：node 没 sync sleep，loop spin 10ms
+      const until = Date.now() + 10
+      while (Date.now() < until) {
+        // spin
+      }
+    }
+  }
+  throw lastErr ?? new Error(`rename failed after retries: ${src} → ${dest}`)
 }
 
 /**

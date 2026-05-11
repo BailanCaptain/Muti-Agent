@@ -51,10 +51,9 @@ export class WikiLeasesRepository {
    * 调用方应在 acquireLease 之前调（或由 acquireLease 内部调）。
    */
   nextFencingToken(): string {
-    const row = this.db
-      .get<{ next_value: string }>(
-        sql`UPDATE wiki_fencing_seq SET next_value = CAST(CAST(next_value AS INTEGER) + 1 AS TEXT) WHERE id = 1 RETURNING next_value`,
-      )
+    const row = this.db.get<{ next_value: string }>(
+      sql`UPDATE wiki_fencing_seq SET next_value = CAST(CAST(next_value AS INTEGER) + 1 AS TEXT) WHERE id = 1 RETURNING next_value`,
+    )
     if (!row) {
       throw new Error("wiki_fencing_seq missing — INIT_SQL seed not applied")
     }
