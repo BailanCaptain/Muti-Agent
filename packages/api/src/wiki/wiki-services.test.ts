@@ -116,6 +116,62 @@ test("F027 P3.e factory: ACL — agent 不能写 wiki/rules/", async () => {
   }
 })
 
+test("F027 P3.5 factory: leader 默认 wiring —— 无 leader 行时 leaderTerm()='0'", async () => {
+  const { services, cleanup } = await build()
+  try {
+    // 无 acquireLeader → getCurrent() null → leaderTerm() = '0'
+    const a = services.leases.acquireLease({
+      path: "wiki/concepts/no-leader.md",
+      ownerAlias: "范德彪",
+      ttlSeconds: 30,
+      leaderTerm: "0",
+    })
+    const r = services.updateWiki.updateWiki(
+      {
+        path: "wiki/concepts/no-leader.md",
+        action: "write",
+        baseHash: null,
+        content: "x",
+        fencingToken: a!.fencingToken,
+      },
+      { alias: "范德彪", isServiceIdentity: false },
+    )
+    assert.equal(r.status, "ok")
+    const ev = services.events.get(r.eventId!)
+    assert.equal(ev?.leaderTerm, "0", "无 leader 期 fallback term=0")
+  } finally {
+    cleanup()
+  }
+})
+
+test("F027 P3.5 factory: leader 接 compiler_leader 后 leaderTerm() 跟 row 走", async () => {
+  const { services, cleanup } = await build()
+  try {
+    services.leader.acquireLeader({ leaderAlias: "instance-A", ttlSeconds: 30 })
+    const a = services.leases.acquireLease({
+      path: "wiki/concepts/with-leader.md",
+      ownerAlias: "范德彪",
+      ttlSeconds: 30,
+      leaderTerm: "1",
+    })
+    const r = services.updateWiki.updateWiki(
+      {
+        path: "wiki/concepts/with-leader.md",
+        action: "write",
+        baseHash: null,
+        content: "x",
+        fencingToken: a!.fencingToken,
+      },
+      { alias: "范德彪", isServiceIdentity: false },
+    )
+    assert.equal(r.status, "ok")
+    const ev = services.events.get(r.eventId!)
+    assert.equal(ev?.leaderTerm, "1", "leader row 在 → leaderTerm() = current_term")
+  } finally {
+    cleanup()
+  }
+})
+
 test("F027 P3.e factory: ACL — wiki/index.md 任何人都不能写（派生视图保护）", async () => {
   const { services, cleanup } = await build()
   try {

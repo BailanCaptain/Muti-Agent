@@ -416,3 +416,19 @@ export const wikiFencingSeq = sqliteTable("wiki_fencing_seq", {
   id: integer("id").primaryKey(), // 强制 = 1（CHECK 在 INIT_SQL 里）
   nextValue: text("next_value").notNull(), // bigint as decimal string
 })
+
+// F027 P3.5 chap 5 · Compiler Leader Lease（防 split-brain）—— 全局唯一 leader。
+// 单 row CHECK(id=1)；候选 compiler 启动时 acquireLeader（INSERT OR FAIL / UPDATE
+// WHERE expired）；每 10s 续约；续约失败 → leader 主动 abort + 释放。
+// 所有 leader 写入 wiki_events 必须携带 current_term；触发器 reject_stale_leader
+// BEFORE INSERT 拒绝 leader_term < current_term 的写。
+export const compilerLeader = sqliteTable("compiler_leader", {
+  id: integer("id").primaryKey(), // CHECK (id = 1) in INIT_SQL
+  currentTerm: text("current_term").notNull(), // bigint as decimal string，单调推进
+  leaderAlias: text("leader_alias").notNull(),
+  acquiredAt: text("acquired_at").notNull(),
+  renewedAt: text("renewed_at").notNull(),
+  leaseExpiresAt: text("lease_expires_at").notNull(),
+  reserved1: text("reserved_1"),
+  reserved2: text("reserved_2"),
+})

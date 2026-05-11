@@ -14,6 +14,7 @@
  */
 
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
+import { CompilerLeaderRepository } from "../db/repositories/compiler-leader-repository"
 import { WikiEventsRepository } from "../db/repositories/wiki-events-repository"
 import { WikiLeasesRepository } from "../db/repositories/wiki-leases-repository"
 import type * as schema from "../db/schema"
@@ -106,6 +107,7 @@ acl:
 export interface WikiServices {
   events: WikiEventsRepository
   leases: WikiLeasesRepository
+  leader: CompilerLeaderRepository
   acl: CompiledACL
   updateWiki: UpdateWikiService
   wikiRoot: string
@@ -114,7 +116,7 @@ export interface WikiServices {
 export interface WikiServicesConfig {
   db: DrizzleDb
   wikiRoot: string
-  /** P3.5 之前 hardcoded；P3.5 后接 compiler_leader.current_term 查询。 */
+  /** 显式 leaderTerm 覆盖（测试/特殊 wiring 用）；默认接 compiler_leader 表。 */
   leaderTerm?: () => string
   /** Compiler debounce hook：service commit 后回调。 */
   onCommit?: (eventId: number, path: string) => void
@@ -125,14 +127,19 @@ export interface WikiServicesConfig {
 export function createWikiServices(cfg: WikiServicesConfig): WikiServices {
   const events = new WikiEventsRepository(cfg.db)
   const leases = new WikiLeasesRepository(cfg.db)
+  const leader = new CompilerLeaderRepository(cfg.db)
   const acl = compileACL(loadACLConfig(cfg.aclYaml ?? DEFAULT_ACL_YAML))
+  // P3.5: leaderTerm 默认接 compiler_leader.current_term；无 leader 行（启动期）→
+  // fallback '0'（触发器在无 row 时跳过校验，term 任意 string 都不会被拒）。
+  // P12 RoomCompiler 起来时 acquireLeader → row 落地 → 后续写入开始受触发器约束。
+  const leaderTerm = cfg.leaderTerm ?? (() => leader.getCurrent()?.currentTerm ?? "0")
   const updateWiki = new UpdateWikiService({
     events,
     leases,
     acl,
     wikiRoot: cfg.wikiRoot,
-    leaderTerm: cfg.leaderTerm ?? (() => "term-1"),
+    leaderTerm,
     onCommit: cfg.onCommit,
   })
-  return { events, leases, acl, updateWiki, wikiRoot: cfg.wikiRoot }
+  return { events, leases, leader, acl, updateWiki, wikiRoot: cfg.wikiRoot }
 }
