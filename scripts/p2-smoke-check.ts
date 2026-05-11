@@ -6,7 +6,7 @@
  *
  * 流程：
  *   1. 起临时 SQLite + 临时 wikiRoot
- *   2. 种 4 type * 2 canonical memory + 1 draft + 1 deprecated（验状态过滤）
+ *   2. 种 5 type * N canonical memory（含 room）+ 1 draft + 1 deprecated（验状态过滤）
  *   3. 种 3 wiki_events committed + 1 aborted（验事件过滤）
  *   4. 调 compileWiki()
  *   5. 打印派生文件列表 + 每个文件前 N 行 + manifest
