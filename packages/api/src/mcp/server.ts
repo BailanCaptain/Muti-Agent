@@ -492,6 +492,60 @@ export function getTools() {
         required: ["backlogItemId"],
       },
     },
+    {
+      name: "acquire_wiki_lease",
+      description:
+        "F027 chap 6: 申请 wiki path 的写入互斥锁。返回 fencing_token + expires_at。lease 默认 TTL 30s，必须在过期前完成 update_wiki，否则 lease 被抢占（任何后续 update_wiki 用过期 token 都会拒）。同 path 已被他人持有时返 409 lease_held。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "wiki 相对路径（如 'wiki/concepts/foo.md'）" },
+          ttlSeconds: { type: "number", description: "lease TTL 秒数，默认 30" },
+        },
+        required: ["path"],
+      },
+    },
+    {
+      name: "read_wiki",
+      description:
+        "F027 chap 6: 读 wiki 文件 + 当前 hash（CAS 用）。返回 content + hash 或 status='not_found'。update_wiki 之前必须先 read_wiki 拿 base_hash。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "wiki 相对路径" },
+        },
+        required: ["path"],
+      },
+    },
+    {
+      name: "update_wiki",
+      description:
+        "F027 chap 6: 写 wiki 文件，全套 ACL + CAS + lease + fencing 校验。流程：1) acquire_wiki_lease 拿 token；2) read_wiki 拿 base_hash；3) update_wiki 提交。status 枚举：ok / denied_acl / conflict（base_hash 不符）/ lease_expired（token 不持有）/ stale_token（写入临界区被抢占）/ schema_invalid / not_implemented。actions: write|append|delete 已支持；patch/promote/demote/ingest 暂未实现。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "wiki 相对路径" },
+          action: {
+            type: "string",
+            enum: ["write", "append", "patch", "ingest", "promote", "demote", "delete"],
+            description: "动作枚举",
+          },
+          base_hash: {
+            type: ["string", "null"],
+            description: "CAS 期望当前 hash，null = 创建新文件",
+          },
+          content: { type: "string", description: "新内容（write/append）或空（delete）" },
+          fencing_token: { type: "string", description: "acquire_wiki_lease 返回的 token" },
+          reason: { type: "string", description: "可选：写入原因（落 wiki_events.reason）" },
+          source_message_ids: {
+            type: "array",
+            items: { type: "string" },
+            description: "可选：触发本次写入的 message id 列表",
+          },
+        },
+        required: ["path", "action", "content", "fencing_token"],
+      },
+    },
   ]
 }
 
@@ -730,6 +784,71 @@ async function callRequestPermission(params: {
   }
 }
 
+async function callAcquireWikiLease(params: {
+  path: string
+  ttlSeconds?: number
+}): Promise<ToolResult> {
+  const identity = getCallbackIdentity()
+  const response = await requestJson(`${identity.apiUrl}/api/callbacks/acquire-wiki-lease`, {
+    method: "POST",
+    body: {
+      invocationId: identity.invocationId,
+      callbackToken: identity.callbackToken,
+      path: params.path,
+      ...(params.ttlSeconds !== undefined ? { ttlSeconds: params.ttlSeconds } : {}),
+    },
+  })
+  return {
+    isError: response.statusCode >= 400,
+    content: [{ type: "text", text: JSON.stringify(response.json) }],
+  }
+}
+
+async function callReadWiki(params: { path: string }): Promise<ToolResult> {
+  const identity = getCallbackIdentity()
+  const url = new URL(`${identity.apiUrl}/api/callbacks/read-wiki`)
+  url.searchParams.set("invocationId", identity.invocationId)
+  url.searchParams.set("callbackToken", identity.callbackToken)
+  url.searchParams.set("path", params.path)
+  const response = await requestJson(url.toString(), { method: "GET" })
+  return {
+    isError: response.statusCode >= 400,
+    content: [{ type: "text", text: JSON.stringify(response.json) }],
+  }
+}
+
+async function callUpdateWiki(params: {
+  path: string
+  action: string
+  base_hash?: string | null
+  content: string
+  fencing_token: string
+  reason?: string
+  source_message_ids?: string[]
+}): Promise<ToolResult> {
+  const identity = getCallbackIdentity()
+  const response = await requestJson(`${identity.apiUrl}/api/callbacks/update-wiki`, {
+    method: "POST",
+    body: {
+      invocationId: identity.invocationId,
+      callbackToken: identity.callbackToken,
+      path: params.path,
+      action: params.action,
+      baseHash: params.base_hash ?? null,
+      content: params.content,
+      fencingToken: params.fencing_token,
+      ...(params.reason !== undefined ? { reason: params.reason } : {}),
+      ...(params.source_message_ids !== undefined
+        ? { sourceMessageIds: params.source_message_ids }
+        : {}),
+    },
+  })
+  return {
+    isError: response.statusCode >= 400,
+    content: [{ type: "text", text: JSON.stringify(response.json) }],
+  }
+}
+
 async function callGetMemory(keyword?: string): Promise<ToolResult> {
   const identity = getCallbackIdentity()
   const url = new URL(`${identity.apiUrl}/api/callbacks/memory`)
@@ -816,6 +935,57 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
         } satisfies ToolResult
       }
       return callUpdateWorkflowSop(args as Parameters<typeof callUpdateWorkflowSop>[0])
+    }
+    case "acquire_wiki_lease": {
+      const path = typeof args?.path === "string" ? args.path : ""
+      if (!path) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: "path is required (non-empty string)" }],
+        } satisfies ToolResult
+      }
+      return callAcquireWikiLease({
+        path,
+        ttlSeconds: typeof args?.ttlSeconds === "number" ? args.ttlSeconds : undefined,
+      })
+    }
+    case "read_wiki": {
+      const path = typeof args?.path === "string" ? args.path : ""
+      if (!path) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: "path is required (non-empty string)" }],
+        } satisfies ToolResult
+      }
+      return callReadWiki({ path })
+    }
+    case "update_wiki": {
+      const path = typeof args?.path === "string" ? args.path : ""
+      const action = typeof args?.action === "string" ? args.action : ""
+      const content = typeof args?.content === "string" ? args.content : ""
+      const fencing_token = typeof args?.fencing_token === "string" ? args.fencing_token : ""
+      if (!path || !action || !fencing_token) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "path, action, fencing_token are required (non-empty strings)",
+            },
+          ],
+        } satisfies ToolResult
+      }
+      return callUpdateWiki({
+        path,
+        action,
+        base_hash: typeof args?.base_hash === "string" ? args.base_hash : null,
+        content,
+        fencing_token,
+        reason: typeof args?.reason === "string" ? args.reason : undefined,
+        source_message_ids: Array.isArray(args?.source_message_ids)
+          ? (args.source_message_ids as string[])
+          : undefined,
+      })
     }
     default:
       return {

@@ -10,6 +10,8 @@ import type { SessionService } from "../services/session-service"
 import type { WorkflowSopService } from "../services/workflow-sop-service"
 import { WorkflowSopValidationError, validateUpdateSopBody } from "../services/workflow-sop-service"
 import type { UpdateSopInput } from "../services/workflow-sop-types"
+import type { WikiAction } from "../wiki/acl-types"
+import type { WikiServices } from "../wiki/wiki-services"
 import type { RealtimeBroadcaster } from "./ws"
 
 type CallbackBody = {
@@ -153,6 +155,8 @@ export function registerCallbackRoutes(
     }) => Promise<{ ok: true; imageUrl: string }>
     /** F019 P3: WorkflowSop 告示牌引擎. Used by /api/callbacks/update-workflow-sop. */
     workflowSopService?: WorkflowSopService
+    /** F027 P3: chap 6 update_wiki MCP — ACL/CAS/lease/fencing 全套。 */
+    wikiServices?: WikiServices
   },
 ) {
   app.post("/api/callbacks/post-message", async (request: FastifyRequest, reply: FastifyReply) => {
@@ -809,4 +813,151 @@ export function registerCallbackRoutes(
       }
     },
   )
+
+  // ─── F027 P3 chap 6 update_wiki MCP: 3 endpoint ──────────────────────────────
+
+  app.post("/api/callbacks/acquire-wiki-lease", async (request, reply) => {
+    const body = request.body as {
+      invocationId?: string
+      callbackToken?: string
+      path?: string
+      ttlSeconds?: number
+    }
+    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+    if (!options.wikiServices) {
+      reply.code(503)
+      return { error: "WikiServices not wired" }
+    }
+    if (typeof body.path !== "string" || body.path.length === 0) {
+      reply.code(400)
+      return { error: "path is required" }
+    }
+    const lease = options.wikiServices.leases.acquireLease({
+      path: body.path,
+      ownerAlias: thread.alias,
+      ttlSeconds: typeof body.ttlSeconds === "number" ? body.ttlSeconds : 30,
+      // P3.5 之前 hardcoded；service.leaderTerm() 才是 wiki_events 写入用的实际 term
+      leaderTerm: "term-1",
+    })
+    if (!lease) {
+      reply.code(409)
+      return { status: "lease_held", error: "path currently leased by another owner" }
+    }
+    return { status: "ok", fencingToken: lease.fencingToken, expiresAt: lease.expiresAt }
+  })
+
+  app.get("/api/callbacks/read-wiki", async (request, reply) => {
+    const query = request.query as {
+      invocationId?: string
+      callbackToken?: string
+      path?: string
+    }
+    const invocation = assertInvocation(
+      options.invocations,
+      query.invocationId,
+      query.callbackToken,
+    )
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+    if (!options.wikiServices) {
+      reply.code(503)
+      return { error: "WikiServices not wired" }
+    }
+    if (typeof query.path !== "string" || query.path.length === 0) {
+      reply.code(400)
+      return { error: "path is required" }
+    }
+    // 简化读：直接 fs 拿 + 算 hash；正式 P4 后用 read_wiki service（含 ACL read 校验）
+    const fs = await import("node:fs")
+    const path = await import("node:path")
+    const crypto = await import("node:crypto")
+    const abs = path.join(options.wikiServices.wikiRoot, query.path)
+    try {
+      const content = fs.readFileSync(abs, "utf8")
+      const hash = `sha256:${crypto.createHash("sha256").update(content).digest("hex")}`
+      return { status: "ok", content, hash }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return { status: "not_found", content: null, hash: null }
+      }
+      reply.code(500)
+      return { error: (err as Error).message }
+    }
+  })
+
+  app.post("/api/callbacks/update-wiki", async (request, reply) => {
+    const body = request.body as {
+      invocationId?: string
+      callbackToken?: string
+      path?: string
+      action?: WikiAction
+      baseHash?: string | null
+      content?: string
+      fencingToken?: string
+      reason?: string
+      sourceMessageIds?: string[]
+    }
+    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+    if (!options.wikiServices) {
+      reply.code(503)
+      return { error: "WikiServices not wired" }
+    }
+    if (
+      typeof body.path !== "string" ||
+      typeof body.action !== "string" ||
+      typeof body.content !== "string" ||
+      typeof body.fencingToken !== "string"
+    ) {
+      reply.code(400)
+      return { error: "path, action, content, fencingToken are required" }
+    }
+    const isService = thread.alias.startsWith("system-auto-")
+    const result = options.wikiServices.updateWiki.updateWiki(
+      {
+        path: body.path,
+        action: body.action,
+        baseHash: body.baseHash ?? null,
+        content: body.content,
+        fencingToken: body.fencingToken,
+        reason: body.reason,
+        sourceMessageIds: body.sourceMessageIds,
+      },
+      { alias: thread.alias, isServiceIdentity: isService },
+    )
+    if (result.status !== "ok") {
+      // 把 service-level reject 映射到 4xx，让 MCP client 能区分
+      const code =
+        result.status === "denied_acl"
+          ? 403
+          : result.status === "lease_expired" || result.status === "stale_token"
+            ? 409
+            : result.status === "conflict"
+              ? 409
+              : result.status === "not_implemented"
+                ? 501
+                : 400
+      reply.code(code)
+    }
+    return result
+  })
 }

@@ -6,23 +6,26 @@ import { encodeMessage, getTools, handleToolCall, parseFrame } from "./server.js
 // getTools tests
 // ---------------------------------------------------------------------------
 
-test("getTools returns 13 tools", () => {
+test("getTools returns 16 tools (F027 P3 +acquire_wiki_lease/read_wiki/update_wiki)", () => {
   const tools = getTools()
-  assert.equal(tools.length, 13, `Expected 13 tools, got ${tools.length}`)
+  assert.equal(tools.length, 16, `Expected 16 tools, got ${tools.length}`)
   const names = tools.map((t) => t.name).sort()
   assert.deepEqual(names, [
+    "acquire_wiki_lease",
     "create_task",
     "get_memory",
     "get_room_context",
     "get_room_summary",
     "get_task_status",
     "post_message",
+    "read_wiki",
     "recall_similar_context",
     "request_decision",
     "request_permission",
     "search_room_memories",
     "take_screenshot",
     "trigger_mention",
+    "update_wiki",
     "update_workflow_sop",
   ])
 })
@@ -96,6 +99,43 @@ test("trigger_mention tool requires targetAgentId and taskSnippet", () => {
   const schema = tool.inputSchema as { required: string[] }
   assert.ok(schema.required.includes("targetAgentId"), "targetAgentId should be required")
   assert.ok(schema.required.includes("taskSnippet"), "taskSnippet should be required")
+})
+
+test("F027 P3 acquire_wiki_lease tool requires path", () => {
+  const tools = getTools()
+  const tool = tools.find((t) => t.name === "acquire_wiki_lease")
+  assert.ok(tool)
+  const schema = tool.inputSchema as { required: string[]; properties: Record<string, unknown> }
+  assert.deepEqual(schema.required, ["path"])
+  assert.ok(schema.properties.ttlSeconds, "ttlSeconds optional present")
+})
+
+test("F027 P3 read_wiki tool requires path", () => {
+  const tools = getTools()
+  const tool = tools.find((t) => t.name === "read_wiki")
+  assert.ok(tool)
+  const schema = tool.inputSchema as { required: string[] }
+  assert.deepEqual(schema.required, ["path"])
+})
+
+test("F027 P3 update_wiki tool requires path/action/content/fencing_token", () => {
+  const tools = getTools()
+  const tool = tools.find((t) => t.name === "update_wiki")
+  assert.ok(tool)
+  const schema = tool.inputSchema as unknown as {
+    required: string[]
+    properties: Record<string, { enum?: string[] }>
+  }
+  assert.deepEqual(schema.required.sort(), ["action", "content", "fencing_token", "path"])
+  assert.deepEqual(schema.properties.action.enum, [
+    "write",
+    "append",
+    "patch",
+    "ingest",
+    "promote",
+    "demote",
+    "delete",
+  ])
 })
 
 // ---------------------------------------------------------------------------
