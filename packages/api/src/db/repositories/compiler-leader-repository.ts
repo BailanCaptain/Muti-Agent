@@ -105,12 +105,22 @@ export class CompilerLeaderRepository {
   }
 
   /**
-   * 主动释放：当前 term 持有才能删（CAS）。
+   * 主动释放：当前 term 持有才能释放（CAS）。
    * 返回 true = 释放了；false = 不持有 / 已过期 / 已被抢占（noop）。
+   *
+   * **不删 row** —— 而是 mark lease_expires_at=epoch。
+   * [范-r1 P1 修正] 删 row 会让 reject_stale_leader 触发器 WHEN EXISTS 跳过，
+   * release 后 zombie 旧 term 写就能绕过校验。同时 reacquire 重置 term=1，
+   * 单调性被打破（旧 term 都 ≥1 通过）。修：UPDATE expires=epoch 保留 row+term。
+   * 后续 acquireLeader 走 ON CONFLICT 抢占路径 → term++。
    */
   releaseLeader(input: ReleaseLeaderInput): boolean {
+    // 用一个固定的远古 epoch ISO 字符串表示"已释放"，触发器和 isCurrent 都会
+    // 视为 expired（lease_expires_at <= any now）
     const result = this.db.run(
-      sql`DELETE FROM compiler_leader WHERE id = 1 AND current_term = ${input.currentTerm}`,
+      sql`UPDATE compiler_leader
+          SET lease_expires_at = '1970-01-01T00:00:00.000Z'
+          WHERE id = 1 AND current_term = ${input.currentTerm}`,
     )
     return result.changes > 0
   }

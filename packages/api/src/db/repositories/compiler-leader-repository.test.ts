@@ -162,13 +162,18 @@ test("F027 P3.5 renewLeader 已过期 → null", async () => {
   }
 })
 
-test("F027 P3.5 releaseLeader 持有 → true + 行删除", async () => {
+test("F027 P3.5 releaseLeader 持有 → true + lease_expires=epoch（row 保留 + term 保留）", async () => {
+  // [范-r1 P1 修正] release 不删 row，避免触发器跳过 + reacquire 重置 term=1
   const { leader, cleanup } = await build()
   try {
     const a = leader.acquireLeader({ leaderAlias: "A", ttlSeconds: 30, now: T0 })
     const ok = leader.releaseLeader({ currentTerm: a!.currentTerm })
     assert.equal(ok, true)
-    assert.equal(leader.getCurrent(), null)
+    const after = leader.getCurrent()
+    assert.ok(after, "row 应保留（不删）")
+    assert.equal(after?.currentTerm, "1", "term 保留，防 reacquire 重置")
+    assert.equal(after?.leaseExpiresAt, "1970-01-01T00:00:00.000Z", "expires 标记 epoch")
+    assert.equal(leader.isLeader(a!.currentTerm, T_PLUS_5), false, "release 后 isLeader=false")
   } finally {
     cleanup()
   }
@@ -263,6 +268,51 @@ test("F027 P3.5 trigger: 当前 term 写 wiki_events 通过", async () => {
       result: "ok",
     })
     assert.ok(ev.id)
+  } finally {
+    cleanup()
+  }
+})
+
+test("F027 P3.5 [范-r1 P1]: release 后 zombie 旧 term 写仍被触发器拒（row 保留 + term 不变）", async () => {
+  const { leader, events, cleanup } = await build()
+  try {
+    const a = leader.acquireLeader({ leaderAlias: "A", ttlSeconds: 30, now: T0 })
+    assert.equal(a?.currentTerm, "1")
+    // 假设 A 续约失败，主动 release
+    leader.releaseLeader({ currentTerm: a!.currentTerm })
+    // 旧 term=1 写 wiki_events，应被触发器拒（row 保留 → WHEN EXISTS 仍为 true）
+    // 实际上 release 后 term 不变 = '1'，旧 term=1 == current_term=1，触发器 < 不成立 → 通过
+    // 但更现实的场景是 race：release 之后另一个 instance 抢占 term=2，
+    // 此时 A 用 term=1 的延迟 insert 才该被拒
+    leader.acquireLeader({ leaderAlias: "B", ttlSeconds: 30, now: T_PLUS_5 }) // term=2
+    assert.throws(
+      () =>
+        events.appendPending({
+          ts: T_PLUS_5,
+          alias: "A",
+          action: "write",
+          path: "wiki/concepts/zombie-after-release.md",
+          attemptedHash: "sha256:zombie",
+          fencingToken: "1",
+          leaderTerm: "1", // A 的旧 term
+          result: "ok",
+        }),
+      /stale leader_term/,
+    )
+  } finally {
+    cleanup()
+  }
+})
+
+test("F027 P3.5 [范-r1 P1]: release → reacquire 后 term 单调推进（不重置 1）", async () => {
+  const { leader, cleanup } = await build()
+  try {
+    const a = leader.acquireLeader({ leaderAlias: "A", ttlSeconds: 30, now: T0 })
+    leader.releaseLeader({ currentTerm: a!.currentTerm })
+    // reacquire 应该 term=2，不是重置为 1
+    const b = leader.acquireLeader({ leaderAlias: "A", ttlSeconds: 30, now: T_PLUS_5 })
+    assert.ok(b)
+    assert.equal(b.currentTerm, "2", "release 后 reacquire term 仍单调推进（防 ABA）")
   } finally {
     cleanup()
   }
