@@ -26,9 +26,14 @@ import {
   cleanupOrphanTmp,
   manifestPath,
   readManifest,
-  tmpManifestPath,
   writeManifestAtomic,
 } from "./index-manifest"
+
+/** 范-review-r1 P1-2 后 tmp 名字 unique（manifest.json.<pid>-<ts>-<seq>.tmp）。
+ *  测试侧用一个固定 unique 样例做 orphan 模拟。 */
+function sampleOrphanTmpPath(dir: string, suffix = "1234-1700000000000-1"): string {
+  return path.join(dir, `${MANIFEST_FILENAME}.${suffix}${TMP_SUFFIX}`)
+}
 
 function safeTempDir(prefix: string) {
   const runtimeDir = path.join(process.cwd(), ".runtime")
@@ -73,7 +78,8 @@ test("F027 P21: write 后 manifest.json 落盘且 .tmp 已 rename 消失", () =>
   try {
     writeManifestAtomic(dir, sampleManifest())
     assert.ok(fs.existsSync(manifestPath(dir)), "manifest.json should exist")
-    assert.ok(!fs.existsSync(tmpManifestPath(dir)), "tmp should be consumed by rename")
+    const leftover = fs.readdirSync(dir).filter((n) => n.endsWith(TMP_SUFFIX))
+    assert.deepEqual(leftover, [], "rename 后无 .tmp 残留")
   } finally {
     safeCleanup(dir)
   }
@@ -113,8 +119,8 @@ test("F027 P21: 崩溃模拟 — 手工写残留 .tmp 但不 rename → readMani
   try {
     // 第一份正常落盘
     writeManifestAtomic(dir, sampleManifest({ version: "stable" }))
-    // 模拟下次 write 崩溃：手工 dump 一份 .tmp 文件占位
-    fs.writeFileSync(tmpManifestPath(dir), '{"crash": "halfway"}')
+    // 模拟下次 write 崩溃：手工 dump 一份 unique-style .tmp 文件占位
+    fs.writeFileSync(sampleOrphanTmpPath(dir), '{"crash": "halfway"}')
 
     // 读应当仍然是 stable manifest（rename 没发生）
     const back = readManifest(dir)
@@ -124,16 +130,17 @@ test("F027 P21: 崩溃模拟 — 手工写残留 .tmp 但不 rename → readMani
   }
 })
 
-test("F027 P21: cleanupOrphanTmp 删 .tmp + 不动 manifest.json，返回 true", () => {
+test("F027 P21: cleanupOrphanTmp 删 .tmp + 不动 manifest.json，返回清理数 ≥ 1", () => {
   const dir = safeTempDir("p21-cleanup-")
   try {
     writeManifestAtomic(dir, sampleManifest({ version: "stable" }))
-    fs.writeFileSync(tmpManifestPath(dir), "garbage")
-    assert.ok(fs.existsSync(tmpManifestPath(dir)))
+    const orphan = sampleOrphanTmpPath(dir)
+    fs.writeFileSync(orphan, "garbage")
+    assert.ok(fs.existsSync(orphan))
 
     const cleaned = cleanupOrphanTmp(dir)
-    assert.equal(cleaned, true)
-    assert.ok(!fs.existsSync(tmpManifestPath(dir)))
+    assert.equal(cleaned, 1)
+    assert.ok(!fs.existsSync(orphan))
     // manifest.json 不动
     const back = readManifest(dir)
     assert.equal(back?.version, "stable")
@@ -142,13 +149,13 @@ test("F027 P21: cleanupOrphanTmp 删 .tmp + 不动 manifest.json，返回 true",
   }
 })
 
-test("F027 P21: cleanupOrphanTmp 没残留返 false 不抛（idempotent）", () => {
+test("F027 P21: cleanupOrphanTmp 没残留返 0 不抛（idempotent）", () => {
   const dir = safeTempDir("p21-cleanup-noop-")
   try {
     writeManifestAtomic(dir, sampleManifest())
-    assert.equal(cleanupOrphanTmp(dir), false)
+    assert.equal(cleanupOrphanTmp(dir), 0)
     // 再叫一次也无副作用
-    assert.equal(cleanupOrphanTmp(dir), false)
+    assert.equal(cleanupOrphanTmp(dir), 0)
   } finally {
     safeCleanup(dir)
   }
@@ -230,4 +237,78 @@ test("F027 P21: 多次 write 后 readManifest 总是最新版（顺序一致性�
 test("F027 P21: 文件名 / 后缀常量与契约一致（防误改）", () => {
   assert.equal(MANIFEST_FILENAME, "manifest.json")
   assert.equal(TMP_SUFFIX, ".tmp")
+})
+
+// ============================================================================
+// 范-review-r1 finding P1-2 修复验证：tmp unique + cleanup 扫 glob
+// ============================================================================
+
+test("F027 P21 [范-review-r1]: 同 dir 多次 write 不留同名 tmp（unique tmp 防 race）", () => {
+  const dir = safeTempDir("p21-unique-tmp-")
+  try {
+    // 连续两次 write，rename 后都不该留 tmp
+    writeManifestAtomic(dir, sampleManifest({ version: "v1" }))
+    writeManifestAtomic(dir, sampleManifest({ version: "v2" }))
+    const tmps = fs.readdirSync(dir).filter((n) => n.endsWith(TMP_SUFFIX))
+    assert.deepEqual(tmps, [], `应无 .tmp 残留，实际: ${tmps.join(", ")}`)
+
+    // tmp 命名格式必含 pid + 单调递增段（即使同一 ms 调多次也不撞）
+    // —— 单测里通过观察"未见到 ENOENT/EEXIST/race 异常"间接验证
+    assert.equal(readManifest(dir)?.version, "v2")
+  } finally {
+    safeCleanup(dir)
+  }
+})
+
+test("F027 P21 [范-review-r1]: cleanupOrphanTmp 扫 glob — 多 writer 留下的多 tmp 全部清扫", () => {
+  const dir = safeTempDir("p21-cleanup-glob-")
+  try {
+    writeManifestAtomic(dir, sampleManifest({ version: "stable" }))
+    // 模拟两个崩溃 writer 各自留下不同名的 tmp（unique 命名后场景）
+    fs.writeFileSync(path.join(dir, `${MANIFEST_FILENAME}.1234-1700000000000-1${TMP_SUFFIX}`), "g1")
+    fs.writeFileSync(path.join(dir, `${MANIFEST_FILENAME}.5678-1700000000001-2${TMP_SUFFIX}`), "g2")
+    fs.writeFileSync(path.join(dir, `${MANIFEST_FILENAME}.9999-1700000000002-3${TMP_SUFFIX}`), "g3")
+
+    const cleaned = cleanupOrphanTmp(dir)
+    assert.equal(cleaned, 3) // 三个 orphan 全清
+    const remaining = fs.readdirSync(dir).filter((n) => n.endsWith(TMP_SUFFIX))
+    assert.deepEqual(remaining, [])
+    // manifest.json 不动
+    assert.equal(readManifest(dir)?.version, "stable")
+  } finally {
+    safeCleanup(dir)
+  }
+})
+
+test("F027 P21 [范-review-r1]: cleanupOrphanTmp 不会误删非 tmp 文件（manifest.json/版本目录/无关文件）", () => {
+  const dir = safeTempDir("p21-cleanup-precision-")
+  try {
+    writeManifestAtomic(dir, sampleManifest({ version: "v1" }))
+    fs.writeFileSync(path.join(dir, "README.md"), "x")
+    fs.writeFileSync(path.join(dir, "manifest.json.bak"), "y") // .bak 后缀不是 .tmp
+    fs.mkdirSync(path.join(dir, "v-2026050601"))
+
+    cleanupOrphanTmp(dir)
+    assert.ok(fs.existsSync(manifestPath(dir)), "manifest.json 不该被删")
+    assert.ok(fs.existsSync(path.join(dir, "README.md")), "README 不该被删")
+    assert.ok(fs.existsSync(path.join(dir, "manifest.json.bak")), ".bak 不该被删")
+    assert.ok(fs.existsSync(path.join(dir, "v-2026050601")), "版本目录不该被删")
+  } finally {
+    safeCleanup(dir)
+  }
+})
+
+test("F027 P21 [范-review-r1]: 同进程紧凑串行 write 不撞（counter 单调，即使同 Date.now()）", () => {
+  const dir = safeTempDir("p21-fast-serial-")
+  try {
+    // 紧凑循环 100 次 — 大概率撞同 Date.now() ms，验证 counter 防撞
+    for (let i = 0; i < 100; i++) {
+      writeManifestAtomic(dir, sampleManifest({ version: `v-${i}` }))
+    }
+    assert.equal(readManifest(dir)?.version, "v-99")
+    const leftover = fs.readdirSync(dir).filter((n) => n.endsWith(TMP_SUFFIX))
+    assert.deepEqual(leftover, [], `100 连写后无 tmp 残留，实际: ${leftover.join(", ")}`)
+  } finally {
+    safeCleanup(dir)
+  }
 })

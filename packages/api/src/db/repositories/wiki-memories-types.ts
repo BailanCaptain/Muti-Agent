@@ -97,6 +97,21 @@ export class InvalidStateTransitionError extends Error {
   }
 }
 
+/**
+ * V16.5 chap 14 状态机白名单。范-review-r1 finding：repo.updateState 之前只 CAS
+ * `from`，未约束 `to` —— `updateState(id, "deprecated", "canonical")` 会真改回 canonical
+ * 违反白名单。本表 = 单一真相源，repo / lint / 调试工具一起用。
+ */
+export const VALID_STATE_TRANSITIONS: Record<WikiMemoryState, readonly WikiMemoryState[]> = {
+  draft: ["canonical", "deprecated"],
+  canonical: ["deprecated"],
+  deprecated: [],
+}
+
+export function isValidTransition(from: WikiMemoryState, to: WikiMemoryState): boolean {
+  return VALID_STATE_TRANSITIONS[from].includes(to)
+}
+
 /** chap 14 type-routed 默认 ttl：feedback 桶 30 天，其他无默认（永久）。 */
 export const DEFAULT_FEEDBACK_TTL_DAYS = 30
 

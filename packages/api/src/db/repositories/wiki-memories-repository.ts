@@ -35,6 +35,7 @@ import {
   RoomBucketCannotPromoteError,
   WIKI_MEMORY_TYPES,
   bucketPrefix,
+  isValidTransition,
 } from "./wiki-memories-types"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
@@ -87,12 +88,15 @@ export class WikiMemoriesRepository {
   }
 
   /**
-   * 状态机 CAS：from → to。重复 settle 返回 false（idempotent）。
-   * 合法转移：draft→canonical / draft→deprecated / canonical→deprecated。
-   * 非法转移会直接 0 rows changed（CAS WHERE state=from），caller 看 false 自决；
-   * 测试侧也可用此判断：先 get 看当前 state，再决定是否 throw InvalidStateTransitionError。
+   * 状态机 CAS：from → to。重复 settle 或非法 transition 返回 false（idempotent + 白名单）。
+   * 合法转移（V16.5 chap 14 + types.VALID_STATE_TRANSITIONS）：
+   *   draft → canonical / draft → deprecated / canonical → deprecated
+   *
+   * 范-review-r1 finding：之前只 CAS `from` 不限 `to`，会让 deprecated→canonical 真生效
+   * 反向推 row 违背白名单。现加 isValidTransition 守卫前置，非法转移直接返 false 不打 DB。
    */
   updateState(memoryId: number, from: WikiMemoryState, to: WikiMemoryState): boolean {
+    if (!isValidTransition(from, to)) return false
     const now = new Date().toISOString()
     const result = this.db
       .update(wikiMemories)

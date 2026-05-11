@@ -225,6 +225,66 @@ test("F027 P10: updateState 重复 settle = noop（CAS 第二次 false，state �
   }
 })
 
+test("F027 P10 [范-review-r1]: deprecated→canonical 是非法 transition，必须返 false（白名单守卫）", async () => {
+  const { repo, cleanup } = await buildRepo()
+  try {
+    const m = repo.insert({
+      type: "project",
+      name: "x",
+      canonicalOwnerPath: "wiki/project/x.md",
+      contributedBy: ["a"],
+      body: "b",
+    })
+    // 先把 row 推到 deprecated
+    assert.equal(repo.updateState(m.id, "draft", "deprecated"), true)
+    assert.equal(repo.get(m.id)?.state, "deprecated")
+    // 反向 deprecated→canonical 是非法 transition，必须返 false 且 row 不变
+    assert.equal(repo.updateState(m.id, "deprecated", "canonical"), false)
+    assert.equal(repo.get(m.id)?.state, "deprecated")
+    // 反向 deprecated→draft 也非法
+    assert.equal(repo.updateState(m.id, "deprecated", "draft"), false)
+    assert.equal(repo.get(m.id)?.state, "deprecated")
+  } finally {
+    cleanup()
+  }
+})
+
+test("F027 P10 [范-review-r1]: canonical→draft 也是非法 transition", async () => {
+  const { repo, cleanup } = await buildRepo()
+  try {
+    const m = repo.insert({
+      type: "project",
+      name: "y",
+      canonicalOwnerPath: "wiki/project/y.md",
+      contributedBy: ["a"],
+      body: "b",
+    })
+    assert.equal(repo.updateState(m.id, "draft", "canonical"), true)
+    // canonical 只能去 deprecated，不能回 draft
+    assert.equal(repo.updateState(m.id, "canonical", "draft"), false)
+    assert.equal(repo.get(m.id)?.state, "canonical")
+  } finally {
+    cleanup()
+  }
+})
+
+test("F027 P10 [范-review-r1]: 同 state self-loop（draft→draft）也非法", async () => {
+  const { repo, cleanup } = await buildRepo()
+  try {
+    const m = repo.insert({
+      type: "user",
+      name: "z",
+      canonicalOwnerPath: "wiki/user/z.md",
+      contributedBy: ["a"],
+      body: "b",
+    })
+    assert.equal(repo.updateState(m.id, "draft", "draft"), false)
+    assert.equal(repo.get(m.id)?.state, "draft")
+  } finally {
+    cleanup()
+  }
+})
+
 test("F027 P10: 不存在 id updateState 返回 false 不抛", async () => {
   const { repo, cleanup } = await buildRepo()
   try {
