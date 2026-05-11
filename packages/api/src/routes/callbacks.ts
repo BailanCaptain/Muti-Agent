@@ -11,6 +11,7 @@ import type { WorkflowSopService } from "../services/workflow-sop-service"
 import { WorkflowSopValidationError, validateUpdateSopBody } from "../services/workflow-sop-service"
 import type { UpdateSopInput } from "../services/workflow-sop-types"
 import type { WikiAction } from "../wiki/acl-types"
+import { WikiPathInvalidError, safeWikiPath } from "../wiki/path-containment"
 import type { WikiServices } from "../wiki/wiki-services"
 import type { RealtimeBroadcaster } from "./ws"
 
@@ -841,6 +842,16 @@ export function registerCallbackRoutes(
       reply.code(400)
       return { error: "path is required" }
     }
+    // [范-r1 P1] path containment 早 reject —— 拿到合法 path 才能进 lease 表
+    try {
+      safeWikiPath(options.wikiServices.wikiRoot, body.path)
+    } catch (err) {
+      if (err instanceof WikiPathInvalidError) {
+        reply.code(400)
+        return { status: "path_invalid", error: err.message }
+      }
+      throw err
+    }
     const lease = options.wikiServices.leases.acquireLease({
       path: body.path,
       ownerAlias: thread.alias,
@@ -878,11 +889,20 @@ export function registerCallbackRoutes(
       reply.code(400)
       return { error: "path is required" }
     }
+    // [范-r1 P1] path containment —— 防 ../../../etc/passwd 通过 fs.readFileSync 暴露
+    let abs: string
+    try {
+      abs = safeWikiPath(options.wikiServices.wikiRoot, query.path)
+    } catch (err) {
+      if (err instanceof WikiPathInvalidError) {
+        reply.code(400)
+        return { status: "path_invalid", error: err.message }
+      }
+      throw err
+    }
     // 简化读：直接 fs 拿 + 算 hash；正式 P4 后用 read_wiki service（含 ACL read 校验）
     const fs = await import("node:fs")
-    const path = await import("node:path")
     const crypto = await import("node:crypto")
-    const abs = path.join(options.wikiServices.wikiRoot, query.path)
     try {
       const content = fs.readFileSync(abs, "utf8")
       const hash = `sha256:${crypto.createHash("sha256").update(content).digest("hex")}`
@@ -945,7 +965,7 @@ export function registerCallbackRoutes(
       { alias: thread.alias, isServiceIdentity: isService },
     )
     if (result.status !== "ok") {
-      // 把 service-level reject 映射到 4xx，让 MCP client 能区分
+      // 把 service-level reject 映射到 4xx/5xx，让 MCP client 能区分
       const code =
         result.status === "denied_acl"
           ? 403
@@ -955,7 +975,9 @@ export function registerCallbackRoutes(
               ? 409
               : result.status === "not_implemented"
                 ? 501
-                : 400
+                : result.status === "internal"
+                  ? 500 // [范-r1 P3] atomic_write_failed 走 5xx，不再返 4xx 让 client 按 CAS 重试
+                  : 400 // path_invalid / schema_invalid / 缺参
       reply.code(code)
     }
     return result

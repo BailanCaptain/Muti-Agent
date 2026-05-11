@@ -176,18 +176,20 @@ function escapeRegex(s: string): string {
 /**
  * 单条决策。返回 allowed=true 表示通过，false 表示拒绝（reason 说明原因）。
  *
- * 决策步骤（white-list union 模型）：
+ * 决策步骤（chap 6.4：deny 优先 + tied OR-union）：
  *   1. 找所有 path 匹配的 rule
  *   2. 没匹配 → no_match（白名单 deny）
  *   3. 取 specificity 最大的 rule 集（可能 tied）
- *   4. tied 集合 OR-union：任一 (alias_ok && action_ok) → allow
- *   5. 全部 fail → 取第一条作示例 pattern，区分 alias / action 拒绝原因
+ *   4. **deny 优先**：tied 集合内若有 rule allowed_aliases=[]（hard deny，例如
+ *      wiki/index.md 派生视图保护）→ 整体 deny，不走 union
+ *   5. 否则 tied OR-union：任一 (alias_ok && action_ok) → allow
+ *   6. 全部 fail → 区分 alias / action 拒绝原因
  *
- * 设计依据：chap 6 sample 的 wiki/people/<self>.md + wiki/people/<other>.md
- * 是 same specificity tied pair，意图就是"自己 page 走 <self> 规则；他人 page
- * 走 <other> 规则"，配置上是 OR 合并的多条 sub-rule。在 union 模型下永远不会
- * 真冲突。chap 6.4 第 4 条"同优先级且不一致 → lint 失败"的 lint 含义是配置
- * *质量* 检查（unreachable rule 之类），不是决策正确性 fail-safe。
+ * [范-r1 P2 修正]：chap 6.4 第 2 条"同 path 内：deny 优先于 allow"明确要求
+ * allowed_aliases=[] 视为 hard deny。同 specificity 下 deny rule 必须 short-
+ * circuit 整个决策，否则后加的 allow rule 能 override 派生视图保护这种关键 deny。
+ * tied 集合内 allow rule 只在没有 hard deny 时才能 OR 合并（例如 wiki/people/
+ * <self> + <other> sample pair）。
  */
 export function decide(
   compiled: CompiledACL,
@@ -210,6 +212,16 @@ export function decide(
   }
   const topSpec = Math.max(...matches.map((m) => m.compiled.specificity))
   const top = matches.filter((m) => m.compiled.specificity === topSpec)
+
+  // [范-r1 P2] deny 优先：tied 内若有 allowed_aliases=[] hard deny rule，整体拒
+  const denyRule = top.find((t) => t.compiled.rule.allowedAliases.length === 0)
+  if (denyRule) {
+    return {
+      allowed: false,
+      reason: "hard_deny",
+      matchedPattern: denyRule.compiled.rule.pathPattern,
+    }
+  }
 
   // tied OR-union：任一 rule (alias_ok && action_ok) → allow
   let aliasOkSomewhere = false

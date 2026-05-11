@@ -28,13 +28,13 @@
 
 import crypto from "node:crypto"
 import fs from "node:fs"
-import path from "node:path"
 import type { WikiEventsRepository } from "../db/repositories/wiki-events-repository"
 import type { WikiLeasesRepository } from "../db/repositories/wiki-leases-repository"
 import type { CompiledACL } from "./acl-engine"
 import { decide } from "./acl-engine"
 import type { ACLContext, WikiAction } from "./acl-types"
 import { writeFileAtomic } from "./atomic-write"
+import { WikiPathInvalidError, safeWikiPath } from "./path-containment"
 
 export interface UpdateWikiRequest {
   /** wiki 相对路径（如 'wiki/concepts/foo.md'）；service 内部解 wikiRoot 后绝对化。 */
@@ -56,6 +56,10 @@ export type UpdateWikiStatus =
   | "schema_invalid"
   | "stale_token"
   | "not_implemented"
+  /** [范-r1 P3] internal IO failure（atomic-write/disk full/permissions），≠ CAS conflict */
+  | "internal"
+  /** [范-r1 P1] path 校验失败（traversal / 非 wiki/ 前缀 / NUL byte）—— security 先于 ACL */
+  | "path_invalid"
 
 export interface UpdateWikiResponse {
   status: UpdateWikiStatus
@@ -88,6 +92,17 @@ export class UpdateWikiService {
   constructor(private readonly cfg: UpdateWikiServiceConfig) {}
 
   updateWiki(req: UpdateWikiRequest, context: ACLContext): UpdateWikiResponse {
+    // 0. [范-r1 P1] path containment —— security 必须先于 ACL（防 ACL 通过后 ../ 逃逸）
+    let absPath: string
+    try {
+      absPath = safeWikiPath(this.cfg.wikiRoot, req.path)
+    } catch (err) {
+      if (err instanceof WikiPathInvalidError) {
+        return { status: "path_invalid", error: err.message }
+      }
+      throw err
+    }
+
     // 1. ACL
     const aclDecision = decide(this.cfg.acl, context, req.path, req.action)
     if (!aclDecision.allowed) {
@@ -101,7 +116,6 @@ export class UpdateWikiService {
     }
 
     // 3. CAS：读当前文件 hash + content（append 用） 比 baseHash
-    const absPath = this.absPath(req.path)
     const existing = readFileTextIfExists(absPath)
     const currentHash = existing === null ? null : sha256(existing)
     if (currentHash !== req.baseHash) {
@@ -149,7 +163,24 @@ export class UpdateWikiService {
     } catch (err) {
       const msg = (err as Error).message
       this.cfg.events.abort(event.id, { error: msg, reason: "atomic_write_failed" })
-      return { status: "conflict", eventId: event.id, error: `write failed: ${msg}` }
+      // [范-r1 P3] 不再返 'conflict'（误导 client 按 CAS 重试）；用 'internal' 让
+      // route layer 映射 5xx
+      return { status: "internal", eventId: event.id, error: `atomic_write_failed: ${msg}` }
+    }
+
+    // [范-r1 P2] 临界区收尾再校 lease：写已落盘但 lease 在 atomic-write 期间被
+    // 抢占的情况（TTL race window），revert 文件 + abort，避免脏数据 + 错误 commit
+    if (!this.cfg.leases.isCurrent(req.path, req.fencingToken, this.nowIso())) {
+      // 回滚：删除本次写入的文件（delete 分支的 revert 拿不回来，但 lease 已抢占
+      // 意味着新 owner 立刻就会重写，临时不一致窗口可接受）
+      if (dispatch.kind !== "delete") {
+        deleteFileIfExists(absPath)
+      }
+      this.cfg.events.abort(event.id, {
+        error: "stale_token",
+        reason: "lease_changed_after_write",
+      })
+      return { status: "stale_token", eventId: event.id, error: "lease lost after write" }
     }
 
     // 8. COMMIT
@@ -168,10 +199,6 @@ export class UpdateWikiService {
 
   private nowIso(): string {
     return (this.cfg.now ? this.cfg.now() : new Date()).toISOString()
-  }
-
-  private absPath(relPath: string): string {
-    return path.join(this.cfg.wikiRoot, relPath)
   }
 }
 

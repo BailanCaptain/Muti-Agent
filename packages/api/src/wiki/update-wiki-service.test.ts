@@ -372,6 +372,212 @@ test("F027 P3 service: not_implemented —— patch / promote / demote / ingest"
   }
 })
 
+test("F027 P3 [范-r1 P1]: path traversal '../../etc/passwd' → status='path_invalid'，wikiRoot 外不写", async () => {
+  const { service, leases, wikiRoot, cleanup } = await build()
+  try {
+    const a = leases.acquireLease({
+      path: "wiki/concepts/../../../etc/passwd",
+      ownerAlias: "范德彪",
+      ttlSeconds: 30,
+      leaderTerm: "term-1",
+    })
+    const r = service.updateWiki(
+      {
+        path: "wiki/concepts/../../../etc/passwd",
+        action: "write",
+        baseHash: null,
+        content: "exploit",
+        fencingToken: a!.fencingToken,
+      },
+      FAN_CTX,
+    )
+    assert.equal(r.status, "path_invalid", `expected path_invalid, got ${r.status}`)
+    // 文件绝不能写到 wikiRoot 外
+    const outsidePath = path.join(wikiRoot, "..", "..", "..", "etc", "passwd")
+    assert.equal(fs.existsSync(outsidePath), false, "must NOT write outside wikiRoot")
+  } finally {
+    cleanup()
+  }
+})
+
+test("F027 P3 [范-r1 P1]: 不以 'wiki/' 开头 → path_invalid", async () => {
+  const { service, leases, cleanup } = await build()
+  try {
+    const a = leases.acquireLease({
+      path: "outside/foo.md",
+      ownerAlias: "范德彪",
+      ttlSeconds: 30,
+      leaderTerm: "term-1",
+    })
+    const r = service.updateWiki(
+      {
+        path: "outside/foo.md",
+        action: "write",
+        baseHash: null,
+        content: "x",
+        fencingToken: a!.fencingToken,
+      },
+      FAN_CTX,
+    )
+    assert.equal(r.status, "path_invalid")
+  } finally {
+    cleanup()
+  }
+})
+
+test("F027 P3 [范-r1 P3]: atomic_write_failed → status='internal'（不是 'conflict'）", async () => {
+  const { createDrizzleDb } = await import("../db/drizzle-instance")
+  const { WikiEventsRepository } = await import("../db/repositories/wiki-events-repository")
+  const { WikiLeasesRepository } = await import("../db/repositories/wiki-leases-repository")
+  const { compileACL, loadACLConfig } = await import("./acl-engine")
+  const { UpdateWikiService } = await import("./update-wiki-service")
+
+  const tempDir = (() => {
+    const runtimeDir = path.join(process.cwd(), ".runtime")
+    fs.mkdirSync(runtimeDir, { recursive: true })
+    return fs.mkdtempSync(path.join(runtimeDir, "r1-internal-"))
+  })()
+  const dbPath = path.join(tempDir, "test.sqlite")
+  // 故意把 wikiRoot 指向一个 *文件*，让 mkdirSync 报错 → atomic-write 失败
+  const wikiRoot = path.join(tempDir, "wiki-root-as-file")
+  fs.writeFileSync(wikiRoot, "block") // wikiRoot 路径是文件不是目录
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const events = new WikiEventsRepository(db)
+  const leases = new WikiLeasesRepository(db)
+  const acl = compileACL(
+    loadACLConfig(`
+acl:
+  - path_pattern: 'wiki/concepts/**'
+    allowed_aliases: ['<any-agent>']
+    allowed_actions: [write]
+`),
+  )
+  const service = new UpdateWikiService({
+    leases,
+    events,
+    acl,
+    wikiRoot,
+    leaderTerm: () => "term-1",
+  })
+
+  try {
+    const a = leases.acquireLease({
+      path: "wiki/concepts/foo.md",
+      ownerAlias: "范德彪",
+      ttlSeconds: 30,
+      leaderTerm: "term-1",
+    })
+    const r = service.updateWiki(
+      {
+        path: "wiki/concepts/foo.md",
+        action: "write",
+        baseHash: null,
+        content: "x",
+        fencingToken: a!.fencingToken,
+      },
+      FAN_CTX,
+    )
+    assert.equal(r.status, "internal", `expected internal, got ${r.status}`)
+    assert.match(r.error ?? "", /atomic_write_failed/)
+    // 对应 wiki_event 应 aborted with reason='atomic_write_failed'
+    const ev = events.get(r.eventId!)
+    assert.equal(ev?.state, "aborted")
+    assert.equal(ev?.reason, "atomic_write_failed")
+  } finally {
+    close()
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    } catch {
+      // best effort
+    }
+  }
+})
+
+test("F027 P3 [范-r1 P2]: 临界区 TTL race —— atomic-write 期间 lease 被抢 → revert + stale_token", async () => {
+  // 注入 hook：让 writeFileAtomic 之间 lease 被强制抢占；service 应回滚文件 + abort
+  // 实现方式：包 leases，让第 2 次（PREPARE 后）isCurrent 通过，第 3 次（post-write）返 false
+  const { createDrizzleDb } = await import("../db/drizzle-instance")
+  const { WikiEventsRepository } = await import("../db/repositories/wiki-events-repository")
+  const { WikiLeasesRepository } = await import("../db/repositories/wiki-leases-repository")
+  const { compileACL, loadACLConfig } = await import("./acl-engine")
+  const { UpdateWikiService } = await import("./update-wiki-service")
+
+  const tempDir = (() => {
+    const runtimeDir = path.join(process.cwd(), ".runtime")
+    fs.mkdirSync(runtimeDir, { recursive: true })
+    return fs.mkdtempSync(path.join(runtimeDir, "r1-ttl-race-"))
+  })()
+  const dbPath = path.join(tempDir, "test.sqlite")
+  const wikiRoot = path.join(tempDir, "wiki-root")
+  fs.mkdirSync(wikiRoot, { recursive: true })
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const events = new WikiEventsRepository(db)
+  const leases = new WikiLeasesRepository(db)
+  const acl = compileACL(
+    loadACLConfig(`
+acl:
+  - path_pattern: 'wiki/concepts/**'
+    allowed_aliases: ['<any-agent>']
+    allowed_actions: [write]
+`),
+  )
+
+  // wrap leases.isCurrent：第 1 + 2 次 true（pre-check + final-CAS），第 3 次起 false
+  let isCurrentCalls = 0
+  const wrappedLeases: typeof leases = Object.create(leases)
+  wrappedLeases.isCurrent = (p: string, t: string, now?: string) => {
+    isCurrentCalls++
+    if (isCurrentCalls <= 2) return leases.isCurrent.call(leases, p, t, now)
+    return false
+  }
+
+  const service = new UpdateWikiService({
+    leases: wrappedLeases,
+    events,
+    acl,
+    wikiRoot,
+    leaderTerm: () => "term-1",
+  })
+
+  try {
+    const a = leases.acquireLease({
+      path: "wiki/concepts/race-late.md",
+      ownerAlias: "范德彪",
+      ttlSeconds: 30,
+      leaderTerm: "term-1",
+    })
+    const r = service.updateWiki(
+      {
+        path: "wiki/concepts/race-late.md",
+        action: "write",
+        baseHash: null,
+        content: "doomed-late",
+        fencingToken: a!.fencingToken,
+      },
+      FAN_CTX,
+    )
+    assert.equal(r.status, "stale_token", `expected stale_token, got ${r.status}`)
+    // 文件应被 revert（atomic-write 已 rename，service 应 unlink 回滚）
+    assert.equal(
+      fs.existsSync(path.join(wikiRoot, "wiki/concepts/race-late.md")),
+      false,
+      "post-write stale_token 应回滚文件",
+    )
+    const ev = events.get(r.eventId!)
+    assert.equal(ev?.state, "aborted")
+    assert.equal(ev?.reason, "lease_changed_after_write")
+  } finally {
+    close()
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    } catch {
+      // best effort
+    }
+  }
+})
+
 test("F027 P3 service: leaderTerm 注入到 wiki_events.leader_term", async () => {
   const { service, leases, events, cleanup } = await build()
   try {

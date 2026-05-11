@@ -169,6 +169,25 @@ test("F027 P3 decide：派生视图 wiki/index.md 任何人都不能写", () => 
   }
 })
 
+test("F027 P3 [范-r1 P2]: hard deny (allowed_aliases=[]) 同优先级 override allow rule", () => {
+  // chap 6.4 第 2 条 "deny 优先于 allow"：tied 集合内若有 hard deny，
+  // 后加的 allow rule 不能 override 派生视图保护
+  const tiedDenyOverride = `
+acl:
+  - path_pattern: 'wiki/index.md'
+    allowed_aliases: []
+    notes: 'hard deny — 派生视图保护'
+  - path_pattern: 'wiki/index.md'
+    allowed_aliases: ['小孙']
+    allowed_actions: [write]
+    notes: '错误配置：试图给小孙开后门'
+`
+  const c = compileACL(loadACLConfig(tiedDenyOverride))
+  const d = decide(c, ctx("小孙"), "wiki/index.md", "write")
+  assert.equal(d.allowed, false, "hard deny 应 short-circuit 整个决策")
+  assert.equal(d.reason, "hard_deny")
+})
+
 test("F027 P3 decide：tied 集合 OR-union（任一 rule 允许即通过）", () => {
   const tied = `
 acl:
