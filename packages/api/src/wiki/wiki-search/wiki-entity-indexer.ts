@@ -89,7 +89,7 @@ export async function reindexWikiEntities(opts: IndexerOptions): Promise<Indexer
 
   for (const bucket of bucketDirs) {
     const bucketDir = path.join(wikiDir, bucket)
-    await walkMd(bucketDir, async (absPath, mtimeMs) => {
+    await walkMd(bucketDir, async (absPath, _walkMtimeMs) => {
       const relPath = path.relative(opts.wikiRoot, absPath).replace(/\\/g, "/")
       seenOnDiskPaths.add(relPath)
       try {
@@ -100,7 +100,17 @@ export async function reindexWikiEntities(opts: IndexerOptions): Promise<Indexer
           return
         }
         const name = path.basename(absPath, ".md")
-        diskByPath.set(relPath, { relPath, absPath, bucket, name, mtimeMs, sizeBytes: stat.size })
+        // 范-r3: 用 visit 内二次 stat 的 mtimeMs，不用 walkMd 传入的（可能 NaN）。
+        //   transient 场景：walkMd pre-visit stat 失败 → 传 NaN；visit 二次 stat
+        //   成功 → 应用真 mtimeMs 而非 NaN（NaN 写 INTEGER NOT NULL 列会触发约束）
+        diskByPath.set(relPath, {
+          relPath,
+          absPath,
+          bucket,
+          name,
+          mtimeMs: stat.mtimeMs,
+          sizeBytes: stat.size,
+        })
       } catch (err) {
         // 范-r1 P1-3: stat 失败 path 已进 seenOnDiskPaths → 不会被当 deleted 删除
         failed.push({ relPath, error: errorMessage(err) })

@@ -335,9 +335,7 @@ describe("reindexWikiEntities", () => {
     }
   })
 
-  it("范-r2 P1-3：walkMd 内 stat 失败不中断同目录其他文件扫", async () => {
-    // 这个测试主要文档化预期行为；实际 stat 失败场景在 Windows 下难复现
-    // (locked file / permission denied)，简化为验证 walkMd 处理 ENOENT 不抛
+  it("范-r2 P1-3：walkMd 内 ENOENT 静默返回（dir 不存在不抛）", async () => {
     const { drizzle, cleanup } = makeDb()
     const { root, cleanup: cleanupFs } = makeWikiRoot()
     try {
@@ -345,6 +343,94 @@ describe("reindexWikiEntities", () => {
       const r = await reindexWikiEntities({ wikiRoot: root, db: drizzle })
       assert.equal(r.scanned, 0)
       assert.equal(r.failed.length, 0)
+    } finally {
+      cleanup()
+      cleanupFs()
+    }
+  })
+
+  it("范-r3：walkMd pre-stat 失败 + visit 二次 stat 成功 → 用真 mtimeMs（不是 NaN）", async () => {
+    // r3 反馈：transient stat 失败时，visit 应使用自己 stat 拿到的 mtimeMs，
+    //   不是 walkMd 第一次失败传的 NaN（NaN 写 INTEGER NOT NULL 会触发约束 fail）
+    const { drizzle, cleanup } = makeDb()
+    const { root, cleanup: cleanupFs } = makeWikiRoot()
+    try {
+      await writeWikiFile(root, "wiki/concepts/F011.md", "content")
+      const originalStat = fsAsync.stat
+      let callCount = 0
+      // biome-ignore lint/suspicious/noExplicitAny: monkey-patch for fault injection
+      ;(fsAsync as any).stat = async (p: string) => {
+        const target = path.join(root, "wiki/concepts/F011.md")
+        if (p === target) {
+          callCount++
+          if (callCount === 1) {
+            const err = new Error("EACCES: simulated transient")
+            ;(err as NodeJS.ErrnoException).code = "EACCES"
+            throw err
+          }
+        }
+        return originalStat.call(fsAsync, p)
+      }
+      try {
+        const r = await reindexWikiEntities({ wikiRoot: root, db: drizzle })
+        // 第一次 stat 失败 walkMd 传 NaN；第二次 visit 内 stat 成功 → 应用真 mtimeMs
+        assert.equal(r.inserted, 1, "transient stat 失败应仍能 insert")
+        const row = drizzle
+          .select()
+          .from(wikiEntityIndex)
+          .all()
+          .find((rr) => rr.path === "wiki/concepts/F011.md")
+        assert.ok(row)
+        assert.ok(Number.isFinite(row.mtimeMs), `mtimeMs 应是有限数，实际 ${row.mtimeMs}`)
+        assert.ok(!Number.isNaN(row.mtimeMs), "mtimeMs 不应 NaN")
+      } finally {
+        // biome-ignore lint/suspicious/noExplicitAny: restore
+        ;(fsAsync as any).stat = originalStat
+      }
+    } finally {
+      cleanup()
+      cleanupFs()
+    }
+  })
+
+  it("范-r3：单文件 stat 持续失败 → failed[] + sibling 仍处理 + 旧 row 不删", async () => {
+    const { drizzle, cleanup } = makeDb()
+    const { root, cleanup: cleanupFs } = makeWikiRoot()
+    try {
+      await writeWikiFile(root, "wiki/concepts/F011.md", "ok body 1")
+      await writeWikiFile(root, "wiki/concepts/F021.md", "ok body 2")
+      await writeWikiFile(root, "wiki/concepts/F018.md", "ok body 3")
+      await reindexWikiEntities({ wikiRoot: root, db: drizzle })
+      assert.equal(drizzle.select().from(wikiEntityIndex).all().length, 3)
+
+      // 二次 reindex：mock fs.stat 让 F021 持续失败
+      const originalStat = fsAsync.stat
+      const f021Target = path.join(root, "wiki/concepts/F021.md")
+      // biome-ignore lint/suspicious/noExplicitAny: fault injection
+      ;(fsAsync as any).stat = async (p: string) => {
+        if (p === f021Target) {
+          const err = new Error("EACCES: persistent")
+          ;(err as NodeJS.ErrnoException).code = "EACCES"
+          throw err
+        }
+        return originalStat.call(fsAsync, p)
+      }
+      try {
+        const r = await reindexWikiEntities({ wikiRoot: root, db: drizzle })
+        assert.ok(
+          r.failed.some((f) => f.relPath.includes("F021")),
+          "F021 应进 failed[]",
+        )
+        assert.equal(r.removed, 0, "stat 失败文件不应触发 removed (P1-3 防误删)")
+        const rows = drizzle.select().from(wikiEntityIndex).all()
+        assert.equal(rows.length, 3, "全 3 行保留")
+        const f021Row = rows.find((rr) => rr.path === "wiki/concepts/F021.md")
+        assert.ok(f021Row)
+        assert.equal(f021Row.body, "ok body 2", "F021 旧 body 保留")
+      } finally {
+        // biome-ignore lint/suspicious/noExplicitAny: restore
+        ;(fsAsync as any).stat = originalStat
+      }
     } finally {
       cleanup()
       cleanupFs()
