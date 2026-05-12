@@ -458,7 +458,7 @@ describe("RoomCompiler · 崩溃恢复 (核心 AC: 断点续编)", () => {
       assert.equal(report.scanned, 1)
       assert.equal(report.patched, 0)
       assert.equal(report.rolledBack, 1)
-      assert.equal(report.details[0].reason, "file_hash_mismatch")
+      assert.equal(report.details[0].reason, "viewfinder.md_hash_mismatch")
       // checkpoint 行被删（caller 下次 run 会从 prev=null 重头编）
       assert.equal(store.read("R1"), null)
     } finally {
@@ -501,7 +501,7 @@ describe("RoomCompiler · 崩溃恢复 (核心 AC: 断点续编)", () => {
       })
       const report = await compiler.recoverIncomplete()
       assert.equal(report.rolledBack, 1)
-      assert.equal(report.details[0].reason, "file_missing")
+      assert.equal(report.details[0].reason, "viewfinder.md_missing")
       assert.equal(store.read("R1"), null)
     } finally {
       cleanup()
@@ -545,10 +545,12 @@ describe("RoomCompiler · 崩溃恢复 (核心 AC: 断点续编)", () => {
           leaderTerm: "1",
         })
       }
-      // R1 落盘正确
+      // R1 落盘正确（3 文件全对，按范-r1 P1-1 必须 3 文件全 hash 匹配才 patch）
       await fsAsync.mkdir(path.join(root, "rooms", "R1"), { recursive: true })
       await fsAsync.writeFile(path.join(root, "rooms", "R1", "viewfinder.md"), a1.viewfinderMd)
-      // R2 落盘错的
+      await fsAsync.writeFile(path.join(root, "rooms", "R1", "decisions.md"), a1.decisionsMd)
+      await fsAsync.writeFile(path.join(root, "rooms", "R1", "log.md"), a1.logMd)
+      // R2 落盘错的（viewfinder hash 不匹配 → rollback）
       await fsAsync.mkdir(path.join(root, "rooms", "R2"), { recursive: true })
       await fsAsync.writeFile(path.join(root, "rooms", "R2", "viewfinder.md"), "# B-WRONG")
       // R3 不写文件
@@ -593,6 +595,353 @@ describe("RoomCompiler · 崩溃恢复 (核心 AC: 断点续编)", () => {
       assert.ok(row?.committedAt)
     } finally {
       cleanup()
+      close()
+    }
+  })
+})
+
+// ─── 范-r1 P1-1 修：3 文件 hash 必须全匹配才补 committed_at ───────────
+
+describe("RoomCompiler · 范-r1 P1-1 三文件 hash 全校验", () => {
+  it("viewfinder hash 匹配 但 decisions.md 缺失 → 不补 committed_at, 走 rollback", async () => {
+    const { db, close } = makeDb()
+    const { root, cleanup } = makeWikiRoot()
+    try {
+      const store = new SqliteCheckpointStore(db)
+      const artifact = makeArtifact({
+        cursorCommitSeq: 7,
+        cursorMessageId: "m7",
+        viewfinderMd: "# viewfinder OK",
+        decisionsMd: "# decisions OK",
+        logMd: "# log OK",
+      })
+      const compiledAt = "2026-05-12T01:00:00.000Z"
+      store.prepare({
+        roomId: "R1",
+        cursorCommitSeq: artifact.cursorCommitSeq,
+        cursorMessageId: artifact.cursorMessageId,
+        sealedCursorSeq: 0,
+        viewfinderHash: sha256(artifact.viewfinderMd),
+        decisionsHash: sha256(artifact.decisionsMd),
+        logHash: sha256(artifact.logMd),
+        threadSealId: null,
+        compiledAt,
+        fencingToken: "100",
+        leaderTerm: "1",
+      })
+      // viewfinder 落盘 OK，decisions / log 缺失（write 阶段崩在第 1 个 atomic-rename 之后）
+      const dir = path.join(root, "rooms", "R1")
+      await fsAsync.mkdir(dir, { recursive: true })
+      await fsAsync.writeFile(path.join(dir, "viewfinder.md"), artifact.viewfinderMd)
+
+      const compiler = new RoomCompiler({
+        store,
+        wikiRoot: root,
+        leaderTerm: "2",
+        fencingToken: "200",
+        compileFn: () => artifact,
+      })
+      const report = await compiler.recoverIncomplete()
+      assert.equal(report.scanned, 1)
+      assert.equal(report.patched, 0, "viewfinder match alone must NOT patch — 范-r1 P1-1")
+      assert.equal(report.rolledBack, 1)
+      assert.equal(store.read("R1"), null)
+    } finally {
+      cleanup()
+      close()
+    }
+  })
+
+  it("viewfinder + decisions OK, log.md hash 不匹配 → 不补 committed_at", async () => {
+    const { db, close } = makeDb()
+    const { root, cleanup } = makeWikiRoot()
+    try {
+      const store = new SqliteCheckpointStore(db)
+      const artifact = makeArtifact({
+        cursorCommitSeq: 7,
+        cursorMessageId: "m7",
+        viewfinderMd: "# v",
+        decisionsMd: "# d",
+        logMd: "# expected log",
+      })
+      const compiledAt = "2026-05-12T01:00:00.000Z"
+      store.prepare({
+        roomId: "R1",
+        cursorCommitSeq: artifact.cursorCommitSeq,
+        cursorMessageId: artifact.cursorMessageId,
+        sealedCursorSeq: 0,
+        viewfinderHash: sha256(artifact.viewfinderMd),
+        decisionsHash: sha256(artifact.decisionsMd),
+        logHash: sha256(artifact.logMd),
+        threadSealId: null,
+        compiledAt,
+        fencingToken: "100",
+        leaderTerm: "1",
+      })
+      const dir = path.join(root, "rooms", "R1")
+      await fsAsync.mkdir(dir, { recursive: true })
+      await fsAsync.writeFile(path.join(dir, "viewfinder.md"), artifact.viewfinderMd)
+      await fsAsync.writeFile(path.join(dir, "decisions.md"), artifact.decisionsMd)
+      await fsAsync.writeFile(path.join(dir, "log.md"), "# WRONG LOG")
+
+      const compiler = new RoomCompiler({
+        store,
+        wikiRoot: root,
+        leaderTerm: "2",
+        fencingToken: "200",
+        compileFn: () => artifact,
+      })
+      const report = await compiler.recoverIncomplete()
+      assert.equal(report.patched, 0)
+      assert.equal(report.rolledBack, 1)
+      assert.equal(report.details[0].reason, "log.md_hash_mismatch")
+    } finally {
+      cleanup()
+      close()
+    }
+  })
+
+  it("3 文件 hash 全匹配 → 补 committed_at", async () => {
+    const { db, close } = makeDb()
+    const { root, cleanup } = makeWikiRoot()
+    try {
+      const store = new SqliteCheckpointStore(db)
+      const artifact = makeArtifact({
+        cursorCommitSeq: 7,
+        cursorMessageId: "m7",
+        viewfinderMd: "# v",
+        decisionsMd: "# d",
+        logMd: "# l",
+      })
+      const compiledAt = "2026-05-12T01:00:00.000Z"
+      store.prepare({
+        roomId: "R1",
+        cursorCommitSeq: artifact.cursorCommitSeq,
+        cursorMessageId: artifact.cursorMessageId,
+        sealedCursorSeq: 0,
+        viewfinderHash: sha256(artifact.viewfinderMd),
+        decisionsHash: sha256(artifact.decisionsMd),
+        logHash: sha256(artifact.logMd),
+        threadSealId: null,
+        compiledAt,
+        fencingToken: "100",
+        leaderTerm: "1",
+      })
+      const dir = path.join(root, "rooms", "R1")
+      await fsAsync.mkdir(dir, { recursive: true })
+      await fsAsync.writeFile(path.join(dir, "viewfinder.md"), artifact.viewfinderMd)
+      await fsAsync.writeFile(path.join(dir, "decisions.md"), artifact.decisionsMd)
+      await fsAsync.writeFile(path.join(dir, "log.md"), artifact.logMd)
+
+      const compiler = new RoomCompiler({
+        store,
+        wikiRoot: root,
+        leaderTerm: "2",
+        fencingToken: "200",
+        compileFn: () => artifact,
+      })
+      const report = await compiler.recoverIncomplete()
+      assert.equal(report.patched, 1)
+      assert.equal(report.rolledBack, 0)
+      assert.ok(store.read("R1")?.committedAt)
+    } finally {
+      cleanup()
+      close()
+    }
+  })
+
+  it("recover 跑两次幂等：第二次扫到 0 行（committed_at 已补）", async () => {
+    const { db, close } = makeDb()
+    const { root, cleanup } = makeWikiRoot()
+    try {
+      const store = new SqliteCheckpointStore(db)
+      const compiler = new RoomCompiler({
+        store,
+        wikiRoot: root,
+        leaderTerm: "1",
+        fencingToken: "1",
+        compileFn: () => makeArtifact({ cursorCommitSeq: 1, cursorMessageId: "m1" }),
+      })
+      // 模拟 write 后崩
+      const a = makeArtifact({ cursorCommitSeq: 1, cursorMessageId: "m1" })
+      store.prepare({
+        roomId: "R1",
+        cursorCommitSeq: a.cursorCommitSeq,
+        cursorMessageId: a.cursorMessageId,
+        sealedCursorSeq: 0,
+        viewfinderHash: sha256(a.viewfinderMd),
+        decisionsHash: sha256(a.decisionsMd),
+        logHash: sha256(a.logMd),
+        threadSealId: null,
+        compiledAt: "2026-05-12T01:00:00.000Z",
+        fencingToken: "1",
+        leaderTerm: "1",
+      })
+      const dir = path.join(root, "rooms", "R1")
+      await fsAsync.mkdir(dir, { recursive: true })
+      await fsAsync.writeFile(path.join(dir, "viewfinder.md"), a.viewfinderMd)
+      await fsAsync.writeFile(path.join(dir, "decisions.md"), a.decisionsMd)
+      await fsAsync.writeFile(path.join(dir, "log.md"), a.logMd)
+
+      const r1 = await compiler.recoverIncomplete()
+      assert.equal(r1.patched, 1)
+      const r2 = await compiler.recoverIncomplete()
+      assert.equal(r2.scanned, 0, "幂等：第二次 listIncomplete 应为空")
+      assert.equal(r2.patched, 0)
+      assert.equal(r2.rolledBack, 0)
+    } finally {
+      cleanup()
+      close()
+    }
+  })
+})
+
+// ─── 范-r1 P1-2 修：同 room 并发互斥 ─────────────────────────────────
+
+describe("RoomCompiler · 范-r1 P1-2 同 room 并发安全", () => {
+  it("两次 run() 并发触发同 room → 串行执行，最终状态一致（不会互相覆盖文件）", async () => {
+    const { db, close } = makeDb()
+    const { root, cleanup } = makeWikiRoot()
+    try {
+      const store = new SqliteCheckpointStore(db)
+      let cursor = 0
+      const compileLatencies: number[] = []
+      const compiler = new RoomCompiler({
+        store,
+        wikiRoot: root,
+        leaderTerm: "1",
+        fencingToken: "1",
+        compileFn: async () => {
+          cursor++
+          const myCursor = cursor
+          // 模拟 LLM 耗时；前一个 compile 还在 await 时第二个 run() 会进入
+          await new Promise((r) => setTimeout(r, 30))
+          compileLatencies.push(Date.now())
+          return makeArtifact({
+            cursorCommitSeq: myCursor,
+            cursorMessageId: `m${myCursor}`,
+            viewfinderMd: `# v cursor=${myCursor}`,
+          })
+        },
+      })
+      // 并发触发两次
+      const [a, b] = await Promise.all([
+        compiler.run({ roomId: "R1", newMessages: [userMsg("m1", 1)], newSeals: [] }),
+        compiler.run({ roomId: "R1", newMessages: [userMsg("m2", 2)], newSeals: [] }),
+      ])
+      // 最终 row 必须 committed_at 非空 + 文件 hash 匹配 row 的 hash
+      const final = store.read("R1")
+      assert.ok(final?.committedAt, "最终 row 必须 commit")
+      const v = await fsAsync.readFile(path.join(root, "rooms", "R1", "viewfinder.md"), "utf-8")
+      assert.equal(
+        sha256(v),
+        final?.viewfinderHash,
+        "文件 hash 必须匹配最终 row 的 hash —— 范-r1 P1-2 防 stale writer 覆盖",
+      )
+      // listIncomplete 必须空
+      assert.deepEqual(store.listIncomplete(), [])
+      // 两次都拿到合法 artifact
+      assert.ok(a.checkpoint.committedAt)
+      assert.ok(b.checkpoint.committedAt)
+    } finally {
+      cleanup()
+      close()
+    }
+  })
+
+  it("mutex 必须 per-room：同 room 串行 / 不同 room 可交叠（用 observable order 而非 wall-clock）", async () => {
+    const { db, close } = makeDb()
+    const { root, cleanup } = makeWikiRoot()
+    try {
+      const store = new SqliteCheckpointStore(db)
+      const order: string[] = []
+      const counters: Record<string, number> = {}
+      const compiler = new RoomCompiler({
+        store,
+        wikiRoot: root,
+        leaderTerm: "1",
+        fencingToken: "1",
+        compileFn: async ({ roomId }) => {
+          const idx = counters[roomId] ?? 0
+          counters[roomId] = idx + 1
+          order.push(`start-${roomId}-${idx}`)
+          await new Promise((r) => setTimeout(r, 20))
+          order.push(`end-${roomId}-${idx}`)
+          return makeArtifact({
+            cursorCommitSeq: idx + 1,
+            cursorMessageId: `m-${roomId}-${idx}`,
+            viewfinderMd: `# v ${roomId} ${idx}`,
+          })
+        },
+      })
+      // R1 ×2 + R2 ×1 并发触发
+      await Promise.all([
+        compiler.run({ roomId: "R1", newMessages: [userMsg("m1a", 1)], newSeals: [] }),
+        compiler.run({ roomId: "R1", newMessages: [userMsg("m1b", 2)], newSeals: [] }),
+        compiler.run({ roomId: "R2", newMessages: [userMsg("m2", 3)], newSeals: [] }),
+      ])
+
+      // 同 room 必须严格串行：R1 第二次 start 必须在 R1 第一次 end 之后
+      const r1Start1 = order.indexOf("start-R1-0")
+      const r1End1 = order.indexOf("end-R1-0")
+      const r1Start2 = order.indexOf("start-R1-1")
+      assert.ok(
+        r1Start1 >= 0 && r1End1 >= 0 && r1Start2 >= 0,
+        `R1 events missing in order: ${order.join(",")}`,
+      )
+      assert.ok(
+        r1End1 < r1Start2,
+        `同 R1 必须串行: end-R1-0(${r1End1}) < start-R1-1(${r1Start2}); order=${order.join(",")}`,
+      )
+
+      // 不同 room 必须可交叠：R2 start 必须早于 R1 第二次 end（即不被 R1 全部 block 完才轮上）
+      const r2Start = order.indexOf("start-R2-0")
+      const r1End2 = order.indexOf("end-R1-1")
+      assert.ok(r2Start >= 0 && r1End2 >= 0)
+      assert.ok(
+        r2Start < r1End2,
+        `R2 必须能与 R1 交叠（per-room 而非 global）: r2Start=${r2Start} r1End2=${r1End2}; order=${order.join(",")}`,
+      )
+
+      // 最终都 commit
+      assert.ok(store.read("R1")?.committedAt)
+      assert.ok(store.read("R2")?.committedAt)
+    } finally {
+      cleanup()
+      close()
+    }
+  })
+})
+
+// ─── 范-r1 P2-1 修：read API 拆 ──────────────────────────────────────
+
+describe("CheckpointStore · 范-r1 P2-1 readForBootstrap 只返已 commit", () => {
+  it("readForBootstrap 在 committed 行返回；prepare 行返 null（防 SessionBootstrap 误读）", () => {
+    const { db, close } = makeDb()
+    try {
+      const store = new SqliteCheckpointStore(db)
+      const artifact = makeArtifact({ cursorCommitSeq: 1, cursorMessageId: "m1" })
+      store.prepare({
+        roomId: "R1",
+        cursorCommitSeq: artifact.cursorCommitSeq,
+        cursorMessageId: artifact.cursorMessageId,
+        sealedCursorSeq: 0,
+        viewfinderHash: sha256(artifact.viewfinderMd),
+        decisionsHash: sha256(artifact.decisionsMd),
+        logHash: sha256(artifact.logMd),
+        threadSealId: null,
+        compiledAt: "2026-05-12T01:00:00.000Z",
+        fencingToken: "1",
+        leaderTerm: "1",
+      })
+      // prepare 行 read() 看得到，但 readForBootstrap() 看不到
+      assert.ok(store.read("R1"), "compiler-side read 必须看得到 prepare 行")
+      assert.equal(store.readForBootstrap("R1"), null, "Bootstrap-side 必须看不到 prepare 行")
+      // commit 后两边都看得到
+      store.commit("R1", "2026-05-12T01:00:00.000Z", "2026-05-12T01:00:01.000Z")
+      assert.ok(store.read("R1")?.committedAt)
+      assert.ok(store.readForBootstrap("R1")?.committedAt)
+    } finally {
       close()
     }
   })

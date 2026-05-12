@@ -64,6 +64,17 @@ export class SqliteCheckpointStore implements CheckpointStore {
     return row ? mapRow(row) : null
   }
 
+  /**
+   * 范-r1 P2-1 修：Bootstrap 侧读 —— SQL 层 filter committed_at IS NOT NULL，
+   * 防 SessionBootstrap 误读 prepare 行（V16.5 chap 8 行 924）。
+   */
+  readForBootstrap(roomId: string): RoomCheckpointRow | null {
+    const row = this.db
+      .prepare("SELECT * FROM room_checkpoints WHERE room_id = ? AND committed_at IS NOT NULL")
+      .get(roomId) as RawRow | undefined
+    return row ? mapRow(row) : null
+  }
+
   prepare(row: Omit<RoomCheckpointRow, "committedAt">): void {
     // Upsert：同 room 已有 row（无论 committed 与否）→ 覆盖 prepare
     // 不变量：committed_at 强制写回 NULL
