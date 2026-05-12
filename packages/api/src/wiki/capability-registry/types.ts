@@ -131,3 +131,23 @@ export class UnknownReceiverError extends Error {
     this.knownAliases = knownAliases
   }
 }
+
+/**
+ * 范-r1 P1：dispatch 实际派发目标与 envelope.receiver_alias 不一致。
+ * 攻击场景：attacker 把 envelope.receiver_alias spoof 成 "黄仁勋" 但实际派给桂芬，
+ * leak-detector 会跳过黄的 risks。caller (P5/P6/runtime dispatch) 拿到实际
+ * dispatch target 后必须调 assertEnvelopeReceiverConsistent 兜底。
+ */
+export class EnvelopeReceiverMismatchError extends Error {
+  readonly envelopeReceiver: string
+  readonly actualReceiver: string
+  constructor(envelopeReceiver: string, actualReceiver: string) {
+    super(
+      `envelope.receiver_alias "${envelopeReceiver}" != actual dispatch target "${actualReceiver}"; ` +
+        `possible spoofing — leak-detector will skip wrong agent's risks. caller must reject.`,
+    )
+    this.name = "EnvelopeReceiverMismatchError"
+    this.envelopeReceiver = envelopeReceiver
+    this.actualReceiver = actualReceiver
+  }
+}

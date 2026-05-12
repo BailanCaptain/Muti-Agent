@@ -23,7 +23,7 @@ import type {
   ReceiverHandoffEnvelope,
   SenderHandoff,
 } from "./types"
-import { UnknownReceiverError } from "./types"
+import { EnvelopeReceiverMismatchError, UnknownReceiverError } from "./types"
 
 export function rewriteHandoffForReceiver(
   handoff: SenderHandoff,
@@ -83,6 +83,24 @@ function dedupeStrings(arr: string[]): string[] {
     out.push(trimmed)
   }
   return out
+}
+
+/**
+ * 范-r1 P1：dispatch 一致性校验。
+ * caller (P5 assemblePrompt / P6 IngestModal / runtime dispatch) 拿到实际派发
+ * target alias 后**必须**调此 helper 兜底，防 attacker 把 envelope.receiver_alias
+ * spoof 成另一 agent 让 leak-detector 跳过该 agent 的 sensitive 字段。
+ *
+ * 设计哲学：P9 不强制做 dispatch 校验（分层职责，P9 只管 envelope 结构层），
+ * 但提供 helper 让 caller 能调；caller 不调 = caller 自己的 bug。
+ */
+export function assertEnvelopeReceiverConsistent(
+  envelope: ReceiverHandoffEnvelope,
+  actualReceiverAlias: string,
+): void {
+  if (envelope.receiver_alias !== actualReceiverAlias) {
+    throw new EnvelopeReceiverMismatchError(envelope.receiver_alias, actualReceiverAlias)
+  }
 }
 
 /**

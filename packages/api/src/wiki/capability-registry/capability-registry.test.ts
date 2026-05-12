@@ -25,12 +25,14 @@ import {
   REQUIRED_CAPABILITY_SLOTS,
 } from "./loader"
 import {
+  assertEnvelopeReceiverConsistent,
   getSelfCapabilityDigest,
   rewriteHandoffForReceiver,
 } from "./handoff-rewriter"
 import { detectSenderRiskLeak } from "./leak-detector"
 import {
   CapabilityRegistryError,
+  EnvelopeReceiverMismatchError,
   type ReceiverHandoffEnvelope,
   UnknownReceiverError,
 } from "./types"
@@ -360,6 +362,128 @@ test("leak-detector: 注入式攻击 — sender 故意在 task 里嵌 receiver �
   assert.ok(result.hasLeak, "范德彪的 must_not 嵌入 task 应被检出")
   const fanLeaks = result.findings.filter((f) => f.sourceAgent === "范德彪")
   assert.ok(fanLeaks.length > 0)
+})
+
+// ─── 范-r1 P1/P2 修复锁 ──────────────────────────────────────────────
+
+test("范-r1 P1: assertEnvelopeReceiverConsistent — receiver_alias 不一致时抛错", () => {
+  // 攻击：dispatch 派给桂芬，但 attacker 把 envelope.receiver_alias 改成 "黄仁勋"
+  // → leak-detector 会跳过黄的 risks 不报 leak
+  // 修：P9 提供 helper 让 caller (P5/P6/runtime dispatch) 能调
+  const registry = loadCapabilityRegistryFromRoot(REPO_ROOT)
+  const env: ReceiverHandoffEnvelope = {
+    sender_alias: "黄仁勋",
+    receiver_alias: "黄仁勋", // attacker spoof
+    task: "x",
+    receiver_capability_digest: "x",
+    collaboration_contract: {
+      sender_alias: "黄仁勋",
+      context_summary: "",
+      expected_evidence: [],
+      receiver_must_do: [],
+      do_not_section: [],
+    },
+  }
+  // 实际 dispatch 目标是桂芬
+  assert.throws(
+    () => assertEnvelopeReceiverConsistent(env, "桂芬"),
+    (err) =>
+      err instanceof EnvelopeReceiverMismatchError &&
+      err.envelopeReceiver === "黄仁勋" &&
+      err.actualReceiver === "桂芬",
+  )
+})
+
+test("范-r1 P1: assertEnvelopeReceiverConsistent — 一致时不抛错", () => {
+  const env: ReceiverHandoffEnvelope = {
+    sender_alias: "黄仁勋",
+    receiver_alias: "桂芬",
+    task: "x",
+    receiver_capability_digest: "x",
+    collaboration_contract: {
+      sender_alias: "黄仁勋",
+      context_summary: "",
+      expected_evidence: [],
+      receiver_must_do: [],
+      do_not_section: [],
+    },
+  }
+  assert.doesNotThrow(() => assertEnvelopeReceiverConsistent(env, "桂芬"))
+})
+
+test("范-r1 P2: 跨字段拼接绕过 — 单字段未命中但聚合扫描能抓", () => {
+  // 攻击场景：把 黄仁勋 LL-HR-1 risk text "长 thread / 跨 session 容易凭印象答复，必须 git rehydrate 再回"
+  // 拆成两个 evidence 项 + 一个嵌入 context_summary：
+  //   项 1 = "evidence A 含 长 thread / 跨 session"
+  //   项 2 = "evidence B 含 容易凭印象答复，必须 git rehydrate 再回"
+  // 两段都 >= 5 字符，但单段都不命中整段 risk text → 默认子串扫描漏抓
+  // 修：加聚合扫描 mode（aggregate=true）扫合并字符串
+  const registry = loadCapabilityRegistryFromRoot(REPO_ROOT)
+  const env: ReceiverHandoffEnvelope = {
+    sender_alias: "黄仁勋",
+    receiver_alias: "桂芬",
+    task: "do this thing",
+    receiver_capability_digest: registry.agents.get("桂芬")!.capability_digest_for_self.trim(),
+    collaboration_contract: {
+      sender_alias: "黄仁勋",
+      context_summary: "",
+      // 把 黄仁勋 LL-HR-1 整段 risk text 拆到两个 item
+      expected_evidence: [
+        "evidence A：注意 长 thread / 跨 session",
+        "evidence B：容易凭\"印象\"答复，必须 git rehydrate 再回",
+      ],
+      receiver_must_do: [],
+      do_not_section: [],
+    },
+  }
+  // 默认 mode（aggregate=false）应漏抓（保留向后兼容 + 单字段精确定位）
+  const defaultResult = detectSenderRiskLeak(env, registry)
+  const huangFromDefault = defaultResult.findings.filter((f) => f.sourceAgent === "黄仁勋")
+  assert.equal(huangFromDefault.length, 0, "默认 mode 漏抓是已知 limitation")
+
+  // aggregate=true 应抓到
+  const aggResult = detectSenderRiskLeak(env, registry, { aggregate: true })
+  const huangFromAgg = aggResult.findings.filter((f) => f.sourceAgent === "黄仁勋")
+  assert.ok(
+    huangFromAgg.length > 0,
+    `aggregate mode 应抓到跨字段拼接的 黄仁勋 risk，实际 findings: ${JSON.stringify(aggResult.findings)}`,
+  )
+})
+
+test("范-r1 P2: aggregate mode 也保持 receiver 自己的字段不算 leak", () => {
+  const registry = loadCapabilityRegistryFromRoot(REPO_ROOT)
+  const guifenCap = registry.agents.get("桂芬")!
+  const env: ReceiverHandoffEnvelope = {
+    sender_alias: "黄仁勋",
+    receiver_alias: "桂芬",
+    task: "x",
+    receiver_capability_digest: guifenCap.capability_digest_for_self.trim(),
+    collaboration_contract: {
+      sender_alias: "黄仁勋",
+      context_summary: guifenCap.must_not[0],
+      expected_evidence: [],
+      receiver_must_do: guifenCap.must_do.slice(0, 1),
+      do_not_section: [],
+    },
+  }
+  const result = detectSenderRiskLeak(env, registry, { aggregate: true })
+  const guifenLeaks = result.findings.filter((f) => f.sourceAgent === "桂芬")
+  assert.equal(guifenLeaks.length, 0, "aggregate mode receiver 自己字段仍不算 leak")
+})
+
+test("范-r1 P2: aggregate mode green fixture 仍 clean", () => {
+  const registry = loadCapabilityRegistryFromRoot(REPO_ROOT)
+  const fixturePath = path.join(
+    REPO_ROOT,
+    "tests/fixtures/capability-registry/green-neutralized.json",
+  )
+  const env = JSON.parse(fs.readFileSync(fixturePath, "utf-8")) as ReceiverHandoffEnvelope
+  const result = detectSenderRiskLeak(env, registry, { aggregate: true })
+  assert.equal(
+    result.hasLeak,
+    false,
+    `green fixture 在 aggregate mode 也必 clean，实际: ${JSON.stringify(result.findings)}`,
+  )
 })
 
 // ─── helpers ─────────────────────────────────────────────────────────
