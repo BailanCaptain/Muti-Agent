@@ -35,8 +35,42 @@ type DrizzleDb = BetterSQLite3Database<typeof schema>
 const DEFAULT_TOP_K = 5
 const MAX_TOP_K = 50
 
+/**
+ * F027 P15 · BM25 列权重（name >> body）
+ *
+ * SQLite FTS5 `bm25(table, w1, w2, ...)` 按列顺序给权重；UNINDEXED 列不算（FTS5 docs
+ * §3.5.5），所以 wiki_entity_fts 的 4 列 (path UNINDEXED, bucket UNINDEXED, name, body)
+ * 只给后 2 个 indexed 列权重。
+ *
+ * 为什么 name 5x body：
+ *   - 文件名（如 'F011-backend-hardening-drizzle'）是 wiki entity 最强元数据信号
+ *   - body 全文虽信息全，但相关性稀释（一篇 5KB 文档命中 'F011' 也可能只是引用提一句）
+ *   - 5x 是经验值，wiki 类全文搜索常用 3-10x 区间；后续 P11.b 接 memory_preflight
+ *     可调
+ *
+ * 调用方可覆盖（构造器传 ftsWeights）。
+ */
+const DEFAULT_NAME_WEIGHT = 5.0
+const DEFAULT_BODY_WEIGHT = 1.0
+
+export interface WikiEntityFtsProviderOptions {
+  /** name 列 BM25 权重（默认 5.0；调小让 body 权重相对升） */
+  nameWeight?: number
+  /** body 列 BM25 权重（默认 1.0） */
+  bodyWeight?: number
+}
+
 export class WikiEntityFtsProvider implements WikiSearchProvider {
-  constructor(private readonly db: DrizzleDb) {}
+  private readonly nameWeight: number
+  private readonly bodyWeight: number
+
+  constructor(
+    private readonly db: DrizzleDb,
+    opts?: WikiEntityFtsProviderOptions,
+  ) {
+    this.nameWeight = opts?.nameWeight ?? DEFAULT_NAME_WEIGHT
+    this.bodyWeight = opts?.bodyWeight ?? DEFAULT_BODY_WEIGHT
+  }
 
   /** memory-preflight 接口：query + topK + optional scope → RecallHit[] */
   async search(query: string, opts: SearchOptions): Promise<RecallHit[]> {
@@ -65,13 +99,27 @@ export class WikiEntityFtsProvider implements WikiSearchProvider {
     const rawDb = (this.db as unknown as { $client: { prepare(sql: string): unknown } }).$client
     const buckets = opts?.buckets ?? null
 
+    // F027 P15: bm25(wiki_entity_fts, w1, w2, w3, w4) — 4 列权重按 schema 顺序传
+    // (path, bucket, name, body)。
+    //
+    // **重要**：SQLite FTS5 bm25() 的权重参数按 schema 全部列顺序映射（含 UNINDEXED
+    // 列），不按 indexed 列子集。schema 第 1/2 列 (path/bucket) UNINDEXED 给 0.0
+    // 安全（UNINDEXED 列没 tf，weight 影响 = 0）；第 3/4 列 (name/body) 给真权重。
+    // 之前只传 2 个 weight 时实际被 path/bucket 列吃掉，name/body 退默认 1.0，导致
+    // weight 完全不生效（测试用 1.0 vs 10.0 raw rank 完全相同复现）。
+    //
+    // 权重格式：必须字面 number 不接受 '?' bind。type-check finite + toFixed(2)
+    // 限定字符防 SQL grammar 注入。
+    const nw = Number.isFinite(this.nameWeight) ? this.nameWeight.toFixed(2) : "5.00"
+    const bw = Number.isFinite(this.bodyWeight) ? this.bodyWeight.toFixed(2) : "1.00"
+
     let sql: string
     let params: unknown[]
     if (buckets && buckets.length > 0) {
       const placeholders = buckets.map(() => "?").join(",")
       sql = `
         SELECT i.path AS path, i.bucket AS bucket, i.name AS name, i.body AS body,
-               bm25(wiki_entity_fts) AS rank
+               bm25(wiki_entity_fts, 0.0, 0.0, ${nw}, ${bw}) AS rank
         FROM wiki_entity_fts
         JOIN wiki_entity_index i ON i.rowid = wiki_entity_fts.rowid
         WHERE wiki_entity_fts MATCH ?
@@ -83,7 +131,7 @@ export class WikiEntityFtsProvider implements WikiSearchProvider {
     } else {
       sql = `
         SELECT i.path AS path, i.bucket AS bucket, i.name AS name, i.body AS body,
-               bm25(wiki_entity_fts) AS rank
+               bm25(wiki_entity_fts, 0.0, 0.0, ${nw}, ${bw}) AS rank
         FROM wiki_entity_fts
         JOIN wiki_entity_index i ON i.rowid = wiki_entity_fts.rowid
         WHERE wiki_entity_fts MATCH ?
