@@ -123,4 +123,10 @@ export interface CrossCorrelateResult {
   verdict: CorrelationVerdict
   /** verdict.kind === "chained_suspect" 的 shortcut */
   chainedSuspect: boolean
+  /**
+   * 范-r1 P2-2：LLM audit hook 抛错时记此字段（不再当成 detection trigger）。
+   * caller 可据此决定 fail-soft（记 warning 进 ledger）vs fail-closed
+   * （强制走 _quarantined/）。默认 verdict 不变。
+   */
+  auditError?: string
 }

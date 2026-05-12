@@ -75,32 +75,37 @@ export async function crossCorrelateDrops(
   // Step 3：算 similarity + sourceMatch
   const scored = inWindow.map((drop) => scoreCandidate(current, drop))
 
-  // Step 4：top-k by similarity（保留 sourceMatch 命中即使 sim 低，因为同源也是信号）
-  // 排序：先 sim 降序；同 sim 时 sourceMatch（任一命中）优先
-  scored.sort((a, b) => {
-    if (a.similarity !== b.similarity) return b.similarity - a.similarity
-    return sourceMatchScore(b) - sourceMatchScore(a)
-  })
-  const topK = scored.slice(0, opts.topK)
-
-  // Step 4.5：在 top-k 上跑 keyword chain + reference link
-  for (const cand of topK) {
+  // 范-r1 P1-2：keyword chain + reference link 必须**全窗口**扫，不能受 top-k 截断。
+  // 攻击场景：5 个 high-sim benign candidate 占满 top-5，第 6 个低 sim 但含
+  // wait pattern → 修前漏抓。reference_link 同理（攻击者显式 ref 一个低相似的 drop）。
+  // 成本：regex 是 cheap，全窗口扫 200 candidates 也 < 1ms。
+  for (const cand of scored) {
     const chain = detectKeywordChain(current.rawContent, cand.drop.rawContent)
     cand.keywordChainHits = chain.hits
     const refHit = findReferenceLink(current.rawContent, cand.drop.id)
     if (refHit) cand.referenceLinks.push(refHit)
   }
 
-  // Step 5：决策
-  const verdict = await decideVerdict(current, topK, opts)
+  // Step 4：排序 + top-k（仅供 result.candidates 透明展示，不影响 trigger 收集）
+  // 排序：先 sim 降序；同 sim 时 sourceMatch 任一命中优先；keyword/reference 命中再优先
+  scored.sort((a, b) => {
+    if (a.similarity !== b.similarity) return b.similarity - a.similarity
+    const sigA = sourceMatchScore(a) + (a.keywordChainHits.length + a.referenceLinks.length) * 2
+    const sigB = sourceMatchScore(b) + (b.keywordChainHits.length + b.referenceLinks.length) * 2
+    return sigB - sigA
+  })
+
+  // Step 5：决策（用全窗口的 scored，不是 top-k —— 修 P1-2）
+  const decision = await decideVerdict(current, scored, opts)
 
   return {
     current,
     windowStart,
     windowEnd,
-    candidates: topK,
-    verdict,
-    chainedSuspect: verdict.kind === "chained_suspect",
+    candidates: scored.slice(0, opts.topK),
+    verdict: decision.verdict,
+    chainedSuspect: decision.verdict.kind === "chained_suspect",
+    auditError: decision.auditError,
   }
 }
 
@@ -130,31 +135,26 @@ function sourceMatchScore(c: CorrelationCandidate): number {
   )
 }
 
+interface VerdictDecision {
+  verdict: CorrelationVerdict
+  /** 范-r1 P2-2：audit hook 抛错时记此字段（不当成 detection trigger） */
+  auditError?: string
+}
+
 async function decideVerdict(
   current: DropRecord,
   candidates: CorrelationCandidate[],
   opts: Required<Omit<CrossCorrelateOptions, "auditCallback">> & {
     auditCallback?: CrossCorrelateOptions["auditCallback"]
   },
-): Promise<CorrelationVerdict> {
-  // 5a：series_member（白名单）—— current 有 seriesId 且至少一个 candidate 同 series 且 sim 达标
-  if (current.seriesId) {
-    const siblings = candidates.filter(
-      (c) =>
-        c.drop.seriesId === current.seriesId && c.similarity >= opts.seriesSimThreshold,
-    )
-    if (siblings.length > 0) {
-      // V16.5 chap 7 行 834-836：series 白名单不报 chained_suspect，
-      // 即使同时命中 keyword/reference 链路（小孙明确 mark "这批是同一组"）。
-      return { kind: "series_member", seriesId: current.seriesId, siblings }
-    }
-  }
-
-  // 5b-d：chained_suspect 三类信号收集
+): Promise<VerdictDecision> {
+  // 范-r1 P1-1 修：先收集所有 trigger 信号；series_member 白名单**只豁免**
+  // high_sim_diff_series（即"内容相似 ≠ 攻击"），不再豁免 keyword_chain /
+  // reference_link（这两类在 series 内仍是真实跨 drop 攻击信号）。
+  // 攻击场景：诱导小孙 mark series → 之后投 wait+execute → 修前全免检。
   const triggers: ChainedTrigger[] = []
-
   for (const c of candidates) {
-    // 5b：reference_link 命中（current 显式 ref candidate）
+    // reference_link：current 显式 ref candidate（即使 series 内也报）
     for (const link of c.referenceLinks) {
       triggers.push({
         reason: "reference_link",
@@ -162,7 +162,7 @@ async function decideVerdict(
         candidateId: c.drop.id,
       })
     }
-    // 5c：keyword_chain 命中（wait/execute 跨 drop 配对）
+    // keyword_chain：wait/execute 跨 drop 配对（即使 series 内也报）
     for (const hit of c.keywordChainHits) {
       triggers.push({
         reason: "keyword_chain",
@@ -170,11 +170,9 @@ async function decideVerdict(
         candidateId: c.drop.id,
       })
     }
-    // 5d：高 sim 且 **未被白名单合法同 series 关系** 覆盖 → chained_suspect。
-    //   - "合法同 series" = 双方都有 seriesId 且相等（小孙 mark 的同一组 drops）
-    //   - 双方都 undefined / 一方 undefined → 视为"无白名单担保"，高 sim 即可疑
-    // V16.5 chap 7 行 832-836：只有显式 series 白名单才豁免，未标 series 的高度相似
-    // 跨投稿者内容本身就是协调攻击信号。
+    // high_sim_diff_series：只有"非合法同 series"+ 高 sim 才报
+    //   合法同 series = 双方都有 seriesId 且相等（小孙明确 mark 的同一组）
+    //   双方 undefined / 一方 undefined → 视为无白名单担保，高 sim 即可疑
     const sameNamedSeries = !!current.seriesId && current.seriesId === c.drop.seriesId
     if (c.similarity >= opts.chainSimThreshold && !sameNamedSeries) {
       triggers.push({
@@ -187,7 +185,11 @@ async function decideVerdict(
     }
   }
 
-  // 5e：LLM audit hook（只在前面没拦下时跑，避免重复成本）
+  // LLM audit hook（只在前面 deterministic 信号都没命中时跑，节省成本）
+  // 范-r1 P2-2 修：抛错不再 push detection trigger，改记 auditError 字段。
+  // verdict 不被 audit error 影响（fail-soft 默认；caller 高安全模式可读
+  // result.auditError 自己升级 fail-closed）。
+  let auditError: string | undefined
   if (triggers.length === 0 && opts.auditCallback && candidates.length > 0) {
     try {
       const audit = await opts.auditCallback(
@@ -201,25 +203,38 @@ async function decideVerdict(
         })
       }
     } catch (err) {
-      // LLM hook 失败静默：不阻塞 ingest，但留 trigger 让 caller 知道审计未跑
-      // （也可视作 fail-open；caller 在 high-sec 模式可包 try/catch 升级 fail-closed）
-      triggers.push({
-        reason: "llm_audit",
-        detail: `audit hook threw: ${err instanceof Error ? err.message : String(err)}; treat as inconclusive`,
-      })
+      auditError = err instanceof Error ? err.message : String(err)
     }
   }
 
   if (triggers.length > 0) {
-    return { kind: "chained_suspect", triggers: dedupeTriggers(triggers) }
+    return {
+      verdict: { kind: "chained_suspect", triggers: dedupeTriggers(triggers) },
+      auditError,
+    }
   }
 
-  // 5f：isolated
+  // series_member 白名单：必须满足 (a) 没命中任何 trigger，(b) current 有 seriesId，
+  // (c) 至少一个 candidate 同 series 且 sim ≥ seriesSimThreshold
+  if (current.seriesId) {
+    const siblings = candidates.filter(
+      (c) => c.drop.seriesId === current.seriesId && c.similarity >= opts.seriesSimThreshold,
+    )
+    if (siblings.length > 0) {
+      return {
+        verdict: { kind: "series_member", seriesId: current.seriesId, siblings },
+        auditError,
+      }
+    }
+  }
+
+  // isolated
+  const sortedBySim = [...candidates].sort((a, b) => b.similarity - a.similarity)
   const reason =
     candidates.length === 0
       ? `no historical drops in ${opts.windowDays}d window`
-      : `${candidates.length} candidate(s), max sim=${candidates[0].similarity.toFixed(3)} < ${opts.chainSimThreshold}`
-  return { kind: "isolated", reason }
+      : `${candidates.length} candidate(s), max sim=${sortedBySim[0].similarity.toFixed(3)} < ${opts.chainSimThreshold}`
+  return { verdict: { kind: "isolated", reason }, auditError }
 }
 
 function dedupeTriggers(triggers: ChainedTrigger[]): ChainedTrigger[] {
