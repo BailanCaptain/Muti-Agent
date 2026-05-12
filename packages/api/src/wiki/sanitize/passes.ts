@@ -10,6 +10,7 @@
  * Pass 5（multi-pass 整合）由 sanitize-raw-drop.ts 主控（fixed-point 循环）。
  */
 
+import { applyConfusables } from "./confusables-map"
 import type { QuarantinedSegment, RedLineTrigger, SanitizePassOutput } from "./types"
 
 // ─────────────────────────────────────────────────────────────────────
@@ -64,7 +65,23 @@ export function pass1Unicode(input: string): SanitizePassOutput {
   // 3) Unicode tag chars 剥离
   const afterTag = stripAndRecord(afterInvisible, UNICODE_TAG_RE, "unicode_tag", segments)
 
-  return { text: afterTag, segments, triggers: [] }
+  // 4) [范-r1 P1-1] confusables 映射：Cyrillic / Greek → Latin
+  // NFKC 不归一化 Cyrillic / Greek，攻击者可用 `іgnоre`（Cyrillic і о）绕过 jailbreak template
+  // 所以替换为 ASCII Latin，让 pass5 的 jailbreak template 检测能命中
+  const confusables = applyConfusables(afterTag)
+  if (confusables.matched.length > 0) {
+    const distinctMatched = [...new Set(confusables.matched)]
+    segments.push({
+      reason: "confusable_substitution",
+      original: confusables.matched.join(""),
+      decoded: distinctMatched
+        .map((c) => `${c}→${applyConfusables(c).text}`)
+        .join(", "),
+      detail: `${confusables.matched.length} confusable chars replaced (Cyrillic / Greek → Latin)`,
+    })
+  }
+
+  return { text: confusables.text, segments, triggers: [] }
 }
 
 function stripAndRecord(
@@ -186,8 +203,11 @@ function stripWithRedLine(
 // Pass 3 · Fence-aware role-token 检测
 // ─────────────────────────────────────────────────────────────────────
 
-/** ``` 或 ~~~ 围栏（含可选 lang 标签 + 跨行内容） */
-const FENCE_RE = /(```|~~~)([^\n`~]*)\n([\s\S]*?)\n\1/g
+/**
+ * ``` 或 ~~~ 围栏（含可选 lang 标签 + 跨行内容）。
+ * [范-r1 P1-4] CommonMark 允许 0-3 空格缩进 —— closing fence 也允许 0-3 空格缩进。
+ */
+const FENCE_RE = /(?:^|\n)[ ]{0,3}(```|~~~)([^\n`~]*)\n([\s\S]*?)\n[ ]{0,3}\1/g
 
 /**
  * 模型对话格式 role token，case-insensitive。
@@ -271,7 +291,16 @@ export function pass3Fence(input: string): SanitizePassOutput {
 // Pass 4 · Encoding 探针（Base64 + 高熵段）
 // ─────────────────────────────────────────────────────────────────────
 
-const BASE64_RE = /\b[A-Za-z0-9+/]{40,}={0,2}\b/g
+/** 单段连续 base64（含末尾 padding） */
+const BASE64_RE = /\b[A-Za-z0-9+/]{40,}={0,2}/g
+/**
+ * [范-r1 P1-3] wrapped base64：行间换行/空白分隔的多行 base64。
+ * 攻击者把长 base64 拆成 16-20 字符多行避开单行长度阈值。
+ * 匹配条件：≥3 行，每行 ≥ 8 字符 base64-only，行间仅空白。
+ * 累计长度 ≥ base64MinLength 才走解码（避免短 token 假阳性）。
+ */
+const WRAPPED_BASE64_RE = /(?:[A-Za-z0-9+/]{8,}={0,2}\s*\n){2,}[A-Za-z0-9+/]{8,}={0,2}/g
+
 const JAILBREAK_KEYWORDS = [
   "ignore previous instructions",
   "ignore above instructions",
@@ -281,6 +310,8 @@ const JAILBREAK_KEYWORDS = [
   "pretend to be",
   "system prompt",
   "reveal your prompt",
+  "reveal your instructions",
+  "reveal system prompt",
   "forget your instructions",
   "override your instructions",
 ]
@@ -293,47 +324,71 @@ export function pass4Encoding(
   const segments: QuarantinedSegment[] = []
   const triggers: RedLineTrigger[] = []
 
-  // 1) Base64 探测：找长串 base64 字符 + 解码 + 检 jailbreak keyword
-  const b64Matches = [...input.matchAll(BASE64_RE)]
   let text = input
-  for (const m of b64Matches) {
+
+  // 1a) [范-r1 P1-3] Wrapped base64：先扫，避免被单行 base64 regex 漏掉
+  const wrappedMatches = [...text.matchAll(WRAPPED_BASE64_RE)]
+  for (const m of wrappedMatches) {
     const candidate = m[0]
-    if (candidate.length < base64MinLength) continue
-    let decoded: string
-    try {
-      decoded = Buffer.from(candidate, "base64").toString("utf-8")
-    } catch {
-      continue
-    }
-    const decodedLower = decoded.toLowerCase()
-    const printableRatio = printableCharRatio(decoded)
-    if (printableRatio < 0.6) continue // 解码出大量乱码 → 大概率不是 base64 文本
+    const stripped = candidate.replace(/\s+/g, "")
+    if (stripped.length < base64MinLength) continue
+    const decoded = tryDecodeBase64(stripped)
+    if (!decoded) continue
     segments.push({
       reason: "encoding_base64",
       original: candidate,
       decoded,
-      detail: `base64 decoded ${decoded.length} chars (printable ratio=${printableRatio.toFixed(2)})`,
+      detail: `wrapped base64 decoded ${decoded.length} chars from ${stripped.length}/B (multi-line)`,
       positionHint: m.index,
     })
-    // 解码后含 jailbreak keyword → 红线
-    for (const kw of JAILBREAK_KEYWORDS) {
-      if (decodedLower.includes(kw)) {
-        triggers.push({
-          reason: "encoded_jailbreak",
-          matched: kw,
-          position: m.index,
-          detail: `base64 segment decoded contains "${kw}"`,
-        })
-        break
-      }
-    }
-    // 剥离 base64 串本身
-    text = text.replace(candidate, "")
+    detectAndPushJailbreak(decoded, m.index, triggers, "wrapped base64")
+  }
+  if (wrappedMatches.length > 0) text = text.replace(WRAPPED_BASE64_RE, "")
+
+  // 1b) 单行 base64 探测（≥ base64MinLength 字符）
+  const b64Matches = [...text.matchAll(BASE64_RE)]
+  for (const m of b64Matches) {
+    const candidate = m[0]
+    if (candidate.length < base64MinLength) continue
+    const decoded = tryDecodeBase64(candidate)
+    if (!decoded) continue
+    segments.push({
+      reason: "encoding_base64",
+      original: candidate,
+      decoded,
+      detail: `base64 decoded ${decoded.length} chars`,
+      positionHint: m.index,
+    })
+    detectAndPushJailbreak(decoded, m.index, triggers, "base64")
+  }
+  if (b64Matches.length > 0) text = text.replace(BASE64_RE, "")
+
+  // 2) [范-r1 P1-2] ROT13 探测：长 alpha-only 段 → ROT13 解码 → 检 jailbreak keyword
+  const rot13Triggers = detectRot13(text, base64MinLength)
+  for (const t of rot13Triggers) {
+    segments.push({
+      reason: "encoding_rot13",
+      original: t.original,
+      decoded: t.decoded,
+      detail: `ROT13 decoded contains "${t.keyword}"`,
+      positionHint: t.position,
+    })
+    triggers.push({
+      reason: "encoded_jailbreak",
+      matched: t.keyword,
+      position: t.position,
+      detail: `ROT13 segment decoded contains "${t.keyword}"`,
+    })
+  }
+  // ROT13 命中段也剥离（防 sanitizedText 含编码指令）
+  for (const t of rot13Triggers.slice().reverse()) {
+    text = text.slice(0, t.position) + text.slice(t.position + t.original.length)
   }
 
-  // 2) 高熵段（除 base64 已处理的）：滑窗找 H > entropyThreshold 的连续段
+  // 3) 高熵段（除 base64 / ROT13 已处理的）：滑窗找 H > entropyThreshold 的连续段
+  // [范-r1 P2-2 修] 倒序删除：每次 splice 后前面段的 offset 不变；正序会失效
   const highEntropySegments = findHighEntropySegments(text, entropyThreshold)
-  for (const he of highEntropySegments) {
+  for (const he of highEntropySegments.slice().reverse()) {
     segments.push({
       reason: "encoding_high_entropy",
       original: he.text,
@@ -344,6 +399,80 @@ export function pass4Encoding(
   }
 
   return { text, segments, triggers }
+}
+
+function tryDecodeBase64(candidate: string): string | null {
+  let decoded: string
+  try {
+    decoded = Buffer.from(candidate, "base64").toString("utf-8")
+  } catch {
+    return null
+  }
+  if (decoded.length === 0) return null
+  if (printableCharRatio(decoded) < 0.6) return null
+  return decoded
+}
+
+function detectAndPushJailbreak(
+  decoded: string,
+  position: number | undefined,
+  triggers: RedLineTrigger[],
+  source: string,
+): void {
+  const decodedLower = decoded.toLowerCase()
+  for (const kw of JAILBREAK_KEYWORDS) {
+    if (decodedLower.includes(kw)) {
+      triggers.push({
+        reason: "encoded_jailbreak",
+        matched: kw,
+        position,
+        detail: `${source} decoded contains "${kw}"`,
+      })
+      return
+    }
+  }
+}
+
+interface Rot13Hit {
+  original: string
+  decoded: string
+  keyword: string
+  position: number
+}
+
+const ROT13_TOKEN_RE = /\b[a-zA-Z][a-zA-Z\s]{20,}[a-zA-Z]\b/g
+
+function detectRot13(text: string, _base64MinLength: number): Rot13Hit[] {
+  // 找长 alpha-only 序列（含空格分隔单词），ROT13 解码后检 jailbreak keyword
+  void _base64MinLength
+  const hits: Rot13Hit[] = []
+  for (const m of text.matchAll(ROT13_TOKEN_RE)) {
+    const candidate = m[0]
+    if (candidate.length < 20) continue
+    const decoded = rot13(candidate)
+    const decodedLower = decoded.toLowerCase()
+    for (const kw of JAILBREAK_KEYWORDS) {
+      if (decodedLower.includes(kw)) {
+        hits.push({
+          original: candidate,
+          decoded,
+          keyword: kw,
+          position: m.index ?? 0,
+        })
+        break
+      }
+    }
+  }
+  return hits
+}
+
+function rot13(s: string): string {
+  return s.replace(/[a-zA-Z]/g, (ch) => {
+    const code = ch.charCodeAt(0)
+    if (code >= 0x41 && code <= 0x5a) return String.fromCharCode(((code - 0x41 + 13) % 26) + 0x41)
+    if (code >= 0x61 && code <= 0x7a) return String.fromCharCode(((code - 0x61 + 13) % 26) + 0x61)
+    return ch
+  })
 }
 
 function printableCharRatio(s: string): number {

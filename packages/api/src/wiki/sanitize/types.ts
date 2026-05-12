@@ -13,8 +13,9 @@
 export type QuarantineReason =
   | "control_char"
   | "invisible_format_char"
-  | "bidi_override"
   | "unicode_tag"
+  /** 范-r1 P1-1：Cyrillic / Greek 同形字替换为 ASCII Latin（让 jailbreak template 能命中） */
+  | "confusable_substitution"
   | "html_comment"
   | "html_script"
   | "html_iframe"
@@ -22,6 +23,8 @@ export type QuarantineReason =
   | "fence_role_token"
   | "fence_yaml_role"
   | "encoding_base64"
+  /** 范-r1 P1-2：ROT13 解码后含 jailbreak keyword */
+  | "encoding_rot13"
   | "encoding_high_entropy"
 
 export interface QuarantinedSegment {

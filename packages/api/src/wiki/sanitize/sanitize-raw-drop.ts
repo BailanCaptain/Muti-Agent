@@ -36,6 +36,11 @@ const DEFAULT_MAX_QUARANTINED_RATIO = 0.3
 const DEFAULT_MAX_PASSES = 5
 const DEFAULT_ENTROPY_THRESHOLD = 4.5
 const DEFAULT_BASE64_MIN_LENGTH = 40
+/**
+ * [范-r1 P2-1 修] 短文本豁免阈值。input.length < 此值时不走 quarantinedRatio 判定，
+ * 仅红线 (redLineTriggers) 才能 BLOCK。否则 `a​b` 单 ZWSP 就触发 33% ratio 误 block。
+ */
+const DEFAULT_MIN_RATIO_INPUT_CHARS = 100
 
 /**
  * Jailbreak 模板（小写匹配）—— 在 sanitized text 上扫，因为前 4 层已剥离同形字 / base64。
@@ -123,7 +128,9 @@ export function sanitizeRawDrop(input: string, options?: SanitizeOptions): Sanit
   const quarantinedChars = allSegments.reduce((s, seg) => s + seg.original.length, 0)
   const ratio = input.length > 0 ? quarantinedChars / input.length : 0
 
-  const blocked = allTriggers.length > 0 || ratio > opts.maxQuarantinedRatio
+  // [范-r1 P2-1] 短文本不走 ratio 判定（避免 `a​b` 单 ZWSP 33% 误 block）
+  const ratioApplies = input.length >= DEFAULT_MIN_RATIO_INPUT_CHARS
+  const blocked = allTriggers.length > 0 || (ratioApplies && ratio > opts.maxQuarantinedRatio)
 
   return {
     sanitizedText: current,
