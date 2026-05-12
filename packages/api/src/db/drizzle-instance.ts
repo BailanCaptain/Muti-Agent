@@ -765,21 +765,29 @@ function upgradeMessagesFtsTokenizer(adapter: ReturnType<typeof createNodeSqlite
 // 触发器 attach 后只对未来 INSERT/UPDATE/DELETE 同步。老库已有的 messages 行
 // 必须显式发 'rebuild' 命令让 FTS5 从 content='messages' 全表扫重建索引。
 //
-// 判定条件：messages_fts 存在 + 表为空 + messages 表非空 → rebuild。
-// 之后每次启动 fts 已填，SELECT LIMIT 1 命中跳过。
+// 判定条件：messages_fts 索引为空 + messages 表非空 → rebuild。
+//
+// 范-r1 P1-1（NO-GO blocking）修：external content FTS5 表上 SELECT 无 MATCH 时
+//   SQLite 会把查询透传到 base 表 messages（SQLite FTS5 文档 §4.4.4 "External
+//   Content Table Pitfalls"），所以 `SELECT rowid FROM messages_fts LIMIT 1` 在
+//   老库 messages 非空但 fts 索引为空时会**误返非空**，跳过 rebuild → 历史 messages
+//   永远查不到。改用 FTS5 shadow 表 messages_fts_docsize 真读索引大小（per-doc 一行，
+//   external content 模式 ground truth）。
 //
 // 风险：3M messages × 5KB 全表扫 ~10s+，启动 IO 一次性贵；同步执行保证启动后
 // query_messages 立即一致。失败不阻塞启动（fail-soft + 下次启动重试）。
+// 范-r1 P2-1：生产大库迁移建议记录耗时（见 logger.info / 大库改后台化策略待 P15）。
 function backfillMessagesFtsIfEmpty(adapter: ReturnType<typeof createNodeSqliteAdapter>): void {
+  // FTS5 shadow 表 messages_fts_docsize（external content 模式真索引行数源）
   // 表存在性兜底（INIT_SQL 已建，但保守 try/catch）
   let ftsEmpty = false
   try {
-    const row = adapter.prepare("SELECT rowid FROM messages_fts LIMIT 1").get() as
-      | { rowid?: number }
+    const row = adapter.prepare("SELECT COUNT(*) AS n FROM messages_fts_docsize").get() as
+      | { n?: number }
       | undefined
-    ftsEmpty = !row
+    ftsEmpty = !row || (row.n ?? 0) === 0
   } catch {
-    return
+    return // shadow 表不存在（虚拟表未建）→ 啥也不做
   }
   if (!ftsEmpty) return
 
@@ -795,8 +803,15 @@ function backfillMessagesFtsIfEmpty(adapter: ReturnType<typeof createNodeSqliteA
   }
   if (!messagesNonEmpty) return
 
+  // 范-r1 P2-1：记录 rebuild 耗时给运维可观测（大库可见启动延迟）
+  const startMs = Date.now()
   try {
     adapter.exec("INSERT INTO messages_fts(messages_fts) VALUES('rebuild');")
+    const elapsedMs = Date.now() - startMs
+    // node stderr 直写（adapter 没有 logger 依赖，drizzle-instance 层不便 wire pino）
+    process.stderr.write(
+      `[F027 P14.b] messages_fts first-time backfill 'rebuild' 完成: ${elapsedMs}ms\n`,
+    )
   } catch {
     // fail-soft: rebuild 失败不阻塞启动；下次启动 fts 仍为空会再尝试
   }

@@ -364,14 +364,14 @@ export function getTools() {
     {
       name: "query_messages",
       description:
-        "F027 chap 21 P14: 按字面/关键词在当前 ROOM 的 messages 表做 BM25 全文召回（trigram tokenizer，中文短串 ≥3 字命中稳）。与 recall_similar_context 互补：那个走 embedding 语义相似，本工具走字面 token / 短语 / 实体 ID（如 F011 / B022 / R-205）的精确召回。query 含特殊字符会被 sanitize 包成 phrase 安全字面量。可选过滤：threadId 限单 thread / role 限消息角色（user/assistant/connector）。topK 默认 10，最大 100。",
+        "F027 chap 21 P14: 按字面/关键词在当前 ROOM 的 messages 表做 BM25 全文召回（trigram tokenizer）。**重要：query 必须 ≥3 字符**（trigram 物理限制：<3 字会切不出完整 3-gram，通常返回 0 hit）。与 recall_similar_context 互补：那个走 embedding 语义相似，本工具走字面 token / 短语 / 实体 ID（如 F011 / B022 / R-205）的精确召回。query 含特殊字符会被 sanitize 包成 phrase 安全字面量；保留字 AND/OR/NEAR 自动转义。可选过滤：threadId 限单 thread / role 限消息角色（user/assistant/connector）。topK 默认 10，最大 100。",
       inputSchema: {
         type: "object",
         properties: {
           query: {
             type: "string",
             description:
-              "搜索字符串。英文 token / 中文短语（≥3 字）/ 实体 ID 都支持；保留字 AND/OR/NEAR 自动转义。",
+              "搜索字符串（**必须 ≥3 字符** — trigram 物理限制，<3 字通常 0 hit）。英文 token / 中文短语 / 实体 ID 都支持；保留字 AND/OR/NEAR 自动转义。",
           },
           topK: {
             type: "integer",

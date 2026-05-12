@@ -327,6 +327,53 @@ describe("backfillMessagesFtsIfEmpty", () => {
     }
   })
 
+  it("范-r1 P1-2 (NO-GO blocking): createDrizzleDb 自动 backfill 老库历史 messages", () => {
+    // SOP: 覆盖 createDrizzleDb -> runMigrations -> backfillMessagesFtsIfEmpty
+    // 自动分支。范 r1 P1-1 真 bug：旧实现用 `SELECT rowid FROM messages_fts LIMIT 1`
+    // 判空，external content 表无 MATCH 退回 base 表 messages → 老库 messages 非空 +
+    // FTS 索引空时误判"不空"跳过 rebuild → 历史 messages 永远查不到。本测试确保
+    // 修复后（用 messages_fts_docsize 真读索引）自动 backfill 真正命中。
+    const dir = mkdtempSync(path.join(tmpdir(), "messages-fts-reopen-"))
+    const dbPath = path.join(dir, "test.sqlite")
+    try {
+      // 第 1 次 createDrizzleDb：建好全套表 + fts + 触发器，插入消息
+      const first = createDrizzleDb(dbPath)
+      const firstRaw = first.raw as Adapter
+      seedRoom(firstRaw, "R-001", ["t1"])
+      insertMessage(firstRaw, "m1", "t1", "user", "F011 历史消息一段")
+      insertMessage(firstRaw, "m2", "t1", "user", "F011 历史消息二段")
+      assert.equal(countFtsRows(firstRaw), 2) // 触发器同步
+
+      // 模拟老库无 messages_fts 场景：DROP fts + 触发器（保留 messages base 表）
+      firstRaw.exec("DROP TRIGGER IF EXISTS messages_fts_ai;")
+      firstRaw.exec("DROP TRIGGER IF EXISTS messages_fts_ad;")
+      firstRaw.exec("DROP TRIGGER IF EXISTS messages_fts_au;")
+      firstRaw.exec("DROP TABLE IF EXISTS messages_fts;")
+      first.close()
+
+      // 第 2 次 createDrizzleDb：INIT_SQL CREATE VIRTUAL TABLE IF NOT EXISTS
+      // 重建 fts（此时索引为空），runMigrations 调 backfillMessagesFtsIfEmpty
+      // 自动 rebuild。验证 fts 索引非空 + MATCH 命中老库历史消息。
+      const second = createDrizzleDb(dbPath)
+      const secondRaw = second.raw as Adapter
+      try {
+        // 真索引行数（messages_fts_docsize ground truth）必须 = 2，证明 backfill 真跑
+        assert.equal(countFtsRows(secondRaw), 2)
+        // MATCH 也能命中老库消息（双重验证：索引大小 + 真可查）
+        assert.equal(ftsMatchCount(secondRaw, '"F011"'), 2)
+        // repository 层也能召回
+        const drizzleDb = drizzleBetter(secondRaw as never, { schema })
+        const repo = new MessagesFtsRepository(drizzleDb)
+        const hits = repo.query("F011")
+        assert.equal(hits.length, 2)
+      } finally {
+        second.close()
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it("模拟老库场景：DROP messages_fts → 重新 CREATE → backfill 重建", () => {
     const { raw, cleanup } = makeDb()
     try {

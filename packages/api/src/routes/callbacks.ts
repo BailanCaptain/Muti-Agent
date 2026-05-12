@@ -493,7 +493,12 @@ export function registerCallbackRoutes(
     const sessionGroup = options.repository.getSessionGroupById(thread.sessionGroupId)
     const roomId = (sessionGroup as { roomId?: string | null } | undefined)?.roomId
     if (!roomId) {
-      // session_group 没 roomId（极少；老库可能漏 backfill）→ graceful empty
+      // session_group 没 roomId（极少；F022 backfillRoomIds 启动时回填，正常路径不应触发）。
+      // 范-r1 P3-2：不静默吃；记 warn 让运维能定位 backfill 失漏。返 hits=[] 不阻塞 caller。
+      app.log.warn(
+        { sessionGroupId: thread.sessionGroupId, threadId: thread.id },
+        "F027 P14.b query_messages: session_group missing roomId (F022 backfill drift?) — returning empty",
+      )
       return { hits: [] }
     }
 
