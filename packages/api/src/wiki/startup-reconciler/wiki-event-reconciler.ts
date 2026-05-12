@@ -17,9 +17,9 @@
 
 import { createHash } from "node:crypto"
 import { promises as fsAsync } from "node:fs"
-import path from "node:path"
 import type { WikiEventsRepository } from "../../db/repositories/wiki-events-repository"
 import type { WikiEvent } from "../../db/repositories/wiki-events-types"
+import { WikiPathInvalidError, safeWikiPath } from "../path-containment"
 import type {
   WikiEventReconcileDetail,
   WikiEventReconcileSummary,
@@ -75,7 +75,36 @@ async function reconcileOne(
   ev: WikiEvent,
   deps: WikiEventReconcilerDeps,
 ): Promise<WikiEventReconcileDetail> {
-  const absPath = path.join(deps.wikiRoot, ev.path)
+  // 范-r1 P1-2 修：path containment —— event.path 来自 DB（PREPARE 输入），
+  // 不能盲信。复用 safeWikiPath 校验：必须 'wiki/' 前缀 + normalize 后仍在 wiki/
+  // namespace 内 + resolve 不逃 wikiRoot/wiki/。失败按 aborted_dirty settle。
+  let absPath: string
+  try {
+    absPath = safeWikiPath(deps.wikiRoot, ev.path)
+  } catch (err) {
+    if (err instanceof WikiPathInvalidError) {
+      const ok = deps.repo.abort(ev.id, {
+        reason: "aborted_dirty",
+        error: `path containment violation: ${err.message}`,
+      })
+      const verdict: WikiEventReconcileVerdict = ok ? "aborted_dirty" : "noop_race_settled"
+      deps.logger?.(
+        `[startup-reconciler] DIRTY (path-containment): event=${ev.id} path=${ev.path} — ${err.message}`,
+      )
+      return {
+        eventId: ev.id,
+        path: ev.path,
+        action: ev.action,
+        alias: ev.alias,
+        verdict,
+        fileHash: null,
+        attemptedHash: ev.attemptedHash,
+        baseHash: ev.baseHash,
+      }
+    }
+    throw err
+  }
+
   const fileHash = await computeFileHashOrNull(absPath)
   const verdict = decideVerdict(ev, fileHash)
 

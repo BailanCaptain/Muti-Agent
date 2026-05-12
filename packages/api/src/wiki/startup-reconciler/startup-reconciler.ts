@@ -93,6 +93,30 @@ export class StartupReconciler {
   }
 }
 
+/**
+ * 范-r1 P1-1 spec defer：runtime wire 由 P14 NightlyJobScheduler '@startup' trigger
+ * 接入（V16.5 chap 17 行 1780 "this.schedule('startup-reconciler', '@startup', ...)"）。
+ * 在 scheduler 落地前，运维 / 测试 / server.ts 可直接调本函数 await 一次。
+ *
+ * 调用契约：
+ *   const report = await runStartupReconcilerOnce({
+ *     wikiEvents: new WikiEventsRepository(drizzleDb),
+ *     roomCompiler: new RoomCompiler({ store, wikiRoot, leaderTerm, fencingToken, compileFn: ... }),
+ *     wikiRoot,
+ *     logger: pinoLogger.info.bind(pinoLogger),
+ *   })
+ *   if (report.alerts.abortedDirtyCount > 0) {
+ *     // P11 evidence pack: 写盘 + 通知小孙
+ *   }
+ *
+ * Caller 决定是否 fail-closed 在 reconciler 抛 StartupReconcilerError 时阻断 listen。
+ */
+export async function runStartupReconcilerOnce(
+  opts: StartupReconcilerOptions,
+): Promise<StartupReconcileReport> {
+  return new StartupReconciler(opts).run()
+}
+
 export { reconcileWikiEvents, decideVerdict } from "./wiki-event-reconciler"
 export type {
   StartupReconcileReport,

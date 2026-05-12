@@ -23,7 +23,7 @@ import * as schema from "../../db/schema"
 import { RoomCompiler } from "../room-compiler/room-compiler"
 import { SqliteCheckpointStore } from "../room-compiler/sqlite-checkpoint-store"
 import type { CompileArtifact } from "../room-compiler/types"
-import { StartupReconciler } from "./startup-reconciler"
+import { StartupReconciler, runStartupReconcilerOnce } from "./startup-reconciler"
 import { decideVerdict, reconcileWikiEvents } from "./wiki-event-reconciler"
 
 function makeDb() {
@@ -258,18 +258,19 @@ describe("reconcileWikiEvents · DB + fs 集成", () => {
         ts: "2026-05-12T01:00:00Z",
         alias: "x",
         action: "write",
-        path: "a.md",
+        path: "wiki/a.md",
         attemptedHash: sha256(c1),
         fencingToken: "1",
         leaderTerm: "1",
       })
-      await fsAsync.writeFile(path.join(root, "a.md"), c1)
+      await fsAsync.mkdir(path.join(root, "wiki"), { recursive: true })
+      await fsAsync.writeFile(path.join(root, "wiki/a.md"), c1)
       // case 2: 文件不存在 → aborted_clean (base null)
       const e2 = repo.appendPending({
         ts: "2026-05-12T01:00:01Z",
         alias: "x",
         action: "write",
-        path: "b.md",
+        path: "wiki/b.md",
         attemptedHash: sha256("b"),
         fencingToken: "2",
         leaderTerm: "1",
@@ -279,13 +280,13 @@ describe("reconcileWikiEvents · DB + fs 集成", () => {
         ts: "2026-05-12T01:00:02Z",
         alias: "x",
         action: "patch",
-        path: "c.md",
+        path: "wiki/c.md",
         baseHash: sha256("c-base"),
         attemptedHash: sha256("c-new"),
         fencingToken: "3",
         leaderTerm: "1",
       })
-      await fsAsync.writeFile(path.join(root, "c.md"), "# DIRTY")
+      await fsAsync.writeFile(path.join(root, "wiki/c.md"), "# DIRTY")
 
       const summary = await reconcileWikiEvents({ repo, wikiRoot: root })
       assert.equal(summary.scanned, 3)
@@ -313,17 +314,184 @@ describe("reconcileWikiEvents · DB + fs 集成", () => {
         ts: "2026-05-12T01:00:00Z",
         alias: "x",
         action: "write",
-        path: "x.md",
+        path: "wiki/x.md",
         attemptedHash: sha256(content),
         fencingToken: "1",
         leaderTerm: "1",
       })
-      await fsAsync.writeFile(path.join(root, "x.md"), content)
+      await fsAsync.mkdir(path.join(root, "wiki"), { recursive: true })
+      await fsAsync.writeFile(path.join(root, "wiki/x.md"), content)
       // 模拟 race：reconciler 还没动手，别处先 commit 了
       repo.commit(ev.id, { contentHash: sha256(content) })
 
       const summary = await reconcileWikiEvents({ repo, wikiRoot: root })
       assert.equal(summary.scanned, 0, "已 committed 不在 getPending() 列表")
+    } finally {
+      rootClean()
+      dbClean()
+    }
+  })
+})
+
+// ─── 范-r1 P1-2 修：path containment（safeWikiPath 校验）────────────
+
+describe("reconcileWikiEvents · 范-r1 P1-2 path containment", () => {
+  it("event.path = '../../etc/passwd' (path traversal) → aborted_dirty + 不读外部文件", async () => {
+    const { drizzle, cleanup: dbClean } = makeDb()
+    const { root, cleanup: rootClean } = makeWikiRoot()
+    try {
+      const repo = new WikiEventsRepository(drizzle)
+      const ev = repo.appendPending({
+        ts: "2026-05-12T01:00:00Z",
+        alias: "evil",
+        action: "write",
+        path: "wiki/../../etc/passwd",
+        attemptedHash: sha256("malicious"),
+        fencingToken: "1",
+        leaderTerm: "1",
+      })
+      const summary = await reconcileWikiEvents({ repo, wikiRoot: root })
+      assert.equal(summary.scanned, 1)
+      assert.equal(summary.abortedDirty, 1, "path traversal 必须当 dirty 处理")
+      const after = repo.get(ev.id)
+      assert.equal(after?.state, "aborted")
+      assert.equal(after?.reason, "aborted_dirty")
+      assert.ok(after?.error?.includes("path"))
+    } finally {
+      rootClean()
+      dbClean()
+    }
+  })
+
+  it("event.path 不以 'wiki/' 开头 (namespace 外) → aborted_dirty", async () => {
+    const { drizzle, cleanup: dbClean } = makeDb()
+    const { root, cleanup: rootClean } = makeWikiRoot()
+    try {
+      const repo = new WikiEventsRepository(drizzle)
+      const ev = repo.appendPending({
+        ts: "2026-05-12T01:00:00Z",
+        alias: "x",
+        action: "write",
+        path: "outside-wiki.md",
+        attemptedHash: sha256("x"),
+        fencingToken: "1",
+        leaderTerm: "1",
+      })
+      const summary = await reconcileWikiEvents({ repo, wikiRoot: root })
+      assert.equal(summary.abortedDirty, 1)
+      const after = repo.get(ev.id)
+      assert.equal(after?.reason, "aborted_dirty")
+    } finally {
+      rootClean()
+      dbClean()
+    }
+  })
+
+  it("dirty 行 settle 后再次 reconciler 跑 → scanned=0（getPending filter 不返已 settle 行）", async () => {
+    const { drizzle, cleanup: dbClean } = makeDb()
+    const { root, cleanup: rootClean } = makeWikiRoot()
+    try {
+      const repo = new WikiEventsRepository(drizzle)
+      repo.appendPending({
+        ts: "2026-05-12T01:00:00Z",
+        alias: "x",
+        action: "patch",
+        path: "wiki/x.md",
+        baseHash: sha256("base"),
+        attemptedHash: sha256("attempted"),
+        fencingToken: "1",
+        leaderTerm: "1",
+      })
+      await fsAsync.mkdir(path.join(root, "wiki"), { recursive: true })
+      await fsAsync.writeFile(path.join(root, "wiki/x.md"), "# DIRTY")
+
+      const r1 = await reconcileWikiEvents({ repo, wikiRoot: root })
+      assert.equal(r1.abortedDirty, 1)
+      // 再跑一次：dirty 已 settle 到 aborted → getPending 不返
+      const r2 = await reconcileWikiEvents({ repo, wikiRoot: root })
+      assert.equal(r2.scanned, 0)
+    } finally {
+      rootClean()
+      dbClean()
+    }
+  })
+
+  it("dirty event 必须把 error 字段写进 wiki_events.error（持久化排错信息）", async () => {
+    const { drizzle, cleanup: dbClean } = makeDb()
+    const { root, cleanup: rootClean } = makeWikiRoot()
+    try {
+      const repo = new WikiEventsRepository(drizzle)
+      const ev = repo.appendPending({
+        ts: "2026-05-12T01:00:00Z",
+        alias: "x",
+        action: "patch",
+        path: "wiki/x.md",
+        baseHash: sha256("base"),
+        attemptedHash: sha256("attempted"),
+        fencingToken: "1",
+        leaderTerm: "1",
+      })
+      await fsAsync.mkdir(path.join(root, "wiki"), { recursive: true })
+      await fsAsync.writeFile(path.join(root, "wiki/x.md"), "# DIRTY")
+      await reconcileWikiEvents({ repo, wikiRoot: root })
+      const after = repo.get(ev.id)
+      assert.equal(after?.reason, "aborted_dirty")
+      assert.ok(after?.error, "error 字段必须有内容")
+      assert.ok(after?.error?.includes("third-party"))
+      assert.ok(after?.error?.includes("attempted="))
+      assert.ok(after?.error?.includes("base="))
+    } finally {
+      rootClean()
+      dbClean()
+    }
+  })
+})
+
+// ─── 范-r1 P1-3 修：CAS race noop_race_settled 真正测到 ──────────
+
+describe("reconcileWikiEvents · 范-r1 P1-3 CAS race", () => {
+  it("getPending 返回 row 后但 settle 之前别处先 commit → noop_race_settled 计数", async () => {
+    const { drizzle, cleanup: dbClean } = makeDb()
+    const { root, cleanup: rootClean } = makeWikiRoot()
+    try {
+      const repo = new WikiEventsRepository(drizzle)
+      const content = "# x"
+      const ev = repo.appendPending({
+        ts: "2026-05-12T01:00:00Z",
+        alias: "x",
+        action: "write",
+        path: "wiki/x.md",
+        attemptedHash: sha256(content),
+        fencingToken: "1",
+        leaderTerm: "1",
+      })
+      await fsAsync.mkdir(path.join(root, "wiki"), { recursive: true })
+      await fsAsync.writeFile(path.join(root, "wiki/x.md"), content)
+
+      // 用 stub 模拟 race：getPending 仍返回 ev 行（pending 视图），
+      // 但 commit/abort 都 false（说明并发 settle 已发生）
+      const stubRepo = {
+        getPending() {
+          return [{ ...ev, state: "pending" as const }]
+        },
+        commit() {
+          return false
+        },
+        abort() {
+          return false
+        },
+        get(id: number) {
+          return repo.get(id)
+        },
+      } as unknown as WikiEventsRepository
+
+      const summary = await reconcileWikiEvents({ repo: stubRepo, wikiRoot: root })
+      assert.equal(summary.scanned, 1)
+      assert.equal(summary.committed, 0, "CAS false 不能算成 committed")
+      assert.equal(summary.abortedClean, 0)
+      assert.equal(summary.abortedDirty, 0)
+      assert.equal(summary.noopRaceSettled, 1, "应该走 noop_race_settled 分支")
+      assert.equal(summary.details[0].verdict, "noop_race_settled")
     } finally {
       rootClean()
       dbClean()
@@ -476,6 +644,104 @@ describe("StartupReconciler · 复合 AC: kill -9 后重启状态恢复", () => 
       assert.ok(logged.some((m) => m.includes("DIRTY")))
       assert.equal(report.roomCheckpoints.rolledBack, 1)
       assert.equal(store.read("R2"), null)
+    } finally {
+      rootClean()
+      dbClean()
+    }
+  })
+
+  it("二次 run 幂等：第一次 patch + 第二次 scanned=0（重启重复执行安全）", async () => {
+    const { raw, drizzle, cleanup: dbClean } = makeDb()
+    const { root, cleanup: rootClean } = makeWikiRoot()
+    try {
+      const repo = new WikiEventsRepository(drizzle)
+      const store = new SqliteCheckpointStore(raw)
+      // pending wiki_events with file in place
+      const content = "# x"
+      const ev = repo.appendPending({
+        ts: "2026-05-12T01:00:00Z",
+        alias: "x",
+        action: "write",
+        path: "wiki/x.md",
+        attemptedHash: sha256(content),
+        fencingToken: "1",
+        leaderTerm: "1",
+      })
+      await fsAsync.mkdir(path.join(root, "wiki"), { recursive: true })
+      await fsAsync.writeFile(path.join(root, "wiki/x.md"), content)
+      // pending checkpoint with all 3 files in place
+      const a = makeArtifact({ cursorCommitSeq: 1, cursorMessageId: "m1", viewfinderMd: "# v" })
+      store.prepare({
+        roomId: "R1",
+        cursorCommitSeq: 1,
+        cursorMessageId: "m1",
+        sealedCursorSeq: 0,
+        viewfinderHash: sha256(a.viewfinderMd),
+        decisionsHash: sha256(a.decisionsMd),
+        logHash: sha256(a.logMd),
+        threadSealId: null,
+        compiledAt: "2026-05-12T01:00:00.000Z",
+        fencingToken: "1",
+        leaderTerm: "1",
+      })
+      const dir = path.join(root, "rooms", "R1")
+      await fsAsync.mkdir(dir, { recursive: true })
+      await fsAsync.writeFile(path.join(dir, "viewfinder.md"), a.viewfinderMd)
+      await fsAsync.writeFile(path.join(dir, "decisions.md"), a.decisionsMd)
+      await fsAsync.writeFile(path.join(dir, "log.md"), a.logMd)
+
+      const roomCompiler = new RoomCompiler({
+        store,
+        wikiRoot: root,
+        leaderTerm: "1",
+        fencingToken: "1",
+        compileFn: () => a,
+      })
+      const reconciler = new StartupReconciler({
+        wikiEvents: repo,
+        roomCompiler,
+        wikiRoot: root,
+      })
+      const r1 = await reconciler.run()
+      assert.equal(r1.wikiEvents.committed, 1)
+      assert.equal(r1.roomCheckpoints.patched, 1)
+      // 第二次 run：所有都 settle 了
+      const r2 = await reconciler.run()
+      assert.equal(r2.wikiEvents.scanned, 0, "wiki_events 已 settle 不再扫")
+      assert.equal(r2.roomCheckpoints.scanned, 0, "checkpoints 已 commit 不在 listIncomplete")
+      assert.equal(r2.alerts.abortedDirtyCount, 0)
+      // 持久化状态：第一次结果保留
+      assert.equal(repo.get(ev.id)?.state, "committed")
+      assert.ok(store.read("R1")?.committedAt)
+    } finally {
+      rootClean()
+      dbClean()
+    }
+  })
+
+  it("范-r1 P1-1 wire helper · runStartupReconcilerOnce 等价于 new + run（caller 一行接入）", async () => {
+    const { raw, drizzle, cleanup: dbClean } = makeDb()
+    const { root, cleanup: rootClean } = makeWikiRoot()
+    try {
+      const repo = new WikiEventsRepository(drizzle)
+      const store = new SqliteCheckpointStore(raw)
+      const roomCompiler = new RoomCompiler({
+        store,
+        wikiRoot: root,
+        leaderTerm: "1",
+        fencingToken: "1",
+        compileFn: () => makeArtifact({ cursorCommitSeq: 1, cursorMessageId: "m1" }),
+      })
+      const report = await runStartupReconcilerOnce({
+        wikiEvents: repo,
+        roomCompiler,
+        wikiRoot: root,
+      })
+      assert.equal(report.wikiEvents.scanned, 0)
+      assert.equal(report.roomCheckpoints.scanned, 0)
+      assert.equal(report.alerts.abortedDirtyCount, 0)
+      assert.ok(report.startedAt)
+      assert.ok(report.finishedAt)
     } finally {
       rootClean()
       dbClean()
