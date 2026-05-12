@@ -189,6 +189,43 @@ async function callSearchRoomMemories(keyword: string): Promise<ToolResult> {
   }
 }
 
+// F027 P14.b: query_messages MCP tool — BM25 全文召回（messages_fts trigram tokenizer），
+// 走 HTTP backend。与 recall_similar_context 互补：semantic 召回靠 embedding cosine，
+// BM25 召回靠字面 token / 短语命中。中文短串 (≥3 字) trigram 命中较稳。
+async function callQueryMessages(params: {
+  query: string
+  topK?: number
+  threadId?: string
+  role?: string
+}): Promise<ToolResult> {
+  const identity = getCallbackIdentity()
+  const url = new URL(`${identity.apiUrl}/api/callbacks/query-messages`)
+  url.searchParams.set("invocationId", identity.invocationId)
+  url.searchParams.set("callbackToken", identity.callbackToken)
+  url.searchParams.set("query", params.query)
+  if (typeof params.topK === "number") {
+    url.searchParams.set("topK", String(params.topK))
+  }
+  if (params.threadId) {
+    url.searchParams.set("threadId", params.threadId)
+  }
+  if (params.role) {
+    url.searchParams.set("role", params.role)
+  }
+
+  const response = await requestJson(url.toString(), { method: "GET" })
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `query_messages failed: ${JSON.stringify(response.json)}` }],
+    }
+  }
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(response.json) }],
+  }
+}
+
 // F018 P5 AC6.3: recall_similar_context MCP tool — 语义召回，走 HTTP backend
 async function callRecallSimilarContext(query: string, topK?: number): Promise<ToolResult> {
   const identity = getCallbackIdentity()
@@ -322,6 +359,36 @@ export function getTools() {
           },
         },
         required: ["keyword"],
+      },
+    },
+    {
+      name: "query_messages",
+      description:
+        "F027 chap 21 P14: 按字面/关键词在当前 ROOM 的 messages 表做 BM25 全文召回（trigram tokenizer，中文短串 ≥3 字命中稳）。与 recall_similar_context 互补：那个走 embedding 语义相似，本工具走字面 token / 短语 / 实体 ID（如 F011 / B022 / R-205）的精确召回。query 含特殊字符会被 sanitize 包成 phrase 安全字面量。可选过滤：threadId 限单 thread / role 限消息角色（user/assistant/connector）。topK 默认 10，最大 100。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "搜索字符串。英文 token / 中文短语（≥3 字）/ 实体 ID 都支持；保留字 AND/OR/NEAR 自动转义。",
+          },
+          topK: {
+            type: "integer",
+            minimum: 1,
+            maximum: 100,
+            description: "返回 top-K 命中（默认 10，最大 100）。",
+          },
+          threadId: {
+            type: "string",
+            description: "可选：限定单个 thread 内召回（默认聚合当前 room 全部 thread）。",
+          },
+          role: {
+            type: "string",
+            description: "可选：限定消息角色（user / assistant / connector）。",
+          },
+        },
+        required: ["query"],
       },
     },
     {
@@ -903,6 +970,16 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
       }
       const topK = typeof args?.topK === "number" ? args.topK : undefined
       return callRecallSimilarContext(query.trim(), topK)
+    }
+    case "query_messages": {
+      const query = typeof args?.query === "string" ? args.query : ""
+      if (!query.trim()) {
+        return { isError: true, content: [{ type: "text", text: "query is required" }] }
+      }
+      const topK = typeof args?.topK === "number" ? args.topK : undefined
+      const threadId = typeof args?.threadId === "string" ? args.threadId : undefined
+      const role = typeof args?.role === "string" ? args.role : undefined
+      return callQueryMessages({ query: query.trim(), topK, threadId, role })
     }
     case "get_task_status":
       return callGetTaskStatus(args?.agentId as string | undefined)

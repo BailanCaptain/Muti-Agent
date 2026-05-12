@@ -533,6 +533,47 @@ const INIT_SQL = `
     VALUES (new.rowid, new.path, new.bucket, new.name, new.body);
   END;
 
+  -- F027 P14.b · messages FTS5 索引（V16.5-final.md chap 21 P14 + chap 22 query_messages MCP）
+  -- 设计：
+  --   - external content table: content='messages' + content_rowid='rowid'，messages_fts
+  --     不冗余存 body，只持索引，省 disk（~3M messages × 5KB = ~15GB 不能再翻倍）。
+  --   - 只索引 content 一列；thread_id / role / created_at 走 JOIN messages 表取，
+  --     UNINDEXED 加进 fts 表反而徒占 schema 不省 IO（fts5 UNINDEXED 列存原 row 副本）。
+  --   - tokenizer 与 wiki_entity_fts 对齐：trigram case_sensitive 0；中文 substring 召回稳。
+  --   - rowid 一致性：messages 是 TEXT PK + 隐式 INTEGER rowid（非 WITHOUT ROWID），
+  --     content_rowid='rowid' 默认走隐式 rowid，触发器 NEW.rowid 同步过去 OK。
+  --
+  -- 风险卡：
+  --   - 老库 messages 已有大量行 → 触发器 attach 后只对未来 INSERT 同步。runMigrations
+  --     里 backfillMessagesFtsIfEmpty 在 fts 为空但 messages 非空时发 'rebuild'。
+  --   - rebuild 在 3M 行库上可能 ~10s+，启动 IO 一次。下次启动 fts 不空跳过。
+  CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    content,
+    content='messages',
+    content_rowid='rowid',
+    tokenize='trigram case_sensitive 0'
+  );
+
+  -- F027 P14.b · 触发器同步 messages → messages_fts
+  -- INSERT
+  CREATE TRIGGER IF NOT EXISTS messages_fts_ai
+  AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+  END;
+  -- DELETE（contentless 行需 'delete' command）
+  CREATE TRIGGER IF NOT EXISTS messages_fts_ad
+  AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, content)
+    VALUES ('delete', old.rowid, old.content);
+  END;
+  -- UPDATE = DELETE 旧 + INSERT 新（messages.content 变化 / 罕见，但 F018 retry 兜底 / F021 model snapshot 重写都可能 UPDATE）
+  CREATE TRIGGER IF NOT EXISTS messages_fts_au
+  AFTER UPDATE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, content)
+    VALUES ('delete', old.rowid, old.content);
+    INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+  END;
+
   -- F027 P0 · V16.5.1 F3 实施前置：drizzle 路径补 a2a_calls 4 个索引（与 sqlite.ts:327-330 对齐），
   -- 加复合索引 idx_a2a_calls_session_status_updated（viewfinder §4 高频查询）。
   -- 性能 AC：viewfinder 编译 1000 calls 房间 ≤ 50ms。
@@ -642,6 +683,10 @@ function runMigrations(adapter: ReturnType<typeof createNodeSqliteAdapter>): voi
   //   unicode61 但不含 trigram → DROP + 重新 CREATE + 'rebuild' 命令让 FTS5 从
   //   wiki_entity_index 全表扫重建索引。base 表 wiki_entity_index 不动。
   upgradeWikiEntityFtsTokenizer(adapter)
+  // F027 P14.b · messages_fts 同款 tokenizer 升级（极少见但对称兜底）
+  upgradeMessagesFtsTokenizer(adapter)
+  // F027 P14.b · messages_fts backfill（first-time 建表场景：触发器只对未来 INSERT 同步）
+  backfillMessagesFtsIfEmpty(adapter)
 }
 
 function upgradeWikiEntityFtsTokenizer(adapter: ReturnType<typeof createNodeSqliteAdapter>): void {
@@ -679,6 +724,81 @@ function upgradeWikiEntityFtsTokenizer(adapter: ReturnType<typeof createNodeSqli
     // 触发器已 attach，indexer 走 INSERT/UPDATE 时会重新同步
     const msg = String((err as { message?: unknown })?.message ?? err)
     if (!/no such table/i.test(msg)) throw err
+  }
+}
+
+// F027 P14.b · messages_fts tokenizer 升级（与 wiki_entity_fts 对称）。
+// 极少见路径（messages_fts 是 P14.b 新表，老库本无），但若历史人手实验建过
+// unicode61 版需要兜底升级到 trigram。逻辑同 upgradeWikiEntityFtsTokenizer：
+// DROP + 重 CREATE + 'rebuild' 命令让 FTS5 从 messages 全表扫重建索引。
+function upgradeMessagesFtsTokenizer(adapter: ReturnType<typeof createNodeSqliteAdapter>): void {
+  let existingSql: string | null = null
+  try {
+    const row = adapter
+      .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='messages_fts'")
+      .get() as { sql?: string } | undefined
+    existingSql = row?.sql ?? null
+  } catch {
+    return
+  }
+  if (!existingSql) return
+  if (/trigram/i.test(existingSql)) return
+  if (!/unicode61/i.test(existingSql)) return
+  try {
+    adapter.exec("DROP TABLE messages_fts;")
+    adapter.exec(`
+      CREATE VIRTUAL TABLE messages_fts USING fts5(
+        content,
+        content='messages',
+        content_rowid='rowid',
+        tokenize='trigram case_sensitive 0'
+      );
+    `)
+    adapter.exec("INSERT INTO messages_fts(messages_fts) VALUES('rebuild');")
+  } catch (err) {
+    const msg = String((err as { message?: unknown })?.message ?? err)
+    if (!/no such table/i.test(msg)) throw err
+  }
+}
+
+// F027 P14.b · first-time backfill：messages_fts 是 P14.b 新增的虚拟表，
+// 触发器 attach 后只对未来 INSERT/UPDATE/DELETE 同步。老库已有的 messages 行
+// 必须显式发 'rebuild' 命令让 FTS5 从 content='messages' 全表扫重建索引。
+//
+// 判定条件：messages_fts 存在 + 表为空 + messages 表非空 → rebuild。
+// 之后每次启动 fts 已填，SELECT LIMIT 1 命中跳过。
+//
+// 风险：3M messages × 5KB 全表扫 ~10s+，启动 IO 一次性贵；同步执行保证启动后
+// query_messages 立即一致。失败不阻塞启动（fail-soft + 下次启动重试）。
+function backfillMessagesFtsIfEmpty(adapter: ReturnType<typeof createNodeSqliteAdapter>): void {
+  // 表存在性兜底（INIT_SQL 已建，但保守 try/catch）
+  let ftsEmpty = false
+  try {
+    const row = adapter.prepare("SELECT rowid FROM messages_fts LIMIT 1").get() as
+      | { rowid?: number }
+      | undefined
+    ftsEmpty = !row
+  } catch {
+    return
+  }
+  if (!ftsEmpty) return
+
+  // messages 表是否非空（避免空库无意义 rebuild）
+  let messagesNonEmpty = false
+  try {
+    const row = adapter.prepare("SELECT id FROM messages LIMIT 1").get() as
+      | { id?: string }
+      | undefined
+    messagesNonEmpty = !!row
+  } catch {
+    return
+  }
+  if (!messagesNonEmpty) return
+
+  try {
+    adapter.exec("INSERT INTO messages_fts(messages_fts) VALUES('rebuild');")
+  } catch {
+    // fail-soft: rebuild 失败不阻塞启动；下次启动 fts 仍为空会再尝试
   }
 }
 

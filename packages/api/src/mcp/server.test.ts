@@ -6,9 +6,9 @@ import { encodeMessage, getTools, handleToolCall, parseFrame } from "./server.js
 // getTools tests
 // ---------------------------------------------------------------------------
 
-test("getTools returns 16 tools (F027 P3 +acquire_wiki_lease/read_wiki/update_wiki)", () => {
+test("getTools returns 17 tools (F027 P14.b +query_messages)", () => {
   const tools = getTools()
-  assert.equal(tools.length, 16, `Expected 16 tools, got ${tools.length}`)
+  assert.equal(tools.length, 17, `Expected 17 tools, got ${tools.length}`)
   const names = tools.map((t) => t.name).sort()
   assert.deepEqual(names, [
     "acquire_wiki_lease",
@@ -18,6 +18,7 @@ test("getTools returns 16 tools (F027 P3 +acquire_wiki_lease/read_wiki/update_wi
     "get_room_summary",
     "get_task_status",
     "post_message",
+    "query_messages",
     "read_wiki",
     "recall_similar_context",
     "request_decision",
@@ -28,6 +29,29 @@ test("getTools returns 16 tools (F027 P3 +acquire_wiki_lease/read_wiki/update_wi
     "update_wiki",
     "update_workflow_sop",
   ])
+})
+
+test("query_messages tool has expected schema (F027 P14.b)", () => {
+  const tools = getTools()
+  const tool = tools.find((t) => t.name === "query_messages")
+  assert.ok(tool)
+  const schema = tool!.inputSchema as {
+    type: string
+    properties: Record<string, { type: string }>
+    required?: string[]
+  }
+  assert.equal(schema.type, "object")
+  assert.equal(schema.properties.query.type, "string")
+  assert.equal(schema.properties.topK.type, "integer")
+  assert.equal(schema.properties.threadId.type, "string")
+  assert.equal(schema.properties.role.type, "string")
+  assert.deepEqual(schema.required, ["query"])
+})
+
+test("handleToolCall query_messages rejects empty query", async () => {
+  const result = await handleToolCall("query_messages", { query: "   " })
+  assert.equal(result.isError, true)
+  assert.match(result.content[0].text, /query is required/)
 })
 
 test("recall_similar_context tool has expected schema (F018 P5 AC6.3)", () => {

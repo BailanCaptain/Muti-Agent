@@ -52,6 +52,7 @@ import { backfillHistoricalTitles } from "./services/session-titler/title-backfi
 import { WorkflowSopService } from "./services/workflow-sop-service"
 import { SkillRegistry } from "./skills/registry"
 import { SopTracker } from "./skills/sop-tracker"
+import { MessagesFtsRepository } from "./wiki/wiki-search"
 import { createWikiServices } from "./wiki/wiki-services"
 
 /**
@@ -99,6 +100,8 @@ export async function createApiServer(options: {
   ensurePreMigrationBackup(options.sqlitePath)
   const { db: drizzleDb, close: closeDrizzle } = createDrizzleDb(options.sqlitePath)
   const repository = new SessionRepository(drizzleDb)
+  // F027 P14.b: messages_fts BM25 召回 repository — query_messages MCP 后端共享一份实例
+  const messagesFtsRepo = new MessagesFtsRepository(drizzleDb)
   // F022 P2: Haiku auto-titler. Fire-and-forget debounced title generation
   // for session groups with a default "新会话 YYYY-MM-DD …" title. See
   // `services/session-titler/*`.
@@ -563,6 +566,11 @@ export async function createApiServer(options: {
     workflowSopService,
     // F027 P3 chap 6: expose wiki services to /api/callbacks/update-wiki + acquire-wiki-lease + read-wiki
     wikiServices,
+    // F027 P14.b: messages_fts BM25 召回（query_messages MCP backend）
+    queryMessages: ({ roomId, query, topK, threadId, role }) => {
+      const hits = messagesFtsRepo.query(query, { roomId, topK, threadId, role })
+      return { hits }
+    },
   })
   registerWsRoute(app, {
     messages,

@@ -126,6 +126,25 @@ export function registerCallbackRoutes(
       text: string
       hits: Array<{ messageId: string; chunkText: string; score: number }>
     }>
+    // F027 P14.b: messages_fts BM25 召回（搭配 recall_similar_context 语义召回的另一路）
+    // scope = roomId 维度（同 session group）；threadId / role 可选过滤。
+    queryMessages?: (params: {
+      roomId: string
+      query: string
+      topK: number
+      threadId?: string
+      role?: string
+    }) => {
+      hits: Array<{
+        messageId: string
+        threadId: string
+        role: string
+        content: string
+        createdAt: string
+        bm25Rank: number
+        score: number
+      }>
+    }
     requestDecision?: (
       sessionGroupId: string,
       params: {
@@ -433,6 +452,64 @@ export function registerCallbackRoutes(
       return { text: "(no relevant context found)", hits: [] }
     },
   )
+
+  // F027 P14.b: query_messages MCP backend — BM25 全文召回（搭配 recall_similar_context
+  // 语义召回，两路语义/字面）。scope 默认 = 当前 invocation 所在 room；threadId / role
+  // 可选过滤。返回 hits 列表给 agent 消费，sanitize 处理同 recall_similar_context。
+  app.get("/api/callbacks/query-messages", async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = request.query as {
+      invocationId?: string
+      callbackToken?: string
+      query?: string
+      topK?: string
+      threadId?: string
+      role?: string
+    }
+    const invocation = assertInvocation(
+      options.invocations,
+      query.invocationId,
+      query.callbackToken,
+    )
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    const q = query.query?.trim()
+    if (!q) {
+      reply.code(400)
+      return { error: "query is required." }
+    }
+
+    const topKParsed = query.topK ? Number.parseInt(query.topK, 10) : 10
+    const topK = Number.isFinite(topKParsed) && topKParsed > 0 ? Math.min(topKParsed, 100) : 10
+
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+
+    const sessionGroup = options.repository.getSessionGroupById(thread.sessionGroupId)
+    const roomId = (sessionGroup as { roomId?: string | null } | undefined)?.roomId
+    if (!roomId) {
+      // session_group 没 roomId（极少；老库可能漏 backfill）→ graceful empty
+      return { hits: [] }
+    }
+
+    if (options.queryMessages) {
+      return options.queryMessages({
+        roomId,
+        query: q,
+        topK,
+        threadId: query.threadId?.trim() || undefined,
+        role: query.role?.trim() || undefined,
+      })
+    }
+
+    // queryMessages not wired → graceful empty
+    return { hits: [] }
+  })
 
   // --- New A2A callback routes ---
 
