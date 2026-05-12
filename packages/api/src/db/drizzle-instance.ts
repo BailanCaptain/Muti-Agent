@@ -481,6 +481,53 @@ const INIT_SQL = `
   CREATE INDEX IF NOT EXISTS idx_room_agent_sessions_active
     ON room_agent_sessions(archived, room_id, alias);
 
+  -- F027 P14.a · wiki entity 索引基表（indexer 扫 wiki/<bucket>/*.md 落入）
+  CREATE TABLE IF NOT EXISTS wiki_entity_index (
+    path TEXT PRIMARY KEY,
+    bucket TEXT NOT NULL,
+    name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    mtime_ms INTEGER NOT NULL,
+    indexed_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_wiki_entity_index_bucket
+    ON wiki_entity_index(bucket);
+
+  -- F027 P14.a · FTS5 虚拟表（content= 关联 wiki_entity_index；中文用 unicode61
+  -- 一字一 token baseline，P15 可换 trigram；name 也参与索引提升路径召回精度）
+  CREATE VIRTUAL TABLE IF NOT EXISTS wiki_entity_fts USING fts5(
+    path UNINDEXED,
+    bucket UNINDEXED,
+    name,
+    body,
+    content='wiki_entity_index',
+    content_rowid='rowid',
+    tokenize='unicode61 remove_diacritics 2'
+  );
+
+  -- F027 P14.a · 触发器同步 wiki_entity_index → wiki_entity_fts
+  -- INSERT
+  CREATE TRIGGER IF NOT EXISTS wiki_entity_fts_ai
+  AFTER INSERT ON wiki_entity_index BEGIN
+    INSERT INTO wiki_entity_fts(rowid, path, bucket, name, body)
+    VALUES (new.rowid, new.path, new.bucket, new.name, new.body);
+  END;
+  -- DELETE（FTS5 contentless 行需要发 'delete' command + 原 row）
+  CREATE TRIGGER IF NOT EXISTS wiki_entity_fts_ad
+  AFTER DELETE ON wiki_entity_index BEGIN
+    INSERT INTO wiki_entity_fts(wiki_entity_fts, rowid, path, bucket, name, body)
+    VALUES ('delete', old.rowid, old.path, old.bucket, old.name, old.body);
+  END;
+  -- UPDATE = DELETE 旧 + INSERT 新
+  CREATE TRIGGER IF NOT EXISTS wiki_entity_fts_au
+  AFTER UPDATE ON wiki_entity_index BEGIN
+    INSERT INTO wiki_entity_fts(wiki_entity_fts, rowid, path, bucket, name, body)
+    VALUES ('delete', old.rowid, old.path, old.bucket, old.name, old.body);
+    INSERT INTO wiki_entity_fts(rowid, path, bucket, name, body)
+    VALUES (new.rowid, new.path, new.bucket, new.name, new.body);
+  END;
+
   -- F027 P0 · V16.5.1 F3 实施前置：drizzle 路径补 a2a_calls 4 个索引（与 sqlite.ts:327-330 对齐），
   -- 加复合索引 idx_a2a_calls_session_status_updated（viewfinder §4 高频查询）。
   -- 性能 AC：viewfinder 编译 1000 calls 房间 ≤ 50ms。

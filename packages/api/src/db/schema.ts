@@ -477,6 +477,40 @@ export const threadSealEvents = sqliteTable("thread_seal_events", {
 // open_threads / closed_threads / sources 走 JSON 序列化（boundary 解析）。
 // canonical_owner_path 永远是 wiki/rooms/<roomId>/agent-sessions/<alias>/S-<seq>.md，
 // LLM 编译只读 row（防漂桶 lint 兜底）。
+// F027 P14.a · wiki entity FTS5 索引基表
+// 真相源：docs/plans/V16.5-final.md chap 21 P14 + chap 22 行 2407 "FTS5 触发器同步"
+//
+// wiki entity 本体是文件（wiki/<bucket>/<name>.md），不是表行。indexer 扫文件
+// 落入本表（path = canonical key，indexed_at + source_hash 防漂移）。
+// FTS5 虚拟表 wiki_entity_fts 用 content=wiki_entity_index 关联，通过 trigger
+// 自动同步 INSERT/UPDATE/DELETE（见 drizzle-instance.ts INIT_SQL）。
+//
+// 不存 wiki_memories 的 metadata（state/promotion_target/...）—— 那些走 P10
+// wikiMemories 表。本表只为 BM25 / FTS5 全文召回服务。
+export const wikiEntityIndex = sqliteTable(
+  "wiki_entity_index",
+  {
+    /** 相对 wiki root 路径（如 wiki/concepts/F011-backend-hardening-drizzle.md） */
+    path: text("path").primaryKey(),
+    /** bucket（concepts / memories / agents / bugReport / archive / ...） */
+    bucket: text("bucket").notNull(),
+    /** 文件名去后缀（F011-backend-hardening-drizzle） */
+    name: text("name").notNull(),
+    /** 文件 body 全文（snapshot；indexer reindex 时整 body 覆写） */
+    body: text("body").notNull(),
+    /** sha256(body)；indexer 增量判定 / 防漂移核验 */
+    sourceHash: text("source_hash").notNull(),
+    /** 文件 mtime（毫秒）；indexer 跳过未变文件用 */
+    mtimeMs: integer("mtime_ms").notNull(),
+    /** 入库时间 ISO（debug + audit） */
+    indexedAt: text("indexed_at").notNull(),
+  },
+  (table) => [
+    // 按 bucket 过滤（caller 想限 scope='concepts' 时用）
+    index("idx_wiki_entity_index_bucket").on(table.bucket),
+  ],
+)
+
 export const roomAgentSessions = sqliteTable(
   "room_agent_sessions",
   {
