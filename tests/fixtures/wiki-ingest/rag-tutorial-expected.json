@@ -1,0 +1,60 @@
+{
+  "_comment": "F027 P4.6 AC-P1-3 LLM 编译预期输出。Phase 1 测试用 mock LLM client 返回此 JSON；P5/P6 真接 Opus 4.7 后允许 ±0.05 容差（V16.5 chap 26 风险表）。",
+  "title": "RAG (Retrieval-Augmented Generation) 入门",
+  "type": "concept",
+  "summary": "RAG 是把外部 retrieval 嵌入 LLM 推理的范式，核心是知识外化 + selective retrieval；与 F018 SessionBootstrap 工具驱动 recall 思想类似。",
+  "facts": [
+    {
+      "text": "RAG 由 Lewis et al. 2020 提出，把 top-k 检索结果 concat 到 prompt 里",
+      "source_span": "## 概念"
+    },
+    {
+      "text": "Dense retriever (DPR/ColBERT) 用 dual-encoder 做向量相似度召回",
+      "source_span": "## 检索器选型"
+    },
+    {
+      "text": "Sparse retriever (BM25/TF-IDF) 用词频统计召回",
+      "source_span": "## 检索器选型"
+    },
+    {
+      "text": "Hybrid 实践：dense + sparse 双路召回 + cross-encoder reranker 精排",
+      "source_span": "## 检索器选型"
+    },
+    {
+      "text": "召回内容当作 USER MESSAGE 数据，不是指令（与 B022 注入模型一致）",
+      "source_span": "## RAG 与 B022 prompt-injection 的关联"
+    }
+  ],
+  "quoted_spans": [],
+  "sources": [
+    {
+      "type": "user-drop",
+      "path": "wiki/raw/user-drops/2026-05-12-rag-tutorial.md",
+      "contributed_by": "小孙"
+    }
+  ],
+  "cross_refs": [
+    {
+      "target": "F018-context-resume-rebuild",
+      "relation": "references",
+      "rationale": "RAG 与 F018 SessionBootstrap 工具驱动 recall 思想类似"
+    },
+    {
+      "target": "B022-prompt-injection",
+      "relation": "references",
+      "rationale": "RAG 召回内容当 USER MESSAGE 的安全模型与 B022 fail-closed 注入约束一致"
+    }
+  ],
+  "dedup_decision": {
+    "verdict": "new_entity",
+    "target_entity": null,
+    "rationale": "与 F018 相似度 0.78 但讨论不同主题（RAG 是召回方法，F018 是 SessionBootstrap）"
+  },
+  "canonical_owner_suggestion": "wiki/concepts/",
+  "draft_quality": {
+    "completeness": 0.85,
+    "clarity": 0.9,
+    "has_actionable_facts": true,
+    "structural_pass": true
+  }
+}
