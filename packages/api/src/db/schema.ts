@@ -471,3 +471,39 @@ export const threadSealEvents = sqliteTable("thread_seal_events", {
   sealedAt: text("sealed_at").notNull(),
   fencingToken: text("fencing_token").notNull(),
 })
+
+// F027 P8 chap 9 · per-agent S-XXXX.md ledger（room × alias × session_seq）。
+// session_seq per-(room, alias) 单调；UNIQUE 防同号重复写。
+// open_threads / closed_threads / sources 走 JSON 序列化（boundary 解析）。
+// canonical_owner_path 永远是 wiki/rooms/<roomId>/agent-sessions/<alias>/S-<seq>.md，
+// LLM 编译只读 row（防漂桶 lint 兜底）。
+export const roomAgentSessions = sqliteTable(
+  "room_agent_sessions",
+  {
+    sessionId: integer("session_id").primaryKey({ autoIncrement: true }),
+    roomId: text("room_id").notNull(),
+    alias: text("alias").notNull(),
+    sessionSeq: integer("session_seq").notNull(),
+    startedAt: text("started_at").notNull(),
+    endedAt: text("ended_at"),
+    entryReason: text("entry_reason").notNull(),
+    exitReason: text("exit_reason"),
+    lastSeenCommitSeq: integer("last_seen_commit_seq"),
+    openThreads: text("open_threads"), // JSON array of {text, a2a_call_id?}
+    closedThreads: text("closed_threads"), // JSON array of string
+    privateNotesHash: text("private_notes_hash"),
+    sessionDigest: text("session_digest"), // 200-300 tok 摘要
+    /** Archive 标记：被 yearly pack 合并后 archived='Y'，主索引不再返回 active 行。 */
+    archived: text("archived").notNull().default("N"), // 'Y' | 'N'
+    archivedAt: text("archived_at"),
+    archivedYear: integer("archived_year"),
+    reserved1: text("reserved_1"),
+    reserved2: text("reserved_2"),
+  },
+  (table) => [
+    // chap 9 行 1002 主查询（per-room+alias 倒序）
+    index("idx_room_agent_sessions").on(table.roomId, table.alias, table.sessionSeq),
+    // archived='N' 过滤 + room/alias 维度（current.md 派生 + 100k sharding active 查询）
+    index("idx_room_agent_sessions_active").on(table.archived, table.roomId, table.alias),
+  ],
+)

@@ -454,6 +454,33 @@ const INIT_SQL = `
   CREATE INDEX IF NOT EXISTS idx_thread_seal_events_room
     ON thread_seal_events(room_id, seq);
 
+  -- F027 P8 chap 9 · per-agent S-XXXX.md ledger（room × alias × session_seq）
+  CREATE TABLE IF NOT EXISTS room_agent_sessions (
+    session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    session_seq INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    entry_reason TEXT NOT NULL,
+    exit_reason TEXT,
+    last_seen_commit_seq INTEGER,
+    open_threads TEXT,
+    closed_threads TEXT,
+    private_notes_hash TEXT,
+    session_digest TEXT,
+    archived TEXT NOT NULL DEFAULT 'N',
+    archived_at TEXT,
+    archived_year INTEGER,
+    reserved_1 TEXT,
+    reserved_2 TEXT,
+    UNIQUE(room_id, alias, session_seq)
+  );
+  CREATE INDEX IF NOT EXISTS idx_room_agent_sessions
+    ON room_agent_sessions(room_id, alias, session_seq);
+  CREATE INDEX IF NOT EXISTS idx_room_agent_sessions_active
+    ON room_agent_sessions(archived, room_id, alias);
+
   -- F027 P0 · V16.5.1 F3 实施前置：drizzle 路径补 a2a_calls 4 个索引（与 sqlite.ts:327-330 对齐），
   -- 加复合索引 idx_a2a_calls_session_status_updated（viewfinder §4 高频查询）。
   -- 性能 AC：viewfinder 编译 1000 calls 房间 ≤ 50ms。
