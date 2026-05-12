@@ -37,39 +37,49 @@ export class RoomAgentSessionsRepository {
   createSession(input: CreateSessionInput): RoomAgentSession {
     const safeRoomId = assertSafePathSegment("roomId", input.roomId)
     const safeAlias = assertSafePathSegment("alias", input.alias)
-    const row = this.db.transaction((tx) => {
-      const last = tx
-        .select({ sessionSeq: roomAgentSessions.sessionSeq })
-        .from(roomAgentSessions)
-        .where(
-          and(eq(roomAgentSessions.roomId, safeRoomId), eq(roomAgentSessions.alias, safeAlias)),
-        )
-        .orderBy(desc(roomAgentSessions.sessionSeq))
-        .limit(1)
-        .get()
-      const next = (last?.sessionSeq ?? 0) + 1
-      return tx
-        .insert(roomAgentSessions)
-        .values({
-          roomId: safeRoomId,
-          alias: safeAlias,
-          sessionSeq: next,
-          startedAt: input.startedAt,
-          endedAt: null,
-          entryReason: input.entryReason,
-          exitReason: null,
-          lastSeenCommitSeq: input.lastSeenCommitSeq ?? null,
-          openThreads: null,
-          closedThreads: null,
-          privateNotesHash: null,
-          sessionDigest: null,
-          archived: "N",
-          archivedAt: null,
-          archivedYear: null,
-        })
-        .returning()
-        .get()
-    })
+    // 范-r2 P1-2 修：必须 BEGIN IMMEDIATE，不是默认 BEGIN DEFERRED。
+    //   DEFERRED：两连接都 BEGIN → 都 SELECT 拿 max=N → A INSERT(N+1) commit OK
+    //             → B INSERT(N+1) 撞 SQLITE_BUSY_SNAPSHOT 或 UNIQUE 失败
+    //   IMMEDIATE：BEGIN 时即拿 RESERVED 写锁 → 第二个 BEGIN 等到第一个 commit
+    //              再读 max → 拿到 N+1 → INSERT(N+2) 串行成功
+    // drizzle better-sqlite3 driver: { behavior: 'immediate' } 会路由到 wrapper.immediate
+    // (drizzle-instance.ts createNodeSqliteAdapter 已暴露 wrapper.immediate)
+    const row = this.db.transaction(
+      (tx) => {
+        const last = tx
+          .select({ sessionSeq: roomAgentSessions.sessionSeq })
+          .from(roomAgentSessions)
+          .where(
+            and(eq(roomAgentSessions.roomId, safeRoomId), eq(roomAgentSessions.alias, safeAlias)),
+          )
+          .orderBy(desc(roomAgentSessions.sessionSeq))
+          .limit(1)
+          .get()
+        const next = (last?.sessionSeq ?? 0) + 1
+        return tx
+          .insert(roomAgentSessions)
+          .values({
+            roomId: safeRoomId,
+            alias: safeAlias,
+            sessionSeq: next,
+            startedAt: input.startedAt,
+            endedAt: null,
+            entryReason: input.entryReason,
+            exitReason: null,
+            lastSeenCommitSeq: input.lastSeenCommitSeq ?? null,
+            openThreads: null,
+            closedThreads: null,
+            privateNotesHash: null,
+            sessionDigest: null,
+            archived: "N",
+            archivedAt: null,
+            archivedYear: null,
+          })
+          .returning()
+          .get()
+      },
+      { behavior: "immediate" },
+    )
     return hydrate(row)
   }
 

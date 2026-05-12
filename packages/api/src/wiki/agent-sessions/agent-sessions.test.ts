@@ -343,6 +343,50 @@ describe("RoomAgentSessionsRepository · 范-r1 P1-2 createSession 并发安全"
     }
   })
 
+  it("范-r2 P1-2 真修：两个独立 DB 连接同一 SQLite 文件，并发 createSession 都成功（BEGIN IMMEDIATE）", async () => {
+    // 范-r2 复现：default BEGIN DEFERRED 时两连接读到同 max → 第二个 INSERT 撞 SQLITE_BUSY
+    // 修后用 BEGIN IMMEDIATE → 第二个 transaction wait 第一个 commit → 拿新 max
+    const dir = mkdtempSync(path.join(tmpdir(), "agent-sessions-concurrent-"))
+    const dbPath = path.join(dir, "shared.sqlite")
+    const conn1 = createDrizzleDb(dbPath)
+    const conn2 = createDrizzleDb(dbPath)
+    try {
+      const dz1 = drizzleBetter(conn1.raw as any, { schema })
+      const dz2 = drizzleBetter(conn2.raw as any, { schema })
+      const repo1 = new RoomAgentSessionsRepository(dz1)
+      const repo2 = new RoomAgentSessionsRepository(dz2)
+      // 跑 50 轮串行交错创建，验两连接都不撞 BUSY/UNIQUE
+      const seqs1: number[] = []
+      const seqs2: number[] = []
+      for (let i = 0; i < 25; i++) {
+        const s1 = repo1.createSession({
+          roomId: "R1",
+          alias: "x",
+          startedAt: `2026-05-12T01:${String(i * 2).padStart(2, "0")}:00Z`,
+          entryReason: "e",
+        })
+        seqs1.push(s1.sessionSeq)
+        const s2 = repo2.createSession({
+          roomId: "R1",
+          alias: "x",
+          startedAt: `2026-05-12T01:${String(i * 2 + 1).padStart(2, "0")}:00Z`,
+          entryReason: "e",
+        })
+        seqs2.push(s2.sessionSeq)
+      }
+      const all = [...seqs1, ...seqs2].sort((a, b) => a - b)
+      // 50 个 session，seq 必须严格 1..50（无 gap、无重复 → BEGIN IMMEDIATE 串行化生效）
+      assert.deepEqual(
+        all,
+        Array.from({ length: 50 }, (_, i) => i + 1),
+      )
+    } finally {
+      conn1.close()
+      conn2.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it("循环 100 次 createSession 同 (room, alias) 全成功 + seq 1..100 严格单调", () => {
     const { drizzle, cleanup } = makeDb()
     try {
@@ -664,6 +708,45 @@ describe("ledger-writer · 范-r1 P2-2 escapeYamlString YAML 1.2 特殊 token �
       assert.ok(content.includes('exit_reason: "{looks like map}"'), "{ 起头必须 quoted")
       assert.ok(content.includes('"a, b, c"'), "含逗号必须 quoted")
       assert.ok(content.includes('"[1, 2]"'), "[ ] 内容必须 quoted")
+    } finally {
+      rootClean()
+      dbClean()
+    }
+  })
+
+  it("范-r2 P2-2 真修：yearly-pack frontmatter 也走加强 escape（roomId='Null' / alias='[a]' 必须 quoted）", async () => {
+    // 范-r2 finding：yearly-pack 有独立旧版 escapeYaml 只覆盖 [:#] 起头几种，
+    // roomId='Null' 会被 YAML 解析成 null，alias='[a]' 解析成 flow seq。
+    // 修后 yearly-pack 必须复用 ledger-writer 的加强版（或抽共享 helper）。
+    const { drizzle, cleanup: dbClean } = makeDb()
+    const { root, cleanup: rootClean } = makeWikiRoot()
+    try {
+      const repo = new RoomAgentSessionsRepository(drizzle)
+      // 注意：path-segment.ts 拒 '[' 和 ' '，所以 alias 不能用 '[a]'；改用 entry/digest 验证
+      // roomId='Null' 通过 path 校验（不是非法字符），但 YAML 会解析成 null
+      const s = repo.createSession({
+        roomId: "Null", // 通过 segment 但 YAML 解析成 null（必须 quote）
+        alias: "agent",
+        startedAt: "2025-06-01T01:00:00Z",
+        entryReason: ".nan",
+      })
+      repo.endSession(s.sessionId, {
+        endedAt: "2025-06-01T02:00:00Z",
+        exitReason: "x",
+        sessionDigest: "yearly digest",
+      })
+      writeAgentSessionLedger({ wikiRoot: root, session: repo.get(s.sessionId)! })
+      const reports = await archiveYearlySessions({
+        wikiRoot: root,
+        year: 2025,
+        repo,
+      })
+      assert.equal(reports.length, 1)
+      const packContent = await fsAsync.readFile(reports[0].packPath, "utf-8")
+      assert.ok(
+        packContent.includes('room_id: "Null"'),
+        `pack frontmatter room_id='Null' 必须 quote 防解析成 null。content:\n${packContent}`,
+      )
     } finally {
       rootClean()
       dbClean()

@@ -19,6 +19,7 @@ import { writeFileAtomic } from "../atomic-write"
 import { computeAgentSessionLayout } from "./ledger-writer"
 import type { RoomAgentSessionsRepository } from "./repository"
 import type { RoomAgentSession, YearlyPackReport } from "./types"
+import { escapeYamlString } from "./yaml-escape"
 
 export interface ArchiveYearlyOptions {
   wikiRoot: string
@@ -140,8 +141,10 @@ function buildYearlyPackMarkdown(
   const lines: string[] = []
   lines.push("---")
   lines.push(`year: ${year}`)
-  lines.push(`room_id: ${escapeYaml(roomId)}`)
-  lines.push(`alias: ${escapeYaml(alias)}`)
+  // 范-r2 P2-2 修：用共享 escapeYamlString 而非旧版 escapeYaml（roomId='Null' /
+  // alias='.nan' 也能正确 quote 防 YAML 解析成 null/数值）
+  lines.push(`room_id: ${escapeYamlString(roomId)}`)
+  lines.push(`alias: ${escapeYamlString(alias)}`)
   lines.push(`session_count: ${sessions.length}`)
   lines.push(`first_seq: ${sessions[0]?.sessionSeq ?? 0}`)
   lines.push(`last_seq: ${sessions[sessions.length - 1]?.sessionSeq ?? 0}`)
@@ -171,14 +174,6 @@ function buildYearlyPackMarkdown(
     lines.push("")
   }
   return `${lines.join("\n")}\n`
-}
-
-function escapeYaml(s: string): string {
-  if (s.length === 0) return '""'
-  if (/[:#\n\r\t]/.test(s) || /^[-?!&*|>%@`]/.test(s)) {
-    return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
-  }
-  return s
 }
 
 /**

@@ -14,6 +14,7 @@ import path from "node:path"
 import { writeFileAtomic } from "../atomic-write"
 import { assertSafePathSegment } from "./path-segment"
 import type { RoomAgentSession, SessionLedgerFrontmatter } from "./types"
+import { escapeYamlString } from "./yaml-escape"
 
 export interface AgentSessionFileLayout {
   /** S-XXXX.md 绝对路径 */
@@ -248,50 +249,5 @@ function renderFrontmatter(fm: SessionLedgerFrontmatter): string {
  *   - 引号包后内部双引号 escape
  *   - 其它纯文本直接返回（YAML 接受）
  */
-/**
- * 范-r1 P2-2 修：覆盖 YAML 1.2 plain scalar 禁用 token + 1.1 boolean / null 残留风险
- *   - control / quote / : # 等
- *   - flow indicators [ ] { } , ` 起头
- *   - YAML 1.2 null: null Null NULL ~ + 空字符串
- *   - YAML 1.1 boolean (老 parser 仍接): true True TRUE false False FALSE Yes YES yes No NO no On ON on Off OFF off Y y N n
- *   - special floats: .nan .NaN .NAN .inf .Inf .INF -.inf etc.
- *   - 数字开头（2026-05 / 1.5 / -3）
- */
-function escapeYamlString(s: string): string {
-  if (s.length === 0) return '""'
-  // 优先：char-class 检查（任何这些都需 quote）
-  let hasControl = false
-  for (let i = 0; i < s.length; i++) {
-    if (s.charCodeAt(i) < 0x20) {
-      hasControl = true
-      break
-    }
-  }
-  const containsRiskyChar =
-    /[:#"'\n\r\t\\]/.test(s) ||
-    /[,[\]{}]/.test(s) || // YAML flow indicators (P2-2)
-    hasControl
-  // leading / trailing whitespace
-  const wsEdge = /^[\s]/.test(s) || /[\s]$/.test(s)
-  // 起头特殊字符（YAML 1.2 spec 7.4.2 plain scalar 禁起字符）
-  const leadingSpecial = /^[-?!&*|>%@`]/.test(s)
-  // 数字开头 → 否则被解析数值
-  const numericLike = /^[0-9]/.test(s)
-  // YAML 1.2 null 字面 + ~
-  const yamlNull = /^(null|Null|NULL|~)$/.test(s)
-  // YAML 1.1 boolean 老 parser 仍接（保守一律 quote）
-  const yamlBoolish =
-    /^(true|True|TRUE|false|False|FALSE|yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF|y|Y|n|N)$/.test(s)
-  // YAML 1.1 .nan / .inf
-  const yamlSpecialNum = /^[-+]?\.(?:nan|NaN|NAN|inf|Inf|INF)$/.test(s)
-  const needsQuote =
-    containsRiskyChar ||
-    wsEdge ||
-    leadingSpecial ||
-    numericLike ||
-    yamlNull ||
-    yamlBoolish ||
-    yamlSpecialNum
-  if (!needsQuote) return s
-  return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
-}
+// 范-r2 P2-2：escapeYamlString 已抽到 ./yaml-escape.ts 作为 single source of truth；
+// 这里直接 import 复用（防 yearly-pack 等下游再写一份漏字符）。
