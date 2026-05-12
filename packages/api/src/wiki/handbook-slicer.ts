@@ -103,12 +103,48 @@ export class HandbookSliceMissingError extends Error {
 }
 
 /**
+ * [范-r1 P3] runtime ENOENT 友好错误：抛 HandbookFileMissingError 而不是裸 ENOENT。
+ * 让 caller（Phase 2 RoomCompiler / sanitize 调度）能直接日志报"哪个 wikiRoot 没 handbook"。
+ */
+export class HandbookFileMissingError extends Error {
+  readonly wikiRoot: string
+  readonly relativePath: string
+  readonly absolutePath: string
+  constructor(wikiRoot: string, relativePath: string, absolutePath: string, cause?: unknown) {
+    super(
+      `Agent Wiki Handbook file not found: ${absolutePath}\n` +
+        `  wikiRoot=${wikiRoot}\n` +
+        `  relativePath=${relativePath}\n` +
+        "  → Phase 1 部署期：把 wiki/rules/agent-wiki-handbook.md seed 进对应 wikiRoot；" +
+        "Phase 2 之后由 P3.6 setup 脚本兜底。",
+    )
+    this.name = "HandbookFileMissingError"
+    this.wikiRoot = wikiRoot
+    this.relativePath = relativePath
+    this.absolutePath = absolutePath
+    if (cause !== undefined) {
+      ;(this as unknown as { cause: unknown }).cause = cause
+    }
+  }
+}
+
+/**
  * IO 包装：从 wikiRoot 加载 handbook 文件并切片。
- * @throws ENOENT / HandbookSliceMissingError
+ * @throws HandbookFileMissingError 文件不存在 / 不可读
+ * @throws HandbookSliceMissingError handbook 内容缺 H2
  */
 export async function loadHandbookSlices(wikiRoot: string): Promise<HandbookSlices> {
   const handbookPath = path.resolve(wikiRoot, HANDBOOK_RELATIVE_PATH)
-  const content = await readFile(handbookPath, "utf-8")
+  let content: string
+  try {
+    content = await readFile(handbookPath, "utf-8")
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException)?.code
+    if (code === "ENOENT" || code === "EACCES" || code === "ENOTDIR") {
+      throw new HandbookFileMissingError(wikiRoot, HANDBOOK_RELATIVE_PATH, handbookPath, e)
+    }
+    throw e
+  }
   return sliceHandbookByH2(content)
 }
 

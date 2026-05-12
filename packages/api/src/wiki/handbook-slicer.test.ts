@@ -19,6 +19,7 @@ import test from "node:test"
 import {
   H2_TO_KEY,
   HANDBOOK_RELATIVE_PATH,
+  HandbookFileMissingError,
   HandbookSliceMissingError,
   buildCompileLLMPrompt,
   buildSanitizeLLMPrompt,
@@ -197,4 +198,20 @@ test("maybeInjectAgentHandbookSlice · 已注入过 → null", () => {
   const slices = sliceHandbookByH2(MINIMAL_HANDBOOK)
   const out = maybeInjectAgentHandbookSlice(slices, { handbookSeen: true })
   assert.equal(out, null)
+})
+
+// ───── 范-r1 P3 防回归：runtime ENOENT 应抛友好错误，不是裸 ENOENT ─────
+test("范-r1 P3 · loadHandbookSlices 文件不存在 → HandbookFileMissingError 含 wikiRoot + relPath", async () => {
+  const fakeRoot = path.join(REPO_ROOT, ".no-such-wiki-root-for-test-xxxx")
+  let caught: unknown = null
+  try {
+    await loadHandbookSlices(fakeRoot)
+  } catch (e) {
+    caught = e
+  }
+  assert.ok(caught instanceof HandbookFileMissingError, `expected HandbookFileMissingError, got: ${(caught as Error)?.message}`)
+  assert.match((caught as HandbookFileMissingError).message, /agent-wiki-handbook\.md/)
+  assert.match((caught as HandbookFileMissingError).message, /no-such-wiki-root-for-test-xxxx/)
+  assert.equal((caught as HandbookFileMissingError).wikiRoot, fakeRoot)
+  assert.equal((caught as HandbookFileMissingError).relativePath, HANDBOOK_RELATIVE_PATH)
 })

@@ -95,82 +95,69 @@ export function lintCrossFileDedupe(
   const fileBStripped = stripWhitespace(fileB.content).toLowerCase()
   const fileAStripped = stripWhitespace(fileA.content).toLowerCase()
 
+  // [范-r1 P1 修正] 双信号 lint：
+  //   - heading 信号 → cross-ref 可赦免（chap 27.0 行 3022 "cross-ref 互引"）
+  //   - body verbatim 信号 → **任何情况下都 red**（"不复制" —— cross-ref 不能赦免复制）
   const findings: CrossFileLintFinding[] = []
+  const seen = new Set<string>()
+
   for (const sa of sectionsA) {
     if (skipEmpty && sa.body.trim().length === 0) continue
     for (const sb of sectionsB) {
       if (skipEmpty && sb.body.trim().length === 0) continue
       const sim = tokenJaccard(sa.heading, sb.heading)
       const headingMatch = sim >= threshold
-      // body N-gram：A section body 是否含 ≥ ngramMin 字符片段也出现在 B section body
       const bodyMatch = bodyNgramOverlap(sa.body, sb.body, ngramMin)
       if (!headingMatch && !bodyMatch.matched) continue
 
-      const reason = headingMatch
-        ? `heading overlap (jaccard=${sim.toFixed(2)})`
-        : `body verbatim overlap (≥${ngramMin} chars: "${truncate(bodyMatch.snippet, 40)}")`
-      const aHasRefToB = refToB.test(sa.body) && sa.body.length <= refBodyMax
-      const bHasRefToA = refToA.test(sb.body) && sb.body.length <= refBodyMax
-      const isReference = aHasRefToB || bHasRefToA
-      findings.push({
-        fileA: fileA.path,
-        sectionA: sa.heading,
-        fileB: fileB.path,
-        sectionB: sb.heading,
-        severity: isReference ? "green" : "red",
-        similarityScore: Number(Math.max(sim, bodyMatch.matched ? 1 : 0).toFixed(3)),
-        reason: isReference
-          ? `${reason} + cross-ref to ${aHasRefToB ? baseB : baseA}`
-          : `${reason} without cross-ref —— 必须用 [${baseB}#section] 形式 cross-ref，不要复制内容`,
+      const finding = buildFinding({
+        fileA,
+        fileB,
+        sa,
+        sb,
+        baseA,
+        baseB,
+        refToA,
+        refToB,
+        refBodyMax,
+        sim,
+        bodyMatch,
+        ngramMin,
       })
+      const key = `${finding.sectionA}::${finding.sectionB}::${finding.severity}::${finding.reason}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      findings.push(finding)
     }
-    // 第二信号：sectionA 的 body 是否含跨文件 verbatim chunk（不限于 sectionB body）
-    // —— 抓"换标题但内容照抄"的攻击。
-    if (sectionsB.length > 0) continue // 已经在内层循环中覆盖
-    // unreachable 保留作语义占位
   }
 
-  // 第三轮：sectionA body 与 fileB 全文 N-gram 重叠（不挂任何 sectionB）—— 抓"换标题或没标题但 body 照抄"
+  // 第三轮：sectionA body 跨 fileB 全文 N-gram —— 抓"换标题但内容照抄"
   for (const sa of sectionsA) {
     if (skipEmpty && sa.body.trim().length === 0) continue
-    // 已在双层循环里覆盖了 sectionB 内的命中；这里只补"sa body 出现在 fileB 但不在任何 sectionB body"
     const cleanA = stripWhitespace(sa.body).toLowerCase()
     if (cleanA.length < ngramMin) continue
     let foundChunk: string | null = null
     for (let i = 0; i + ngramMin <= cleanA.length; i++) {
       const chunk = cleanA.slice(i, i + ngramMin)
       if (fileBStripped.includes(chunk)) {
-        // 已在 sectionB body 命中过 → 跳过（去重）
-        if (
-          findings.some(
-            (f) => f.fileA === fileA.path && f.sectionA === sa.heading && /body/.test(f.reason),
-          )
-        ) {
-          foundChunk = null
-          break
-        }
         foundChunk = chunk
         break
       }
     }
     if (!foundChunk) continue
-    const aHasRefToB = refToB.test(sa.body) && sa.body.length <= refBodyMax
+    // [范-r1 P1] body verbatim copy → 永远 red（不被 cross-ref 赦免）
     findings.push({
       fileA: fileA.path,
       sectionA: sa.heading,
       fileB: fileB.path,
       sectionB: "(file-wide)",
-      severity: aHasRefToB ? "green" : "red",
+      severity: "red",
       similarityScore: 1,
-      reason: aHasRefToB
-        ? `body verbatim overlap with ${baseB} (≥${ngramMin} chars: "${truncate(foundChunk, 40)}") + cross-ref present`
-        : `body verbatim overlap with ${baseB} (≥${ngramMin} chars: "${truncate(foundChunk, 40)}") without cross-ref —— 必须用 [${baseB}#section] 形式 cross-ref，不要复制内容`,
+      reason: `body verbatim overlap with ${baseB} (≥${ngramMin} chars: "${truncate(foundChunk, 40)}") —— 复制即违规，cross-ref 也不能赦免（V16.5 chap 27.0 "互引不复制"）`,
     })
   }
 
-  // 抑制重复 findings（同一对 sectionA × sectionB 组合多信号触发的合并已在内层处理；
-  // 这里的 file-wide 第三轮可能与内层重复，已通过 some() 去重，不再二次过滤。）
-  // 防止 (file-wide) finding 与 (具体 sectionB) finding 同时出现：移除 file-wide 当存在具体 sectionB 命中
+  // 去重 (file-wide) 与具体 sectionB 之间的重复
   const filtered = findings.filter((f) => {
     if (f.sectionB !== "(file-wide)") return true
     return !findings.some(
@@ -178,13 +165,82 @@ export function lintCrossFileDedupe(
         g !== f &&
         g.fileA === f.fileA &&
         g.sectionA === f.sectionA &&
-        g.sectionB !== "(file-wide)",
+        g.sectionB !== "(file-wide)" &&
+        /verbatim/.test(g.reason),
     )
   })
 
-  // 用 fileAStripped 做形式占位（未来对称扩展用），ESLint 不抱怨
   void fileAStripped
   return filtered
+}
+
+interface BuildFindingArgs {
+  fileA: FileInput
+  fileB: FileInput
+  sa: MarkdownSection
+  sb: MarkdownSection
+  baseA: string
+  baseB: string
+  refToA: RegExp
+  refToB: RegExp
+  refBodyMax: number
+  sim: number
+  bodyMatch: BodyOverlapResult
+  ngramMin: number
+}
+
+function buildFinding(args: BuildFindingArgs): CrossFileLintFinding {
+  const {
+    fileA,
+    fileB,
+    sa,
+    sb,
+    baseA,
+    baseB,
+    refToA,
+    refToB,
+    refBodyMax,
+    sim,
+    bodyMatch,
+    ngramMin,
+  } = args
+  const aHasRefToB = refToB.test(sa.body) && sa.body.length <= refBodyMax
+  const bHasRefToA = refToA.test(sb.body) && sb.body.length <= refBodyMax
+  const hasCrossRef = aHasRefToB || bHasRefToA
+
+  if (bodyMatch.matched) {
+    // body verbatim 信号：永远 red，cross-ref 不能赦免
+    return {
+      fileA: fileA.path,
+      sectionA: sa.heading,
+      fileB: fileB.path,
+      sectionB: sb.heading,
+      severity: "red",
+      similarityScore: Number(Math.max(sim, 1).toFixed(3)),
+      reason: `body verbatim overlap (≥${ngramMin} chars: "${truncate(bodyMatch.snippet, 40)}") —— 复制即违规，cross-ref 不能赦免（V16.5 chap 27.0 "互引不复制"）`,
+    }
+  }
+  // 仅 heading 信号 + cross-ref → green
+  if (hasCrossRef) {
+    return {
+      fileA: fileA.path,
+      sectionA: sa.heading,
+      fileB: fileB.path,
+      sectionB: sb.heading,
+      severity: "green",
+      similarityScore: Number(sim.toFixed(3)),
+      reason: `heading overlap (jaccard=${sim.toFixed(2)}) + cross-ref to ${aHasRefToB ? baseB : baseA}`,
+    }
+  }
+  return {
+    fileA: fileA.path,
+    sectionA: sa.heading,
+    fileB: fileB.path,
+    sectionB: sb.heading,
+    severity: "red",
+    similarityScore: Number(sim.toFixed(3)),
+    reason: `heading overlap (jaccard=${sim.toFixed(2)}) without cross-ref —— 必须用 [${baseB}#section] 形式 cross-ref，不要复制内容`,
+  }
 }
 
 /** 仅返回 red findings（CI / lint 命令兜底用）。 */
@@ -268,8 +324,17 @@ function escapeRegex(s: string): string {
 }
 
 function makeCrossRefRegex(basename: string): RegExp {
-  // 匹配 [basename / [basename# / [basename §  等 markdown 链接前缀
-  return new RegExp(`\\[${escapeRegex(basename)}[\\s#§]`)
+  // [范-r1 P2 修正] cross-ref 必须是 markdown 链接 `[label](url)`，且 url 含 basename。
+  // 之前 `\[basename[\s#§]` 太宽 —— 普通文本 `[shared-rules.md 也许应该看` 就触发 green。
+  // 新规则：匹配 `](...basename...)` —— 即 markdown link 的 URL 段含 basename。
+  // 这覆盖：
+  //   - `[label](./foo/basename)`
+  //   - `[label](../foo/basename#anchor)`
+  //   - `[basename § X](./basename#anchor)` 全部命中
+  // 排除：
+  //   - 纯文本 `[basename ...]` 而无 `(url)` 段
+  //   - 纯文本 `basename` 不在 markdown 链接里
+  return new RegExp(`\\]\\([^)\\n]*${escapeRegex(basename)}[^)\\n]*\\)`)
 }
 
 function stripWhitespace(s: string): string {

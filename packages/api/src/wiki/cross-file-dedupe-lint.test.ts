@@ -57,10 +57,11 @@ test("lint · 同名 H3 标题 + 长 body 复制 → red", () => {
   assert.ok(reds.some((f) => f.sectionA === "@ 规则" && f.sectionB === "@ 规则"))
 })
 
-test("lint · 同名 H3 + body 用 cross-ref [otherFile.md → green", () => {
+test("lint · 同名 H3 + body 用 cross-ref markdown link → green", () => {
   const a = {
     path: "fileA.md",
-    content: "# A\n\n## 协作\n\n### @ 规则\n\n详见 [fileB.md § @ 规则](#anchor)，本文件不重复。\n",
+    content:
+      "# A\n\n## 协作\n\n### @ 规则\n\n详见 [fileB.md § @ 规则](./fileB.md#anchor)，本文件不重复。\n",
   }
   const b = {
     path: "fileB.md",
@@ -71,6 +72,47 @@ test("lint · 同名 H3 + body 用 cross-ref [otherFile.md → green", () => {
   assert.equal(reds.length, 0, `expected 0 red, got: ${JSON.stringify(findings)}`)
   const greens = findings.filter((f) => f.severity === "green")
   assert.ok(greens.length >= 1)
+})
+
+// ───── 范-r1 P1 防回归：复制正文 + cross-ref 不应被绕过 ─────
+test("范-r1 P1 · body verbatim copy + cross-ref → 仍 red（cross-ref 不能赦免复制）", () => {
+  // V16.5 chap 27.0 行 3022 明文 "cross-ref 互引（不复制，仅引用）" ——
+  // 复制内容到对方真相源文件，即便加 cross-ref 也是违规。
+  const sharedRules = {
+    path: "shared-rules.md",
+    content: "# 家规\n\n## 协作纪律\n\n派发用 [Call: @人名 任务描述] 标签。@ 用真实人名 —— @黄仁勋 / @范德彪 / @桂芬 / @小孙，不是 provider 代号、不是文件路径。这一段独占一行细节内容大于 60 字符。\n",
+  }
+  const handbook = {
+    path: "handbook.md",
+    content:
+      "# Handbook\n\n## Agent 动作手册\n\n### @ 规则（详见 [shared-rules.md § 协作纪律](./shared-rules.md#x)）\n\n派发用 [Call: @人名 任务描述] 标签。@ 用真实人名 —— @黄仁勋 / @范德彪 / @桂芬 / @小孙，不是 provider 代号、不是文件路径。这一段独占一行细节内容大于 60 字符。\n\n以及 [shared-rules.md § 协作纪律](./shared-rules.md#x) 见原文。\n",
+  }
+  const findings = lintCrossFileDedupe(handbook, sharedRules)
+  const reds = findings.filter((f) => f.severity === "red")
+  assert.ok(
+    reds.length >= 1,
+    `复制 60+ 字符正文即便加 cross-ref 也应 red，实际：${JSON.stringify(findings, null, 2)}`,
+  )
+})
+
+// ───── 范-r1 P2 防回归：cross-ref 必须是 markdown 链接，不能是普通文本 ─────
+test("范-r1 P2 · 普通文本中的 [basename 不算 cross-ref，仍 red", () => {
+  const a = {
+    path: "fileA.md",
+    content:
+      "# A\n\n## 协作\n\n### @ 规则\n\n这不是链接，只是普通文字：[fileB.md 也许应该看一眼。\n\n派发用 [Call: @人名] 标签。@ 用真实人名 —— @黄仁勋 / @范德彪 等等等等等更多文本以保证超过 60 字符阈值。\n",
+  }
+  const b = {
+    path: "fileB.md",
+    content:
+      "# B\n\n## 协作\n\n### @ 规则\n\n派发用 [Call: @人名] 标签。@ 用真实人名 —— @黄仁勋 / @范德彪 等等等等等更多文本以保证超过 60 字符阈值。\n",
+  }
+  const findings = lintCrossFileDedupe(a, b)
+  const reds = findings.filter((f) => f.severity === "red")
+  assert.ok(
+    reds.length >= 1,
+    `普通文本 [basename 不应被识别为 cross-ref，应仍 red，实际：${JSON.stringify(findings, null, 2)}`,
+  )
 })
 
 test("lint · 完全无重叠 → 无 finding", () => {
