@@ -36,6 +36,10 @@ export interface ArchiveYearlyOptions {
 /**
  * 主入口：归档某一 year（默认 = 现在年 - 1，由 caller 决定）。
  * 跨 (roomId, alias) 一并处理，返回汇总 reports。
+ *
+ * 范-r1 P2-1 修：用 nested Map<roomId, Map<alias, sessions>> 而非 string join，
+ * 防 roomId/alias 含 '::' 时 split 错配（虽然 P1-1 已校验段名拒 ':'，但内部
+ * 数据结构不该依赖 string parse 还原 tuple identity）。
  */
 export async function archiveYearlySessions(
   opts: ArchiveYearlyOptions,
@@ -43,22 +47,23 @@ export async function archiveYearlySessions(
   const candidates = opts.repo.listForYearlyPack(opts.year)
   if (candidates.length === 0) return []
 
-  // 按 (roomId, alias) 分桶
-  const buckets = groupBy(candidates, (s) => `${s.roomId}::${s.alias}`)
+  // 按 (roomId, alias) 分桶 —— nested Map 保留原 tuple identity
+  const buckets = groupByTuple(candidates, (s) => [s.roomId, s.alias])
   const reports: YearlyPackReport[] = []
   const moveFiles = opts.moveFiles !== false
 
-  for (const [bucketKey, sessions] of buckets.entries()) {
-    const [roomId, alias] = bucketKey.split("::") as [string, string]
-    const report = await archiveOneBucket({
-      wikiRoot: opts.wikiRoot,
-      year: opts.year,
-      roomId,
-      alias,
-      sessions,
-      moveFiles,
-    })
-    reports.push(report)
+  for (const [roomId, byAlias] of buckets.entries()) {
+    for (const [alias, sessions] of byAlias.entries()) {
+      const report = await archiveOneBucket({
+        wikiRoot: opts.wikiRoot,
+        year: opts.year,
+        roomId,
+        alias,
+        sessions,
+        moveFiles,
+      })
+      reports.push(report)
+    }
   }
 
   // 全部文件 op 完成后再批 markArchived（防中途 mv 失败留半态 DB 标 archived）
@@ -176,13 +181,25 @@ function escapeYaml(s: string): string {
   return s
 }
 
-function groupBy<T>(arr: T[], keyFn: (x: T) => string): Map<string, T[]> {
-  const m = new Map<string, T[]>()
+/**
+ * 范-r1 P2-1 修：用 (k1, k2) tuple 而非 string join 做 bucket key。
+ * 防 roomId/alias 内含特殊字符让 string split 错位。
+ */
+function groupByTuple<T>(
+  arr: T[],
+  keyFn: (x: T) => [string, string],
+): Map<string, Map<string, T[]>> {
+  const outer = new Map<string, Map<string, T[]>>()
   for (const x of arr) {
-    const k = keyFn(x)
-    const bucket = m.get(k)
+    const [k1, k2] = keyFn(x)
+    let inner = outer.get(k1)
+    if (!inner) {
+      inner = new Map<string, T[]>()
+      outer.set(k1, inner)
+    }
+    const bucket = inner.get(k2)
     if (bucket) bucket.push(x)
-    else m.set(k, [x])
+    else inner.set(k2, [x])
   }
-  return m
+  return outer
 }

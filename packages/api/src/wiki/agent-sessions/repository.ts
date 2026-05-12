@@ -15,6 +15,7 @@ import { and, asc, desc, eq, like, lt } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import { roomAgentSessions } from "../../db/schema"
 import type * as schema from "../../db/schema"
+import { assertSafePathSegment } from "./path-segment"
 import type { CreateSessionInput, EndSessionInput, OpenThread, RoomAgentSession } from "./types"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
@@ -24,31 +25,51 @@ export class RoomAgentSessionsRepository {
 
   /**
    * 创建 session 行：session_seq = max(同 room/alias) + 1。
-   * 并发安全：UNIQUE(room_id, alias, session_seq) 防重复；冲突时调用方重试。
+   *
+   * 范-r1 P1-1 修：roomId / alias 走 assertSafePathSegment 校验
+   * （这两字段会直接拼到 wiki/rooms/<roomId>/agent-sessions/<alias>/...，
+   * 防 alias='..' / 含路径分隔符 / Windows 非法字符）。
+   *
+   * 范-r1 P1-2 修：SELECT max + INSERT 包在 db.transaction()（drizzle 走 better-sqlite3
+   * deferred 事务 + SQLite WAL 串行写入）。原 SELECT-then-INSERT 是 TOCTOU：两并发
+   * createSession 读到同 max → 同 seq → 第二个 INSERT 撞 UNIQUE。包事务后串行化。
    */
   createSession(input: CreateSessionInput): RoomAgentSession {
-    const next = this.nextSessionSeq(input.roomId, input.alias)
-    const row = this.db
-      .insert(roomAgentSessions)
-      .values({
-        roomId: input.roomId,
-        alias: input.alias,
-        sessionSeq: next,
-        startedAt: input.startedAt,
-        endedAt: null,
-        entryReason: input.entryReason,
-        exitReason: null,
-        lastSeenCommitSeq: input.lastSeenCommitSeq ?? null,
-        openThreads: null,
-        closedThreads: null,
-        privateNotesHash: null,
-        sessionDigest: null,
-        archived: "N",
-        archivedAt: null,
-        archivedYear: null,
-      })
-      .returning()
-      .get()
+    const safeRoomId = assertSafePathSegment("roomId", input.roomId)
+    const safeAlias = assertSafePathSegment("alias", input.alias)
+    const row = this.db.transaction((tx) => {
+      const last = tx
+        .select({ sessionSeq: roomAgentSessions.sessionSeq })
+        .from(roomAgentSessions)
+        .where(
+          and(eq(roomAgentSessions.roomId, safeRoomId), eq(roomAgentSessions.alias, safeAlias)),
+        )
+        .orderBy(desc(roomAgentSessions.sessionSeq))
+        .limit(1)
+        .get()
+      const next = (last?.sessionSeq ?? 0) + 1
+      return tx
+        .insert(roomAgentSessions)
+        .values({
+          roomId: safeRoomId,
+          alias: safeAlias,
+          sessionSeq: next,
+          startedAt: input.startedAt,
+          endedAt: null,
+          entryReason: input.entryReason,
+          exitReason: null,
+          lastSeenCommitSeq: input.lastSeenCommitSeq ?? null,
+          openThreads: null,
+          closedThreads: null,
+          privateNotesHash: null,
+          sessionDigest: null,
+          archived: "N",
+          archivedAt: null,
+          archivedYear: null,
+        })
+        .returning()
+        .get()
+    })
     return hydrate(row)
   }
 
@@ -200,19 +221,6 @@ export class RoomAgentSessionsRepository {
       .where(eq(roomAgentSessions.archived, "N"))
       .all()
     return rows.length
-  }
-
-  // ─── helpers ───────────────────────────────────────────────────────
-
-  private nextSessionSeq(roomId: string, alias: string): number {
-    const row = this.db
-      .select({ sessionSeq: roomAgentSessions.sessionSeq })
-      .from(roomAgentSessions)
-      .where(and(eq(roomAgentSessions.roomId, roomId), eq(roomAgentSessions.alias, alias)))
-      .orderBy(desc(roomAgentSessions.sessionSeq))
-      .limit(1)
-      .get()
-    return (row?.sessionSeq ?? 0) + 1
   }
 }
 

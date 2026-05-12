@@ -209,6 +209,164 @@ describe("RoomAgentSessionsRepository · CRUD", () => {
   })
 })
 
+// ─── 范-r1 P1-1 修：path segment containment ─────────────────────
+
+describe("RoomAgentSessionsRepository · 范-r1 P1-1 path segment 校验", () => {
+  it("createSession alias = '../escape' → 抛 + 不写入 DB", () => {
+    const { drizzle, cleanup } = makeDb()
+    try {
+      const repo = new RoomAgentSessionsRepository(drizzle)
+      assert.throws(() =>
+        repo.createSession({
+          roomId: "R1",
+          alias: "../escape",
+          startedAt: "2026-05-12T01:00:00Z",
+          entryReason: "e",
+        }),
+      )
+      assert.equal(repo.countAllActive(), 0)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("createSession roomId = 'R/with-slash' → 抛", () => {
+    const { drizzle, cleanup } = makeDb()
+    try {
+      const repo = new RoomAgentSessionsRepository(drizzle)
+      assert.throws(() =>
+        repo.createSession({
+          roomId: "R/with-slash",
+          alias: "x",
+          startedAt: "2026-05-12T01:00:00Z",
+          entryReason: "e",
+        }),
+      )
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("createSession alias 含 backslash 或 NUL → 抛", () => {
+    const { drizzle, cleanup } = makeDb()
+    try {
+      const repo = new RoomAgentSessionsRepository(drizzle)
+      assert.throws(() =>
+        repo.createSession({
+          roomId: "R1",
+          alias: "x\\y",
+          startedAt: "2026-05-12T01:00:00Z",
+          entryReason: "e",
+        }),
+      )
+      assert.throws(() =>
+        repo.createSession({
+          roomId: "R1",
+          alias: "x\0y",
+          startedAt: "2026-05-12T01:00:00Z",
+          entryReason: "e",
+        }),
+      )
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("Windows 非法字符 (* ? < > | :) 在 roomId/alias 里 → 抛", () => {
+    const { drizzle, cleanup } = makeDb()
+    try {
+      const repo = new RoomAgentSessionsRepository(drizzle)
+      for (const ch of ["*", "?", "<", ">", "|", ":"]) {
+        assert.throws(
+          () =>
+            repo.createSession({
+              roomId: `R${ch}1`,
+              alias: "x",
+              startedAt: "2026-05-12T01:00:00Z",
+              entryReason: "e",
+            }),
+          /invalid|segment|character/i,
+          `roomId 含 '${ch}' 必须拒绝`,
+        )
+      }
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("computeAgentSessionLayout: 无效 alias / roomId 也抛（双重保险）", async () => {
+    const { computeAgentSessionLayout: compute } = await import("./ledger-writer")
+    assert.throws(() => compute({ wikiRoot: "/tmp/x", roomId: "R1", alias: "..", sessionSeq: 1 }))
+    assert.throws(() => compute({ wikiRoot: "/tmp/x", roomId: "R/x", alias: "x", sessionSeq: 1 }))
+  })
+
+  it("正常中文 alias / 短横线 roomId 仍允许", () => {
+    const { drizzle, cleanup } = makeDb()
+    try {
+      const repo = new RoomAgentSessionsRepository(drizzle)
+      const s = repo.createSession({
+        roomId: "R-201",
+        alias: "黄仁勋",
+        startedAt: "2026-05-12T01:00:00Z",
+        entryReason: "e",
+      })
+      assert.equal(s.alias, "黄仁勋")
+    } finally {
+      cleanup()
+    }
+  })
+})
+
+// ─── 范-r1 P1-2 修：session_seq 并发安全 ──────────────────────────
+
+describe("RoomAgentSessionsRepository · 范-r1 P1-2 createSession 并发安全", () => {
+  it("两次串行 createSession 不抛 UNIQUE 冲突 (BEGIN IMMEDIATE)", () => {
+    const { drizzle, cleanup } = makeDb()
+    try {
+      const repo = new RoomAgentSessionsRepository(drizzle)
+      const s1 = repo.createSession({
+        roomId: "R1",
+        alias: "x",
+        startedAt: "2026-05-12T01:00:00Z",
+        entryReason: "e",
+      })
+      const s2 = repo.createSession({
+        roomId: "R1",
+        alias: "x",
+        startedAt: "2026-05-12T01:00:01Z",
+        entryReason: "e",
+      })
+      assert.equal(s1.sessionSeq, 1)
+      assert.equal(s2.sessionSeq, 2)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("循环 100 次 createSession 同 (room, alias) 全成功 + seq 1..100 严格单调", () => {
+    const { drizzle, cleanup } = makeDb()
+    try {
+      const repo = new RoomAgentSessionsRepository(drizzle)
+      const seqs: number[] = []
+      for (let i = 0; i < 100; i++) {
+        const s = repo.createSession({
+          roomId: "R1",
+          alias: "x",
+          startedAt: `2026-05-12T01:${String(i).padStart(2, "0")}:00Z`,
+          entryReason: "e",
+        })
+        seqs.push(s.sessionSeq)
+      }
+      assert.deepEqual(
+        seqs,
+        Array.from({ length: 100 }, (_, i) => i + 1),
+      )
+    } finally {
+      cleanup()
+    }
+  })
+})
+
 // ─── ledger writer ─────────────────────────────────────────────────
 
 describe("ledger-writer · S-NNNN.md + current.md", () => {
@@ -434,6 +592,110 @@ describe("archiveYearlySessions · yearly pack + 不删原则", () => {
       await archiveYearlySessions({ wikiRoot: root, year: 2025, repo })
       const r2 = await archiveYearlySessions({ wikiRoot: root, year: 2025, repo })
       assert.deepEqual(r2, [], "已 archived 第二次扫不到")
+    } finally {
+      rootClean()
+      dbClean()
+    }
+  })
+})
+
+// ─── 范-r1 P2-1/P2-2 修：bucket key 安全 + YAML escape 加强 ───────
+
+describe("yearly-pack · 范-r1 P2-1 bucket 不再用 :: join", () => {
+  it("roomId 含 '::' (虽然已被 P1-1 拒，但内部 grouping 不该依赖 string split)", async () => {
+    // P1-1 拒 ':' 整字符（含 '::'），所以 caller 进不来 :: 路径；
+    // 但 yearly-pack 内部数据结构应该 group by 真实 (roomId, alias) tuple，
+    // 不依赖 string join/split。这个测试验内部不变量。
+    const { drizzle, cleanup: dbClean } = makeDb()
+    const { root, cleanup: rootClean } = makeWikiRoot()
+    try {
+      const repo = new RoomAgentSessionsRepository(drizzle)
+      // 用合法 alias 但能验内部分桶逻辑：两个 (roomId, alias) tuple 必须分桶
+      const s1 = repo.createSession({
+        roomId: "R-A",
+        alias: "alpha",
+        startedAt: "2025-06-01T01:00:00Z",
+        entryReason: "e",
+      })
+      repo.endSession(s1.sessionId, { endedAt: "2025-06-01T02:00:00Z", exitReason: "x" })
+      const s2 = repo.createSession({
+        roomId: "R-A",
+        alias: "beta",
+        startedAt: "2025-06-01T01:00:00Z",
+        entryReason: "e",
+      })
+      repo.endSession(s2.sessionId, { endedAt: "2025-06-01T02:00:00Z", exitReason: "x" })
+      writeAgentSessionLedger({ wikiRoot: root, session: repo.get(s1.sessionId)! })
+      writeAgentSessionLedger({ wikiRoot: root, session: repo.get(s2.sessionId)! })
+      const reports = await archiveYearlySessions({ wikiRoot: root, year: 2025, repo })
+      // 必须 2 个 bucket（不是 1 个 split 错的）
+      assert.equal(reports.length, 2)
+      const bucketRooms = reports.map((r) => r.archivedDir.split(/[/\\]/).slice(-3, -1).join("/"))
+      assert.ok(bucketRooms.includes("R-A/alpha"))
+      assert.ok(bucketRooms.includes("R-A/beta"))
+    } finally {
+      rootClean()
+      dbClean()
+    }
+  })
+})
+
+describe("ledger-writer · 范-r1 P2-2 escapeYamlString YAML 1.2 特殊 token 全覆盖", () => {
+  it("YAML 指示符 [ ] { } , 起头或含义的字符串需 quoted", async () => {
+    const { drizzle, cleanup: dbClean } = makeDb()
+    const { root, cleanup: rootClean } = makeWikiRoot()
+    try {
+      const repo = new RoomAgentSessionsRepository(drizzle)
+      const s = repo.createSession({
+        roomId: "R-1",
+        alias: "agent",
+        startedAt: "2026-05-12T01:00:00Z",
+        entryReason: "[looks like array]",
+      })
+      repo.endSession(s.sessionId, {
+        endedAt: "2026-05-12T02:00:00Z",
+        exitReason: "{looks like map}",
+        openThreads: ["a, b, c", "[1, 2]"],
+      })
+      const after = repo.get(s.sessionId)!
+      const layout = writeAgentSessionLedger({ wikiRoot: root, session: after })
+      const content = await fsAsync.readFile(layout.ledgerPath, "utf-8")
+      assert.ok(content.includes('entry_reason: "[looks like array]"'), "[ 起头必须 quoted")
+      assert.ok(content.includes('exit_reason: "{looks like map}"'), "{ 起头必须 quoted")
+      assert.ok(content.includes('"a, b, c"'), "含逗号必须 quoted")
+      assert.ok(content.includes('"[1, 2]"'), "[ ] 内容必须 quoted")
+    } finally {
+      rootClean()
+      dbClean()
+    }
+  })
+
+  it("YAML null/Null/NULL/~/.nan/.inf string 必须 quoted（防被解析成 null/数值）", async () => {
+    const { drizzle, cleanup: dbClean } = makeDb()
+    const { root, cleanup: rootClean } = makeWikiRoot()
+    try {
+      const repo = new RoomAgentSessionsRepository(drizzle)
+      const s = repo.createSession({
+        roomId: "R-1",
+        alias: "agent",
+        startedAt: "2026-05-12T01:00:00Z",
+        entryReason: "Null",
+      })
+      repo.endSession(s.sessionId, {
+        endedAt: "2026-05-12T02:00:00Z",
+        exitReason: "~",
+        openThreads: ["NULL", ".nan", ".inf", "Yes", "no"],
+      })
+      const after = repo.get(s.sessionId)!
+      const layout = writeAgentSessionLedger({ wikiRoot: root, session: after })
+      const content = await fsAsync.readFile(layout.ledgerPath, "utf-8")
+      assert.ok(content.includes('entry_reason: "Null"'), "Null 字面值必须 quoted")
+      assert.ok(content.includes('exit_reason: "~"'), "~ 字面值必须 quoted")
+      assert.ok(content.includes('"NULL"'), "NULL 必须 quoted")
+      assert.ok(content.includes('".nan"'), ".nan 必须 quoted")
+      assert.ok(content.includes('".inf"'), ".inf 必须 quoted")
+      assert.ok(content.includes('"Yes"'), "Yes 必须 quoted（YAML 1.1 boolean）")
+      assert.ok(content.includes('"no"'), "no 必须 quoted（YAML 1.1 boolean）")
     } finally {
       rootClean()
       dbClean()

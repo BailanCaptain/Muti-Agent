@@ -12,6 +12,7 @@
 
 import path from "node:path"
 import { writeFileAtomic } from "../atomic-write"
+import { assertSafePathSegment } from "./path-segment"
 import type { RoomAgentSession, SessionLedgerFrontmatter } from "./types"
 
 export interface AgentSessionFileLayout {
@@ -31,18 +32,21 @@ export function computeAgentSessionLayout(opts: {
   alias: string
   sessionSeq: number
 }): AgentSessionFileLayout {
+  // 范-r1 P1-1 双重保险：repo 入口已校验，此处再校验一次防绕过
+  const safeRoomId = assertSafePathSegment("roomId", opts.roomId)
+  const safeAlias = assertSafePathSegment("alias", opts.alias)
   const seqPadded = String(opts.sessionSeq).padStart(4, "0")
   const agentDir = path.join(
     opts.wikiRoot,
     "wiki",
     "rooms",
-    opts.roomId,
+    safeRoomId,
     "agent-sessions",
-    opts.alias,
+    safeAlias,
   )
   const ledgerPath = path.join(agentDir, `S-${seqPadded}.md`)
   const currentPath = path.join(agentDir, "current.md")
-  const canonicalOwnerRelPath = `wiki/rooms/${opts.roomId}/agent-sessions/${opts.alias}/S-${seqPadded}.md`
+  const canonicalOwnerRelPath = `wiki/rooms/${safeRoomId}/agent-sessions/${safeAlias}/S-${seqPadded}.md`
   return { ledgerPath, currentPath, canonicalOwnerRelPath, agentDir }
 }
 
@@ -244,17 +248,50 @@ function renderFrontmatter(fm: SessionLedgerFrontmatter): string {
  *   - 引号包后内部双引号 escape
  *   - 其它纯文本直接返回（YAML 接受）
  */
+/**
+ * 范-r1 P2-2 修：覆盖 YAML 1.2 plain scalar 禁用 token + 1.1 boolean / null 残留风险
+ *   - control / quote / : # 等
+ *   - flow indicators [ ] { } , ` 起头
+ *   - YAML 1.2 null: null Null NULL ~ + 空字符串
+ *   - YAML 1.1 boolean (老 parser 仍接): true True TRUE false False FALSE Yes YES yes No NO no On ON on Off OFF off Y y N n
+ *   - special floats: .nan .NaN .NAN .inf .Inf .INF -.inf etc.
+ *   - 数字开头（2026-05 / 1.5 / -3）
+ */
 function escapeYamlString(s: string): string {
   if (s.length === 0) return '""'
-  const needsQuote =
+  // 优先：char-class 检查（任何这些都需 quote）
+  let hasControl = false
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) < 0x20) {
+      hasControl = true
+      break
+    }
+  }
+  const containsRiskyChar =
     /[:#"'\n\r\t\\]/.test(s) ||
-    /^[\s]/.test(s) ||
-    /[\s]$/.test(s) ||
-    /^[-?!&*|>%@`]/.test(s) ||
-    s === "null" ||
-    s === "true" ||
-    s === "false" ||
-    /^[0-9]/.test(s)
+    /[,[\]{}]/.test(s) || // YAML flow indicators (P2-2)
+    hasControl
+  // leading / trailing whitespace
+  const wsEdge = /^[\s]/.test(s) || /[\s]$/.test(s)
+  // 起头特殊字符（YAML 1.2 spec 7.4.2 plain scalar 禁起字符）
+  const leadingSpecial = /^[-?!&*|>%@`]/.test(s)
+  // 数字开头 → 否则被解析数值
+  const numericLike = /^[0-9]/.test(s)
+  // YAML 1.2 null 字面 + ~
+  const yamlNull = /^(null|Null|NULL|~)$/.test(s)
+  // YAML 1.1 boolean 老 parser 仍接（保守一律 quote）
+  const yamlBoolish =
+    /^(true|True|TRUE|false|False|FALSE|yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF|y|Y|n|N)$/.test(s)
+  // YAML 1.1 .nan / .inf
+  const yamlSpecialNum = /^[-+]?\.(?:nan|NaN|NAN|inf|Inf|INF)$/.test(s)
+  const needsQuote =
+    containsRiskyChar ||
+    wsEdge ||
+    leadingSpecial ||
+    numericLike ||
+    yamlNull ||
+    yamlBoolish ||
+    yamlSpecialNum
   if (!needsQuote) return s
   return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
 }
