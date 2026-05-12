@@ -179,9 +179,22 @@ function assertSources(v: unknown): LLMCompileOutput["sources"] {
   return out
 }
 
+/**
+ * 范-r1 D3 cap：单 entity 最多 cross_refs 数。
+ * 防御 attacker 写一堆假 [[XXX]] 引用让 wiki/warnings/cross-ref-dead-* 涨爆。
+ * 20 是经验值：正常 entity cross_refs 1-5 条；超过 20 几乎肯定是攻击或 LLM 幻觉。
+ */
+const MAX_CROSS_REFS = 20
+
 function assertCrossRefs(v: unknown): CrossRef[] {
   if (!Array.isArray(v)) {
     throw new LLMCompileSchemaError("cross_refs", `expected array, got ${typeOf(v)}`)
+  }
+  if (v.length > MAX_CROSS_REFS) {
+    throw new LLMCompileSchemaError(
+      "cross_refs",
+      `too many cross_refs: ${v.length} > MAX_CROSS_REFS=${MAX_CROSS_REFS} (attack vector? 范-r1 D3 cap)`,
+    )
   }
   const out: CrossRef[] = []
   for (const [i, item] of v.entries()) {
