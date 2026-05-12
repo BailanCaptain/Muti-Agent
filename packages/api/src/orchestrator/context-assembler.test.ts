@@ -1,3 +1,5 @@
+import fs from "node:fs"
+import path from "node:path"
 import assert from "node:assert/strict"
 import test from "node:test"
 import { ACCEPTANCE_GUARDIAN_PROMPT } from "../runtime/agent-prompts"
@@ -563,28 +565,52 @@ test("F027-P5 · 5 区段顺序固定（Viewfinder → Recall Pack → Handbook 
   assert.ok(headerIdx > handbookIdx, "header 应在所有 reference 区段后")
 })
 
-test("F027-P5 · AC-P1-7 — runtime 内 grep 'Iron Laws' = 1（B022 防回归）", async () => {
+test("F027-P5 · AC-P1-7 — runtime grep 'Iron Laws' 数 = shared-rules.md 中的数（B022 防回归 · 动态对账，范-r1 修）", async () => {
+  // 范 r1 反馈：caller 传含 "Iron Laws" 的合法内容会误报回归。
+  // 改法：动态对账 shared-rules.md 自身的 Iron Laws 出现数；P5 注入的 5 区段 caller body
+  // 此测试明确传不含 "Iron Laws" 的 body 来证明"P5 自身不复制 Iron Laws"
+  // （caller 主动传 Iron Laws 字样属 caller 责任，不归 P5）
+  const sharedRulesPath = path.resolve(
+    __dirname,
+    "../../../../multi-agent-skills/refs/shared-rules.md",
+  )
+  const sharedRulesContent = fs.readFileSync(sharedRulesPath, "utf-8")
+  const expectedCount = (sharedRulesContent.match(/Iron Laws/g) ?? []).length
+
   const result = await assemblePrompt(
     {
       ...P5_BASE_INPUT,
       scenario: "wake_up",
-      capabilityDigest: "黄仁勋 自我介绍",
-      viewfinder: { body: "viewfinder" },
-      memoryPreflight: { hits: [{ score: 0.9, summary: "hit" }] },
-      handbookSlices: { agentActions: "agent actions" },
+      capabilityDigest: "黄仁勋 自我介绍 — 主架构师",
+      viewfinder: { body: "viewfinder body 不含敏感字样" },
+      memoryPreflight: { hits: [{ score: 0.9, summary: "recall hit 也不含" }] },
+      handbookSlices: { agentActions: "agent actions text 同样不含" },
     },
     null,
   )
-  // systemPrompt 含 shared-rules.md → 1 处 Iron Laws
-  // content 含 5 个 reference 区段 → 0 处 Iron Laws
-  // 合并 0 + 1 = 1
   const fullPrompt = result.systemPrompt + "\n" + result.content
-  const matches = fullPrompt.match(/Iron Laws/g) ?? []
+  const actualCount = (fullPrompt.match(/Iron Laws/g) ?? []).length
   assert.equal(
-    matches.length,
-    1,
-    `B022 防回归：runtime 内 'Iron Laws' 应只出现 1 次（shared-rules.md），实际 ${matches.length} 次`,
+    actualCount,
+    expectedCount,
+    `B022 防回归：runtime 'Iron Laws' 数应 = shared-rules.md (${expectedCount})；实际 ${actualCount}`,
   )
+})
+
+test("F027-P5 · AC-P1-7 negative — caller 传含 'Iron Laws' 字样的 viewfinder 仍透传（caller 责任，不归 P5）", async () => {
+  // 范 r1 修补：明确"caller 传 Iron Laws 字样 → grep 数 + 1"是 caller 控制 + 透传行为，
+  // P5 自身没有重复注入。验证机制：P5 不 strip "Iron Laws" 字样，仅做 sanitize 防 SYSTEM:/IMPORTANT:。
+  const result = await assemblePrompt(
+    {
+      ...P5_BASE_INPUT,
+      viewfinder: {
+        body: "## Decision\nCommitted to comply with Iron Laws strictly during this room.",
+      },
+    },
+    null,
+  )
+  // viewfinder body 透传 (sanitize 不剥 "Iron Laws" 这个字串)
+  assert.match(result.content, /Iron Laws strictly/)
 })
 
 test("F027-P5 · 全 7 字段 missing 不影响向后兼容", async () => {
