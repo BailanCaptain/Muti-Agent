@@ -494,8 +494,13 @@ const INIT_SQL = `
   CREATE INDEX IF NOT EXISTS idx_wiki_entity_index_bucket
     ON wiki_entity_index(bucket);
 
-  -- F027 P14.a · FTS5 虚拟表（content= 关联 wiki_entity_index；中文用 unicode61
-  -- 一字一 token baseline，P15 可换 trigram；name 也参与索引提升路径召回精度）
+  -- F027 P14.a · FTS5 虚拟表（content= 关联 wiki_entity_index）
+  -- 范-r1 P2-2 修：tokenizer 换 trigram（SQLite 3.34+ 内置）
+  --   unicode61 默认对中文一字一 token，'上下文窗口' query 切成 4 个独立 token，
+  --   匹配纯靠 AND 组合，中等长度词命中差。trigram 按字符 3-gram 索引，对中文
+  --   substring 召回精度好；索引膨胀 ~3-4x 可接受（100k entity × 5KB → 数 GB）。
+  --   也兼容英文 partial match（'drizzle' 命中含 'drizzle' 的任意片段）。
+  -- 'case_sensitive 0' 让英文大小写不敏感（'F011' 匹配 'f011'）。
   CREATE VIRTUAL TABLE IF NOT EXISTS wiki_entity_fts USING fts5(
     path UNINDEXED,
     bucket UNINDEXED,
@@ -503,7 +508,7 @@ const INIT_SQL = `
     body,
     content='wiki_entity_index',
     content_rowid='rowid',
-    tokenize='unicode61 remove_diacritics 2'
+    tokenize='trigram case_sensitive 0'
   );
 
   -- F027 P14.a · 触发器同步 wiki_entity_index → wiki_entity_fts

@@ -23,26 +23,29 @@
  */
 
 export function sanitizeFtsQuery(raw: string): string {
-  // 控制字符（避免 biome noControlCharactersInRegex）
+  // 范-r1 P2-1: 控制字符替换为空格（不直接丢），与下面"标点 → 空格再 split"统一
+  //   语义。'hello\x00world' 应切成 2 token 而非粘成 'helloworld'。
   let cleaned = ""
   for (let i = 0; i < raw.length; i++) {
     const code = raw.charCodeAt(i)
-    if (code >= 0x20 || code === 0x09) cleaned += raw[i]
+    cleaned += code >= 0x20 ? raw[i] : " "
   }
   const trimmed = cleaned.trim()
   if (trimmed.length === 0) return ""
 
-  // 按空白切 token；每个 token 引用成 phrase；内部 quote 双倍转义
-  const tokens = trimmed.split(/\s+/).filter((t) => t.length > 0)
+  // 范-r1 P2-1: 把非 token 字符（含 hyphen / 标点 / 引号）换成空格再 split，
+  //   让 'F011-backend-hardening-drizzle' 切成 4 个 phrase token；旧版直接
+  //   strip 标点导致 'F011backendhardeningdrizzle' 单 token，trigram 下无法
+  //   和 wiki entity name 中的 'F011' / 'backend' 等子串匹配。
+  //   保留字母数字 + 下划线 + Unicode letters（覆盖 CJK）。
+  const normalized = trimmed.replace(/[^\p{L}\p{N}_]/gu, " ")
+  const tokens = normalized.split(/\s+/).filter((t) => t.length > 0)
   if (tokens.length === 0) return ""
 
   const quoted: string[] = []
   for (const tok of tokens) {
-    // 跳过纯标点 token (FTS5 unicode61 会忽略，但写进 query 仍占 AND 槽降召回)
-    const stripped = tok.replace(/[^\p{L}\p{N}_一-鿿]/gu, "")
-    if (stripped.length === 0) continue
-    quoted.push(`"${stripped.replace(/"/g, '""')}"`)
+    // 双倍转义内部 quote（虽然上面 strip 已剥，paranoid 兜底）
+    quoted.push(`"${tok.replace(/"/g, '""')}"`)
   }
-  if (quoted.length === 0) return ""
   return quoted.join(" ")
 }

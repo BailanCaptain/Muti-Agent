@@ -18,7 +18,12 @@ import { drizzle as drizzleBetter } from "drizzle-orm/better-sqlite3"
 import { createDrizzleDb } from "../../db/drizzle-instance"
 import * as schema from "../../db/schema"
 import { wikiEntityIndex } from "../../db/schema"
-import { WikiEntityFtsProvider, bm25ToScore, reindexWikiEntities, sanitizeFtsQuery } from "./index"
+import {
+  WikiEntityFtsProvider,
+  normalizeBm25Corpus,
+  reindexWikiEntities,
+  sanitizeFtsQuery,
+} from "./index"
 
 function makeDb() {
   const dir = mkdtempSync(path.join(tmpdir(), "wiki-search-db-"))
@@ -58,6 +63,21 @@ describe("sanitizeFtsQuery", () => {
     assert.equal(sanitizeFtsQuery("F011 drizzle 优化"), '"F011" "drizzle" "优化"')
   })
 
+  it("范-r1 P2-1：hyphen path 切成多 token（防 trigram 单 token 召不回）", () => {
+    // 'F011-backend-hardening-drizzle' 应切成 4 个 phrase token
+    const out = sanitizeFtsQuery("F011-backend-hardening-drizzle")
+    assert.equal(out, '"F011" "backend" "hardening" "drizzle"')
+  })
+
+  it("范-r1 P2-1：标点切 token 不粘连", () => {
+    // 'session/bootstrap, ledger.thread' → 各自独立 token
+    const out = sanitizeFtsQuery("session/bootstrap, ledger.thread")
+    assert.match(out, /"session"/)
+    assert.match(out, /"bootstrap"/)
+    assert.match(out, /"ledger"/)
+    assert.match(out, /"thread"/)
+  })
+
   it("含 quote 内部双倍转义", () => {
     const out = sanitizeFtsQuery('say "hello"')
     // 标点被 strip，hello 内部 quote 已剥（standard tokens 不含 quote 字符）
@@ -67,7 +87,8 @@ describe("sanitizeFtsQuery", () => {
 
   it("控制字符 strip", () => {
     const out = sanitizeFtsQuery("hello\x00world")
-    assert.equal(out, '"helloworld"')
+    // 范-r1 P2-1: 现在 \x00 控制字符 strip 后留空格，hello 和 world 是两 token
+    assert.equal(out, '"hello" "world"')
   })
 
   it("纯标点 → 空字符串", () => {
@@ -90,20 +111,33 @@ describe("sanitizeFtsQuery", () => {
 // 2. bm25ToScore
 // ─────────────────────────────────────────────────────────────────────
 
-describe("bm25ToScore", () => {
-  it("完美匹配 (bm25 = -8) → score ≈ 1.0", () => {
-    assert.ok(bm25ToScore(-8) >= 0.99)
+describe("normalizeBm25Corpus (范-r1 P1-1)", () => {
+  it("最好 rank (min) → score = 1，最差 rank (max) → score = 0", () => {
+    const ranks = [-8, -5, -2, 0, 3]
+    assert.equal(normalizeBm25Corpus(-8, ranks), 1)
+    assert.equal(normalizeBm25Corpus(3, ranks), 0)
   })
-  it("弱匹配 (bm25 = 4) → score ≈ 0", () => {
-    assert.ok(bm25ToScore(4) <= 0.01)
+
+  it("中间值 → 线性插值", () => {
+    const ranks = [-10, 0]
+    // -5 在中点 → score = 0.5
+    assert.equal(normalizeBm25Corpus(-5, ranks), 0.5)
   })
-  it("中等 (bm25 = -2) → score 在 0.4-0.8", () => {
-    const s = bm25ToScore(-2)
-    assert.ok(s >= 0.4 && s <= 0.8, `score ${s} 不在 [0.4, 0.8]`)
+
+  it("单 hit (best == worst) → score = 1", () => {
+    assert.equal(normalizeBm25Corpus(-3, [-3]), 1)
   })
-  it("clamp: 极小 bm25 也 ≤ 1", () => {
-    assert.ok(bm25ToScore(-100) <= 1)
-    assert.ok(bm25ToScore(-100) >= 0)
+
+  it("空 ranks → score = 0", () => {
+    assert.equal(normalizeBm25Corpus(-5, []), 0)
+  })
+
+  it("阈值语义：Quality Gate ≥ 0.75 = topK 前 25%", () => {
+    // 4 hit 均匀分布 → top1 = 1.0, top2 ≈ 0.67, top3 ≈ 0.33, top4 = 0
+    const ranks = [-8, -6, -4, -2]
+    assert.equal(normalizeBm25Corpus(-8, ranks), 1)
+    assert.ok(normalizeBm25Corpus(-6, ranks) >= 0.6 && normalizeBm25Corpus(-6, ranks) <= 0.7)
+    assert.equal(normalizeBm25Corpus(-2, ranks), 0)
   })
 })
 
@@ -226,6 +260,81 @@ describe("reindexWikiEntities", () => {
       assert.equal(r.failed.length, 1)
       assert.match(r.failed[0].error, /exceeds maxBodyBytes/)
       assert.equal(drizzle.select().from(wikiEntityIndex).all().length, 0)
+    } finally {
+      cleanup()
+      cleanupFs()
+    }
+  })
+
+  it("范-r1 P1-3：先入库后变 oversized → 旧索引保留 + removed=0", async () => {
+    const { drizzle, cleanup } = makeDb()
+    const { root, cleanup: cleanupFs } = makeWikiRoot()
+    try {
+      // 1) 第一次小文件入库
+      await writeWikiFile(root, "wiki/concepts/F011.md", "small")
+      const r1 = await reindexWikiEntities({ wikiRoot: root, db: drizzle, maxBodyBytes: 1000 })
+      assert.equal(r1.inserted, 1)
+      // 2) 改大超 cap
+      await new Promise((res) => setTimeout(res, 10))
+      await writeWikiFile(root, "wiki/concepts/F011.md", "x".repeat(2000))
+      const r2 = await reindexWikiEntities({ wikiRoot: root, db: drizzle, maxBodyBytes: 1000 })
+      // 文件在磁盘但 size 超 cap → failed[]
+      assert.equal(r2.failed.length, 1)
+      assert.match(r2.failed[0].error, /exceeds maxBodyBytes/)
+      // 关键：旧 index 行不应被删除（path 在 seenOnDiskPaths）
+      assert.equal(r2.removed, 0, "failed 文件不应触发 removed")
+      const rows = drizzle.select().from(wikiEntityIndex).all()
+      assert.equal(rows.length, 1, "旧 index 行保留")
+      assert.equal(rows[0].body, "small", "body 仍是旧版（未被破坏）")
+    } finally {
+      cleanup()
+      cleanupFs()
+    }
+  })
+
+  it("范-r1 P1-2：真增量 — mtime 未变的文件即使大也不被 readFile", async () => {
+    const { drizzle, cleanup } = makeDb()
+    const { root, cleanup: cleanupFs } = makeWikiRoot()
+    try {
+      // 首次入库
+      await writeWikiFile(root, "wiki/concepts/F011.md", "small initial")
+      await reindexWikiEntities({ wikiRoot: root, db: drizzle })
+      // 二次 reindex：路径同 / mtime 同 / 没读 body 应能 skip
+      const r2 = await reindexWikiEntities({ wikiRoot: root, db: drizzle })
+      assert.equal(r2.skipped, 1, "mtime 未变 → skipped (无需 readFile/sha256)")
+      assert.equal(r2.inserted, 0)
+      assert.equal(r2.updated, 0)
+      // sanity：DB body 仍是初始
+      const row = drizzle.select().from(wikiEntityIndex).all()[0]
+      assert.equal(row.body, "small initial")
+    } finally {
+      cleanup()
+      cleanupFs()
+    }
+  })
+
+  it("范-r1 P2-3：indexer diff 包事务 — 半态防御 (mock dbRows + 触发器同步无漏)", async () => {
+    const { drizzle, cleanup } = makeDb()
+    const { root, cleanup: cleanupFs } = makeWikiRoot()
+    try {
+      await writeWikiFile(root, "wiki/concepts/F011.md", "drizzle migration")
+      await writeWikiFile(root, "wiki/concepts/F021.md", "context window")
+      await writeWikiFile(root, "wiki/concepts/F018.md", "bootstrap")
+      const r = await reindexWikiEntities({ wikiRoot: root, db: drizzle })
+      assert.equal(r.inserted, 3)
+      // FTS5 行数 == base 表行数（trigger atomicity 验证）
+      const rawDb = (drizzle as never as { $client: { prepare(s: string): unknown } }).$client
+      const baseCount = (
+        rawDb.prepare("SELECT COUNT(*) as c FROM wiki_entity_index") as {
+          get(): { c: number }
+        }
+      ).get().c
+      const ftsCount = (
+        rawDb.prepare("SELECT COUNT(*) as c FROM wiki_entity_fts") as {
+          get(): { c: number }
+        }
+      ).get().c
+      assert.equal(ftsCount, baseCount, "FTS5 行数应 == base 表（trigger 同步事务包内无半态）")
     } finally {
       cleanup()
       cleanupFs()
@@ -410,8 +519,8 @@ describe("WikiEntityFtsProvider FTS5 query", () => {
 // 5. AC-P1-11 baseline with real FTS5 backend (P11.b 雏形)
 // ─────────────────────────────────────────────────────────────────────
 
-describe("AC-P1-11 baseline with FTS5：F011 drizzle 优化 → F011 排首位 + F021/B022 ranking", () => {
-  it("FTS5 backend 复现 P11.a 排序：F011 > F021 > B022", async () => {
+describe("AC-P1-11 baseline with FTS5：F011 drizzle 优化 → F011 排首位 + Quality Gate 阈值真验", () => {
+  it("FTS5 backend 复现 P11.a 排序：F011 排首位 + corpus 归一化阈值", async () => {
     const { drizzle, cleanup } = makeDb()
     const { root, cleanup: cleanupFs } = makeWikiRoot()
     try {
@@ -434,12 +543,45 @@ describe("AC-P1-11 baseline with FTS5：F011 drizzle 优化 → F011 排首位 +
       const provider = new WikiEntityFtsProvider(drizzle)
       const hits = await provider.search("F011 drizzle 优化", { topK: 10, scope: "all" })
       assert.ok(hits.length >= 1)
-      // F011 必须排首位
+      // F011 必须排首位（task_summary 最相关）
       assert.match(
         hits[0].path,
         /F011-backend-hardening-drizzle/,
         `F011 应排首位，实际 ${hits.map((h) => h.path).join(",")}`,
       )
+      // 范-r1 P1-1: corpus-内归一化语义 — 首位 = 1.0
+      assert.equal(hits[0].score, 1, "首位 hit 必 score=1（corpus best）")
+      // 末位 = 0
+      if (hits.length > 1) {
+        assert.equal(hits[hits.length - 1].score, 0, "末位 hit 必 score=0（corpus worst）")
+      }
+      // Quality Gate 阈值落点合理：F011 在 ≥ 0.75 区
+      assert.ok(hits[0].score >= 0.75, `F011 score ${hits[0].score.toFixed(3)} 应 ≥ 0.75 (高置信)`)
+    } finally {
+      cleanup()
+      cleanupFs()
+    }
+  })
+
+  it("范-r1 P2-1：hyphen-rich path 'F011-backend-hardening-drizzle' query 仍命中 F011", async () => {
+    const { drizzle, cleanup } = makeDb()
+    const { root, cleanup: cleanupFs } = makeWikiRoot()
+    try {
+      await writeWikiFile(
+        root,
+        "wiki/concepts/F011-backend-hardening-drizzle.md",
+        "F011 drizzle migration safety + backfill",
+      )
+      await writeWikiFile(root, "wiki/concepts/F021.md", "context window resolver")
+      await reindexWikiEntities({ wikiRoot: root, db: drizzle })
+      const provider = new WikiEntityFtsProvider(drizzle)
+      // 用 hyphen path 当 query — sanitize 切成 4 token，trigram 都该命中 name 字段
+      const hits = await provider.search("F011-backend-hardening-drizzle", {
+        topK: 5,
+        scope: "all",
+      })
+      assert.ok(hits.length >= 1, "hyphen 切 token 后应命中 F011")
+      assert.match(hits[0].path, /F011-backend-hardening/)
     } finally {
       cleanup()
       cleanupFs()

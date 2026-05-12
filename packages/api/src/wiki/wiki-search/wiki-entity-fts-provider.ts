@@ -6,12 +6,22 @@
  * 实现 memory-preflight 的 WikiSearchProvider interface — P11.b 接 hybrid backend
  * 时用本 provider 替换 P11.a 的 InMemoryWikiSearchProvider（不修 caller）。
  *
- * BM25 → score 归一化（V16.5 chap 10 行 1146-1150 Quality Gate 用 [0,1] score）：
- *   FTS5 bm25() 返回**值越小越相关**的实数（负数也可能）。
- *   归一化策略 Phase 1 baseline：score = exp(-max(0, bm25Rank))，限到 (0, 1]。
- *   实际表现：完美匹配 bm25 ≈ -8 → score ≈ 1；中等 bm25 ≈ -1 → score ≈ 0.37；
- *   弱匹配 bm25 ≈ 2 → score ≈ 0.14。caller (Quality Gate) 用 ≥ 0.6/0.75 阈值。
- *   P15 LLM rerank 后会重写 score，本步骤只是占位让 P11 接得通。
+ * 范-r1 P1-1 修：BM25 → score 归一化改为 **corpus-内 min-max**（不依赖 raw rank 绝对值）。
+ *   旧版 linear-clamp [-8, 4] → [1, 0] 把 Quality Gate ≥0.75/≥0.6 阈值绑死到
+ *   SQLite FTS5 raw rank 区间，但 SQLite 只保证 "lower better"，没保 [-8, 4]。
+ *   实测 bm25 区间随 query 长度 / 文档密度 / tokenizer 漂移，硬阈值物理不稳。
+ *
+ *   新归一化（fts-provider:scoreHits）：
+ *     - 拿 topK 结果中 best(min) 和 worst(max) 两端
+ *     - score = 1 - (rank - best) / (worst - best)
+ *     - 单 hit 边界 → score = 1（best == worst 无 spread）
+ *   语义：**当 query 的 topK 内相对置信度**，best 永远 1，worst 永远 0。
+ *
+ *   Quality Gate 阈值含义变成"相对当前 query topK 的前 25% / 前 40%"：
+ *     - ≥ 0.75 = topK 中相对最强的部分（含 best 自身）
+ *     - 0.6-0.75 = 中等 inspector 区
+ *     - < 0.6 = 弱召回过滤掉
+ *   这个语义对 caller 反而更稳：不管 raw rank 怎么漂，阈值含义不变。
  */
 
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
@@ -108,35 +118,40 @@ export class WikiEntityFtsProvider implements WikiSearchProvider {
       throw err
     }
 
+    // 范-r1 P1-1: corpus-内 min-max 归一化（不依赖 raw rank 绝对区间）
+    const ranks = rows.map((r) => r.rank)
     return rows.map((r) => ({
       path: r.path,
       bucket: r.bucket,
       name: r.name,
       body: r.body,
       bm25Rank: r.rank,
-      score: bm25ToScore(r.rank),
+      score: normalizeBm25Corpus(r.rank, ranks),
     }))
   }
 }
 
 /**
- * BM25 → [0, 1] 归一化。
- * FTS5 bm25() 默认权重下，完美匹配 ≈ -8（4-token query），
- * 越大表示越不相关；可能正可能负。
- * score = exp(min(0, bm25))  ∈ (0, 1]
- *   bm25 = -8 → score ≈ 1.0
- *   bm25 = -4 → score ≈ 0.98
- *   bm25 = -2 → score ≈ 0.86
- *   bm25 = -1 → score ≈ 0.63
- *   bm25 = 0  → score = 1（边界）—— 这种是 query 完全没 hit 词，FTS5 不该返
- *   bm25 = 1  → score ≈ 0.37
+ * 范-r1 P1-1: corpus-内 min-max 归一化。
+ * FTS5 bm25() 越小越相关。给定一组 ranks（同 query 的 topK），best=min worst=max。
+ *   - score = 1 - (rank - best) / (worst - best)
+ *   - 单 hit 或 best == worst → score = 1（无 spread 全打满）
+ * 返回 [0, 1]。
+ *
+ * 设计权衡 vs alternative：
+ *   - 绝对阈值（旧版 linear-clamp [-8, 4]）→ 物理上不稳，SQLite 没保证 raw 区间
+ *   - corpus-内归一化 → 阈值语义变成"前 25%"（≥ 0.75）/"前 40%"（≥ 0.6），跨 query 稳
+ *   - global percentile（跨 query 历史窗）→ 需 audit 维护历史 rank，开销大；留 P15
  */
-export function bm25ToScore(bm25Rank: number): number {
-  // FTS5 完美匹配返负数，越小越相关。clamp 到 [-8, 4] 后映射。
-  const clamped = Math.max(-8, Math.min(4, bm25Rank))
-  // -8 → 1.0；4 → exp(-4) ≈ 0.018
-  // 映射 = exp(-(clamped+8)/8) 让 [-8, 0] 落到 [1, exp(-1)]，[0, 4] 落到 [exp(-1), exp(-1.5)]
-  // 更简单：score = 1 - normalize(clamped, -8, 4)
-  const normalized = (clamped - -8) / (4 - -8) // 0 (perfect) → 1 (worst)
-  return Math.max(0, Math.min(1, 1 - normalized))
+export function normalizeBm25Corpus(rank: number, all: ReadonlyArray<number>): number {
+  if (all.length === 0) return 0
+  let best = all[0]
+  let worst = all[0]
+  for (const r of all) {
+    if (r < best) best = r
+    if (r > worst) worst = r
+  }
+  if (worst === best) return 1
+  const score = 1 - (rank - best) / (worst - best)
+  return Math.max(0, Math.min(1, score))
 }

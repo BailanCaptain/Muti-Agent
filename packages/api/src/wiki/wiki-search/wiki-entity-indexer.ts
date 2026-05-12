@@ -16,11 +16,11 @@ import crypto from "node:crypto"
 import type { Dirent } from "node:fs"
 import { promises as fsAsync } from "node:fs"
 import path from "node:path"
-import { and, eq, like } from "drizzle-orm"
+import { eq } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type * as schema from "../../db/schema"
 import { wikiEntityIndex } from "../../db/schema"
-import type { IndexerReport, WikiEntityFile } from "./types"
+import type { IndexerReport } from "./types"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
 
@@ -39,6 +39,19 @@ export interface IndexerOptions {
 
 const DEFAULT_MAX_BODY = 1_048_576 // 1 MB
 
+/**
+ * 范-r1 重写：真增量 + failed 不删 + 事务包 diff。
+ *
+ * 算法（chap 22 行 2386 "FTS5 索引构建慢" 兜底"离线批量 + 灰度"对齐）：
+ *   1. 先 SELECT DB 拿 (path, mtime_ms, source_hash, bucket, name) metadata（不含 body）
+ *   2. 扫磁盘 stat 每个 .md 文件（不读 body）→ seenOnDiskPaths + diskMeta map
+ *   3. 对每个 disk file：
+ *      a. 不在 DB → 读 body + hash + INSERT
+ *      b. 在 DB 且 mtime 相同 → skip（不读 body，不算 hash）
+ *      c. 在 DB 且 mtime 不同 → 读 body 算 hash；hash 同 → 仅 UPDATE mtime；hash 不同 → 全 UPDATE
+ *   4. DELETE 仅针对 (DB 有 - seenOnDiskPaths) 集合 — failed 文件保留旧索引
+ *   5. 整 diff 包在 db.transaction({behavior: 'immediate'}) 防中途崩半态
+ */
 export async function reindexWikiEntities(opts: IndexerOptions): Promise<IndexerReport> {
   const t0 = Date.now()
   const maxBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY
@@ -46,110 +59,149 @@ export async function reindexWikiEntities(opts: IndexerOptions): Promise<Indexer
   const nowIso = opts.now ?? new Date().toISOString()
 
   const failed: IndexerReport["failed"] = []
-  const filesOnDisk = new Map<string, WikiEntityFile>() // relPath → entity
 
-  // 1) 磁盘扫文件
-  let buckets: string[]
+  // ─── 1) DB 当前 metadata（不含 body，省内存）─────────────────────────
+  const dbRows = selectDbMetadata(opts.db, opts.buckets)
+  const dbByPath = new Map<string, DbMetaRow>()
+  for (const row of dbRows) dbByPath.set(row.path, row)
+
+  // ─── 2) 磁盘扫 .md 文件（只 stat，不读 body）─────────────────────────
+  let bucketDirs: string[]
   try {
     const entries = await fsAsync.readdir(wikiDir, { withFileTypes: true })
-    buckets = entries.filter((e) => e.isDirectory()).map((e) => e.name)
-    if (opts.buckets) buckets = buckets.filter((b) => opts.buckets?.includes(b))
+    bucketDirs = entries.filter((e) => e.isDirectory()).map((e) => String(e.name))
+    if (opts.buckets) bucketDirs = bucketDirs.filter((b) => opts.buckets?.includes(b))
   } catch (err) {
-    // wikiDir 不存在 = 空 indexer 报告（不报错）
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err
-    buckets = []
+    bucketDirs = []
   }
 
-  for (const bucket of buckets) {
+  type DiskMeta = {
+    relPath: string
+    absPath: string
+    bucket: string
+    name: string
+    mtimeMs: number
+    sizeBytes: number
+  }
+  const diskByPath = new Map<string, DiskMeta>()
+  const seenOnDiskPaths = new Set<string>()
+
+  for (const bucket of bucketDirs) {
     const bucketDir = path.join(wikiDir, bucket)
     await walkMd(bucketDir, async (absPath, mtimeMs) => {
       const relPath = path.relative(opts.wikiRoot, absPath).replace(/\\/g, "/")
+      seenOnDiskPaths.add(relPath)
       try {
         const stat = await fsAsync.stat(absPath)
         if (stat.size > maxBytes) {
+          // 范-r1 P1-3: failed 不算 deleted；保留 DB 旧索引
           failed.push({ relPath, error: `body exceeds maxBodyBytes (${stat.size} > ${maxBytes})` })
           return
         }
-        const buf = await fsAsync.readFile(absPath, "utf8")
-        const hash = sha256Hex(buf)
         const name = path.basename(absPath, ".md")
-        filesOnDisk.set(relPath, {
-          relPath,
-          bucket,
-          name,
-          body: buf,
-          sourceHash: hash,
-          mtimeMs,
-        })
+        diskByPath.set(relPath, { relPath, absPath, bucket, name, mtimeMs, sizeBytes: stat.size })
       } catch (err) {
+        // 范-r1 P1-3: stat 失败 path 已进 seenOnDiskPaths → 不会被当 deleted 删除
         failed.push({ relPath, error: errorMessage(err) })
       }
     })
   }
 
-  // 2) DB 当前已索引行（限 buckets，若指定）
-  const existing = opts.buckets
-    ? bucketsFilter(opts.db, opts.buckets)
-    : opts.db.select().from(wikiEntityIndex).all()
-  const dbByPath = new Map<string, typeof wikiEntityIndex.$inferSelect>()
-  for (const row of existing) {
-    dbByPath.set(row.path, row)
-  }
-
-  // 3) Diff & upsert
+  // ─── 3) Diff: 决定每条 path 的动作 + 按需读 body ──────────────────────
+  type Action =
+    | { kind: "insert"; meta: DiskMeta; body: string; hash: string }
+    | { kind: "update"; meta: DiskMeta; body: string; hash: string; oldHash: string }
+    | { kind: "skip" }
+  type PlanEntry = { relPath: string; action: Action }
+  const plan: PlanEntry[] = []
   let inserted = 0
   let updated = 0
   let skipped = 0
-  let removed = 0
 
-  for (const [relPath, file] of filesOnDisk) {
+  for (const [relPath, dmeta] of diskByPath) {
     const dbRow = dbByPath.get(relPath)
     if (!dbRow) {
-      opts.db
-        .insert(wikiEntityIndex)
-        .values({
-          path: relPath,
-          bucket: file.bucket,
-          name: file.name,
-          body: file.body,
-          sourceHash: file.sourceHash,
-          mtimeMs: file.mtimeMs,
-          indexedAt: nowIso,
+      try {
+        const buf = await fsAsync.readFile(dmeta.absPath, "utf8")
+        plan.push({
+          relPath,
+          action: { kind: "insert", meta: dmeta, body: buf, hash: sha256Hex(buf) },
         })
-        .run()
-      inserted++
+        inserted++
+      } catch (err) {
+        failed.push({ relPath, error: errorMessage(err) })
+      }
       continue
     }
-    if (dbRow.sourceHash === file.sourceHash && dbRow.mtimeMs === file.mtimeMs) {
+    // 同 path 已存在；只 mtime 相同就 skip（不读 body 省 IO）
+    if (dbRow.mtimeMs === dmeta.mtimeMs) {
+      plan.push({ relPath, action: { kind: "skip" } })
       skipped++
       continue
     }
-    // 内容变更或 mtime 不同（即使 hash 同也更新 mtime 防下次再读）
-    opts.db
-      .update(wikiEntityIndex)
-      .set({
-        bucket: file.bucket,
-        name: file.name,
-        body: file.body,
-        sourceHash: file.sourceHash,
-        mtimeMs: file.mtimeMs,
-        indexedAt: nowIso,
+    // mtime 不同 → 读 body 校 hash
+    try {
+      const buf = await fsAsync.readFile(dmeta.absPath, "utf8")
+      const hash = sha256Hex(buf)
+      // 范-r1 P1-2: hash 同也 UPDATE mtime（防下次再读）；hash 不同则全 UPDATE
+      plan.push({
+        relPath,
+        action: { kind: "update", meta: dmeta, body: buf, hash, oldHash: dbRow.sourceHash },
       })
-      .where(eq(wikiEntityIndex.path, relPath))
-      .run()
-    updated++
-  }
-
-  // 4) DB 有但磁盘已无 → DELETE
-  for (const relPath of dbByPath.keys()) {
-    if (!filesOnDisk.has(relPath)) {
-      opts.db.delete(wikiEntityIndex).where(eq(wikiEntityIndex.path, relPath)).run()
-      removed++
+      updated++
+    } catch (err) {
+      failed.push({ relPath, error: errorMessage(err) })
     }
   }
 
+  // ─── 4) DELETE: 仅 (dbByPath - seenOnDiskPaths)；failed/超大文件保留 ──
+  const toDelete: string[] = []
+  for (const dbPath of dbByPath.keys()) {
+    if (!seenOnDiskPaths.has(dbPath)) toDelete.push(dbPath)
+  }
+  const removed = toDelete.length
+
+  // ─── 5) 包事务执行 plan + delete（范-r1 P2-3）────────────────────────
+  opts.db.transaction(
+    (tx) => {
+      for (const entry of plan) {
+        const a = entry.action
+        if (a.kind === "insert") {
+          tx.insert(wikiEntityIndex)
+            .values({
+              path: entry.relPath,
+              bucket: a.meta.bucket,
+              name: a.meta.name,
+              body: a.body,
+              sourceHash: a.hash,
+              mtimeMs: a.meta.mtimeMs,
+              indexedAt: nowIso,
+            })
+            .run()
+        } else if (a.kind === "update") {
+          tx.update(wikiEntityIndex)
+            .set({
+              bucket: a.meta.bucket,
+              name: a.meta.name,
+              body: a.body,
+              sourceHash: a.hash,
+              mtimeMs: a.meta.mtimeMs,
+              indexedAt: nowIso,
+            })
+            .where(eq(wikiEntityIndex.path, entry.relPath))
+            .run()
+        }
+      }
+      for (const p of toDelete) {
+        tx.delete(wikiEntityIndex).where(eq(wikiEntityIndex.path, p)).run()
+      }
+    },
+    { behavior: "immediate" },
+  )
+
   return {
-    scanned: filesOnDisk.size,
+    scanned: diskByPath.size,
     inserted,
     updated,
     skipped,
@@ -161,24 +213,24 @@ export async function reindexWikiEntities(opts: IndexerOptions): Promise<Indexer
 
 // ─── helpers ───────────────────────────────────────────────────────────
 
-function bucketsFilter(
-  db: DrizzleDb,
-  buckets: string[],
-): Array<typeof wikiEntityIndex.$inferSelect> {
-  // drizzle 没原生 OR-IN helper；用多 like 兜底（buckets 通常 ≤ 5）
-  if (buckets.length === 0) return []
-  if (buckets.length === 1) {
-    return db.select().from(wikiEntityIndex).where(eq(wikiEntityIndex.bucket, buckets[0])).all()
+/** 范-r1 P1-2: DB metadata only（不含 body 省内存）；按 buckets 过滤 */
+type DbMetaRow = { path: string; bucket: string; name: string; sourceHash: string; mtimeMs: number }
+
+function selectDbMetadata(db: DrizzleDb, buckets: string[] | undefined): DbMetaRow[] {
+  const cols = {
+    path: wikiEntityIndex.path,
+    bucket: wikiEntityIndex.bucket,
+    name: wikiEntityIndex.name,
+    sourceHash: wikiEntityIndex.sourceHash,
+    mtimeMs: wikiEntityIndex.mtimeMs,
   }
-  // 多 bucket：UNION 实现 — drizzle 接口繁，这里直接 prefix-like 多次 query 合并去重
+  if (!buckets || buckets.length === 0) {
+    return db.select(cols).from(wikiEntityIndex).all()
+  }
   const seen = new Set<string>()
-  const out: Array<typeof wikiEntityIndex.$inferSelect> = []
+  const out: DbMetaRow[] = []
   for (const b of buckets) {
-    const rows = db
-      .select()
-      .from(wikiEntityIndex)
-      .where(and(eq(wikiEntityIndex.bucket, b), like(wikiEntityIndex.path, "wiki/%")))
-      .all()
+    const rows = db.select(cols).from(wikiEntityIndex).where(eq(wikiEntityIndex.bucket, b)).all()
     for (const r of rows) {
       if (!seen.has(r.path)) {
         seen.add(r.path)
