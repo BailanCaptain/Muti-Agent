@@ -241,6 +241,16 @@ function selectDbMetadata(db: DrizzleDb, buckets: string[] | undefined): DbMetaR
   return out
 }
 
+/**
+ * 范-r2 P1-3 修：walkMd 内的 pre-visit stat 也要 try/catch，否则 stat 失败
+ *   会让整个 walk 中断 → 同一目录后续 .md 文件根本进不了 seenOnDiskPaths
+ *   → 它们可能被当 deleted 误删（实际是 stat 错没扫到）。改成：
+ *     - readdir 失败：保留 ENOENT 静默 + 其他错继续 throw（dir-level 失败需暴露）
+ *     - 单文件 stat 失败：传 visit(_, NaN)；visit 内部会 stat 第二次，第二次失败时
+ *       走 failed[] 路径 + path 已进 seenOnDiskPaths 不被删
+ *   实际 visit 内会再 stat 一次拿 size，所以第二次失败时 failed[].push + 不影响
+ *   seenOnDiskPaths（caller 已在 stat 之前 add）。本步骤主要防 walk 中断。
+ */
 async function walkMd(
   dir: string,
   visit: (absPath: string, mtimeMs: number) => Promise<void>,
@@ -258,8 +268,17 @@ async function walkMd(
     if (ent.isDirectory()) {
       await walkMd(abs, visit)
     } else if (ent.isFile() && name.endsWith(".md")) {
-      const stat = await fsAsync.stat(abs)
-      await visit(abs, stat.mtimeMs)
+      // 范-r2 P1-3: pre-visit stat 失败不中断 walk；用 NaN 当 mtime 让 visit
+      //   走 fall-through 路径（visit 内的 stat 会再失败一次进 failed[] 并 add
+      //   到 seenOnDiskPaths 防误删）
+      let mtimeMs = Number.NaN
+      try {
+        const stat = await fsAsync.stat(abs)
+        mtimeMs = stat.mtimeMs
+      } catch {
+        // stat 失败 → mtimeMs=NaN；visit 内的二次 stat 会带 failed[] 路径
+      }
+      await visit(abs, mtimeMs)
     }
   }
 }

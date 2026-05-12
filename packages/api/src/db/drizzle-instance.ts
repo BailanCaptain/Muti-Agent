@@ -636,6 +636,50 @@ function runMigrations(adapter: ReturnType<typeof createNodeSqliteAdapter>): voi
       }
     }
   }
+  // F027 P14.a 范-r2 修：FTS5 tokenizer 升级（unicode61 → trigram）。
+  //   SQLite FTS5 tokenizer 是 CREATE 时锁定的，CREATE VIRTUAL TABLE IF NOT EXISTS
+  //   对既有不同 tokenizer 的表不会 alter。本函数检测 sqlite_master.sql 含
+  //   unicode61 但不含 trigram → DROP + 重新 CREATE + 'rebuild' 命令让 FTS5 从
+  //   wiki_entity_index 全表扫重建索引。base 表 wiki_entity_index 不动。
+  upgradeWikiEntityFtsTokenizer(adapter)
+}
+
+function upgradeWikiEntityFtsTokenizer(adapter: ReturnType<typeof createNodeSqliteAdapter>): void {
+  let existingSql: string | null = null
+  try {
+    const row = adapter
+      .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='wiki_entity_fts'")
+      .get() as { sql?: string } | undefined
+    existingSql = row?.sql ?? null
+  } catch {
+    return
+  }
+  if (!existingSql) return // 表还没建，INIT_SQL 已建 trigram 形态
+  if (/trigram/i.test(existingSql)) return // 已是 trigram，幂等
+  if (!/unicode61/i.test(existingSql)) return // 未知 tokenizer，保守不动
+  // 旧 unicode61 → 升级 trigram
+  try {
+    adapter.exec("DROP TABLE wiki_entity_fts;")
+    adapter.exec(`
+      CREATE VIRTUAL TABLE wiki_entity_fts USING fts5(
+        path UNINDEXED,
+        bucket UNINDEXED,
+        name,
+        body,
+        content='wiki_entity_index',
+        content_rowid='rowid',
+        tokenize='trigram case_sensitive 0'
+      );
+    `)
+    // FTS5 'rebuild' 命令：从 content 表 (wiki_entity_index) 全表扫重建索引
+    // 触发器仍然 attach（前面 INIT_SQL 已 CREATE TRIGGER IF NOT EXISTS）
+    adapter.exec("INSERT INTO wiki_entity_fts(wiki_entity_fts) VALUES('rebuild');")
+  } catch (err) {
+    // 升级失败不阻塞启动；下次 indexer reindex 会通过 trigger 重新填
+    // 触发器已 attach，indexer 走 INSERT/UPDATE 时会重新同步
+    const msg = String((err as { message?: unknown })?.message ?? err)
+    if (!/no such table/i.test(msg)) throw err
+  }
 }
 
 // F022 Phase 1: 历史 session roomId 回填（幂等）。
