@@ -418,6 +418,42 @@ const INIT_SQL = `
       SELECT RAISE(ABORT, 'stale leader_term');
     END;
 
+  -- F027 P7 chap 8 · RoomCompiler 二阶段提交 + commit-monotonic cursor + sealed cursor
+  CREATE TABLE IF NOT EXISTS room_checkpoints (
+    room_id TEXT PRIMARY KEY,
+    cursor_commit_seq INTEGER NOT NULL,
+    cursor_message_id TEXT NOT NULL,
+    sealed_cursor_seq INTEGER NOT NULL,
+    viewfinder_hash TEXT NOT NULL,
+    decisions_hash TEXT NOT NULL,
+    log_hash TEXT NOT NULL,
+    thread_seal_id TEXT,
+    compiled_at TEXT NOT NULL,
+    committed_at TEXT,
+    fencing_token TEXT NOT NULL,
+    leader_term TEXT NOT NULL,
+    reserved_1 TEXT,
+    reserved_2 TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_room_checkpoints_committed
+    ON room_checkpoints(committed_at);
+
+  CREATE TABLE IF NOT EXISTS message_commit_seq (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT NOT NULL UNIQUE,
+    committed_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS thread_seal_events (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id TEXT NOT NULL,
+    room_id TEXT NOT NULL,
+    sealed_at TEXT NOT NULL,
+    fencing_token TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_thread_seal_events_room
+    ON thread_seal_events(room_id, seq);
+
   -- F027 P0 · V16.5.1 F3 实施前置：drizzle 路径补 a2a_calls 4 个索引（与 sqlite.ts:327-330 对齐），
   -- 加复合索引 idx_a2a_calls_session_status_updated（viewfinder §4 高频查询）。
   -- 性能 AC：viewfinder 编译 1000 calls 房间 ≤ 50ms。

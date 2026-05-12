@@ -432,3 +432,42 @@ export const compilerLeader = sqliteTable("compiler_leader", {
   reserved1: text("reserved_1"),
   reserved2: text("reserved_2"),
 })
+
+// F027 P7 chap 8 · RoomCompiler 二阶段提交 checkpoint（每 room 一行）。
+// committed_at IS NULL = PREPARE 阶段未完，SessionBootstrap 不读；reconciler 扫该集合修。
+// cursor_commit_seq = message_commit_seq.seq 单调推进；sealed_cursor_seq 独立 cursor
+// 防 V16 chap 8 "sealed 但无 message → tick 漏" 漏洞。
+export const roomCheckpoints = sqliteTable("room_checkpoints", {
+  roomId: text("room_id").primaryKey(),
+  cursorCommitSeq: integer("cursor_commit_seq").notNull(),
+  cursorMessageId: text("cursor_message_id").notNull(),
+  sealedCursorSeq: integer("sealed_cursor_seq").notNull(),
+  viewfinderHash: text("viewfinder_hash").notNull(),
+  decisionsHash: text("decisions_hash").notNull(),
+  logHash: text("log_hash").notNull(),
+  threadSealId: text("thread_seal_id"),
+  compiledAt: text("compiled_at").notNull(),
+  committedAt: text("committed_at"), // null = prepare 阶段未完
+  fencingToken: text("fencing_token").notNull(),
+  leaderTerm: text("leader_term").notNull(),
+  reserved1: text("reserved_1"),
+  reserved2: text("reserved_2"),
+})
+
+// F027 P7 chap 8 · message commit 单调序列（F004 message-service 同事务 INSERT）。
+// 用 seq 而非 created_at 推进 cursor —— created_at 同毫秒可碰撞，seq 严格单调。
+export const messageCommitSeq = sqliteTable("message_commit_seq", {
+  seq: integer("seq").primaryKey({ autoIncrement: true }),
+  messageId: text("message_id").notNull().unique(),
+  committedAt: text("committed_at").notNull(),
+})
+
+// F027 P7 chap 8 · thread seal 独立事件流（F018 seal 同事务 INSERT）。
+// compiler 用 sealed_cursor_seq 单独 watch，"sealed_at 变但无新 message" 也能触发。
+export const threadSealEvents = sqliteTable("thread_seal_events", {
+  seq: integer("seq").primaryKey({ autoIncrement: true }),
+  threadId: text("thread_id").notNull(),
+  roomId: text("room_id").notNull(),
+  sealedAt: text("sealed_at").notNull(),
+  fencingToken: text("fencing_token").notNull(),
+})
