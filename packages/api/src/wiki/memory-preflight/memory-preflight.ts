@@ -22,8 +22,15 @@ import type {
   WikiSearchProvider,
 } from "./types"
 
+/** 范-r1 P2-2: 可选 logger 让 search backend 整体挂掉时不静默"无召回"。 */
+export interface MinimalLogger {
+  warn(obj: unknown, msg?: string): void
+}
+
 export interface MemoryPreflightDeps {
   search: WikiSearchProvider
+  /** 可选 logger（不传走 no-op）。caller 接生产时建议传 pino 实例。 */
+  logger?: MinimalLogger
 }
 
 export interface LoadTaskMemoryPackOptions {
@@ -39,14 +46,26 @@ export async function loadTaskMemoryPack(
   // Step 1
   const queries = generateRecallQueries(ctx, opts?.queries)
 
-  // Step 2: 并行召回（失败静默：单 query 抛 → 空数组）
+  // Step 2: 并行召回（失败 fail-soft：单 query 抛 → 空数组）
   // V16.5 chap 12 行 1419 query_parallel: true
+  // 范-r1 P2-2: 单 query 失败时 warn（caller 传 logger 才记录），防 backend
+  //   整体挂掉表现成"无召回"的静默退化。
+  const logger = deps.logger
   const results: RecallResult[] = await Promise.all(
     queries.map(async (q) => {
       try {
         const hits = await deps.search.search(q.query, { topK: q.topK, scope: "all" })
         return { query: q, hits }
-      } catch {
+      } catch (err) {
+        logger?.warn(
+          {
+            stage: "memory_preflight.search",
+            query: q.query,
+            source: q.source,
+            err: err instanceof Error ? { name: err.name, message: err.message } : String(err),
+          },
+          "memory_preflight search 单 query 失败（fail-soft 返空 hits）",
+        )
         return { query: q, hits: [] }
       }
     }),

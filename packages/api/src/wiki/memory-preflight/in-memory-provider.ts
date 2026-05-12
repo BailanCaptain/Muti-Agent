@@ -1,12 +1,20 @@
 /**
- * F027 P11 · InMemoryWikiSearchProvider
- * Phase 1 边界（小孙拍）：骨架先走 + 实现分两步。
+ * F027 P11 · InMemoryWikiSearchProvider —— ⚠️ TEST/FIXTURE ONLY
+ *
+ * Phase 1 边界（小孙 2026-05-12 拍）：骨架先走 + 实现分两步。
  *
  * 本 provider 用 in-memory wiki entity records + 调 caller 提供的 embedding 生成器
  * + cosine 内存搜。给 fixture / 单元测试用。
  *
- * P14 (Day 25) wiki entity FTS5 + indexer 落库后，加 SqliteWikiSearchProvider
- * 复用同 WikiSearchProvider interface（不修 caller side）。
+ * **生产不要 wire 本 provider**：
+ *   - 无文件订阅 / 没 indexer，wiki entity 写入后召回不会更新
+ *   - records 全在内存（100k entity ≈ 数 GB embedding）
+ *   - P14 (Day 25) wiki entity FTS5 + indexer 落库后，加 SqliteWikiSearchProvider
+ *     复用同 WikiSearchProvider interface（不修 caller side）
+ *
+ * 范-r1 P2-3 修：加 NaN / 维度不等 / 非 finite score 防御——cosineSimilarity 在
+ * 维度不等向量上行为未定义；不防御的话 score=NaN 在 Quality Gate 的 `< floor`
+ * 比较里永远 false（NaN 任何比较返 false），漏过 reject 直接进 inspector/injected。
  */
 
 import { cosineSimilarity } from "../../services/embedding-service"
@@ -25,12 +33,6 @@ export interface WikiEntityRecord {
 
 export type EmbeddingGenerator = (text: string) => Promise<number[] | null>
 
-/**
- * 简单 in-memory cosine 搜索。
- * - 失败静默：embedding 生成器 return null → return [] 不抛
- * - 不做 thread filter（wiki entity 不属任何 thread）
- * - excerpt = body 首 200 字
- */
 export class InMemoryWikiSearchProvider implements WikiSearchProvider {
   constructor(
     private readonly records: ReadonlyArray<WikiEntityRecord>,
@@ -40,11 +42,14 @@ export class InMemoryWikiSearchProvider implements WikiSearchProvider {
   async search(query: string, opts: SearchOptions): Promise<RecallHit[]> {
     if (this.records.length === 0) return []
     const qVec = await this.generateEmbedding(query)
-    if (!qVec) return []
+    if (!qVec || qVec.length === 0) return []
 
     const scored: RecallHit[] = []
     for (const rec of this.records) {
+      // 范-r1 P2-3: 维度不等 / 空向量 / 非 finite score → 跳过（不漏进 buckets）
+      if (rec.embedding.length === 0 || rec.embedding.length !== qVec.length) continue
       const score = cosineSimilarity(qVec, rec.embedding)
+      if (!Number.isFinite(score)) continue
       scored.push({
         path: rec.path,
         score,

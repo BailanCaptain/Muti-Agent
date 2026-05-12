@@ -83,7 +83,7 @@ export function renderTaskMemoryPack(
 
   if (buckets.rejected.length > 0) {
     lines.push(
-      `> ${buckets.rejected.length} hit 被 Quality Gate reject（below_floor / duplicate / token_budget）`,
+      `> ${buckets.rejected.length} hit 被 Quality Gate reject（below_floor / duplicate_source）`,
     )
     lines.push("")
   }

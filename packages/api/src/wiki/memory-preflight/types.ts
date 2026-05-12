@@ -62,7 +62,12 @@ export interface QualityGateBuckets {
   rejected: Array<{ hit: RecallHit; reason: RejectReason }>
 }
 
-export type RejectReason = "below_floor" | "duplicate_source" | "token_budget_exceeded"
+/**
+ * 范-r1 P2-1 修：token_budget_exceeded 不再做 reject 原因——超 cap 的高置信 hit
+ * 走单一状态降级到 inspectorOnly + budgetExceeded flag。rejected 只承担"真丢弃"
+ * 语义（floor 砍 + 同源 dedup 截）。
+ */
+export type RejectReason = "below_floor" | "duplicate_source"
 
 export interface QualityGateOptions {
   /** < scoreFloor 直接 reject (默认 0.6 — chap 10 行 1146) */

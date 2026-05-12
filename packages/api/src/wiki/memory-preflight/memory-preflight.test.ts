@@ -60,21 +60,40 @@ function fakeHit(path: string, score: number, excerpt = "x".repeat(20)): RecallH
 // ─────────────────────────────────────────────────────────────────────
 
 describe("generateRecallQueries", () => {
-  it("空 ctx 只 task_summary 1 query", () => {
+  it("范-r1 P1-1：只 taskSummary 含 entity ID → 至少 2 query（主 + entity 派生）", () => {
     const qs = generateRecallQueries({
       roomId: "R-205",
       alias: "桂芬",
       scenario: "wake_up",
       taskSummary: "F011 drizzle 优化",
     })
-    assert.equal(qs.length, 1)
+    // V16.5 chap 10 行 1095："生成 2-5 个召回 query"——至少 2 条
+    assert.ok(qs.length >= 2, `应至少 2 query (spec 2-5)，实际 ${qs.length}`)
     assert.equal(qs[0].source, "task_summary")
     assert.equal(qs[0].query, "F011 drizzle 优化")
     assert.equal(qs[0].topK, 3)
     assert.equal(qs[0].expectedScoreFloor, 0.6)
+    // 第二 query 应是 entity ID 派生（F011 高精度路径召回）
+    assert.ok(
+      qs.some((q) => q.query.includes("F011") && q !== qs[0]),
+      "应有 entity-derived query 含 F011",
+    )
   })
 
-  it("4 源都有 → 5 query（cap 上限）", () => {
+  it("范-r1 P1-1：taskSummary 无 entity ID → fallback 用 alias+scenario 补到 2 query", () => {
+    const qs = generateRecallQueries({
+      roomId: "R-205",
+      alias: "桂芬",
+      scenario: "wake_up",
+      taskSummary: "继续干昨天的事",
+    })
+    assert.ok(qs.length >= 2, `应 ≥ 2 query (spec)，实际 ${qs.length}`)
+    assert.equal(qs[0].source, "task_summary")
+    // 第二 query 应是 fallback（room/alias/scenario context 派生）
+    assert.notEqual(qs[1].query, qs[0].query)
+  })
+
+  it("4 源都有（含 entity ID 派生）→ 5 query（cap 上限，task_summary 系优先）", () => {
     const qs = generateRecallQueries({
       roomId: "R-205",
       alias: "桂芬",
@@ -84,16 +103,19 @@ describe("generateRecallQueries", () => {
       recentMessageConcepts: ["B022", "redundancy", "fail-closed"],
       unresolvedThreads: ["等范 review", "桂芬补 acceptance", "第三个"],
     })
-    // task + capability + recent + 2 unresolved = 5
+    // 范-r1 P1-1 修后：task_summary 主 + task_summary entity 派生 + capability
+    //   + recent + 2 unresolved = 6 → cap 5（最后一个 unresolved 截掉）
     assert.equal(qs.length, 5)
     assert.equal(qs[0].source, "task_summary")
-    assert.equal(qs[1].source, "capability_digest")
-    assert.equal(qs[2].source, "recent_messages")
-    assert.equal(qs[3].source, "unresolved_threads")
+    assert.equal(qs[0].query, "F011 drizzle")
+    assert.equal(qs[1].source, "task_summary") // entity 派生
+    assert.equal(qs[1].query, "F011")
+    assert.equal(qs[2].source, "capability_digest")
+    assert.equal(qs[3].source, "recent_messages")
     assert.equal(qs[4].source, "unresolved_threads")
   })
 
-  it("空白 taskSummary 跳过", () => {
+  it("空白 taskSummary + 有 capability_digest → 仍补足 ≥ 2 query", () => {
     const qs = generateRecallQueries({
       roomId: "R-1",
       alias: "a",
@@ -101,7 +123,8 @@ describe("generateRecallQueries", () => {
       taskSummary: "   ",
       capabilityDigestKeywords: ["frontend"],
     })
-    assert.equal(qs.length, 1)
+    // 范-r1 P1-1: 即使 taskSummary 空也要保证 ≥ 2 query
+    assert.ok(qs.length >= 2, `应 ≥ 2 query，实际 ${qs.length}`)
     assert.equal(qs[0].source, "capability_digest")
   })
 
@@ -131,6 +154,20 @@ describe("generateRecallQueries", () => {
     )
     assert.equal(qs.length, 2)
     assert.equal(qs[0].source, "task_summary")
+  })
+
+  it("范-r1 P1-1：多种 entity ID（F/B/R-/D-）都被抽出", () => {
+    const qs = generateRecallQueries({
+      roomId: "R-205",
+      alias: "桂芬",
+      scenario: "wake_up",
+      taskSummary: "复盘 F011 + B022 + R-201 之前 D-018 决策",
+    })
+    assert.ok(qs.length >= 2)
+    const entityQ = qs.find((q) => q !== qs[0])
+    assert.ok(entityQ)
+    // 至少含 1 个 entity ID
+    assert.match(entityQ.query, /(F011|B022|R-201|D-018)/)
   })
 })
 
@@ -179,7 +216,7 @@ describe("applyQualityGate", () => {
     assert.equal(dupCount, 2)
   })
 
-  it("token cap 触发 → budget_exceeded + 降级 inspector", () => {
+  it("范-r1 P2-1：token cap 触发 → budget_exceeded + 单一状态降级 inspector（不重复进 rejected）", () => {
     // 默认 estimateTokens = len/4，excerpt 长 800 → 200 tok / hit
     const longExcerpt = "x".repeat(800)
     const out = applyQualityGate(
@@ -199,10 +236,23 @@ describe("applyQualityGate", () => {
     )
     assert.ok(out.budgetExceeded, "应标 budgetExceeded")
     assert.ok(out.buckets.injected.length < 8, "至少一部分降级到 inspector")
-    assert.ok(
-      out.buckets.rejected.some((r) => r.reason === "token_budget_exceeded"),
-      "至少 1 个 reject 原因是 token_budget_exceeded",
-    )
+    // 范-r1 P2-1: rejected 只承担"真丢弃"（below_floor + duplicate_source），
+    // 不再含 token_budget_exceeded（已改用单一状态降级 inspector）
+    for (const r of out.buckets.rejected) {
+      assert.ok(
+        r.reason === "below_floor" || r.reason === "duplicate_source",
+        `rejected.reason 仅允许 below_floor / duplicate_source，实际 ${r.reason}`,
+      )
+    }
+    // 超 cap 的 hit 进 inspectorOnly + score >= injectFloor → "未注入的高置信"
+    const highInInspector = out.buckets.inspectorOnly.filter((h) => h.score >= 0.75)
+    assert.ok(highInInspector.length >= 1, "至少 1 个高置信 hit 因 token cap 降级到 inspector")
+    // 同一 hit 不应同时在两个 bucket
+    const injectedPaths = new Set(out.buckets.injected.map((h) => h.path))
+    const inspectorPaths = new Set(out.buckets.inspectorOnly.map((h) => h.path))
+    for (const p of injectedPaths) {
+      assert.ok(!inspectorPaths.has(p), `path ${p} 不应同时在 injected + inspector`)
+    }
   })
 
   it("自定义 scoreFloor / injectFloor", () => {
@@ -326,6 +376,33 @@ describe("detectRecallTrigger", () => {
     assert.equal(t.trigger, "review_action")
   })
 
+  it("范-r1 P1-2：中文 '审核' 命中 review_action（不依赖英文 \\b 边界）", async () => {
+    const t = await detectRecallTrigger({ scenario: "turn", draft: "麻烦审核一下我这个 PR" }, null)
+    assert.equal(t.required, true)
+    assert.equal(t.trigger, "review_action")
+  })
+
+  it("范-r1 P1-2：中文 '过一眼' 命中 review_action", async () => {
+    const t = await detectRecallTrigger({ scenario: "turn", draft: "帮我过一眼这段代码" }, null)
+    assert.equal(t.required, true)
+    assert.equal(t.trigger, "review_action")
+  })
+
+  it("范-r1 P3-2：已 cite + modify_wiki 共存 → modify_wiki 优先级最高 required", async () => {
+    // spec V16.5 chap 12 行 1374 + 1376："修改 plan / wiki" 是顶级 trigger，
+    // evidence_already_cited 只豁免"引用历史"类。共存时 modify_wiki 应胜出。
+    const t = await detectRecallTrigger(
+      {
+        scenario: "turn",
+        draft: "我要修改 plan 中的 P11 优先级",
+        citedMessageIds: ["msg_123"],
+      },
+      null,
+    )
+    assert.equal(t.required, true)
+    assert.equal(t.trigger, "modify_plan_or_wiki")
+  })
+
   it("已 cite message_id → evidence_already_cited not required", async () => {
     const t = await detectRecallTrigger(
       {
@@ -378,9 +455,12 @@ describe("detectRecallTrigger", () => {
 // ─────────────────────────────────────────────────────────────────────
 
 describe("loadTaskMemoryPack with FakeProvider", () => {
-  it("端到端 happy path", async () => {
+  it("端到端 happy path（taskSummary 含 entity ID → 2 query 都返同一 hit）", async () => {
+    // 范-r1 P1-1 修后：taskSummary "F011 优化" 抽 entity → 第二 query "F011"
+    // 两 query 都返同 path → quality-gate dedup 保留最高分
     const provider = new FakeProvider({
       "F011 优化": [fakeHit("wiki/concepts/F011.md", 0.92, "drizzle migration safety")],
+      F011: [fakeHit("wiki/concepts/F011.md", 0.95, "drizzle migration safety")],
     })
     const out = await loadTaskMemoryPack(
       {
@@ -391,15 +471,15 @@ describe("loadTaskMemoryPack with FakeProvider", () => {
       },
       { search: provider },
     )
-    assert.equal(out.queries.length, 1)
-    assert.equal(out.buckets.injected.length, 1)
-    assert.equal(out.prompt.hits.length, 1)
+    assert.equal(out.queries.length, 2) // 主 + entity 派生
+    assert.equal(out.buckets.injected.length, 1) // dedup 后保留最高分 0.95
+    assert.equal(out.buckets.injected[0].score, 0.95)
     assert.equal(out.prompt.hits[0].path, "wiki/concepts/F011.md")
     assert.ok(out.totalTokens > 0)
     assert.match(out.packMarkdown, /F011\.md/)
   })
 
-  it("search 抛错 → 静默降级到空 hits", async () => {
+  it("search 抛错 → fail-soft 空 hits", async () => {
     const provider: WikiSearchProvider = {
       async search() {
         throw new Error("model down")
@@ -418,6 +498,30 @@ describe("loadTaskMemoryPack with FakeProvider", () => {
     assert.equal(out.buckets.injected.length, 0)
   })
 
+  it("范-r1 P2-2：search 抛错时 logger.warn 被调用（防 backend 整体挂掉静默）", async () => {
+    const provider: WikiSearchProvider = {
+      async search() {
+        throw new Error("xenova model load failed")
+      },
+    }
+    const warnCalls: Array<{ obj: unknown; msg?: string }> = []
+    const logger = {
+      warn(obj: unknown, msg?: string) {
+        warnCalls.push({ obj, msg })
+      },
+    }
+    await loadTaskMemoryPack(
+      { roomId: "R", alias: "a", scenario: "wake_up", taskSummary: "F011 优化" },
+      { search: provider, logger },
+    )
+    // 2 query (主 + entity) 都 fail → 2 warn
+    assert.ok(warnCalls.length >= 1, "应至少 1 warn")
+    assert.match(warnCalls[0].msg ?? "", /memory_preflight search.*失败/)
+    const obj = warnCalls[0].obj as Record<string, unknown>
+    assert.equal(obj.stage, "memory_preflight.search")
+    assert.ok((obj.err as { message: string }).message.includes("xenova"))
+  })
+
   it("deriveAuditPatch 输出可 JSON.parse + 字段齐全", async () => {
     const provider = new FakeProvider({
       F011: [fakeHit("p1", 0.9, "exc1"), fakeHit("p2", 0.7, "exc2")],
@@ -432,6 +536,40 @@ describe("loadTaskMemoryPack with FakeProvider", () => {
     assert.equal(patch.topScore, 0.9)
     assert.equal(patch.recallBudgetExceeded, 0)
     assert.equal(typeof patch.recallTotalTokens, "number")
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────
+// 6a. InMemoryWikiSearchProvider 维度/NaN 防御（范-r1 P2-3）
+// ─────────────────────────────────────────────────────────────────────
+
+describe("InMemoryWikiSearchProvider 范-r1 P2-3 维度/NaN 防御", () => {
+  it("不同维度向量 → 该 record 跳过（不漏 NaN 进 buckets）", async () => {
+    const records = [
+      { path: "p1.md", body: "body 1", embedding: [1, 0, 0] }, // 3-dim
+      { path: "p2.md", body: "body 2", embedding: [1, 0] }, // 2-dim 错维
+      { path: "p3.md", body: "body 3", embedding: [0.5, 0.5, 0.7] }, // 3-dim OK
+    ]
+    // generator 总返 3-dim
+    const provider = new InMemoryWikiSearchProvider(records, async () => [1, 0, 0])
+    const hits = await provider.search("q", { topK: 10 })
+    assert.equal(hits.length, 2, `跳过 p2 (2-dim) 后应剩 2 hit，实际 ${hits.length}`)
+    assert.ok(!hits.some((h) => h.path === "p2.md"))
+    for (const h of hits) assert.ok(Number.isFinite(h.score))
+  })
+
+  it("空向量 / generator 返 null → 跳过 + 空结果", async () => {
+    const records = [{ path: "p1.md", body: "b", embedding: [] }]
+    const provider = new InMemoryWikiSearchProvider(records, async () => [1, 0, 0])
+    const hits1 = await provider.search("q", { topK: 5 })
+    assert.equal(hits1.length, 0)
+
+    const provider2 = new InMemoryWikiSearchProvider(
+      [{ path: "p1.md", body: "b", embedding: [1, 0, 0] }],
+      async () => null,
+    )
+    const hits2 = await provider2.search("q", { topK: 5 })
+    assert.equal(hits2.length, 0)
   })
 })
 
@@ -505,23 +643,25 @@ describe("AC-P1-11 ★ 北极星 baseline (P11.a)：桂芬进 R-205 自动召回
       `F011 应排首位 (task_summary 最相关)，实际首位=${sorted[0].path} score=${sorted[0].score.toFixed(3)}`,
     )
 
-    // ── 断言 2: F011 score > F021 score > B022 score (基础 ranking 对) ──
+    // ── 断言 2: 严格 F011 > F021 > B022 ranking（范-r1 P1-3 修） ──
     const f011 = sorted.find((h) => h.path.includes("F011-backend-hardening-drizzle"))!
     const f021 = sorted.find((h) => h.path.includes("F021-context-window"))
     const b022 = sorted.find((h) => h.path.includes("B022"))
     assert.ok(f011)
-    if (f021) {
-      assert.ok(
-        f011.score > f021.score,
-        `F011 (${f011.score.toFixed(3)}) 应高于 F021 (${f021.score.toFixed(3)})`,
-      )
-    }
-    if (b022) {
-      assert.ok(
-        f011.score > b022.score,
-        `F011 (${f011.score.toFixed(3)}) 应高于 B022 (${b022.score.toFixed(3)}) — drizzle vs prompt-injection 语义远`,
-      )
-    }
+    assert.ok(f021, `F021 应进 buckets，实际 sorted=${sorted.map((h) => h.path).join(",")}`)
+    assert.ok(b022, `B022 应进 buckets，实际 sorted=${sorted.map((h) => h.path).join(",")}`)
+    assert.ok(
+      f011.score > f021.score,
+      `F011 (${f011.score.toFixed(3)}) 应高于 F021 (${f021.score.toFixed(3)}) — 任务主题 drizzle 直接匹配`,
+    )
+    assert.ok(
+      f021.score > b022.score,
+      `F021 (${f021.score.toFixed(3)}) 应高于 B022 (${b022.score.toFixed(3)}) — F-series 设计文档 vs bug 报告语义远`,
+    )
+    assert.ok(
+      f011.score > b022.score,
+      `F011 (${f011.score.toFixed(3)}) 应高于 B022 (${b022.score.toFixed(3)})`,
+    )
 
     // ── 断言 3: deriveAuditPatch 可写 prompt_audit（schema 字段齐） ─────
     const patch = deriveAuditPatch(out)
@@ -530,8 +670,10 @@ describe("AC-P1-11 ★ 北极星 baseline (P11.a)：桂芬进 R-205 自动召回
     assert.ok(patch.recallTotalTokens >= 0)
     const parsedQ = JSON.parse(patch.recallQueries)
     const parsedR = JSON.parse(patch.recallResults)
-    assert.equal(parsedQ.length, 1)
+    // 范-r1 P1-1 修后：taskSummary "F011 drizzle 优化" 抽 entity → 2 query
+    assert.equal(parsedQ.length, 2)
     assert.equal(parsedR[0].source, "task_summary")
+    assert.equal(parsedR[1].source, "task_summary") // entity-derived
 
     // ── 断言 4: packMarkdown 含 F011 ───────────────────────────────────
     assert.match(out.packMarkdown, /F011/)

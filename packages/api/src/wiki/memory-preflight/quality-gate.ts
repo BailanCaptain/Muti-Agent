@@ -62,6 +62,10 @@ export function applyQualityGate(
   }
 
   // Step 3 + 4: bucket by injectFloor + token cap
+  // 范-r1 P2-1 修：token cap 触发时 hit 走单一状态——降级到 inspector，
+  //   不再同时 push 到 rejected。budgetExceeded flag 统一 audit 写一条；
+  //   下游需要找出"未注入的高置信"时按 (inspectorOnly 中 score >= injectFloor) 反查。
+  //   rejected 只保留 below_floor + duplicate_source 两种"真丢弃"原因。
   const ordered = Array.from(bestByPath.values()).sort((a, b) => b.score - a.score)
   const injected: RecallHit[] = []
   const inspectorOnly: RecallHit[] = []
@@ -75,9 +79,8 @@ export function applyQualityGate(
     }
     const tok = cfg.estimateTokens(hit.excerpt)
     if (totalTokens + tok > cfg.totalTokenCap) {
-      // 不强切，整 hit 降级到 inspector + 标 budget_exceeded
+      // 范-r1 P2-1: 单一状态降级，不重复进 rejected
       budgetExceeded = true
-      rejected.push({ hit, reason: "token_budget_exceeded" })
       inspectorOnly.push(hit)
       continue
     }
