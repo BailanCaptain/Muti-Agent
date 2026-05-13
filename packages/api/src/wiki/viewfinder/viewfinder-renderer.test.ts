@@ -554,15 +554,17 @@ describe("queryBlockerCalls · B024 24h deadline_at 防御过滤", () => {
         status: "pending",
         deadlineAt: "2026-05-12T20:00:00+08:00",
       })
-      // case B: '2026-05-13T07:00:00-08:00' = UTC '2026-05-13T15:00:00Z'
-      //   字典序对 cutoff: 前 11 字符相同, '07' < '14' → 字典序 < cutoff → 字典序判 STALE
+      // case B: '2026-05-12T05:00:00-10:00' = UTC '2026-05-12T15:00:00Z'
+      //   字典序对 cutoff: 前 11 字符相同, '05' < '14' → 字典序 < cutoff → 字典序判 STALE
       //   datetime() UTC: 15:00 > 14:30 → UTC > cutoff → datetime 判 FRESH ← 真相
       //   预期: 保留 (fresh) — 只有 datetime() 在生效才能 pass
+      //   范-r6 修：原 case B 用 '-08:00 + 5/13' 字典序也 > cutoff，没判别力；
+      //     改 '-10:00 + 5/12' 真做到字典序 < UTC，与 case A 形成双向判别
       insertCall(db, {
         callId: "c-neg-offset-actually-fresh",
         sessionGroupId: "sg-1",
         status: "pending",
-        deadlineAt: "2026-05-13T07:00:00-08:00",
+        deadlineAt: "2026-05-12T05:00:00-10:00",
       })
       const blockers = queryBlockerCalls(db, "sg-1", "2026-05-13T14:30:00Z")
       const ids = blockers.map((b) => b.callId)
@@ -572,7 +574,7 @@ describe("queryBlockerCalls · B024 24h deadline_at 防御过滤", () => {
       )
       assert.ok(
         ids.includes("c-neg-offset-actually-fresh"),
-        "-08:00 offset 字典序看像 stale 但 UTC 真相是 fresh → 必须保留（datetime() 必生效）",
+        "-10:00 offset 字典序看像 stale 但 UTC 真相是 fresh → 必须保留（datetime() 必生效）",
       )
     } finally {
       cleanup()
