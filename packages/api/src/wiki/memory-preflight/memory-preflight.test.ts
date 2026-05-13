@@ -832,6 +832,50 @@ describe("AC-P1-11 ★ 北极星 baseline (P11.a)：桂芬进 R-205 自动召回
   })
 
   /**
+   * 范-P11.b r2 Q2 锁住测试：cosine 路径真生效（max 融合不退化为纯 BM25）
+   *
+   * 弱 e2e AC 锁不住 "hybrid 算法"——纯 BM25 也能让 F011/F021 命中。本 unit test 用
+   * mock BM25 + 固定 embedding 向量直接锁 HybridSearchProvider.search 的 max 融合行为：
+   *
+   *   - mock BM25 返回 candidate (path A, score=0.1) — 模拟 BM25 弱命中
+   *   - 预生成 record A 的 embedding = [1, 0, 0, ...]
+   *   - mock query embedding = [1, 0, 0, ...] — cosine sim = 1.0
+   *
+   * 期望：hybrid score = max(0.1, 1.0) = 1.0；如果实现退化为纯 BM25 用 cand.score，
+   * 输出会是 0.1 → 测试红。
+   */
+  it("(P11.b 范-r2 Q2) cosine 路径锁住：max 融合让 BM25 弱命中 entity 被 cosine 拉高", async () => {
+    // mock 一个固定向量 embedding generator —— 不依赖真 model
+    const fixedVec = [1, 0, 0, 0, 0]
+    const mockQueryEmbed = async () => fixedVec
+
+    // mock BM25 candidate provider：返回 path A，score 故意低（0.1）
+    const mockBM25: import("./hybrid-search-provider").BM25CandidateProvider = {
+      async search() {
+        return [{ path: "wiki/concepts/A.md", score: 0.1, excerpt: "A excerpt" }]
+      },
+    }
+
+    // entity A 的 embedding 与 query embedding 一致 → cosine sim = 1.0
+    const records = [{ path: "wiki/concepts/A.md", body: "A body content", embedding: fixedVec }]
+
+    const hybrid = new HybridSearchProvider(mockBM25, records, mockQueryEmbed)
+    const hits = await hybrid.search("any query string", { topK: 5 })
+
+    process.stderr.write(
+      `\n[P11.b cosine-lock] mocked hits = ${hits.map((h) => `${h.path.split("/").pop()}=${h.score.toFixed(3)}`).join(", ")}\n`,
+    )
+
+    assert.equal(hits.length, 1)
+    assert.equal(hits[0].path, "wiki/concepts/A.md")
+    // 断言：max(BM25 0.1, cosine 1.0) = 1.0；如果退化为纯 BM25，hits[0].score 会是 0.1
+    assert.ok(
+      hits[0].score >= 0.99,
+      `hybrid score=${hits[0].score.toFixed(3)} 应 ≥ 0.99 (cosine sim=1.0 拉高)；如果是 ~0.1 说明 max 融合退化为纯 BM25`,
+    )
+  })
+
+  /**
    * AC-P1-11 严阈值 it.todo —— 等 Phase 2 真 LLM rerank confidence score 转正
    *
    * 物理依赖（范-P11.b r1 拍）：plan chap 12 行 1403 "Level 2: search_wiki ← BM25 +
@@ -841,15 +885,23 @@ describe("AC-P1-11 ★ 北极星 baseline (P11.a)：桂芬进 R-205 自动召回
    *   - BM25 query 内 rank 0 永远 1.0 → 命中 entity 全 inject，inspector 中段空
    *   - cosine sim 中文短 query 顶 ~0.5（Xenova all-MiniLM-L6-v2 q8 物理限制）
    *
-   * Phase 2 接真 LLM rerank 后：
-   *   - rerank 输出 confidence score（[0,1] 校准），是 gate 真信号
+   * Phase 2 接真 LLM rerank 后（范-r2 Q4 修：原"自然落区间"是过度承诺）：
+   *   - rerank 输出 confidence —— **默认未校准**（数字自评、logits、cross-encoder
+   *     分都不天然等价概率，不一定落 plan [0.6, 0.85) 区间）
    *   - hybrid 排序 = max(bm25, cosine) 仍用作 ranking
-   *   - gate 用 rerank confidence，自然落 [0.6, 0.85) 区间出 inspector
+   *   - gate 用 rerank confidence，**必须配 prompt schema + fixture 校准集 + 阈值
+   *     回归测试**，确认落 plan 阈值区间后才转正
+   *
+   * Phase 2 类型层 follow-up（范-r2 Q1）：
+   *   分离 ranking score (rankScore = max hybrid) vs gate score (gateScore = rerank
+   *   confidence)。择一：
+   *     a) 扩 RecallHit 加 rankScore + gateScore 两字段
+   *     b) 严格定义 reranker 覆写 score 后 score === gate confidence，文档化契约
    *
    * 不改 plan AC 阈值（0.85/0.6/inspector ≥ 3）—— 范说"plan 隐含的是可校准置信度，
    * 直接改成 ≥1 是验收漂移"。
    */
   it.todo(
-    "(Phase 2 后补) F011 sim ≥ 0.85 + F021 sim ≥ 0.6 + Inspector ≥ 3 — 需真 LLM rerank confidence score",
+    "(Phase 2 后补) F011 gate confidence ≥ 0.85 + F021 ≥ 0.6 + Inspector ≥ 3 — 需真 LLM rerank confidence + 校准 fixture",
   )
 })

@@ -38,7 +38,20 @@ export interface RecallQuery {
 export interface RecallHit {
   /** 命中 wiki 实体路径（wiki/concepts/F011-xxx.md） */
   path: string
-  /** cosine 相似度（已含时间衰减权重，若 backend 算了的话） */
+  /**
+   * Quality Gate 用的 score（[0, 1] 区间）。
+   *
+   * 范-P11.b r2 Q1/Q4 P2 follow-up（Phase 2 转正前必须明确分离）：
+   *   - Phase 1 (NoopReranker): score = HybridSearchProvider 的 max(bm25_norm, cosine_sim)。
+   *     语义混合（既是 ranking 排序信号，也被 Quality Gate 当 confidence 用）—— 这是
+   *     Phase 1 物理限制（没真 LLM rerank confidence 信号），不是设计目标。
+   *   - Phase 2 (真 LLM rerank): score 应来自 reranker 输出的 confidence，需 prompt
+   *     schema + fixture 校准 + 阈值回归测试，**不会**自然落 [0.6, 0.85) 区间。
+   *   - **Phase 2 重构方向**（择一）：
+   *     a) 扩 RecallHit 加 `rankScore` (max hybrid 用作排序) + `gateScore` (rerank
+   *        confidence 用作 Quality Gate)，类型上分离两个职责
+   *     b) 严格定义 reranker 覆写 `score` 后 `score === gate confidence`，文档化契约
+   */
   score: number
   /** 摘录（注入 prompt 用 + Inspector 看；上限 ~200 char） */
   excerpt: string
