@@ -19,7 +19,13 @@
 
 import { createHash } from "node:crypto"
 import type { SqliteAdapterLike } from "../room-compiler/sqlite-checkpoint-store"
-import type { AppendDecisionInput, DecisionRow, DecisionType, RevokeDecisionInput } from "./types"
+import type {
+  AppendDecisionInput,
+  DecisionRow,
+  DecisionStatus,
+  DecisionType,
+  RevokeDecisionInput,
+} from "./types"
 import { ViewfinderError } from "./types"
 
 interface RawDecisionRow {
@@ -37,6 +43,7 @@ interface RawDecisionRow {
   fencing_token: string
   extractor_confidence: number | null
   coverage_check_passed: number | null
+  status: string
 }
 
 function mapRow(r: RawDecisionRow): DecisionRow {
@@ -55,6 +62,7 @@ function mapRow(r: RawDecisionRow): DecisionRow {
     fencingToken: r.fencing_token,
     extractorConfidence: r.extractor_confidence,
     coverageCheckPassed: r.coverage_check_passed === null ? null : r.coverage_check_passed === 1,
+    status: (r.status as DecisionStatus) ?? "active",
   }
 }
 
@@ -85,14 +93,15 @@ export class DecisionLedger {
     const decidedAt = this.nowFn()
     const sourceHash = sha256(input.sourceQuote)
     const tombstone = input.tombstone ? 1 : 0
+    // P4 C-auto-2: 新决策默认 status='active'（schema default 也是 active，显式写更清楚）
     const result = this.db
       .prepare(`
         INSERT INTO room_decisions (
           room_id, decided_at, decided_by, decision_type, content,
           source_message_ids, source_quote, source_hash,
           tombstone, superseded_by, fencing_token,
-          extractor_confidence, coverage_check_passed
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)
+          extractor_confidence, coverage_check_passed, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, 'active')
       `)
       .run(
         input.roomId,
@@ -115,6 +124,41 @@ export class DecisionLedger {
       )
     }
     return id
+  }
+
+  /**
+   * P4 C-auto-2: 把一批 decision 标 completed（status='active' → 'completed'）。
+   *
+   * 用途：extractor LLM 判定新 commit 决策（如"F026 已合"）完成了哪些旧 active commit
+   * 决策（如"进 merger-gate"），sweep 旧的 → 让 viewfinder §3 不显示已完成承诺。
+   *
+   * 安全性：
+   *   - 只改 status='active' 行（防重复标 / 防 superseded 行被误改）
+   *   - 校验 fencingToken（防 race / 错 leader 误改）
+   *   - 返回实际改成功的 id 列表（caller 可对比 input 校验 LLM 没 hallucinate 出不存在的 id）
+   */
+  markCompleted(decisionIds: ReadonlyArray<number>, fencingToken: string): number[] {
+    if (decisionIds.length === 0) return []
+    const placeholders = decisionIds.map(() => "?").join(",")
+    // 先查实际能改的 id（status='active' AND fencing_token 一致）
+    const eligible = this.db
+      .prepare(`
+        SELECT decision_id FROM room_decisions
+         WHERE decision_id IN (${placeholders})
+           AND status = 'active'
+           AND fencing_token = ?
+      `)
+      .all(...decisionIds, fencingToken) as Array<{ decision_id: number }>
+    if (eligible.length === 0) return []
+    const eligibleIds = eligible.map((r) => r.decision_id)
+    const updatePlaceholders = eligibleIds.map(() => "?").join(",")
+    this.db
+      .prepare(`
+        UPDATE room_decisions SET status = 'completed'
+         WHERE decision_id IN (${updatePlaceholders})
+      `)
+      .run(...eligibleIds)
+    return eligibleIds
   }
 
   /**
@@ -149,11 +193,12 @@ export class DecisionLedger {
       fencingToken: input.fencingToken,
     })
 
-    // 2. UPDATE 旧行 superseded_by = newId（metadata 可改）
+    // 2. UPDATE 旧行 superseded_by = newId + status='superseded'（metadata 可改）
+    //    P4 C-auto-2: status 与 superseded_by 同步更新 → 让 viewfinder §3 status='active' 过滤生效
     const result = this.db
       .prepare(`
         UPDATE room_decisions
-           SET superseded_by = ?
+           SET superseded_by = ?, status = 'superseded'
          WHERE decision_id = ? AND superseded_by IS NULL
       `)
       .run(newId, input.oldDecisionId)
@@ -203,14 +248,19 @@ export class DecisionLedger {
     return row ? mapRow(row) : null
   }
 
-  /** Active = 未被撤销 (superseded_by IS NULL)。最新在前。 */
+  /**
+   * Active = status='active' (P4 C-auto-2)。
+   * - 未被 revoke（status != 'superseded'）
+   * - 未被 sweep（status != 'completed'）
+   * 最新在前。
+   */
   getActiveDecisions(roomId: string, limit?: number): DecisionRow[] {
     const sql = limit
       ? `SELECT * FROM room_decisions
-         WHERE room_id = ? AND superseded_by IS NULL
+         WHERE room_id = ? AND status = 'active'
          ORDER BY decided_at DESC LIMIT ?`
       : `SELECT * FROM room_decisions
-         WHERE room_id = ? AND superseded_by IS NULL
+         WHERE room_id = ? AND status = 'active'
          ORDER BY decided_at DESC`
     const rows = limit
       ? (this.db.prepare(sql).all(roomId, limit) as RawDecisionRow[])
@@ -220,7 +270,7 @@ export class DecisionLedger {
 
   /**
    * Tombstone 决策（永久投影到 viewfinder §1 主题 / §6 不要再做）。
-   * 包含被 supersede 的 tombstone（关键决策原文不会因 supersede 消失）。
+   * 包含被 supersede 或 completed 的 tombstone（关键决策原文不会因 status 变化消失）。
    */
   getTombstoneDecisions(roomId: string): DecisionRow[] {
     const rows = this.db
@@ -233,14 +283,17 @@ export class DecisionLedger {
     return rows.map(mapRow)
   }
 
-  /** 按 type 取 active 决策。最新在前。 */
+  /**
+   * 按 type 取 active 决策（P4 C-auto-2: status='active'）。最新在前。
+   * viewfinder §3 "下一步"用 getActiveByType('commit') 自动过滤掉已 sweep 的 commit。
+   */
   getActiveByType(roomId: string, type: DecisionType, limit?: number): DecisionRow[] {
     const sql = limit
       ? `SELECT * FROM room_decisions
-         WHERE room_id = ? AND decision_type = ? AND superseded_by IS NULL
+         WHERE room_id = ? AND decision_type = ? AND status = 'active'
          ORDER BY decided_at DESC LIMIT ?`
       : `SELECT * FROM room_decisions
-         WHERE room_id = ? AND decision_type = ? AND superseded_by IS NULL
+         WHERE room_id = ? AND decision_type = ? AND status = 'active'
          ORDER BY decided_at DESC`
     const rows = limit
       ? (this.db.prepare(sql).all(roomId, type, limit) as RawDecisionRow[])

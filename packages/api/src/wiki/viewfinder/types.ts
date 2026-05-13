@@ -15,6 +15,14 @@
 
 export type DecisionType = "spec" | "pivot" | "commit" | "reject"
 
+/**
+ * P4 C-auto-2 (小孙 2026-05-13 拍)：决策生命周期 status
+ *   - active: 还在执行中 / 还没被覆盖（viewfinder §3 候选）
+ *   - completed: 后续 commit 决策 sweep 时由 extractor 标 done
+ *   - superseded: 被 revoke 写新行覆盖（原行 supersededBy 也会写值）
+ */
+export type DecisionStatus = "active" | "completed" | "superseded"
+
 export interface DecisionRow {
   decisionId: number
   roomId: string
@@ -30,6 +38,7 @@ export interface DecisionRow {
   fencingToken: string
   extractorConfidence: number | null
   coverageCheckPassed: boolean | null
+  status: DecisionStatus
 }
 
 export interface AppendDecisionInput {
@@ -83,6 +92,13 @@ export interface CandidateJudgment {
   confidence?: number
   /** 失败/超时时填，is_decision=false 时也可填 reason */
   reason?: string
+  /**
+   * P4 C-auto-2: 本次新决策（is_decision=true 时）完成了哪些旧 active commit 决策。
+   * extractor LLM 在 prompt 里收到 active commit decisions 列表，判定本次消息
+   * （如"F026 已合"）是否表示某些旧 commit 决策（如"进 merger-gate"）的完成。
+   * 写入 ledger 时调用 markCompleted(supersedesDecisionIds) sweep 旧 commit。
+   */
+  supersedesDecisionIds?: number[]
 }
 
 /** Extractor 跑一轮的完整产出（写 ledger + Coverage Check 用） */
@@ -197,10 +213,22 @@ export interface MonthlySnapshotInput {
 
 // ─── HaikuRunner 抽象（注入 + 测试 stub） ──────────────────────────────
 
+/**
+ * P4 C-auto-2: 活跃 commit 决策上下文 — 喂给 extractor LLM 判定本次新决策
+ * 是否完成（supersede）哪些旧 commit。caller 从 ledger.getActiveByType('commit') 拉。
+ */
+export interface ActiveCommitForSweep {
+  decisionId: number
+  content: string
+  decidedAt: string
+}
+
 export interface DecisionJudgeProvider {
   judge(input: {
     candidate: BroadCandidate
     timeoutMs?: number
+    /** P4 C-auto-2: 注入 active commit decisions 让 LLM 判 supersedes */
+    activeCommits?: ReadonlyArray<ActiveCommitForSweep>
   }): Promise<CandidateJudgment>
 }
 

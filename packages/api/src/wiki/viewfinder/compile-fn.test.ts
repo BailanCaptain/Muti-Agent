@@ -349,6 +349,115 @@ describe("createViewfinderCompileFn · E2E happy path (R-201 真实场景)", () 
     }
   })
 
+  it("P4 C-auto-2: LLM 判 supersedes 自动 sweep — §3 不再显示已完成 commit", async () => {
+    const { db, cleanup } = makeDb()
+    try {
+      const { sessionGroupId, threadId, roomId } = seedRoom(db, {
+        roomId: "R-P4-sweep",
+        sessionGroupId: "sg-p4",
+      })
+      void sessionGroupId
+
+      // Step 1: 模拟之前已有的 active commit "进 merger-gate"
+      insertMessage(db, {
+        id: "m-old",
+        threadId,
+        role: "user",
+        content: "@黄仁勋 F026 我们做完了，进 merger-gate",
+        createdAt: "2026-05-08T06:07:00Z",
+      })
+
+      // 注入 stub judge 阶段 1: 把 m-old 判成 commit "进 merger-gate"，不 supersede
+      const stubJudge1: DecisionJudgeProvider = {
+        async judge({ candidate }) {
+          if (candidate.messageId === "m-old") {
+            return { isDecision: true, type: "commit", content: "进 merger-gate" }
+          }
+          return { isDecision: false, reason: "stub" }
+        },
+      }
+      const ledger = new DecisionLedger(db, () => "2026-05-13T09:00:00Z")
+      const compile1 = createViewfinderCompileFn({
+        db,
+        ledger,
+        judge: stubJudge1,
+        fencingToken: "leader-1",
+        leaderTerm: "term-1",
+        nowFn: () => "2026-05-13T09:00:00Z",
+      })
+      const r1 = await compile1({
+        roomId,
+        prevCheckpoint: null,
+        newMessages: [
+          { seq: 1, messageId: "m-old", committedAt: "2026-05-08T06:07:00Z", role: "user" },
+        ],
+        newSeals: [],
+      })
+      // 验证 step 1: §3 "下一步"显示"进 merger-gate"
+      const r1Section3 = r1.viewfinderMd.split("## 3. 下一步")[1]?.split("##")[0] ?? ""
+      assert.match(r1Section3, /进 merger-gate/, "Step 1: §3 显示新 commit")
+
+      // Step 2: 新 message "F026 已合 dev" → stub judge 判 supersedes [D-1]
+      insertMessage(db, {
+        id: "m-new",
+        threadId,
+        role: "user",
+        content: "@黄仁勋 F026 已合 dev，stash 也清了",
+        createdAt: "2026-05-13T08:30:00Z",
+      })
+      const stubJudge2: DecisionJudgeProvider = {
+        async judge({ candidate, activeCommits }) {
+          if (candidate.messageId === "m-new") {
+            // 模拟 Sonnet 判：本次完成了 D-1 "进 merger-gate"
+            const supersedesIds = activeCommits?.map((c) => c.decisionId) ?? []
+            return {
+              isDecision: true,
+              type: "commit",
+              content: "F026 + stash 收尾完成",
+              supersedesDecisionIds: supersedesIds,
+            }
+          }
+          return { isDecision: false, reason: "stub" }
+        },
+      }
+      const compile2 = createViewfinderCompileFn({
+        db,
+        ledger,
+        judge: stubJudge2,
+        fencingToken: "leader-1",
+        leaderTerm: "term-1",
+        nowFn: () => "2026-05-13T09:30:00Z",
+      })
+      const r2 = await compile2({
+        roomId,
+        prevCheckpoint: null,
+        newMessages: [
+          { seq: 2, messageId: "m-new", committedAt: "2026-05-13T08:30:00Z", role: "user" },
+        ],
+        newSeals: [],
+      })
+
+      // 验证 step 2: §3 显示新 commit "F026 + stash 收尾完成"
+      const r2Section3 = r2.viewfinderMd.split("## 3. 下一步")[1]?.split("##")[0] ?? ""
+      assert.match(r2Section3, /F026.*收尾完成/, "Step 2: §3 显示新 commit")
+      assert.doesNotMatch(
+        r2Section3,
+        /进 merger-gate/,
+        "Step 2: §3 不再显示已 sweep 的旧 commit（P4 修好）",
+      )
+
+      // 验证 ledger: 旧 commit status='completed'
+      const activeCommits = ledger.getActiveByType(roomId, "commit")
+      assert.equal(activeCommits.length, 1, "只剩 1 个 active commit（旧的被 sweep）")
+      assert.match(activeCommits[0].content, /收尾完成/)
+
+      // 验证 log.md 含 swept_decisions
+      assert.match(r2.logMd, /swept_decisions: 1/, "compile log 反映 P4 sweep 数量")
+    } finally {
+      cleanup()
+    }
+  })
+
   it("prevCheckpoint 存在 → cursor 从 checkpoint 接力", async () => {
     const { db, cleanup } = makeDb()
     try {

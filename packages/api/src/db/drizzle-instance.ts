@@ -323,6 +323,8 @@ const INIT_SQL = `
   CREATE INDEX IF NOT EXISTS idx_wiki_memories_state ON wiki_memories(state, type);
 
   -- chap 11 · viewfinder anti-drift decision ledger（append-only + tombstone）
+  -- P4 C-auto-2 (小孙 2026-05-13 拍): status 字段让 extractor 自动 sweep 旧 commit，
+  --   viewfinder §3 "下一步"只取 status='active'，避免已完成承诺持续显示
   CREATE TABLE IF NOT EXISTS room_decisions (
     decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id TEXT NOT NULL,
@@ -338,10 +340,14 @@ const INIT_SQL = `
     fencing_token TEXT NOT NULL,
     extractor_confidence REAL,
     coverage_check_passed INTEGER,
+    status TEXT NOT NULL DEFAULT 'active',
     reserved_1 TEXT,
     reserved_2 TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_room_decisions ON room_decisions(room_id, decided_at);
+  -- P4: viewfinder §3 SQL 高频查 (decision_type='commit' AND status='active')
+  CREATE INDEX IF NOT EXISTS idx_room_decisions_status_type
+    ON room_decisions(room_id, decision_type, status);
 
   -- chap 18 · prompt 拼装审计（assembler 每次拼装同步写一条）
   CREATE TABLE IF NOT EXISTS prompt_audit (

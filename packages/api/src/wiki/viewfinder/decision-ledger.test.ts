@@ -232,6 +232,182 @@ describe("DecisionLedger.markTombstone (fencingToken 校验)", () => {
   })
 })
 
+describe("DecisionLedger.markCompleted (P4 C-auto-2 自动 sweep)", () => {
+  it("把 active commit 标 completed，getActive 自动排除", () => {
+    const { db, close } = makeDb()
+    try {
+      let n = 0
+      const ledger = new DecisionLedger(db, () => {
+        n++
+        return `2026-05-08T0${n}:00:00Z`
+      })
+      const d1 = ledger.append({
+        roomId: ROOM,
+        decidedBy: "小孙",
+        decisionType: "commit",
+        content: "进 merger-gate",
+        sourceMessageIds: ["msg-1"],
+        sourceQuote: "进 merger-gate",
+        fencingToken: FENCING,
+      })
+      const d2 = ledger.append({
+        roomId: ROOM,
+        decidedBy: "小孙",
+        decisionType: "commit",
+        content: "F026 已合 dev",
+        sourceMessageIds: ["msg-2"],
+        sourceQuote: "F026 已合",
+        fencingToken: FENCING,
+      })
+      // 模拟 extractor 写 d2 后判定 d1 已完成
+      const completedIds = ledger.markCompleted([d1], FENCING)
+      assert.deepEqual(completedIds, [d1], "返回实际改成功 id")
+      const active = ledger.getActiveDecisions(ROOM)
+      const activeIds = active.map((r) => r.decisionId)
+      assert.ok(!activeIds.includes(d1), `D-${d1} sweep 后不在 active`)
+      assert.ok(activeIds.includes(d2), `D-${d2} 仍 active`)
+      // 验证 status 字段确实变了
+      const d1Row = ledger.getById(d1)
+      assert.equal(d1Row?.status, "completed")
+      const d2Row = ledger.getById(d2)
+      assert.equal(d2Row?.status, "active")
+    } finally {
+      close()
+    }
+  })
+
+  it("已 completed 的 decision 重复 markCompleted → 跳过（idempotent）", () => {
+    const { db, close } = makeDb()
+    try {
+      const ledger = new DecisionLedger(db, () => "2026-05-13T10:00:00Z")
+      const id = ledger.append({
+        roomId: ROOM,
+        decidedBy: "小孙",
+        decisionType: "commit",
+        content: "test",
+        sourceMessageIds: ["msg-1"],
+        sourceQuote: "test",
+        fencingToken: FENCING,
+      })
+      const first = ledger.markCompleted([id], FENCING)
+      assert.deepEqual(first, [id])
+      const second = ledger.markCompleted([id], FENCING)
+      assert.deepEqual(second, [], "已 completed 不再标")
+    } finally {
+      close()
+    }
+  })
+
+  it("已 superseded 的 decision 不被 markCompleted 影响（防覆盖 revoke 状态）", () => {
+    const { db, close } = makeDb()
+    try {
+      const ledger = new DecisionLedger(db, () => "2026-05-13T10:00:00Z")
+      const oldId = ledger.append({
+        roomId: ROOM,
+        decidedBy: "小孙",
+        decisionType: "commit",
+        content: "原决策",
+        sourceMessageIds: ["msg-1"],
+        sourceQuote: "原",
+        fencingToken: FENCING,
+      })
+      ledger.revoke({
+        oldDecisionId: oldId,
+        reason: "误判",
+        decidedBy: "小孙",
+        fencingToken: FENCING,
+      })
+      // 此时 oldId status='superseded'，markCompleted 不该改它
+      const completed = ledger.markCompleted([oldId], FENCING)
+      assert.deepEqual(completed, [], "superseded 不被 sweep 改写")
+      assert.equal(ledger.getById(oldId)?.status, "superseded")
+    } finally {
+      close()
+    }
+  })
+
+  it("fencingToken 不一致 → 全部跳过（防错 leader / race）", () => {
+    const { db, close } = makeDb()
+    try {
+      const ledger = new DecisionLedger(db, () => "2026-05-13T10:00:00Z")
+      const id = ledger.append({
+        roomId: ROOM,
+        decidedBy: "小孙",
+        decisionType: "commit",
+        content: "test",
+        sourceMessageIds: ["msg-1"],
+        sourceQuote: "test",
+        fencingToken: FENCING,
+      })
+      const completed = ledger.markCompleted([id], "wrong-leader:term-99")
+      assert.deepEqual(completed, [])
+      assert.equal(ledger.getById(id)?.status, "active", "原状态不动")
+    } finally {
+      close()
+    }
+  })
+
+  it("空 ids[] → 返空 []，0 SQL", () => {
+    const { db, close } = makeDb()
+    try {
+      const ledger = new DecisionLedger(db, () => "t")
+      assert.deepEqual(ledger.markCompleted([], FENCING), [])
+    } finally {
+      close()
+    }
+  })
+
+  it("混合 active + completed + superseded → 只对 active 生效", () => {
+    const { db, close } = makeDb()
+    try {
+      let n = 0
+      const ledger = new DecisionLedger(db, () => {
+        n++
+        return `2026-05-13T10:${String(n).padStart(2, "0")}:00Z`
+      })
+      const dActive = ledger.append({
+        roomId: ROOM,
+        decidedBy: "小孙",
+        decisionType: "commit",
+        content: "active",
+        sourceMessageIds: ["msg-1"],
+        sourceQuote: "a",
+        fencingToken: FENCING,
+      })
+      const dCompleted = ledger.append({
+        roomId: ROOM,
+        decidedBy: "小孙",
+        decisionType: "commit",
+        content: "completed",
+        sourceMessageIds: ["msg-2"],
+        sourceQuote: "c",
+        fencingToken: FENCING,
+      })
+      ledger.markCompleted([dCompleted], FENCING)
+      const dSuperseded = ledger.append({
+        roomId: ROOM,
+        decidedBy: "小孙",
+        decisionType: "commit",
+        content: "superseded",
+        sourceMessageIds: ["msg-3"],
+        sourceQuote: "s",
+        fencingToken: FENCING,
+      })
+      ledger.revoke({
+        oldDecisionId: dSuperseded,
+        reason: "rv",
+        decidedBy: "小孙",
+        fencingToken: FENCING,
+      })
+      // 一次性传所有三个 → 只有 dActive 被标 completed
+      const result = ledger.markCompleted([dActive, dCompleted, dSuperseded], FENCING)
+      assert.deepEqual(result, [dActive])
+    } finally {
+      close()
+    }
+  })
+})
+
 describe("DecisionLedger 查询", () => {
   it("getActiveDecisions 自然过滤 superseded_by NOT NULL", () => {
     const { db, close } = makeDb()

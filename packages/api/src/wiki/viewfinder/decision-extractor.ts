@@ -25,6 +25,7 @@
  */
 
 import type {
+  ActiveCommitForSweep,
   BroadCandidate,
   CandidateJudgment,
   DecisionJudgeProvider,
@@ -45,6 +46,7 @@ const COMMIT_KEYWORDS = [
   /做完(了|啦)?/,
   /已(经)?合(并|入|了|完)/,
   /合(并|入|完)/, // u-14 "已经合并完了吗" — 宽召（即便是询问 LLM 过滤）
+  /已合(?=\s|$|[a-zA-Z])/, // "F026 已合 dev" 简写宽召（已合 + 空格/EOL/英文目标）
   /已完成/,
   /验过了/,
   /验证(过|了)/,
@@ -188,10 +190,21 @@ export interface HaikuJudgeOptions {
 
 const HAIKU_DEFAULT_TIMEOUT = 30000
 
-export function buildJudgePrompt(c: BroadCandidate): string {
+export function buildJudgePrompt(
+  c: BroadCandidate,
+  opts: { activeCommits?: ReadonlyArray<ActiveCommitForSweep> } = {},
+): string {
   const prev = c.prevAssistantContent
     ? `[上一条 assistant 消息]\n${c.prevAssistantContent}\n`
     : "（无上一条 assistant）\n"
+
+  // P4 C-auto-2: 注入当前 active commit 决策列表，让 LLM 判 supersedes
+  const activeCommits = opts.activeCommits ?? []
+  const sweepBlock =
+    activeCommits.length > 0
+      ? `\n[当前 active commit 决策列表]（如本次新决策完成了其中任一项，列出 decision_id）\n${activeCommits.map((c) => `- D-${c.decisionId} (${c.decidedAt}): ${c.content}`).join("\n")}\n`
+      : "\n[当前 active commit 决策列表] 空\n"
+
   return `你是房间决策识别器。判定下面这条 user 消息是否构成"决策"。
 
 判定标准：
@@ -201,14 +214,15 @@ export function buildJudgePrompt(c: BroadCandidate): string {
 注意：
 - 短指令如 "go" / "A" / "好" / "不用" 必须结合"上一条 assistant 消息"判定语义
 - 上下文不足时返回 is_decision=false + reason="上下文不足"
+- 如本次新决策（is_decision=true）完成了 [当前 active commit 决策列表] 中的某些条目，在 supersedes_decision_ids 列出。例如：旧决策"进 merger-gate"，本次"F026 已合 dev" → 列 [<进 merger-gate 的 id>]
 
 [上下文]
-${prev}
+${prev}${sweepBlock}
 [user 消息]
 ${c.content}
 
 只返回 JSON，不要任何解释或 markdown 包装：
-{"is_decision": <bool>, "type": "spec|pivot|commit|reject", "content": "<结合上下文补全的决策内容，≤80字>", "confidence": <0-1>, "reason": "<不是决策时填原因>"}`
+{"is_decision": <bool>, "type": "spec|pivot|commit|reject", "content": "<结合上下文补全的决策内容，≤80字>", "confidence": <0-1>, "supersedes_decision_ids": [<decision_id 数组，只填 [当前 active commit 决策列表] 里存在的 id>], "reason": "<不是决策时填原因>"}`
 }
 
 export class HaikuDecisionJudge implements DecisionJudgeProvider {
@@ -220,24 +234,32 @@ export class HaikuDecisionJudge implements DecisionJudgeProvider {
   async judge(input: {
     candidate: BroadCandidate
     timeoutMs?: number
+    activeCommits?: ReadonlyArray<ActiveCommitForSweep>
   }): Promise<CandidateJudgment> {
-    const prompt = buildJudgePrompt(input.candidate)
+    const prompt = buildJudgePrompt(input.candidate, { activeCommits: input.activeCommits })
     const result = await this.haiku.runPrompt(prompt, {
       timeoutMs: input.timeoutMs ?? this.defaultTimeoutMs,
     })
     if (!result.ok) {
-      // Haiku 失败 → 上层标 unresolved（不阻塞 RoomCompiler tick）
+      // Sonnet CLI 失败 → 上层标 unresolved（不阻塞 RoomCompiler tick）
       throw new Error(`haiku-failed: ${result.error ?? "unknown"}`)
     }
-    return parseJudgmentJson(result.text, input.candidate)
+    return parseJudgmentJson(result.text, input.candidate, input.activeCommits)
   }
 }
 
 /**
- * Parse Haiku JSON output。容忍 markdown code fence 包裹 / 前后空白。
+ * Parse Claude CLI JSON output。容忍 markdown code fence 包裹 / 前后空白。
  * 解析失败抛 Error 让上层标 unresolved。
+ *
+ * P4 C-auto-2: 支持解析 supersedes_decision_ids 字段。如果 activeCommits 传入，
+ * 自动过滤 LLM 返回的 ids — 只保留确实在 activeCommits 中的（防 hallucination）。
  */
-export function parseJudgmentJson(raw: string, candidate: BroadCandidate): CandidateJudgment {
+export function parseJudgmentJson(
+  raw: string,
+  candidate: BroadCandidate,
+  activeCommits?: ReadonlyArray<ActiveCommitForSweep>,
+): CandidateJudgment {
   const trimmed = raw.trim()
   // 剥 ```json ... ``` fence
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(trimmed)
@@ -273,16 +295,40 @@ export function parseJudgmentJson(raw: string, candidate: BroadCandidate): Candi
     typeof obj.confidence === "number" && obj.confidence >= 0 && obj.confidence <= 1
       ? obj.confidence
       : undefined
-  return { isDecision: true, type, content, confidence }
+
+  // P4 C-auto-2: 解析 supersedes_decision_ids + 校验 ids 都在 activeCommits 内
+  let supersedesDecisionIds: number[] | undefined
+  if (Array.isArray(obj.supersedes_decision_ids)) {
+    const raw = obj.supersedes_decision_ids.filter(
+      (x): x is number => typeof x === "number" && Number.isInteger(x) && x > 0,
+    )
+    if (activeCommits && activeCommits.length > 0) {
+      // 严格校验：LLM 返的 id 必须在 caller 传入的 active commits 列表内
+      const validIds = new Set(activeCommits.map((c) => c.decisionId))
+      supersedesDecisionIds = raw.filter((id) => validIds.has(id))
+    } else {
+      // 没传 activeCommits → 不允许任何 supersedes（LLM 不该凭空生成）
+      supersedesDecisionIds = []
+    }
+    if (supersedesDecisionIds.length === 0) supersedesDecisionIds = undefined
+  }
+
+  return { isDecision: true, type, content, confidence, supersedesDecisionIds }
 }
 
 // ─── runExtractor 编排：宽召 → 限并发 judge → 收集 ExtractorRun ──────
 
 export interface RunExtractorOptions {
-  /** Haiku 并发上限；默认 4（spawn child process 风险控制） */
+  /** Claude CLI 并发上限；默认 4（spawn child process 风险控制） */
   maxConcurrency?: number
-  /** 每候选 timeout；默认 20s */
+  /** 每候选 timeout；默认 30s */
   judgeTimeoutMs?: number
+  /**
+   * P4 C-auto-2: 房间当前 active commit 决策列表，喂给 LLM 让其判定
+   * 本次新 commit 是否完成（supersede）旧 commit。
+   * caller compile-fn 通常从 ledger.getActiveByType(roomId, 'commit') 拉。
+   */
+  activeCommits?: ReadonlyArray<ActiveCommitForSweep>
 }
 
 const DEFAULT_CONCURRENCY = 4
@@ -294,6 +340,7 @@ export async function runExtractor(
 ): Promise<ExtractorRun> {
   const concurrency = Math.max(1, opts.maxConcurrency ?? DEFAULT_CONCURRENCY)
   const timeoutMs = opts.judgeTimeoutMs
+  const activeCommits = opts.activeCommits
 
   const resolvedDecisions: ExtractorRun["resolvedDecisions"] = []
   const resolvedNonDecisions: ExtractorRun["resolvedNonDecisions"] = []
@@ -307,7 +354,7 @@ export async function runExtractor(
       const cand = queue.shift()
       if (!cand) break
       try {
-        const judgment = await judge.judge({ candidate: cand, timeoutMs })
+        const judgment = await judge.judge({ candidate: cand, timeoutMs, activeCommits })
         if (judgment.isDecision) {
           resolvedDecisions.push({ candidate: cand, judgment })
         } else {

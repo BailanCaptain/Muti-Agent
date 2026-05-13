@@ -356,6 +356,91 @@ describe("runExtractor · 三集合分流", () => {
 
 // ─── buildJudgePrompt ────────────────────────────────────────────────
 
+describe("P4 C-auto-2: supersedes_decision_ids 解析 + 防 hallucination", () => {
+  const fakeCand: BroadCandidate = {
+    messageId: "u-1",
+    authorAlias: "小孙",
+    createdAt: "t",
+    content: "F026 已合 dev",
+    matchedKeyword: "commit:已合",
+    prevAssistantContent: null,
+    prevAssistantId: null,
+  }
+
+  it("activeCommits 内的 id 被保留", () => {
+    const raw =
+      '{"is_decision": true, "type": "commit", "content": "F026 已合", "supersedes_decision_ids": [2, 5]}'
+    const j = parseJudgmentJson(raw, fakeCand, [
+      { decisionId: 2, content: "进 merger-gate", decidedAt: "t1" },
+      { decisionId: 5, content: "验证 stash", decidedAt: "t2" },
+    ])
+    assert.deepEqual(j.supersedesDecisionIds, [2, 5])
+  })
+
+  it("LLM 返不存在的 id → 过滤掉（防 hallucination）", () => {
+    const raw =
+      '{"is_decision": true, "type": "commit", "content": "x", "supersedes_decision_ids": [2, 999, 5]}'
+    const j = parseJudgmentJson(raw, fakeCand, [
+      { decisionId: 2, content: "x", decidedAt: "t" },
+      { decisionId: 5, content: "y", decidedAt: "t" },
+    ])
+    assert.deepEqual(j.supersedesDecisionIds, [2, 5], "999 不存在被过滤")
+  })
+
+  it("activeCommits 未传 → supersedes 全部丢弃（LLM 不该凭空生成）", () => {
+    const raw =
+      '{"is_decision": true, "type": "commit", "content": "x", "supersedes_decision_ids": [2, 5]}'
+    const j = parseJudgmentJson(raw, fakeCand)
+    assert.equal(j.supersedesDecisionIds, undefined)
+  })
+
+  it("activeCommits 传空数组 → supersedes 全部丢弃", () => {
+    const raw =
+      '{"is_decision": true, "type": "commit", "content": "x", "supersedes_decision_ids": [2, 5]}'
+    const j = parseJudgmentJson(raw, fakeCand, [])
+    assert.equal(j.supersedesDecisionIds, undefined)
+  })
+
+  it("LLM 没返 supersedes_decision_ids → undefined（不强制要求）", () => {
+    const raw = '{"is_decision": true, "type": "commit", "content": "F026 已合"}'
+    const j = parseJudgmentJson(raw, fakeCand, [{ decisionId: 2, content: "x", decidedAt: "t" }])
+    assert.equal(j.supersedesDecisionIds, undefined)
+  })
+
+  it("非数字 id 被过滤（防类型混淆）", () => {
+    const raw =
+      '{"is_decision": true, "type": "commit", "content": "x", "supersedes_decision_ids": [2, "5", 3.5, -1, null]}'
+    const j = parseJudgmentJson(raw, fakeCand, [
+      { decisionId: 2, content: "x", decidedAt: "t" },
+      { decisionId: 5, content: "y", decidedAt: "t" },
+    ])
+    assert.deepEqual(j.supersedesDecisionIds, [2], "只 2 是正整数且在 activeCommits 内")
+  })
+
+  it("buildJudgePrompt 含 active commit 列表块", () => {
+    const p = buildJudgePrompt(fakeCand, {
+      activeCommits: [
+        { decisionId: 2, content: "进 merger-gate", decidedAt: "2026-05-08T06:07:00Z" },
+        { decisionId: 5, content: "验证 stash", decidedAt: "2026-05-08T06:23:00Z" },
+      ],
+    })
+    assert.match(p, /\[当前 active commit 决策列表\]/)
+    assert.match(p, /D-2.*进 merger-gate/)
+    assert.match(p, /D-5.*验证 stash/)
+    assert.match(p, /supersedes_decision_ids/, "prompt 含 supersedes_decision_ids schema 字段")
+  })
+
+  it("buildJudgePrompt 无 activeCommits → 块显式标'空'", () => {
+    const p = buildJudgePrompt(fakeCand, { activeCommits: [] })
+    assert.match(p, /\[当前 active commit 决策列表\] 空/)
+  })
+
+  it("buildJudgePrompt 不传 activeCommits → 默认为空", () => {
+    const p = buildJudgePrompt(fakeCand)
+    assert.match(p, /\[当前 active commit 决策列表\] 空/)
+  })
+})
+
 describe("buildJudgePrompt", () => {
   it("含上下文时拼上一条 assistant", () => {
     const c: BroadCandidate = {

@@ -327,6 +327,9 @@ export const wikiMemories = sqliteTable(
 
 // F027 chap 11 · viewfinder anti-drift decision ledger（append-only）。
 // tombstone=1 + superseded_by 软删覆盖，原文不动；MonthlySnapshot 比对漂移。
+// P4 (小孙 2026-05-13 拍 C-auto-2): status 字段标 'active'/'completed'/'superseded'，
+//   extractor LLM 判定新 commit 决策时同步 sweep 旧 active commit
+//   （viewfinder §3 "下一步"只取 active 的，避免"进 merger-gate" 已完成还显示成下一步）
 export const roomDecisions = sqliteTable(
   "room_decisions",
   {
@@ -344,10 +347,16 @@ export const roomDecisions = sqliteTable(
     fencingToken: text("fencing_token").notNull(),
     extractorConfidence: real("extractor_confidence"),
     coverageCheckPassed: integer("coverage_check_passed"), // 0/1
+    // P4 C-auto-2: viewfinder §3 过滤 + extractor sweep 用
+    status: text("status").notNull().default("active"), // active|completed|superseded
     reserved1: text("reserved_1"),
     reserved2: text("reserved_2"),
   },
-  (table) => [index("idx_room_decisions").on(table.roomId, table.decidedAt)],
+  (table) => [
+    index("idx_room_decisions").on(table.roomId, table.decidedAt),
+    // P4: §3 SQL `WHERE decision_type='commit' AND status='active'` 高频查询用
+    index("idx_room_decisions_status_type").on(table.roomId, table.decisionType, table.status),
+  ],
 )
 
 // F027 chap 18 · prompt 拼装审计（assembler 每次拼装同步写一条）。

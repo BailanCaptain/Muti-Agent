@@ -47,6 +47,7 @@ function makeDecision(opts: {
     fencingToken: "leader-1",
     extractorConfidence: null,
     coverageCheckPassed: null,
+    status: "active",
   }
 }
 

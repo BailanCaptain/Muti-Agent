@@ -71,15 +71,26 @@ export function createViewfinderCompileFn(deps: CompileViewfinderDeps): CompileF
         ? queryRecentMessagesForSessionGroup(deps.db, sessionGroupId, RECENT_MESSAGES_LIMIT)
         : []
 
-    // 3. extractor 流程（newMessages 上跑 — 增量召回）
+    // 3. P4 C-auto-2: 拉房间当前 active commit 决策给 LLM 判 supersedes（sweep 用）
+    const activeCommitsForSweep = deps.ledger
+      .getActiveByType(input.roomId, "commit", 20)
+      .map((d) => ({
+        decisionId: d.decisionId,
+        content: d.content,
+        decidedAt: d.decidedAt,
+      }))
+
+    // 4. extractor 流程（newMessages 上跑 — 增量召回 + activeCommits 喂 sweep prompt）
     const broadCandidates = extractBroadCandidates(newMessagesFull)
     const extractorRun = await runExtractor(deps.judge, broadCandidates, {
       maxConcurrency: deps.judgeConcurrency,
       judgeTimeoutMs: deps.judgeTimeoutMs,
+      activeCommits: activeCommitsForSweep,
     })
 
-    // 4. 写入 ledger（resolved decisions）
+    // 5. 写入 ledger（resolved decisions）+ P4 sweep 旧 commit
     const writtenDecisionIds: number[] = []
+    const sweptDecisionIds: number[] = []
     for (const { candidate, judgment } of extractorRun.resolvedDecisions) {
       if (!judgment.type || !judgment.content) continue
       try {
@@ -94,6 +105,11 @@ export function createViewfinderCompileFn(deps: CompileViewfinderDeps): CompileF
           extractorConfidence: judgment.confidence,
         })
         writtenDecisionIds.push(id)
+        // P4 C-auto-2: LLM 判 supersedes → markCompleted 旧 active commits
+        if (judgment.supersedesDecisionIds && judgment.supersedesDecisionIds.length > 0) {
+          const swept = deps.ledger.markCompleted(judgment.supersedesDecisionIds, deps.fencingToken)
+          sweptDecisionIds.push(...swept)
+        }
       } catch {
         // ledger.append 失败（极端：DB 锁/磁盘满）→ 不阻塞 viewfinder 编译
       }
@@ -126,12 +142,13 @@ export function createViewfinderCompileFn(deps: CompileViewfinderDeps): CompileF
     // 9. decisionsMd（dump active decisions for human-readable audit）
     const decisionsMd = renderDecisionsAuditMd(input.roomId, activeDecisions)
 
-    // 10. logMd（编译审计：candidates / coverage / Haiku 调用统计）
+    // 10. logMd（编译审计：candidates / coverage / Claude CLI 调用统计 + P4 sweep）
     const logMd = renderCompileLogMd(input.roomId, {
       generatedAt,
       newMessagesCount: newMessagesFull.length,
       broadCount: broadCandidates.length,
       writtenIds: writtenDecisionIds,
+      sweptIds: sweptDecisionIds,
       coverage,
       unresolvedSamples: extractorRun.unresolved.slice(0, 5).map((u) => ({
         messageId: u.candidate.messageId,
@@ -265,6 +282,8 @@ interface CompileLogParams {
   newMessagesCount: number
   broadCount: number
   writtenIds: number[]
+  /** P4 C-auto-2: 本轮被 extractor LLM 标 completed 的旧 active commit ids */
+  sweptIds: number[]
   coverage: CoverageReport
   unresolvedSamples: Array<{ messageId: string; excerpt: string; error: string }>
 }
@@ -277,6 +296,7 @@ function renderCompileLogMd(roomId: string, p: CompileLogParams): string {
     `- new_messages: ${p.newMessagesCount}`,
     `- broad_candidates: ${p.broadCount}`,
     `- written_decisions: ${p.writtenIds.length} [${p.writtenIds.map((i) => `D-${i}`).join(", ")}]`,
+    `- swept_decisions: ${p.sweptIds.length} [${p.sweptIds.map((i) => `D-${i}`).join(", ")}]`,
     `- coverage: ${p.coverage.coverage === null ? "unknown" : `${(p.coverage.coverage * 100).toFixed(0)}%`} (${p.coverage.status})`,
     `- coverage_reason: ${p.coverage.reason}`,
     "",
