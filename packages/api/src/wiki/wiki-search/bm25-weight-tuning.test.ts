@@ -4,16 +4,20 @@
  * 范的建议：P11.b 接 hybrid 前用真实/近真实 fixture 跑 3x/5x/10x nameWeight 曲线选最终
  * 默认，否则 recall threshold 调参会把权重经验值一起吞掉。
  *
- * Fixture（与 memory-preflight AC-P1-11 测试同源）：
- *   - 期望命中：F011-backend-hardening-drizzle / F021-context-window-resolver / B022-prompt-injection-redundancy
- *   - 干扰项：F018-session-bootstrap / F004-prompt-assembly / F019-workflow-sop / F022-room-namespace / B019-vector-search-fix
+ * Fixture（11 entities：5 期望命中 + 3 业务干扰 + 3 stress 干扰）：
+ *   - 期望命中：F011 / F021 / F018 / B022 / F004（design/bug 文档，name 含 entity ID）
+ *   - 业务干扰：F019 / F022 / B019（真实 wiki entity，可能 noise 但非 dominant）
+ *   - stress 干扰：db-driver-overview / security-fundamentals / agent-runtime-overview
+ *     （name 完全不沾 query keyword，body 多次重复 query 词，专测 weight 真力）
  *
- * Query 集（多 query 求平均 MRR / top-K hit rate）：
- *   - "F011 drizzle 优化"（AC-P1-11 主 query）
- *   - "drizzle migration safety"（F011 细节）
- *   - "context window seal 阈值"（F021）
- *   - "prompt 注入"（B022）
- *   - "backend hardening"（通用）
+ * Query 集（7 个，混合 name-hit / body-only / 多 entity body 都含的边界 case）：
+ *   - "drizzle migration"（F011，B019 body 也含）
+ *   - "context window resolver"（F021）
+ *   - "prompt injection"（B022，F004 body 含 injection 干扰）
+ *   - "backend hardening"（F011）
+ *   - "session bootstrap"（F018）
+ *   - "TOCTOU 防御"（F011，body-only 命中）
+ *   - "rolling summary"（F018，多 entity body 都含）
  *
  * Metric：
  *   - MRR (Mean Reciprocal Rank): 1/rank of expected entity, averaged across queries
@@ -99,9 +103,10 @@ const FIXTURE: FixtureEntity[] = [
   },
 ]
 
-// 注：Query 设计原则——不能让 query 直接命中 entity name 字面（那样 BM25 weight 无关）。
-// 真实场景 caller 不一定知道 wiki path 的 entity ID，更可能用关键词 / 短语搜。
-// 测 weight 压力的关键是：query 是 keyword/短语，entity name 是结构化命名。
+// 注（范-r1 P3 修）：query 是关键词 / 短语而非 wiki 路径搜。多数 query 仍会命中
+// entity name 中的 token（如 "context window resolver" 对应 F021-context-window-resolver.md），
+// nameWeight benchmark 本就需要测 name token 命中场景。weight 压力关键不是"name 不命中"，
+// 而是 stress 干扰项（name 完全不沾 + body 多次重复同 keyword）能否被 name 命中文档压过。
 const QUERIES: QueryCase[] = [
   // 1. F011 主要由 name 命中（"backend" / "hardening" 都在 name 里），body 含相同 keyword
   //    干扰：B019 body 也含 "drizzle migration"
@@ -153,13 +158,13 @@ const QUERIES: QueryCase[] = [
 const WEIGHTS_TO_TEST = [1, 3, 5, 8, 10, 20]
 
 describe("BM25 nameWeight 调参 benchmark (P11.b prep)", () => {
-  it("跑 6 个 weight × 5 queries 输出 MRR + Top-3 hit rate 报告", async () => {
+  it("跑 6 个 weight × 7 queries 输出 MRR + Top-3 hit rate 报告", async () => {
     const dbDir = mkdtempSync(path.join(tmpdir(), "bm25-tuning-db-"))
     const fsRoot = mkdtempSync(path.join(tmpdir(), "bm25-tuning-fs-"))
     const dbPath = path.join(dbDir, "test.sqlite")
 
     try {
-      // Setup: 写 8 个 fixture entity 进 wiki/，reindex 进 wiki_entity_index
+      // Setup: 写 11 个 fixture entity 进 wiki/（5 期望命中 + 3 业务干扰 + 3 stress 干扰），reindex 进 wiki_entity_index
       for (const ent of FIXTURE) {
         const abs = path.join(fsRoot, "wiki", ent.relPath)
         await fsAsync.mkdir(path.dirname(abs), { recursive: true })
