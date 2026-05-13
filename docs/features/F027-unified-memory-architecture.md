@@ -196,6 +196,34 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
 
 **并行性说明**（修 v1 误判）：plan chap 21 依赖**不是**线性链。Phase 1 schema 冻结后，Phase 2 调度（lease + job harness）和 Phase 3 前端（UI shell + tab 容器 + StatusPanel resize）可同时启动；Phase 4 部分（评审 UI）依赖 Phase 3 前端骨架，但验证套件 P18 可在 Phase 1 evidence 框架冻结后并行准备。
 
+## Phase 2 增补 · P12 walkthrough 后发现（2026-05-13）
+
+P12 收尾真数据 walkthrough（R-201, 50 messages, Sonnet 4.6, 48.6s）暴露 viewfinder 6 段语义跟 V16.5 chap 11 vision example 有偏差。**P12 Phase 1 不修**（测试 109/109 全绿 + AC-P1-10 字面达标 + 范-r6 GO；这是"内容生成质量"问题，不是"防漂移基础设施"问题，跟 P12 anti-drift 主线两个维度）。挂 Phase 2 P12.b：
+
+### P12.b · viewfinder 6 段语义二轮打磨
+
+| 段 | V16.5 vision example | 当前实测 | 根因 | 修法 |
+|---|---|---|---|---|
+| §1 当前主题 | "V14 plan 推到可立项状态" — 高层主题抽象 | "选方案 A：由黄仁勋手写 worktree-report.md…（D-8）" — spec 决策原文当主题 | rule-based 模板"取最新 spec/fallback 房间标题"过机械 | 上 narrow LLM 提炼一句话主题（不冲突范 r2 否决"全 LLM"——这是 single-purpose LLM 调用不是全链路）|
+| §3 下一步 + 谁做 | "派范第 4 轮 verify（黄仁勋 owner）" — 未来动作 + owner | "批准干掉孤儿 preview 进程…（D-10）" — **语义反了**：取最新 commit 当下一步 = 已完成当待办 | 当前 `activeDecisions.filter(type=commit).slice(5)` 算法错位 | 改算法：取 pending/working a2a_calls 配 issuer/convener，或取未被 supersede 的最新 spec 决策 |
+| §5 关键决策 | "D-018: V13 升级到 V14" — pivot/spec 级 | D-11 reject + D-10/9/8/7 worktree 清理 commit 平铺 | 没"重要性加权" | decision_type 加权：pivot/spec 优先于 commit/reject；commit 类只在前 5 条空缺时填补 |
+| §6 不要再做 | "D-005 [tombstone, msg_180]" — tombstone 永久红线 | "删除某些已完成…（D-11 reject, confidence 0.60）" extractor 自承"上下文不足" | 用 reject decisions 替 tombstone | 严格只取 `tombstone=1`；reject 决策不进 §6（reject 可被 supersede，不是永久红线）|
+
+**P12.b AC**：
+- [ ] **AC-P2-6 · §3 下一步算法修复**：fixture 含 pending a2a_call + 未 supersede spec 决策时，§3 输出"等 <issuer> [a2a_call=...]"或"<spec.content>（<owner>）"，不再输出最新 commit
+- [ ] **AC-P2-7 · §6 严格 tombstone**：fixture 含 reject decision (tombstone=0) + tombstone decision (tombstone=1)，§6 只渲染 tombstone=1 项
+- [ ] **AC-P2-8 · §5 加权排序**：fixture 含 pivot×1 + spec×2 + reject×1 + commit×5，§5 前 5 条按 pivot>spec>reject>commit 排序
+- [ ] **AC-P2-9 · §1 主题提炼**（可选 LLM 路径）：Sonnet 4.6 prompt 给最新 spec 决策原文 + 房间 title → 输出 ≤ 30 字主题概括；fallback：纯 rule-based 抽 spec 决策动词宾语
+
+**工时估**：§3/§6 各 1h（算法 + 改 fixture）+ §5 30min（加权排序）+ §1 LLM 2-3h（含 prompt 调优 + 校准）= 4.5-6.5h。
+
+### 其他 Phase 2 增补
+
+| 项 | 来源 | 修法 |
+|---|---|---|
+| §1 长期 spec 投影 | walkthrough P2 痛点：50 条窗口外 spec 决策不显示 | 扩窗口或 markTombstone(spec_id) 让永久不被换出 |
+| §3 time-decay 自动 sweep | V16.5 chap 11 暗含 | commit 决策超 7 天无新 commit 引用则 status='expired'，§3 不再渲染 |
+
 ## 复用 / 不复用决策
 
 V16.5 chap 21 已对账 8+ 现有 feature：
