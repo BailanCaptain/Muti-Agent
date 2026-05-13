@@ -458,6 +458,167 @@ describe("queryBlockerCalls · B024 24h deadline_at 防御过滤", () => {
       cleanup()
     }
   })
+
+  // ─── 范-r3 P1-2 修：24h 边界 + 时间格式变种 ────────────────────────
+
+  it("24h 边界等号: 恰好 24h 之前的 call 被严格 > 过滤（秒级精度）", () => {
+    const { db, cleanup } = makeDb()
+    try {
+      // 范-r3 P1-2 修：SQL 用 SQLite datetime() 而非字典序 → 格式宽容但精度到秒
+      // 生产 a2a deadline 是分钟/小时级别，秒级精度足够（毫秒边界不是真实场景）
+      // R-201 实证：'2026-05-08T09:11:19.603Z' — 秒级粒度比对正常
+      insertCall(db, {
+        callId: "c-edge-eq",
+        sessionGroupId: "sg-1",
+        status: "pending",
+        deadlineAt: "2026-05-12T14:30:00.000Z",
+      })
+      // 比 cutoff 晚 1 秒 → datetime() 比较 > → 保留
+      insertCall(db, {
+        callId: "c-edge-just-after",
+        sessionGroupId: "sg-1",
+        status: "pending",
+        deadlineAt: "2026-05-12T14:30:01.000Z",
+      })
+      const blockers = queryBlockerCalls(db, "sg-1", "2026-05-13T14:30:00Z")
+      const ids = blockers.map((b) => b.callId)
+      assert.ok(!ids.includes("c-edge-eq"), "恰好 24h 之前的 call 不算 fresh")
+      assert.ok(ids.includes("c-edge-just-after"), "晚 1 秒的 call 算 fresh")
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("UTC ISO 字典序边界: 高位字段变化时字符串比较仍正确", () => {
+    const { db, cleanup } = makeDb()
+    try {
+      // 2026 年/月/日/时/分都参与字典序——验证不同月份不会乱序
+      insertCall(db, {
+        callId: "c-jan",
+        sessionGroupId: "sg-1",
+        status: "pending",
+        deadlineAt: "2026-01-15T00:00:00Z",
+      })
+      insertCall(db, {
+        callId: "c-may-fresh",
+        sessionGroupId: "sg-1",
+        status: "pending",
+        deadlineAt: "2026-05-13T15:00:00Z",
+      })
+      const blockers = queryBlockerCalls(db, "sg-1", "2026-05-13T14:30:00Z")
+      const ids = blockers.map((b) => b.callId)
+      assert.ok(!ids.includes("c-jan"), "1 月 call (高位字段早) 字典序 < cutoff，过滤掉")
+      assert.ok(ids.includes("c-may-fresh"), "当月 fresh call 保留")
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("不带 Z 后缀的 ISO 字符串 deadline 也能正确比较（防 SQLite datetime 变种）", () => {
+    const { db, cleanup } = makeDb()
+    try {
+      // 模拟 F026 schema 写入时未带 Z 后缀的边缘 case
+      // 当前 a2a_calls.deadline_at 是 TEXT，约定 UTC ISO with Z，但防御未来格式变种
+      insertCall(db, {
+        callId: "c-no-z",
+        sessionGroupId: "sg-1",
+        status: "pending",
+        deadlineAt: "2026-05-13T15:00:00",
+      })
+      // ISO 不带 Z 的字典序：'2026-05-13T15:00:00' < '2026-05-13T15:00:00Z'（因 EOL < 'Z'）
+      // 但 cutoff 是 '2026-05-12T14:30:00Z' < '2026-05-13T15:00:00' → 字典序仍 > → 保留
+      const blockers = queryBlockerCalls(db, "sg-1", "2026-05-13T14:30:00Z")
+      const ids = blockers.map((b) => b.callId)
+      assert.ok(ids.includes("c-no-z"), "无 Z 后缀 ISO 字符串字典序仍 > cutoff，正常保留")
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("跨月 24h 兜底：5/1 00:00 cutoff 正确过滤 4 月 stale call", () => {
+    const { db, cleanup } = makeDb()
+    try {
+      insertCall(db, {
+        callId: "c-apr-30",
+        sessionGroupId: "sg-1",
+        status: "pending",
+        deadlineAt: "2026-04-30T20:00:00Z",
+      })
+      insertCall(db, {
+        callId: "c-may-2",
+        sessionGroupId: "sg-1",
+        status: "pending",
+        deadlineAt: "2026-05-02T00:00:00Z",
+      })
+      // now = 2026-05-02 12:00, cutoff = 2026-05-01 12:00
+      const blockers = queryBlockerCalls(db, "sg-1", "2026-05-02T12:00:00Z")
+      const ids = blockers.map((b) => b.callId)
+      assert.ok(!ids.includes("c-apr-30"), "4/30 deadline 字典序 < 5/1 cutoff，过滤")
+      assert.ok(ids.includes("c-may-2"), "5/2 deadline 保留")
+    } finally {
+      cleanup()
+    }
+  })
+})
+
+// ─── 范-r3 P2-2 修：tombstone/active 双集合同步契约测试 ──────────────
+
+describe("renderViewfinder · tombstone/active 双集合契约（范-r3 P2-2）", () => {
+  it("同一 decision 同时出现在 tombstone + active → §6 去重", () => {
+    // 用 ledger.markTombstone 标 active 决策后，getActive 仍含它（superseded_by IS NULL），
+    // getTombstone 也含它 → renderer 必须去重不重复列
+    const tombstoneSpec = makeDecision({
+      id: 100,
+      type: "reject",
+      content: "不要回 V12",
+      tombstone: true,
+    })
+    const activeSameId = makeDecision({
+      id: 100, // 同 id
+      type: "reject",
+      content: "不要回 V12",
+      tombstone: true,
+    })
+    const r = renderViewfinder(
+      defaultInput({
+        tombstoneDecisions: [tombstoneSpec],
+        activeDecisions: [activeSameId],
+      }),
+    )
+    const section6 = r.markdown.split("## 6. 不要再做")[1] ?? ""
+    const occurrences = (section6.match(/不要回 V12/g) ?? []).length
+    assert.equal(occurrences, 1, "同一决策不能在 §6 重复出现")
+  })
+
+  it("tombstone 集合含被 supersede 的决策（active 集合不含）→ §6 仍渲染", () => {
+    // 模拟：ledger.getTombstoneDecisions 返"被 supersede 的 tombstone"（永存）
+    // ledger.getActiveDecisions 返 active（不含 superseded）→ 两集合互斥但都该投影 §6
+    const supersededTomb = {
+      ...makeDecision({ id: 50, type: "reject", content: "拒方案 X", tombstone: true }),
+      supersededBy: 99,
+    }
+    const r = renderViewfinder(
+      defaultInput({
+        tombstoneDecisions: [supersededTomb],
+        activeDecisions: [],
+      }),
+    )
+    const section6 = r.markdown.split("## 6. 不要再做")[1] ?? ""
+    assert.match(section6, /拒方案 X/, "supersede 后 tombstone 仍永存 §6")
+    assert.match(section6, /tombstone/, "标 tombstone 标识")
+  })
+
+  it("active 含 reject 但不 tombstone + tombstone 集合空 → §6 仅渲染 active", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        tombstoneDecisions: [],
+        activeDecisions: [makeDecision({ id: 7, type: "reject", content: "跳过 review" })],
+      }),
+    )
+    const section6 = r.markdown.split("## 6. 不要再做")[1] ?? ""
+    assert.match(section6, /跳过 review/)
+    assert.doesNotMatch(section6, /tombstone/, "非 tombstone 决策不标 tombstone")
+  })
 })
 
 describe("renderBlockers (helper)", () => {

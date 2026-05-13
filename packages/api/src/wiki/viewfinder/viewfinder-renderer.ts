@@ -312,6 +312,10 @@ import type { SqliteAdapterLike } from "../room-compiler/sqlite-checkpoint-store
  * F026 a2a_calls 表不含 result/error 字段，failed/timeout 的 reason
  * 需要 LEFT JOIN messages.a2a_call_id 拿 retry_reasons / content（V16.5 chap 11 行 1311-1322）。
  * Phase 1 简化：只查 a2a_calls 主表，reason=undefined（P19 V16.5 修订时再补 LEFT JOIN）。
+ *
+ * 范-r3 P1-2 修：SQL 用 `datetime()` 而非字典序比较 —— SQLite datetime() 解析 ISO 字符串
+ * 宽容（带/不带 Z / 带/不带毫秒 / 带 +HH:MM offset 都能解析），避免字典序在毫秒段
+ * "." vs "Z" 字符 (0x2E < 0x5A) 反转的边界陷阱。
  */
 export function queryBlockerCalls(
   db: SqliteAdapterLike,
@@ -325,8 +329,8 @@ export function queryBlockerCalls(
       FROM a2a_calls
       WHERE session_group_id = ?
         AND status IN ('pending', 'working', 'failed', 'timeout', 'cancelled')
-        AND deadline_at > ?
-      ORDER BY deadline_at DESC
+        AND datetime(deadline_at) > datetime(?)
+      ORDER BY datetime(deadline_at) DESC
       LIMIT 20
     `)
     .all(sessionGroupId, cutoff) as Array<{

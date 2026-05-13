@@ -131,10 +131,15 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
 - [ ] **AC-P1-8 · agent-sessions ledger**：per-agent S-XXXX.md 写入 + sharding（按 R-XXX 分目录 path: `agent-sessions/R-042/S-001-黄仁勋.md`）+ yearly pack 1/1 03:00 触发；fixture 模拟 100k session 文件归档后 active < 1k
 - [ ] **AC-P1-9 · 6 类记忆桶物理表**：wiki_memories 5 type + messages 表 1 类 = 6 类全覆盖；canonical_owner 防漂桶 lint 红绿测试（fixture: `tests/fixtures/canonical-owner/red-drift.md` vs `green.md`）
 - [ ] **AC-P1-10 · viewfinder anti-drift**（**漂移度阈值锁定**）：
-  - room_decisions append-only + tombstone 字段
+  - room_decisions append-only + tombstone 字段 + revoke 纠错（写新行 + UPDATE 旧行 superseded_by）
   - MonthlySnapshot full recompile 触发 → 漂移度 = `1 - jaccard(old.decisions_summary, new.decisions_summary)`
   - 漂移度 > 30% 自动 replace + 推审计通知到指定 room
-  - fixture: `tests/fixtures/viewfinder-drift/100-iter-telephone-game.json` 模拟 100 次总结迭代，最终 jaccard ≥ 0.7（drift ≤ 30%）
+  - fixture: `tests/fixtures/viewfinder-drift/100-iter-telephone-game.json` 模拟 100 次总结迭代，**有 anti-drift 干预条件下**（每 10 iter MonthlySnapshot 检测，drift > 30% auto-replace） 最终 jaccard ≥ 0.7（drift ≤ 30%）；同 fixture 含 raw 100 iter（无干预）drift ≈ 0.6 对照组，证明 anti-drift 必需
+  - **验收边界**（小孙 2026-05-13 拍 + 范-r3 CONDITIONAL 修后）：
+    - **P12 Phase 1 范围**：决策 ledger CRUD（append/revoke/tombstone/queries）+ 关键词宽召 + HaikuRunner yes/no 精筛 + Coverage Check 三集合（broad/resolved/unresolved）+ viewfinder 6 段 rule-based 模板（small fans 拍：不上 LLM 编 viewfinder）+ jaccard drift 算法纯函数 + AC fixture
+    - **挂 Phase 2 P19 调度**：`runMonthlySnapshot(roomId)` 闭环触发（NightlyJob cron 1 号 03:00）+ auto-replace IO（写旧 viewfinder 到 audit + replace 新文件） + 审计通知 push
+    - **挂 Phase 3 P20 前端**：manual confirm decision API (POST /api/rooms/:id/decisions) + Inspector 显示 Coverage warning unresolved 列表入口
+    - **Phase 1 fixture 语义**：fixture `with_anti_drift_intervention` 段含 10 个 block intervention_log 模拟 MonthlySnapshot 检测+ reset 闭环；P19 完成后 fixture 应升级为接真 cron 跑（非模拟）
 - [ ] **AC-P1-11 · memory_preflight 自动召回**（北极星兑现 AC）★：
   - 新 agent 进 R-XXX wake-up 时 runtime 自动跑 memory_preflight
   - 提取 task summary 抽 2-5 query → vectorSearch + BM25 hybrid（chap 15 P15 复用 BM25）
