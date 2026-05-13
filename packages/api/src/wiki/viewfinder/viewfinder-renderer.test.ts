@@ -535,6 +535,44 @@ describe("queryBlockerCalls · B024 24h deadline_at 防御过滤", () => {
     }
   })
 
+  it("范-r4: +HH:MM offset 格式 deadline 经 datetime() 后正确转 UTC 比较", () => {
+    const { db, cleanup } = makeDb()
+    try {
+      // 范-r4 P1-2 follow-up: 测试 +08:00 offset 格式
+      // "2026-05-13T23:00:00+08:00" 等价于 UTC "2026-05-13T15:00:00Z"
+      // SQLite datetime() 解析 offset 后转为 UTC 形式比较
+      // cutoff = subtractHours("2026-05-13T14:30:00Z", 24) = "2026-05-12T14:30:00.000Z"
+      // → UTC 15:00 - cutoff 14:30 = 24.5h 后，应保留
+      insertCall(db, {
+        callId: "c-offset-fresh",
+        sessionGroupId: "sg-1",
+        status: "pending",
+        deadlineAt: "2026-05-13T23:00:00+08:00", // UTC 15:00 (现在 14:30, 30 min 后到期)
+      })
+      // 等价 UTC 形式作 sanity check（应同等保留）
+      insertCall(db, {
+        callId: "c-utc-fresh",
+        sessionGroupId: "sg-1",
+        status: "pending",
+        deadlineAt: "2026-05-13T15:00:00.000Z",
+      })
+      // +08:00 stale: "2026-05-08T17:00:00+08:00" = UTC "2026-05-08T09:00:00Z" (5 天前)
+      insertCall(db, {
+        callId: "c-offset-stale",
+        sessionGroupId: "sg-1",
+        status: "pending",
+        deadlineAt: "2026-05-08T17:00:00+08:00",
+      })
+      const blockers = queryBlockerCalls(db, "sg-1", "2026-05-13T14:30:00Z")
+      const ids = blockers.map((b) => b.callId)
+      assert.ok(ids.includes("c-offset-fresh"), "+08:00 offset 30min 后到期 → fresh")
+      assert.ok(ids.includes("c-utc-fresh"), "等价 UTC fresh sanity")
+      assert.ok(!ids.includes("c-offset-stale"), "+08:00 offset 5 天前 → stale 过滤")
+    } finally {
+      cleanup()
+    }
+  })
+
   it("跨月 24h 兜底：5/1 00:00 cutoff 正确过滤 4 月 stale call", () => {
     const { db, cleanup } = makeDb()
     try {
