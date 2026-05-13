@@ -5,7 +5,7 @@
  * 覆盖：
  *   - 6 段全部渲染 + frontmatter
  *   - §1 优先级：tombstone spec > active spec > session_groups.title fallback
- *   - §2 messages tail 关键词扫
+ *   - §2 commit 决策驱动的"已完成"列表（小孙 walkthrough 反馈：messages 关键词扫无时间语义）
  *   - §3 取最新 commit 决策
  *   - §4 含 B024 24h 防御 SQL 过滤
  *   - §5 [decision_id, msg_id] 证据链
@@ -122,46 +122,51 @@ describe("renderViewfinder · 6 段 happy path", () => {
     assert.match(c.markdown, /F026-A2A 设计重新对.*fallback/)
   })
 
-  it("§2 messages tail 关键词扫 → 最新进度句", () => {
+  it("§2 取最近 5 条 active commit 决策拼'已完成'列表", () => {
     const r = renderViewfinder(
       defaultInput({
-        recentMessages: [
-          {
-            messageId: "m-1",
-            authorAlias: "黄仁勋",
-            role: "assistant",
-            content: "正在干活",
-            createdAt: "t1",
-          },
-          {
-            messageId: "m-2",
-            authorAlias: "黄仁勋",
-            role: "assistant",
-            content: "✅ 阻塞 1 收尾。修了 X。",
-            createdAt: "t2",
-          },
+        activeDecisions: [
+          makeDecision({ id: 12, type: "commit", content: "干掉孤儿 worktree", decidedAt: "t12" }),
+          makeDecision({ id: 11, type: "reject", content: "不要再 X", decidedAt: "t11" }),
+          makeDecision({ id: 10, type: "commit", content: "清理 preview 进程", decidedAt: "t10" }),
+          makeDecision({ id: 9, type: "commit", content: "F026 进 merger-gate", decidedAt: "t9" }),
         ],
       }),
     )
-    assert.match(r.markdown, /✅ 阻塞 1 收尾/)
-    assert.match(r.markdown, /msg m-2/)
+    const section2 = r.markdown.split("## 2. 当前进度")[1]?.split("##")[0] ?? ""
+    assert.match(section2, /已完成/, "§2 头部含'已完成'标记")
+    assert.match(section2, /干掉孤儿 worktree/, "含最新 commit")
+    assert.match(section2, /清理 preview 进程/)
+    assert.match(section2, /F026 进 merger-gate/)
+    assert.doesNotMatch(section2, /不要再 X/, "§2 不含 reject 类决策")
   })
 
-  it("§2 无任何进度信号 → fallback", () => {
+  it("§2 无 commit 类决策 → fallback 文案", () => {
     const r = renderViewfinder(
       defaultInput({
-        recentMessages: [
-          {
-            messageId: "m-1",
-            authorAlias: "黄仁勋",
-            role: "assistant",
-            content: "在思考",
-            createdAt: "t1",
-          },
-        ],
+        activeDecisions: [makeDecision({ id: 1, type: "spec", content: "立项 X" })],
       }),
     )
-    assert.match(r.markdown, /最近 messages 无明确进度信号/)
+    assert.match(r.markdown, /暂无 commit 类决策入 ledger/)
+  })
+
+  it("§2 commit 多于 5 条 → 仅取最新 5 条", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        activeDecisions: Array.from({ length: 10 }, (_, i) =>
+          makeDecision({
+            id: 10 - i,
+            type: "commit",
+            content: `commit ${10 - i}`,
+            decidedAt: `t${10 - i}`,
+          }),
+        ),
+      }),
+    )
+    const section2 = r.markdown.split("## 2. 当前进度")[1]?.split("##")[0] ?? ""
+    assert.match(section2, /commit 10/)
+    assert.match(section2, /commit 6/, "第 5 条（10/9/8/7/6）保留")
+    assert.doesNotMatch(section2, /commit 5/, "第 6 条之后不显示")
   })
 
   it("§3 取最新 commit 决策（type=commit 优先）", () => {

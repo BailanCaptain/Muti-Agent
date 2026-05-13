@@ -126,43 +126,25 @@ function renderTopic(input: RenderViewfinderInput): string {
 }
 
 // ─── §2 当前进度 ─────────────────────────────────────────────────────
+//
+// 小孙 2026-05-13 真数据 walkthrough 反馈：原 messages 关键词扫法没时间语义，
+// 容易抓到早期"在后台跑"等过期句子。改为从最新 active commit 决策拼"已完成"列表，
+// 因为 commit 决策本身就是"已批准 / 已完成"语义的承诺事件。
+//
+// 算法：取最新 PROGRESS_COMMIT_LIMIT 条 active commit 决策，按 decided_at DESC
+// 拼成 markdown 列表。无 commit 时 fallback 到"暂无进度信号"。
 
-const PROGRESS_KEYWORDS = [
-  /已合(并|入|完)/,
-  /推完/,
-  /通过(了|啦)?/,
-  /验过了/,
-  /done/i,
-  /完成/,
-  /搞定/,
-  /✅/,
-  /阻塞.*(收尾|搞定|通过)/,
-  /closed/i,
-]
+const PROGRESS_COMMIT_LIMIT = 5
 
 function renderProgress(input: RenderViewfinderInput): string {
-  // 倒序找最新 assistant 消息含进度关键词的一句
-  for (const m of [...input.recentMessages].reverse()) {
-    if (m.role !== "assistant") continue
-    for (const k of PROGRESS_KEYWORDS) {
-      if (k.test(m.content)) {
-        const sentence = extractFirstMatchingSentence(m.content, k)
-        return `"${sentence}" (msg ${m.messageId} by ${m.authorAlias})`
-      }
-    }
+  const commits = input.activeDecisions
+    .filter((d) => d.decisionType === "commit")
+    .slice(0, PROGRESS_COMMIT_LIMIT)
+  if (commits.length === 0) {
+    return "（暂无 commit 类决策入 ledger，无法描绘进度）"
   }
-  return "（最近 messages 无明确进度信号）"
-}
-
-function extractFirstMatchingSentence(content: string, pattern: RegExp): string {
-  // 按中英文句号 / 换行切，取第一句命中的
-  const sentences = content.split(/[\n。.!?！？]+/).map((s) => s.trim())
-  for (const s of sentences) {
-    if (pattern.test(s)) {
-      return s.length > 100 ? `${s.slice(0, 100)}…` : s
-    }
-  }
-  return content.slice(0, 100)
+  const lines = commits.map((d) => `- ${d.content}（${formatDecisionRef(d)}）`)
+  return `已完成：\n${lines.join("\n")}`
 }
 
 // ─── §3 下一步 + 谁做 ────────────────────────────────────────────────
