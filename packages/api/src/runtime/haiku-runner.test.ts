@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import type { ChildProcess } from "node:child_process"
 import { EventEmitter } from "node:events"
 import { describe, it, mock } from "node:test"
-import { createHaikuRunner } from "./haiku-runner"
+import { createHaikuRunner, createSonnetRunner } from "./haiku-runner"
 
 type FakeSpawnOpts = { code: number | null; stdout?: string; delayMs?: number; spawnError?: Error }
 
@@ -120,5 +120,49 @@ describe("HaikuRunner", () => {
     const modelIdx = capturedArgs.indexOf("--model")
     assert.equal(capturedArgs[modelIdx + 1], "claude-haiku-4-5")
     assert.ok(capturedArgs.includes("my prompt text"), "prompt should be passed as an argument")
+  })
+})
+
+describe("SonnetRunner (F027 P12 decision extractor — 小孙拍 sonnet-4-6)", () => {
+  it("passes --model claude-sonnet-4-6 to spawn", async () => {
+    let capturedArgs: readonly string[] = []
+    const spawn = ((_cmd: string, args: readonly string[]) => {
+      capturedArgs = args
+      const proc: any = new EventEmitter()
+      proc.stdout = new EventEmitter()
+      proc.stderr = new EventEmitter()
+      proc.stdin = { end: mock.fn() }
+      proc.kill = mock.fn()
+      setTimeout(() => {
+        proc.stdout.emit("data", Buffer.from("ok"))
+        proc.emit("close", 0)
+      }, 1)
+      return proc as ChildProcess
+    }) as any
+    const r = createSonnetRunner({ spawn })
+    await r.runPrompt("decide if this is a decision")
+    const modelIdx = capturedArgs.indexOf("--model")
+    assert.equal(
+      capturedArgs[modelIdx + 1],
+      "claude-sonnet-4-6",
+      "Sonnet runner 必须传 claude-sonnet-4-6 模型 ID（小孙 2026-05-13 拍）",
+    )
+  })
+
+  it("shares the same HaikuRunner shape (interchangeable for HaikuLike consumers)", async () => {
+    // P12 decision-extractor 的 HaikuLike interface 接受任一 runner，
+    // 这个测试确保两个 runner 接口签名兼容（编译期 + 运行期均兼容）
+    const { spawn } = fakeSpawn({ code: 0, stdout: "yes" })
+    const haiku = createHaikuRunner({ spawn })
+    const sonnet = createSonnetRunner({ spawn })
+    // 同样调用方式，同样返回 shape
+    const haikuRes = await haiku.runPrompt("x")
+    const sonnetRes = await sonnet.runPrompt("x")
+    assert.equal(typeof haikuRes.ok, "boolean")
+    assert.equal(typeof sonnetRes.ok, "boolean")
+    assert.equal(typeof haikuRes.text, "string")
+    assert.equal(typeof sonnetRes.text, "string")
+    assert.equal(typeof haikuRes.durationMs, "number")
+    assert.equal(typeof sonnetRes.durationMs, "number")
   })
 })

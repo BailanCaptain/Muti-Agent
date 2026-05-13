@@ -40,9 +40,9 @@ export interface CompileViewfinderDeps {
   fencingToken: string
   leaderTerm: string
   nowFn?: () => string
-  /** Haiku 单次调用 timeout（ms），默认 20s */
+  /** Claude CLI 单次调用 timeout（ms），默认 30s（生产 Sonnet 4.6） */
   judgeTimeoutMs?: number
-  /** Haiku 并发上限，默认 4 */
+  /** Claude CLI 并发上限，默认 4（防 spawn 风暴） */
   judgeConcurrency?: number
 }
 

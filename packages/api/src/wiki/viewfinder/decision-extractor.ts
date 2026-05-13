@@ -4,17 +4,24 @@
  *
  * 两段流程（小孙 2026-05-13 拍 + 范-r2 GO）：
  *   1. 关键词宽召（broad_candidates）—— 宽松，宁多勿少
- *   2. HaikuRunner yes/no 短判 —— LLM 二分类承担过滤
+ *   2. Claude CLI yes/no 短判 —— LLM 二分类承担过滤
+ *
+ * 模型选择（小孙 2026-05-13 拍）：
+ *   - **Sonnet 4.6**（不是 Haiku 4.5）—— 决策识别是语义密集任务，准确度优先
+ *   - 订阅模式 quota 不是约束，可用更强模型
+ *   - 走 createSonnetRunner（runtime/haiku-runner.ts，接口同 HaikuLike shape）
+ *   - HaikuLike interface 名字是历史遗留，实际签名通用 ClaudeRunner shape
  *
  * R-201 真实数据观察（5/8 50 条）：
  *   - 50%+ user 消息是 "go"/"A"/"干掉" 短指令
  *   - 关键词扫单看一句识别不出语义 → 必须 join 上一条 assistant 消息
- *   - "go" + 上下文 "批准合 F026 进 merger-gate" → Haiku 判 commit
- *   - "什么玩意" + 上下文 → Haiku 判 non-decision
+ *   - "go" + 上下文 "批准合 F026 进 merger-gate" → Sonnet 判 commit
+ *   - "什么玩意" + 上下文 → Sonnet 判 non-decision
  *
- * 并发：每候选独立 await Haiku，限 MAX_CONCURRENCY 防 spawn 风暴
- *   （SessionTitler 实测 claude --print 冷启 18s / 热启 8-9s，14 候选串行=4min 内 RoomCompiler tick 5min 撑得住，
- *   并发 4 把总耗时压到 ~30-60s）
+ * 并发：每候选独立 await Sonnet CLI，限 MAX_CONCURRENCY 防 spawn 风暴
+ *   （SessionTitler 实测 claude --print 冷启 18s / 热启 8-9s，14 候选串行=4min 内
+ *   RoomCompiler tick 5min 撑得住，并发 4 把总耗时压到 ~30-60s；Sonnet 比 Haiku 慢一些
+ *   但仍在窗口内）
  */
 
 import type {
@@ -25,7 +32,7 @@ import type {
   ExtractorRun,
 } from "./types"
 
-// ─── 关键词宽召规则（宁多勿少 — Haiku 二判过滤） ─────────────────────
+// ─── 关键词宽召规则（宁多勿少 — Sonnet 二判过滤） ─────────────────────
 
 /**
  * commit 类（批准/完成/动作执行）：通常是简短确认或完成陈述
@@ -162,9 +169,11 @@ function matchKeyword(content: string): string | null {
   return null
 }
 
-// ─── HaikuRunner 接入（DecisionJudgeProvider impl） ──────────────────
+// ─── Claude CLI Runner 接入（DecisionJudgeProvider impl） ────────────
+// 生产用 createSonnetRunner（小孙拍：决策识别走 Sonnet 4.6 不是 Haiku 4.5）。
+// HaikuLike 名字是历史遗留 type alias，shape 与 ClaudeRunner 通用 runPrompt 一致。
 
-/** HaikuRunner 抽象（兼容 createHaikuRunner 返回的 HaikuRunner） */
+/** Claude CLI runner 抽象（兼容 createHaikuRunner / createSonnetRunner 返回的 HaikuRunner） */
 export interface HaikuLike {
   runPrompt(
     prompt: string,
@@ -173,11 +182,11 @@ export interface HaikuLike {
 }
 
 export interface HaikuJudgeOptions {
-  /** Haiku 单次调用超时；默认 20s（SessionTitler 同款 — 冷启 18s 留余量） */
+  /** Claude CLI 单次调用超时；默认 30s（Sonnet 比 Haiku 慢一些，留余量） */
   timeoutMs?: number
 }
 
-const HAIKU_DEFAULT_TIMEOUT = 20000
+const HAIKU_DEFAULT_TIMEOUT = 30000
 
 export function buildJudgePrompt(c: BroadCandidate): string {
   const prev = c.prevAssistantContent
