@@ -140,9 +140,10 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
   - 提取 task summary 抽 2-5 query → vectorSearch + BM25 hybrid（chap 15 P15 复用 BM25）
   - Quality Gate：score ≥ 0.75 注入 prompt `[Recall Pack]` 区段 / 0.6-0.75 仅 Inspector 看 / < 0.6 丢
   - **fixture 锁定**：新 agent 桂芬第一次进 R-205 讨论 "F011 drizzle 优化" → 必须命中 `F011-backend-hardening-drizzle.md` (sim ≥ 0.85) + `F021-context-window-resolver.md` (sim ≥ 0.6) + Inspector 区列出至少 3 项中置信
-  - **验收边界**（小孙 2026-05-12 拍 B 路径 + 范-r1 P2-4 同步）：
-    - **P11.a baseline (本 phase)** 锁定：模块骨架 + Quality Gate + Hard Gate + AC 相对排序（F011 > F021 > B022），物理上 cosine baseline 单 vector 顶 ~0.5
-    - **P11.b + P14 + P15 完成后转正**：sim ≥ 0.85 + ≥ 0.6 + ≥ 3 Inspector 项需 BM25 hybrid + LLM rerank 才能达，挂 it.todo 占位
+  - **验收边界**（小孙 2026-05-12 拍 B 路径 + 范-r1 P2-4 同步 + 小孙/范-P11.b r1 2026-05-13 拍 Phase 2 依赖）：
+    - **P11.a baseline 锁定**：模块骨架 + Quality Gate + Hard Gate + AC 相对排序（F011 > F021 > B022），物理上 cosine baseline 单 vector 顶 ~0.5
+    - **P11.b 弱阈值锁定**：HybridSearchProvider 接 BM25 (P14) + cosine (F018 EmbeddingService) + LLM rerank stub (P15 NoopReranker) 框架成立；F011/F021 命中 + F011 排首位 + 总召回 ≥ 2 验证 hybrid 召回功能（`memory-preflight.test.ts:709`）
+    - **AC-P1-11 严阈值挂 it.todo 等 Phase 2 真 LLM rerank confidence**：sim ≥ 0.85 + sim ≥ 0.6 + Inspector ≥ 3 物理依赖真 LLM rerank 输出 confidence score（plan chap 12 行 1403 "BM25 + LLM rerank" 原意）。Phase 1 NoopReranker 透传时 hybrid_score = max(bm25_norm, cosine_sim) 同时承担 ranking + gate 双职责，BM25 命中 entity 永远 score=1.0，inspector 中段 (0.6-0.85) 物理不可达。**不改 plan AC 阈值**——范判定"plan 隐含可校准置信度，改 ≥ 1 是验收漂移"。Phase 2 接真 LLM rerank（Claude Haiku / Qwen / 本地）后 gate score 走 confidence 自然落 [0.6, 0.85)，转正条件成立
 - [ ] **AC-P1-12 · Adaptive Recall 5 级 fallback**：5 级 fallback 全部触发 fixture（Level 1 cache hit / Level 2 search_wiki / Level 3 LLM rerank / Level 4 hard gate / Level 5 escalate to user）+ Hard Gate 命中 escalate 写 wiki_events
 - [ ] **AC-P1-13 · alias-aware capability registry**（**fixture 锁定**）：handoff 中性改写测试——sender alias 黄仁勋 → @桂芬 时，receiver 看到的 prompt 不暴露 sender risks
   - **fixture**: `tests/fixtures/capability-registry/red-leaks-sender-risk.json`（含未脱敏 prompt 含"黄仁勋 unresolved threads / 黄仁勋 token 占比 / sender 内部状态"等 forbidden strings）vs `green-neutralized.json`（中性改写后仅含 `{ task, receiver_capability_digest, collaboration_contract }` required fields）

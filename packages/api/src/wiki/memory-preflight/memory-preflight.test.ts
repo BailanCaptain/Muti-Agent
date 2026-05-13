@@ -17,9 +17,18 @@
  */
 
 import assert from "node:assert/strict"
+import { promises as fsAsync, mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
 import { describe, it } from "node:test"
+import { drizzle as drizzleBetter } from "drizzle-orm/better-sqlite3"
+import { createDrizzleDb } from "../../db/drizzle-instance"
+import * as schema from "../../db/schema"
 import { EmbeddingService } from "../../services/embedding-service"
+import { WikiEntityFtsProvider } from "../wiki-search/wiki-entity-fts-provider"
+import { reindexWikiEntities } from "../wiki-search/wiki-entity-indexer"
 import {
+  HybridSearchProvider,
   InMemoryWikiSearchProvider,
   applyQualityGate,
   buildWikiEntityRecords,
@@ -687,12 +696,160 @@ describe("AC-P1-11 ★ 北极星 baseline (P11.a)：桂芬进 R-205 自动召回
   })
 
   /**
-   * 严阈值 fixture：F011 sim ≥ 0.85 + F021 sim ≥ 0.6 + Inspector ≥ 3 项中置信
-   * 物理上需 P15 BM25 hybrid + LLM rerank 才能达到（单 vector cosine 中文短 query 顶 ~0.5）
-   * 小孙 2026-05-12 拍 B 路径：现在一次干到 P14+P15+P11 严阈值 fixture
-   * 待 P15 commit 时把这条转成正式 it() 并断 ≥0.85 / ≥0.6 / ≥3 inspector
+   * P11.b 弱阈值 fixture：HybridSearchProvider 召回功能验证（命中 + 排序）
+   *
+   * 实现路径：HybridSearchProvider = WikiEntityFtsProvider (BM25) + EmbeddingService
+   * (cosine sim) + LLMReranker (Phase 1 NoopReranker)。hybrid score = max(bm25_norm, cosine_sim)
+   * —— 任一信号强即认为相关。
+   *
+   * 验收边界（范-P11.b r1 拍 + 小孙 2026-05-13 拍）：
+   *   本测试只验"hybrid 召回功能成立"（F011/F021 命中 + 排序）。AC-P1-11 严阈值
+   *   (sim ≥ 0.85 + Inspector ≥ 3) 物理依赖 Phase 2 真 LLM rerank confidence
+   *   score —— Phase 1 NoopReranker 透传时 hybrid_score 同时承担 ranking + gate
+   *   双职责，BM25 rank 0 永远拿 1.0，inspector 中段 (0.6-0.85) 几乎不可达；
+   *   严阈值 it.todo 等 Phase 2 接真 LLM 转正（plan chap 12 行 1403 "BM25 + LLM rerank"
+   *   原意：confidence score 从 LLM rerank 输出，不是 BM25 rank/cosine sim 直接派生）。
+   */
+  it("(P11.b) HybridSearchProvider 召回功能：F011 排首位 + F021 进 buckets", async () => {
+    // 真 embedding（Xenova all-MiniLM-L6-v2 q8）+ 真 BM25 (SQLite FTS5 trigram)
+    const embed = new EmbeddingService()
+    const ok = await embed.ensureModel()
+    if (!ok) {
+      console.warn("AC-P1-11 严阈值: embedding model unavailable, skipping (CI 必须可用)")
+      return
+    }
+
+    // Setup: temp DB + temp wiki/ → reindex → wiki_entity_index 填好 → BM25 ready
+    const dbDir = mkdtempSync(path.join(tmpdir(), "p11b-strict-db-"))
+    const fsRoot = mkdtempSync(path.join(tmpdir(), "p11b-strict-fs-"))
+    const dbPath = path.join(dbDir, "test.sqlite")
+
+    try {
+      const fixture: { relPath: string; body: string }[] = [
+        {
+          relPath: "concepts/F011-backend-hardening-drizzle.md",
+          body: "F011 drizzle 优化 backend hardening. drizzle migration safety + backfill 安全策略, 把 SELECT max + INSERT 包在 db.transaction 防 TOCTOU. BEGIN IMMEDIATE 锁串行写. drizzle better-sqlite3 driver wrapper.immediate. 优化 query 改 prepared statement 防 sql injection 同时减 plan parse 开销。",
+        },
+        {
+          relPath: "concepts/F021-context-window-resolver.md",
+          body: "F021 上下文窗口 / Seal 阈值齿轮可配 + fillRatio 实时观测 + seal 感知. context window resolver 动态调整 prompt token 预算. seal 阈值由 config 控制 + 实时 metrics 输出. 与 F018 ThreadMemory rolling summary 集成. drizzle 配置兼容.",
+        },
+        {
+          relPath: "concepts/F018-session-bootstrap.md",
+          body: "F018 SessionBootstrap 续接逻辑. ThreadMemory rolling summary + 7 entries prelude. 新 session 注入 reference-only 上下文. drizzle 持久化 thread_memory 字段.",
+        },
+        {
+          relPath: "bugReport/B022-prompt-injection-redundancy.md",
+          body: "B022 prompt 注入四源冗余 + L0_DIGEST drift. fail-closed 防御. F011 backend 注入合约关联.",
+        },
+        {
+          relPath: "concepts/F004-prompt-assembly.md",
+          body: "F004 assemblePrompt 统一注入合约. 5 reference-only section: viewfinder / recall-pack / handbook / collaboration-contract / capability-digest.",
+        },
+      ]
+
+      for (const ent of fixture) {
+        const abs = path.join(fsRoot, "wiki", ent.relPath)
+        await fsAsync.mkdir(path.dirname(abs), { recursive: true })
+        await fsAsync.writeFile(abs, ent.body, "utf8")
+      }
+
+      const { raw, close } = createDrizzleDb(dbPath)
+      const drizzleDb = drizzleBetter(raw as never, { schema })
+      try {
+        await reindexWikiEntities({ wikiRoot: fsRoot, db: drizzleDb })
+
+        // 预生成 entity body embedding（HybridProvider lookup 用）
+        const records = await buildWikiEntityRecords(
+          fixture.map((f) => ({ path: `wiki/${f.relPath}`, body: f.body })),
+          (t) => embed.generateEmbedding(t),
+        )
+        assert.ok(records.length === fixture.length, "全部 entity embedding 成功")
+
+        const bm25 = new WikiEntityFtsProvider(drizzleDb)
+        const hybrid = new HybridSearchProvider(bm25, records, (t) => embed.generateEmbedding(t))
+
+        const out = await loadTaskMemoryPack(
+          {
+            roomId: "R-205",
+            alias: "桂芬",
+            scenario: "wake_up",
+            taskSummary: "F011 drizzle 优化",
+            // 注入 multi-source 让 generateRecallQueries 出多 query 增加召回
+            capabilityDigestKeywords: ["前端", "F018", "TranscriptWriter"],
+            recentMessageConcepts: ["context window", "seal 阈值"],
+          },
+          { search: hybrid },
+          // 默认 quality gate 阈值（plan chap 10 行 1146-1150：≥0.75 inject / ≥0.6 inspector）
+        )
+
+        // ── 输出 score 分布给 debugging + 后续 Phase 2 转正阈值参考 ──
+        const allHits = [...out.buckets.injected, ...out.buckets.inspectorOnly]
+          .map((h) => `${h.path.split("/").pop()} = ${h.score.toFixed(3)}`)
+          .join(", ")
+        const rejectedSummary = out.buckets.rejected
+          .map((r) => `${r.hit.path.split("/").pop()} (${r.reason})`)
+          .join(", ")
+        process.stderr.write(
+          `\n[P11.b weak] injected=${out.buckets.injected.length} inspector=${out.buckets.inspectorOnly.length} rejected=${out.buckets.rejected.length}\n` +
+            `[P11.b weak] all hits: ${allHits}\n[P11.b weak] rejected: ${rejectedSummary}\n`,
+        )
+
+        // ── 断言 1: F011 必须命中（任一 bucket）────────────────────────
+        const f011 =
+          out.buckets.injected.find((h) => h.path.includes("F011-backend-hardening")) ??
+          out.buckets.inspectorOnly.find((h) => h.path.includes("F011-backend-hardening"))
+        assert.ok(
+          f011,
+          `F011 必须召回（hybrid backend 工作）。实际 injected=${out.buckets.injected.map((h) => h.path).join(",")} inspector=${out.buckets.inspectorOnly.map((h) => h.path).join(",")}`,
+        )
+
+        // ── 断言 2: F021 必须命中（任一 bucket）────────────────────────
+        const f021 =
+          out.buckets.injected.find((h) => h.path.includes("F021-context-window")) ??
+          out.buckets.inspectorOnly.find((h) => h.path.includes("F021-context-window"))
+        assert.ok(
+          f021,
+          `F021 必须召回（multi-query recent_messages 路径）。实际 injected=${out.buckets.injected.map((h) => h.path).join(",")} inspector=${out.buckets.inspectorOnly.map((h) => h.path).join(",")}`,
+        )
+
+        // ── 断言 3: F011 score ≥ F021 score（task_summary 主 query 排序优先）──
+        assert.ok(
+          f011.score >= f021.score,
+          `F011 (${f011.score.toFixed(3)}) 应 ≥ F021 (${f021.score.toFixed(3)}) — 主 query 'F011 drizzle 优化' 直接对应 F011`,
+        )
+
+        // ── 断言 4: 总召回 ≥ 2（hybrid backend 真返回结果，非空）──────
+        const totalRecalled = out.buckets.injected.length + out.buckets.inspectorOnly.length
+        assert.ok(totalRecalled >= 2, `总召回应 ≥ 2，实际 ${totalRecalled}`)
+      } finally {
+        close()
+      }
+    } finally {
+      rmSync(dbDir, { recursive: true, force: true })
+      rmSync(fsRoot, { recursive: true, force: true })
+    }
+  })
+
+  /**
+   * AC-P1-11 严阈值 it.todo —— 等 Phase 2 真 LLM rerank confidence score 转正
+   *
+   * 物理依赖（范-P11.b r1 拍）：plan chap 12 行 1403 "Level 2: search_wiki ← BM25 +
+   * LLM rerank" 原意是 confidence score 来源 = LLM rerank 输出，不是 BM25 corpus-内
+   * normalize 或 cosine 绝对值。Phase 1 NoopReranker 透传时：
+   *   - hybrid_score = max(bm25_norm, cosine_sim) 同时承担 ranking + gate 双职责
+   *   - BM25 query 内 rank 0 永远 1.0 → 命中 entity 全 inject，inspector 中段空
+   *   - cosine sim 中文短 query 顶 ~0.5（Xenova all-MiniLM-L6-v2 q8 物理限制）
+   *
+   * Phase 2 接真 LLM rerank 后：
+   *   - rerank 输出 confidence score（[0,1] 校准），是 gate 真信号
+   *   - hybrid 排序 = max(bm25, cosine) 仍用作 ranking
+   *   - gate 用 rerank confidence，自然落 [0.6, 0.85) 区间出 inspector
+   *
+   * 不改 plan AC 阈值（0.85/0.6/inspector ≥ 3）—— 范说"plan 隐含的是可校准置信度，
+   * 直接改成 ≥1 是验收漂移"。
    */
   it.todo(
-    "(P15 后补) F011 sim ≥ 0.85 + F021 sim ≥ 0.6 + Inspector ≥ 3 项 — 需 BM25 hybrid + LLM rerank",
+    "(Phase 2 后补) F011 sim ≥ 0.85 + F021 sim ≥ 0.6 + Inspector ≥ 3 — 需真 LLM rerank confidence score",
   )
 })

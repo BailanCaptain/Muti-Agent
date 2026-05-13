@@ -13,3 +13,9 @@ export { InMemoryWikiSearchProvider, buildWikiEntityRecords } from "./in-memory-
 export type { WikiEntityRecord, EmbeddingGenerator } from "./in-memory-provider"
 export { loadTaskMemoryPack, deriveAuditPatch } from "./memory-preflight"
 export type { MemoryPreflightDeps, LoadTaskMemoryPackOptions } from "./memory-preflight"
+export { HybridSearchProvider } from "./hybrid-search-provider"
+export type {
+  HybridSearchProviderOptions,
+  BM25CandidateProvider,
+  EmbeddingGeneratorFn,
+} from "./hybrid-search-provider"
