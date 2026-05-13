@@ -1,7 +1,7 @@
 ---
 id: F027-P13
 title: Adaptive Recall Policy 5 级 fallback + Hard Gate（V16.5 chap 12 落地）
-status: draft（等小孙拍）
+status: confirmed（小孙 2026-05-13 拍 5 个 Open · 开干）
 owner: 黄仁勋
 created: 2026-05-13
 plan_truth_source: docs/plans/V16.5-final.md chap 12（行 1367-1444）
@@ -11,8 +11,16 @@ ac: AC-P1-12
 depends_on:
   - P11 memory_preflight（✅ done — hard-gate.ts + HybridSearchProvider + conservativeStubJudge）
   - P12 viewfinder anti-drift（✅ done — 9a1c7b3）
-  - P14 BM25 + messages FTS5（❌ Day 30 — Level 3 query_messages 依赖此）
-  - P15 LLM rerank（❌ Day 30 — Level 2 Critique 复用此能力）
+  - P14.b messages_fts + query_messages MCP（✅ done — f91edf5；Level 3 后端就位，无需等待）
+  - P15 LLM rerank（❌ 未做但不阻塞 — Level 2 Critique 走独立 Sonnet 4.6 调用）
+
+## 拍板记录（小孙 2026-05-13）
+
+1. **范围切法 = A（等 P14）** → P14.b 实际已 done (f91edf5)，Level 3 query_messages repo 就位，**等同立即开干**
+2. **Critique LLM = Sonnet 4.6**（同 P12 extractor，准确度优先；延迟靠 budget cap 控）
+3. **Level 4 严格度 = 严格** — 仅 exact path 触发 read_wiki，fuzzy path 不触发
+4. **AC L4 fixture = 手工** — hand-crafted room，不走 critique mock
+5. **范 review 节奏 = 一次性 r1** — P13.1-.5 全做完 + AC 全绿后一次性提交范
 ---
 
 # F027-P13 — Adaptive Recall Policy 5 级 fallback + Hard Gate
