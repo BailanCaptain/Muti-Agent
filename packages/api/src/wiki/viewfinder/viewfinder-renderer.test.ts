@@ -535,39 +535,45 @@ describe("queryBlockerCalls · B024 24h deadline_at 防御过滤", () => {
     }
   })
 
-  it("范-r4: +HH:MM offset 格式 deadline 经 datetime() 后正确转 UTC 比较", () => {
+  it("范-r5: offset 必须 UTC 归一化（字典序与 UTC 结果相反的判别 case）", () => {
     const { db, cleanup } = makeDb()
     try {
-      // 范-r4 P1-2 follow-up: 测试 +08:00 offset 格式
-      // "2026-05-13T23:00:00+08:00" 等价于 UTC "2026-05-13T15:00:00Z"
-      // SQLite datetime() 解析 offset 后转为 UTC 形式比较
-      // cutoff = subtractHours("2026-05-13T14:30:00Z", 24) = "2026-05-12T14:30:00.000Z"
-      // → UTC 15:00 - cutoff 14:30 = 24.5h 后，应保留
+      // 范-r5 抓到 r4 缺判别力：原 offset case (+08:00 fresh/stale) 在字典序下也同结果，
+      // 不能证明 datetime() 做了 UTC 归一化。本 test 设计字典序判结果 vs UTC 判结果**相反**
+      // 的 case，只有真做 UTC 归一化才能 pass。
+      //
+      // now = 2026-05-13T14:30:00Z, cutoff(24h ago) = 2026-05-12T14:30:00.000Z
+      //
+      // case A: '2026-05-12T20:00:00+08:00' = UTC '2026-05-12T12:00:00Z'
+      //   字典序对 cutoff: 前 11 字符相同, '20' > '14' → 字典序 > cutoff → 字典序判 FRESH
+      //   datetime() UTC: 12:00 < 14:30 → UTC < cutoff → datetime 判 STALE ← 真相
+      //   预期: 过滤掉 (stale) — 只有 datetime() 在生效才能 pass
       insertCall(db, {
-        callId: "c-offset-fresh",
+        callId: "c-pos-offset-actually-stale",
         sessionGroupId: "sg-1",
         status: "pending",
-        deadlineAt: "2026-05-13T23:00:00+08:00", // UTC 15:00 (现在 14:30, 30 min 后到期)
+        deadlineAt: "2026-05-12T20:00:00+08:00",
       })
-      // 等价 UTC 形式作 sanity check（应同等保留）
+      // case B: '2026-05-13T07:00:00-08:00' = UTC '2026-05-13T15:00:00Z'
+      //   字典序对 cutoff: 前 11 字符相同, '07' < '14' → 字典序 < cutoff → 字典序判 STALE
+      //   datetime() UTC: 15:00 > 14:30 → UTC > cutoff → datetime 判 FRESH ← 真相
+      //   预期: 保留 (fresh) — 只有 datetime() 在生效才能 pass
       insertCall(db, {
-        callId: "c-utc-fresh",
+        callId: "c-neg-offset-actually-fresh",
         sessionGroupId: "sg-1",
         status: "pending",
-        deadlineAt: "2026-05-13T15:00:00.000Z",
-      })
-      // +08:00 stale: "2026-05-08T17:00:00+08:00" = UTC "2026-05-08T09:00:00Z" (5 天前)
-      insertCall(db, {
-        callId: "c-offset-stale",
-        sessionGroupId: "sg-1",
-        status: "pending",
-        deadlineAt: "2026-05-08T17:00:00+08:00",
+        deadlineAt: "2026-05-13T07:00:00-08:00",
       })
       const blockers = queryBlockerCalls(db, "sg-1", "2026-05-13T14:30:00Z")
       const ids = blockers.map((b) => b.callId)
-      assert.ok(ids.includes("c-offset-fresh"), "+08:00 offset 30min 后到期 → fresh")
-      assert.ok(ids.includes("c-utc-fresh"), "等价 UTC fresh sanity")
-      assert.ok(!ids.includes("c-offset-stale"), "+08:00 offset 5 天前 → stale 过滤")
+      assert.ok(
+        !ids.includes("c-pos-offset-actually-stale"),
+        "+08:00 offset 字典序看像 fresh 但 UTC 真相是 stale → 必须过滤（datetime() 必生效）",
+      )
+      assert.ok(
+        ids.includes("c-neg-offset-actually-fresh"),
+        "-08:00 offset 字典序看像 stale 但 UTC 真相是 fresh → 必须保留（datetime() 必生效）",
+      )
     } finally {
       cleanup()
     }
