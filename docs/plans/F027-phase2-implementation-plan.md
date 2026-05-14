@@ -447,6 +447,8 @@ v1 walkthrough 暴露 2 处 V16.5 真相源 vs P1 实现 drift。Phase 2 保留 
 
 ---
 
-**下一步**：plan v2a commit 入 worktree → [Call: @范德彪 confirm v2a] → 通过后启动 P19.1 框架。
+**下一步**：plan v2b commit `f5e6821` 已落 → 范德彪 v2b confirm review GO（2026-05-14，未发现新 P1/P2，三个 v2a 阻断点 F1/F2/F3 全部覆盖）→ 启动 P19.1 NightlyJobScheduler 框架 + croner。
 
+> v2b 修订点（范 v2a confirm review 3 修前阻断）：F1 `selfDemote()` 清 lease + 记 `demotedReason` / `runJob` 三段 guard（role / lease 对象 / lease 时间）· F2 status enum 锁 8 种 + reason enum 4 种 · F3 AC-P2-3 拆 a (loader fallback / Gate 2 前可推) + b (Gate 2 后真文件)，总 AC 18 → 19。
+>
 > v2a 修订点（范 v2 confirm review 4 修前阻断 + 1 AC 强化）：F1 lease heartbeat self-demote · F2 wiki.config.yaml Iron Laws 3 gate 拆 P19.3a/b · F3 job_trace `missed_window`/`lease_lost` enum + 时间窗字段 · F4 backfill marker 落 frontmatter + state.jsonl（**不**碰 DB schema） · AC-P2-2 加 lease-lost-live fixture。
