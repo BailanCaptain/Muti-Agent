@@ -35,6 +35,7 @@ const DEFAULT_TIMEOUT_MS = 15000
 
 const HAIKU_MODEL = "claude-haiku-4-5"
 const SONNET_MODEL = "claude-sonnet-4-6"
+const OPUS_MODEL = "claude-opus-4-7"
 
 /**
  * 单轮 Claude CLI 调用封装。内部 spawn `claude --print --model <model> "<prompt>"`，
@@ -118,4 +119,9 @@ export function createHaikuRunner(deps: HaikuRunnerDeps = {}): HaikuRunner {
  */
 export function createSonnetRunner(deps: HaikuRunnerDeps = {}): HaikuRunner {
   return createClaudeCliRunner(SONNET_MODEL, deps)
+}
+
+/** Opus 4.7 — F027 P18 evidence pack judge runner. */
+export function createOpusRunner(deps: HaikuRunnerDeps = {}): HaikuRunner {
+  return createClaudeCliRunner(OPUS_MODEL, deps)
 }

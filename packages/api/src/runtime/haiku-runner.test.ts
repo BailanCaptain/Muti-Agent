@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import type { ChildProcess } from "node:child_process"
 import { EventEmitter } from "node:events"
 import { describe, it, mock } from "node:test"
-import { createHaikuRunner, createSonnetRunner } from "./haiku-runner"
+import { createHaikuRunner, createOpusRunner, createSonnetRunner } from "./haiku-runner"
 
 type FakeSpawnOpts = { code: number | null; stdout?: string; delayMs?: number; spawnError?: Error }
 
@@ -120,6 +120,29 @@ describe("HaikuRunner", () => {
     const modelIdx = capturedArgs.indexOf("--model")
     assert.equal(capturedArgs[modelIdx + 1], "claude-haiku-4-5")
     assert.ok(capturedArgs.includes("my prompt text"), "prompt should be passed as an argument")
+  })
+})
+
+describe("OpusRunner (F027 P18 evidence judge)", () => {
+  it("passes --model claude-opus-4-7 to spawn", async () => {
+    let capturedArgs: readonly string[] = []
+    const spawn = ((_cmd: string, args: readonly string[]) => {
+      capturedArgs = args
+      const proc: any = new EventEmitter()
+      proc.stdout = new EventEmitter()
+      proc.stderr = new EventEmitter()
+      proc.stdin = { end: mock.fn() }
+      proc.kill = mock.fn()
+      setTimeout(() => {
+        proc.stdout.emit("data", Buffer.from("ok"))
+        proc.emit("close", 0)
+      }, 1)
+      return proc as ChildProcess
+    }) as any
+    const r = createOpusRunner({ spawn })
+    await r.runPrompt("judge this evidence")
+    const modelIdx = capturedArgs.indexOf("--model")
+    assert.equal(capturedArgs[modelIdx + 1], "claude-opus-4-7")
   })
 })
 
