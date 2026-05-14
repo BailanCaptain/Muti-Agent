@@ -1,0 +1,10 @@
+{
+  "verdict": "PASS",
+  "reason": "All 7 evidence files are present; result.json reports PASS; prompt and response record Iron Laws expected=1 and actual=1 for the assembled prompt under test.",
+  "weak_points": [
+    "No raw grep command output or harness-level injection counter log is included.",
+    "Only one assembled prompt/role continuation is covered; there is no matrix across all agents or entrypoints.",
+    "Counting the 'Iron Laws' phrase does not prove other shared-rules sections were not duplicated under different headings.",
+    "prompt.txt is a large rendered prompt, not a minimal reproducible fixture plus command transcript."
+  ]
+}

@@ -1,5 +1,0 @@
-{
-  "verdict": "PASS",
-  "reason": "agent-sessions ledger 100k session sharding correctly limits active count to < 1k as seen in the result evidence.",
-  "weak_points": []
-}

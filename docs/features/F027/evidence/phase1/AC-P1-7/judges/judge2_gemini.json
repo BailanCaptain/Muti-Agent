@@ -1,5 +1,0 @@
-{
-  "verdict": "PASS",
-  "reason": "Evidence clearly shows that the 'Iron Laws' section is injected exactly once into the assembled prompt. The count in the final prompt matches the count in the source shared-rules.md, proving no redundant duplication.",
-  "weak_points": []
-}

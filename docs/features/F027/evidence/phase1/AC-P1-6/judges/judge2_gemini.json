@@ -1,5 +1,0 @@
-{
-  "verdict": "PASS",
-  "reason": "证据包展示了 handbook 正确被切分为 4 个 H2 段落。lint 逻辑成功识别了红样例中的违规复制（severity=red）以及绿样例中的合规交叉引用（severity=green）。基线测试也确认了当前文件无冲突。符合 AC-P1-6 要求。",
-  "weak_points": []
-}

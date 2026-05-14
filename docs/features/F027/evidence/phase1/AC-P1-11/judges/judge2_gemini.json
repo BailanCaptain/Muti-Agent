@@ -1,5 +1,0 @@
-{
-  "verdict": "PASS",
-  "reason": "memory_preflight successfully hits the target F011-backend-hardening-drizzle.md at rank 1.",
-  "weak_points": []
-}

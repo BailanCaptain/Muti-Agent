@@ -1,0 +1,11 @@
+{
+  "verdict": "INCONCLUSIVE",
+  "reason": "result.json reports top_hit=F011 and response shows Rank 1, but evidence omits F021/equivalent score data and the injected prompt section required by the north-star AC.",
+  "weak_points": [
+    "agent_response.txt only contains one Rank 1 line; no ranking list, BM25 scores, or F021/equivalent target evidence is shown.",
+    "prompt.txt contains only the query, not the memory_preflight injected section promised by the evidence plan.",
+    "No Inspector/rendered prompt evidence is included to prove the recall result was injected into context.",
+    "result.json reason mentions F011/F021, but the structured field only records top_hit=F011.",
+    "db_dump.sql and wiki_state.tar.gz are placeholders, and no raw test command output is present."
+  ]
+}

@@ -1,5 +1,0 @@
-{
-  "verdict": "PASS",
-  "reason": "证据包完整覆盖了 fixture 中定义的 5 个场景。agent_response.txt 显示逻辑正确处理了同 series 白名单、不同 series 高相似度报警、关键词链配对以及显式引用。结果与预期一致。",
-  "weak_points": []
-}

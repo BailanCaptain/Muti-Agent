@@ -1,6 +1,10 @@
 {
-  "verdict": "PASS",
-  "reason": "double-pass",
-  "judge1_verdict": "PASS",
-  "judge2_verdict": "PASS"
+  "verdict": "INCONCLUSIVE",
+  "reason": "inconclusive-in-1+2",
+  "judge1_verdict": "INCONCLUSIVE",
+  "judge2_verdict": "INCONCLUSIVE",
+  "judge1": "claude-opus-4-7",
+  "judge2": "codex-gpt-5.4",
+  "judge1_file": "judge1_claude-opus-4-7.json",
+  "judge2_file": "judge2_codex-gpt-5.4.json"
 }
