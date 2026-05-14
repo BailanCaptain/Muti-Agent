@@ -1,0 +1,1 @@
+AC-P1-14 meta input: verify Phase 1 evidence pack framework itself. Expected final state: all AC-P1-1 through AC-P1-14 directories contain 7 evidence files, judge1 JSON, judge2 JSON, and arbitration.json; all arbitrations double-pass.

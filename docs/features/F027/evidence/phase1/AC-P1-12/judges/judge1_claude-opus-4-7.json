@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "All 7 evidence files present; 18 adaptive-recall tests pass covering L1-L5 paths, L5 escalation (no_specific_path, budget, critique_fail, next_level_5, read_wiki_null), and 3 Level5 sink traces; recall_satisfied/escalateReason recorded.",
+  "weak_points": [
+    "db_dump.sql is a narrative note rather than SQL since AC is pure executor behavior — acceptable but limits cross-verification",
+    "wiki_state.tar.gz contents not inspected, only hash/size attested",
+    "prod_config_diff.txt asserts no change but no diff command output shown"
+  ]
+}

@@ -1,0 +1,20 @@
+Command run:
+pnpm exec tsx --test packages/api/src/wiki/capability-registry/capability-registry.test.ts
+Observed output excerpts:
+- loader: wiki/agents/agent-capabilities.yaml real file loads and all 4 agents present: PASS
+- loader missing file/missing agent/missing slots/top_risks non-array fail closed with CapabilityRegistryError: PASS
+- rewriter: Huang -> Guifen envelope has strict 4 main fields; sender sensitive slots have zero occurrence: PASS
+- receiver_capability_digest equals receiver registry digest: PASS
+- receiver handoff_contract enters expected_evidence with dedupe: PASS
+- unknown receiver throws UnknownReceiverError: PASS
+- do_not_section remains empty: PASS
+- task/contextSummary trim: PASS
+- getSelfCapabilityDigest returns self digest and rejects unknown agent: PASS
+- leak-detector GREEN fixture clean hasLeak=false: PASS
+- leak-detector RED fixture hits >=1 finding for sender risk: PASS
+- end-to-end rewriter output has zero leak findings: PASS
+- receiver's own sensitive fields are not counted as sender leak: PASS
+- injection attack that embeds receiver/internal risk is detected: PASS
+- assertEnvelopeReceiverConsistent rejects receiver_alias spoof and accepts matching receiver: PASS
+- aggregate scan catches cross-field split leak and still keeps green fixture clean: PASS
+Targeted run summary: 22 capability-registry tests pass / 0 fail; combined Batch 4 AC12/13 run: 40 pass / 0 fail.

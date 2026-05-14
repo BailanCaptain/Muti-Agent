@@ -1,0 +1,8 @@
+{
+    "verdict":  "BLOCKED",
+    "reason":  "blocked-in-1",
+    "judge1_verdict":  "BLOCKED",
+    "judge2_verdict":  "BLOCKED",
+    "judge1":  "claude-opus-4-7",
+    "judge2":  "codex-gpt-5.4"
+}

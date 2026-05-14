@@ -1,0 +1,4 @@
+-- AC-P1-14 meta completeness snapshot
+-- Complete/double-pass as of scan: AC-P1-1, AC-P1-2, AC-P1-3, AC-P1-4, AC-P1-5, AC-P1-6, AC-P1-7, AC-P1-9, AC-P1-12, AC-P1-13
+-- Missing required evidence pack files as of scan: AC-P1-8, AC-P1-10, AC-P1-11
+-- Final AC-P1-14 required condition is therefore not yet satisfied.

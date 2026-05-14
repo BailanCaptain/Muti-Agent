@@ -1,0 +1,10 @@
+{
+  "verdict": "BLOCKED",
+  "reason": "AC-P1-14 requires all 14 AC packs and judges; Batch 3 AC-P1-8/10/11 evidence is not present yet.",
+  "checks": {
+    "complete_double_pass_acs": ["AC-P1-1", "AC-P1-2", "AC-P1-3", "AC-P1-4", "AC-P1-5", "AC-P1-6", "AC-P1-7", "AC-P1-9", "AC-P1-12", "AC-P1-13"],
+    "missing_or_incomplete_acs": ["AC-P1-8", "AC-P1-10", "AC-P1-11"],
+    "blocked_on": "Batch 3 evidence pack and judges",
+    "fail_closed": true
+  }
+}

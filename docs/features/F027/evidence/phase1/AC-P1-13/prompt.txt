@@ -1,0 +1,1 @@
+AC-P1-13 input: capability registry tests plus fixtures tests/fixtures/capability-registry/red-leaks-sender-risk.json and green-neutralized.json. Expected: red fixture leaks sender risk, green fixture is neutral, rewritten handoff has required receiver fields and zero forbidden sender risk leakage.

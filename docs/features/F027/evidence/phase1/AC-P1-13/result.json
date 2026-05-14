@@ -1,0 +1,16 @@
+{
+  "verdict": "PASS",
+  "reason": "Capability registry loader, handoff rewriter, red/green leak fixtures, receiver consistency guard, and aggregate leak detection passed.",
+  "checks": {
+    "red_fixture": "tests/fixtures/capability-registry/red-leaks-sender-risk.json",
+    "red_fixture_has_leak": true,
+    "green_fixture": "tests/fixtures/capability-registry/green-neutralized.json",
+    "green_fixture_has_leak": false,
+    "required_envelope_fields": ["sender_alias", "receiver_alias", "task", "receiver_capability_digest", "collaboration_contract"],
+    "forbidden_sender_slots_in_rewritten_envelope": 0,
+    "receiver_alias_spoof_guard": true,
+    "aggregate_cross_field_leak_guard": true,
+    "targeted_tests_passed": 22,
+    "test_command": "pnpm exec tsx --test packages/api/src/wiki/capability-registry/capability-registry.test.ts"
+  }
+}

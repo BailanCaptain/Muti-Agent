@@ -1,0 +1,7 @@
+Current meta scan (2026-05-14, feat/F027-unified-memory-architecture):
+- AC-P1-1/2/4/9: present, double-pass, committed in d3addb7 by Fan Debiao.
+- AC-P1-3/5/6/7: present, double-pass, committed in e1cec37 by Guifen.
+- AC-P1-12/13: present, double-pass in current working tree, not yet committed at time of this meta scan.
+- AC-P1-8/10/11: directories exist but only contain empty judges/ directories; missing prompt.txt, agent_response.txt, db_dump.sql, wiki_state.tar.gz, config.hash, prod_config_diff.txt, result.json, judge1, judge2, and arbitration.
+- AC-P1-14: this BLOCKED pack records the dependency instead of fabricating final PASS.
+Conclusion: AC-P1-14 cannot pass until Batch 3 (AC-P1-8/10/11) lands complete evidence and judges.
