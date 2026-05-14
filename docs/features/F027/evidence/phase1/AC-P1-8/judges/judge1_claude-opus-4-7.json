@@ -1,12 +1,9 @@
 {
-  "verdict": "INCONCLUSIVE",
-  "reason": "result.json claims PASS with active=532<1k, but no command output, sharding strategy, or ledger schema shown; agent_response is a single summary line without verifiable execution trace.",
+  "verdict": "PASS",
+  "reason": "All 7 evidence files present; result.json verdict=PASS with exit_code=0; metrics confirm 100k total → 99468 sharded → 532 active (<1000); SQLite dump and raw transcript corroborate counts.",
   "weak_points": [
-    "prompt.txt is N/A — no reproducible test command",
-    "db_dump.sql empty — cannot verify ledger schema or shard distribution",
-    "agent_response.txt is a single summary sentence, no actual command output/logs",
-    "wiki_state.tar.gz size=9 bytes is suspiciously small for a 100k session test",
-    "no evidence of how 100k sessions were generated or how active count was measured",
-    "config.hash is the empty-string SHA256 (e3b0c44...) — suggests no real config captured"
+    "agent_response.txt truncated at 15389 chars (sample only, but key counts visible)",
+    "db_dump.sql truncated at 384400 chars (schema visible, row-level verification limited)",
+    "fixture is script-generated temp SQLite, not production-scale load test"
   ]
 }

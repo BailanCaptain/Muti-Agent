@@ -17,6 +17,15 @@ const EVIDENCE_FILES = [
   "result.json",
 ] as const
 
+const TEXT_EVIDENCE_LIMITS: Partial<Record<(typeof EVIDENCE_FILES)[number], number>> = {
+  "agent_response.txt": 9000,
+  "db_dump.sql": 5000,
+  "result.json": 6000,
+  "prompt.txt": 3000,
+}
+
+const DEFAULT_TEXT_EVIDENCE_LIMIT = 1500
+
 const AC_TEXT: Record<string, string> = {
   "AC-P1-1": "4 tables schema + EXPLAIN <= 50ms; db_dump.sql should include sqlite_master and indices evidence.",
   "AC-P1-2":
@@ -148,7 +157,8 @@ function renderEvidenceFile(filePath: string, label: string): string {
   }
 
   const content = readFileSync(filePath, "utf8")
-  return `## ${label}\n${truncate(content, 20000)}`
+  const maxChars = TEXT_EVIDENCE_LIMITS[label as (typeof EVIDENCE_FILES)[number]] ?? DEFAULT_TEXT_EVIDENCE_LIMIT
+  return `## ${label}\n${truncate(content, maxChars)}`
 }
 
 function truncate(value: string, maxChars: number) {

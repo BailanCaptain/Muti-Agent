@@ -1,1 +1,5 @@
-N/A
+AC-P1-10 viewfinder telephone-game anti-drift evidence
+test_command=(cd packages/api && pnpm exec tsx --test src/wiki/viewfinder/fixture.test.ts src/wiki/viewfinder/monthly-snapshot.test.ts)
+calculation=jaccard(A,B)=|A∩B|/|A∪B|; drift=1-jaccard
+baseline=100 iter without intervention
+with_intervention=100 iter with MonthlySnapshot check every 10 iter and reset when drift>0.3

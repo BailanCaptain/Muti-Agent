@@ -1,6 +1,28 @@
 {
   "verdict": "PASS",
-  "reason": "agent-sessions ledger 100k session sharding processed successfully. Active count < 1k.",
-  "active_count": 532,
-  "sharded_count": 99468
+  "reason": "agent-sessions 100k sharding rerun with auditable raw transcript and SQLite dump; active count is below 1000.",
+  "raw_transcript_lines": 273,
+  "commands": [
+    {
+      "command": "pnpm exec tsx --test src/wiki/agent-sessions/*.test.ts",
+      "cwd": "C:\\Users\\-\\Desktop\\Multi-Agent\\.worktrees\\F027\\packages\\api",
+      "exit_code": 0
+    }
+  ],
+  "metrics": {
+    "total_rows_before_sharding": 100000,
+    "active_count_after_sharding": 532,
+    "sharded_count": 99468,
+    "active_threshold": 1000,
+    "active_rows_dumped": 532,
+    "sharded_sample_rows_dumped": 100,
+    "sqlite_dump_bytes": 389400
+  },
+  "checks": {
+    "test_exit_zero": true,
+    "total_rows_is_100k": true,
+    "active_count_is_532": true,
+    "sharded_count_is_99468": true,
+    "active_under_1000": true
+  }
 }

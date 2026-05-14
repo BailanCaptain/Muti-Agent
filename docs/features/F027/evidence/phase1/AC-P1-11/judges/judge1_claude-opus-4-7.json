@@ -1,9 +1,9 @@
 {
   "verdict": "PASS",
-  "reason": "All 7 evidence files present; result.json verdict=PASS; agent_response Rank 1 hits F011-backend-hardening-drizzle.md matching AC north-star recall target.",
+  "reason": "7 files present; tests exit_code=0; F011 ranked #1 score 1.0, F021 ranked #2 score 1.0; [Recall Pack — Reference Only] section rendered in assembled prompt with both targets injected.",
   "weak_points": [
-    "wiki_state.tar.gz size 9 bytes suggests placeholder rather than real archive",
-    "db_dump.sql is N/A — no DB-level proof of injection rendering",
-    "agent_response shows only Rank 1 line, no evidence of 'injected section' rendering in prompt context"
+    "R-205 row scores 0.00 and falls to inspector-only — north-star recall depends on F011/F021 hits, R-205 contributes nothing to injected pack",
+    "Query 3 (capability_digest 'frontend F018 TranscriptWriter') returns 0 hits, leaving that source path untested in this AC",
+    "db_dump.sql truncated at 15454 chars so wiki_entity_index/FTS5 row contents aren't directly auditable from the dump alone"
   ]
 }

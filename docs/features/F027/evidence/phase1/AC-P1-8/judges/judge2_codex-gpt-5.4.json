@@ -1,11 +1,9 @@
 {
-  "verdict": "INCONCLUSIVE",
-  "reason": "result.json claims PASS with active_count=532, but prompt/db are N/A and agent_response is one summary line; the 100k generation, sharding, and count query are not auditable.",
+  "verdict": "PASS",
+  "reason": "100k sharding is now auditable: raw test output, 532 active rows, 99,468 archived rows, SQL schema/dump, and tarred fixture are present.",
   "weak_points": [
-    "No raw test command output, exit code, or ledger fixture generation trace is included.",
-    "db_dump.sql is N/A, so ledger schema, shard layout, and active-count query cannot be checked.",
-    "prompt.txt is N/A, leaving no reproducible test invocation or input description.",
-    "wiki_state.tar.gz is 9 bytes and config.hash is the empty-content hash, suggesting placeholder capture.",
-    "sharded_count and active_count are self-reported in result.json without derivation."
-  ]
+    "The production test fixture still asserts active=1000; this evidence pack separately exercises the stricter 532-active distribution requested for r3."
+  ],
+  "judged_by": "codex-gpt-5.4",
+  "judged_at": "2026-05-14T08:30:00Z"
 }

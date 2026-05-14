@@ -1,5 +1,82 @@
 {
   "verdict": "PASS",
-  "reason": "memory_preflight hit target F011/F021. BM25 scoring validated.",
-  "top_hit": "F011-backend-hardening-drizzle.md"
+  "reason": "memory_preflight north-star rerun with BM25 top 10 ranking, Inspector markdown, and assembled prompt injection section.",
+  "raw_transcript_lines": 169,
+  "commands": [
+    {
+      "command": "pnpm exec tsx --test src/wiki/memory-preflight/memory-preflight.test.ts src/orchestrator/context-assembler.test.ts",
+      "cwd": "C:\\Users\\-\\Desktop\\Multi-Agent\\.worktrees\\F027\\packages\\api",
+      "exit_code": 0
+    }
+  ],
+  "metrics": {
+    "bm25_primary_query": [
+      {
+        "rank": 1,
+        "path": "wiki/concepts/F011-backend-hardening-drizzle.md",
+        "score": 1,
+        "bm25_rank": -1.9023455429688858
+      },
+      {
+        "rank": 2,
+        "path": "wiki/concepts/R-205-room-history.md",
+        "score": 0,
+        "bm25_rank": -1.2759166888489812
+      }
+    ],
+    "bm25_aggregate_top_10": [
+      {
+        "rank": 1,
+        "source": "task_summary",
+        "query": "F011 drizzle 优化",
+        "path": "wiki/concepts/F011-backend-hardening-drizzle.md",
+        "score": 1
+      },
+      {
+        "rank": 2,
+        "source": "recent_messages",
+        "query": "F021 context window seal threshold drizzle",
+        "path": "wiki/concepts/F021-context-window-resolver.md",
+        "score": 1
+      },
+      {
+        "rank": 3,
+        "source": "task_summary",
+        "query": "F011 drizzle 优化",
+        "path": "wiki/concepts/R-205-room-history.md",
+        "score": 0
+      }
+    ],
+    "f011": {
+      "rank": 1,
+      "score": 1
+    },
+    "f021": {
+      "rank": 2,
+      "score": 1
+    },
+    "injected_hits": [
+      {
+        "path": "wiki/concepts/F011-backend-hardening-drizzle.md",
+        "score": 1
+      },
+      {
+        "path": "wiki/concepts/F021-context-window-resolver.md",
+        "score": 1
+      }
+    ],
+    "inspector_only_hits": [
+      {
+        "path": "wiki/concepts/R-205-room-history.md",
+        "score": 0
+      }
+    ]
+  },
+  "checks": {
+    "test_exit_zero": true,
+    "f011_ranked": true,
+    "f021_ranked": true,
+    "recall_pack_injected": true,
+    "inspector_markdown_rendered": true
+  }
 }

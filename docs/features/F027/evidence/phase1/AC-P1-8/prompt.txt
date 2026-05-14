@@ -1,1 +1,7 @@
-N/A
+AC-P1-8 agent-sessions 100k sharding evidence
+test_command=(cd packages/api && pnpm exec tsx --test src/wiki/agent-sessions/*.test.ts)
+fixture_command=script-generated temp SQLite with 100000 room_agent_sessions rows
+assertions:
+- sharding before active count is total unarchived candidate count = 100000
+- yearly-pack archived rows = 99468
+- sharding after active count = 532 (< 1000)

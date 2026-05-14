@@ -1,1 +1,5 @@
-Query: TOCTOU 防御, backend hardening
+AC-P1-11 memory_preflight north-star evidence
+test_command=(cd packages/api && pnpm exec tsx --test src/wiki/memory-preflight/memory-preflight.test.ts src/orchestrator/context-assembler.test.ts)
+query=桂芬 first wake-up in R-205 about F011 drizzle 优化
+backend=SQLite FTS5 BM25 via WikiEntityFtsProvider
+prompt_render=assemblePrompt memoryPreflight -> [Recall Pack — Reference Only] content section
