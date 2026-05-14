@@ -451,6 +451,70 @@ describe("F027 P13.1 · AdaptiveRecallExecutor", () => {
     assert.equal(result.attempts[0].level, 2)
   })
 
+  it("【范-r2 P2-A 隐藏 P1】critique runner failure → executor 不 throw 而是 fail-closed escalate", async () => {
+    const l5 = recordingLevel5()
+    // critique 直接抛 error 模拟 runner failure / parse failure
+    const failingCritique: CritiqueAgent = {
+      async evaluate() {
+        throw new Error("critique-runner-failed: timeout / parse error")
+      },
+    }
+    const result = await executeAdaptiveRecall(
+      {
+        roomId: "R-201",
+        alias: "桂芬",
+        trigger: "history_keyword",
+        query: "x",
+        taskMemoryPack: [hit("wiki/x.md", 0.5)],
+      },
+      {
+        critique: failingCritique,
+        level2: stubLevel2(),
+        level3: stubLevel3(),
+        level4: stubLevel4(),
+        level5: l5.sink,
+      },
+    )
+
+    // 范-r2 P2-A: critique 失败必须 fail-closed escalate，不能 unhandled throw
+    assert.equal(result.recallPath, 5, "critique error 必须导向 L5 escalate")
+    assert.equal(result.recallSatisfied, false)
+    assert.ok(result.escalateReason, "escalateReason 非空")
+    assert.match(result.escalateReason!, /critique_failed|critique-runner-failed/)
+    assert.equal(l5.calls.length, 1)
+  })
+
+  it("【范-r2 P2-B】L2 critique 返 next_level=5（被 parser 转 escalate）→ executor 直接 L5，不进 L3", async () => {
+    const l5 = recordingLevel5()
+    const result = await executeAdaptiveRecall(
+      {
+        roomId: "R-201",
+        alias: "桂芬",
+        trigger: "history_keyword",
+        query: "x",
+        budget: { maxCritiqueCalls: 5, maxLevels: 5 },
+      },
+      {
+        critique: scriptedCritique({
+          byLevel: {
+            // 模拟 parser 已把 next_level=5 转成 escalate verdict
+            2: { satisfied: false, escalate: true, reason: "exhausted_at_l2" },
+          },
+        }),
+        level2: stubLevel2([]),
+        level3: stubLevel3([hit("messages/should-not-reach", 0.9)]),
+        level4: stubLevel4(),
+        level5: l5.sink,
+      },
+    )
+
+    assert.equal(result.recallPath, 5)
+    assert.equal(result.recallSatisfied, false)
+    assert.match(result.escalateReason!, /exhausted_at_l2/)
+    assert.equal(result.attempts.find((a) => a.level === 3), undefined, "L3 不应被触发")
+    assert.equal(l5.calls.length, 1)
+  })
+
   it("Level 4 路径未找到：read_wiki 返 null → 立即 escalate, attempt level=4 satisfied=false", async () => {
     const l5 = recordingLevel5()
     const result = await executeAdaptiveRecall(

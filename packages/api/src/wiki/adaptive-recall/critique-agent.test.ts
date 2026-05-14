@@ -161,6 +161,25 @@ describe("F027 P13.2 · parseCritiqueJson", () => {
     assert.match(v.reason, /exhausted/)
   })
 
+  it("【范-r2 P2-B】L2 + next_level=5 → 转 escalate（防 fall through 到 L3）", () => {
+    const v = parseCritiqueJson(
+      '{"satisfied": false, "next_level": 5, "reason": "no_history_topic"}',
+      input(2),
+    )
+    assert.equal(v.satisfied, false)
+    assert.ok("escalate" in v && v.escalate === true)
+    assert.match(v.reason, /no_history_topic/)
+  })
+
+  it("【范-r2 P2-B】L3 + next_level=5 → 转 escalate（防 fall through 到 L4 attempt）", () => {
+    const v = parseCritiqueJson(
+      '{"satisfied": false, "next_level": 5, "reason": "exhausted_l3"}',
+      input(3),
+    )
+    assert.equal(v.satisfied, false)
+    assert.ok("escalate" in v && v.escalate === true)
+  })
+
   it("next_level 非整数 / 越界 → 抛", () => {
     assert.throws(
       () =>

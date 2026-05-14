@@ -15,7 +15,8 @@
  * 防 hallucination 校验：
  *   1. nextLevel 必须 > 当前 level（防反复推回）
  *   2. nextLevel=4 必须配 specificPath
- *   3. specificPath 必须形如 `wiki/...` 或当前 hits 中已存在的 path 前缀
+ *   3. specificPath 必须严格形如 `wiki/...md`（小孙 Open #3 strict + 范-r2 P2-A）
+ *      —— 不接受 hits 中已存在的非 wiki path（如 messages/... 进 readWiki 注定 escalate）
  */
 
 import type {
@@ -85,7 +86,8 @@ ${hitsBlock}
 [硬约束]
 - next_level 必须严格大于当前级（${input.level}）
 - next_level=4 必须配 specific_path（严格模式，不接受 fuzzy path）
-- specific_path 只能填本级 hits 中已出现的 path，或形如 "wiki/concepts/..." / "wiki/rules/..." 的标准 wiki 路径
+- specific_path **必须形如 "wiki/concepts/..." / "wiki/rules/..." 的标准 wiki path 且以 .md 结尾**
+- specific_path **不能填 messages/... 或本级 hits 中的非 wiki path**（这类 path 进 read_wiki 会失败 → 浪费一次 fallback）
 
 只返回 JSON，不要任何解释或 markdown 包装：
 {"satisfied": <bool>, "next_level": <2|3|4|5 或省略>, "specific_path": "<wiki 路径或省略>", "escalate": <bool 或省略>, "reason": "<≤80字>"}`

@@ -93,17 +93,17 @@ export async function executeAdaptiveRecall(
       hits: lastHits,
       visitedLevels,
     })
-    if (verdict === "budget_critique" || verdict === "budget_time") {
-      budgetExceeded = true
-      const budgetReason = verdict === "budget_time" ? "max_total_ms_exceeded" : "critique_budget_exceeded"
+    if (isCritiqueSentinel(verdict)) {
+      if (verdict === "budget_critique" || verdict === "budget_time") budgetExceeded = true
+      const reason = sentinelToReason(verdict)
       attempts.push({
         level: 1,
         hitsCount: lastHits.length,
         satisfied: false,
         ms: now() - l1Start,
-        reason: budgetReason,
+        reason,
       })
-      return escalate(`${budgetReason}_at_l1`, lastHits, 1)
+      return escalate(`${reason}_at_l1`, lastHits, 1)
     }
     critiqueCalls++
     attempts.push({
@@ -146,17 +146,17 @@ export async function executeAdaptiveRecall(
       hits,
       visitedLevels,
     })
-    if (verdict === "budget_critique" || verdict === "budget_time") {
-      budgetExceeded = true
-      const budgetReason = verdict === "budget_time" ? "max_total_ms_exceeded" : "critique_budget_exceeded"
+    if (isCritiqueSentinel(verdict)) {
+      if (verdict === "budget_critique" || verdict === "budget_time") budgetExceeded = true
+      const reason = sentinelToReason(verdict)
       attempts.push({
         level: 2,
         hitsCount: hits.length,
         satisfied: false,
         ms: now() - l2Start,
-        reason: budgetReason,
+        reason,
       })
-      return escalate(`${budgetReason}_at_l2`, hits, 2)
+      return escalate(`${reason}_at_l2`, hits, 2)
     }
     critiqueCalls++
     attempts.push({
@@ -202,17 +202,17 @@ export async function executeAdaptiveRecall(
       hits,
       visitedLevels,
     })
-    if (verdict === "budget_critique" || verdict === "budget_time") {
-      budgetExceeded = true
-      const budgetReason = verdict === "budget_time" ? "max_total_ms_exceeded" : "critique_budget_exceeded"
+    if (isCritiqueSentinel(verdict)) {
+      if (verdict === "budget_critique" || verdict === "budget_time") budgetExceeded = true
+      const reason = sentinelToReason(verdict)
       attempts.push({
         level: 3,
         hitsCount: hits.length,
         satisfied: false,
         ms: now() - l3Start,
-        reason: budgetReason,
+        reason,
       })
-      return escalate(`${budgetReason}_at_l3`, hits, 3)
+      return escalate(`${reason}_at_l3`, hits, 3)
     }
     critiqueCalls++
     attempts.push({
@@ -276,18 +276,18 @@ export async function executeAdaptiveRecall(
       hits,
       visitedLevels,
     })
-    if (verdict === "budget_critique" || verdict === "budget_time") {
-      budgetExceeded = true
-      const budgetReason = verdict === "budget_time" ? "max_total_ms_exceeded" : "critique_budget_exceeded"
+    if (isCritiqueSentinel(verdict)) {
+      if (verdict === "budget_critique" || verdict === "budget_time") budgetExceeded = true
+      const reason = sentinelToReason(verdict)
       attempts.push({
         level: 4,
         hitsCount: hits.length,
         satisfied: false,
         ms: now() - l4Start,
-        reason: budgetReason,
+        reason,
         meta: { path },
       })
-      return escalate(`${budgetReason}_at_l4`, hits, 4)
+      return escalate(`${reason}_at_l4`, hits, 4)
     }
     critiqueCalls++
     attempts.push({
@@ -314,21 +314,31 @@ export async function executeAdaptiveRecall(
 }
 
 /**
- * 运行 critique，加 budget 检查。返：
+ * 运行 critique，加 budget 检查 + fail-closed error catch。返：
  *   - CritiqueVerdict — 正常返回
  *   - "budget_critique" — critique 调用次数 cap 触顶（V16.5 行 1418 maxCritiqueCalls）
  *   - "budget_time" — 总耗时 cap 触顶（V16.5 行 1417 maxTotalMs）
+ *   - { kind: "critique_failed", error } — runner 失败 / parse 失败（范-r2 P2-A）
  *
  * 范-r1 P1-1 修：critique **调用前 + 调用后** 都查 maxTotalMs，防"慢 critique 返
- * satisfied 时绕过 cap"路径。caller 收到 budget_time 必须 escalate（同 budget_critique）。
+ * satisfied 时绕过 cap"路径。
+ *
+ * 范-r2 P2-A 修：catch evaluate() 抛错（runner timeout / parse failure），
+ * 返 "critique_failed" 让 caller fail-closed 走 escalate（不 unhandled throw）。
  */
+type CritiqueRunResult =
+  | CritiqueVerdict
+  | "budget_critique"
+  | "budget_time"
+  | { kind: "critique_failed"; error: string }
+
 async function runCritique(
   deps: ExecutorDeps,
   startMs: number,
   currentCritiqueCalls: number,
   budget: RecallBudget,
   input: CritiqueInput,
-): Promise<CritiqueVerdict | "budget_critique" | "budget_time"> {
+): Promise<CritiqueRunResult> {
   const now = deps.now ?? Date.now
   if (now() - startMs > budget.maxTotalMs) {
     return "budget_time"
@@ -336,10 +346,38 @@ async function runCritique(
   if (currentCritiqueCalls >= budget.maxCritiqueCalls) {
     return "budget_critique"
   }
-  const verdict = await deps.critique.evaluate(input)
+  let verdict: CritiqueVerdict
+  try {
+    verdict = await deps.critique.evaluate(input)
+  } catch (err) {
+    return {
+      kind: "critique_failed",
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
   // 关键：critique 调用本身可能耗时，调用后再查 maxTotalMs（防 satisfied 绕过 cap）
   if (now() - startMs > budget.maxTotalMs) {
     return "budget_time"
   }
   return verdict
+}
+
+/** 判断 verdict 是否为 budget/error 哨兵值（4 处 caller 共用） */
+function isCritiqueSentinel(
+  v: CritiqueRunResult,
+): v is "budget_critique" | "budget_time" | { kind: "critique_failed"; error: string } {
+  return (
+    v === "budget_critique" ||
+    v === "budget_time" ||
+    (typeof v === "object" && v !== null && "kind" in v && v.kind === "critique_failed")
+  )
+}
+
+/** 哨兵值 → escalate reason 字符串（4 处 caller 共用） */
+function sentinelToReason(
+  v: "budget_critique" | "budget_time" | { kind: "critique_failed"; error: string },
+): string {
+  if (v === "budget_critique") return "critique_budget_exceeded"
+  if (v === "budget_time") return "max_total_ms_exceeded"
+  return `critique_failed:${v.error.slice(0, 80)}`
 }
