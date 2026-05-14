@@ -1,0 +1,33 @@
+{
+  "verdict": "PASS",
+  "reason": "100-iter telephone game includes per-iteration Jaccard inputs and baseline versus intervention drift.",
+  "raw_transcript_lines": 272,
+  "commands": [
+    {
+      "command": "pnpm exec tsx --test src/wiki/viewfinder/fixture.test.ts src/wiki/viewfinder/monthly-snapshot.test.ts",
+      "cwd": "C:\\Users\\-\\Desktop\\Multi-Agent\\.worktrees\\F027\\packages\\api",
+      "exit_code": 0
+    }
+  ],
+  "metrics": {
+    "baseline_without_intervention": {
+      "final_jaccard": 0.5,
+      "drift": 0.5,
+      "should_replace": true
+    },
+    "with_intervention": {
+      "final_jaccard": 1,
+      "drift": 0,
+      "should_replace": false,
+      "intervention_events": 10,
+      "resets": 8
+    }
+  },
+  "checks": {
+    "test_exit_zero": true,
+    "has_100_baseline_rows": true,
+    "has_100_intervention_rows": true,
+    "baseline_drift_over_30_percent": true,
+    "intervention_drift_at_or_under_30_percent": true
+  }
+}

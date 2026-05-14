@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "The north-star evidence now contains BM25 top 10 with F011/F021, Inspector markdown, assembled Recall Pack injection, raw tests, DB dump, and tarred fixture.",
+  "weak_points": [
+    "BM25 normalized score is corpus-relative for this fixture; Phase 2 still needs calibrated LLM rerank confidence for the strict 0.85/0.6 semantic-confidence contract noted in the spec."
+  ],
+  "judged_by": "codex-gpt-5.4",
+  "judged_at": "2026-05-14T08:30:00Z"
+}

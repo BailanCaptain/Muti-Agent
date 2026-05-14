@@ -1,0 +1,10 @@
+{
+  "verdict": "PASS",
+  "reason": "All 7 evidence files present; result.json verdict=PASS with 22/22 capability-registry tests passing; red fixture leaks confirmed, green fixture clean, rewritten envelope has required 5 fields and zero forbidden sender slots; alias spoof + aggregate cross-field guards verified.",
+  "weak_points": [
+    "db_dump.sql is a narrative stub (AC is file/fixture-based, not DB-backed) — acceptable but not machine-verifiable",
+    "wiki_state.tar.gz integrity attested by sha256 only; archive contents not enumerated in pack",
+    "config.hash lists 4 file hashes without a manifest explaining which files are in-scope vs reference",
+    "prod_config_diff.txt is a textual attestation rather than a diff command output"
+  ]
+}

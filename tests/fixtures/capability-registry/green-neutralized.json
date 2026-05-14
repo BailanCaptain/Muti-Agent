@@ -1,0 +1,24 @@
+{
+  "_comment": "F027 P9 AC-P1-13 GREEN fixture: 经 rewriteHandoffForReceiver 的标准产物。leak-detector 必须 0 finding。仅含 task / receiver_capability_digest / collaboration_contract（4 字段）。真相源 V16.5 chap 13 行 1480-1490。",
+  "sender_alias": "黄仁勋",
+  "receiver_alias": "桂芬",
+  "task": "请帮我把 F018 的 message schema 改一下，加 chained_suspect 字段。",
+  "receiver_capability_digest": "桂芬，Gemini，前端 + F018。Gemini CLI standalone。\n必须：F018 改动配 e2e；UI 改完真起 dev server。\n禁止：改 runtime/ / force push main。\n易在被强质疑时道歉退让 — 先实测再回应。\nF018 改动前读 SessionBootstrap，message schema 改动 sync 黄。",
+  "collaboration_contract": {
+    "sender_alias": "黄仁勋",
+    "context_summary": "F027 P4.5 已合，需要 P6 IngestModal 把 chained_suspect 字段端到端串起来。",
+    "expected_evidence": [
+      "改完跑 pnpm test:api 全绿",
+      "接 F018 任务前必须读 SessionBootstrap",
+      "message schema 改动前 sync 黄仁勋",
+      "UI feature 验收必须有 dev server 截图"
+    ],
+    "receiver_must_do": [
+      "F018 改动必须配 acceptance test",
+      "UI 改完起 dev server 真验（不只看代码）",
+      "接 F018 任务前必须读 SessionBootstrap.md",
+      "message schema 改动必须先 sync 黄仁勋"
+    ],
+    "do_not_section": []
+  }
+}

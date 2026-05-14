@@ -131,16 +131,31 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
 - [ ] **AC-P1-8 · agent-sessions ledger**：per-agent S-XXXX.md 写入 + sharding（按 R-XXX 分目录 path: `agent-sessions/R-042/S-001-黄仁勋.md`）+ yearly pack 1/1 03:00 触发；fixture 模拟 100k session 文件归档后 active < 1k
 - [ ] **AC-P1-9 · 6 类记忆桶物理表**：wiki_memories 5 type + messages 表 1 类 = 6 类全覆盖；canonical_owner 防漂桶 lint 红绿测试（fixture: `tests/fixtures/canonical-owner/red-drift.md` vs `green.md`）
 - [ ] **AC-P1-10 · viewfinder anti-drift**（**漂移度阈值锁定**）：
-  - room_decisions append-only + tombstone 字段
+  - room_decisions append-only + tombstone 字段 + revoke 纠错（写新行 + UPDATE 旧行 superseded_by）
   - MonthlySnapshot full recompile 触发 → 漂移度 = `1 - jaccard(old.decisions_summary, new.decisions_summary)`
   - 漂移度 > 30% 自动 replace + 推审计通知到指定 room
-  - fixture: `tests/fixtures/viewfinder-drift/100-iter-telephone-game.json` 模拟 100 次总结迭代，最终 jaccard ≥ 0.7（drift ≤ 30%）
+  - fixture: `tests/fixtures/viewfinder-drift/100-iter-telephone-game.json` 模拟 100 次总结迭代，**有 anti-drift 干预条件下**（每 10 iter MonthlySnapshot 检测，drift > 30% auto-replace） 最终 jaccard ≥ 0.7（drift ≤ 30%）；同 fixture 含 raw 100 iter（无干预）drift ≈ 0.6 对照组，证明 anti-drift 必需
+  - **验收边界**（小孙 2026-05-13 拍 + 范-r3 CONDITIONAL 修后）：
+    - **P12 Phase 1 范围**：决策 ledger CRUD（append/revoke/tombstone/queries）+ 关键词宽召 + HaikuRunner yes/no 精筛 + Coverage Check 三集合（broad/resolved/unresolved）+ viewfinder 6 段 rule-based 模板（small fans 拍：不上 LLM 编 viewfinder）+ jaccard drift 算法纯函数 + AC fixture
+    - **挂 Phase 2 P19 调度**：`runMonthlySnapshot(roomId)` 闭环触发（NightlyJob cron 1 号 03:00）+ auto-replace IO（写旧 viewfinder 到 audit + replace 新文件） + 审计通知 push
+    - **挂 Phase 3 P20 前端**：manual confirm decision API (POST /api/rooms/:id/decisions) + Inspector 显示 Coverage warning unresolved 列表入口
+    - **Phase 1 fixture 语义**：fixture `with_anti_drift_intervention` 段含 10 个 block intervention_log 模拟 MonthlySnapshot 检测+ reset 闭环；P19 完成后 fixture 应升级为接真 cron 跑（非模拟）
 - [ ] **AC-P1-11 · memory_preflight 自动召回**（北极星兑现 AC）★：
   - 新 agent 进 R-XXX wake-up 时 runtime 自动跑 memory_preflight
   - 提取 task summary 抽 2-5 query → vectorSearch + BM25 hybrid（chap 15 P15 复用 BM25）
   - Quality Gate：score ≥ 0.75 注入 prompt `[Recall Pack]` 区段 / 0.6-0.75 仅 Inspector 看 / < 0.6 丢
   - **fixture 锁定**：新 agent 桂芬第一次进 R-205 讨论 "F011 drizzle 优化" → 必须命中 `F011-backend-hardening-drizzle.md` (sim ≥ 0.85) + `F021-context-window-resolver.md` (sim ≥ 0.6) + Inspector 区列出至少 3 项中置信
-- [ ] **AC-P1-12 · Adaptive Recall 5 级 fallback**：5 级 fallback 全部触发 fixture（Level 1 cache hit / Level 2 search_wiki / Level 3 LLM rerank / Level 4 hard gate / Level 5 escalate to user）+ Hard Gate 命中 escalate 写 wiki_events
+  - **验收边界**（小孙 2026-05-12 拍 B 路径 + 范-r1 P2-4 同步 + 小孙/范-P11.b r1 2026-05-13 拍 Phase 2 依赖）：
+    - **P11.a baseline 锁定**：模块骨架 + Quality Gate + Hard Gate + AC 相对排序（F011 > F021 > B022），物理上 cosine baseline 单 vector 顶 ~0.5
+    - **P11.b 弱阈值锁定**：HybridSearchProvider 接 BM25 (P14) + cosine (F018 EmbeddingService) + LLM rerank stub (P15 NoopReranker) 框架成立；F011/F021 命中 + F011 排首位 + 总召回 ≥ 2 验证 hybrid 召回功能（`memory-preflight.test.ts:709`）
+    - **AC-P1-11 严阈值挂 it.todo 等 Phase 2 真 LLM rerank confidence**：gate confidence ≥ 0.85 + gate confidence ≥ 0.6 + Inspector ≥ 3 物理依赖真 LLM rerank 输出 confidence score（plan chap 12 行 1403 "BM25 + LLM rerank" 原意）。Phase 1 NoopReranker 透传时 hybrid_score = max(bm25_norm, cosine_sim) 同时承担 ranking + gate 双职责，BM25 命中 entity 永远 score=1.0，inspector 中段 (0.6-0.85) 物理不可达。**不改 plan AC 阈值**——范判定"plan 隐含可校准置信度，改 ≥ 1 是验收漂移"。Phase 2 转正路径：接真 LLM rerank（Claude Haiku / Qwen / 本地 cross-encoder）→ 输出 confidence 但**默认未校准**（数字自评、logits、cross-encoder 分都不天然等价概率）→ 必须配 prompt schema + fixture 校准集 + 阈值回归测试，确认 confidence 落 plan 阈值区间后才转正（范-P11.b r2 Q4 修：原"自然落区间"是过度承诺）。同时类型层分离 ranking score vs gate score（范-P11.b r2 Q1：扩 RecallHit 加 rankScore/gateScore，或定义 reranker 覆写 score 后 score === gate confidence）
+- [ ] **AC-P1-12 · Adaptive Recall 5 级 fallback**（**对齐 V16.5 chap 12 行 1398-1410 阶梯**）：5 级 fallback 全部触发 fixture（Level 1 task_memory_pack / Level 2 search_wiki BM25+rerank / Level 3 query_messages FTS5 / Level 4 read_wiki strict path / Level 5 escalate）+ Hard Gate 命中 escalate Sink 被调用
+  - **AC 文字修订**（小孙 2026-05-14 拍 + P13 实施核对 V16.5 chap 12）：原文 "Level 3 LLM rerank" 与 chap 12 行 1402-1406 阶梯对照应为 "Level 3 query_messages FTS5"（LLM rerank 是 Level 2 search_wiki 的一部分，不是独立级）
+  - **验收边界**（小孙 2026-05-13 拍 5 个 Open + P13.4 设计核对）：
+    - **P13 Phase 1 范围**：AdaptiveRecallExecutor 状态机 + Critique Agent (Sonnet 4.6 LlmCritiqueAgent) + 4 个 Level Backend Adapter（MessagesFtsLevel3Backend / FileSystemLevel4Backend + Level2/5 接口）+ Per-turn Budget 强制 + Judge BLOCKED lint + 防 hallucination 校验（next_level / specific_path）+ 55 单测全绿
+    - **挂 Phase 3 P20 wiring**：(a) orchestrator / RoomCompiler 接 executeAdaptiveRecall 调用点；(b) prompt_audit 表 recall_path / recall_satisfied / escalate_reason 等 9 字段真写入；(c) Level5Sink 生产实现（写 wiki_events action='recall_escalate' / 推审计通知 / Inspector UI 显示）— **P13 模块设计上不绑定具体 audit 后端**（避免 library import db/fencing 逻辑），caller 责任
+    - **Phase 1 fixture 语义**：P13 单测端到端验证算法正确性（含真 SQLite FTS5 + 真文件 IO + 状态机 + budget 触顶 + critique 防 hallucination），生产 observability（prompt_audit 行数 / wiki_events trace）属 Phase 3 P20 wiring 验收
+    - **依赖确认**：P14.b messages_fts + query_messages MCP (f91edf5) 已 done，P13.3 Level 3 直接复用
 - [ ] **AC-P1-13 · alias-aware capability registry**（**fixture 锁定**）：handoff 中性改写测试——sender alias 黄仁勋 → @桂芬 时，receiver 看到的 prompt 不暴露 sender risks
   - **fixture**: `tests/fixtures/capability-registry/red-leaks-sender-risk.json`（含未脱敏 prompt 含"黄仁勋 unresolved threads / 黄仁勋 token 占比 / sender 内部状态"等 forbidden strings）vs `green-neutralized.json`（中性改写后仅含 `{ task, receiver_capability_digest, collaboration_contract }` required fields）
   - **断言**：red fixture 必须命中 forbidden strings 至少 1 条 → 触发改写；green fixture 必须 0 命中 forbidden strings + 含全部 required fields
@@ -186,6 +201,34 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
 | **总工时** | | **58-80 单人天** | | **8-13 周（多 agent 并行）** |
 
 **并行性说明**（修 v1 误判）：plan chap 21 依赖**不是**线性链。Phase 1 schema 冻结后，Phase 2 调度（lease + job harness）和 Phase 3 前端（UI shell + tab 容器 + StatusPanel resize）可同时启动；Phase 4 部分（评审 UI）依赖 Phase 3 前端骨架，但验证套件 P18 可在 Phase 1 evidence 框架冻结后并行准备。
+
+## Phase 2 增补 · P12 walkthrough 后发现（2026-05-13）
+
+P12 收尾真数据 walkthrough（R-201, 50 messages, Sonnet 4.6, 48.6s）暴露 viewfinder 6 段语义跟 V16.5 chap 11 vision example 有偏差。**P12 Phase 1 不修**（测试 109/109 全绿 + AC-P1-10 字面达标 + 范-r6 GO；这是"内容生成质量"问题，不是"防漂移基础设施"问题，跟 P12 anti-drift 主线两个维度）。挂 Phase 2 P12.b：
+
+### P12.b · viewfinder 6 段语义二轮打磨
+
+| 段 | V16.5 vision example | 当前实测 | 根因 | 修法 |
+|---|---|---|---|---|
+| §1 当前主题 | "V14 plan 推到可立项状态" — 高层主题抽象 | "选方案 A：由黄仁勋手写 worktree-report.md…（D-8）" — spec 决策原文当主题 | rule-based 模板"取最新 spec/fallback 房间标题"过机械 | 上 narrow LLM 提炼一句话主题（不冲突范 r2 否决"全 LLM"——这是 single-purpose LLM 调用不是全链路）|
+| §3 下一步 + 谁做 | "派范第 4 轮 verify（黄仁勋 owner）" — 未来动作 + owner | "批准干掉孤儿 preview 进程…（D-10）" — **语义反了**：取最新 commit 当下一步 = 已完成当待办 | 当前 `activeDecisions.filter(type=commit).slice(5)` 算法错位 | 改算法：取 pending/working a2a_calls 配 issuer/convener，或取未被 supersede 的最新 spec 决策 |
+| §5 关键决策 | "D-018: V13 升级到 V14" — pivot/spec 级 | D-11 reject + D-10/9/8/7 worktree 清理 commit 平铺 | 没"重要性加权" | decision_type 加权：pivot/spec 优先于 commit/reject；commit 类只在前 5 条空缺时填补 |
+| §6 不要再做 | "D-005 [tombstone, msg_180]" — tombstone 永久红线 | "删除某些已完成…（D-11 reject, confidence 0.60）" extractor 自承"上下文不足" | 用 reject decisions 替 tombstone | 严格只取 `tombstone=1`；reject 决策不进 §6（reject 可被 supersede，不是永久红线）|
+
+**P12.b AC**：
+- [ ] **AC-P2-6 · §3 下一步算法修复**：fixture 含 pending a2a_call + 未 supersede spec 决策时，§3 输出"等 <issuer> [a2a_call=...]"或"<spec.content>（<owner>）"，不再输出最新 commit
+- [ ] **AC-P2-7 · §6 严格 tombstone**：fixture 含 reject decision (tombstone=0) + tombstone decision (tombstone=1)，§6 只渲染 tombstone=1 项
+- [ ] **AC-P2-8 · §5 加权排序**：fixture 含 pivot×1 + spec×2 + reject×1 + commit×5，§5 前 5 条按 pivot>spec>reject>commit 排序
+- [ ] **AC-P2-9 · §1 主题提炼**（可选 LLM 路径）：Sonnet 4.6 prompt 给最新 spec 决策原文 + 房间 title → 输出 ≤ 30 字主题概括；fallback：纯 rule-based 抽 spec 决策动词宾语
+
+**工时估**：§3/§6 各 1h（算法 + 改 fixture）+ §5 30min（加权排序）+ §1 LLM 2-3h（含 prompt 调优 + 校准）= 4.5-6.5h。
+
+### 其他 Phase 2 增补
+
+| 项 | 来源 | 修法 |
+|---|---|---|
+| §1 长期 spec 投影 | walkthrough P2 痛点：50 条窗口外 spec 决策不显示 | 扩窗口或 markTombstone(spec_id) 让永久不被换出 |
+| §3 time-decay 自动 sweep | V16.5 chap 11 暗含 | commit 决策超 7 天无新 commit 引用则 status='expired'，§3 不再渲染 |
 
 ## 复用 / 不复用决策
 

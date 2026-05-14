@@ -1,0 +1,8 @@
+{
+  "verdict": "PASS",
+  "reason": "All 7 evidence files present; 100-iter baseline drift=0.5 (>0.3) vs intervention drift=0 (≤0.3); test exit 0; per-iter Jaccard table verifies AC.",
+  "weak_points": [
+    "baseline drift exactly 0.5 borderline-deterministic fixture rather than stochastic",
+    "intervention reaches drift=0 suggests reset dominates rather than gradual control"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "verdict": "PASS",
+  "reason": "multi-drop cross-correlation logic verified across 5 scenarios (series_member, high_sim, keyword_chain, reference_link, isolated).",
+  "scenarios": {
+    "s1": "series_member",
+    "s2": "chained_suspect",
+    "s3": "chained_suspect",
+    "s4": "chained_suspect",
+    "s5": "isolated"
+  }
+}

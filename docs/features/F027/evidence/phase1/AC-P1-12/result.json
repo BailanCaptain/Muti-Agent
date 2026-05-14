@@ -1,0 +1,11 @@
+{
+  "verdict": "PASS",
+  "reason": "Adaptive Recall tests exercised L1-L5 paths, budget escalation, strict L4 path handling, fail-closed critique errors, and Level5 sink traces.",
+  "checks": {
+    "recall_paths_triggered": [1, 2, 3, 4, 5],
+    "l5_cases": ["no_specific_path", "maxLevels", "maxCritiqueCalls", "maxTotalMs", "critique_failed", "next_level_5", "read_wiki_null"],
+    "level5_sink_traces": ["NoopLevel5Sink", "ConsoleWarnLevel5Sink", "RecordingLevel5Sink"],
+    "targeted_tests_passed": 18,
+    "test_command": "pnpm exec tsx --test packages/api/src/wiki/adaptive-recall/executor.test.ts packages/api/src/wiki/adaptive-recall/level5-escalate-sink.test.ts"
+  }
+}

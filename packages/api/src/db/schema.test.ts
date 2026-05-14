@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-test("schema exports all 11 tables (F018 messageEmbeddings + F019 workflowSop)", async () => {
+test("schema exports all tables (F018 + F019 + F026 a2aCalls + F027 P0 4 表)", async () => {
   const schema = await import("./schema")
 
   const expectedTables = [
@@ -16,6 +16,11 @@ test("schema exports all 11 tables (F018 messageEmbeddings + F019 workflowSop)",
     "authorizationAudit",
     "messageEmbeddings", // F018 AC6.1 / AC8.2 — F007 AC5.2 回填
     "workflowSop", // F019 P2 — 告示牌状态机
+    "a2aCalls", // F026 ADR-002 Call Tree
+    "wikiEvents", // F027 P0 chap 5
+    "wikiMemories", // F027 P0 chap 14
+    "roomDecisions", // F027 P0 chap 11
+    "promptAudit", // F027 P0 chap 18
   ]
 
   for (const name of expectedTables) {
@@ -114,4 +119,131 @@ test("F026 P5 T0: messages table has nullable a2aCallId column", async () => {
   const { getTableColumns } = await import("drizzle-orm")
   const cols = getTableColumns(schema.messages)
   assert.ok(cols.a2aCallId, "messages should have a2aCallId column (F026 P5 T0)")
+})
+
+// F027 P0 · 4 张地基表列契约（V16.5-final.md chap 5 / 11 / 14 / 18）。
+// 列存在性 + reserved_1/reserved_2 NULL 兜底 + 关键 NOT NULL/DEFAULT 校验。
+test("F027 P0 chap 5: wiki_events 列契约（CAS + fencing + reserved）", async () => {
+  const schema = await import("./schema")
+  const { getTableColumns } = await import("drizzle-orm")
+  const cols = getTableColumns(schema.wikiEvents)
+  // 范 review nit: 全列契约 (drift detection)，不只校 CAS/fencing 关键列
+  for (const c of [
+    "id",
+    "ts",
+    "alias",
+    "action",
+    "path",
+    "baseHash",
+    "contentHash",
+    "attemptedHash",
+    "diffSummary",
+    "sourceMessageIds",
+    "promotionTarget",
+    "reason",
+    "fencingToken",
+    "leaderTerm",
+    "result",
+    "error",
+    "state",
+    "resultManifestVersion",
+    "reserved1",
+    "reserved2",
+  ]) {
+    assert.ok(cols[c as keyof typeof cols], `wikiEvents should have ${c}`)
+  }
+})
+
+test("F027 P0 chap 14: wiki_memories 列契约（type/canonical_owner_path + reserved）", async () => {
+  const schema = await import("./schema")
+  const { getTableColumns } = await import("drizzle-orm")
+  const cols = getTableColumns(schema.wikiMemories)
+  for (const c of [
+    "id",
+    "type",
+    "name",
+    "canonicalOwnerPath",
+    "promotionTarget",
+    "ttlDays",
+    "supersedes",
+    "replacesInBuckets",
+    "sourceMessageIds",
+    "contributedBy",
+    "crossRefs",
+    "dedupDecision",
+    "body",
+    "state",
+    "createdAt",
+    "updatedAt",
+    "reserved1",
+    "reserved2",
+  ]) {
+    assert.ok(cols[c as keyof typeof cols], `wikiMemories should have ${c}`)
+  }
+})
+
+test("F027 P0 chap 11: room_decisions 列契约（append-only + tombstone + reserved）", async () => {
+  const schema = await import("./schema")
+  const { getTableColumns } = await import("drizzle-orm")
+  const cols = getTableColumns(schema.roomDecisions)
+  for (const c of [
+    "decisionId",
+    "roomId",
+    "decidedAt",
+    "decidedBy",
+    "decisionType",
+    "content",
+    "sourceMessageIds",
+    "sourceQuote",
+    "sourceHash",
+    "tombstone",
+    "supersededBy",
+    "fencingToken",
+    "extractorConfidence",
+    "coverageCheckPassed",
+    "reserved1",
+    "reserved2",
+  ]) {
+    assert.ok(cols[c as keyof typeof cols], `roomDecisions should have ${c}`)
+  }
+})
+
+test("F027 P0 chap 18: prompt_audit 列契约（V15.1+V15.2 召回字段全 + reserved）", async () => {
+  const schema = await import("./schema")
+  const { getTableColumns } = await import("drizzle-orm")
+  const cols = getTableColumns(schema.promptAudit)
+  for (const c of [
+    "id",
+    "createdAt",
+    "alias",
+    "roomId",
+    "scenario",
+    "totalTokens",
+    "cap",
+    "partsJson",
+    "notInjectedJson",
+    "ironLawsCount",
+    "rawText",
+    "sourceEventIds",
+    // V15.1
+    "recallQueries",
+    "recallResults",
+    "recallTotalTokens",
+    "recallRejectedReasons",
+    // V15.2 Adaptive Recall
+    "recallRequired",
+    "recallTrigger",
+    "recallPath",
+    "topScore",
+    "recallSatisfied",
+    "escalateReason",
+    "recallTotalMs",
+    "recallCritiqueCalls",
+    "recallBudgetExceeded",
+    "agentSessionRef",
+    "reserved1",
+    "reserved2",
+  ]) {
+    assert.ok(cols[c as keyof typeof cols], `promptAudit should have ${c}`)
+  }
 })

@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "Verification of 'Only One Injection' contract for Iron Laws in assemblePrompt.",
+  "checks": {
+    "shared_rules_count": 1,
+    "assembled_prompt_count": 1,
+    "unique_injection": true
+  }
+}

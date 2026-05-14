@@ -1,0 +1,11 @@
+{
+  "verdict": "PASS",
+  "reason": "4 F027 P0 tables and required indices exist; EXPLAIN uses idx_a2a_calls_session_status_updated; 1000-call query observed at 42.3072ms.",
+  "checks": {
+    "tables": ["wiki_events", "wiki_memories", "room_decisions", "prompt_audit"],
+    "indices_present": ["idx_wiki_events_path", "idx_wiki_events_alias", "idx_wiki_events_state", "idx_wiki_events_term", "idx_wiki_memories_type", "idx_wiki_memories_canonical", "idx_wiki_memories_state", "idx_room_decisions", "idx_prompt_audit"],
+    "explain_uses_index": true,
+    "observed_ms_for_1000_call_query": 42.3072,
+    "test_command": "pnpm exec tsx --test packages/api/src/db/drizzle-instance.test.ts packages/api/src/db/schema.test.ts"
+  }
+}

@@ -36,3 +36,12 @@ scripts/record-events.*
 scripts/analyze-events.*
 *.log
 .env.development.local.backup-by-preview
+
+# Evidence pack raw 文件 (V16.5 chap 16 精简版 — 2026-05-14 小孙拍)
+# 入 git 的只有 result.json + judges/，raw 重跑可现产
+docs/features/*/evidence/**/prompt.txt
+docs/features/*/evidence/**/agent_response.txt
+docs/features/*/evidence/**/db_dump.sql
+docs/features/*/evidence/**/wiki_state.tar.gz
+docs/features/*/evidence/**/config.hash
+docs/features/*/evidence/**/prod_config_diff.txt

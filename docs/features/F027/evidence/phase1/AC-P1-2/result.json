@@ -1,0 +1,16 @@
+{
+  "verdict": "PASS",
+  "reason": "update_wiki ACL/CAS/lease/fencing/path containment passed; Promise.all(100 callers) race produced one commit and 99 retryable lease_expired rejects.",
+  "checks": {
+    "targeted_tests_passed": 48,
+    "race_scheduled_via": "Promise.all(100 callers)",
+    "race_attempts": 100,
+    "race_duration_ms": 12,
+    "race_counts": { "ok": 1, "lease_expired": 99 },
+    "winner": { "attempt": 0, "eventId": 1, "fencingToken": "1" },
+    "retry_log": { "attempt_0": "ok/non-retryable/eventId=1", "attempts_1_to_99": "lease_expired/retryable/eventId=null" },
+    "committed_events": 1,
+    "final_lease": null,
+    "covered_statuses": ["ok", "denied_acl", "lease_expired", "conflict", "stale_token", "path_invalid", "internal", "not_implemented"]
+  }
+}

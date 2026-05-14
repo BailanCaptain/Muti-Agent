@@ -10,6 +10,9 @@ import type { SessionService } from "../services/session-service"
 import type { WorkflowSopService } from "../services/workflow-sop-service"
 import { WorkflowSopValidationError, validateUpdateSopBody } from "../services/workflow-sop-service"
 import type { UpdateSopInput } from "../services/workflow-sop-types"
+import type { WikiAction } from "../wiki/acl-types"
+import { WikiPathInvalidError, safeWikiPath } from "../wiki/path-containment"
+import type { WikiServices } from "../wiki/wiki-services"
 import type { RealtimeBroadcaster } from "./ws"
 
 type CallbackBody = {
@@ -123,6 +126,25 @@ export function registerCallbackRoutes(
       text: string
       hits: Array<{ messageId: string; chunkText: string; score: number }>
     }>
+    // F027 P14.b: messages_fts BM25 召回（搭配 recall_similar_context 语义召回的另一路）
+    // scope = roomId 维度（同 session group）；threadId / role 可选过滤。
+    queryMessages?: (params: {
+      roomId: string
+      query: string
+      topK: number
+      threadId?: string
+      role?: string
+    }) => {
+      hits: Array<{
+        messageId: string
+        threadId: string
+        role: string
+        content: string
+        createdAt: string
+        bm25Rank: number
+        score: number
+      }>
+    }
     requestDecision?: (
       sessionGroupId: string,
       params: {
@@ -153,6 +175,8 @@ export function registerCallbackRoutes(
     }) => Promise<{ ok: true; imageUrl: string }>
     /** F019 P3: WorkflowSop 告示牌引擎. Used by /api/callbacks/update-workflow-sop. */
     workflowSopService?: WorkflowSopService
+    /** F027 P3: chap 6 update_wiki MCP — ACL/CAS/lease/fencing 全套。 */
+    wikiServices?: WikiServices
   },
 ) {
   app.post("/api/callbacks/post-message", async (request: FastifyRequest, reply: FastifyReply) => {
@@ -428,6 +452,69 @@ export function registerCallbackRoutes(
       return { text: "(no relevant context found)", hits: [] }
     },
   )
+
+  // F027 P14.b: query_messages MCP backend — BM25 全文召回（搭配 recall_similar_context
+  // 语义召回，两路语义/字面）。scope 默认 = 当前 invocation 所在 room；threadId / role
+  // 可选过滤。返回 hits 列表给 agent 消费，sanitize 处理同 recall_similar_context。
+  app.get("/api/callbacks/query-messages", async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = request.query as {
+      invocationId?: string
+      callbackToken?: string
+      query?: string
+      topK?: string
+      threadId?: string
+      role?: string
+    }
+    const invocation = assertInvocation(
+      options.invocations,
+      query.invocationId,
+      query.callbackToken,
+    )
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    const q = query.query?.trim()
+    if (!q) {
+      reply.code(400)
+      return { error: "query is required." }
+    }
+
+    const topKParsed = query.topK ? Number.parseInt(query.topK, 10) : 10
+    const topK = Number.isFinite(topKParsed) && topKParsed > 0 ? Math.min(topKParsed, 100) : 10
+
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+
+    const sessionGroup = options.repository.getSessionGroupById(thread.sessionGroupId)
+    const roomId = (sessionGroup as { roomId?: string | null } | undefined)?.roomId
+    if (!roomId) {
+      // session_group 没 roomId（极少；F022 backfillRoomIds 启动时回填，正常路径不应触发）。
+      // 范-r1 P3-2：不静默吃；记 warn 让运维能定位 backfill 失漏。返 hits=[] 不阻塞 caller。
+      app.log.warn(
+        { sessionGroupId: thread.sessionGroupId, threadId: thread.id },
+        "F027 P14.b query_messages: session_group missing roomId (F022 backfill drift?) — returning empty",
+      )
+      return { hits: [] }
+    }
+
+    if (options.queryMessages) {
+      return options.queryMessages({
+        roomId,
+        query: q,
+        topK,
+        threadId: query.threadId?.trim() || undefined,
+        role: query.role?.trim() || undefined,
+      })
+    }
+
+    // queryMessages not wired → graceful empty
+    return { hits: [] }
+  })
 
   // --- New A2A callback routes ---
 
@@ -809,4 +896,172 @@ export function registerCallbackRoutes(
       }
     },
   )
+
+  // ─── F027 P3 chap 6 update_wiki MCP: 3 endpoint ──────────────────────────────
+
+  app.post("/api/callbacks/acquire-wiki-lease", async (request, reply) => {
+    const body = request.body as {
+      invocationId?: string
+      callbackToken?: string
+      path?: string
+      ttlSeconds?: number
+    }
+    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+    if (!options.wikiServices) {
+      reply.code(503)
+      return { error: "WikiServices not wired" }
+    }
+    if (typeof body.path !== "string" || body.path.length === 0) {
+      reply.code(400)
+      return { error: "path is required" }
+    }
+    // [范-r1 P1] path containment 早 reject —— 拿到合法 path 才能进 lease 表
+    try {
+      safeWikiPath(options.wikiServices.wikiRoot, body.path)
+    } catch (err) {
+      if (err instanceof WikiPathInvalidError) {
+        reply.code(400)
+        return { status: "path_invalid", error: err.message }
+      }
+      throw err
+    }
+    const lease = options.wikiServices.leases.acquireLease({
+      path: body.path,
+      ownerAlias: thread.alias,
+      ttlSeconds: typeof body.ttlSeconds === "number" ? body.ttlSeconds : 30,
+      // P3.5 之前 hardcoded；service.leaderTerm() 才是 wiki_events 写入用的实际 term
+      leaderTerm: "term-1",
+    })
+    if (!lease) {
+      reply.code(409)
+      return { status: "lease_held", error: "path currently leased by another owner" }
+    }
+    return { status: "ok", fencingToken: lease.fencingToken, expiresAt: lease.expiresAt }
+  })
+
+  app.get("/api/callbacks/read-wiki", async (request, reply) => {
+    const query = request.query as {
+      invocationId?: string
+      callbackToken?: string
+      path?: string
+    }
+    const invocation = assertInvocation(
+      options.invocations,
+      query.invocationId,
+      query.callbackToken,
+    )
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+    if (!options.wikiServices) {
+      reply.code(503)
+      return { error: "WikiServices not wired" }
+    }
+    if (typeof query.path !== "string" || query.path.length === 0) {
+      reply.code(400)
+      return { error: "path is required" }
+    }
+    // [范-r1 P1] path containment —— 防 ../../../etc/passwd 通过 fs.readFileSync 暴露
+    let abs: string
+    try {
+      abs = safeWikiPath(options.wikiServices.wikiRoot, query.path)
+    } catch (err) {
+      if (err instanceof WikiPathInvalidError) {
+        reply.code(400)
+        return { status: "path_invalid", error: err.message }
+      }
+      throw err
+    }
+    // 简化读：直接 fs 拿 + 算 hash；正式 P4 后用 read_wiki service（含 ACL read 校验）
+    const fs = await import("node:fs")
+    const crypto = await import("node:crypto")
+    try {
+      const content = fs.readFileSync(abs, "utf8")
+      const hash = `sha256:${crypto.createHash("sha256").update(content).digest("hex")}`
+      return { status: "ok", content, hash }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return { status: "not_found", content: null, hash: null }
+      }
+      reply.code(500)
+      return { error: (err as Error).message }
+    }
+  })
+
+  app.post("/api/callbacks/update-wiki", async (request, reply) => {
+    const body = request.body as {
+      invocationId?: string
+      callbackToken?: string
+      path?: string
+      action?: WikiAction
+      baseHash?: string | null
+      content?: string
+      fencingToken?: string
+      reason?: string
+      sourceMessageIds?: string[]
+    }
+    const invocation = assertInvocation(options.invocations, body.invocationId, body.callbackToken)
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+    const thread = options.repository.getThreadById(invocation.threadId)
+    if (!thread) {
+      reply.code(404)
+      return { error: "Thread not found." }
+    }
+    if (!options.wikiServices) {
+      reply.code(503)
+      return { error: "WikiServices not wired" }
+    }
+    if (
+      typeof body.path !== "string" ||
+      typeof body.action !== "string" ||
+      typeof body.content !== "string" ||
+      typeof body.fencingToken !== "string"
+    ) {
+      reply.code(400)
+      return { error: "path, action, content, fencingToken are required" }
+    }
+    const isService = thread.alias.startsWith("system-auto-")
+    const result = options.wikiServices.updateWiki.updateWiki(
+      {
+        path: body.path,
+        action: body.action,
+        baseHash: body.baseHash ?? null,
+        content: body.content,
+        fencingToken: body.fencingToken,
+        reason: body.reason,
+        sourceMessageIds: body.sourceMessageIds,
+      },
+      { alias: thread.alias, isServiceIdentity: isService },
+    )
+    if (result.status !== "ok") {
+      // 把 service-level reject 映射到 4xx/5xx，让 MCP client 能区分
+      const code =
+        result.status === "denied_acl"
+          ? 403
+          : result.status === "lease_expired" || result.status === "stale_token"
+            ? 409
+            : result.status === "conflict"
+              ? 409
+              : result.status === "not_implemented"
+                ? 501
+                : result.status === "internal"
+                  ? 500 // [范-r1 P3] atomic_write_failed 走 5xx，不再返 4xx 让 client 按 CAS 重试
+                  : 400 // path_invalid / schema_invalid / 缺参
+      reply.code(code)
+    }
+    return result
+  })
 }

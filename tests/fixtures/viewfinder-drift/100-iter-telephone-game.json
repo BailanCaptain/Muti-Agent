@@ -1,0 +1,79 @@
+{
+  "description": "F027 P12 AC-P1-10: 100-iter telephone game with anti-drift intervention",
+  "generated_by": "scripts/generate-telephone-fixture.ts",
+  "initial": "F027 viewfinder anti drift decision ledger tombstone coverage gate haiku rule based extractor merger",
+  "iterations": 100,
+  "variation_params": {
+    "replaceP": 0.05,
+    "deleteP": 0.02,
+    "insertP": 0.02,
+    "seed": 42
+  },
+  "raw_no_intervention": {
+    "final_text": "merger gate merger rule merger drift F026 F027 coverage",
+    "final_jaccard_with_initial": 0.4,
+    "drift": 0.6,
+    "should_replace": true,
+    "note": "raw 100 iter without anti-drift always exceeds 30% — 证明 anti-drift 必需"
+  },
+  "with_anti_drift_intervention": {
+    "intervention_protocol": "Every 10 iter: MonthlySnapshot computeDrift; drift > 30% → auto-replace (reset to initial)",
+    "intervention_log": [
+      {
+        "iter": 10,
+        "action": "reset",
+        "drift": 0.625
+      },
+      {
+        "iter": 20,
+        "action": "reset",
+        "drift": 0.5882352941176471
+      },
+      {
+        "iter": 30,
+        "action": "reset",
+        "drift": 0.375
+      },
+      {
+        "iter": 40,
+        "action": "reset",
+        "drift": 0.4375
+      },
+      {
+        "iter": 50,
+        "action": "reset",
+        "drift": 0.3125
+      },
+      {
+        "iter": 60,
+        "action": "reset",
+        "drift": 0.5
+      },
+      {
+        "iter": 70,
+        "action": "reset",
+        "drift": 0.33333333333333337
+      },
+      {
+        "iter": 80,
+        "action": "reset",
+        "drift": 0.5
+      },
+      {
+        "iter": 90,
+        "action": "reset",
+        "drift": 0.375
+      },
+      {
+        "iter": 100,
+        "action": "reset",
+        "drift": 0.4
+      }
+    ],
+    "final_text": "F027 viewfinder anti drift decision ledger tombstone coverage gate haiku rule based extractor merger",
+    "final_jaccard_with_initial": 1,
+    "final_drift": 0,
+    "final_should_replace": false,
+    "AC_P1_10_pass": true
+  }
+}

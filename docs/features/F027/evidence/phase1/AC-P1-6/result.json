@@ -1,0 +1,15 @@
+{
+  "verdict": "PASS",
+  "reason": "Handbook slicing and cross-file dedupe lint logic verified.",
+  "slicing": {
+    "compileRules_len": 1668,
+    "sanitizeRules_len": 1470,
+    "agentActions_len": 2574,
+    "devHuman_len": 868
+  },
+  "lint": {
+    "red_findings": 1,
+    "green_findings": 1,
+    "baseline_clean": true
+  }
+}

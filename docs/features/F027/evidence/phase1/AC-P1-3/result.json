@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "3-phase compilation pipeline verified with RAG tutorial fixture.",
+  "checks": {
+    "phase1_entities": 0,
+    "phase2_valid": true,
+    "phase3_result": "wiki/concepts/draft/2026-05-12-rag-retrieval-augmented-generation-入门.md"
+  }
+}

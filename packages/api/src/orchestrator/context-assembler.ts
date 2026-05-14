@@ -50,6 +50,41 @@ export type AssemblePromptInput = {
    * Source 不限（user → cold 与 agent → cold 同等覆盖）。
    */
   coldTargetBurst?: { burstSection: string; tombstoneSection: string | null }
+
+  // ─── F027 P5 · V16.4 新增 7 字段 (V16.5 chap 4 行 393-401) ─────────────
+  /** F027 chap 8 RoomCompiler 联动（F022 R-XXX）。Phase 1 仅作 metadata，未驱动逻辑。 */
+  roomId?: string | null
+  /** 显式区分 wake-up / handoff / session_bootstrap 场景，决定哪些区段注入 */
+  scenario?: "session_bootstrap" | "wake_up" | "a2a_handoff"
+  /**
+   * F027 chap 11 viewfinder reference 视图（room 防漂移）。
+   * Phase 1 caller 传已 stringify 的 markdown body；P11 实施完整 ViewfinderRef 后再细化。
+   */
+  viewfinder?: { body: string } | null
+  /**
+   * F027 chap 13 capability_digest_for_self（P9 capability registry 输出）。
+   * caller 调 getSelfCapabilityDigest(targetAlias, registry) 拿到。
+   * 进 systemPrompt（agent 身份层），不进 content（V16.5 chap 4 行 417-419）。
+   */
+  capabilityDigest?: string | null
+  /**
+   * F027 chap 27 handbook H2 切片 — agent actions 部分（仅 first wake-up 注入）。
+   * caller 调 loadHandbookSlices(wikiRoot).agentActions 拿到。
+   */
+  handbookSlices?: { agentActions: string } | null
+  /**
+   * F027 chap 10 memory_preflight 高置信召回（≥ 0.75）。
+   * Phase 1 简化 shape：caller 传已过滤的 hits；P11 实施 TaskMemoryPack 后再细化。
+   */
+  memoryPreflight?: {
+    hits: Array<{ score: number; summary: string; path?: string }>
+  } | null
+  /**
+   * F027 chap 13 handoff 中性改写（不暴露 sender risks）。
+   * F026 EnvelopeBuilder 在派发时填充（V16.5 chap 4 行 422-431）。
+   * Phase 1 简化 shape：receiverAlias + taskSummary 两个派生字段。
+   */
+  handoffContext?: { receiverAlias: string; taskSummary: string } | null
 }
 
 export type AssemblePromptResult = {
@@ -112,6 +147,19 @@ export async function assemblePrompt(
     }
   }
 
+  // F027 P5 · V16.5 chap 4 行 405：capabilityDigest 进 systemPrompt（agent 身份层）。
+  // 不进 content（V16.5 chap 4 行 417-419 严格区分：systemPrompt = agent 身份；
+  // content = reference-only）。capability_digest_for_self 是 agent 自我介绍属性，
+  // sanitize 是为防 wiki 修改后被 prompt-injection 污染（registry 来自 wiki/agents/）。
+  if (input.capabilityDigest) {
+    const sanitized = sanitizeHandoffBody(input.capabilityDigest)
+    if (sanitized) {
+      systemParts.push("")
+      systemParts.push("## Capability Digest")
+      systemParts.push(sanitized)
+    }
+  }
+
   const systemPrompt = systemParts.join("\n")
 
   // ── Content (user message) ─────────────────────────────────────────
@@ -151,6 +199,69 @@ export async function assemblePrompt(
       contentSections.push(input.coldTargetBurst.tombstoneSection)
     }
     contentSections.push("")
+  }
+
+  // ─── F027 P5 · 4 个新 reference-only 区段（V16.5 chap 4 行 362-367） ──────
+  // 顺序固定（AC-P1-7）：Viewfinder → Recall Pack → Handbook → Collaboration Contract
+  // 全部以 [Section — Reference Only] 包裹，body 入 wrapper 前过 sanitizeHandoffBody
+  // 防 LLM 生成 / wiki 写入的内容含 directive-like 行 (SYSTEM:/IMPORTANT:) 或伪闭合标签。
+
+  // 1. Viewfinder — Reference Only（room 防漂移视图）
+  if (input.viewfinder?.body) {
+    const sanitized = sanitizeHandoffBody(input.viewfinder.body)
+    if (sanitized) {
+      contentSections.push("[Viewfinder — Reference Only]")
+      contentSections.push(sanitized)
+      contentSections.push("[/Viewfinder]")
+      contentSections.push("")
+    }
+  }
+
+  // 2. Recall Pack — Reference Only（memory_preflight 高置信召回 ≥ 0.75）
+  // V16.5 chap 4 行 366："≥ 0.75 才注入；0.6-0.75 仅 Inspector 看"——caller 责任过滤
+  if (input.memoryPreflight && input.memoryPreflight.hits.length > 0) {
+    const lines: string[] = ["[Recall Pack — Reference Only]"]
+    for (const hit of input.memoryPreflight.hits) {
+      const sanitized = sanitizeHandoffBody(hit.summary)
+      if (!sanitized) continue
+      const pathPart = hit.path ? ` path=${hit.path}` : ""
+      lines.push(`- (score=${hit.score.toFixed(2)}${pathPart}) ${sanitized}`)
+    }
+    if (lines.length > 1) {
+      lines.push("[/Recall Pack]")
+      lines.push("")
+      contentSections.push(...lines)
+    }
+  }
+
+  // 3. Handbook — Agent Actions — Reference Only（仅 first wake-up）
+  // V16.5 chap 4 行 365：capability_digest 已覆盖最小动作集时 skip
+  // Phase 1 简化：scenario === 'wake_up' 且 caller 提供 handbookSlices.agentActions 即注入
+  if (input.scenario === "wake_up" && input.handbookSlices?.agentActions) {
+    const sanitized = sanitizeHandoffBody(input.handbookSlices.agentActions)
+    if (sanitized) {
+      contentSections.push("[Handbook — Agent Actions — Reference Only]")
+      contentSections.push(sanitized)
+      contentSections.push("[/Handbook]")
+      contentSections.push("")
+    }
+  }
+
+  // 4. Collaboration Contract — Reference Only（仅 a2a_handoff）
+  // V16.5 chap 4 行 422-431：handoffContext 由 F026 EnvelopeBuilder 派发时填充。
+  // P9 capability registry rewriteHandoffForReceiver 已保证不含 sender risks。
+  if (input.scenario === "a2a_handoff" && input.handoffContext) {
+    const sanitizedReceiver = sanitizeHandoffBody(input.handoffContext.receiverAlias)
+    const sanitizedTask = sanitizeHandoffBody(input.handoffContext.taskSummary)
+    if (sanitizedReceiver || sanitizedTask) {
+      contentSections.push("[Collaboration Contract — Reference Only]")
+      contentSections.push(`receiver_alias: ${sanitizedReceiver}`)
+      if (sanitizedTask) {
+        contentSections.push(`task_summary: ${sanitizedTask}`)
+      }
+      contentSections.push("[/Collaboration Contract]")
+      contentSections.push("")
+    }
   }
 
   // Header

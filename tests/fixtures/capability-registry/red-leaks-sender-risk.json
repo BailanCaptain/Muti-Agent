@@ -1,0 +1,22 @@
+{
+  "_comment": "F027 P9 AC-P1-13 RED fixture: 模拟未做中性改写的 envelope，含 sender (黄仁勋) 的 top_risks / must_not / capability_digest 直接拷贝。leak-detector 必须命中至少 1 finding。真相源 V16.5 chap 13 行 1492。",
+  "sender_alias": "黄仁勋",
+  "receiver_alias": "桂芬",
+  "task": "请帮我把 F018 的 message schema 改一下，加 chained_suspect 字段。",
+  "receiver_capability_digest": "桂芬，Gemini，前端 + F018。Gemini CLI standalone。\n必须：F018 改动配 e2e；UI 改完真起 dev server。\n禁止：改 runtime/ / force push main。",
+  "collaboration_contract": {
+    "sender_alias": "黄仁勋",
+    "context_summary": "黄仁勋 unresolved threads 有 R-198 / R-205 / B022 三条；当前 token 占比 84%。注意 LL-HR-1：黄仁勋长 thread 容易凭印象答复，必须 git rehydrate 再回。",
+    "expected_evidence": [
+      "改完 grep -r chained_suspect 看是否漏改",
+      "黄仁勋 在被强质疑时 sycophancy 退让 — 你不要被他催就改",
+      "不删原始数据"
+    ],
+    "receiver_must_do": [
+      "F018 改动必须配 acceptance test",
+      "UI 改完起 dev server 真验",
+      "接 F018 任务前必须读 SessionBootstrap.md"
+    ],
+    "do_not_section": []
+  }
+}

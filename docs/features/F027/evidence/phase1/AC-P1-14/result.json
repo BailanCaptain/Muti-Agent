@@ -1,0 +1,40 @@
+{
+  "verdict": "PASS",
+  "reason": "All 14 Phase 1 AC evidence packs are present; prerequisite AC-P1-1 through AC-P1-13 arbitrations are PASS / double-pass.",
+  "checks": {
+    "scan_date": "2026-05-14",
+    "branch": "feat/F027-unified-memory-architecture",
+    "evidence_root": "docs/features/F027/evidence/phase1",
+    "required_files_per_ac": [
+      "prompt.txt",
+      "agent_response.txt",
+      "db_dump.sql",
+      "wiki_state.tar.gz",
+      "config.hash",
+      "prod_config_diff.txt",
+      "result.json",
+      "judges/judge1_*.json",
+      "judges/judge2_*.json",
+      "judges/arbitration.json"
+    ],
+    "complete_double_pass_acs": [
+      "AC-P1-1",
+      "AC-P1-2",
+      "AC-P1-3",
+      "AC-P1-4",
+      "AC-P1-5",
+      "AC-P1-6",
+      "AC-P1-7",
+      "AC-P1-8",
+      "AC-P1-9",
+      "AC-P1-10",
+      "AC-P1-11",
+      "AC-P1-12",
+      "AC-P1-13",
+      "AC-P1-14"
+    ],
+    "missing_or_incomplete_acs": [],
+    "non_pass_prerequisite_arbitrations": [],
+    "fail_closed": false
+  }
+}

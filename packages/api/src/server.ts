@@ -52,6 +52,8 @@ import { backfillHistoricalTitles } from "./services/session-titler/title-backfi
 import { WorkflowSopService } from "./services/workflow-sop-service"
 import { SkillRegistry } from "./skills/registry"
 import { SopTracker } from "./skills/sop-tracker"
+import { MessagesFtsRepository } from "./wiki/wiki-search"
+import { createWikiServices } from "./wiki/wiki-services"
 
 /**
  * F026 R-073 · MCP `trigger_mention` 派发 payload 构造器。
@@ -98,6 +100,8 @@ export async function createApiServer(options: {
   ensurePreMigrationBackup(options.sqlitePath)
   const { db: drizzleDb, close: closeDrizzle } = createDrizzleDb(options.sqlitePath)
   const repository = new SessionRepository(drizzleDb)
+  // F027 P14.b: messages_fts BM25 召回 repository — query_messages MCP 后端共享一份实例
+  const messagesFtsRepo = new MessagesFtsRepository(drizzleDb)
   // F022 P2: Haiku auto-titler. Fire-and-forget debounced title generation
   // for session groups with a default "新会话 YYYY-MM-DD …" title. See
   // `services/session-titler/*`.
@@ -179,13 +183,7 @@ export async function createApiServer(options: {
     // inference failures surface to operators instead of being swallowed.
     logger: { warn: (obj, msg) => app.log.warn(obj, msg) },
   })
-  const messages = new MessageService(
-    sessions,
-    dispatch,
-    invocations,
-    eventBus,
-    options.apiBaseUrl,
-  )
+  const messages = new MessageService(sessions, dispatch, invocations, eventBus, options.apiBaseUrl)
   messages.setTranscriptWriter(transcriptWriter)
   messages.setEmbeddingService(embeddingService)
   // F026 P1 Wiring · advance/settle the call_registry row at runThreadTurn's
@@ -219,6 +217,12 @@ export async function createApiServer(options: {
   // tool (Tasks 3.3/3.4) will be added as more consumers.
   const workflowSopRepo = new DrizzleWorkflowSopRepository(drizzleDb)
   const workflowSopService = new WorkflowSopService(workflowSopRepo)
+  // F027 P3 chap 6: update_wiki MCP services（lease + ACL + service）。
+  // wikiRoot 定位：env > 默认 .runtime/wiki/。leaderTerm 留 P3.5 接 compiler_leader。
+  const wikiServices = createWikiServices({
+    db: drizzleDb,
+    wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+  })
   const decisions = new DecisionManager((event) => broadcaster.broadcast(event), repository)
   messages.setMemoryService(memoryService)
   messages.setSkillRegistry(skillRegistry)
@@ -560,6 +564,13 @@ export async function createApiServer(options: {
     },
     // F019 P3: expose the bulletin board service to /api/callbacks/update-workflow-sop
     workflowSopService,
+    // F027 P3 chap 6: expose wiki services to /api/callbacks/update-wiki + acquire-wiki-lease + read-wiki
+    wikiServices,
+    // F027 P14.b: messages_fts BM25 召回（query_messages MCP backend）
+    queryMessages: ({ roomId, query, topK, threadId, role }) => {
+      const hits = messagesFtsRepo.query(query, { roomId, topK, threadId, role })
+      return { hits }
+    },
   })
   registerWsRoute(app, {
     messages,

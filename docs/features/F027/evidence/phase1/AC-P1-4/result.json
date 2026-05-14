@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "All five sanitize fixture layers hit expected triggers; red-line blocking and multipass chained suspect precondition passed.",
+  "checks": {
+    "fixtures": ["L1-unicode.md", "L2-html.md", "L3-fence.md", "L4-base64.md", "L5-multipass.md"],
+    "expected_triggers": ["unicode/invisible/control/tag", "dangerous_html_tag/dangerous_url_scheme", "role-token fence", "encoded_jailbreak", "jailbreak_template"],
+    "test_command": "pnpm exec tsx --test packages/api/src/wiki/sanitize/sanitize-raw-drop.test.ts"
+  }
+}

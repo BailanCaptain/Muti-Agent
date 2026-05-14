@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "100k sharding is now auditable: raw test output, 532 active rows, 99,468 archived rows, SQL schema/dump, and tarred fixture are present.",
+  "weak_points": [
+    "The production test fixture still asserts active=1000; this evidence pack separately exercises the stricter 532-active distribution requested for r3."
+  ],
+  "judged_by": "codex-gpt-5.4",
+  "judged_at": "2026-05-14T08:30:00Z"
+}

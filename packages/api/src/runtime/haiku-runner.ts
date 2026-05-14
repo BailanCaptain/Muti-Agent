@@ -33,20 +33,29 @@ export interface HaikuRunnerDeps {
 
 const DEFAULT_TIMEOUT_MS = 15000
 
+const HAIKU_MODEL = "claude-haiku-4-5"
+const SONNET_MODEL = "claude-sonnet-4-6"
+const OPUS_MODEL = "claude-opus-4-7"
+
 /**
- * 单轮 Haiku 调用封装。内部 spawn `claude --print --model claude-haiku-4-5 "<prompt>"`，
- * 5s 超时 kill，stdout trim 返回。失败分四类：timeout / exit-code-N / empty-output / spawn-error。
+ * 单轮 Claude CLI 调用封装。内部 spawn `claude --print --model <model> "<prompt>"`，
+ * 超时 kill，stdout trim 返回。失败分四类：timeout / exit-code-N / empty-output / spawn-error。
  *
  * 注入 `spawn` 便于测试（stub ChildProcess）。生产使用默认 node:child_process.spawn。
+ *
+ * 模型选择：
+ *   - HaikuRunner (haiku-4-5): SessionTitler 等高频低成本任务（房间标题等）
+ *   - SonnetRunner (sonnet-4-6): F027 P12 decision extractor 等需要语义判断准确度的任务
+ *     （小孙 2026-05-13 拍板：决策识别准确度优先于 quota；订阅模式 quota 不是约束）
  */
-export function createHaikuRunner(deps: HaikuRunnerDeps = {}): HaikuRunner {
+function createClaudeCliRunner(model: string, deps: HaikuRunnerDeps = {}): HaikuRunner {
   const spawn = deps.spawn ?? (realSpawn as SpawnFn)
 
   return {
     runPrompt(prompt, opts = {}) {
       const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
       const runtime = resolveClaudeCommand()
-      const args = [...runtime.prefixArgs, "--print", "--model", "claude-haiku-4-5", prompt]
+      const args = [...runtime.prefixArgs, "--print", "--model", model, prompt]
       const start = Date.now()
       const proc = spawn(runtime.command, args, { shell: runtime.shell })
       // Close stdin immediately so `claude --print` sees EOF and can exit cleanly.
@@ -96,4 +105,23 @@ export function createHaikuRunner(deps: HaikuRunnerDeps = {}): HaikuRunner {
       })
     },
   }
+}
+
+/** Haiku 4.5 — SessionTitler 等高频低成本任务（房间标题等） */
+export function createHaikuRunner(deps: HaikuRunnerDeps = {}): HaikuRunner {
+  return createClaudeCliRunner(HAIKU_MODEL, deps)
+}
+
+/**
+ * Sonnet 4.6 — F027 P12 decision extractor 等需要语义判断准确度的任务。
+ * 小孙 2026-05-13 拍板：决策识别准确度优先于 quota；订阅模式 quota 不是约束。
+ * 接口与 HaikuRunner 完全一致（HaikuRunner 是历史 type 名，可作通用 ClaudeRunner 用）。
+ */
+export function createSonnetRunner(deps: HaikuRunnerDeps = {}): HaikuRunner {
+  return createClaudeCliRunner(SONNET_MODEL, deps)
+}
+
+/** Opus 4.7 — F027 P18 evidence pack judge runner. */
+export function createOpusRunner(deps: HaikuRunnerDeps = {}): HaikuRunner {
+  return createClaudeCliRunner(OPUS_MODEL, deps)
 }
