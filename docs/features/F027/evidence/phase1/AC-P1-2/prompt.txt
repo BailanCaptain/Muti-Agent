@@ -1,1 +1,0 @@
-AC-P1-2 input: update_wiki service + MCP schema tests; 100-attempt temporary race harness on one lease/path; ACL/CAS/lease/fencing/path containment fixtures.

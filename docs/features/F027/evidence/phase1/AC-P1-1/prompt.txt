@@ -1,1 +1,0 @@
-AC-P1-1 input: createDrizzleDb fresh temporary SQLite DB; inspect sqlite_master for wiki_events/wiki_memories/room_decisions/prompt_audit tables and indices; run EXPLAIN QUERY PLAN for indexed viewfinder query.

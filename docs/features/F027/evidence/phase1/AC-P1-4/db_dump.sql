@@ -1,1 +1,0 @@
--- AC-P1-4 is pure sanitizer behavior; no DB writes. Test state is fixture files under tests/fixtures/sanitize and function output from sanitizeRawDrop.

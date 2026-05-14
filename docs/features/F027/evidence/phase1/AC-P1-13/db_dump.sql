@@ -1,5 +1,0 @@
--- AC-P1-13 is file/fixture behavior, not DB behavior.
--- Registry source: wiki/agents/agent-capabilities.yaml
--- Red fixture: tests/fixtures/capability-registry/red-leaks-sender-risk.json => detectSenderRiskLeak.hasLeak=true, findings >= 1
--- Green fixture: tests/fixtures/capability-registry/green-neutralized.json => detectSenderRiskLeak.hasLeak=false, findings=[]
--- Rewriter output required fields: sender_alias, receiver_alias, task, receiver_capability_digest, collaboration_contract{sender_alias, context_summary, expected_evidence, receiver_must_do, do_not_section}

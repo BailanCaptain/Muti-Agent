@@ -1,8 +1,0 @@
-AC-P1-14 meta input: verify Phase 1 evidence pack framework itself.
-
-Expected final state:
-- AC-P1-1 through AC-P1-14 directories exist under docs/features/F027/evidence/phase1/.
-- Each AC directory contains the 7 required evidence files from docs/plans/V16.5-final.md lines 1693-1705: prompt.txt, agent_response.txt, db_dump.sql, wiki_state.tar.gz, config.hash, prod_config_diff.txt, result.json.
-- Each AC directory contains judges/judge1_*.json, judges/judge2_*.json, and judges/arbitration.json.
-- AC-P1-1 through AC-P1-13 arbitration is PASS/double-pass before AC-P1-14 is judged.
-- AC-P1-14 result.json reports PASS only after the current filesystem scan shows no missing required files and no non-PASS prerequisite arbitration.

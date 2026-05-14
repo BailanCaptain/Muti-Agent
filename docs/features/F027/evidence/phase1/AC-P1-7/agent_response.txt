@@ -1,4 +1,0 @@
-Iron Laws Count Check:
-Expected (from shared-rules.md): 1
-Actual (in assembled prompt): 1
-Status: PASS

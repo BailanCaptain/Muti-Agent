@@ -1,3 +1,0 @@
--- AC-P1-12 is pure adaptive recall executor behavior; no SQLite writes are required.
--- Result state evidence is executor output: recallPath 1/2/3/4/5, recallSatisfied true/false, escalateReason, budgetExceeded, critiqueCalls, attempts[], and Level5Sink.calls[].
--- prompt_audit schema also has recall fields for persistence integration: recall_required, recall_trigger, recall_path, top_score, recall_satisfied, escalate_reason, recall_total_ms, recall_critique_calls, recall_budget_exceeded.

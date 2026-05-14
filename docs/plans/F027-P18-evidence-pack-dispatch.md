@@ -15,29 +15,27 @@ worktree: .worktrees/F027 (branch feat/F027-unified-memory-architecture)
 
 完成 F027 Phase 1 最后 1 个 AC（**AC-P1-14**），生成 14 个 AC 的 evidence pack + 异构双 judge 仲裁，让 Phase 1 整体收尾可合 dev。
 
-按 V16.5 chap 16 行 1693-1706 spec：每个 AC 在 `docs/features/F027/evidence/phase1/<ac>/` 落 7 件套：
+按 V16.5 chap 16（精简版，2026-05-14 小孙拍）：每个 AC 在 `docs/features/F027/evidence/phase1/<ac>/` 入 git **3 件套**：
 
 ```
 docs/features/F027/evidence/phase1/AC-P1-N/
-  prompt.txt                       # assembler 输出 system prompt（如该 AC 涉及）
-  agent_response.txt               # agent 完整 response（如涉及 agent 行为）
-  db_dump.sql                      # 测试前后 DB 状态 dump
-  wiki_state.tar.gz                # 测试前后 wiki/ 文件 tar
-  config.hash                      # runtime + LLM provider config 的 hash
-  prod_config_diff.txt             # 与生产配置 diff
-  result.json                      # PASS / BLOCKED / INCONCLUSIVE / FAIL
+  result.json                      # PASS / BLOCKED / INCONCLUSIVE / FAIL + 关键 metric
   judges/
-    judge1_anthropic-opus-4-7.json   # judge1 Anthropic Opus 4.7 (黄仁勋指定)
-    judge2_<model>_<provider>.json   # judge2 (待小孙在 room 里拍)
-    arbitration.json                 # 双 judge 不一致时的仲裁
+    judge1_claude-opus-4-7.json      # judge1 Anthropic Opus 4.7 (订阅模式 wrapper)
+    judge2_<model>_<provider>.json   # 异构 judge2（不能跟 judge1 同 provider）
+    arbitration.json                 # 双 judge 仲裁
 ```
+
+**Raw evidence 不入 git**（.gitignore 已规则化）：`prompt.txt` / `agent_response.txt` / `db_dump.sql` / `wiki_state.tar.gz` / `config.hash` / `prod_config_diff.txt` —— 本地 audit / judge 复跑时按需现产，可参考 `scripts/f027-batch3-evidence.ts`（批量生成 batch3 raw 的 reference 脚本）。
+
+**为什么砍**：长期累积 50 feature × 4 phase × ~15MB raw → 750MB git repo + 开源 noise；防 LL-030 的真核心是"双 judge 异构 + 真跑测试" 机制，机制 + 判定结论入 git 即可，raw 重跑可现产。
 
 ## 关键决策（小孙 2026-05-14 拍）
 
 1. **分 4 批 × ~3-4 AC** — 每批 commit + checkpoint，避免一刀做完
-2. **完整 7 件套** — 按 spec 全要（schema 类 / behavior 类都按 7 件套填）
-3. **复用现有单测/集成测提取** — 现有 2149/2154 测试已覆盖大多数 AC，写 evidence runner script 抽取测试输入/输出/状态 dump 当 evidence
-4. **judge2 model**：黄仁勋开任务清单 → 小孙在 multi-agent room 里 @范德彪 / @桂芬 分发派工 + judge2 model 由 reviewer 自定（建议范=Codex/gpt-5.4，桂=Gemini）
+2. **精简 3 件套入 git**（2026-05-14 改 V16.5 spec 后） — result.json + judges/judge1/judge2/arbitration.json；raw 6 类本地生成不入 git
+3. **复用现有单测/集成测提取** — 现有 2149/2154 测试已覆盖大多数 AC，写 evidence runner script 抽取测试输入/输出/状态 dump 当 evidence 素材，judge 跑完后只 commit 判定结论
+4. **judge2 model**：黄仁勋开任务清单 → 小孙在 multi-agent room 里 @范德彪 / @桂芬 分发派工 + judge2 model 由 reviewer 自定（**桂芬 Gemini judge 实测偏 rubber stamp，r2 后已全部换 Codex** — 见 ace8cad）
 
 ## 4 批 AC 切分
 

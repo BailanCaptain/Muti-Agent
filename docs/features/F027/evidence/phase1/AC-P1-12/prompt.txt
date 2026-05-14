@@ -1,1 +1,0 @@
-AC-P1-12 input: packages/api/src/wiki/adaptive-recall/executor.test.ts and level5-escalate-sink.test.ts. Expected: Adaptive Recall triggers L1, L2, L3, L4, and L5 paths, records recall_path, recallSatisfied, escalateReason, and Level5 sink trace.

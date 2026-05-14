@@ -1,1 +1,0 @@
-No production runtime config or .env was read or changed. AC-P1-14 is a meta evidence completeness check over docs/features/F027/evidence/phase1.

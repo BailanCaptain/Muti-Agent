@@ -1,7 +1,0 @@
-AC-P1-4 input fixtures:
-- tests/fixtures/sanitize/L1-unicode.md
-- tests/fixtures/sanitize/L2-html.md
-- tests/fixtures/sanitize/L3-fence.md
-- tests/fixtures/sanitize/L4-base64.md
-- tests/fixtures/sanitize/L5-multipass.md
-Expected: sanitizeRawDrop 5-layer defense hits all fixtures; L5 chained/multipass path marks red-line jailbreak_template and chained_suspect precondition.
