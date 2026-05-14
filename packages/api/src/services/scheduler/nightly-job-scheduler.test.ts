@@ -18,7 +18,8 @@
 
 import assert from "node:assert/strict"
 import test from "node:test"
-import { NightlyJobScheduler } from "./nightly-job-scheduler"
+import { Cron } from "croner"
+import { NightlyJobScheduler, computePlannedSlot } from "./nightly-job-scheduler"
 
 function newScheduler() {
   return new NightlyJobScheduler()
@@ -293,6 +294,48 @@ test("NightlyJobScheduler · 范-r1 P2-3: handler 接 JobContext { scheduledFor 
   } finally {
     sch.stop()
   }
+})
+
+// 范-r2 P2-3: scheduledFor 必须是 cron 计划槽位，不是 callback entry wall clock
+test("computePlannedSlot · 范-r2 P2-3: 取 cron 槽位（previousRuns），不取 entry time", () => {
+  // cron pattern '0 4 * * *' Asia/Shanghai = 每天 4:00 UTC+8 = 20:00 UTC
+  const job = new Cron("0 4 * * *", { timezone: "Asia/Shanghai", paused: true })
+
+  // 模拟 event loop 阻塞 30s 后才进 callback：
+  // 真 cron 槽位是 2026-05-15T04:00:00 Asia/Shanghai = 2026-05-14T20:00:00Z
+  // entry time 模拟为 +30s
+  const entryTime = new Date("2026-05-14T20:00:30.000Z")
+  const planned = computePlannedSlot(job, entryTime)
+
+  // planned slot 应严格 < entryTime（不是 entry 当下）
+  assert.ok(planned.getTime() < entryTime.getTime(), "planned slot 应早于 entry time")
+  // planned slot 应 = 20:00:00 UTC（cron 槽位）
+  assert.equal(
+    planned.toISOString(),
+    "2026-05-14T20:00:00.000Z",
+    "planned slot 应是 cron pattern 上的精确时刻，不受 event loop delay 影响",
+  )
+})
+
+test("computePlannedSlot · entry 正好是 cron 槽位 → planned = entry", () => {
+  const job = new Cron("0 4 * * *", { timezone: "Asia/Shanghai", paused: true })
+  const onSlot = new Date("2026-05-14T20:00:00.000Z")
+  const planned = computePlannedSlot(job, onSlot)
+  // 在 cron slot 当下，planned = 那个 slot 自己
+  assert.equal(planned.toISOString(), "2026-05-14T20:00:00.000Z")
+})
+
+test("computePlannedSlot · 5min cron + delay 90s → planned 仍是 5min 边界", () => {
+  // */5 * * * * 每 5 分钟（: 00, 05, 10, ...）
+  const job = new Cron("*/5 * * * *", { timezone: "UTC", paused: true })
+  // entry 在 12:05:00 + 90s 延迟 = 12:06:30
+  const entryTime = new Date("2026-05-15T12:06:30.000Z")
+  const planned = computePlannedSlot(job, entryTime)
+  // planned 应是 12:05:00 (上一个 5min 槽位)
+  assert.equal(planned.toISOString(), "2026-05-15T12:05:00.000Z")
+  // delay = entry - planned = 90s（demonstrates missed-window 检测能感知到延迟）
+  const delayMs = entryTime.getTime() - planned.getTime()
+  assert.equal(delayMs, 90_000, "delay 应是 90s，证明 scheduler 能感知 event loop 阻塞")
 })
 
 test("NightlyJobScheduler · 范-r1 P2-3: handler windowMinutes 默认 5min", async () => {

@@ -24,15 +24,46 @@ import type { FastifyBaseLogger } from "fastify"
 import { createLogger } from "../../lib/logger"
 
 /**
- * **范-r1 P2-3**：handler 接收的 cron 触发上下文。
- * scheduledFor 由 croner.currentRun() 提供（fall back to new Date() 极端漏拿场景）。
- * windowEnd = scheduledFor + windowMinutes 用于 RoomCompilerTick 等 tick handler
- * 内部判 missed_window。
+ * **范-r1 P2-3 + r2 P2-3 修正**：handler 接收的 cron 触发上下文。
+ *
+ * `scheduledFor` 是**计划触发槽位**（cron pattern 上的精确时刻），不是 callback
+ * 实际进入瞬间。即使 event loop 阻塞 30s，`scheduledFor` 仍是 4:00:00 而非
+ * 4:00:30。这样 RoomCompilerTick 等内部判 `now > scheduledFor + windowMinutes`
+ * 才能真感知到调度延迟。
+ *
+ * 推导：`self.previousRuns(1, now + 1ms)` — croner 取 now 之前最近的 cron
+ * 槽位（reference 加 1ms 是为了包含 now 当下若它正好是 cron 时刻）。
+ *
+ * windowEnd = scheduledFor + windowMinutes 用于 tick handler 内部判 missed_window。
  */
 export interface JobContext {
   scheduledFor: Date
   windowStart: Date
   windowEnd: Date
+}
+
+/**
+ * 范-r2 P2-3 helper：从 cron job 推导本次触发的 planned slot。
+ *
+ * 不用 `self.currentRun()` —— 那是 callback entry wall clock，event loop
+ * 阻塞会让 missed_window 失真。
+ *
+ * 用 `self.previousRuns(1, reference)` 取 reference 之前最近的 cron 槽位：
+ * - reference = now + 1000ms（second 级；croner 内部 strips milliseconds，
+ *   所以加 1ms 不够 —— 1s 才能让 now 自己（如它正好是 cron slot）被包括）
+ * - 推论：本类不支持每秒 cron（生产无意义；测试用例避免）
+ *
+ * fallback 链：croner 推导 → now（极端边界，cron 第一次还没 prev run）
+ */
+export function computePlannedSlot(job: Cron, now: Date = new Date()): Date {
+  try {
+    const ref = new Date(now.getTime() + 1000)
+    const prev = job.previousRuns(1, ref)
+    if (prev && prev.length > 0 && prev[0]) return prev[0]
+  } catch {
+    // croner 异常路径 —— fallback to now（防御性）
+  }
+  return now
 }
 
 export interface JobSpec {
@@ -172,8 +203,9 @@ export class NightlyJobScheduler {
             }
             return
           }
-          // 范-r1 P2-3: 构造 JobContext (scheduledFor + window) 并传给 handler
-          const scheduledFor = self.currentRun() ?? new Date()
+          // 范-r2 P2-3 修正: 用 previousRuns 推导 cron 计划槽位，不是
+          // currentRun()（=callback entry wall clock，event loop 阻塞会失真）
+          const scheduledFor = computePlannedSlot(self, new Date())
           const windowStart = scheduledFor
           const windowEnd = new Date(scheduledFor.getTime() + windowMinutes * 60_000)
           try {
