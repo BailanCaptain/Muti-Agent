@@ -1,4 +1,34 @@
 -- AC-P1-14 meta completeness snapshot
--- Complete/double-pass as of scan: AC-P1-1, AC-P1-2, AC-P1-3, AC-P1-4, AC-P1-5, AC-P1-6, AC-P1-7, AC-P1-9, AC-P1-12, AC-P1-13
--- Missing required evidence pack files as of scan: AC-P1-8, AC-P1-10, AC-P1-11
--- Final AC-P1-14 required condition is therefore not yet satisfied.
+-- Scan date: 2026-05-14
+-- Branch: feat/F027-unified-memory-architecture
+-- Evidence root: docs/features/F027/evidence/phase1
+-- Required evidence files per AC:
+--   prompt.txt
+--   agent_response.txt
+--   db_dump.sql
+--   wiki_state.tar.gz
+--   config.hash
+--   prod_config_diff.txt
+--   result.json
+--   judges/judge1_*.json
+--   judges/judge2_*.json
+--   judges/arbitration.json
+--
+-- AC status from filesystem + result/arbitration JSON:
+--   AC-P1-1  result=PASS arbitration=PASS/double-pass
+--   AC-P1-2  result=PASS arbitration=PASS/double-pass
+--   AC-P1-3  result=PASS arbitration=PASS/double-pass
+--   AC-P1-4  result=PASS arbitration=PASS/double-pass
+--   AC-P1-5  result=PASS arbitration=PASS/double-pass
+--   AC-P1-6  result=PASS arbitration=PASS/double-pass
+--   AC-P1-7  result=PASS arbitration=PASS/double-pass
+--   AC-P1-8  result=PASS arbitration=PASS/double-pass
+--   AC-P1-9  result=PASS arbitration=PASS/double-pass
+--   AC-P1-10 result=PASS arbitration=PASS/double-pass
+--   AC-P1-11 result=PASS arbitration=PASS/double-pass
+--   AC-P1-12 result=PASS arbitration=PASS/double-pass
+--   AC-P1-13 result=PASS arbitration=PASS/double-pass
+--   AC-P1-14 result=PASS arbitration=PASS/double-pass
+--
+-- Missing required files: none
+-- Non-PASS prerequisite arbitrations: none

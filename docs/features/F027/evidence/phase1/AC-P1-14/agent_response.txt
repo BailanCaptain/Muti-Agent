@@ -1,7 +1,12 @@
 Current meta scan (2026-05-14, feat/F027-unified-memory-architecture):
-- AC-P1-1/2/4/9: present, double-pass, committed in d3addb7 by Fan Debiao.
-- AC-P1-3/5/6/7: present, double-pass, committed in e1cec37 by Guifen.
-- AC-P1-12/13: present, double-pass in current working tree, not yet committed at time of this meta scan.
-- AC-P1-8/10/11: directories exist but only contain empty judges/ directories; missing prompt.txt, agent_response.txt, db_dump.sql, wiki_state.tar.gz, config.hash, prod_config_diff.txt, result.json, judge1, judge2, and arbitration.
-- AC-P1-14: this BLOCKED pack records the dependency instead of fabricating final PASS.
-Conclusion: AC-P1-14 cannot pass until Batch 3 (AC-P1-8/10/11) lands complete evidence and judges.
+- Wrapper checkpoint is committed in 26a24de.
+- Batch 1 AC-P1-1/2/4/9 is present, committed in d3addb7, and each arbitration reports PASS / double-pass.
+- Batch 2 AC-P1-3/5/6/7 is present, committed in e1cec37, and each arbitration reports PASS / double-pass.
+- Batch 3 AC-P1-8/10/11 is present, committed in e4fe1d7, and each arbitration reports PASS / double-pass.
+- Batch 4 AC-P1-12/13 is present, committed in 408cfa1, and each arbitration reports PASS / double-pass.
+- AC-P1-14 now records this meta scan: all 14 AC directories contain the required 7 evidence files plus judge1, judge2, and arbitration JSON. No missing required files were found in the scan.
+
+Meta scan command:
+PowerShell enumerated AC-P1-1 through AC-P1-14 under docs/features/F027/evidence/phase1 and checked prompt.txt, agent_response.txt, db_dump.sql, wiki_state.tar.gz, config.hash, prod_config_diff.txt, result.json, judges/arbitration.json, and the presence of one judge1_*.json plus one judge2_*.json per AC.
+
+Conclusion: AC-P1-14 can proceed to final PASS because all prerequisite AC evidence packs are complete and all prerequisite arbitrations are PASS / double-pass.
