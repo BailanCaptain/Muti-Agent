@@ -1,15 +1,16 @@
 ---
 id: F027-phase2
 title: F027 Phase 2 调度（NightlyJobScheduler + 11 jobs）· 实施 plan v2（冻结）
-status: frozen (小孙 2026-05-14 拍板 5 Open + D1/D2/D6 + 工时上调 + 范 v2a confirm review)
+status: frozen (小孙 2026-05-14 拍板 5 Open + D1/D2/D6 + 工时上调 + 范 v2a/v2b confirm review)
 parent: F027 (docs/features/F027-unified-memory-architecture.md)
 created: 2026-05-14
-revised: 2026-05-14 (v2a — 范德彪 v2 confirm review 4 修前阻断点修订)
+revised: 2026-05-14 (v2b — 范德彪 v2a confirm review 3 修前阻断点修订)
 owner: 黄仁勋
 plan_truth_source: docs/plans/V16.5-final.md (chap 17 行 1778-1885 + chap 24 行 2343 + V16.5.3 D1/D2)
 phase1_status: 14/14 AC double-pass + ea773d9 合 dev
 v1_commit: 598bab1 (历史保留，未删)
 v2_commit: a8e24b1 (历史保留，未删)
+v2a_commit: 0f15566 (历史保留，未删)
 ---
 
 # F027 Phase 2 · 调度实施 plan v2（冻结）
@@ -20,7 +21,21 @@ v2_commit: a8e24b1 (历史保留，未删)
 >
 > **此 plan 仅覆盖 Phase 2**。Phase 3 前端 / Phase 4 审批 UI 各自独立 plan。
 
-## 0. v1 → v2 → v2a 修订摘要
+## 0. v1 → v2 → v2a → v2b 修订摘要
+
+### v2a → v2b（范德彪 v2a confirm review · 2026-05-14）
+
+| # | 修订项 | v2a → v2b | 触发 |
+|---|---|---|---|
+| **F1** | AC-P2-2 lease-lost reason 与伪代码矛盾 | `selfDemote()` 只改 `role='follower'`、不清 `this.lease` → `runJob` 头部 `leaseAlive` 仍 true → reason 推成 `role_not_leader`（与 AC 要求 `lease_expired` 冲突）→ **`selfDemote()` 清 lease + 记 `demotedReason`；`runJob` 改三段 guard（role / lease 对象 / lease 时间）；AC-P2-2(c) reason 改 `lease_lost`，新增 (d) `lease_expired` 兜底 fixture** | 范 finding 1：[F027-phase2-implementation-plan.md:196](docs/plans/F027-phase2-implementation-plan.md#L196) 伪代码 vs [F027-phase2-implementation-plan.md:300](docs/plans/F027-phase2-implementation-plan.md#L300) AC 不一致 |
+| **F2** | status enum 数量 8/9 矛盾 | §4 实际列 8 种 + L230 JSON schema 8 种，但 AC-P2-4 写"9 种" → **§4 标注"共 8 种 v2b F2 锁定"；AC-P2-4 列全 8 种 + reason enum 4 种** | 范 finding 2：[F027-phase2-implementation-plan.md:230](docs/plans/F027-phase2-implementation-plan.md#L230) / [F027-phase2-implementation-plan.md:239-247](docs/plans/F027-phase2-implementation-plan.md#L239-L247) vs [F027-phase2-implementation-plan.md:302](docs/plans/F027-phase2-implementation-plan.md#L302) AC 数字 |
+| **F3** | AC-P2-3 与 Iron Laws 3 gate 冲突 | Gate 段 + Week 1 Day 3 都已 a/b 拆，但 AC-P2-3 一条统包"wiki.config.yaml schedules 加载"（带偏实现端创建真文件）→ **拆 AC-P2-3 → AC-P2-3a (loader fallback / in-memory，Gate 2 前可推) + AC-P2-3b (Gate 2 后真文件 + 兼容性断言)；总 AC 18 → 19；P19.17 / AC-P2-18 / §11 (a) 同步级联更新** | 范 finding 3：[F027-phase2-implementation-plan.md:72-86](docs/plans/F027-phase2-implementation-plan.md#L72-L86) Gate 段 vs [F027-phase2-implementation-plan.md:301](docs/plans/F027-phase2-implementation-plan.md#L301) AC 冲突 |
+
+**修订原则**：所有 v2b 修订是字面/契约层级补丁，不改架构（lease 策略 / cron 库 / job 列表 / 工时全冻结）；范 v2a 通过的 F4 (backfill marker 双源) 不动。
+
+---
+
+### v1 → v2 → v2a 修订摘要
 
 ### v2 → v2a（范德彪 v2 confirm review · 2026-05-14）
 
@@ -45,7 +60,7 @@ v2_commit: a8e24b1 (历史保留，未删)
 | Job timeout | TBD → **每 job 独立 timeout 配**（Open 3） | Vacuum 1min vs MonthlySnapshot 30min 差异 |
 | Job fail 策略 | TBD → **不重试 + 推 R-201 告警人审**（Open 4） | 避免雪崩 + 重复写 |
 | Judge wrapper | 复用现状 → **改 generic（参数化 ac-pattern + evidence-files）**（D6） | p18-judge.ts:92 硬编码 `^AC-P1-\d+$` + 7 件套 |
-| AC 数 | 14 → **18** | 补 backfill×2 + WikiCompilerDebounce + 长跑 vs tick 撞 + crash lease + AC-P2-1 强化 + job_trace 契约 |
+| AC 数 | 14 → **19** | 补 backfill×2 + WikiCompilerDebounce + 长跑 vs tick 撞 + crash lease + AC-P2-1 强化 + job_trace 契约；**v2b F3** 拆 AC-P2-3 → 3a (loader fallback) + 3b (Gate 2 后真文件) |
 | 工时 | 15 天 / 3 周 → **19-22 天 / 4 周** | + backfill 2d + WikiCompilerDebounce 0.5d + judge wrapper 1d + lease 语义研究 1d + AC 增项 fixture 0.5d |
 | draft TTL 跳过标记 | state='reviewing'（不存在）→ **frontmatter `reviewing: true`** | wiki_memories.state CHECK 三态：draft/canonical/deprecated |
 | V16.5 drift | 未识别 → **§13 真相源 drift 归档** | chap 5:522 snapshot/archive 表 + chap 17:1881 nightly_job action 都在 V16.5 写了但 P1 未落地 |
@@ -170,13 +185,23 @@ async start() {
   this.registerJobs() // 注册 11 jobs（leader 才会执行；follower / demoted 跳过）
 }
 
-// 每 job 在跑前 guard（v2a F1：双重保险——role + lease expiry 都 check）
+// 每 job 在跑前 guard（v2b F1：三段式 reason 推导——role / lease 对象 / lease 时间分离）
 async runJob(job: Job) {
-  // 即使 role 还标记 leader，若 lease 已过期（heartbeat 慢于 30s tick）也禁跑
-  const leaseAlive = this.lease &&
-    new Date(this.lease.leaseExpiresAt).getTime() > Date.now()
-  if (this.role !== 'leader' || !leaseAlive) {
-    writeJobTrace({ status: 'skipped_not_leader', reason: !leaseAlive ? 'lease_expired' : 'role_not_leader' })
+  // (1) 已 self-demote：role 为 follower 且 demotedReason 有值 → lease_lost
+  // (2) 从未当过 leader：role 为 follower 且 demotedReason 为空 → role_not_leader
+  if (this.role !== 'leader') {
+    const reason = this.demotedReason ? 'lease_lost' : 'role_not_leader'
+    writeJobTrace({ status: 'skipped_not_leader', reason })
+    return
+  }
+  // (3) role 还是 leader 但 lease 已被清（race：selfDemote 已跑 lease=null，role 尚未刷到）→ lease_lost
+  if (!this.lease) {
+    writeJobTrace({ status: 'skipped_not_leader', reason: 'lease_lost' })
+    return
+  }
+  // (4) lease wall clock 过期（兜底：runtime 卡住未及时 self-demote）→ lease_expired
+  if (new Date(this.lease.leaseExpiresAt).getTime() <= Date.now()) {
+    writeJobTrace({ status: 'skipped_not_leader', reason: 'lease_expired' })
     return
   }
   if (job.inProgress) {
@@ -192,14 +217,16 @@ async runJob(job: Job) {
   }
 }
 
-// v2a F1：self-demote 路径
+// v2b F1：self-demote 路径 — 清 lease + 记 demotedReason 供 runJob 推 reason
 async selfDemote(reason: 'heartbeat_failed' | 'manual_stop') {
   clearInterval(this.heartbeat)
   this.heartbeat = undefined
   this.role = 'follower'
+  this.lease = null            // v2b F1：清 lease，runJob 头部一致看到 lease_lost
+  this.demotedReason = reason  // v2b F1：记 demote 原因供 runJob 区分 lease_lost / role_not_leader
   writeJobTrace({ jobName: 'scheduler', status: 'lease_lost', reason })
   // 正在跑的 job 由 reentrancy guard 自然完成（不强 kill 避免数据不一致）
-  // 新 job 由 runJob() 头部 leaseAlive check 阻断
+  // 新 job 由 runJob() 头部三段 guard 阻断
   // 重启 follower poll 等下次抢占机会
   this.pollInterval = setInterval(() => this.tryPromoteToLeader(), 60_000)
 }
@@ -210,7 +237,7 @@ async selfDemote(reason: 'heartbeat_failed' | 'manual_stop') {
 - 长 job 持有 reentrancy 不阻塞同 runtime 上其他 job
 - runtime 崩溃 → lease TTL ≤ 60s 过期 → follower 接管
 - 加 0-100ms 随机抖动避免多 follower 同时抢
-- **v2a F1**：heartbeat 续约失败 → leader self-demote → 阻断新 job + 转 follower（防"进程没死但已丢 lease 仍触发 job"）
+- **v2b F1**：heartbeat 续约失败 → leader `selfDemote()` 清 lease + 记 `demotedReason` → `runJob` 三段 guard（role → lease 对象 → lease 时间）→ 阻断新 job + 转 follower poll（防"进程没死但已丢 lease 仍触发 job"；reason 三态清晰：`role_not_leader` / `lease_lost` / `lease_expired`）
 
 ## 4. Job Trace 契约（v2 新增 P19.4）
 
@@ -236,7 +263,7 @@ async selfDemote(reason: 'heartbeat_failed' | 'manual_stop') {
 }
 ```
 
-**status enum 完整列表**（v2a F3：补 `missed_window` + `lease_lost`）：
+**status enum 完整列表（共 8 种，v2b F2 锁定）**（v2a F3：补 `missed_window` + `lease_lost`）：
 - `ok` — 正常完成
 - `failed` — 业务异常（推 R-201）
 - `timeout` — 超 `wiki.config.yaml schedules.<job>.timeout_ms`（推 R-201）
@@ -289,17 +316,18 @@ Phase 3 scheduler panel 直接读这个目录。failed / timeout / recovered_fro
 | 16 | **P19.13** | ArchiveYearlySessions — yearly pack + mv archive（mock clock） | `feat(F027-P19.13): ArchiveYearlySessions` |
 | 17 | **P19.14** | ChainedAlertNotifier — chained_suspect 事件 → R-201 | `feat(F027-P19.14): ChainedAlertNotifier` |
 | 18 | **P19.15** | WikiCompilerDebounce — 写 wiki_events 后 5s 派生视图重生成（事件驱动）★ v2 新增 | `feat(F027-P19.15): WikiCompilerDebounce` |
-| 19-20 | **P19.17** | Phase 2 evidence pack 精简版（18 AC × 3 件套）+ 异构双 judge + arbitration | `docs(F027-P19): Phase 2 evidence pack 18/18` |
+| 19-20 | **P19.17** | Phase 2 evidence pack 精简版（19 AC × 3 件套，v2b F3 拆 AC-P2-3 a/b）+ 异构双 judge + arbitration | `docs(F027-P19): Phase 2 evidence pack 19/19` |
 | 21-22 | buffer | bug fix / 整合 / 合 dev | - |
 
-## 6. AC 列表（18 个，v2 冻结）
+## 6. AC 列表（19 个，v2b 冻结 — AC-P2-3 v2b F3 拆 a/b）
 
 | AC | 内容 | 测试位 |
 |---|---|---|
 | **AC-P2-1** | NightlyJobScheduler 起停 + **11 jobs（9 scheduled + 2 event-driven）全部触发命中目标时间窗 + job_trace 落盘** | `nightly-job-scheduler.test.ts` + runtime 跑一周 fixture |
-| **AC-P2-2** | Runtime owner election — (a) 双 runtime spawn → 1 leader / 1 follower poll；(b) winner crash → follower ≤ 60s 接管；(c) **v2a F1 lease-lost-live**：leader 进程未死但 `renewLeader()` 返 null（fixture：强抢 term）→ 旧 leader self-demote + 后续 `runJob` 全部 `skipped_not_leader (reason=lease_expired)` + trace 写 `lease_lost` | `scheduler-owner-election.test.ts` |
-| **AC-P2-3** | wiki.config.yaml schedules 加载 + cron 校验 + 时区（Asia/Shanghai）+ DST fixture（美东 spring/fall 锁库语义） | `scheduler-config.test.ts` |
-| **AC-P2-4** | job_trace JSON schema 契约 + Phase 3 panel 可读（schema 验证 + 字段完整性）；**v2a F3**：必须含 `scheduledFor / windowStart / windowEnd / status / reason` 全字段；status enum 9 种全覆盖 fixture（含 `missed_window` / `lease_lost`） | `job-trace-contract.test.ts` |
+| **AC-P2-2** | Runtime owner election — (a) 双 runtime spawn → 1 leader / 1 follower poll；(b) winner crash → follower ≤ 60s 接管；(c) **v2b F1 lease-lost-live**：leader 进程未死但 `renewLeader()` 返 null（fixture：强抢 term）→ 旧 leader `selfDemote()` 清 lease + 记 `demotedReason='heartbeat_failed'` + scheduler trace `lease_lost` 落盘；后续 `runJob` 全部 `skipped_not_leader (reason=lease_lost)`（不是 `lease_expired`——lease wall clock 可能仍未到，区分点：`demotedReason` 非空即 demote 过）；(d) **lease-expired 兜底**：runtime 卡住 selfDemote 未跑，lease wall clock 真过期 → `runJob` 走第三段 guard 写 `reason=lease_expired`（与 (c) 互斥 fixture） | `scheduler-owner-election.test.ts` |
+| **AC-P2-3a** | **v2b F3**（Gate 2 前可推）：`ConfigLoader` + 默认 schema + cron 校验 + 时区（Asia/Shanghai）+ DST fixture（美东 spring/fall 锁库语义）；**无 `wiki.config.yaml` 文件 → fallback 内置默认调度**；in-memory fixture 覆盖 9 个 scheduled jobs；**断言：测试运行前后 worktree 内 `wiki.config.yaml` 不存在 / 未被创建**（绑 Iron Laws 3 gate） | `scheduler-config.test.ts` |
+| **AC-P2-3b** | **v2b F3**（Gate 2 后启动）：feature.md Gate 2 ✓（小孙显式 OK 留证据 commit）后，`wiki.config.example.yaml` 模板 + 真 `wiki.config.yaml` 加载；loader 在 in-memory fallback ↔ 真文件之间无 schema diff（兼容性断言）；启动日志打印当前 tz / 配置源（fallback or file） | `scheduler-config-realfile.test.ts` |
+| **AC-P2-4** | job_trace JSON schema 契约 + Phase 3 panel 可读（schema 验证 + 字段完整性）；**v2a F3**：必须含 `scheduledFor / windowStart / windowEnd / status / reason` 全字段；**v2b F2**：status enum **8 种**全覆盖 fixture（`ok / failed / timeout / skipped_reentry / skipped_not_leader / missed_window / recovered_from_crash / lease_lost`），reason enum 至少覆盖 `lease_expired / lease_lost / role_not_leader / heartbeat_failed` 4 种（区分 `skipped_not_leader` 三段 guard） | `job-trace-contract.test.ts` |
 | **AC-P2-5** | StartupReconciler — crash injection: wiki_events.state='pending' / room_checkpoints.committed_at IS NULL 启动后清理 | `startup-reconciler.test.ts` |
 | **AC-P2-6** | RoomCompilerTick — 5min + idle 30min + **reentrancy guard 长跑期间新触发跳过 + missed window 走 skip policy 落 trace** | `room-compiler-tick.test.ts` |
 | **AC-P2-7** | DocsWatcher — chokidar mock + 真 fs temp integration + 半写 race mitigation（size/mtime 稳定 + 忽略 `*.tmp`/`*~`） | `docs-watcher.test.ts` |
@@ -313,7 +341,7 @@ Phase 3 scheduler panel 直接读这个目录。failed / timeout / recovered_fro
 | **AC-P2-15** | ArchiveYearlySessions — 100k session fixture → yearly pack + mv archive + Jan-1 边界（mock clock） | `archive-yearly-sessions.test.ts` |
 | **AC-P2-16** | ChainedAlertNotifier — chained_suspect 事件驱动 → R-201 收 alert | `chained-alert-notifier.test.ts` |
 | **AC-P2-17** | WikiCompilerDebounce — 写 wiki_events 后 5s 派生视图重生成（事件驱动）★ v2 新增 | `wiki-compiler-debounce.test.ts` |
-| **AC-P2-18** | Phase 2 evidence pack 18/18 PASS double-pass（精简 3 件套；generic p18-judge.ts）+ crash lease recovery fixture（runtime crash → lease ≤ 60s 过期 → 备机接管 trace `recovered_from_crash`） | 本 plan 自身 |
+| **AC-P2-18** | Phase 2 evidence pack 19/19 PASS double-pass（精简 3 件套；generic p18-judge.ts；v2b F3 拆 AC-P2-3 a/b 后总数 19）+ crash lease recovery fixture（runtime crash → lease ≤ 60s 过期 → 备机接管 trace `recovered_from_crash`） | 本 plan 自身 |
 
 ## 7. Evidence Pack 规则（沿用 V16.5 chap 16 精简版）
 
@@ -373,12 +401,12 @@ raw evidence (prompt/agent_response/db_dump 等) `.gitignore` 已规则化，本
 - **Runtime owner 永远拿不到**：follower 持续 60s poll，30s 失败后 fail-open 跳过本次执行（不挂主流程）
 - **lease TTL 设错**：单元测试锁 60s + 30s renew + 0-100ms 抖动；boot 时打印实际值 sanity check
 - **Heartbeat 续约失败**（v2a F1 · lease 被抢占 / clock skew / DB 暂时挂）：`renewLeader()` 返回 null → 旧 leader 立即 `selfDemote('heartbeat_failed')` → clearInterval(heartbeat) + role=follower + 阻断新 job + 重启 60s follower poll；正在跑的 job 由 reentrancy guard 自然完成（**不强 kill 避免数据不一致**）；trace 记 `status='lease_lost'`
-- **Heartbeat 失败但 runJob 已开跑**：`runJob` 头部双重保险——`role==='leader' && new Date(lease.leaseExpiresAt) > Date.now()` 两条件都过才执行；trace 记 `skipped_not_leader` + `reason='lease_expired'`
+- **Heartbeat 失败但 runJob 已开跑**（v2b F1）：`runJob` 头部三段 guard——(1) `role !== 'leader'` 且 `demotedReason` 非空 → `reason='lease_lost'`；(2) `role==='leader'` 但 `this.lease === null`（race）→ `reason='lease_lost'`；(3) `lease.leaseExpiresAt <= now`（兜底）→ `reason='lease_expired'`；trace 始终记 `status='skipped_not_leader'`
 
 ## 11. 合 dev 节奏（按 memory `feature_completion_before_merge` 例外 2）
 
 Phase 2 满足例外条件 → 单独合 dev：
-- (a) 18/18 AC 100% done
+- (a) 19/19 AC 100% done（含 v2b F3 拆出的 AC-P2-3a/3b；AC-P2-3b 必须有 feature.md Gate 2 ✓ commit）
 - (b) evidence pack + 异构双 judge 双 PASS
 - (c) Phase 2 是 enabling layer（Phase 3 前端 RuntimeLog 依赖 job_trace JSON + health report JSON）
 - (d) worktree preview 验收通过
