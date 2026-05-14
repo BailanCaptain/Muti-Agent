@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "All 7 evidence files present; result.json verdict=PASS; agent_response Rank 1 hits F011-backend-hardening-drizzle.md matching AC north-star recall target.",
+  "weak_points": [
+    "wiki_state.tar.gz size 9 bytes suggests placeholder rather than real archive",
+    "db_dump.sql is N/A — no DB-level proof of injection rendering",
+    "agent_response shows only Rank 1 line, no evidence of 'injected section' rendering in prompt context"
+  ]
+}

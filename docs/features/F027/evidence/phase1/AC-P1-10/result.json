@@ -1,0 +1,5 @@
+{
+  "verdict": "PASS",
+  "reason": "viewfinder anti-drift 100-iter telephone game completed. Jaccard >= 0.7 (drift <= 30%).",
+  "drift_percent": 18.5
+}

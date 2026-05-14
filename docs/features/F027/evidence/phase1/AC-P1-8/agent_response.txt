@@ -1,0 +1,1 @@
+Ledger test run: 100k sharded, 532 active remain.

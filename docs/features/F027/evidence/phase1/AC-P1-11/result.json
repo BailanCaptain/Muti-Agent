@@ -1,0 +1,5 @@
+{
+  "verdict": "PASS",
+  "reason": "memory_preflight hit target F011/F021. BM25 scoring validated.",
+  "top_hit": "F011-backend-hardening-drizzle.md"
+}
