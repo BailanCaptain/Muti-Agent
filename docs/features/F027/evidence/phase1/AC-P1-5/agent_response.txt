@@ -1,0 +1,19 @@
+=== SCENARIO 1: series_member (White-list) ===
+Verdict: {"kind":"series_member","seriesId":"rag-paper","siblings":[{"drop":{"id":"drop-a","rawContent":"RAG (Retrieval-Augmented Generation) 是把 retrieval 嵌入 LLM 推理的范式...","ingestedAt":1714913600000,"contributedBy":"alice","seriesId":"rag-paper","embedding":[1,0,0,0]},"similarity":0.9659258262890683,"sourceMatch":{"contributedBy":true,"ip":false,"userAgent":false},"keywordChainHits":[],"referenceLinks":[]}]}
+ChainedSuspect: false
+
+=== SCENARIO 2: chained_suspect (high_sim_diff_series) ===
+Verdict: {"kind":"chained_suspect","triggers":[{"reason":"high_sim_diff_series","detail":"sim=0.940 ≥ 0.7 (current.series=∅, candidate.series=∅)","candidateId":"drop-c"}]}
+ChainedSuspect: true
+
+=== SCENARIO 3: chained_suspect (keyword_chain) ===
+Verdict: {"kind":"chained_suspect","triggers":[{"reason":"keyword_chain","detail":"execute@current[ignore previous] + wait@candidate[wait for the next drop to arrive]","candidateId":"drop-e"}]}
+ChainedSuspect: true
+
+=== SCENARIO 4: chained_suspect (reference_link) ===
+Verdict: {"kind":"chained_suspect","triggers":[{"reason":"reference_link","detail":"current 引用 candidate abc-123: [drop:abc-123","candidateId":"abc-123"}]}
+ChainedSuspect: true
+
+=== SCENARIO 5: isolated ===
+Verdict: {"kind":"isolated","reason":"no historical drops in 7d window"}
+ChainedSuspect: false

@@ -1,0 +1,1 @@
+Input: agent-wiki-handbook.md + shared-rules.md fixtures
