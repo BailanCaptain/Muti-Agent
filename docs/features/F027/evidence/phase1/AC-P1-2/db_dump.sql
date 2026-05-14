@@ -1,0 +1,10 @@
+-- AC-P1-2 DB state evidence from temporary Promise.all(100 callers) race harness
+-- Path: wiki/concepts/fuzz.md
+-- Attempts: 100
+-- Duration: 12ms
+-- Status counts: ok=1, lease_expired=99
+-- Winner row: event id=1, path=wiki/concepts/fuzz.md, state=committed, fencing_token=1, content_hash=sha256:bc7c6d5e989db55abb82385444f174fc3b686b2deae863373cd4e57ec4574d03
+-- Final stored content: attempt-0
+-- final lease row: null (released after successful commit)
+-- Retry log: attempt 0 ok/non-retryable; attempts 1-99 lease_expired/retryable/no event row.
+-- Additional repository tests cover CAS noop, commit-after-abort noop, abort-after-commit noop, getByState committed/aborted observability, and fencing token monotonicity.

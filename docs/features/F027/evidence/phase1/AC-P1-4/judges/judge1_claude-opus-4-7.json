@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "All 7 evidence files present; result.json verdict=PASS; 5 fixture layers L1-L5 all hit expected triggers including red-line blocks and chained_suspect precondition.",
+  "weak_points": [
+    "agent_response.txt is summarized excerpts rather than raw stdout",
+    "db_dump.sql is a comment not actual SQL (acceptable since AC is pure sanitizer)",
+    "no per-layer assertion counts shown"
+  ]
+}

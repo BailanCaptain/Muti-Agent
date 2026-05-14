@@ -1,0 +1,8 @@
+{
+    "verdict":  "PASS",
+    "reason":  "double-pass",
+    "judge1_verdict":  "PASS",
+    "judge2_verdict":  "PASS",
+    "judge1":  "claude-opus-4-7",
+    "judge2":  "codex-gpt-5.4"
+}

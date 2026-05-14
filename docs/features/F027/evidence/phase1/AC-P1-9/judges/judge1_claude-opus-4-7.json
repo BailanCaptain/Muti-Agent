@@ -1,0 +1,7 @@
+{
+  "verdict": "PASS",
+  "reason": "All 7 evidence files present; result.json verdict=PASS; 6 segments mapped (5 wiki_memories enum buckets + messages-backed conversation); lint red/green fixtures all passed; CHECK constraint rejects conversation type.",
+  "weak_points": [
+    "Evidence is excerpts not raw test stdout; db_dump.sql is schema-only without fixture row dumps; wiki_state.tar.gz contents not inspected; no direct line-pointer to lint test source file"
+  ]
+}

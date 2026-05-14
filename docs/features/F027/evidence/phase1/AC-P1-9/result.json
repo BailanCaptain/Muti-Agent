@@ -1,0 +1,19 @@
+{
+  "verdict": "PASS",
+  "reason": "Six memory segments are covered as five wiki_memories enum buckets plus messages-backed conversation; canonical_owner lint red/green fixtures passed.",
+  "checks": {
+    "memory_segments": {
+      "room": "wiki_memories.type=room",
+      "project": "wiki_memories.type=project",
+      "user": "wiki_memories.type=user",
+      "feedback": "wiki_memories.type=feedback",
+      "work": "wiki_memories.type=work",
+      "conversation": "messages table"
+    },
+    "wiki_memories_rejects_conversation_type": true,
+    "messages_table_columns_present": ["id", "thread_id", "role", "content", "message_type", "created_at"],
+    "memory_service_summarize_session_from_messages": true,
+    "lint_green_findings": 0,
+    "lint_red_cases": ["duplicate canonical owner", "missing supersedes", "canonical prefix mismatch"]
+  }
+}

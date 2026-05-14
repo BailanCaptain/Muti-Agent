@@ -1,0 +1,19 @@
+Commands run:
+1. pnpm exec tsx --test packages/api/src/wiki/wiki-services.test.ts packages/api/src/wiki/update-wiki-service.test.ts packages/api/src/mcp/server.test.ts
+2. 100-caller temporary harness scheduled with Promise.all against one lease/path.
+Observed test output excerpts:
+- update_wiki tool requires path/action/content/fencing_token: PASS
+- happy path write/append/delete commit + onCommit: PASS
+- denied_acl for agent writing wiki/rules/: PASS
+- lease_expired for non-current fencing token: PASS
+- conflict for baseHash mismatch: PASS
+- stale_token when lease is stolen during critical section: PASS
+- path traversal ../../etc/passwd => path_invalid and no write outside wikiRoot: PASS
+- atomic write failure => internal, not conflict: PASS
+- TTL race after write reverts existing content: PASS
+100-caller race trace:
+{"scheduled_via":"Promise.all(100 callers)","duration_ms":12,"attempts":100,"counts":{"ok":1,"lease_expired":99},"stored":"attempt-0","committedRows":[{"id":1,"path":"wiki/concepts/fuzz.md","state":"committed","contentHash":"sha256:bc7c6d5e989db55abb82385444f174fc3b686b2deae863373cd4e57ec4574d03","fencingToken":"1"}],"finalLease":null}
+Retry log:
+- attempt 0: status=ok, retryable=false, eventId=1
+- attempts 1-99: status=lease_expired, retryable=true, eventId=null
+Targeted run summary: 48 tests pass / 0 fail.
