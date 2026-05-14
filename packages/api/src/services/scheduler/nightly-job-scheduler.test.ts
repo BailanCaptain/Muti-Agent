@@ -26,8 +26,12 @@ function newScheduler() {
 
 test("NightlyJobScheduler · register before start, health reports specs", () => {
   const sch = newScheduler()
-  sch.register({ name: "noop-a", cron: "0 0 * * *", handler: () => {} })
-  sch.register({ name: "noop-b", cron: "0 1 * * *", handler: () => {} })
+  sch.register({ name: "noop-a", cron: "0 0 * * *", handler: () => {
+        // 范-r1 P2-3 后 handler 接 ctx，但 noop 测试可省略参数
+      } })
+  sch.register({ name: "noop-b", cron: "0 1 * * *", handler: () => {
+        // 范-r1 P2-3 后 handler 接 ctx，但 noop 测试可省略参数
+      } })
 
   const h = sch.health()
   assert.equal(h.running, false)
@@ -44,7 +48,9 @@ test("NightlyJobScheduler · register before start, health reports specs", () =>
 
 test("NightlyJobScheduler · start sets running, computes nextRun", () => {
   const sch = newScheduler()
-  sch.register({ name: "midnight", cron: "0 0 * * *", handler: () => {} })
+  sch.register({ name: "midnight", cron: "0 0 * * *", handler: () => {
+        // 范-r1 P2-3 后 handler 接 ctx，但 noop 测试可省略参数
+      } })
 
   sch.start()
   try {
@@ -62,7 +68,9 @@ test("NightlyJobScheduler · start sets running, computes nextRun", () => {
 
 test("NightlyJobScheduler · start is idempotent", () => {
   const sch = newScheduler()
-  sch.register({ name: "idem", cron: "0 0 * * *", handler: () => {} })
+  sch.register({ name: "idem", cron: "0 0 * * *", handler: () => {
+        // 范-r1 P2-3 后 handler 接 ctx，但 noop 测试可省略参数
+      } })
 
   sch.start()
   const first = sch.health().startedAt
@@ -74,7 +82,9 @@ test("NightlyJobScheduler · start is idempotent", () => {
 
 test("NightlyJobScheduler · stop is idempotent + clears running state", () => {
   const sch = newScheduler()
-  sch.register({ name: "idem-stop", cron: "0 0 * * *", handler: () => {} })
+  sch.register({ name: "idem-stop", cron: "0 0 * * *", handler: () => {
+        // 范-r1 P2-3 后 handler 接 ctx，但 noop 测试可省略参数
+      } })
 
   sch.start()
   sch.stop()
@@ -88,11 +98,15 @@ test("NightlyJobScheduler · stop is idempotent + clears running state", () => {
 
 test("NightlyJobScheduler · register after start throws", () => {
   const sch = newScheduler()
-  sch.register({ name: "first", cron: "0 0 * * *", handler: () => {} })
+  sch.register({ name: "first", cron: "0 0 * * *", handler: () => {
+        // 范-r1 P2-3 后 handler 接 ctx，但 noop 测试可省略参数
+      } })
   sch.start()
   try {
     assert.throws(
-      () => sch.register({ name: "second", cron: "0 1 * * *", handler: () => {} }),
+      () => sch.register({ name: "second", cron: "0 1 * * *", handler: () => {
+        // 范-r1 P2-3 后 handler 接 ctx，但 noop 测试可省略参数
+      } }),
       /cannot register .* after start/,
     )
   } finally {
@@ -102,9 +116,13 @@ test("NightlyJobScheduler · register after start throws", () => {
 
 test("NightlyJobScheduler · duplicate name throws", () => {
   const sch = newScheduler()
-  sch.register({ name: "dup", cron: "0 0 * * *", handler: () => {} })
+  sch.register({ name: "dup", cron: "0 0 * * *", handler: () => {
+        // 范-r1 P2-3 后 handler 接 ctx，但 noop 测试可省略参数
+      } })
   assert.throws(
-    () => sch.register({ name: "dup", cron: "0 1 * * *", handler: () => {} }),
+    () => sch.register({ name: "dup", cron: "0 1 * * *", handler: () => {
+        // 范-r1 P2-3 后 handler 接 ctx，但 noop 测试可省略参数
+      } }),
     /duplicate job name 'dup'/,
   )
 })
@@ -112,7 +130,9 @@ test("NightlyJobScheduler · duplicate name throws", () => {
 test("NightlyJobScheduler · default tz Asia/Shanghai applied", () => {
   const sch = new NightlyJobScheduler({ defaultTimezone: "Asia/Shanghai" })
   // 03:00 Shanghai 每天一次
-  sch.register({ name: "tz-test", cron: "0 3 * * *", handler: () => {} })
+  sch.register({ name: "tz-test", cron: "0 3 * * *", handler: () => {
+        // 范-r1 P2-3 后 handler 接 ctx，但 noop 测试可省略参数
+      } })
   sch.start()
   try {
     const next = sch.health().jobs[0].nextRun
@@ -217,14 +237,17 @@ test("NightlyJobScheduler · P19.2 guard returns reason → handler skipped + on
   void guardReason
 })
 
-test("NightlyJobScheduler · P19.2 guard threw treated as skip with reason='guard_error'", async () => {
+// 范-r1 P2-2: guard 抛错改走独立 onGuardError 回调，不引入新 reason enum
+test("NightlyJobScheduler · 范-r1 P2-2: guard threw → onGuardError fires + handler skipped (no reason enum pollution)", async () => {
   const skipEvents: Array<{ name: string; reason: string }> = []
+  const guardErrors: Array<{ name: string; message: string }> = []
   let count = 0
   const sch = new NightlyJobScheduler({
     guard: () => {
       throw new Error("guard explosion")
     },
     onSkip: (name, reason) => skipEvents.push({ name, reason }),
+    onGuardError: (name, err) => guardErrors.push({ name, message: err.message }),
   })
   sch.register({
     name: "boom-guard",
@@ -236,9 +259,58 @@ test("NightlyJobScheduler · P19.2 guard threw treated as skip with reason='guar
   sch.start()
   try {
     await new Promise((resolve) => setTimeout(resolve, 1500))
-    assert.equal(count, 0, "guard error → handler skipped")
-    assert.ok(skipEvents.length >= 1)
-    assert.equal(skipEvents[0].reason, "guard_error")
+    assert.equal(count, 0, "guard error → handler skipped (fail-safe)")
+    assert.equal(skipEvents.length, 0, "onSkip 不该 fire（guard error 是 infra 异常，非 spec'd skip reason）")
+    assert.ok(guardErrors.length >= 1, `onGuardError 应 fire ≥ 1 次, got ${guardErrors.length}`)
+    assert.equal(guardErrors[0].name, "boom-guard")
+    assert.match(guardErrors[0].message, /guard explosion/)
+  } finally {
+    sch.stop()
+  }
+})
+
+// 范-r1 P2-3: handler 接 JobContext (scheduledFor + window) — 验证传参正确
+test("NightlyJobScheduler · 范-r1 P2-3: handler 接 JobContext { scheduledFor / windowStart / windowEnd }", async () => {
+  const ctxCaptured: Array<{ scheduledFor: Date; windowStart: Date; windowEnd: Date }> = []
+  const sch = new NightlyJobScheduler()
+  sch.register({
+    name: "ctx-test",
+    cron: "* * * * * *", // 每秒
+    windowMinutes: 3, // 自定义 window
+    handler: (ctx) => {
+      ctxCaptured.push(ctx)
+    },
+  })
+  sch.start()
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    assert.ok(ctxCaptured.length >= 1, `handler 应 fire ≥ 1 次, got ${ctxCaptured.length}`)
+    const c = ctxCaptured[0]
+    // scheduledFor 与 windowStart 应一致
+    assert.equal(c.windowStart.getTime(), c.scheduledFor.getTime())
+    // windowEnd = scheduledFor + 3min
+    assert.equal(c.windowEnd.getTime() - c.scheduledFor.getTime(), 3 * 60_000)
+  } finally {
+    sch.stop()
+  }
+})
+
+test("NightlyJobScheduler · 范-r1 P2-3: handler windowMinutes 默认 5min", async () => {
+  let captured: { scheduledFor: Date; windowEnd: Date } | null = null
+  const sch = new NightlyJobScheduler()
+  sch.register({
+    name: "default-window",
+    cron: "* * * * * *",
+    handler: (ctx) => {
+      if (!captured) captured = ctx
+    },
+  })
+  sch.start()
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    assert.ok(captured !== null)
+    const c = captured as { scheduledFor: Date; windowEnd: Date }
+    assert.equal(c.windowEnd.getTime() - c.scheduledFor.getTime(), 5 * 60_000)
   } finally {
     sch.stop()
   }
@@ -246,9 +318,15 @@ test("NightlyJobScheduler · P19.2 guard threw treated as skip with reason='guar
 
 test("NightlyJobScheduler · health.jobs preserves spec order (insertion)", () => {
   const sch = newScheduler()
-  sch.register({ name: "z-first", cron: "0 0 * * *", handler: () => {} })
-  sch.register({ name: "a-second", cron: "0 1 * * *", handler: () => {} })
-  sch.register({ name: "m-third", cron: "0 2 * * *", handler: () => {} })
+  sch.register({ name: "z-first", cron: "0 0 * * *", handler: () => {
+        // 范-r1 P2-3 后 handler 接 ctx，但 noop 测试可省略参数
+      } })
+  sch.register({ name: "a-second", cron: "0 1 * * *", handler: () => {
+        // 范-r1 P2-3 后 handler 接 ctx，但 noop 测试可省略参数
+      } })
+  sch.register({ name: "m-third", cron: "0 2 * * *", handler: () => {
+        // 范-r1 P2-3 后 handler 接 ctx，但 noop 测试可省略参数
+      } })
 
   const names = sch.health().jobs.map((j) => j.name)
   assert.deepEqual(names, ["z-first", "a-second", "m-third"])

@@ -62,8 +62,71 @@ test("scheduler-config · loadSchedulerConfig with no file → fallback default 
   }
 })
 
-test("scheduler-config · DEFAULT_SCHEDULER_CONFIG all cron patterns valid (croner)", () => {
+// 范-r1 P1-1: Iron Laws 3 fail-safe — root 真文件存在 + gate2Approved=false → throw
+test("scheduler-config · 范-r1 P1-1: root wiki.config.yaml 存在 + gate2Approved=false → throw", () => {
+  const tempDir = safeTempDir("scheduler-config-iron-laws-3-")
+  try {
+    // 模拟有人偷偷创建 wiki.config.yaml (Iron Laws 3 violation)
+    fs.writeFileSync(
+      path.join(tempDir, "wiki.config.yaml"),
+      "scheduled:\n  - name: stealth-job\n    cron: '0 0 * * *'\n",
+      "utf-8",
+    )
+    assert.throws(
+      () => loadSchedulerConfig({ rootDir: tempDir }), // 默认 gate2Approved=false
+      /Iron Laws 3 violation.*gate2Approved=false/,
+    )
+  } finally {
+    safeCleanup(tempDir)
+  }
+})
+
+test("scheduler-config · 范-r1 P1-1: root wiki.config.yaml 存在 + gate2Approved=true → 正常加载", () => {
+  const tempDir = safeTempDir("scheduler-config-gate2-approved-")
+  try {
+    fs.writeFileSync(
+      path.join(tempDir, "wiki.config.yaml"),
+      [
+        "defaultTimezone: Asia/Shanghai",
+        "scheduled:",
+        "  - name: gate2-approved-job",
+        "    kind: cron",
+        "    cron: '0 6 * * *'",
+        "    timezone: Asia/Shanghai",
+        "    timeoutSeconds: 300",
+        "    windowMinutes: 5",
+      ].join("\n"),
+      "utf-8",
+    )
+    const result = loadSchedulerConfig({ rootDir: tempDir, gate2Approved: true })
+    assert.equal(result.fromFile, true)
+    assert.equal(result.config.scheduled.length, 1)
+    assert.equal(result.config.scheduled[0].name, "gate2-approved-job")
+  } finally {
+    safeCleanup(tempDir)
+  }
+})
+
+test("scheduler-config · 范-r1 P1-1: configPath override 跳过 gate2 fail-safe（测试场景）", () => {
+  const tempDir = safeTempDir("scheduler-config-explicit-path-")
+  const configPath = path.join(tempDir, "test.scheduler.yaml")
+  try {
+    // configPath 注入路径不受 gate2 约束（测试 / 开发用）
+    fs.writeFileSync(
+      configPath,
+      "scheduled:\n  - name: t\n    kind: cron\n    cron: '0 0 * * *'\n",
+      "utf-8",
+    )
+    // 默认 gate2Approved=false 但 configPath 注入 → 不抛
+    assert.doesNotThrow(() => loadSchedulerConfig({ configPath }))
+  } finally {
+    safeCleanup(tempDir)
+  }
+})
+
+test("scheduler-config · DEFAULT all 'cron' kind patterns valid (croner) — non-cron skipped", () => {
   for (const job of DEFAULT_SCHEDULER_CONFIG.scheduled) {
+    if (job.kind !== "cron") continue
     assert.doesNotThrow(
       () => new Cron(job.cron, { timezone: job.timezone, paused: true }),
       `invalid cron in default: ${job.name} '${job.cron}'`,
@@ -71,7 +134,8 @@ test("scheduler-config · DEFAULT_SCHEDULER_CONFIG all cron patterns valid (cron
   }
 })
 
-test("scheduler-config · DEFAULT_SCHEDULER_CONFIG covers known scheduled jobs", () => {
+// 范-r1 P1-2: feature.md AC-P2-1 锁定 9 scheduled jobs (7 cron + 1 startup + 1 watcher)
+test("scheduler-config · 范-r1 P1-2: DEFAULT 锁定 9 scheduled jobs (7 cron + 1 startup + 1 watcher)", () => {
   const expectedNames = [
     "room-compiler-tick",
     "nightly-health-check",
@@ -80,15 +144,40 @@ test("scheduler-config · DEFAULT_SCHEDULER_CONFIG covers known scheduled jobs",
     "drift-detector",
     "monthly-snapshot",
     "archive-yearly-sessions",
+    "startup-reconciler",
+    "docs-watcher",
   ]
   const actualNames = DEFAULT_SCHEDULER_CONFIG.scheduled.map((j) => j.name).sort()
-  assert.deepEqual(actualNames, expectedNames.sort())
+  assert.deepEqual(actualNames, [...expectedNames].sort())
+  assert.equal(DEFAULT_SCHEDULER_CONFIG.scheduled.length, 9, "exactly 9 scheduled per AC-P2-1")
 })
 
-test("scheduler-config · DEFAULT all jobs have non-zero timeout + windowMinutes", () => {
+test("scheduler-config · 范-r1 P1-2: kind 分布 7 cron + 1 startup + 1 watcher", () => {
+  const byKind: Record<string, number> = { cron: 0, startup: 0, watcher: 0 }
+  for (const job of DEFAULT_SCHEDULER_CONFIG.scheduled) {
+    byKind[job.kind] = (byKind[job.kind] ?? 0) + 1
+  }
+  assert.deepEqual(byKind, { cron: 7, startup: 1, watcher: 1 })
+})
+
+// 范-r1 P2-1: windowMinutes 全部 5 (cron) / 0 (non-cron)，违反 plan §4 min(cron_period, 5min) 修复
+test("scheduler-config · 范-r1 P2-1: cron kind windowMinutes=5 / non-cron=0 (plan §4 锁定)", () => {
+  for (const job of DEFAULT_SCHEDULER_CONFIG.scheduled) {
+    if (job.kind === "cron") {
+      assert.equal(
+        job.windowMinutes,
+        5,
+        `${job.name}: cron kind windowMinutes 应统一 5（长任务用 timeoutSeconds 表达）`,
+      )
+    } else {
+      assert.equal(job.windowMinutes, 0, `${job.name}: non-cron kind windowMinutes=0`)
+    }
+  }
+})
+
+test("scheduler-config · DEFAULT all jobs have positive timeoutSeconds", () => {
   for (const job of DEFAULT_SCHEDULER_CONFIG.scheduled) {
     assert.ok(job.timeoutSeconds > 0, `${job.name}: timeoutSeconds must be > 0`)
-    assert.ok(job.windowMinutes > 0, `${job.name}: windowMinutes must be > 0`)
   }
 })
 
@@ -103,6 +192,7 @@ test("scheduler-config · YAML file load (via configPath override; not at worktr
         "defaultTimezone: Asia/Shanghai",
         "scheduled:",
         "  - name: my-test-job",
+        "    kind: cron",
         "    cron: '0 12 * * *'",
         "    timezone: Asia/Shanghai",
         "    timeoutSeconds: 120",
@@ -115,7 +205,62 @@ test("scheduler-config · YAML file load (via configPath override; not at worktr
     assert.match(result.config.source, /^file:/)
     assert.equal(result.config.scheduled.length, 1)
     assert.equal(result.config.scheduled[0].name, "my-test-job")
+    assert.equal(result.config.scheduled[0].kind, "cron")
     assert.equal(result.config.scheduled[0].cron, "0 12 * * *")
+  } finally {
+    safeCleanup(tempDir)
+  }
+})
+
+// 范-r1 P1-2: YAML 解析支持 kind='startup' / 'watcher' (skip cron 校验)
+test("scheduler-config · YAML kind='startup' / 'watcher' skip cron validation", () => {
+  const tempDir = safeTempDir("scheduler-config-non-cron-kind-")
+  const configPath = path.join(tempDir, "test.scheduler.yaml")
+  try {
+    fs.writeFileSync(
+      configPath,
+      [
+        "defaultTimezone: Asia/Shanghai",
+        "scheduled:",
+        "  - name: startup-job",
+        "    kind: startup",
+        "    cron: '@startup'", // 非合法 cron 但 kind='startup' 跳过校验
+        "    timezone: Asia/Shanghai",
+        "    timeoutSeconds: 60",
+        "    windowMinutes: 0",
+        "  - name: watcher-job",
+        "    kind: watcher",
+        "    cron: '@watcher'",
+        "    timezone: Asia/Shanghai",
+        "    timeoutSeconds: 30",
+        "    windowMinutes: 0",
+      ].join("\n"),
+      "utf-8",
+    )
+    const result = loadSchedulerConfig({ configPath })
+    assert.equal(result.config.scheduled.length, 2)
+    assert.equal(result.config.scheduled[0].kind, "startup")
+    assert.equal(result.config.scheduled[1].kind, "watcher")
+  } finally {
+    safeCleanup(tempDir)
+  }
+})
+
+test("scheduler-config · YAML invalid kind value → throws", () => {
+  const tempDir = safeTempDir("scheduler-config-bad-kind-")
+  const configPath = path.join(tempDir, "test.scheduler.yaml")
+  try {
+    fs.writeFileSync(
+      configPath,
+      [
+        "scheduled:",
+        "  - name: weird",
+        "    kind: not-a-kind",
+        "    cron: '0 0 * * *'",
+      ].join("\n"),
+      "utf-8",
+    )
+    assert.throws(() => loadSchedulerConfig({ configPath }), /kind must be 'cron'\|'startup'\|'watcher'/)
   } finally {
     safeCleanup(tempDir)
   }

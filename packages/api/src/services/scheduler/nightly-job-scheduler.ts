@@ -23,6 +23,18 @@ import { Cron } from "croner"
 import type { FastifyBaseLogger } from "fastify"
 import { createLogger } from "../../lib/logger"
 
+/**
+ * **范-r1 P2-3**：handler 接收的 cron 触发上下文。
+ * scheduledFor 由 croner.currentRun() 提供（fall back to new Date() 极端漏拿场景）。
+ * windowEnd = scheduledFor + windowMinutes 用于 RoomCompilerTick 等 tick handler
+ * 内部判 missed_window。
+ */
+export interface JobContext {
+  scheduledFor: Date
+  windowStart: Date
+  windowEnd: Date
+}
+
 export interface JobSpec {
   /** Unique job name. 注册重复抛错。 */
   name: string
@@ -30,8 +42,10 @@ export interface JobSpec {
   cron: string
   /** 可选；不填走 scheduler 默认 tz。 */
   timezone?: string
-  /** Job 主体；同步或 Promise 都允许。 */
-  handler: () => Promise<void> | void
+  /** **范-r1 P2-3**：window 长度分钟（默认 5）；windowEnd = scheduledFor + windowMinutes。 */
+  windowMinutes?: number
+  /** Job 主体；接 ctx 上下文（scheduledFor / window）；同步或 Promise 都允许。 */
+  handler: (ctx: JobContext) => Promise<void> | void
 }
 
 export interface SchedulerJobView {
@@ -59,10 +73,19 @@ export interface NightlyJobSchedulerOptions {
    */
   guard?: () => string | null
   /**
-   * P19.2 + P19.4 hook：guard 触发 skip 时回调。Day 2 仅 log；Day 3 P19.4 在此写
-   * job_trace（status='skipped_not_leader' + reason=guard 返回值）。
+   * P19.2 + P19.4 hook：guard 返 reason 触发 skip 时回调。Day 3 P19.4 在此写
+   * job_trace（status='skipped_not_leader' + reason=guard 返回值，必须 ∈
+   * JOB_TRACE_REASON_VALUES 4 种）。
    */
   onSkip?: (jobName: string, reason: string) => void
+  /**
+   * **范-r1 P2-2**：guard 抛错时回调（区分于 onSkip — guard 返 reason 是
+   * 正常路径；guard throw 是 infra 异常）。Day 4+ 集成时 caller 应在此写
+   * job_trace（status='failed', error 字段记 stack）。
+   * 不引入新 reason enum 值（v2b F2 锁定 4 种）。
+   * 默认行为：log error + skip 本次（不跑 handler，fail-safe）。
+   */
+  onGuardError?: (jobName: string, error: Error) => void
 }
 
 export class NightlyJobScheduler {
@@ -70,6 +93,7 @@ export class NightlyJobScheduler {
   private readonly defaultTimezone: string
   private readonly guard: () => string | null
   private readonly onSkip?: (jobName: string, reason: string) => void
+  private readonly onGuardError?: (jobName: string, error: Error) => void
   private readonly specs = new Map<string, JobSpec>()
   private readonly jobs = new Map<string, Cron>()
   private startedAt: string | null = null
@@ -79,6 +103,7 @@ export class NightlyJobScheduler {
     this.defaultTimezone = options.defaultTimezone ?? "Asia/Shanghai"
     this.guard = options.guard ?? (() => null)
     this.onSkip = options.onSkip
+    this.onGuardError = options.onGuardError
   }
 
   register(spec: JobSpec): void {
@@ -101,6 +126,7 @@ export class NightlyJobScheduler {
     const startedAt = new Date().toISOString()
 
     for (const spec of this.specs.values()) {
+      const windowMinutes = spec.windowMinutes ?? 5
       const job = new Cron(
         spec.cron,
         {
@@ -114,14 +140,26 @@ export class NightlyJobScheduler {
             )
           },
         },
-        async () => {
+        async (self) => {
           // P19.2 lease guard — 三段 guard 任一失败 → skip
           let skipReason: string | null = null
           try {
             skipReason = this.guard()
           } catch (err) {
-            this.log.error({ err, jobName: spec.name }, "guard threw; treating as skip")
-            skipReason = "guard_error"
+            // 范-r1 P2-2: guard 抛错走独立 onGuardError 回调，不引入新 reason enum
+            const error = err as Error
+            this.log.error(
+              { err, jobName: spec.name },
+              "guard threw; firing onGuardError + skipping (fail-safe)",
+            )
+            if (this.onGuardError) {
+              try {
+                this.onGuardError(spec.name, error)
+              } catch (cbErr) {
+                this.log.warn({ err: cbErr }, "onGuardError threw (ignored)")
+              }
+            }
+            return
           }
           if (skipReason !== null) {
             this.log.warn({ jobName: spec.name, reason: skipReason }, "job skipped by guard")
@@ -134,8 +172,12 @@ export class NightlyJobScheduler {
             }
             return
           }
+          // 范-r1 P2-3: 构造 JobContext (scheduledFor + window) 并传给 handler
+          const scheduledFor = self.currentRun() ?? new Date()
+          const windowStart = scheduledFor
+          const windowEnd = new Date(scheduledFor.getTime() + windowMinutes * 60_000)
           try {
-            await spec.handler()
+            await spec.handler({ scheduledFor, windowStart, windowEnd })
           } catch (err) {
             // catch:fn 已兜了；这里防御性兜底（异步 handler 罕见漏网路径）。
             this.log.error({ err, jobName: spec.name }, "handler async error fallthrough")

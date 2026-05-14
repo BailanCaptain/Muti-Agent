@@ -80,14 +80,13 @@ test("job-trace · status enum — 8 种 v2b F2 锁定全覆盖", () => {
   )
 })
 
-test("job-trace · reason enum — 至少 4 种 v2b F2 锁定", () => {
-  assert.ok(JOB_TRACE_REASON_VALUES.length >= 4)
-  for (const r of ["lease_expired", "lease_lost", "role_not_leader", "heartbeat_failed"]) {
-    assert.ok(
-      (JOB_TRACE_REASON_VALUES as readonly string[]).includes(r),
-      `reason enum 缺 '${r}'`,
-    )
-  }
+test("job-trace · reason enum — 锁定 exactly 4 种 v2b F2（防偷扩 enum）", () => {
+  // [范-r1 P3-2] 改 exactly 4 — v2b F2 锁定不允许扩 reason enum
+  assert.equal(JOB_TRACE_REASON_VALUES.length, 4, "reason enum 必须 exactly 4 种")
+  assert.deepEqual(
+    [...JOB_TRACE_REASON_VALUES].sort(),
+    ["heartbeat_failed", "lease_expired", "lease_lost", "role_not_leader"],
+  )
 })
 
 test("job-trace · 8 status fixture 各通过 validateJobTrace", () => {

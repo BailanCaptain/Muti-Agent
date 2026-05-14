@@ -56,8 +56,16 @@ export interface RoomCompilerTickOptions {
   logger?: FastifyBaseLogger
   /** Job 名；落 trace 用；默认 'room-compiler-tick'。 */
   jobName?: string
-  /** 当前 leaderTerm，落 trace 用；默认 null。 */
-  leaderTerm?: string | null
+  /**
+   * **范-r1 P3-1**：当前 leaderTerm，落 trace 用；默认 null。
+   *
+   * 接受静态值 `string | null` 或 getter `() => string | null`。生产 wiring
+   * **必须传 getter**（如 `() => leader.getLease()?.currentTerm ?? null`），
+   * 否则 reacquire 后 trace 会写旧 term。
+   *
+   * 静态值仅供测试 / 单 term 场景便利。
+   */
+  leaderTerm?: string | null | (() => string | null)
 }
 
 export type TickOutcome =
@@ -74,7 +82,8 @@ export class RoomCompilerTick {
   private readonly clock: () => Date
   private readonly log: FastifyBaseLogger
   private readonly jobName: string
-  private readonly leaderTerm: string | null
+  // 范-r1 P3-1: leaderTerm 内部统一存为 getter 形式（静态值包成常量 getter）
+  private readonly leaderTermFn: () => string | null
 
   private inProgress = false
   private lastSuccessAt: Date | null = null
@@ -86,7 +95,13 @@ export class RoomCompilerTick {
     this.onTrace = opts.onTrace
     this.clock = opts.clock ?? (() => new Date())
     this.jobName = opts.jobName ?? "room-compiler-tick"
-    this.leaderTerm = opts.leaderTerm ?? null
+    // 范-r1 P3-1: 静态值包成 getter，使用方统一调函数
+    if (typeof opts.leaderTerm === "function") {
+      this.leaderTermFn = opts.leaderTerm
+    } else {
+      const term = opts.leaderTerm ?? null
+      this.leaderTermFn = () => term
+    }
     this.log = opts.logger ?? createLogger(this.jobName)
   }
 
@@ -232,7 +247,8 @@ export class RoomCompilerTick {
       finishedAt: input.finishedAt ? input.finishedAt.toISOString() : null,
       durationMs: input.durationMs,
       status: input.status,
-      leaderTerm: this.leaderTerm,
+      // 范-r1 P3-1: 每次 trace 实时取 leaderTerm（getter 路径捕获 reacquire 后新 term）
+      leaderTerm: this.leaderTermFn(),
       reason: null,
       result: input.result ?? null,
       error: input.error ?? null,

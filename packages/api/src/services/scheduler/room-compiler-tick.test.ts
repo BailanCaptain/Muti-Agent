@@ -260,6 +260,30 @@ test("RoomCompilerTick · custom jobName + leaderTerm 反映在 trace", async ()
   assert.equal(traceCollector[0].leaderTerm, "42")
 })
 
+// 范-r1 P3-1: leaderTerm getter — 每次 trace 实时取，不缓存构造时值
+test("RoomCompilerTick · 范-r1 P3-1: leaderTerm getter 反映 reacquire 后新 term", async () => {
+  const traceCollector: JobTrace[] = []
+  let currentTerm: string | null = "1"
+  const tick = new RoomCompilerTick({
+    compileExecutor: async () => ({ roomsProcessed: 0 }),
+    onTrace: (t) => traceCollector.push(t),
+    leaderTerm: () => currentTerm, // getter
+  })
+
+  await tick.tick(new Date("2026-05-15T00:00:00.000Z"))
+  assert.equal(traceCollector[0].leaderTerm, "1")
+
+  // 模拟 leader reacquire，term++
+  currentTerm = "2"
+  await tick.tick(new Date("2026-05-15T00:05:00.000Z"))
+  assert.equal(traceCollector[1].leaderTerm, "2", "getter 应捕获新 term，不是构造时缓存")
+
+  // 模拟 selfDemote → null
+  currentTerm = null
+  await tick.tick(new Date("2026-05-15T00:10:00.000Z"))
+  assert.equal(traceCollector[2].leaderTerm, null)
+})
+
 // ── (7) onTrace throw 不打断 tick ────────────────────────────────────────
 
 test("RoomCompilerTick · onTrace throw 不打断 tick result", async () => {
