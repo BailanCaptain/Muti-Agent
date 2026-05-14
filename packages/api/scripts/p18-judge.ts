@@ -7,7 +7,20 @@ import { createOpusRunner } from "../src/runtime/haiku-runner"
 const DEFAULT_JUDGE = "claude-opus-4-7"
 const JUDGE_TIMEOUT_MS = 60000
 
-const EVIDENCE_FILES = [
+/**
+ * F027 P19.16 · generic 化（v2 新增）—— 让 Phase 2/3/N evidence pack 复用本 wrapper。
+ *
+ * 默认值保 Phase 1 back-compat：未显式传 --ac-pattern / --evidence-files /
+ * --ac-text-file 时按 Phase 1 7 件套 + AC-P1-N 模式跑，旧调用不动。
+ *
+ * 新参数（Phase 2 evidence pack P19.17 用）：
+ *   --ac-pattern <regex>      —— override AC 名格式校验（如 ^AC-P2-\d+[ab]?$）
+ *   --evidence-files <csv>    —— override 待读 evidence 文件清单
+ *   --ac-text-file <json-path> —— override AC 描述映射（JSON: { "AC-P2-1": "text" }）
+ */
+export const DEFAULT_AC_PATTERN = "^AC-P1-\\d+$"
+
+export const DEFAULT_PHASE1_EVIDENCE_FILES = [
   "prompt.txt",
   "agent_response.txt",
   "db_dump.sql",
@@ -17,7 +30,7 @@ const EVIDENCE_FILES = [
   "result.json",
 ] as const
 
-const TEXT_EVIDENCE_LIMITS: Partial<Record<(typeof EVIDENCE_FILES)[number], number>> = {
+export const DEFAULT_PHASE1_TEXT_EVIDENCE_LIMITS: Record<string, number> = {
   "agent_response.txt": 9000,
   "db_dump.sql": 5000,
   "result.json": 6000,
@@ -26,7 +39,7 @@ const TEXT_EVIDENCE_LIMITS: Partial<Record<(typeof EVIDENCE_FILES)[number], numb
 
 const DEFAULT_TEXT_EVIDENCE_LIMIT = 1500
 
-const AC_TEXT: Record<string, string> = {
+export const DEFAULT_PHASE1_AC_TEXT: Record<string, string> = {
   "AC-P1-1": "4 tables schema + EXPLAIN <= 50ms; db_dump.sql should include sqlite_master and indices evidence.",
   "AC-P1-2":
     "update_wiki MCP ACL/CAS/lease/fencing fuzz 100 concurrent attempts; evidence should include race trace and retry log.",
@@ -56,11 +69,23 @@ export interface JudgeArgs {
   evidence: string
   out: string
   judge: string
+  /** v2 P19.16: AC 名格式 regex；默认 Phase 1 ^AC-P1-\d+$。 */
+  acPattern: string
+  /** v2 P19.16: evidence 文件清单；默认 Phase 1 7 件套。 */
+  evidenceFiles: readonly string[]
+  /** v2 P19.16: AC 描述 map；默认 Phase 1 内置（DEFAULT_PHASE1_AC_TEXT）。 */
+  acText: Record<string, string>
 }
 
 export interface BuildJudgePromptInput {
   ac: string
   evidenceDir: string
+  /** v2 P19.16 optional override；缺省走 DEFAULT_PHASE1_EVIDENCE_FILES。 */
+  evidenceFiles?: readonly string[]
+  /** v2 P19.16 optional override；缺省走 DEFAULT_PHASE1_TEXT_EVIDENCE_LIMITS。 */
+  evidenceLimits?: Record<string, number>
+  /** v2 P19.16 optional override；缺省走 DEFAULT_PHASE1_AC_TEXT。 */
+  acText?: Record<string, string>
 }
 
 export interface JudgeJson {
@@ -78,6 +103,9 @@ export function parseJudgeArgs(argv: string[]): JudgeArgs {
       evidence: { type: "string" },
       out: { type: "string" },
       judge: { type: "string", default: DEFAULT_JUDGE },
+      "ac-pattern": { type: "string", default: DEFAULT_AC_PATTERN },
+      "evidence-files": { type: "string" },
+      "ac-text-file": { type: "string" },
     },
     strict: true,
   })
@@ -86,32 +114,85 @@ export function parseJudgeArgs(argv: string[]): JudgeArgs {
   const evidence = parsed.values.evidence
   const out = parsed.values.out
   const judge = parsed.values.judge ?? DEFAULT_JUDGE
+  const acPattern = parsed.values["ac-pattern"] ?? DEFAULT_AC_PATTERN
+  const evidenceFilesArg = parsed.values["evidence-files"]
+  const acTextFileArg = parsed.values["ac-text-file"]
+
   if (!ac || !evidence || !out) {
-    throw new Error("Usage: p18-judge.ts --ac AC-P1-N --evidence <dir> --out <judge1.json>")
+    throw new Error(
+      "Usage: p18-judge.ts --ac <AC-id> --evidence <dir> --out <judge1.json> " +
+        "[--ac-pattern '<regex>'] [--evidence-files 'a,b,c'] [--ac-text-file <path>]",
+    )
   }
-  if (!/^AC-P1-\d+$/.test(ac)) {
-    throw new Error(`Invalid --ac value: ${ac}`)
+
+  // 校验 ac-pattern regex 自身可编译
+  let acRegex: RegExp
+  try {
+    acRegex = new RegExp(acPattern)
+  } catch (err) {
+    throw new Error(`Invalid --ac-pattern '${acPattern}': ${(err as Error).message}`)
   }
+  if (!acRegex.test(ac)) {
+    throw new Error(`Invalid --ac value '${ac}' (does not match --ac-pattern '${acPattern}')`)
+  }
+
   if (judge !== DEFAULT_JUDGE) {
     throw new Error(`Unsupported --judge value: ${judge}; this wrapper is for ${DEFAULT_JUDGE}`)
   }
-  return { ac, evidence, out, judge }
+
+  // evidenceFiles：CSV → string[]；缺省 Phase 1 默认
+  const evidenceFiles: readonly string[] = evidenceFilesArg
+    ? evidenceFilesArg
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+    : DEFAULT_PHASE1_EVIDENCE_FILES
+  if (evidenceFiles.length === 0) {
+    throw new Error("--evidence-files: parsed empty list")
+  }
+
+  // acText：JSON 文件加载；缺省 Phase 1 默认
+  let acText: Record<string, string> = DEFAULT_PHASE1_AC_TEXT
+  if (acTextFileArg) {
+    if (!existsSync(acTextFileArg)) {
+      throw new Error(`--ac-text-file not found: ${acTextFileArg}`)
+    }
+    const raw = readFileSync(acTextFileArg, "utf8")
+    let parsedJson: unknown
+    try {
+      parsedJson = JSON.parse(raw)
+    } catch (err) {
+      throw new Error(`--ac-text-file invalid JSON at ${acTextFileArg}: ${(err as Error).message}`)
+    }
+    if (typeof parsedJson !== "object" || parsedJson === null || Array.isArray(parsedJson)) {
+      throw new Error(`--ac-text-file must be JSON object { "AC-id": "text" } at ${acTextFileArg}`)
+    }
+    acText = parsedJson as Record<string, string>
+  }
+
+  return { ac, evidence, out, judge, acPattern, evidenceFiles, acText }
 }
 
 export function buildJudgePrompt(input: BuildJudgePromptInput): string {
-  const sections = EVIDENCE_FILES.map((name) =>
-    renderEvidenceFile(path.join(input.evidenceDir, name), name),
+  const evidenceFiles = input.evidenceFiles ?? DEFAULT_PHASE1_EVIDENCE_FILES
+  const evidenceLimits = input.evidenceLimits ?? DEFAULT_PHASE1_TEXT_EVIDENCE_LIMITS
+  const acTextMap = input.acText ?? DEFAULT_PHASE1_AC_TEXT
+
+  const sections = evidenceFiles.map((name) =>
+    renderEvidenceFile(path.join(input.evidenceDir, name), name, evidenceLimits),
   )
-  const acText = AC_TEXT[input.ac] ?? "AC text not found in wrapper map; judge should verify against evidence and mark INCONCLUSIVE if ambiguous."
+  const acText =
+    acTextMap[input.ac] ??
+    "AC text not found in wrapper map; judge should verify against evidence and mark INCONCLUSIVE if ambiguous."
 
   return [
-    "You are the F027-P18 evidence pack judge.",
+    "You are the F027 evidence pack judge.",
     "",
     `Spec AC: ${input.ac}`,
     acText,
     "",
     "Judge rules:",
-    "- PASS: all 7 evidence pack files are present, result.json verdict=PASS, and observed behavior matches the AC.",
+    `- PASS: all ${evidenceFiles.length} evidence pack files are present, result.json verdict=PASS, and observed behavior matches the AC.`,
     "- BLOCKED: evidence is incomplete or dependency/quota/environment prevented verification.",
     "- INCONCLUSIVE: commands ran but the assertion is ambiguous or evidence is insufficient to prove the AC.",
     "- FAIL: executed evidence contradicts the AC or result.json reports failure.",
@@ -145,19 +226,24 @@ export function extractJudgeJson(text: string): JudgeJson {
   return parsed as JudgeJson
 }
 
-function renderEvidenceFile(filePath: string, label: string): string {
+function renderEvidenceFile(
+  filePath: string,
+  label: string,
+  limits: Record<string, number> = DEFAULT_PHASE1_TEXT_EVIDENCE_LIMITS,
+): string {
   if (!existsSync(filePath)) {
     return `## ${label}\nMISSING`
   }
 
   const stat = statSync(filePath)
-  if (label === "wiki_state.tar.gz") {
+  // 二进制 / 压缩文件按 hash 报；通过文件名后缀判别（generic 化兼容 .tar.gz / .zip / .gz）
+  if (/\.(tar\.gz|tgz|zip|gz)$/i.test(label)) {
     const bytes = readFileSync(filePath)
     return `## ${label}\nexists=true\nsize_bytes=${stat.size}\nsha256=${createHash("sha256").update(bytes).digest("hex")}`
   }
 
   const content = readFileSync(filePath, "utf8")
-  const maxChars = TEXT_EVIDENCE_LIMITS[label as (typeof EVIDENCE_FILES)[number]] ?? DEFAULT_TEXT_EVIDENCE_LIMIT
+  const maxChars = limits[label] ?? DEFAULT_TEXT_EVIDENCE_LIMIT
   return `## ${label}\n${truncate(content, maxChars)}`
 }
 
@@ -168,7 +254,12 @@ function truncate(value: string, maxChars: number) {
 
 async function main() {
   const args = parseJudgeArgs(process.argv.slice(2))
-  const prompt = buildJudgePrompt({ ac: args.ac, evidenceDir: args.evidence })
+  const prompt = buildJudgePrompt({
+    ac: args.ac,
+    evidenceDir: args.evidence,
+    evidenceFiles: args.evidenceFiles,
+    acText: args.acText,
+  })
   const runner = createOpusRunner()
   const result = await runner.runPrompt(prompt, { timeoutMs: JUDGE_TIMEOUT_MS })
 
