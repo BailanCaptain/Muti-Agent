@@ -97,15 +97,27 @@ docs/features/F027/evidence/phase1/AC-P1-N/
 
 ## 双 Judge 操作规范
 
-### Judge1 — Anthropic Opus 4.7（黄仁勋指定）
+### Judge1 — Claude Opus 4.7（订阅模式 / 不是 API）
+
+> **重要**：项目用 Claude **订阅模式**走 `claude --print` CLI，**不是 Anthropic SDK + API key**。
+> 0 token 成本，复用 createHaikuRunner/createSonnetRunner 同款 spawn pattern（小孙 2026-05-13 P12 拍板原则）。
+>
+> Wrapper 实施前置：先扩 `packages/api/src/runtime/haiku-runner.ts` 加 `createOpusRunner`
+> （同 createSonnetRunner 同款，只是 model="claude-opus-4-7"，10 行改动）。
 
 ```bash
-# 通过 Claude API 直接调（建议在 packages/api/scripts/p18-judge.ts 写 wrapper）
-node packages/api/scripts/p18-judge.ts \
-  --judge anthropic-opus-4-7 \
+# packages/api/scripts/p18-judge.ts 实施模板：
+# import { createOpusRunner } from "../src/runtime/haiku-runner"
+# const runner = createOpusRunner()
+# const result = await runner.runPrompt(judgePromptText, { timeoutMs: 60000 })
+# 把 result.text 解析成 verdict JSON 落 judge1_*.json
+
+# 跑法：
+pnpm exec tsx packages/api/scripts/p18-judge.ts \
+  --judge claude-opus-4-7 \
   --ac AC-P1-N \
   --evidence docs/features/F027/evidence/phase1/AC-P1-N/ \
-  --out docs/features/F027/evidence/phase1/AC-P1-N/judges/judge1_anthropic-opus-4-7.json
+  --out docs/features/F027/evidence/phase1/AC-P1-N/judges/judge1_claude-opus-4-7.json
 ```
 
 Judge prompt 模板（每 AC 通用）：
@@ -121,11 +133,13 @@ Evidence pack：<7 件套内容>
 返 JSON: {"verdict": "...", "reason": "<≤200 字>", "weak_points": [...]}
 ```
 
-### Judge2 — 由 reviewer 自定（小孙在 room 里拍）
+### Judge2 — 由 reviewer 自定（异构 provider，不能跟 judge1 同源）
 
-建议：
-- **范德彪 batch (Batch 1+4)** → judge2 = Codex/gpt-5.4 (走 codex:rescue 调用同款风格)
+建议（全订阅模式，0 token 成本）：
+- **范德彪 batch (Batch 1+4)** → judge2 = Codex/gpt-5.4 (走 codex:rescue 同款 CLI 调用)
 - **桂芬 batch (Batch 2+3)** → judge2 = Gemini CLI (gemini --print)
+
+异构原则：judge1 用 Anthropic（Opus），judge2 必须换 provider（OpenAI Codex / Google Gemini），不能两个都 Claude。
 
 ### Arbitration 规则
 
