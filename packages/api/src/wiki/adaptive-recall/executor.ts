@@ -86,23 +86,24 @@ export async function executeAdaptiveRecall(
     lastHits = input.taskMemoryPack
     visitedLevels.push(1)
     const l1Start = now()
-    const verdict = await runCritique(deps, critiqueCalls, budget, {
+    const verdict = await runCritique(deps, startMs, critiqueCalls, budget, {
       trigger: input.trigger,
       query: input.query,
       level: 1,
       hits: lastHits,
       visitedLevels,
     })
-    if (verdict === "budget_critique") {
+    if (verdict === "budget_critique" || verdict === "budget_time") {
       budgetExceeded = true
+      const budgetReason = verdict === "budget_time" ? "max_total_ms_exceeded" : "critique_budget_exceeded"
       attempts.push({
         level: 1,
         hitsCount: lastHits.length,
         satisfied: false,
         ms: now() - l1Start,
-        reason: "critique_budget_exceeded",
+        reason: budgetReason,
       })
-      return escalate("critique_budget_exceeded_at_l1", lastHits, 1)
+      return escalate(`${budgetReason}_at_l1`, lastHits, 1)
     }
     critiqueCalls++
     attempts.push({
@@ -138,23 +139,24 @@ export async function executeAdaptiveRecall(
     const hits = await deps.level2.searchWiki(input.query, LEVEL2_TOPK)
     visitedLevels.push(2)
     lastHits = hits
-    const verdict = await runCritique(deps, critiqueCalls, budget, {
+    const verdict = await runCritique(deps, startMs, critiqueCalls, budget, {
       trigger: input.trigger,
       query: input.query,
       level: 2,
       hits,
       visitedLevels,
     })
-    if (verdict === "budget_critique") {
+    if (verdict === "budget_critique" || verdict === "budget_time") {
       budgetExceeded = true
+      const budgetReason = verdict === "budget_time" ? "max_total_ms_exceeded" : "critique_budget_exceeded"
       attempts.push({
         level: 2,
         hitsCount: hits.length,
         satisfied: false,
         ms: now() - l2Start,
-        reason: "critique_budget_exceeded",
+        reason: budgetReason,
       })
-      return escalate("critique_budget_exceeded_at_l2", hits, 2)
+      return escalate(`${budgetReason}_at_l2`, hits, 2)
     }
     critiqueCalls++
     attempts.push({
@@ -193,23 +195,24 @@ export async function executeAdaptiveRecall(
     })
     visitedLevels.push(3)
     lastHits = hits
-    const verdict = await runCritique(deps, critiqueCalls, budget, {
+    const verdict = await runCritique(deps, startMs, critiqueCalls, budget, {
       trigger: input.trigger,
       query: input.query,
       level: 3,
       hits,
       visitedLevels,
     })
-    if (verdict === "budget_critique") {
+    if (verdict === "budget_critique" || verdict === "budget_time") {
       budgetExceeded = true
+      const budgetReason = verdict === "budget_time" ? "max_total_ms_exceeded" : "critique_budget_exceeded"
       attempts.push({
         level: 3,
         hitsCount: hits.length,
         satisfied: false,
         ms: now() - l3Start,
-        reason: "critique_budget_exceeded",
+        reason: budgetReason,
       })
-      return escalate("critique_budget_exceeded_at_l3", hits, 3)
+      return escalate(`${budgetReason}_at_l3`, hits, 3)
     }
     critiqueCalls++
     attempts.push({
@@ -266,24 +269,25 @@ export async function executeAdaptiveRecall(
       })
       return escalate("l4_path_not_found", prevHits, 4)
     }
-    const verdict = await runCritique(deps, critiqueCalls, budget, {
+    const verdict = await runCritique(deps, startMs, critiqueCalls, budget, {
       trigger: input.trigger,
       query: input.query,
       level: 4,
       hits,
       visitedLevels,
     })
-    if (verdict === "budget_critique") {
+    if (verdict === "budget_critique" || verdict === "budget_time") {
       budgetExceeded = true
+      const budgetReason = verdict === "budget_time" ? "max_total_ms_exceeded" : "critique_budget_exceeded"
       attempts.push({
         level: 4,
         hitsCount: hits.length,
         satisfied: false,
         ms: now() - l4Start,
-        reason: "critique_budget_exceeded",
+        reason: budgetReason,
         meta: { path },
       })
-      return escalate("critique_budget_exceeded_at_l4", hits, 4)
+      return escalate(`${budgetReason}_at_l4`, hits, 4)
     }
     critiqueCalls++
     attempts.push({
@@ -310,16 +314,32 @@ export async function executeAdaptiveRecall(
 }
 
 /**
- * 运行 critique，加 budget 检查。返 "budget_critique" 表示 critique budget 触顶。
+ * 运行 critique，加 budget 检查。返：
+ *   - CritiqueVerdict — 正常返回
+ *   - "budget_critique" — critique 调用次数 cap 触顶（V16.5 行 1418 maxCritiqueCalls）
+ *   - "budget_time" — 总耗时 cap 触顶（V16.5 行 1417 maxTotalMs）
+ *
+ * 范-r1 P1-1 修：critique **调用前 + 调用后** 都查 maxTotalMs，防"慢 critique 返
+ * satisfied 时绕过 cap"路径。caller 收到 budget_time 必须 escalate（同 budget_critique）。
  */
 async function runCritique(
   deps: ExecutorDeps,
+  startMs: number,
   currentCritiqueCalls: number,
   budget: RecallBudget,
   input: CritiqueInput,
-): Promise<CritiqueVerdict | "budget_critique"> {
+): Promise<CritiqueVerdict | "budget_critique" | "budget_time"> {
+  const now = deps.now ?? Date.now
+  if (now() - startMs > budget.maxTotalMs) {
+    return "budget_time"
+  }
   if (currentCritiqueCalls >= budget.maxCritiqueCalls) {
     return "budget_critique"
   }
-  return await deps.critique.evaluate(input)
+  const verdict = await deps.critique.evaluate(input)
+  // 关键：critique 调用本身可能耗时，调用后再查 maxTotalMs（防 satisfied 绕过 cap）
+  if (now() - startMs > budget.maxTotalMs) {
+    return "budget_time"
+  }
+  return verdict
 }

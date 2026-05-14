@@ -139,20 +139,26 @@ describe("F027 P13.2 · parseCritiqueJson", () => {
     )
   })
 
-  it("next_level=4 specific_path 是本级 hits 中已存在的 path → 通过（即使不严格 wiki/ 前缀）", () => {
-    const v = parseCritiqueJson(
-      '{"satisfied": false, "next_level": 4, "specific_path": "messages/m-xxx", "reason": "..."}',
-      input(3, [hit("messages/m-xxx", 0.7)]),
+  it("【范-r1 P2-1】next_level=4 严格只接受 wiki/...md：即使在本级 hits 中，messages path 也抛（小孙 Open #3 strict）", () => {
+    assert.throws(
+      () =>
+        parseCritiqueJson(
+          '{"satisfied": false, "next_level": 4, "specific_path": "messages/m-xxx", "reason": "..."}',
+          input(3, [hit("messages/m-xxx", 0.7)]),
+        ),
+      /不合法/,
+      "L4 严格模式只接受 wiki/...md，hits 中 messages path 不放宽（避免 backend 注定返 null 浪费 critique）",
     )
-    assert.ok("specificPath" in v && v.specificPath === "messages/m-xxx")
   })
 
-  it("next_level=5 视为 escalate-like next_level（合法）", () => {
+  it("【范-r1 P2-2】next_level=5 由 parser 转 escalate verdict（防 executor 不识别 nextLevel=5 而 fall through）", () => {
     const v = parseCritiqueJson(
       '{"satisfied": false, "next_level": 5, "reason": "exhausted"}',
       input(4),
     )
-    assert.ok("nextLevel" in v && v.nextLevel === 5)
+    assert.equal(v.satisfied, false)
+    assert.ok("escalate" in v && v.escalate === true, "next_level=5 必须转 escalate verdict")
+    assert.match(v.reason, /exhausted/)
   })
 
   it("next_level 非整数 / 越界 → 抛", () => {

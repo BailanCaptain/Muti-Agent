@@ -26,3 +26,10 @@ export {
   type JudgeBlockInput,
   type JudgeBlockVerdict,
 } from "./judge-block"
+export {
+  buildRecallJudgePrompt,
+  parseRecallJudgeJson,
+  LlmRecallJudge,
+  type RecallJudgeResult,
+  type LlmRecallJudgeOptions,
+} from "./llm-recall-judge"

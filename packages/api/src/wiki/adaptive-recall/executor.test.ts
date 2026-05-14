@@ -347,6 +347,45 @@ describe("F027 P13.1 · AdaptiveRecallExecutor", () => {
     assert.match(l5.calls[0].reason, /budget_exceeded_before_l2/)
   })
 
+  it("【范-r1 P1-1】budget maxTotalMs 触顶：critique 慢但返 satisfied → 仍强制 escalate, budgetExceeded=true", async () => {
+    const l5 = recordingLevel5()
+    let fakeMs = 1000
+    // critique 慢响应但返 satisfied — 当前 bug: executor 直接接受 satisfied 不查 maxTotalMs
+    const slowSatisfiedCritique: CritiqueAgent = {
+      async evaluate(input) {
+        fakeMs += 6000 // 单次跳 6s, 超 maxTotalMs=5000
+        return { satisfied: true, reason: `level_${input.level}_satisfied_but_slow` }
+      },
+    }
+    const result = await executeAdaptiveRecall(
+      {
+        roomId: "R-201",
+        alias: "桂芬",
+        trigger: "history_keyword",
+        query: "x",
+        taskMemoryPack: [hit("wiki/x.md", 0.5)],
+        budget: { maxTotalMs: 5000, maxCritiqueCalls: 5 },
+      },
+      {
+        critique: slowSatisfiedCritique,
+        level2: stubLevel2(),
+        level3: stubLevel3(),
+        level4: stubLevel4(),
+        level5: l5.sink,
+        now: () => fakeMs,
+      },
+    )
+
+    // 范-r1 P1-1: critique 返 satisfied 但 totalMs 已超 cap → 必须 escalate（V16.5 行 1415-1418 + executor.ts:12 注释"任一触顶 → 强制 L5 escalate"）
+    assert.equal(result.recallPath, 5, "慢 critique 返 satisfied 仍必须 escalate")
+    assert.equal(result.recallSatisfied, false)
+    assert.equal(result.budgetExceeded, true)
+    assert.ok(result.escalateReason, "escalate reason 非空")
+    assert.match(result.escalateReason!, /max_total_ms|budget_exceeded/)
+    assert.ok(result.totalMs >= 5000)
+    assert.equal(l5.calls.length, 1)
+  })
+
   it("budget maxTotalMs 触顶：critique 慢响应 → totalMs 超 cap → escalate, budgetExceeded=true", async () => {
     const l5 = recordingLevel5()
     // 用注入的 now() 模拟时间快速流逝

@@ -147,19 +147,23 @@ export function parseCritiqueJson(raw: string, input: CritiqueInput): CritiqueVe
     )
   }
 
-  // next_level=4 → specific_path 必须存在且合法（严格模式）
+  // 范-r1 P2-2 修：next_level=5 转 escalate verdict（防 executor fall through 不识别）
+  // L5 在 V16.5 chap 12 阶梯里是 "提示不确定 / 请求人工裁决"，不是继续搜索
+  if (nextLevel === 5) {
+    return { satisfied: false, escalate: true, reason }
+  }
+
+  // next_level=4 → specific_path 必须存在且严格合法（小孙 Open #3 拍 strict）
+  // 范-r1 P2-1 修：移除"hits 中已存在 path"放宽（messages/... path 进 readWiki 注定返 null）
   if (nextLevel === 4) {
     const sp = obj.specific_path
     if (typeof sp !== "string" || sp.trim().length === 0) {
       throw new Error("critique-parse-failed: next_level=4 必须配 specific_path（严格模式）")
     }
     const path = sp.trim()
-    // 校验：要么形如 wiki/.../*.md，要么是本级 hits 中已存在的 path
-    const matchesPrefix = WIKI_PATH_PREFIX.test(path)
-    const matchesHit = input.hits.some((h) => h.path === path)
-    if (!matchesPrefix && !matchesHit) {
+    if (!WIKI_PATH_PREFIX.test(path)) {
       throw new Error(
-        `critique-parse-failed: specific_path="${path}" 不合法（既非 wiki/...md 形式，也非本级 hits 中已出现的 path）`,
+        `critique-parse-failed: specific_path="${path}" 不合法（严格模式：必须形如 wiki/...md）`,
       )
     }
     return { satisfied: false, nextLevel: 4, specificPath: path, reason }

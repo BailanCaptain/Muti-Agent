@@ -100,28 +100,32 @@ const RECALL_BUDGET = {
 - `recall_required=true` 但 `recall_satisfied=false` 且 agent 输出了历史结论 → judge 标 **BLOCKED**
 - 提示 agent 重做（escalate or 主动召回）
 
-## P13 实施切片（建议 5 段）
+## P13 实施切片（5 段）
+
+> **范-r1 P2-3 修**：AC 同步 F027 spec AC-P1-12 验收边界（library 范围 vs Phase 3 wiring 切分）。本 plan 旧文字 "每级 audit 写 prompt_audit" / "Level 5 写 wiki_events action='recall_escalate'" 是错的——P13 模块不绑定 audit 后端，写入是 caller 在 Phase 3 P20 wiring 时的责任。
 
 | 段 | 文件 | 工作 |
 |---|---|---|
-| **P13.1 · AdaptiveRecallExecutor 主框架** | `wiki/adaptive-recall/executor.ts`（新） | 5 级 fallback 状态机 + budget 强制 + 每级 audit 写 prompt_audit |
-| **P13.2 · 真 LLM critique-agent** | `wiki/adaptive-recall/critique-agent.ts`（新） | 输入：query + level N hits → 输出：satisfied / continue-to-level-M / specific-path-hint / escalate；用 createSonnetRunner（同 P12 决策 extractor）|
-| **P13.3 · Level 3 query_messages 真后端** | `wiki/adaptive-recall/level3-messages.ts`（新，依赖 P14 FTS5）| 用 FTS5 全文搜 messages，limit 20，过滤本房间 |
-| **P13.4 · Level 4 read_wiki + Level 5 escalate** | `wiki/adaptive-recall/level4-readwiki.ts` + `level5-escalate.ts` | Level 4 读 specific path（critique 必须给）；Level 5 写 wiki_events action='recall_escalate' + audit |
-| **P13.5 · Judge BLOCKED lint** | `wiki/adaptive-recall/judge-block.ts` | input: prompt_audit row + agent output → detect"历史结论"模式 → 若 recall_required=true & recall_satisfied=false → BLOCKED |
+| **P13.1 · AdaptiveRecallExecutor 主框架** | `wiki/adaptive-recall/executor.ts`（新） | 5 级 fallback 状态机 + budget 三维强制（maxLevels/maxTotalMs/maxCritiqueCalls）+ 每级 audit 收集到 LevelAttempt[] 返调用方 |
+| **P13.2 · 真 LLM critique-agent + recall-judge** | `wiki/adaptive-recall/critique-agent.ts` + `llm-recall-judge.ts`（新） | LlmCritiqueAgent 判 hits 是否充分（5 级 fallback 内部）+ LlmRecallJudge 实现 P11 RecallJudgeProvider（Hard Gate 第二层 LLM judge，r2 P1-2 补）；用 createSonnetRunner |
+| **P13.3 · Level 3 query_messages 真后端** | `wiki/adaptive-recall/level3-messages-backend.ts` | 包装 P14.b MessagesFtsRepository → Level3Backend；FTS5 全文搜 + roomId 隔离 |
+| **P13.4 · Level 4 read_wiki + Level 5 escalate 接口** | `wiki/adaptive-recall/level4-readwiki-backend.ts` + `level5-escalate-sink.ts` | FileSystemLevel4Backend 严格 wiki/...md（小孙 Open #3）+ 3 Sink 实现（Noop/ConsoleWarn/Recording，不绑定 audit 后端） |
+| **P13.5 · Judge BLOCKED lint** | `wiki/adaptive-recall/judge-block.ts` | 输入 recallRequired/recallSatisfied/agentOutput → 5 路径决策表 + HISTORY_CLAIM + cite 检测（真实性校验留 P20 接 db） |
 
-## AC（对应 AC-P1-12）
+## AC（对应 F027 spec AC-P1-12 验收边界 — library 范围）
 
-- [ ] **AC-1 · 5 级 fallback fixture 全触发**：
-  - L1 命中 fixture：tail 已含证据 → 不进 fallback（recall_path=1, recall_satisfied=1）
-  - L2 命中 fixture：search_wiki hybrid 命中 score ≥ 0.75 → critique satisfied（recall_path=2）
-  - L3 命中 fixture：search_wiki 0 命中但 query_messages 命中 → critique satisfied（recall_path=3）
-  - L4 命中 fixture：critique 输出 specific path → read_wiki 取原文 → satisfied（recall_path=4）
-  - L5 命中 fixture：L1-L4 全部未 satisfied → escalate to user + 写 wiki_events（recall_path=5, recall_satisfied=0, escalate_reason 非空）
-- [ ] **AC-2 · Hard Gate escalate 写 wiki_events**：fixture L5 触发后查 wiki_events 表存在 action='recall_escalate' 行 + payload 含 trigger / draft 摘录
-- [ ] **AC-3 · Budget cap**：构造 critique 慢响应 fixture，max_total_ms=5000 触发 → 强制 escalate（recall_budget_exceeded=1）
-- [ ] **AC-4 · BLOCKED lint**：fixture agent output 含"之前我们决定 X"无 cite + recall_required=true & recall_satisfied=false → judge 输出 BLOCKED + 不许通过
-- [ ] **AC-5 · 现 P11 边界保留**：detectRecallTrigger deterministic 第一层不变（a2a_handoff / modify_wiki / review keyword 仍判 required）
+- [ ] **AC-1 · 5 级 fallback 状态机全路径**：单测覆盖 L1/L2/L3/L4 命中 + L5 escalate + 3 维 budget 触顶（maxLevels/maxTotalMs/maxCritiqueCalls 任一 → 强制 escalate, budgetExceeded=true）+ L4 严格 path / L4 path not found / 慢 critique 返 satisfied 仍强制 escalate（r2 P1-1 case）
+- [ ] **AC-2 · L5 escalate Sink 被调用**：fixture L5 触发后 Level5Sink.escalate() 被调一次（生产 Sink 写 wiki_events / 推审计通知是 P20 wiring 责任，不在 P13 范围）
+- [ ] **AC-3 · Budget cap**：max_total_ms=5000 + maxCritiqueCalls=2 cap 任一触顶 → 强制 escalate；返 budgetExceeded=true（escalateReason 区分 max_total_ms / critique_budget）
+- [ ] **AC-4 · BLOCKED lint**：5 路径决策表覆盖（required=false / satisfied=true / 无历史结论 / 有 cite / BLOCKED ★）+ cite 模式检测（[decision_id=N] / [D-N] / [msg_xxx] / [a2a_call=...]）；cite 真实性校验留 P20
+- [ ] **AC-5 · P11 边界保留 + Hard Gate 第二层兑现**：detectRecallTrigger deterministic 第一层不变 + LlmRecallJudge 实现 RecallJudgeProvider，可注入替换 conservativeStubJudge（r2 P1-2 补）
+- [ ] **AC-6 · 防 hallucination 校验**：parseCritiqueJson 验证 next_level 越界/反复推回/L4 严格 wiki/...md path/数组 JSON/next_level=5 转 escalate（r2 P2-1/P2-2 补）
+
+**P13 范围外**（挂 Phase 3 P20 wiring）：
+- prompt_audit 表 recall_path / recall_satisfied / escalate_reason 真写入
+- WikiEventsLevel5Sink 生产实现（caller 注入 db lease/fencing context）
+- Inspector UI 显示 recall_path / escalate_reason / attempts
+- cite 真实性校验（接 db 后验 decision_id / msg_id 实际存在）
 
 ## 5 个 Open 问题（请小孙拍）
 

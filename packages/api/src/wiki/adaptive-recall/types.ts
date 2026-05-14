@@ -18,7 +18,14 @@ export interface RecallBudget {
   maxTotalMs: number
   /** Critique LLM 调用 cap，默认 2 */
   maxCritiqueCalls: number
-  /** Level 2/3 是否并行查询，默认 true */
+  /**
+   * Level 2/3 是否并行查询，默认 true。
+   *
+   * 范-r1 P2-5 备注：**P13 当前实现按 chap 12 阶梯严格逐级 critique**（L2 critique
+   * 未 satisfied 才进 L3），未实现 L2/L3 backend 并行查询。字段保留作 future
+   * 占位 — 真要并行需重设计 critique 评估时序（一个 critique 决策可能基于 L2+L3
+   * 合并 hits，而非逐级独立）。挂 Phase 3 P20 wiring 时评估收益再实施。
+   */
   queryParallel: boolean
   /** 是否复用 caller 传入的 task memory pack 作 L1，默认 true */
   reuseTaskMemoryPack: boolean

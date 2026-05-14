@@ -74,7 +74,11 @@ export async function detectRecallTrigger(
 
 /**
  * Phase 1 默认 stub judge：始终 required=true（保守）。
- * 真 LLM judge 在 P13 (Adaptive Recall) 接入。
+ *
+ * 真 LLM judge 由 P13 提供：`wiki/adaptive-recall/llm-recall-judge.ts` LlmRecallJudge。
+ * caller 可注入 LlmRecallJudge 替换本 stub（见 llm-recall-judge.test.ts 集成测试）。
+ *
+ * 范-r1 P1-2 修：兑现 P13 接入承诺，LlmRecallJudge 是 RecallJudgeProvider 的真实现。
  */
 export const conservativeStubJudge: RecallJudgeProvider = {
   async judge({ draft }) {

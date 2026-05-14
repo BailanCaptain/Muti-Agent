@@ -24,7 +24,12 @@ const HISTORY_CLAIM_PATTERNS: RegExp[] = [
   /我们.{0,5}(?:之前|上次).{0,30}/,
 ]
 
-/** 证据链 cite 模式（任一命中视为带证据，PASS） */
+/** 证据链 cite 模式（任一命中视为带证据，PASS）
+ *
+ * 范-r1 P2-4 备注：当前仅做正则存在性校验，伪 cite (如 [decision_id=999999]) 也会 PASS。
+ * **真实性校验留 Phase 3 P20**：caller 接 db 后查 decision_id/msg_id 实际存在，
+ * 不在 P13 library 范围内（避免本模块 import db/fencing 逻辑）。
+ */
 const CITE_PATTERNS: RegExp[] = [
   /\[msg_[\w-]+/i, // [msg_uuid] / [msg_R-201-001]
   /\[decision_id\s*=\s*\d+/i, // [decision_id=42]
