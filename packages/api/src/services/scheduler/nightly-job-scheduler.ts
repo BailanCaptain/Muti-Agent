@@ -1,15 +1,17 @@
 /**
- * F027 P19.1 · NightlyJobScheduler 框架（croner + lifecycle start/stop/health）
+ * F027 P19.1 + P19.2 · NightlyJobScheduler — 框架 + lease guard hook
  *
- * Day 1 范围：
+ * 范围：
  *   - register(spec) — start 前注册 job（pattern + handler）
  *   - start() — 用 croner 物化所有已注册 spec，idempotent
  *   - stop() — 停所有 cron，idempotent
  *   - health() — { running, startedAt, jobs[ {name, pattern, nextRun} ] }
+ *   - guard hook（P19.2）：每次 cron 触发前问 guard()，非 null 则 skip + onSkip 通知
  *
  * 不做（推后）：
- *   - lease / runtime owner election → P19.2 Day 2
+ *   - 直接耦合 SchedulerLeader → caller 用 `guard: () => leader.shouldSkipJob()`
  *   - ConfigLoader（wiki.config.yaml fallback）→ P19.3a Day 3
+ *   - job_trace 落盘 → P19.4 Day 3（onSkip 暴露 hook）
  *   - 真 jobs 注册（NightlyHealthCheck / Vacuum / ...）→ Week 2-4
  *   - reentrancy long-run skip policy → P19.6 RoomCompilerTick（更细 guard）
  *
@@ -50,11 +52,24 @@ export interface NightlyJobSchedulerOptions {
   logger?: FastifyBaseLogger
   /** 默认时区；plan §5 Open#5：Asia/Shanghai。 */
   defaultTimezone?: string
+  /**
+   * P19.2 lease guard hook。每次 cron 触发先问；返非 null 则 skip 并触发 onSkip。
+   * 默认 `() => null`（无 guard，job 每次都跑）。
+   * 生产用法：`guard: () => schedulerLeader.shouldSkipJob()`
+   */
+  guard?: () => string | null
+  /**
+   * P19.2 + P19.4 hook：guard 触发 skip 时回调。Day 2 仅 log；Day 3 P19.4 在此写
+   * job_trace（status='skipped_not_leader' + reason=guard 返回值）。
+   */
+  onSkip?: (jobName: string, reason: string) => void
 }
 
 export class NightlyJobScheduler {
   private readonly log: FastifyBaseLogger
   private readonly defaultTimezone: string
+  private readonly guard: () => string | null
+  private readonly onSkip?: (jobName: string, reason: string) => void
   private readonly specs = new Map<string, JobSpec>()
   private readonly jobs = new Map<string, Cron>()
   private startedAt: string | null = null
@@ -62,6 +77,8 @@ export class NightlyJobScheduler {
   constructor(options: NightlyJobSchedulerOptions = {}) {
     this.log = options.logger ?? createLogger("nightly-job-scheduler")
     this.defaultTimezone = options.defaultTimezone ?? "Asia/Shanghai"
+    this.guard = options.guard ?? (() => null)
+    this.onSkip = options.onSkip
   }
 
   register(spec: JobSpec): void {
@@ -98,6 +115,25 @@ export class NightlyJobScheduler {
           },
         },
         async () => {
+          // P19.2 lease guard — 三段 guard 任一失败 → skip
+          let skipReason: string | null = null
+          try {
+            skipReason = this.guard()
+          } catch (err) {
+            this.log.error({ err, jobName: spec.name }, "guard threw; treating as skip")
+            skipReason = "guard_error"
+          }
+          if (skipReason !== null) {
+            this.log.warn({ jobName: spec.name, reason: skipReason }, "job skipped by guard")
+            if (this.onSkip) {
+              try {
+                this.onSkip(spec.name, skipReason)
+              } catch (err) {
+                this.log.warn({ err }, "onSkip threw (ignored)")
+              }
+            }
+            return
+          }
           try {
             await spec.handler()
           } catch (err) {

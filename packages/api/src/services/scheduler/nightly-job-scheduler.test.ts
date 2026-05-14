@@ -168,6 +168,82 @@ test("NightlyJobScheduler · handler throw caught, scheduler keeps running", asy
   }
 })
 
+test("NightlyJobScheduler · P19.2 guard returns reason → handler skipped + onSkip fires", async () => {
+  let count = 0
+  const skipEvents: Array<{ name: string; reason: string }> = []
+  const guardReason: string | null = "lease_lost"
+  const sch = new NightlyJobScheduler({
+    guard: () => guardReason,
+    onSkip: (name, reason) => skipEvents.push({ name, reason }),
+  })
+  sch.register({
+    name: "guarded",
+    cron: "* * * * * *",
+    handler: () => {
+      count += 1
+    },
+  })
+  sch.start()
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    assert.equal(count, 0, "handler should NOT fire when guard returns reason")
+    assert.ok(skipEvents.length >= 1, `onSkip should fire ≥ 1 time, got ${skipEvents.length}`)
+    assert.equal(skipEvents[0].name, "guarded")
+    assert.equal(skipEvents[0].reason, "lease_lost")
+  } finally {
+    sch.stop()
+  }
+  // 关 guard，验证 handler 恢复触发
+  const sch2 = new NightlyJobScheduler({
+    guard: () => null,
+    onSkip: (name, reason) => skipEvents.push({ name, reason }),
+  })
+  let count2 = 0
+  sch2.register({
+    name: "ungated",
+    cron: "* * * * * *",
+    handler: () => {
+      count2 += 1
+    },
+  })
+  sch2.start()
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    assert.ok(count2 >= 1, `handler should fire when guard returns null, got ${count2}`)
+  } finally {
+    sch2.stop()
+  }
+  // 强制使用 guardReason 抑制未使用警告
+  void guardReason
+})
+
+test("NightlyJobScheduler · P19.2 guard threw treated as skip with reason='guard_error'", async () => {
+  const skipEvents: Array<{ name: string; reason: string }> = []
+  let count = 0
+  const sch = new NightlyJobScheduler({
+    guard: () => {
+      throw new Error("guard explosion")
+    },
+    onSkip: (name, reason) => skipEvents.push({ name, reason }),
+  })
+  sch.register({
+    name: "boom-guard",
+    cron: "* * * * * *",
+    handler: () => {
+      count += 1
+    },
+  })
+  sch.start()
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    assert.equal(count, 0, "guard error → handler skipped")
+    assert.ok(skipEvents.length >= 1)
+    assert.equal(skipEvents[0].reason, "guard_error")
+  } finally {
+    sch.stop()
+  }
+})
+
 test("NightlyJobScheduler · health.jobs preserves spec order (insertion)", () => {
   const sch = newScheduler()
   sch.register({ name: "z-first", cron: "0 0 * * *", handler: () => {} })
