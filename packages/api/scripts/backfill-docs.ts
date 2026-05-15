@@ -466,6 +466,44 @@ export async function runBackfill(args: BackfillArgs): Promise<BackfillRunResult
 
 // ── CLI entry ────────────────────────────────────────────────────────────
 
+/**
+ * 范-r2 P2-1 修复：抽 CLI 编排为 testable helper。main() 调它；测试也调它，
+ * 验证 --resume CLI 路径真调 scanFrontmatterCommittedSources 并合并 skip set
+ * （非 unit-test main 难直接覆盖；提取后单测可验"helper 真接 wiring"）。
+ */
+export async function runBackfillFromCli(
+  cli: { rootDir: string; dryRun: boolean; resume: boolean },
+  ingestFn: IngestFn,
+): Promise<BackfillRunResult & { frontmatterCommittedCount: number }> {
+  const today = new Date().toISOString().slice(0, 10)
+
+  // --resume 真跑时调 frontmatter scan（dry-run 不需要）
+  let frontmatterCommittedSources: Set<string> | undefined
+  if (cli.resume && !cli.dryRun) {
+    const draftDirs = [
+      path.join(cli.rootDir, "wiki", "concepts", "draft", "_backfill"),
+      path.join(cli.rootDir, "wiki", "concepts", "draft", "_auto"),
+    ]
+    frontmatterCommittedSources = await scanFrontmatterCommittedSources(draftDirs)
+  }
+
+  const result = await runBackfill({
+    rootDir: cli.rootDir,
+    docsSubdirs: DEFAULT_DOCS_SUBDIRS,
+    stateJsonlPath: path.join(cli.rootDir, ".runtime", "backfill-state.jsonl"),
+    reportPath: path.join(cli.rootDir, "docs", "plans", `V16.5-backfill-report-${today}.md`),
+    dryRun: cli.dryRun,
+    resume: cli.resume,
+    ingestFn,
+    frontmatterCommittedSources,
+  })
+
+  return {
+    ...result,
+    frontmatterCommittedCount: frontmatterCommittedSources?.size ?? 0,
+  }
+}
+
 async function main() {
   const cli = parseBackfillArgs(process.argv.slice(2))
   let ingestFn: IngestFn
@@ -485,17 +523,12 @@ async function main() {
     ingestFn = async () => ({ ingestEventId: "dry-run", type: "unknown", crossRefs: 0 })
   }
 
-  const today = new Date().toISOString().slice(0, 10)
-  const result = await runBackfill({
-    rootDir: cli.rootDir,
-    docsSubdirs: DEFAULT_DOCS_SUBDIRS,
-    stateJsonlPath: path.join(cli.rootDir, ".runtime", "backfill-state.jsonl"),
-    reportPath: path.join(cli.rootDir, "docs", "plans", `V16.5-backfill-report-${today}.md`),
-    dryRun: cli.dryRun,
-    resume: cli.resume,
-    ingestFn,
-  })
-
+  const result = await runBackfillFromCli(cli, ingestFn)
+  if (cli.resume && !cli.dryRun) {
+    console.error(
+      `[backfill] frontmatter fallback scan: found ${result.frontmatterCommittedCount} pre-committed source files`,
+    )
+  }
   console.log(JSON.stringify(result, null, 2))
 }
 

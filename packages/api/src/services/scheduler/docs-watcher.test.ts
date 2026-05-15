@@ -160,7 +160,7 @@ test("DocsWatcher · kind 收敛: add 后接 change → finalKind='add'", async 
 // ── 忽略临时文件 ──────────────────────────────────────────────────────
 
 test("DocsWatcher · 忽略 *.tmp / *~ / *.swp / .DS_Store", async () => {
-  const h = await build({ debounceMs: 60, stabilityMs: 20 })
+  const h = await build({ debounceMs: 60, stabilityMs: 30 })
   try {
     fs.writeFileSync(path.join(h.watchPath, "real.md"), "real", "utf-8")
     fs.writeFileSync(path.join(h.watchPath, "draft.md.tmp"), "tmp", "utf-8")
@@ -212,7 +212,7 @@ test("DocsWatcher · 启动前已存在文件不触发 add (ignoreInitial=true)"
   const watcher = new DocsWatcher({
     watchPaths: [watchPath],
     debounceMs: 60,
-    stabilityMs: 100,
+    stabilityMs: 30,
     onEvent: (e) => {
       events.push(e)
     },
@@ -237,7 +237,7 @@ test("DocsWatcher · onEvent throw 被吞，watcher 继续运行", async () => {
   const watcher = new DocsWatcher({
     watchPaths: [watchPath],
     debounceMs: 60,
-    stabilityMs: 100,
+    stabilityMs: 30,
     onEvent: () => {
       count += 1
       throw new Error("intentional test error")
@@ -268,7 +268,7 @@ test("DocsWatcher · relativePath = abs path 相对最长匹配 watchPath", asyn
   const watcher = new DocsWatcher({
     watchPaths: [features],
     debounceMs: 60,
-    stabilityMs: 100,
+    stabilityMs: 30,
     onEvent: (e) => {
       events.push(e)
     },

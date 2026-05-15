@@ -33,6 +33,7 @@ import {
   readBackfillState,
   renderDryRunReport,
   runBackfill,
+  runBackfillFromCli,
   scanFrontmatterCommittedSources,
 } from "./backfill-docs"
 
@@ -513,6 +514,109 @@ test("backfill-docs · 范-r1 P2-1: --resume 合并 state.jsonl + frontmatterCom
     assert.equal(result.succeeded, 2, "B999 + L001 真跑")
     const sortedIngested = ingested.map((f) => f.replace(/\\/g, "/")).sort()
     assert.deepEqual(sortedIngested, ["docs/bugReport/B999.md", "docs/lessons/L001.md"])
+  } finally {
+    safeCleanup(tempDir)
+  }
+})
+
+// ── 范-r2 P2-1: CLI wiring (runBackfillFromCli) ────────────────────────
+
+test("backfill-docs · 范-r2 P2-1 CLI wiring: --resume 真调 frontmatter scan + 合并 skip", async () => {
+  const tempDir = safeTempDir("backfill-cli-wiring-")
+  try {
+    const { rootDir } = setupDocsTree(tempDir)
+    // 模拟 wiki/concepts/draft/_backfill 下有 F999 的 frontmatter marker
+    const draftBackfillDir = path.join(
+      rootDir,
+      "wiki",
+      "concepts",
+      "draft",
+      "_backfill",
+    )
+    fs.mkdirSync(draftBackfillDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(draftBackfillDir, "f999-imported.md"),
+      [
+        "---",
+        "title: F999 imported",
+        "ingest_metadata:",
+        "  source_path: docs/features/F999.md",
+        "  ingest_event_id: evt-fm-1",
+        "---",
+        "# body",
+      ].join("\n"),
+    )
+    // state.jsonl 完全为空（模拟 state 丢失场景）
+
+    const ingested: string[] = []
+    let counter = 0
+    const ingestFn: IngestFn = async (_abs, source) => {
+      counter += 1
+      ingested.push(source)
+      return { ingestEventId: `evt-${counter}`, type: "concept", crossRefs: 0 }
+    }
+
+    const result = await runBackfillFromCli(
+      { rootDir, dryRun: false, resume: true },
+      ingestFn,
+    )
+
+    assert.equal(
+      result.frontmatterCommittedCount,
+      1,
+      "CLI 应真调 scan 找到 1 个 frontmatter committed source",
+    )
+    // F999 应被 frontmatter fallback skip；F998 + B999 + L001 真跑
+    assert.equal(result.skipped, 1, "F999 frontmatter committed → skip")
+    assert.equal(result.succeeded, 3)
+    const sortedIngested = ingested.map((f) => f.replace(/\\/g, "/")).sort()
+    assert.deepEqual(
+      sortedIngested,
+      ["docs/bugReport/B999.md", "docs/features/F998.md", "docs/lessons/L001.md"],
+    )
+  } finally {
+    safeCleanup(tempDir)
+  }
+})
+
+test("backfill-docs · 范-r2 P2-1 CLI wiring: --dry-run 不调 frontmatter scan", async () => {
+  const tempDir = safeTempDir("backfill-cli-dryrun-")
+  try {
+    const { rootDir } = setupDocsTree(tempDir)
+    // 即使 _backfill 下有 frontmatter markers，dry-run 也不调 scan
+    const draftBackfillDir = path.join(rootDir, "wiki", "concepts", "draft", "_backfill")
+    fs.mkdirSync(draftBackfillDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(draftBackfillDir, "x.md"),
+      "---\ningest_metadata:\n  source_path: docs/features/F999.md\n---\n# x\n",
+    )
+    const ingestFn: IngestFn = async () => ({ ingestEventId: "x", type: "x", crossRefs: 0 })
+    const result = await runBackfillFromCli(
+      { rootDir, dryRun: true, resume: true },
+      ingestFn,
+    )
+    assert.equal(
+      result.frontmatterCommittedCount,
+      0,
+      "dry-run 路径不应调 scan（frontmatterCommittedSources undefined）",
+    )
+  } finally {
+    safeCleanup(tempDir)
+  }
+})
+
+test("backfill-docs · 范-r2 P2-1 CLI wiring: 不传 --resume 不调 frontmatter scan", async () => {
+  const tempDir = safeTempDir("backfill-cli-no-resume-")
+  try {
+    const { rootDir } = setupDocsTree(tempDir)
+    const ingestFn: IngestFn = async () => ({ ingestEventId: "x", type: "x", crossRefs: 0 })
+    const result = await runBackfillFromCli(
+      { rootDir, dryRun: false, resume: false },
+      ingestFn,
+    )
+    assert.equal(result.frontmatterCommittedCount, 0)
+    assert.equal(result.skipped, 0)
+    assert.equal(result.succeeded, 4, "全部跑（无 resume / 无 frontmatter scan）")
   } finally {
     safeCleanup(tempDir)
   }
