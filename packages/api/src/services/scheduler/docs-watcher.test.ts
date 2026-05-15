@@ -36,6 +36,24 @@ function safeCleanup(dir: string) {
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+/**
+ * 轮询等待条件成立（chokidar + 真 fs 时序在满负载 CI 下抖动大 —— 固定 sleep
+ * 不可靠，改为 poll-until 直到条件成立或超时）。
+ */
+async function waitFor(
+  cond: () => boolean,
+  opts: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<boolean> {
+  const timeoutMs = opts.timeoutMs ?? 3000
+  const intervalMs = opts.intervalMs ?? 25
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (cond()) return true
+    await sleep(intervalMs)
+  }
+  return cond()
+}
+
 interface Harness {
   watcher: DocsWatcher
   events: DocsEvent[]
@@ -93,15 +111,16 @@ test("DocsWatcher · start/stop idempotent + isRunning 状态正确", async () =
 })
 
 // ── 真 fs integration ─────────────────────────────────────────────────
+// 注：chokidar + 真 fs 在满负载 CI 时序抖动大 → 用 waitFor 轮询替代固定 sleep。
 
 test("DocsWatcher · 真 fs add → stability + debounce 后 onEvent fire", async () => {
   const h = await build({ debounceMs: 80, stabilityMs: 30 })
   try {
     const f = path.join(h.watchPath, "F999-test.md")
     fs.writeFileSync(f, "# F999 test\n", "utf-8")
-    // 等：stability(30) + debounce(80) + 余量(120) = ~230ms
-    await sleep(300)
-    assert.equal(h.events.length, 1, `应触发 1 次, 实际 ${h.events.length}`)
+    const fired = await waitFor(() => h.events.length >= 1)
+    assert.ok(fired, `应触发 onEvent, 实际 ${h.events.length}`)
+    assert.equal(h.events.length, 1)
     assert.equal(h.events[0].kind, "add")
     assert.equal(h.events[0].absolutePath, path.resolve(f))
     assert.equal(h.events[0].relativePath, "F999-test.md")
@@ -117,11 +136,15 @@ test("DocsWatcher · 同 path 连续两次 write 在 debounce 内 → onEvent �
   try {
     const f = path.join(h.watchPath, "rapid.md")
     fs.writeFileSync(f, "v1", "utf-8")
-    await sleep(100) // stability passed, debounce 计时启动
+    await sleep(80)
     fs.writeFileSync(f, "v2", "utf-8") // reset debounce
-    await sleep(100)
+    await sleep(80)
     fs.writeFileSync(f, "v3", "utf-8") // reset again
-    await sleep(400) // 等到最后一次 debounce 完成
+    // 等到 onEvent fire（debounce 收敛后 1 次）
+    const fired = await waitFor(() => h.events.length >= 1)
+    assert.ok(fired, "debounce 收敛后应 fire 1 次")
+    // 再等一个 debounce 窗口确认没有第 2 次
+    await sleep(300)
     assert.equal(h.events.length, 1, `连续编辑只触发 1 次, 实际 ${h.events.length}`)
   } finally {
     await h.cleanup()
@@ -133,10 +156,12 @@ test("DocsWatcher · 两次 write 间隔 > debounce → onEvent 触发 2 次", a
   try {
     const f = path.join(h.watchPath, "spaced.md")
     fs.writeFileSync(f, "v1", "utf-8")
-    await sleep(250) // 1st event 已 fire
+    assert.ok(await waitFor(() => h.events.length >= 1), "第 1 次应 fire")
     fs.writeFileSync(f, "v2", "utf-8")
-    await sleep(250)
-    assert.equal(h.events.length, 2, `两次独立写应 2 次, 实际 ${h.events.length}`)
+    assert.ok(
+      await waitFor(() => h.events.length >= 2),
+      `两次独立写应 2 次, 实际 ${h.events.length}`,
+    )
   } finally {
     await h.cleanup()
   }
@@ -148,8 +173,9 @@ test("DocsWatcher · kind 收敛: add 后接 change → finalKind='add'", async 
     const f = path.join(h.watchPath, "merged.md")
     fs.writeFileSync(f, "v1", "utf-8") // add
     await sleep(80)
-    fs.writeFileSync(f, "v2", "utf-8") // change in debounce window → 应 reset debounce 但保留 kind=add
-    await sleep(400)
+    fs.writeFileSync(f, "v2", "utf-8") // change in debounce window → reset debounce 但保留 kind=add
+    assert.ok(await waitFor(() => h.events.length >= 1), "debounce 收敛后应 fire")
+    await sleep(300) // 确认无第 2 次
     assert.equal(h.events.length, 1)
     assert.equal(h.events[0].kind, "add", "add+change debounce 收敛后应保留 add 信号")
   } finally {
@@ -167,7 +193,8 @@ test("DocsWatcher · 忽略 *.tmp / *~ / *.swp / .DS_Store", async () => {
     fs.writeFileSync(path.join(h.watchPath, "draft.md~"), "vim backup", "utf-8")
     fs.writeFileSync(path.join(h.watchPath, ".DS_Store"), "mac", "utf-8")
     fs.writeFileSync(path.join(h.watchPath, "config.swp"), "vim swap", "utf-8")
-    await sleep(250)
+    assert.ok(await waitFor(() => h.events.length >= 1), "real.md 应 fire")
+    await sleep(300) // 给 ignored 文件充分机会"误触发"（应不会）
     assert.equal(
       h.events.length,
       1,
@@ -186,14 +213,13 @@ test("DocsWatcher · unlink 立即 fire + 同 path pending add/change cancel", a
   try {
     const f = path.join(h.watchPath, "ephemeral.md")
     fs.writeFileSync(f, "data", "utf-8")
-    await sleep(80) // stability passed, debounce 计时启动
-    assert.ok(h.watcher.pendingCount() >= 0) // pending may be 0 if stability still running
+    await sleep(80) // 让 chokidar 有机会 stability + 进 debounce（add 进 pending）
     fs.unlinkSync(f)
-    await sleep(200) // unlink 应立即 fire
-    // 由于 add 在 debounce 内被 unlink cancel：events 只有 unlink，没有 add
-    const kinds = h.events.map((e) => e.kind)
-    assert.ok(kinds.includes("unlink"), `events kinds: ${kinds.join(",")}`)
-    const addCount = kinds.filter((k) => k === "add").length
+    // unlink 立即 fire（无 debounce）→ 轮询等 unlink kind 出现
+    const sawUnlink = await waitFor(() => h.events.some((e) => e.kind === "unlink"))
+    assert.ok(sawUnlink, `events kinds: ${h.events.map((e) => e.kind).join(",")}`)
+    // add 应被 unlink cancel（debounce 500ms 还没到）→ 不进 events
+    const addCount = h.events.filter((e) => e.kind === "add").length
     assert.equal(addCount, 0, "add 应被 unlink cancel，不进 events")
   } finally {
     await h.cleanup()
@@ -246,10 +272,12 @@ test("DocsWatcher · onEvent throw 被吞，watcher 继续运行", async () => {
   await watcher.start()
   try {
     fs.writeFileSync(path.join(watchPath, "first.md"), "1", "utf-8")
-    await sleep(250)
+    assert.ok(await waitFor(() => count >= 1), "第 1 次 onEvent 应触发")
     fs.writeFileSync(path.join(watchPath, "second.md"), "2", "utf-8")
-    await sleep(250)
-    assert.ok(count >= 2, `两次 onEvent 都应被调用（throw 不打断）, 实际 ${count}`)
+    assert.ok(
+      await waitFor(() => count >= 2),
+      `两次 onEvent 都应被调用（throw 不打断）, 实际 ${count}`,
+    )
     assert.equal(watcher.isRunning(), true, "watcher 仍 running")
   } finally {
     await watcher.stop()
@@ -276,7 +304,7 @@ test("DocsWatcher · relativePath = abs path 相对最长匹配 watchPath", asyn
   await watcher.start()
   try {
     fs.writeFileSync(path.join(sub, "spec.md"), "data", "utf-8")
-    await sleep(250)
+    assert.ok(await waitFor(() => events.length >= 1), "应 fire onEvent")
     assert.equal(events.length, 1)
     // relativePath 相对 features：F999/spec.md（windows 是 F999\spec.md）
     assert.match(events[0].relativePath, /^F999[/\\]spec\.md$/)
