@@ -42,24 +42,44 @@ export interface DriftUpdateDraft {
 }
 
 export interface DriftDetectorOptions {
-  /** Caller-injected scanner; 返当前未处理的 drift trigger 列表。 */
+  /** Caller-injected scanner; 返当前 drift trigger 列表。 */
   scanTriggers: () => Promise<DriftTrigger[]>
   /**
    * Caller-injected draft opener; 真开 update draft。
    * 不注入时 result 仍记录应开的 draft（dry-run / 测试模式）。
    */
   openUpdateDraft?: (draft: DriftUpdateDraft) => Promise<void>
+  /**
+   * **范-r1 P2-2 修复**：已处理过的 trigger key 集合（`<kind>:<ref>` 格式）。
+   *
+   * caller 注入跨 run 持久化的已处理集合（如上周已开过 draft 的 trigger）。
+   * run() 跳过这些 trigger，避免同一 LL-XXX 连续多周重复开 draft → draft 泛滥。
+   *
+   * 另外 run() 内部也对**本次 scan 返回的重复 trigger**做 in-run 去重
+   * （同 kind:ref 出现多次只开一个 draft）。
+   *
+   * 默认 (undefined): 不做跨 run 去重（仅 in-run 去重）。
+   */
+  processedTriggerKeys?: Set<string>
   /** Inject clock (testing); 默认 () => new Date()。 */
   clock?: () => Date
   logger?: FastifyBaseLogger
 }
 
+/** trigger 唯一 key：`<kind>:<ref>`。去重 + processed 集合用。 */
+export function driftTriggerKey(t: DriftTrigger): string {
+  return `${t.kind}:${t.ref}`
+}
+
 export interface DriftDetectionResult {
   scannedAt: string
+  /** scanTriggers 返回的原始 trigger（含重复 / 已处理）。 */
   triggers: DriftTrigger[]
   draftsOpened: DriftUpdateDraft[]
   /** openUpdateDraft 抛错的 trigger（draft 未成功开）。 */
   failed: { trigger: DriftTrigger; error: string }[]
+  /** 范-r1 P2-2: 因已处理 / 本次重复而 skip 的 trigger 数。 */
+  skippedDuplicate: number
 }
 
 export class DriftDetector {
@@ -77,8 +97,19 @@ export class DriftDetector {
     const triggers = await this.opts.scanTriggers()
     const draftsOpened: DriftUpdateDraft[] = []
     const failed: { trigger: DriftTrigger; error: string }[] = []
+    let skippedDuplicate = 0
+
+    // 范-r1 P2-2: 跨 run（caller 注入）+ in-run 去重
+    const seen = new Set<string>(this.opts.processedTriggerKeys ?? [])
 
     for (const trigger of triggers) {
+      const key = driftTriggerKey(trigger)
+      if (seen.has(key)) {
+        skippedDuplicate += 1
+        continue
+      }
+      seen.add(key) // in-run 去重：同次 scan 重复的后续也 skip
+
       const draft = buildUpdateDraft(trigger)
       if (this.opts.openUpdateDraft) {
         try {
@@ -100,9 +131,15 @@ export class DriftDetector {
       triggers,
       draftsOpened,
       failed,
+      skippedDuplicate,
     }
     this.log.info(
-      { triggers: triggers.length, opened: draftsOpened.length, failed: failed.length },
+      {
+        triggers: triggers.length,
+        opened: draftsOpened.length,
+        failed: failed.length,
+        skippedDuplicate,
+      },
       "drift detection done",
     )
     return result

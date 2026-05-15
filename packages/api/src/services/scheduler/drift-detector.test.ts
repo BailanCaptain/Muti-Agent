@@ -140,3 +140,47 @@ test("DriftDetector · 同类多 trigger → 各自独立 draft", async () => {
   assert.equal(result.draftsOpened.length, 2)
   assert.notEqual(result.draftsOpened[0].title, result.draftsOpened[1].title)
 })
+
+// ── 范-r1 P2-2: trigger 去重 ────────────────────────────────────────────
+
+test("DriftDetector · 范-r1 P2-2: in-run 去重 — 同次 scan 重复 trigger 只开 1 draft", async () => {
+  const triggers: DriftTrigger[] = [
+    { kind: "new_lesson", ref: "LL-31", detail: "first" },
+    { kind: "new_lesson", ref: "LL-31", detail: "dup same kind:ref" },
+    { kind: "model_upgrade", ref: "LL-31", detail: "different kind same ref — 不算 dup" },
+  ]
+  const detector = new DriftDetector({ scanTriggers: async () => triggers })
+  const result = await detector.run()
+  assert.equal(result.draftsOpened.length, 2, "new_lesson:LL-31 去重 + model_upgrade:LL-31 保留")
+  assert.equal(result.skippedDuplicate, 1)
+})
+
+test("DriftDetector · 范-r1 P2-2: 跨 run 去重 — processedTriggerKeys 注入跳过已处理", async () => {
+  const triggers: DriftTrigger[] = [
+    { kind: "new_lesson", ref: "LL-31", detail: "上周已开过 draft" },
+    { kind: "new_lesson", ref: "LL-32", detail: "本周新增" },
+  ]
+  const opened: DriftUpdateDraft[] = []
+  const detector = new DriftDetector({
+    scanTriggers: async () => triggers,
+    openUpdateDraft: async (d) => {
+      opened.push(d)
+    },
+    // 上周已处理 new_lesson:LL-31
+    processedTriggerKeys: new Set(["new_lesson:LL-31"]),
+  })
+  const result = await detector.run()
+  assert.equal(result.draftsOpened.length, 1, "只 LL-32 新开 draft")
+  assert.equal(result.skippedDuplicate, 1, "LL-31 已处理 skip")
+  assert.equal(opened.length, 1)
+  assert.match(opened[0].title, /LL-32/)
+})
+
+test("DriftDetector · 范-r1 P2-2: 无 processedTriggerKeys → 仅 in-run 去重", async () => {
+  const detector = new DriftDetector({
+    scanTriggers: async () => [{ kind: "new_lesson", ref: "LL-01", detail: "x" }],
+  })
+  const result = await detector.run()
+  assert.equal(result.skippedDuplicate, 0)
+  assert.equal(result.draftsOpened.length, 1)
+})

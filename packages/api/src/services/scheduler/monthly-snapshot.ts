@@ -87,7 +87,18 @@ export class MonthlySnapshot {
 
   async run(): Promise<SnapshotReport> {
     const now = this.clock()
-    const label = now.toISOString().slice(0, 7) // "2027-01"
+    // 范-r1 P1-1: label 按 Asia/Shanghai 格式化（cron 在 CST 触发；UTC slice
+    // 会让 2027-01-01 03:00 CST = 2026-12-31 19:00 UTC 错标成 2026-12）。
+    const label = formatYearMonthShanghai(now)
+
+    // 范-r1 P1-2: 有 replaceViewfinder 时 backup 必填（无 backup = 无回滚兜底，
+    // 禁止 replace）。仅 dry-run（不传 replaceViewfinder）允许无 backup。
+    if (this.opts.replaceViewfinder && !this.opts.backup) {
+      throw new Error(
+        "MonthlySnapshot: replaceViewfinder 提供时 backup 必填（backup-before-replace " +
+          "安全语义）；dry-run 模式请不要传 replaceViewfinder",
+      )
+    }
 
     // (1) backup 当前状态
     let backupLocation: string | null = null
@@ -98,7 +109,7 @@ export class MonthlySnapshot {
         // backup 失败 → 不 replace（无回滚兜底不敢动），report 标记
         this.log.error({ err, label }, "backup failed — skipping replace this run (fail-safe)")
         const rooms0 = await this.opts.recompileAllRooms()
-        return this.buildReport({
+        const failReport = this.buildReport({
           snapshotAt: now.toISOString(),
           label,
           backupLocation: null,
@@ -109,6 +120,16 @@ export class MonthlySnapshot {
             replaceError: "backup failed — replace skipped",
           })),
         })
+        // 范-r1 P2-4: backup 失败的 report 也走 pushAudit best-effort
+        // （否则 R-201 收不到失败审计 — 比 replace 成功更需要告警）
+        if (this.opts.pushAudit) {
+          try {
+            await this.opts.pushAudit(failReport)
+          } catch (auditErr) {
+            this.log.warn({ err: auditErr }, "pushAudit threw on backup-failure report (ignored)")
+          }
+        }
+        return failReport
       }
     }
 
@@ -215,4 +236,18 @@ function tokenize(text: string): Set<string> {
       .split(/[^a-z0-9一-鿿]+/i)
       .filter((w) => w.length > 0),
   )
+}
+
+/**
+ * 范-r1 P1-1: 按 Asia/Shanghai (UTC+8 无 DST) 格式化 year-month。
+ * MonthlySnapshot cron 在 CST 03:00 触发；直接 toISOString().slice(0,7) 是 UTC
+ * label，跨日界会错月（CST 月初 = UTC 上月末）。
+ */
+function formatYearMonthShanghai(d: Date): string {
+  // Asia/Shanghai = UTC+8 固定偏移
+  const shanghai = new Date(d.getTime() + 8 * 3600 * 1000)
+  // 用 getUTC* 读偏移后的"墙上时间"
+  const year = shanghai.getUTCFullYear()
+  const month = String(shanghai.getUTCMonth() + 1).padStart(2, "0")
+  return `${year}-${month}`
 }

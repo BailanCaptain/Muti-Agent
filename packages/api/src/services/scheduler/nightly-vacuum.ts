@@ -140,20 +140,19 @@ export class NightlyVacuum {
       archiveFiles.push(path.relative(this.rootDir, archiveAbs).replace(/\\/g, "/"))
 
       // ── snapshot：committed 事件按 path 取 last → .runtime/wiki-events-snapshot/<ym>.jsonl ──
+      // 范-r1 P2-1: events 已 ORDER BY ts ASC, id ASC → 迭代顺序即时间顺序，
+      // 直接覆盖 = last-write-wins（不能按 id 判定 —— backfill 导入历史文件时
+      // ts 是历史时间但 id 是新分配的大值，按 id 选会选错"最新"）。
       const snapshotMap = new Map<string, SnapshotEntry>()
       for (const ev of events) {
         if (ev.state !== "committed") continue
-        const prev = snapshotMap.get(ev.path)
-        // events 已按 ts ASC, id ASC 排序 → 后出现的即更新（last-write-wins）
-        if (!prev || ev.id > prev.lastEventId) {
-          snapshotMap.set(ev.path, {
-            path: ev.path,
-            lastContentHash: ev.content_hash,
-            lastWriter: ev.alias,
-            lastTs: ev.ts,
-            lastEventId: ev.id,
-          })
-        }
+        snapshotMap.set(ev.path, {
+          path: ev.path,
+          lastContentHash: ev.content_hash,
+          lastWriter: ev.alias,
+          lastTs: ev.ts,
+          lastEventId: ev.id,
+        })
       }
       if (snapshotMap.size > 0) {
         const snapshotDir = path.join(this.rootDir, ".runtime", "wiki-events-snapshot")

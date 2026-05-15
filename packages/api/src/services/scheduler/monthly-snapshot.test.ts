@@ -63,6 +63,7 @@ test("MonthlySnapshot · AC-P2-14: drift > 30% → replace", async () => {
   const replaced: Array<{ roomId: string; content: string }> = []
   const snap = new MonthlySnapshot({
     recompileAllRooms: async () => snapshots,
+    backup: async (l) => `backup://${l}`,
     replaceViewfinder: async (roomId, content) => {
       replaced.push({ roomId, content })
     },
@@ -86,6 +87,7 @@ test("MonthlySnapshot · AC-P2-14: drift ≤ 30% → 不 replace", async () => {
   const replaced: string[] = []
   const snap = new MonthlySnapshot({
     recompileAllRooms: async () => snapshots,
+    backup: async (l) => `backup://${l}`,
     replaceViewfinder: async (roomId) => {
       replaced.push(roomId)
     },
@@ -154,6 +156,7 @@ test("MonthlySnapshot · AC-P2-14 幂等: 第二次 recompile 一致 → drift 0
         recompiledViewfinder: recompiled,
       },
     ],
+    backup: async (l) => `backup://${l}`,
     replaceViewfinder: async (_roomId, content) => {
       viewfinder = content // replace 后 current 更新
     },
@@ -170,24 +173,89 @@ test("MonthlySnapshot · AC-P2-14 幂等: 第二次 recompile 一致 → drift 0
   assert.equal(r2.rooms[0].driftRatio, 0)
 })
 
-// ── Jan-1 边界 ───────────────────────────────────────────────────────────
+// ── Jan-1 边界（范-r1 P1-1: label 按 Asia/Shanghai）─────────────────────
 
-test("MonthlySnapshot · Jan-1 边界: label = 年首月 2027-01", async () => {
+test("MonthlySnapshot · 范-r1 P1-1 Jan-1 边界: cron 在 CST 2027-01-01 03:00 触发 → label 2027-01", async () => {
+  // cron 0 3 1 * * Asia/Shanghai → 2027-01-01 03:00 CST = 2026-12-31 19:00 UTC
+  // 旧实现 toISOString().slice(0,7) 会错标 "2026-12"；修复后按 CST 算 → "2027-01"
   const snap = new MonthlySnapshot({
     recompileAllRooms: async () => [],
-    clock: () => new Date("2027-01-01T03:00:00.000Z"),
+    clock: () => new Date("2026-12-31T19:00:00.000Z"), // = 2027-01-01 03:00 CST
   })
   const report = await snap.run()
-  assert.equal(report.label, "2027-01")
+  assert.equal(report.label, "2027-01", "CST 月初触发 label 应是 CST 的年-月")
 })
 
-test("MonthlySnapshot · label 普通月份 2026-06", async () => {
+test("MonthlySnapshot · 范-r1 P1-1: 普通月初 CST 触发 — 2026-06-01 03:00 CST → 2026-06", async () => {
+  // 2026-06-01 03:00 CST = 2026-05-31 19:00 UTC
   const snap = new MonthlySnapshot({
     recompileAllRooms: async () => [],
-    clock: () => new Date("2026-06-01T03:00:00.000Z"),
+    clock: () => new Date("2026-05-31T19:00:00.000Z"),
   })
   const report = await snap.run()
   assert.equal(report.label, "2026-06")
+})
+
+// ── 范-r1 P1-2: backup 必填 when replaceViewfinder 提供 ─────────────────
+
+test("MonthlySnapshot · 范-r1 P1-2: 有 replaceViewfinder 但无 backup → 构造期 run() 抛错", async () => {
+  const snap = new MonthlySnapshot({
+    recompileAllRooms: async () => [
+      { roomId: "R-1", currentViewfinder: "a", recompiledViewfinder: "x y z" },
+    ],
+    replaceViewfinder: async () => {
+      // 有 replacer 但没 backup → 违反 backup-before-replace
+    },
+  })
+  await assert.rejects(() => snap.run(), /backup 必填/)
+})
+
+test("MonthlySnapshot · 范-r1 P1-2: dry-run（无 replaceViewfinder + 无 backup）→ 允许", async () => {
+  const snap = new MonthlySnapshot({
+    recompileAllRooms: async () => [
+      { roomId: "R-1", currentViewfinder: "a", recompiledViewfinder: "x y z" },
+    ],
+    // 无 replaceViewfinder + 无 backup → dry-run，合法
+  })
+  const report = await snap.run()
+  assert.equal(report.roomsReplaced, 0)
+})
+
+// ── 范-r1 P2-4: backup 失败的 report 也走 pushAudit ─────────────────────
+
+test("MonthlySnapshot · 范-r1 P2-4: backup 失败 → fail report 仍推 pushAudit", async () => {
+  const audits: SnapshotReport[] = []
+  const snap = new MonthlySnapshot({
+    recompileAllRooms: async () => [
+      { roomId: "R-1", currentViewfinder: "a b c", recompiledViewfinder: "x y z" },
+    ],
+    backup: async () => {
+      throw new Error("disk full")
+    },
+    replaceViewfinder: async () => {},
+    pushAudit: async (r) => {
+      audits.push(r)
+    },
+  })
+  const report = await snap.run()
+  assert.equal(audits.length, 1, "backup 失败的 report 必须推 audit（R-201 收到失败告警）")
+  assert.equal(audits[0].backupLocation, null)
+  assert.match(audits[0].rooms[0].replaceError ?? "", /backup failed/)
+  assert.equal(report.roomsReplaced, 0)
+})
+
+// ── 范-r1 P2-3: word-Jaccard 否定句已知限制 ────────────────────────────
+
+test("MonthlySnapshot · 范-r1 P2-3: word-Jaccard 已知限制 — 否定句反转 drift 偏低", () => {
+  // 已知限制：computeDrift 是 word-set Jaccard，"否定反转"语义完全相反但词集
+  // 高度重叠 → drift 偏低可能漏判。本测试锁定此行为为"已知限制"，留 follow-up
+  // （真语义 drift 需 LLM verifier，成本高 — Phase 2 不接）。
+  const drift = computeDrift(
+    "the migration is safe to run",
+    "the migration is not safe to run",
+  )
+  // 只多 1 个 "not" 词 → drift 很小（这正是已知限制）
+  assert.ok(drift < 0.2, `否定句反转 word-Jaccard drift 偏低（已知限制）, got ${drift}`)
 })
 
 // ── pushAudit + replace 错误处理 ────────────────────────────────────────
@@ -214,6 +282,7 @@ test("MonthlySnapshot · replaceViewfinder throw → 落 replaceError，不打�
       { roomId: "R-ok", currentViewfinder: "a b", recompiledViewfinder: "x y z w" },
       { roomId: "R-fail", currentViewfinder: "a b", recompiledViewfinder: "x y z w" },
     ],
+    backup: async (l) => `backup://${l}`,
     replaceViewfinder: async (roomId) => {
       if (roomId === "R-fail") throw new Error("write conflict")
     },
@@ -256,6 +325,7 @@ test("MonthlySnapshot · AC-P2-14: 100k room mock pressure — 跑完不 OOM + �
       }
       return rooms
     },
+    backup: async (l) => `backup://${l}`,
     replaceViewfinder: async () => {
       // no-op stub
     },
