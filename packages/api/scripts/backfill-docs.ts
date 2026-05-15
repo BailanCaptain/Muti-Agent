@@ -63,6 +63,20 @@ export interface BackfillArgs {
   resume: boolean
   /** 注入测试用 ingest fn；CLI 模式从 --ingest-module 加载。 */
   ingestFn: IngestFn
+  /**
+   * **范-r1 P2-1 修复**：v2a F4 frontmatter fallback。
+   *
+   * caller 预扫 wiki/concepts/draft/{_backfill,_auto}/* frontmatter，提取
+   * `ingest_metadata.source_path` (post-compile.ts 写入的字段) 收集到 Set。
+   * 本脚本 --resume 时合并 state.jsonl committed + 本 Set 一起 skip。
+   *
+   * 用途：state.jsonl 损坏 / 丢失 / 没同步 → 用 frontmatter 兜底，避免重跑
+   * 已成功导入的源文件（post-compile 写入是 atomic + idempotent，frontmatter
+   * 存在 = source 已入 wiki）。
+   *
+   * 默认 (undefined): 只用 state.jsonl，不做 frontmatter fallback (Day 7-8 行为)。
+   */
+  frontmatterCommittedSources?: Set<string>
 }
 
 export const DEFAULT_DOCS_SUBDIRS = ["docs/features", "docs/bugReport", "docs/lessons"]
@@ -91,6 +105,97 @@ export function parseBackfillArgs(argv: string[]): {
     rootDir: parsed.values["root-dir"] ?? process.cwd(),
     ingestModule: parsed.values["ingest-module"] ?? null,
   }
+}
+
+// ── Frontmatter fallback scan (v2a F4) ───────────────────────────────────
+
+/**
+ * 范-r1 P2-1: 扫描 wiki/concepts/draft/{_backfill,_auto}/ 下所有 .md 文件的
+ * YAML frontmatter，提取 `ingest_metadata.source_path` 字段（post-compile.ts:83
+ * 实际写入的源文件路径），返回已 committed 的源文件 Set。
+ *
+ * v2a F4 强约束："resume 时优先读 state 文件，缺失 fallback 扫 frontmatter"。
+ *
+ * 用法：caller 在 --resume 时调本函数预扫，传入 runBackfill.frontmatterCommittedSources。
+ *
+ * 鲁棒性：单文件 frontmatter 解析失败跳过不打断（可能 yaml 格式错 / IO 错）。
+ */
+export async function scanFrontmatterCommittedSources(
+  draftDirs: string[],
+  options: { sourcePathField?: string } = {},
+): Promise<Set<string>> {
+  const field = options.sourcePathField ?? "source_path"
+  const committed = new Set<string>()
+  for (const dir of draftDirs) {
+    if (!existsSync(dir)) continue
+    const files: string[] = []
+    await collectMarkdownFiles(dir, files)
+    for (const file of files) {
+      try {
+        const sourcePath = extractSourcePathFromFrontmatter(file, field)
+        if (sourcePath) committed.add(sourcePath)
+      } catch {
+        // 单文件解析失败跳过（YAML 错 / IO 错）
+      }
+    }
+  }
+  return committed
+}
+
+async function collectMarkdownFiles(dir: string, out: string[]): Promise<void> {
+  let entries: import("node:fs").Dirent[]
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const e of entries) {
+    if (e.name.startsWith(".")) continue
+    const full = path.join(dir, e.name)
+    if (e.isDirectory()) {
+      await collectMarkdownFiles(full, out)
+    } else if (e.isFile() && e.name.endsWith(".md")) {
+      out.push(full)
+    }
+  }
+}
+
+/**
+ * 提取 frontmatter 中的 ingest_metadata.<field>。
+ * 默认 field='source_path'（post-compile.ts:83 写入约定）。
+ *
+ * 简化解析（不引 yaml lib，避免 hot path 开销）：
+ *   只处理 `--- ... ---` 包裹的 YAML 头；扫 `ingest_metadata:\n  source_path: <value>`
+ *   形式。复杂 YAML 路径 (锚点 / multiline) 不支持 — 正常 frontmatter 写入不该用。
+ */
+export function extractSourcePathFromFrontmatter(
+  filePath: string,
+  field = "source_path",
+): string | null {
+  const content = readFileSync(filePath, "utf-8")
+  // 仅匹配文件开头 `---\n...---\n` frontmatter 块
+  const m = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!m) return null
+  const fm = m[1]
+  // 找 ingest_metadata: ... 块下的 source_path
+  const lines = fm.split(/\r?\n/)
+  let inIngestMeta = false
+  for (const line of lines) {
+    if (/^ingest_metadata:\s*$/.test(line)) {
+      inIngestMeta = true
+      continue
+    }
+    // 离开 ingest_metadata 块的判定：缩进 0 的新顶层 key
+    if (inIngestMeta && /^[A-Za-z0-9_-]+:/.test(line)) {
+      inIngestMeta = false
+    }
+    if (inIngestMeta) {
+      const fieldRe = new RegExp(`^\\s+${field}:\\s*['"]?([^'"\\n]+?)['"]?\\s*$`)
+      const fm2 = line.match(fieldRe)
+      if (fm2) return fm2[1].trim()
+    }
+  }
+  return null
 }
 
 // ── State file (.runtime/backfill-state.jsonl) ───────────────────────────
@@ -288,6 +393,10 @@ export async function runBackfill(args: BackfillArgs): Promise<BackfillRunResult
   const committedFiles = new Set<string>()
   for (const [file, entry] of stateMap) {
     if (entry.status === "committed") committedFiles.add(file)
+  }
+  // 范-r1 P2-1: 合并 frontmatter fallback set（v2a F4 双源 marker）
+  if (args.frontmatterCommittedSources) {
+    for (const f of args.frontmatterCommittedSources) committedFiles.add(f)
   }
 
   if (args.dryRun) {

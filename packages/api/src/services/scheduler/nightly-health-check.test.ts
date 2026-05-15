@@ -58,7 +58,89 @@ test("NightlyHealthCheck · deadLinks RED — entity 引用不存在的 path", a
   const report = await check.run()
   assert.equal(report.deadLinks.length, 1)
   assert.equal(report.deadLinks[0].from, "wiki/concepts/foo.md")
-  assert.equal(report.deadLinks[0].to, "wiki/concepts/missing.md")
+  // 范-r1 P1 改：deadLink.to 报 raw target（保留 user-visible 链文本，不自动 .md 后缀）
+  assert.equal(report.deadLinks[0].to, "wiki/concepts/missing")
+})
+
+// ── 范-r1 P1: wikilink resolver hook ───────────────────────────────────
+
+test("NightlyHealthCheck · 范-r1 P1: name-style wikilink (无 /) + 无 resolver → 不报 deadLink", async () => {
+  // [[Concept Name|alias]] / [[Concept Name#section]] 是 compile-prompt.ts:75 实际格式
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/foo.md", "see [[Concept Name|alias]] and [[Other#section]]\n"),
+    ],
+    // 不注入 resolveWikiLink → default 行为：name-style 不报 deadLink (避免 false positive)
+  })
+  const report = await check.run()
+  assert.equal(
+    report.deadLinks.length,
+    0,
+    "name-style wikilink 默认 silent skip; caller 用 resolver 接 wiki-services",
+  )
+})
+
+test("NightlyHealthCheck · 范-r1 P1: name-style wikilink + resolver 返合法 path → inbound 计数 + 不 deadLink", async () => {
+  const check = new NightlyHealthCheck({
+    scanEntities: async () => [
+      entity("wiki/concepts/foo.md", "see [[Concept Name|alias]]\n"),
+      entity("wiki/concepts/concept.md", "# concept\n"),
+    ],
+    resolveWikiLink: (target) => {
+      // alias 已被 regex 剥离 m[1] = "Concept Name"
+      if (target === "Concept Name") return "wiki/concepts/concept.md"
+      return null
+    },
+  })
+  const report = await check.run()
+  assert.equal(report.deadLinks.length, 0, "resolver 返合法 path → 不 deadLink")
+  // concept.md 应有 inbound count (foo 引用了它)
+  assert.ok(!report.orphans.includes("wiki/concepts/concept.md"))
+})
+
+test("NightlyHealthCheck · 范-r1 P1: name-style wikilink + resolver 返 null → silent skip 不 deadLink", async () => {
+  const check = new NightlyHealthCheck({
+    scanEntities: async () => [
+      entity("wiki/concepts/foo.md", "see [[Unknown Concept]]\n"),
+    ],
+    resolveWikiLink: () => null, // resolver 不知道
+  })
+  const report = await check.run()
+  assert.equal(
+    report.deadLinks.length,
+    0,
+    "resolver 返 null 也 silent skip（resolver 自己判断不报）",
+  )
+})
+
+test("NightlyHealthCheck · 范-r1 P1: alias [[Name|alias]] regex 剥离 alias 后传 resolver", async () => {
+  let receivedTarget: string | null = null
+  const check = new NightlyHealthCheck({
+    scanEntities: async () => [
+      entity("wiki/concepts/foo.md", "[[My Concept|displayed text]]\n"),
+    ],
+    resolveWikiLink: (target) => {
+      receivedTarget = target
+      return null
+    },
+  })
+  await check.run()
+  assert.equal(receivedTarget, "My Concept", "alias 'displayed text' 应被剥离")
+})
+
+test("NightlyHealthCheck · 范-r1 P1: hash [[Name#section]] regex 剥离 #section", async () => {
+  let receivedTarget: string | null = null
+  const check = new NightlyHealthCheck({
+    scanEntities: async () => [
+      entity("wiki/concepts/foo.md", "[[My Concept#sec1]]\n"),
+    ],
+    resolveWikiLink: (target) => {
+      receivedTarget = target
+      return null
+    },
+  })
+  await check.run()
+  assert.equal(receivedTarget, "My Concept", "#section 应被剥离")
 })
 
 test("NightlyHealthCheck · deadLinks GREEN — wikilink 全 resolve", async () => {
@@ -107,18 +189,36 @@ test("NightlyHealthCheck · orphans RED — 无 inbound link 的非 draft 文件
   assert.ok(report.orphans.includes("wiki/concepts/never-referenced.md"))
 })
 
-test("NightlyHealthCheck · orphans 豁免 draft 路径（draft 默认未发布）", async () => {
+test("NightlyHealthCheck · orphans 豁免任何 /draft/ 路径（含 _expired / _quarantined — 范-r1 P2-2）", async () => {
   const check = newCheck({
     entities: [
       entity("wiki/concepts/draft/auto-1.md", "# auto draft 1\n"),
+      entity("wiki/concepts/draft/_expired/old.md", "# expired\n"),
+      entity("wiki/concepts/draft/_quarantined/sus.md", "# quarantined\n"),
       entity("wiki/concepts/finalized.md", "# fin\n"),
     ],
   })
   const report = await check.run()
-  // draft/ 路径不算 orphan（豁免）
+  // 任何 /draft/ 路径都豁免（含已归档 / 已隔离 — 它们本来就不该被引用）
   assert.ok(!report.orphans.includes("wiki/concepts/draft/auto-1.md"))
+  assert.ok(!report.orphans.includes("wiki/concepts/draft/_expired/old.md"))
+  assert.ok(!report.orphans.includes("wiki/concepts/draft/_quarantined/sus.md"))
   // finalized 无 inbound 算 orphan
   assert.ok(report.orphans.includes("wiki/concepts/finalized.md"))
+})
+
+// 范-r1 P2-3: self-link 不算 inbound（防自循环 orphan 被隐藏）
+test("NightlyHealthCheck · 范-r1 P2-3: self-link 不算 inbound → 自循环 orphan 仍被识别", async () => {
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/lonely.md", "# lonely\n\n[[wiki/concepts/lonely]]\n"),
+    ],
+  })
+  const report = await check.run()
+  assert.ok(
+    report.orphans.includes("wiki/concepts/lonely.md"),
+    "自循环不算 inbound，lonely 仍报 orphan",
+  )
 })
 
 // ── missingFrontmatter ──────────────────────────────────────────────────
@@ -254,6 +354,60 @@ test("NightlyHealthCheck · draftExpired 无 mover → movedTo=null（dry-run �
   const report = await check.run()
   assert.equal(report.draftExpired.length, 1)
   assert.equal(report.draftExpired[0].movedTo, null, "无 mover → movedTo=null")
+})
+
+// 范-r1 P2-2: split active vs expired/quarantined draft
+test("NightlyHealthCheck · 范-r1 P2-2: _expired/ 路径下 30 天前 draft 不重复归档", async () => {
+  const now = new Date("2026-06-15T00:00:00.000Z")
+  const oldCreated = new Date("2026-05-01T00:00:00.000Z").toISOString() // 45 天前
+  const moved: Array<{ src: string; dst: string }> = []
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/draft/_expired/already-archived.md", "# old\n", {
+        created_at: oldCreated,
+      }),
+    ],
+    now,
+    movedRecorder: moved,
+  })
+  const report = await check.run()
+  assert.equal(report.draftExpired.length, 0, "_expired/ 已归档不应重复触发")
+  assert.equal(moved.length, 0, "mover 不应被调")
+})
+
+test("NightlyHealthCheck · 范-r1 P2-2: _quarantined/ 路径下 30 天前 draft 不归档（隔离不动）", async () => {
+  const now = new Date("2026-06-15T00:00:00.000Z")
+  const oldCreated = new Date("2026-05-01T00:00:00.000Z").toISOString()
+  const moved: Array<{ src: string; dst: string }> = []
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/draft/_quarantined/sus.md", "# blocked\n", {
+        created_at: oldCreated,
+      }),
+    ],
+    now,
+    movedRecorder: moved,
+  })
+  const report = await check.run()
+  assert.equal(report.draftExpired.length, 0, "_quarantined/ 隔离 draft 不归档")
+  assert.equal(moved.length, 0)
+})
+
+test("NightlyHealthCheck · 范-r1 P2-2: _backfill / _auto active draft 仍正常归档（>30 天）", async () => {
+  const now = new Date("2026-06-15T00:00:00.000Z")
+  const oldCreated = new Date("2026-05-01T00:00:00.000Z").toISOString()
+  const moved: Array<{ src: string; dst: string }> = []
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/draft/_backfill/old-bf.md", "# bf\n", { created_at: oldCreated }),
+      entity("wiki/concepts/draft/_auto/old-auto.md", "# auto\n", { created_at: oldCreated }),
+    ],
+    now,
+    movedRecorder: moved,
+  })
+  const report = await check.run()
+  assert.equal(report.draftExpired.length, 2, "active draft (_backfill / _auto) 仍归档")
+  assert.equal(moved.length, 2)
 })
 
 test("NightlyHealthCheck · draftExpired mover throw → 落 movedTo=null + 不抛", async () => {

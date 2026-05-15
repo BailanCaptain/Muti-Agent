@@ -28,10 +28,12 @@ import {
   appendBackfillState,
   buildDryRunReport,
   enumerateDocsFiles,
+  extractSourcePathFromFrontmatter,
   parseBackfillArgs,
   readBackfillState,
   renderDryRunReport,
   runBackfill,
+  scanFrontmatterCommittedSources,
 } from "./backfill-docs"
 
 function safeTempDir(prefix: string) {
@@ -392,6 +394,125 @@ test("backfill-docs · AC-P2-9 v2a F4 marker --resume: 跳 state 已 committed �
       ingestedRel.sort(),
       ["docs/features/F998.md", "docs/lessons/L001.md"],
     )
+  } finally {
+    safeCleanup(tempDir)
+  }
+})
+
+// ── 范-r1 P2-1: frontmatter fallback (v2a F4) ──────────────────────────
+
+test("backfill-docs · 范-r1 P2-1: extractSourcePathFromFrontmatter 提取 ingest_metadata.source_path", () => {
+  const tempDir = safeTempDir("backfill-fm-extract-")
+  try {
+    const draftFile = path.join(tempDir, "draft.md")
+    fs.writeFileSync(
+      draftFile,
+      [
+        "---",
+        "title: Test Draft",
+        "ingest_metadata:",
+        "  source_path: docs/features/F999.md",
+        "  ingest_event_id: evt-42",
+        "tags:",
+        "  - test",
+        "---",
+        "",
+        "# body",
+        "",
+      ].join("\n"),
+    )
+    const sp = extractSourcePathFromFrontmatter(draftFile)
+    assert.equal(sp, "docs/features/F999.md")
+  } finally {
+    safeCleanup(tempDir)
+  }
+})
+
+test("backfill-docs · 范-r1 P2-1: extractSourcePathFromFrontmatter 缺 frontmatter / 缺字段 → null", () => {
+  const tempDir = safeTempDir("backfill-fm-missing-")
+  try {
+    const noFm = path.join(tempDir, "no-fm.md")
+    fs.writeFileSync(noFm, "# just body\n")
+    assert.equal(extractSourcePathFromFrontmatter(noFm), null)
+
+    const fmNoSource = path.join(tempDir, "fm-no-source.md")
+    fs.writeFileSync(
+      fmNoSource,
+      "---\ntitle: x\nother: yes\n---\n# body\n",
+    )
+    assert.equal(extractSourcePathFromFrontmatter(fmNoSource), null)
+  } finally {
+    safeCleanup(tempDir)
+  }
+})
+
+test("backfill-docs · 范-r1 P2-1: scanFrontmatterCommittedSources 扫 _backfill / _auto", async () => {
+  const tempDir = safeTempDir("backfill-fm-scan-")
+  try {
+    const backfillDir = path.join(tempDir, "_backfill")
+    const autoDir = path.join(tempDir, "_auto")
+    fs.mkdirSync(backfillDir, { recursive: true })
+    fs.mkdirSync(autoDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(backfillDir, "f999-backfill.md"),
+      "---\ningest_metadata:\n  source_path: docs/features/F999.md\n---\n# x\n",
+    )
+    fs.writeFileSync(
+      path.join(autoDir, "f998-auto.md"),
+      "---\ningest_metadata:\n  source_path: docs/features/F998.md\n---\n# x\n",
+    )
+    fs.writeFileSync(
+      path.join(autoDir, "no-fm.md"),
+      "# just body, no frontmatter\n",
+    )
+    const set = await scanFrontmatterCommittedSources([backfillDir, autoDir])
+    assert.equal(set.size, 2)
+    assert.ok(set.has("docs/features/F999.md"))
+    assert.ok(set.has("docs/features/F998.md"))
+  } finally {
+    safeCleanup(tempDir)
+  }
+})
+
+test("backfill-docs · 范-r1 P2-1: --resume 合并 state.jsonl + frontmatterCommittedSources", async () => {
+  const tempDir = safeTempDir("backfill-fm-merge-")
+  try {
+    const { rootDir } = setupDocsTree(tempDir)
+    const stateFile = path.join(rootDir, ".runtime", "backfill-state.jsonl")
+    const reportFile = path.join(rootDir, "docs", "plans", "report.md")
+
+    // state 只 commit 了 F999；frontmatterCommittedSources 兜底 F998
+    appendBackfillState(stateFile, {
+      file: "docs/features/F999.md",
+      status: "committed",
+      ingestEventId: "evt-state-1",
+      ts: "2026-05-14T00:00:00.000Z",
+    })
+
+    const ingested: string[] = []
+    let counter = 0
+    const ingestFn: IngestFn = async (_abs, source) => {
+      counter += 1
+      ingested.push(source)
+      return { ingestEventId: `evt-${counter}`, type: "concept", crossRefs: 0 }
+    }
+
+    const result = await runBackfill({
+      rootDir,
+      docsSubdirs: ["docs/features", "docs/bugReport", "docs/lessons"],
+      stateJsonlPath: stateFile,
+      reportPath: reportFile,
+      dryRun: false,
+      resume: true,
+      ingestFn,
+      // ★ frontmatter fallback 模拟：F998 已有 draft frontmatter
+      frontmatterCommittedSources: new Set(["docs/features/F998.md"]),
+    })
+
+    assert.equal(result.skipped, 2, "F999 (state) + F998 (frontmatter) 共跳 2")
+    assert.equal(result.succeeded, 2, "B999 + L001 真跑")
+    const sortedIngested = ingested.map((f) => f.replace(/\\/g, "/")).sort()
+    assert.deepEqual(sortedIngested, ["docs/bugReport/B999.md", "docs/lessons/L001.md"])
   } finally {
     safeCleanup(tempDir)
   }

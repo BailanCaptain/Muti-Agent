@@ -63,6 +63,25 @@ export interface NightlyHealthCheckOptions {
    */
   onReport?: (report: HealthCheckReport) => Promise<void> | void
   logger?: FastifyBaseLogger
+  /**
+   * **范-r1 P1 修复**：resolve `[[wikilink]]` target（可能是 name 而非 path）→ entity.path。
+   *
+   * 实际 wikilink 多是 `[[Concept Name|alias]]` / `[[Concept#section]]` 等
+   * name-based（compile-prompt.ts:75 emit）。直接当 path 对比会 false-positive
+   * 误报 deadLink。
+   *
+   * caller 注入 resolver：根据 target text + fromEntity + allEntities 算出 path
+   * 或返 null 表示不能 resolve（caller 不知道这个 name 是什么）。
+   *
+   * **不注入时的 default 行为**：只对"path-style" target（`wiki/...md` 形如
+   * 真实 fs path）做存在性检查；其他 name-style target **跳过 deadLink 检测**
+   * 避免 false positive（spec 真实情况由 caller 用 wiki-services 等 layer 接 resolver）。
+   */
+  resolveWikiLink?: (
+    target: string,
+    fromEntity: WikiEntity,
+    allEntities: WikiEntity[],
+  ) => string | null
 }
 
 export interface DeadLink {
@@ -155,30 +174,46 @@ export class NightlyHealthCheck {
       // (3) deadLinks + inbound counting
       const refs = extractRefs(entity.body, entity.path)
       for (const ref of refs) {
-        const refNorm = normalizePath(ref)
-        if (allPaths.has(refNorm)) {
-          inboundCounts.set(refNorm, (inboundCounts.get(refNorm) ?? 0) + 1)
+        // 范-r1 P1: wikilink 走 resolver；rellink 已是 path-style 直接对比
+        let resolved: string | null
+        if (ref.kind === "rellink") {
+          resolved = normalizePath(ref.target)
+        } else if (this.opts.resolveWikiLink) {
+          const r = this.opts.resolveWikiLink(ref.target, entity, entities)
+          resolved = r === null ? null : normalizePath(r)
         } else {
-          deadLinks.push({ from: entity.path, to: ref })
+          // default no-resolver：仅 path-style target 做存在性检查；name-style 跳过避免 false-positive
+          resolved = looksLikePath(ref.target)
+            ? normalizePath(ref.target.endsWith(".md") ? ref.target : `${ref.target}.md`)
+            : null
+        }
+        if (resolved === null) continue // resolver 没法判 / name-style 默认豁免
+        // 范-r1 P2-3: self-link 不算 inbound（防自循环 orphan 被隐藏）
+        if (resolved === myPath) continue
+        if (allPaths.has(resolved)) {
+          inboundCounts.set(resolved, (inboundCounts.get(resolved) ?? 0) + 1)
+        } else {
+          deadLinks.push({ from: entity.path, to: ref.target })
         }
       }
     }
 
-    // (4) orphans = inboundCounts == 0 的（draft 子目录默认豁免——尚未发布）
+    // (4) orphans = inboundCounts == 0 的（任何 /draft/ 路径豁免——未发布 + 已归档不应被引用）
     const orphans: string[] = []
     for (const e of entities) {
       const myPath = normalizePath(e.path)
-      if ((inboundCounts.get(myPath) ?? 0) === 0 && !isDraftPath(myPath)) {
+      if ((inboundCounts.get(myPath) ?? 0) === 0 && !isAnyDraftPath(myPath)) {
         orphans.push(e.path)
       }
     }
 
-    // (5) draftExpired (含 v2 修订 reviewing=true 跳过)
+    // (5) draftExpired (含 v2 修订 reviewing=true 跳过 + 范-r1 P2-2 split active)
     const nowMs = this.clock().getTime()
     const ttlMs = this.draftTtlDays * 24 * 3600 * 1000
     const draftExpired: DraftExpired[] = []
     for (const entity of entities) {
-      if (!isDraftPath(normalizePath(entity.path))) continue
+      // 范-r1 P2-2: 只对 active draft 做 TTL 检查（_expired/ 已归档 / _quarantined/ 隔离都跳过）
+      if (!isActiveDraftPath(normalizePath(entity.path))) continue
       // v2 修订：reviewing=true 跳过归档（审核中保留）
       if (entity.frontmatter.reviewing === true) continue
       const createdIso = entity.frontmatter.created_at
@@ -243,7 +278,20 @@ function normalizePath(p: string): string {
   return p.replace(/\\/g, "/")
 }
 
-function isDraftPath(normalizedPath: string): boolean {
+/**
+ * 范-r1 P2-2: 区分 active draft（应做 TTL）vs 已归档/隔离 draft（跳过 TTL）。
+ *   - active：top-level draft + _backfill + _auto + 其他常规 draft 子目录
+ *   - non-active：_expired (已归档) + _quarantined (sanitize 隔离)
+ */
+function isActiveDraftPath(normalizedPath: string): boolean {
+  if (!normalizedPath.includes("/draft/")) return false
+  if (normalizedPath.includes("/draft/_expired/")) return false
+  if (normalizedPath.includes("/draft/_quarantined/")) return false
+  return true
+}
+
+/** 任何 /draft/ 路径（含 _expired / _quarantined）— 用于 orphan 豁免（已归档也不应被引用）。 */
+function isAnyDraftPath(normalizedPath: string): boolean {
   return normalizedPath.includes("/draft/")
 }
 
@@ -260,20 +308,36 @@ function expiredArchivePath(originalPath: string): string {
   return `${head}_expired/${tail}`
 }
 
-function extractRefs(body: string, fromPath: string): string[] {
-  const refs: string[] = []
-  // [[wikilink]] — 路径直接是 wikilink target
+/**
+ * 范-r1 P1: extracted ref 区分 wikilink (raw target text) vs rellink (已解析 path-style)。
+ * caller 路径根据 kind 选 resolver vs 直接对比。
+ */
+type ExtractedRef =
+  | { kind: "wikilink"; target: string } // raw text inside [[...]]; e.g. "Concept Name|alias" or "wiki/concepts/foo"
+  | { kind: "rellink"; target: string } // resolved path-style; e.g. "wiki/concepts/foo.md"
+
+function extractRefs(body: string, fromPath: string): ExtractedRef[] {
+  const refs: ExtractedRef[] = []
   for (const m of body.matchAll(WIKILINK_RE)) {
     const target = m[1].trim()
-    refs.push(target.endsWith(".md") ? target : `${target}.md`)
+    refs.push({ kind: "wikilink", target })
   }
-  // (./foo.md) / (../bar.md) — 解析为相对 fromPath 的 path
   for (const m of body.matchAll(RELLINK_RE)) {
     const raw = m[0].slice(1, -1) // strip ( )
-    // 用 path.posix 解析；fromPath 提取 dirname
     const fromDir = path.posix.dirname(normalizePath(fromPath))
     const resolved = path.posix.normalize(path.posix.join(fromDir, raw))
-    refs.push(resolved)
+    refs.push({ kind: "rellink", target: resolved })
   }
   return refs
+}
+
+/**
+ * 范-r1 P1 default no-resolver path-detection：true = target 形如 fs path
+ * （可直接当 entity.path 对比）；false = name-style，需 resolver。
+ */
+function looksLikePath(target: string): boolean {
+  // 含 '/' 或以 .md 结尾 → path-style
+  if (target.includes("/")) return true
+  if (target.endsWith(".md")) return true
+  return false
 }

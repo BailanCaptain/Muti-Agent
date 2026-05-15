@@ -96,8 +96,12 @@ export class DocsWatcher {
       return
     }
     const { watch } = await import("chokidar")
-    // pollInterval 必须 < stabilityThreshold 否则永远不收敛；min(50, stability/3)
-    const pollInterval = Math.max(5, Math.min(50, Math.floor(this.stabilityMs / 3)))
+    // 范-r1 P3 修复：pollInterval clamp [10ms, 100ms]
+    //   - 10ms 绝对最小（防极小 stabilityMs 下 5ms 过度 CPU；tests-only 场景）
+    //   - 100ms 上限（production stabilityMs >= 1000ms 时不需要更频繁）
+    //   - target = stability/3（确保 stability 内能 poll ≥ 2 次收敛判定）
+    // production 推荐 stabilityMs >= 1000ms（pollInterval 即 100ms）。
+    const pollInterval = Math.max(10, Math.min(100, Math.floor(this.stabilityMs / 3)))
     const fsWatcher = watch(this.watchPaths, {
       ignored: this.ignored,
       ignoreInitial: true, // 启动时已存在的文件不算 add（避免 backfill 由 watcher 触发）
