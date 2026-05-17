@@ -104,14 +104,31 @@ export class ArchiveYearlySessions {
       // 拼 yearly pack 内容（metadata + digest 保留）
       const packContent = buildYearlyPack(year, sessions)
       let packPath: string | null = null
+      let packFailed = false
       if (this.opts.writeYearlyPack) {
         try {
           packPath = await this.opts.writeYearlyPack(year, packContent)
         } catch (err) {
-          this.log.error({ err, year }, "writeYearlyPack failed")
+          this.log.error(
+            { err, year },
+            "writeYearlyPack failed; 跳过本年 session 归档（防 partial year）",
+          )
+          packFailed = true
         }
       }
       packs.push({ year, packPath, sessionCount: sessions.length })
+
+      // 范-r2 P2-2：pack 没写成 → 本年 session 全不 mv（避免"源文件已移走但
+      // 无 yearly pack 索引"的 partial year 不一致状态）；落 failed。
+      if (packFailed) {
+        for (const s of sessions) {
+          failed.push({
+            src: s.path,
+            error: `yearly pack write failed for ${year}; session not archived`,
+          })
+        }
+        continue
+      }
 
       // mv 每个 S 文件到归档区（不删原则）
       for (const s of sessions) {

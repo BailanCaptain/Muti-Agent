@@ -117,6 +117,32 @@ test("WikiCompilerDebounce · reentrancy: recompile 进行中来 event → 本�
   d.stop()
 })
 
+test("WikiCompilerDebounce · 范-r2 P3-2: recompile 进行中 stop() → 完成后不补跑", async () => {
+  let count = 0
+  let releaseFirst!: () => void
+  const firstRecompile = new Promise<void>((resolve) => {
+    releaseFirst = resolve
+  })
+  const d = new WikiCompilerDebounce({
+    recompileDerivedViews: async () => {
+      count += 1
+      if (count === 1) await firstRecompile // 第一次卡住
+    },
+    debounceMs: 9999,
+  })
+  const flush1 = d.flush() // 触发第一次 recompile（卡住）
+  await sleep(20)
+  assert.equal(d.isRunning(), true, "第一次 recompile 进行中")
+  const flush2 = d.flush() // 进行中再 flush → 标记 pendingAfterRun
+  await sleep(20)
+  d.stop() // stop 应清 pendingAfterRun
+  releaseFirst()
+  await flush1
+  await flush2
+  await sleep(40)
+  assert.equal(count, 1, "stop 后本轮完成不补跑（pendingAfterRun 被清）")
+})
+
 test("WikiCompilerDebounce · recompile throw → 不打断后续 event", async () => {
   let count = 0
   const d = new WikiCompilerDebounce({

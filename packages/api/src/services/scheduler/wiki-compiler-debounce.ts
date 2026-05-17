@@ -66,9 +66,11 @@ export class WikiCompilerDebounce {
     await this.fire()
   }
 
-  /** 停止 — 清 pending timer，不再接受 onWikiEvent。 */
+  /** 停止 — 清 pending timer + pending 补跑标记，不再接受 onWikiEvent。 */
   stop(): void {
     this.stopped = true
+    // 范-r2 P3-2：清 pendingAfterRun，防 stop() 时正在跑的 recompile 完成后还补跑
+    this.pendingAfterRun = false
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer)
       this.debounceTimer = null
@@ -95,6 +97,11 @@ export class WikiCompilerDebounce {
       this.log.error({ err }, "recompileDerivedViews threw (caught)")
     } finally {
       this.running = false
+    }
+    // 范-r2 P3-2：stop() 期间本轮完成 → 清 pending 不补跑（stop 即"不再 recompile"）
+    if (this.stopped) {
+      this.pendingAfterRun = false
+      return
     }
     // 本轮跑期间又有 event → 补跑一次（收敛 reentrancy 期间的所有 event 为 1 次）
     if (this.pendingAfterRun) {

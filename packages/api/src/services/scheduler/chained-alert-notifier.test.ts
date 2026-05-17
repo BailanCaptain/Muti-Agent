@@ -19,6 +19,8 @@ import {
   type ChainedSuspectEvent,
 } from "./chained-alert-notifier"
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
 function evt(over: Partial<ChainedSuspectEvent> = {}): ChainedSuspectEvent {
   return {
     draftPath: "wiki/concepts/draft/_quarantined/sus-1.md",
@@ -165,6 +167,33 @@ test("ChainedAlertNotifier · pushAlert throw → alerted=false skipReason=push_
   const result = await notifier.notify(evt())
   assert.equal(result.alerted, false)
   assert.equal(result.skipReason, "push_failed")
+})
+
+test("ChainedAlertNotifier · 范-r2 P3-1: 并发同 draftPath notify → 只推 1 次", async () => {
+  let releasePush!: () => void
+  const firstPush = new Promise<void>((resolve) => {
+    releasePush = resolve
+  })
+  const pushed: ChainedAlert[] = []
+  let pushCalls = 0
+  const notifier = new ChainedAlertNotifier({
+    pushAlert: async (a) => {
+      pushCalls += 1
+      if (pushCalls === 1) await firstPush // 第一次卡在 push 里
+      pushed.push(a)
+    },
+  })
+  // 并发两次同 path notify：n1 卡在 pushAlert（已进 inFlight）
+  const n1 = notifier.notify(evt({ draftPath: "wiki/.../concurrent.md" }))
+  await sleep(10)
+  const r2 = await notifier.notify(evt({ draftPath: "wiki/.../concurrent.md" }))
+  assert.equal(r2.alerted, false, "并发 in-flight → deduped")
+  assert.equal(r2.skipReason, "deduped")
+  releasePush()
+  const r1 = await n1
+  assert.equal(r1.alerted, true)
+  assert.equal(pushCalls, 1, "并发只调 pushAlert 1 次")
+  assert.equal(pushed.length, 1)
 })
 
 test("ChainedAlertNotifier · pushAlert 失败 → dedup 不记录（下次仍可推）", async () => {

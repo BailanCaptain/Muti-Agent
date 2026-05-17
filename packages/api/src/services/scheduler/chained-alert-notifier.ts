@@ -65,6 +65,8 @@ export class ChainedAlertNotifier {
   private readonly log: FastifyBaseLogger
   /** draftPath → 上次 alert 时刻 ms（dedup 用）。 */
   private readonly lastAlertAt = new Map<string, number>()
+  /** 范-r2 P3-1：正在 push 中的 draftPath（并发 in-flight 去重）。 */
+  private readonly inFlight = new Set<string>()
 
   constructor(opts: ChainedAlertNotifierOptions) {
     this.pushAlert = opts.pushAlert
@@ -90,6 +92,14 @@ export class ChainedAlertNotifier {
       }
     }
 
+    // 范-r2 P3-1：并发 in-flight 去重 — 同 draftPath 正在 push（await 未回）→
+    // 视作 deduped。dedup mark（lastAlertAt）在 await 后才写，并发 notify()
+    // 会同时通过上面的窗口检查 → 不加此防护会 double-push。
+    if (this.inFlight.has(event.draftPath)) {
+      this.log.debug({ draftPath: event.draftPath }, "chained alert in-flight deduped")
+      return { alerted: false, skipReason: "deduped" }
+    }
+
     const alert: ChainedAlert = {
       targetRoom: this.targetRoom,
       draftPath: event.draftPath,
@@ -98,11 +108,14 @@ export class ChainedAlertNotifier {
       alertedAt: event.detectedAt ?? new Date(nowMs).toISOString(),
     }
 
+    this.inFlight.add(event.draftPath)
     try {
       await this.pushAlert(alert)
     } catch (err) {
       this.log.error({ err, draftPath: event.draftPath }, "pushAlert failed")
       return { alerted: false, skipReason: "push_failed" }
+    } finally {
+      this.inFlight.delete(event.draftPath)
     }
 
     // 仅在成功推送后记 dedup 时刻

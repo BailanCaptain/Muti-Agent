@@ -9,20 +9,24 @@
  *   - onGuardError → failed trace；timeout → timeout trace
  *   - startup jobs：runtime 起来后跑一次（受 leader guard 约束）
  *   - event-driven jobs（watcher / ChainedAlertNotifier / WikiCompilerDebounce）：
- *     纯 lifecycle start/stop，由各自内部 hook 落 trace
+ *     **仅在 leader 上跑**（范-r2 P1-1）；follower→leader 提升时起，demote 时停
+ *   - SchedulerRuntime 自己构造并持有 SchedulerLeader，装 onDemote /
+ *     onAcquireAsFollower hook → 落 lease_lost / recovered_from_crash trace（范-r2 P2-1）
+ *   - per-job reentrancy guard（范-r2 P1-2）：上一轮 ghost job 未结束 → 本轮
+ *     skipped_reentry，绝不并发同名 job；timeout 时 abort signal 让合作型 job 早退
  *   - failed / timeout / recovered_from_crash / lease_lost 状态 trace 推 R-201
  *
- * 设计沿用 Phase 2 注入依赖范式：jobs 由 caller 构造好后以统一 run(ctx) 接口注入，
- *   本层不碰 fs/db，纯 wiring + trace，可单测。
+ * 设计沿用 Phase 2 注入依赖范式：jobs 由 caller 构造好后以统一 run() 接口注入，
+ *   本层不碰 fs/db（leaseRepo 由 caller 注入），纯 wiring + trace，可单测。
  *
  * 不做：
- *   - leader 自身 demote/acquire 的 lease_lost / recovered_from_crash trace —
- *     由构造 SchedulerLeader 的 caller 经 onDemote / onAcquireAsFollower 落
- *   - watcher / event-driven job 的 leader 门禁（其副作用门禁是独立 concern）
+ *   - 不强杀 ghost job（JS promise 无法强杀）；timeout 后 abort signal 仅"请求"
+ *     合作型 job 早退，不合作的 job 仍跑到自然结束 —— reentrancy guard 兜并发安全
  */
 
 import type { FastifyBaseLogger } from "fastify"
 import { createLogger } from "../../lib/logger"
+import type { CompilerLeaderRepository } from "../../db/repositories/compiler-leader-repository"
 import {
   type JobTrace,
   type JobTraceReason,
@@ -33,7 +37,11 @@ import {
   writeJobTrace,
 } from "./job-trace"
 import { NightlyJobScheduler, type JobContext } from "./nightly-job-scheduler"
-import type { SchedulerLeader } from "./scheduler-leader"
+import {
+  SchedulerLeader,
+  type DemoteReason,
+  type LeaderLease,
+} from "./scheduler-leader"
 
 /** Job run() 的返回值；job 可自报 status（如 RoomCompilerTick 的 missed_window）。 */
 export interface JobRunOutcome {
@@ -53,16 +61,19 @@ export interface CronJobRegistration {
   timezone?: string
   /** 默认 5。 */
   windowMinutes?: number
-  /** 单次运行超时（秒）；超时 → trace status='timeout'。 */
+  /** 单次运行超时（秒）；超时 → trace status='timeout' + abort signal。 */
   timeoutSeconds: number
-  /** Job 主体；接 ctx；返 outcome 或 void。 */
-  run: (ctx: JobContext) => Promise<JobRunOutcome> | Promise<void>
+  /**
+   * Job 主体；接 ctx + AbortSignal；返 outcome 或 void。
+   * 长跑 job 应周期性检查 `signal.aborted` 以便 timeout 时早退。
+   */
+  run: (ctx: JobContext, signal: AbortSignal) => Promise<JobRunOutcome> | Promise<void>
 }
 
 export interface StartupJobRegistration {
   name: string
   timeoutSeconds: number
-  run: () => Promise<JobRunOutcome> | Promise<void>
+  run: (signal: AbortSignal) => Promise<JobRunOutcome> | Promise<void>
 }
 
 /** Watcher / ChainedAlertNotifier / WikiCompilerDebounce — 纯 lifecycle。 */
@@ -73,7 +84,16 @@ export interface EventDrivenJobRegistration {
 }
 
 export interface SchedulerRuntimeOptions {
-  leader: SchedulerLeader
+  /** 本 runtime 实例 leader 别名（建议 `${hostname}-${pid}`）。 */
+  leaderAlias: string
+  /** Caller-injected: lease 仓储（SchedulerRuntime 内部据此构造 SchedulerLeader）。 */
+  leaseRepo: CompilerLeaderRepository
+  /** Lease TTL 秒；默认走 SchedulerLeader 默认 90。 */
+  leaderTtlSeconds?: number
+  /** Heartbeat 间隔 ms；默认走 SchedulerLeader 默认 30000。 */
+  heartbeatIntervalMs?: number
+  /** Follower poll 间隔 ms；默认走 SchedulerLeader 默认 60000。 */
+  followerPollIntervalMs?: number
   cronJobs: CronJobRegistration[]
   startupJobs?: StartupJobRegistration[]
   eventDrivenJobs?: EventDrivenJobRegistration[]
@@ -106,6 +126,9 @@ const ALERT_STATUSES: ReadonlySet<JobTraceStatus> = new Set<JobTraceStatus>([
   "lease_lost",
 ])
 
+/** leader 生命周期 trace（lease_lost / recovered_from_crash）的合成 jobName。 */
+const LEADER_TRACE_JOB = "scheduler-leader"
+
 export class SchedulerRuntime {
   private readonly log: FastifyBaseLogger
   private readonly leader: SchedulerLeader
@@ -119,11 +142,14 @@ export class SchedulerRuntime {
   private readonly pushAlert?: (trace: JobTrace) => void | Promise<void>
   private readonly cronByName = new Map<string, CronJobRegistration>()
   private readonly scheduler: NightlyJobScheduler
+  /** 范-r2 P1-2：当前真 job promise 未 settle 的 cron job 名（reentrancy guard）。 */
+  private readonly runningJobs = new Set<string>()
   private started = false
+  /** 范-r2 P1-1：event-driven jobs 是否已起（leader 上才起；幂等）。 */
+  private eventDrivenStarted = false
 
   constructor(opts: SchedulerRuntimeOptions) {
     this.log = opts.logger ?? createLogger("scheduler-runtime")
-    this.leader = opts.leader
     this.cronJobs = opts.cronJobs
     this.startupJobs = opts.startupJobs ?? []
     this.eventDrivenJobs = opts.eventDrivenJobs ?? []
@@ -138,6 +164,18 @@ export class SchedulerRuntime {
       }
       this.cronByName.set(reg.name, reg)
     }
+    // 范-r2 P2-1：SchedulerRuntime 自己构造并持有 leader，装生命周期 hook。
+    this.leader = new SchedulerLeader({
+      leaderAlias: opts.leaderAlias,
+      leaseRepo: opts.leaseRepo,
+      ttlSeconds: opts.leaderTtlSeconds,
+      heartbeatIntervalMs: opts.heartbeatIntervalMs,
+      followerPollIntervalMs: opts.followerPollIntervalMs,
+      clock: this.clock,
+      logger: this.log,
+      onDemote: (reason, prevLease) => this.onLeaderDemote(reason, prevLease),
+      onAcquireAsFollower: (lease) => this.onLeaderTakeover(lease),
+    })
     this.scheduler = new NightlyJobScheduler({
       logger: this.log,
       defaultTimezone: this.defaultTimezone,
@@ -148,7 +186,7 @@ export class SchedulerRuntime {
   }
 
   /**
-   * 起 leader + 注册并启动 cron jobs + 跑 startup jobs + 起 event-driven jobs。
+   * 起 leader + 注册并启动 cron jobs + 跑 startup jobs + （leader 才）起 event-driven jobs。
    * idempotent。
    */
   async start(): Promise<void> {
@@ -170,7 +208,14 @@ export class SchedulerRuntime {
     this.scheduler.start()
 
     await this.runStartupJobs()
-    await this.startEventDrivenJobs()
+
+    // 范-r2 P1-1：event-driven jobs 只在 leader 上跑。起来即 leader → 现在起；
+    // 起来是 follower → 不起，等 onLeaderTakeover 提升时再起。
+    if (this.leader.getRole() === "leader") {
+      await this.startEventDrivenJobs()
+    } else {
+      this.log.info("started as follower; event-driven jobs deferred until leadership")
+    }
 
     this.started = true
     this.log.info(
@@ -178,6 +223,7 @@ export class SchedulerRuntime {
         cronJobs: this.cronJobs.length,
         startupJobs: this.startupJobs.length,
         eventDrivenJobs: this.eventDrivenJobs.length,
+        role: this.leader.getRole(),
       },
       "SchedulerRuntime started",
     )
@@ -187,14 +233,7 @@ export class SchedulerRuntime {
   async stop(): Promise<void> {
     if (!this.started) return
     this.scheduler.stop()
-    for (const reg of this.eventDrivenJobs) {
-      if (!reg.stop) continue
-      try {
-        await reg.stop()
-      } catch (err) {
-        this.log.warn({ err, job: reg.name }, "event-driven job stop() threw (ignored)")
-      }
-    }
+    await this.stopEventDrivenJobs()
     this.leader.stop()
     this.started = false
     this.log.info("SchedulerRuntime stopped")
@@ -205,41 +244,84 @@ export class SchedulerRuntime {
     return this.scheduler.health()
   }
 
+  /** 当前 leader 角色（调试 / 测试用）。 */
+  leaderRole() {
+    return this.leader.getRole()
+  }
+
   // ── private ──────────────────────────────────────────────────────────
 
   private async runCronJob(reg: CronJobRegistration, ctx: JobContext): Promise<void> {
+    // 范-r2 P1-2 reentrancy guard：上一轮（含 timeout 后的 ghost job）真 job
+    // promise 未 settle → 跳过本轮，落 skipped_reentry，绝不并发同名 job。
+    if (this.runningJobs.has(reg.name)) {
+      this.log.warn({ job: reg.name }, "job still running (ghost?), skipping reentry")
+      await this.persistTrace(
+        this.buildTrace({
+          jobName: reg.name,
+          runId: newRunId(),
+          scheduledFor: ctx.scheduledFor,
+          windowStart: ctx.windowStart,
+          windowEnd: ctx.windowEnd,
+          startedAt: null,
+          finishedAt: null,
+          status: "skipped_reentry",
+          reason: null,
+          result: null,
+          error: null,
+        }),
+      )
+      return
+    }
+
     const runId = newRunId()
     const startedAt = this.clock()
+    const controller = new AbortController()
+    // 真 job promise 与 wrapper 解耦：timeout 后 ghost 仍在跑，runningJobs 标记
+    // 直到真 promise settle 才解除 → ghost 期间下一轮触发被 reentry guard 挡。
+    const jobPromise = Promise.resolve(reg.run(ctx, controller.signal))
+    this.runningJobs.add(reg.name)
+    void jobPromise
+      .catch(() => {}) // ghost rejection 已被 withTimeout 消费；此处仅防 unhandled
+      .finally(() => this.runningJobs.delete(reg.name))
+
     let status: JobTraceStatus = "ok"
     let result: unknown = null
     let error: { message: string; stack?: string } | null = null
     try {
-      const outcome = (await this.withTimeout(
-        Promise.resolve(reg.run(ctx)),
-        reg.timeoutSeconds * 1000,
-      )) as JobRunOutcome | undefined
+      const outcome = (await this.withTimeout(jobPromise, reg.timeoutSeconds * 1000)) as
+        | JobRunOutcome
+        | undefined
       if (outcome?.status) status = outcome.status
       result = outcome?.result ?? null
     } catch (err) {
       const e = err as Error
-      status = err instanceof JobTimeoutError ? "timeout" : "failed"
+      if (err instanceof JobTimeoutError) {
+        status = "timeout"
+        // 范-r2 P1-2：超时 → abort signal，让合作型 job 早退（不合作的仍 ghost，
+        // 但 reentry guard 兜并发安全）。
+        controller.abort()
+      } else {
+        status = "failed"
+      }
       error = { message: e.message, stack: e.stack }
     }
     const finishedAt = this.clock()
-    const trace = this.buildTrace({
-      jobName: reg.name,
-      runId,
-      scheduledFor: ctx.scheduledFor,
-      windowStart: ctx.windowStart,
-      windowEnd: ctx.windowEnd,
-      startedAt,
-      finishedAt,
-      status,
-      reason: null,
-      result,
-      error,
-    })
-    await this.persistTrace(trace)
+    await this.persistTrace(
+      this.buildTrace({
+        jobName: reg.name,
+        runId,
+        scheduledFor: ctx.scheduledFor,
+        windowStart: ctx.windowStart,
+        windowEnd: ctx.windowEnd,
+        startedAt,
+        finishedAt,
+        status,
+        reason: null,
+        result,
+        error,
+      }),
+    )
   }
 
   private async runStartupJobs(): Promise<void> {
@@ -250,57 +332,68 @@ export class SchedulerRuntime {
       const scheduledFor = this.clock()
       if (skip !== null) {
         // 非 leader → 不跑 startup job，落 skipped_not_leader trace
-        const trace = this.buildTrace({
-          jobName: reg.name,
-          runId,
-          scheduledFor,
-          windowStart: scheduledFor,
-          windowEnd: scheduledFor,
-          startedAt: null,
-          finishedAt: null,
-          status: "skipped_not_leader",
-          reason: this.toTraceReason(skip),
-          result: null,
-          error: null,
-        })
-        await this.persistTrace(trace)
+        await this.persistTrace(
+          this.buildTrace({
+            jobName: reg.name,
+            runId,
+            scheduledFor,
+            windowStart: scheduledFor,
+            windowEnd: scheduledFor,
+            startedAt: null,
+            finishedAt: null,
+            status: "skipped_not_leader",
+            reason: this.toTraceReason(skip),
+            result: null,
+            error: null,
+          }),
+        )
         continue
       }
       const startedAt = this.clock()
+      const controller = new AbortController()
       let status: JobTraceStatus = "ok"
       let result: unknown = null
       let error: { message: string; stack?: string } | null = null
       try {
         const outcome = (await this.withTimeout(
-          Promise.resolve(reg.run()),
+          Promise.resolve(reg.run(controller.signal)),
           reg.timeoutSeconds * 1000,
         )) as JobRunOutcome | undefined
         if (outcome?.status) status = outcome.status
         result = outcome?.result ?? null
       } catch (err) {
         const e = err as Error
-        status = err instanceof JobTimeoutError ? "timeout" : "failed"
+        if (err instanceof JobTimeoutError) {
+          status = "timeout"
+          controller.abort()
+        } else {
+          status = "failed"
+        }
         error = { message: e.message, stack: e.stack }
       }
       const finishedAt = this.clock()
-      const trace = this.buildTrace({
-        jobName: reg.name,
-        runId,
-        scheduledFor,
-        windowStart: scheduledFor,
-        windowEnd: scheduledFor,
-        startedAt,
-        finishedAt,
-        status,
-        reason: null,
-        result,
-        error,
-      })
-      await this.persistTrace(trace)
+      await this.persistTrace(
+        this.buildTrace({
+          jobName: reg.name,
+          runId,
+          scheduledFor,
+          windowStart: scheduledFor,
+          windowEnd: scheduledFor,
+          startedAt,
+          finishedAt,
+          status,
+          reason: null,
+          result,
+          error,
+        }),
+      )
     }
   }
 
+  /** 起 event-driven jobs（leader 才调；幂等）。 */
   private async startEventDrivenJobs(): Promise<void> {
+    if (this.eventDrivenStarted) return
+    this.eventDrivenStarted = true
     for (const reg of this.eventDrivenJobs) {
       if (!reg.start) continue
       try {
@@ -311,25 +404,93 @@ export class SchedulerRuntime {
     }
   }
 
+  /** 停 event-driven jobs（demote / runtime stop 时调；幂等）。 */
+  private async stopEventDrivenJobs(): Promise<void> {
+    if (!this.eventDrivenStarted) return
+    this.eventDrivenStarted = false
+    for (const reg of this.eventDrivenJobs) {
+      if (!reg.stop) continue
+      try {
+        await reg.stop()
+      } catch (err) {
+        this.log.warn({ err, job: reg.name }, "event-driven job stop() threw (ignored)")
+      }
+    }
+  }
+
+  /**
+   * 范-r2 P2-1：follower → leader 提升（crash recovery）。
+   * 落 recovered_from_crash trace + 起 event-driven jobs。
+   */
+  private onLeaderTakeover(lease: LeaderLease): void {
+    this.log.info({ term: lease.currentTerm }, "took over leadership (crash recovery)")
+    const now = this.clock()
+    void this.persistTrace(
+      this.buildTrace({
+        jobName: LEADER_TRACE_JOB,
+        runId: newRunId(),
+        scheduledFor: now,
+        windowStart: now,
+        windowEnd: now,
+        startedAt: null,
+        finishedAt: null,
+        status: "recovered_from_crash",
+        reason: null,
+        result: { acquiredTerm: lease.currentTerm },
+        error: null,
+        leaderTerm: lease.currentTerm,
+      }),
+    )
+    void this.startEventDrivenJobs()
+  }
+
+  /**
+   * 范-r2 P2-1：leader → demoted（heartbeat 失败）。
+   * 落 lease_lost trace + 停 event-driven jobs。
+   * 注：SchedulerLeader.stop() 不走 onDemote，故此回调只会以 heartbeat_failed 触发。
+   */
+  private onLeaderDemote(reason: DemoteReason, prevLease: LeaderLease | null): void {
+    this.log.warn({ reason }, "demoted from leadership")
+    const now = this.clock()
+    void this.persistTrace(
+      this.buildTrace({
+        jobName: LEADER_TRACE_JOB,
+        runId: newRunId(),
+        scheduledFor: now,
+        windowStart: now,
+        windowEnd: now,
+        startedAt: null,
+        finishedAt: null,
+        status: "lease_lost",
+        reason: "heartbeat_failed",
+        result: null,
+        error: null,
+        leaderTerm: prevLease?.currentTerm ?? null,
+      }),
+    )
+    void this.stopEventDrivenJobs()
+  }
+
   /** guard 返 skip reason 时由 NightlyJobScheduler.onSkip 回调。 */
   private onJobSkipped(jobName: string, reason: string): void {
     const now = this.clock()
     const reg = this.cronByName.get(jobName)
     const windowMs = (reg?.windowMinutes ?? 5) * 60_000
-    const trace = this.buildTrace({
-      jobName,
-      runId: newRunId(),
-      scheduledFor: now,
-      windowStart: now,
-      windowEnd: new Date(now.getTime() + windowMs),
-      startedAt: null,
-      finishedAt: null,
-      status: "skipped_not_leader",
-      reason: this.toTraceReason(reason),
-      result: null,
-      error: null,
-    })
-    void this.persistTrace(trace)
+    void this.persistTrace(
+      this.buildTrace({
+        jobName,
+        runId: newRunId(),
+        scheduledFor: now,
+        windowStart: now,
+        windowEnd: new Date(now.getTime() + windowMs),
+        startedAt: null,
+        finishedAt: null,
+        status: "skipped_not_leader",
+        reason: this.toTraceReason(reason),
+        result: null,
+        error: null,
+      }),
+    )
   }
 
   /** guard 自身抛错时由 NightlyJobScheduler.onGuardError 回调。 */
@@ -337,20 +498,21 @@ export class SchedulerRuntime {
     const now = this.clock()
     const reg = this.cronByName.get(jobName)
     const windowMs = (reg?.windowMinutes ?? 5) * 60_000
-    const trace = this.buildTrace({
-      jobName,
-      runId: newRunId(),
-      scheduledFor: now,
-      windowStart: now,
-      windowEnd: new Date(now.getTime() + windowMs),
-      startedAt: null,
-      finishedAt: null,
-      status: "failed",
-      reason: null,
-      result: null,
-      error: { message: error.message, stack: error.stack },
-    })
-    void this.persistTrace(trace)
+    void this.persistTrace(
+      this.buildTrace({
+        jobName,
+        runId: newRunId(),
+        scheduledFor: now,
+        windowStart: now,
+        windowEnd: new Date(now.getTime() + windowMs),
+        startedAt: null,
+        finishedAt: null,
+        status: "failed",
+        reason: null,
+        result: null,
+        error: { message: error.message, stack: error.stack },
+      }),
+    )
   }
 
   private buildTrace(p: {
@@ -365,6 +527,8 @@ export class SchedulerRuntime {
     reason: JobTraceReason | null
     result: unknown
     error: { message: string; stack?: string } | null
+    /** 显式 leaderTerm（leader 生命周期 trace 用 prevLease）；不填则取当前 lease。 */
+    leaderTerm?: string | null
   }): JobTrace {
     const durationMs =
       p.startedAt && p.finishedAt ? p.finishedAt.getTime() - p.startedAt.getTime() : null
@@ -381,7 +545,10 @@ export class SchedulerRuntime {
       finishedAt: p.finishedAt ? p.finishedAt.toISOString() : null,
       durationMs: durationMs !== null && durationMs < 0 ? 0 : durationMs,
       status: p.status,
-      leaderTerm: this.leader.getLease()?.currentTerm ?? null,
+      leaderTerm:
+        p.leaderTerm !== undefined
+          ? p.leaderTerm
+          : (this.leader.getLease()?.currentTerm ?? null),
       reason: p.reason,
       result: p.result,
       error: p.error,

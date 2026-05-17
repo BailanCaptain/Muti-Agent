@@ -142,6 +142,37 @@ test("ArchiveYearlySessions · archiveSessionFile throw → 落 failed 不打断
   assert.match(result.failed[0].error, /EPERM/)
 })
 
+test("ArchiveYearlySessions · 范-r2 P2-2: writeYearlyPack 失败 → 该年 session 不归档", async () => {
+  const sessions: SessionEntry[] = [
+    session({ path: "S-2025-a.md", year: 2025 }),
+    session({ path: "S-2025-b.md", year: 2025 }),
+    session({ path: "S-2026.md", year: 2026 }),
+  ]
+  const moved: Array<{ src: string; dst: string }> = []
+  const archiver = new ArchiveYearlySessions({
+    scanSessions: async () => sessions,
+    clock: () => new Date("2027-06-01T03:00:00.000Z"),
+    writeYearlyPack: async (year) => {
+      if (year === 2025) throw new Error("disk full")
+      return `packs/${year}.md`
+    },
+    archiveSessionFile: async (src, dst) => {
+      moved.push({ src, dst })
+    },
+  })
+  const result = await archiver.run()
+  // 2025 pack 写失败 → 2025 两个 session 不 mv（防 partial year），落 failed
+  assert.ok(!moved.some((m) => m.src.includes("2025")), "2025 session 不应被 mv")
+  assert.equal(result.failed.length, 2, "2025 两个 session 落 failed")
+  assert.ok(result.failed.every((f) => /pack write failed/.test(f.error)))
+  // 2026 pack 正常 → 2026 session 照常归档
+  assert.ok(
+    moved.some((m) => m.src === "S-2026.md"),
+    "2026 session 正常归档",
+  )
+  assert.equal(result.archivedFiles.length, 1)
+})
+
 test("ArchiveYearlySessions · dry-run（无 writer/mover）→ 仍记录归档目标", async () => {
   const archiver = new ArchiveYearlySessions({
     scanSessions: async () => [session({ path: "S-1.md", year: 2026 })],
