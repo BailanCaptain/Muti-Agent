@@ -147,6 +147,8 @@ export class SchedulerRuntime {
   private started = false
   /** 范-r2 P1-1：event-driven jobs 是否已起（leader 上才起；幂等）。 */
   private eventDrivenStarted = false
+  /** 范-r3 P2：event-driven 生命周期串行链（防 demote↔reacquire 交错）。 */
+  private lifecycleChain: Promise<void> = Promise.resolve()
 
   constructor(opts: SchedulerRuntimeOptions) {
     this.log = opts.logger ?? createLogger("scheduler-runtime")
@@ -212,7 +214,7 @@ export class SchedulerRuntime {
     // 范-r2 P1-1：event-driven jobs 只在 leader 上跑。起来即 leader → 现在起；
     // 起来是 follower → 不起，等 onLeaderTakeover 提升时再起。
     if (this.leader.getRole() === "leader") {
-      await this.startEventDrivenJobs()
+      await this.enqueueLifecycle(() => this.startEventDrivenJobs())
     } else {
       this.log.info("started as follower; event-driven jobs deferred until leadership")
     }
@@ -233,7 +235,7 @@ export class SchedulerRuntime {
   async stop(): Promise<void> {
     if (!this.started) return
     this.scheduler.stop()
-    await this.stopEventDrivenJobs()
+    await this.enqueueLifecycle(() => this.stopEventDrivenJobs())
     this.leader.stop()
     this.started = false
     this.log.info("SchedulerRuntime stopped")
@@ -390,7 +392,18 @@ export class SchedulerRuntime {
     }
   }
 
-  /** 起 event-driven jobs（leader 才调；幂等）。 */
+  /**
+   * 范-r3 P2：把 event-driven 生命周期操作排入串行链，保证 start / stop 不交错。
+   * 防快速 demote→reacquire 时 stale stop 与新 start 并发、最终态错乱。
+   */
+  private enqueueLifecycle(op: () => Promise<void>): Promise<void> {
+    const next = this.lifecycleChain.then(op, op)
+    // op 内部已逐 job try/catch，理论不 reject；catch 兜底防链断。
+    this.lifecycleChain = next.catch(() => {})
+    return next
+  }
+
+  /** 起 event-driven jobs（leader 才调；幂等；经 enqueueLifecycle 串行化）。 */
   private async startEventDrivenJobs(): Promise<void> {
     if (this.eventDrivenStarted) return
     this.eventDrivenStarted = true
@@ -441,7 +454,7 @@ export class SchedulerRuntime {
         leaderTerm: lease.currentTerm,
       }),
     )
-    void this.startEventDrivenJobs()
+    void this.enqueueLifecycle(() => this.startEventDrivenJobs())
   }
 
   /**
@@ -468,7 +481,7 @@ export class SchedulerRuntime {
         leaderTerm: prevLease?.currentTerm ?? null,
       }),
     )
-    void this.stopEventDrivenJobs()
+    void this.enqueueLifecycle(() => this.stopEventDrivenJobs())
   }
 
   /** guard 返 skip reason 时由 NightlyJobScheduler.onSkip 回调。 */

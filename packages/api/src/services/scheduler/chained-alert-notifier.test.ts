@@ -196,6 +196,35 @@ test("ChainedAlertNotifier · 范-r2 P3-1: 并发同 draftPath notify → 只推
   assert.equal(pushed.length, 1)
 })
 
+test("ChainedAlertNotifier · 范-r2(r3) 已知行为: 并发 dedup 期间主 push 失败 → 被 dedup 的不补发", async () => {
+  // in-flight dedup 是 best-effort 防 alert 风暴：并发同 draftPath 只第一条真 push，
+  // 其余视作 deduped。若第一条 push 失败，被 dedup 的并发条不内联补发
+  // （chained_suspect 是持续条件，后续 event 会重新触发）。锁定此行为为有意。
+  let releasePush!: () => void
+  const gate = new Promise<void>((r) => {
+    releasePush = r
+  })
+  let pushCalls = 0
+  const notifier = new ChainedAlertNotifier({
+    pushAlert: async () => {
+      pushCalls += 1
+      if (pushCalls === 1) {
+        await gate
+        throw new Error("push failed")
+      }
+    },
+  })
+  const n1 = notifier.notify(evt({ draftPath: "wiki/.../x.md" }))
+  await sleep(10)
+  const r2 = await notifier.notify(evt({ draftPath: "wiki/.../x.md" }))
+  assert.equal(r2.skipReason, "deduped", "并发条被 in-flight dedup")
+  releasePush()
+  const r1 = await n1
+  assert.equal(r1.alerted, false)
+  assert.equal(r1.skipReason, "push_failed")
+  assert.equal(pushCalls, 1, "被 dedup 的并发条不补发（有意 — 后续 event 重触发）")
+})
+
 test("ChainedAlertNotifier · pushAlert 失败 → dedup 不记录（下次仍可推）", async () => {
   let now = new Date("2026-05-15T00:00:00.000Z")
   let failNext = true

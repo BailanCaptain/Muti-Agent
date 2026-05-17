@@ -772,3 +772,75 @@ test("SchedulerRuntime · 范-r2 P2-1: leader demote → lease_lost trace + even
     safeCleanup(tempDir)
   }
 })
+
+test("SchedulerRuntime · 范-r3 P2: 快速 demote→reacquire — event-driven 生命周期串行不交错", async () => {
+  const tempDir = safeTempDir("sched-runtime-")
+  const { repo, close } = await buildRepo(tempDir)
+  let now = new Date("2026-05-15T00:00:00.000Z")
+  const clock = () => now
+  const events: string[] = []
+  let releaseStop!: () => void
+  const stopGate = new Promise<void>((r) => {
+    releaseStop = r
+  })
+  let stopCount = 0
+  const runtime = new SchedulerRuntime({
+    leaderAlias: "A",
+    leaseRepo: repo,
+    leaderTtlSeconds: 30,
+    heartbeatIntervalMs: 40,
+    followerPollIntervalMs: 40,
+    clock,
+    rootDir: tempDir,
+    cronJobs: [],
+    eventDrivenJobs: [
+      {
+        name: "watcher",
+        start: () => {
+          events.push("start")
+        },
+        stop: async () => {
+          events.push("stop-begin")
+          stopCount += 1
+          if (stopCount === 1) await stopGate // 第一次 stop 卡住
+          events.push("stop-end")
+        },
+      },
+    ],
+  })
+  try {
+    await runtime.start()
+    assert.deepEqual(events, ["start"], "leader 起来即起 watcher")
+    // 偷 term（1s TTL，很快过期）→ A demote → onLeaderDemote enqueue stop（卡 gate）
+    now = new Date(now.getTime() + 31_000)
+    repo.acquireLeader({ leaderAlias: "B", ttlSeconds: 1, now: now.toISOString() })
+    await waitFor(() => runtime.leaderRole() === "demoted", { timeoutMs: 3000 })
+    await waitFor(() => events.includes("stop-begin"), { timeoutMs: 2000 })
+    // stop 卡住中。推进时钟让 B 的 1s lease 过期 → A 的 poll 重新抢回
+    now = new Date(now.getTime() + 2_000)
+    await waitFor(() => runtime.leaderRole() === "leader", { timeoutMs: 3000 })
+    // 关键断言：start 已 enqueue 但排在 slow stop 后 — 不应抢跑
+    await sleep(150)
+    assert.deepEqual(
+      events,
+      ["start", "stop-begin"],
+      "slow stop 未完成前 start 不应跑（串行链生效）",
+    )
+    // 放行 stop → 链继续 → start 跑
+    releaseStop()
+    await waitFor(
+      () => events.length === 4 && events[3] === "start",
+      { timeoutMs: 2000 },
+    )
+    assert.deepEqual(
+      events,
+      ["start", "stop-begin", "stop-end", "start"],
+      "生命周期串行：stop 完整跑完才 start，无交错",
+    )
+  } finally {
+    releaseStop()
+    await runtime.stop()
+    close()
+    safeCleanup(tempDir)
+  }
+})
