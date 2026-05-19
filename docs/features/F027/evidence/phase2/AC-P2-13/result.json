@@ -1,0 +1,17 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-13",
+  "reason": "DriftDetector：3 类 trigger（new_lesson / model_upgrade / handoff_failure）→ buildUpdateDraft 映射；openUpdateDraft throw → 落 failed 不打断；processedTriggerKeys 跨 run 去重 + in-run 去重。",
+  "checks": {
+    "test_files": ["packages/api/src/services/scheduler/drift-detector.test.ts"],
+    "tests_total": 12,
+    "tests_passed": 12,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/drift-detector.test.ts",
+    "key_assertions": [
+      "3 类 trigger → update draft",
+      "openUpdateDraft throw → 落 failed 不打断后续",
+      "processedTriggerKeys 注入跨 run 去重 + driftTriggerKey() in-run 去重"
+    ]
+  }
+}

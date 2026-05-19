@@ -1,0 +1,18 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-3a",
+  "reason": "ConfigLoader + 默认 schema + cron 校验 + Asia/Shanghai 时区 + DST fixture；无 wiki.config.yaml 文件 → fallback 内置默认调度（9 scheduled jobs）；测试前后 worktree 内 wiki.config.yaml 不存在/未被创建（绑 Iron Laws 3 gate）。",
+  "checks": {
+    "test_files": ["packages/api/src/services/scheduler/scheduler-config.test.ts"],
+    "tests_total": 20,
+    "tests_passed": 20,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/scheduler-config.test.ts",
+    "key_assertions": [
+      "无文件 → fallback DEFAULT_SCHEDULER_CONFIG（7 cron + 1 startup + 1 watcher）",
+      "gate2Approved=false 时根 wiki.config.yaml 存在即 throw（Iron Laws 3 fail-safe）",
+      "cron 表达式 + 时区校验；DST 美东 spring/fall 锁库语义",
+      "assertNoConfigFile：测试前后 worktree 根无 wiki.config.yaml"
+    ]
+  }
+}

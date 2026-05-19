@@ -1,0 +1,19 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-14",
+  "reason": "MonthlySnapshot：backup → viewfinder full recompile → drift > 30% replace 编排；幂等（二次 recompile 一致 → drift 0 不再 replace）；Jan-1 边界（formatYearMonthShanghai）；100k room mock pressure 线性时间；backup 必填 fail-safe。",
+  "checks": {
+    "test_files": ["packages/api/src/services/scheduler/monthly-snapshot.test.ts"],
+    "tests_total": 20,
+    "tests_passed": 20,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/monthly-snapshot.test.ts",
+    "key_assertions": [
+      "backup + recompile + drift>30% replace 编排顺序",
+      "drift ≤ 30% 不 replace；幂等二次 drift=0",
+      "Jan-1 边界 label 用 formatYearMonthShanghai（UTC+8）",
+      "100k room mock pressure 线性时间",
+      "replaceViewfinder 提供时 backup 必填（fail-closed）"
+    ]
+  }
+}

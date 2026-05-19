@@ -1,0 +1,8 @@
+{
+  "verdict": "PASS",
+  "reason": "result.json verdict=PASS；drift-detector.test.ts 12 tests 覆盖 3 类 trigger（new_lesson/model_upgrade/handoff_failure）→ buildUpdateDraft、openUpdateDraft throw 落 failed 不打断、processedTriggerKeys 跨 run + in-run 去重。",
+  "weak_points": [
+    "Phase 2 精简 evidence：仅 result.json，无 raw transcript",
+    "judge1 由 claude-opus-4-7 直接评估产出（p18-judge runner 环境受限）"
+  ]
+}

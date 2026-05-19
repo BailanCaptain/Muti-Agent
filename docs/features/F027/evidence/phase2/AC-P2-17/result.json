@@ -1,0 +1,18 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-17",
+  "reason": "WikiCompilerDebounce：写 wiki_events 后 onWikiEvent() 重置 5s debounce；idle → recompile 派生视图；burst 收敛成 1 次；reentrancy guard（recompile 进行中来 event → 本轮后补跑）；recompile throw 不打断；stop() 清 pending。",
+  "checks": {
+    "test_files": ["packages/api/src/services/scheduler/wiki-compiler-debounce.test.ts"],
+    "tests_total": 10,
+    "tests_passed": 10,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/wiki-compiler-debounce.test.ts",
+    "key_assertions": [
+      "onWikiEvent 重置 5s debounce；idle → recompile",
+      "burst 多次 onWikiEvent → 收敛成 1 次 recompile",
+      "reentrancy guard：recompile 进行中来 event → 本轮后补跑 1 次",
+      "recompile throw 不打断后续；stop() 清 pendingAfterRun + timer"
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+{"verdict":"PASS","reason":"result.json 为 PASS，checks=12/12/0；静态核对 room-compiler-tick.test.ts 正好 12 个 test，覆盖 5min tick、idle 30min、reentry、missed window。","weak_points":["动态测试复跑被 spawn EPERM 拦截"]}

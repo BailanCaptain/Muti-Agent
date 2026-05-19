@@ -1,0 +1,1 @@
+{"verdict":"PASS","reason":"result.json 为 PASS，checks=9/9/0；静态核对 nightly-vacuum.test.ts 正好 9 个 test，覆盖 snapshot/archive/job_trace 与 sqlite_master diff 为空。","weak_points":["动态测试复跑被 spawn EPERM 拦截"]}

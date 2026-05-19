@@ -1,0 +1,8 @@
+{
+  "verdict": "PASS",
+  "reason": "result.json verdict=PASS；weekly-draft-digest.test.ts 11 tests 覆盖 classifyDraftPath 三分类、只推 user-drop 顶层 draft、4 类子目录不推、混合 5+4 fixture digest 只含 5。",
+  "weak_points": [
+    "Phase 2 精简 evidence：仅 result.json，无 raw transcript",
+    "judge1 由 claude-opus-4-7 直接评估产出（p18-judge runner 环境受限）"
+  ]
+}

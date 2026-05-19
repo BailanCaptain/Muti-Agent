@@ -1,0 +1,17 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-6",
+  "reason": "RoomCompilerTick：5min tick + idle 30min 停 + reentrancy guard（长跑期间新触发跳过）+ missed window 走 skip policy 落 trace。",
+  "checks": {
+    "test_files": ["packages/api/src/services/scheduler/room-compiler-tick.test.ts"],
+    "tests_total": 12,
+    "tests_passed": 12,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/room-compiler-tick.test.ts",
+    "key_assertions": [
+      "5min 周期触发；idle 30min 后停",
+      "reentrancy guard：长跑期间新触发被跳过",
+      "missed window（now > scheduledFor + windowMinutes）→ skip policy 落 trace"
+    ]
+  }
+}

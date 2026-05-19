@@ -1,0 +1,18 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-11",
+  "reason": "NightlyVacuum：30 天前 events 产 .runtime/wiki-events-snapshot/<year>-<month>.jsonl + .runtime/wiki-events-archive/<year>/<month>.jsonl + job_trace；DB 行/state/schema 全不变（测试前后 sqlite_master diff = ∅），只读 SQL（SELECT only）。",
+  "checks": {
+    "test_files": ["packages/api/src/services/scheduler/nightly-vacuum.test.ts"],
+    "tests_total": 9,
+    "tests_passed": 9,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/nightly-vacuum.test.ts",
+    "key_assertions": [
+      "30 天前 events → archive jsonl + snapshot jsonl",
+      "DB 完全不变：sqlite_master diff=∅ + wiki_events 行数不变",
+      "只读 SQL（绝无 DELETE/UPDATE）",
+      "snapshot 按 path last-write-wins（events ORDER BY ts,id）"
+    ]
+  }
+}

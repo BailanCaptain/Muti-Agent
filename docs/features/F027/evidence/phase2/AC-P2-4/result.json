@@ -1,0 +1,18 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-4",
+  "reason": "job_trace JSON schema 契约冻结（schemaVersion 1.0）；validateJobTrace 字段存在性+类型+enum 校验；v2b F2 status enum 8 种全覆盖 fixture，reason enum 4 种全覆盖；v2a F3 时间窗字段 scheduledFor/windowStart/windowEnd 必填；atomic write（.tmp+rename）。",
+  "checks": {
+    "test_files": ["packages/api/src/services/scheduler/job-trace.test.ts"],
+    "tests_total": 20,
+    "tests_passed": 20,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/job-trace.test.ts",
+    "key_assertions": [
+      "status enum 8 种：ok/failed/timeout/skipped_reentry/skipped_not_leader/missed_window/recovered_from_crash/lease_lost",
+      "reason enum 4 种：lease_expired/lease_lost/role_not_leader/heartbeat_failed",
+      "时间窗字段必填 + ISO UTC 格式校验",
+      "writeJobTrace atomic（.tmp + rename）落 .runtime/job-traces/<job>/<date>/"
+    ]
+  }
+}

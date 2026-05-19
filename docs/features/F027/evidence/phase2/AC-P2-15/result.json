@@ -1,0 +1,18 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-15",
+  "reason": "ArchiveYearlySessions：往年 session → yearly pack + mv wiki/archive/agent-sessions/<room>/<alias>/<year>/；当年 active 不动；Jan-1 边界（mock clock）；100k session fixture 线性时间不 OOM；writeYearlyPack 失败该年不 mv（防 partial year）。",
+  "checks": {
+    "test_files": ["packages/api/src/services/scheduler/archive-yearly-sessions.test.ts"],
+    "tests_total": 10,
+    "tests_passed": 10,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/archive-yearly-sessions.test.ts",
+    "key_assertions": [
+      "往年 session → yearly pack + mv archive；当年 active 不动",
+      "Jan-1 边界 mock clock（2026-12-31T19:00 UTC = 2027-01-01 CST）",
+      "100k session fixture 线性时间 < 30s 不 OOM",
+      "writeYearlyPack 失败 → 该 year 不 mv，落 failed（防 partial year）"
+    ]
+  }
+}

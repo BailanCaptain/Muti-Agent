@@ -1,0 +1,1 @@
+{"verdict":"PASS","reason":"result.json 为 PASS，checks=11/11/0；静态核对 scheduler-leader.test.ts 正好 11 个 test，断言含 leader/follower、crash 接管、lease_lost/expired guard。","weak_points":["动态测试复跑被 spawn EPERM 拦截"]}

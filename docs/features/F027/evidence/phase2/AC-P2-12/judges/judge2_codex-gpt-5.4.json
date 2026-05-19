@@ -1,0 +1,1 @@
+{"verdict":"PASS","reason":"result.json 为 PASS，checks=11/11/0；静态核对 weekly-draft-digest.test.ts 正好 11 个 test，覆盖 user-drop only 与 5+4 fixture。","weak_points":["动态测试复跑被 spawn EPERM 拦截"]}

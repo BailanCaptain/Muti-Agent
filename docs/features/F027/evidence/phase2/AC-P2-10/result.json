@@ -1,0 +1,18 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-10",
+  "reason": "NightlyHealthCheck 5 类问题红绿 fixture：死链 / 孤岛 / 缺 frontmatter / canonical owner 漂桶 / draft TTL 过期；draft frontmatter reviewing:true 不归档。",
+  "checks": {
+    "test_files": ["packages/api/src/services/scheduler/nightly-health-check.test.ts"],
+    "tests_total": 27,
+    "tests_passed": 27,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/nightly-health-check.test.ts",
+    "key_assertions": [
+      "5 buckets：deadLinks/orphans/missingFrontmatter/canonicalOwnerDrift/draftExpired",
+      "resolveWikiLink hook + self-link skip",
+      "isActiveDraftPath vs isAnyDraftPath 区分",
+      "reviewing:true draft 跳过归档"
+    ]
+  }
+}

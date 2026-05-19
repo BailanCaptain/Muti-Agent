@@ -1,0 +1,19 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-2",
+  "reason": "SchedulerLeader runtime owner election 全覆盖：双 runtime → 1 leader/1 follower；winner crash → follower ≤60s 接管；v2b F1 lease-lost-live（renewLeader 返 null → selfDemote 清 lease + demotedReason=heartbeat_failed）；lease-expired 兜底（第三段 guard）。",
+  "checks": {
+    "test_files": ["packages/api/src/services/scheduler/scheduler-leader.test.ts"],
+    "tests_total": 11,
+    "tests_passed": 11,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/scheduler-leader.test.ts",
+    "key_assertions": [
+      "(a) 双 instance → 1 leader / 1 follower poll",
+      "(b) winner crash → follower poll 接管",
+      "(c) lease-lost-live：heartbeat fail → selfDemote → shouldSkipJob=lease_lost",
+      "(d) lease-expired 兜底：时钟过期 heartbeat 未跑 → 第三段 guard reason=lease_expired",
+      "三段 guard 区分 role_not_leader / lease_lost / lease_expired"
+    ]
+  }
+}

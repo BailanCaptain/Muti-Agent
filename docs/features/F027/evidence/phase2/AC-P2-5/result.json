@@ -1,0 +1,17 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-5",
+  "reason": "StartupReconciler crash injection：启动后清理 wiki_events.state='pending'→'aborted'、删除 room_checkpoints.committed_at IS NULL；幂等。",
+  "checks": {
+    "test_files": ["packages/api/src/services/scheduler/startup-reconciler.test.ts"],
+    "tests_total": 7,
+    "tests_passed": 7,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/startup-reconciler.test.ts",
+    "key_assertions": [
+      "wiki_events.state='pending' → 'aborted'",
+      "room_checkpoints.committed_at IS NULL → 删除",
+      "无 crash 残留时 noop；重复跑幂等"
+    ]
+  }
+}

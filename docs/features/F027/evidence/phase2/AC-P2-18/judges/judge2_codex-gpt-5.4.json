@@ -1,0 +1,1 @@
+{"verdict":"PASS","reason":"18 个功能 AC 目录四件套齐全；arbitration 为 17 个 PASS、AC-P2-3b 一个 BLOCKED，且与 AC-P2-18/result.json 自报一致。","weak_points":["未复跑各 AC 功能测试，仅按 rubric 核验证据包元完整性","AC-P2-18 自身 judge2/arbitration 属自指后写，不纳入本判定"]}

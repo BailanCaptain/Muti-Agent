@@ -1,0 +1,1 @@
+{"verdict":"PASS","reason":"result.json 为 PASS，checks=20/20/0；静态核对 scheduler-config.test.ts 正好 20 个 test，含 fallback、gate2Approved=false、cron/timezone/DST、无 root wiki.config。","weak_points":["动态测试复跑被 spawn EPERM 拦截"]}

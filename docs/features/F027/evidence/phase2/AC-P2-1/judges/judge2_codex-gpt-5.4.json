@@ -1,0 +1,1 @@
+{"verdict":"PASS","reason":"result.json 为 PASS，checks=35/35/0；静态核对 nightly-job-scheduler+scheduler-runtime 正好 35 个 test 定义，覆盖 11 jobs、event-driven、job_trace。","weak_points":["pnpm/tsx 动态复跑被 spawn EPERM 拦截，未独立得到运行时 pass 输出"]}

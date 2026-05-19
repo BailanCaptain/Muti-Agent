@@ -1,0 +1,19 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-9",
+  "reason": "backfill 正式跑：全量 docs/* 落 wiki/concepts/draft/_backfill/ + 写 wiki_events；kill -9 + --resume 跳过已成功（marker 双源：draft frontmatter ingest_metadata.ingest_event_id + .runtime/backfill-state.jsonl）；测试前后 wiki_events schema/索引/CHECK diff = ∅。",
+  "checks": {
+    "test_files": ["packages/api/scripts/backfill-docs.test.ts"],
+    "tests_total": 22,
+    "tests_passed": 22,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/scripts/backfill-docs.test.ts",
+    "key_assertions": [
+      "正式跑落 _backfill/ draft + 写 wiki_events",
+      "--resume 双源 marker：frontmatter ingest_event_id + state.jsonl",
+      "kill -9 后 resume 跳过已成功文件",
+      "不新增 DB column/index/schema（diff=∅）"
+    ],
+    "note": "AC-P2-8 与 AC-P2-9 共用 backfill-docs.test.ts"
+  }
+}

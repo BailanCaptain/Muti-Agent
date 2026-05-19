@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "result.json verdict=PASS；scheduler-leader.test.ts 11 tests 覆盖 AC-P2-2 (a)(b)(c)(d) 四子项 + 三段 guard 区分 role_not_leader/lease_lost/lease_expired，含 v2b F1 lease-lost-live。",
+  "weak_points": [
+    "Phase 2 精简 evidence：仅 result.json，无 raw transcript",
+    "crash 接管用快 poll/短 TTL fixture 压缩验证；真实 60s 接管窗口未实跑",
+    "judge1 由 claude-opus-4-7 直接评估产出（p18-judge runner 环境受限）"
+  ]
+}

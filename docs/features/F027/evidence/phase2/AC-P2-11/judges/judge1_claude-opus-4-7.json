@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "result.json verdict=PASS；nightly-vacuum.test.ts 9 tests 覆盖 30 天前 events 产 snapshot+archive jsonl + job_trace；DB 完全不变（sqlite_master diff=∅ + 行数不变），只读 SQL（SELECT only）。",
+  "weak_points": [
+    "Phase 2 精简 evidence：仅 result.json，无 raw transcript",
+    "DB diff=∅ 断言由测试内 sqlite_master 比对，未附原始 dump 对照",
+    "judge1 由 claude-opus-4-7 直接评估产出（p18-judge runner 环境受限）"
+  ]
+}
