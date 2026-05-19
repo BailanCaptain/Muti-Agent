@@ -1,7 +1,7 @@
 ---
 id: F027-phase3-implementation-plan
 title: F027 Phase 3 实施 plan — 前端面板 + 调度器 go-live 接线
-status: v1 draft（待小孙拍 Open + 范德彪 review）
+status: v2（小孙 2026-05-20 拍 7 Open 全过）+ 待范德彪 review
 created: 2026-05-20
 feature: docs/features/F027-unified-memory-architecture.md
 phase: Phase 3 · 前端（V16.5 P20）
@@ -15,6 +15,7 @@ parent: docs/plans/F027-P19-phase2-evidence-summary.md（Phase 2 收稿）
 | 版本 | 变更 |
 |---|---|
 | v1 | 首稿。基于前端结构探查（status-panel/composer/AtPill 已有；RuntimeLog/viewfinder/inspector/IngestModal 从零）。含 7 Open 待小孙拍。|
+| v2 | 小孙 2026-05-20 拍 7 Open 全按建议过。§5 转拍板态。待范德彪 review。|
 
 ## 1. 范围
 
@@ -109,9 +110,9 @@ Phase 3 = F027 统一记忆架构的**前端面板层** + **Phase 2 调度器 go
 | AC-P3-6 | IngestModal 3 入口任一触发 → 5 层 sanitize + LLM 编译预览 + multi-drop 关联 → 点 [/ingest 编译] 才落盘 | 组件测试 + E2E |
 | **AC-P3-7**（新）| 调度器 go-live：API server 启动 → `SchedulerRuntime` 实例化 + 11 job 注册 + 真 job_trace 落 `.runtime/job-traces/` | 集成测试（启真 server + 探针 trace）|
 
-## 5. Open 待小孙拍（7 个）
+## 5. Open 拍板（7 个 — 小孙 2026-05-20 全过）
 
-| # | 决策 | 黄建议 | 理由 |
+| # | 决策 | 拍板 | 理由 |
 |---|---|---|---|
 | 1 | 后端 HTTP API 层算不算 Phase 3 | **算** | 前端面板没 API 就是空壳；Phase 1 建的是 service + MCP，前端走 HTTP/WS。不算的话 Phase 3 无法独立交付 |
 | 2 | go-live 接线范围 | **API boot 实例化 + fallback config 启动** | 小孙已拍归 Phase 3；用 Phase 2 的 fallback 默认调度即可启动，不依赖 Gate 2 |
@@ -140,6 +141,6 @@ Phase 3 = F027 统一记忆架构的**前端面板层** + **Phase 2 调度器 go
 
 ## 8. 下一步
 
-1. 小孙拍 §5 的 7 个 Open
-2. 范德彪 review 本 plan（同 Phase 2 v1→v2 walkthrough 模式）
-3. 修订冻结 → 开 Week 1
+1. ~~小孙拍 §5 的 7 个 Open~~ ✓ 2026-05-20 全过
+2. 范德彪 review 本 plan v2（同 Phase 2 v1→v2 walkthrough 模式）
+3. review 修订冻结 → 开 Week 1
