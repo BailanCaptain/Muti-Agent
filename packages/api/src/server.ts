@@ -33,6 +33,7 @@ import { registerCallbackRoutes } from "./routes/callbacks"
 import { registerDebugA2ARoutes } from "./routes/debug-a2a"
 import { registerDecisionBoardRoutes } from "./routes/decision-board"
 import { registerMessageRoutes } from "./routes/messages"
+import { registerPhase3Routes } from "./routes/phase3"
 import { registerPreviewRoutes } from "./routes/preview"
 import { registerRuntimeConfigRoutes } from "./routes/runtime-config"
 import { registerSessionRuntimeConfigRoutes } from "./routes/session-runtime-config"
@@ -581,6 +582,13 @@ export async function createApiServer(options: {
       decisions.respond(requestId, decisions_payload, userInput),
   })
   registerMcpServer(app)
+
+  // F027 Phase 3 P20 · Phase 3 endpoint 集中注册（Week 1 Day 3+）
+  // 当前已 wire：GET /api/rooms/:id/viewfinder · GET /api/wiki/drafts
+  registerPhase3Routes(app, {
+    db: drizzleDb,
+    wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+  })
 
   // F027 Phase 3 P20 · scheduler go-live（Week 1 Day 1）
   //
