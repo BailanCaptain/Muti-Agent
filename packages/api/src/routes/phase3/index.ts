@@ -16,6 +16,7 @@ import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type { FastifyInstance } from "fastify"
 import type * as schema from "../../db/schema"
 import { DraftScanner, registerDraftsRoute } from "./drafts"
+import { PromptInspectorService, registerPromptInspectorRoute } from "./prompt-inspector"
 import { ViewfinderService, registerViewfinderRoute } from "./viewfinder"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
@@ -34,9 +35,11 @@ export function registerPhase3Routes(
     wikiRoot: deps.wikiRoot,
     logWarn: (obj, msg) => app.log.warn(obj, msg),
   })
+  const promptInspector = new PromptInspectorService({ db: deps.db })
 
   registerViewfinderRoute(app, viewfinderService)
   registerDraftsRoute(app, draftScanner)
+  registerPromptInspectorRoute(app, promptInspector)
 }
 
 export {
@@ -44,5 +47,9 @@ export {
   registerViewfinderRoute,
 } from "./viewfinder"
 export { DraftScanner, registerDraftsRoute } from "./drafts"
+export {
+  PromptInspectorService,
+  registerPromptInspectorRoute,
+} from "./prompt-inspector"
 export * from "./contracts"
 export * from "./frontmatter"
