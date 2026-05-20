@@ -179,7 +179,11 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
 - [ ] **AC-P3-3 · prompt-inspector 透明显示**：注入的 part 表（含 token 占比）+ 未注入预期 part + Iron Laws 重复检测 + **自动召回 query 列表（含 Quality Gate 三段：高置信注入 / 中置信仅 Inspector / 低置信 reject）+ Adaptive Recall Policy 状态（recall_required / recall_path Level 1-5 / recall_satisfied）** ★
 - [ ] **AC-P3-4 · viewfinder §4 a2a 状态人话化**（V16.5.2）：含 `[a2a_call=xxx]` 引用 → 用 F026 `<AtPill>` 渲染 + click pill in-place drawer 展开 mini call tree（不跳 /debug/a2a）
 - [ ] **AC-P3-5 · prompt-inspector 顶部 wake-up 触发因**（V16.5.2）：显示 `🔔 触发因: [a2a_call=xxx]` + click 同样 in-place drawer
-- [ ] **AC-P3-6 · IngestModal 3 入口 + sanitize 预扫**：composer 拖文件 / [+ Drop 资料] 按钮 / `/ingest` 命令面板三入口任一触发 → preview 显示 5 层 sanitize + LLM 编译预览 + multi-drop 关联 → 你点 [/ingest 编译] 才落盘
+- [ ] **AC-P3-6 · IngestModal 3 入口 + sanitize 预扫**：composer 拖文件 / [+ Drop 资料] 按钮 / `/ingest` 命令面板三入口任一触发 → preview 显示 5 层 sanitize + LLM 编译预览 + multi-drop 关联 → 你点 [/ingest 编译] 才落盘（**commit 路径走 AC-P3-10**）
+- [ ] **AC-P3-7 · 调度器 go-live + Iron Laws 3 边界**（F027 Phase 3 plan v2/v3 新增）：API server 启动 → `SchedulerRuntime` 实例化 + 11 job 注册 + 真 job_trace 落 `.runtime/job-traces/`；**Iron Laws 3 负断言**：不存在/不创建/不写入 `wiki.config.yaml`；fallback config 来源可观测；Gate 2 未批准时真配置路径保持 BLOCKED（集成测试 + 文件系统断言）
+- [ ] **AC-P3-8 · manual confirm decision API + Inspector unresolved 入口**（F027 Phase 3 plan v3 新增 — 接 AC-P1-10 P20 wiring 挂位）：POST `/api/rooms/:id/decisions` + prompt-inspector Coverage warning unresolved 列表 UI 点击 → manual confirm 写新行；Phase 1 P12 ledger append-only + tombstone 语义不变
+- [ ] **AC-P3-9 · Adaptive Recall production wiring**（F027 Phase 3 plan v3 新增 — 接 AC-P1-12 P20 wiring 挂位）：(a) orchestrator / RoomCompiler 实际调用 `executeAdaptiveRecall`；(b) `prompt_audit` 表 9 字段真写入（recall_path / recall_satisfied / escalate_reason 等）fixture 验证；(c) Level5Sink 生产实现（写 `wiki_events` action='recall_escalate' + 推审计通知 + Inspector UI 显示）
+- [ ] **AC-P3-10 · IngestModal commit endpoint 落盘闭环**（F027 Phase 3 plan v3 新增 — 修 AC-P3-6 闭环）：POST `/api/wiki/ingest/commit` endpoint，前端 [/ingest 编译] → 后端复用 Phase 1 `update_wiki`，含 ACL / CAS / lease / fencing；E2E：preview 不落盘 / commit 才落盘 / 失败不产生 `wiki_events`
 
 ### Phase 4 AC（审批 UI + 验证）
 
@@ -196,9 +200,9 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
 |---|---|---|---|---|
 | **Phase 1 · 后端基础设施** | 3-15 + 26 + 27 | 30-45 | 无 | 内部 P0-P15 部分可并行（schema 冻结后）|
 | **Phase 2 · 调度** | 17 + V16.5.3 D1/D2 | 5-7 | Phase 1 schema 冻结 | 与 Phase 3 并行 |
-| **Phase 3 · 前端** | 18 + 25 | 12-15 | Phase 1 API contract 冻结 | 与 Phase 2 并行 |
+| **Phase 3 · 前端 + P20 wiring** | 18 + 25 + P20 wiring（AC-P1-10/12 挂位）| 26-32（v3 修订）| Phase 1 API contract 冻结 + AC-P1-10/12 P20 挂位 | 与 Phase 2 并行 |
 | **Phase 4 · 审批 UI + 验证** | 18 PromoteModal + 16 验证 + 22 walkthrough | 11-13 | Phase 3 + Phase 1 evidence 框架 | - |
-| **总工时** | | **58-80 单人天** | | **8-13 周（多 agent 并行）** |
+| **总工时** | | **72-97 单人天**（v3 修订）| | **9-14 周（多 agent 并行）** |
 
 **并行性说明**（修 v1 误判）：plan chap 21 依赖**不是**线性链。Phase 1 schema 冻结后，Phase 2 调度（lease + job harness）和 Phase 3 前端（UI shell + tab 容器 + StatusPanel resize）可同时启动；Phase 4 部分（评审 UI）依赖 Phase 3 前端骨架，但验证套件 P18 可在 Phase 1 evidence 框架冻结后并行准备。
 
