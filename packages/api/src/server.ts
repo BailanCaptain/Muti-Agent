@@ -42,6 +42,7 @@ import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
 import { createHaikuRunner } from "./runtime/haiku-runner"
 import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
+import { bootSchedulerRuntime } from "./runtime/scheduler-bootstrap"
 import { awaitRunsToStop } from "./runtime/shutdown"
 import { MemoryService } from "./services/memory-service"
 import { MessageService } from "./services/message-service"
@@ -581,11 +582,42 @@ export async function createApiServer(options: {
   })
   registerMcpServer(app)
 
+  // F027 Phase 3 P20 · scheduler go-live（Week 1 Day 1）
+  //
+  // boot 11 真 job adapter + SchedulerRuntime + start；走 fallback config（不等
+  // Gate 2）。Iron Laws 3 fail-safe：worktree root 有 wiki.config.yaml 会抛错。
+  //
+  // MULTI_AGENT_SKIP_SCHEDULER=1 跳过（CI / 单测）。
+  // 单元测试用 createApiServer 时默认跳过 — vitest 跑 next-app 组件测试只起 fastify
+  // 不应起 scheduler。
+  const schedulerRuntime = await bootSchedulerRuntime({
+    db: drizzleDb,
+    log: app.log,
+    // 调度告警走 ws broadcast（lazy resolve broadcaster.broadcast — registerWsRoute
+    // 已在上面装好实际实现，此处闭包捕获最新引用）。
+    pushAlert: (trace) =>
+      broadcaster.broadcast({ type: "scheduler.alert", payload: trace } as never),
+    pushChainedAlert: (alert) =>
+      broadcaster.broadcast({ type: "scheduler.chained_alert", payload: alert } as never),
+    rootDir: process.cwd(),
+    skipBoot: process.env.MULTI_AGENT_SKIP_SCHEDULER === "1",
+  })
+  app.addHook("onClose", async () => {
+    if (schedulerRuntime) {
+      try {
+        await schedulerRuntime.stop()
+      } catch (err) {
+        app.log.warn({ err }, "schedulerRuntime.stop() threw on close (ignored)")
+      }
+    }
+  })
+
   Object.assign(app, {
     multiAgentContext: {
       repository,
       sessions,
       invocations,
+      schedulerRuntime,
     },
   })
 
