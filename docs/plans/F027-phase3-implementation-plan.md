@@ -17,6 +17,7 @@ parent: docs/plans/F027-P19-phase2-evidence-summary.md（Phase 2 收稿）
 | v1 | 首稿。基于前端结构探查（status-panel/composer/AtPill 已有；RuntimeLog/viewfinder/inspector/IngestModal 从零）。含 7 Open 待小孙拍。 |
 | v2 | 小孙 2026-05-20 拍 7 Open 全按建议过。§5 转拍板态。待范德彪 review。 |
 | **v3** | **范-r1 CONDITIONAL（2 P1 + 5 P2 + 3 P3）小孙拍 A 全接受**。新增 3 块 wiring AC（AC-P3-8/9/10）补齐 feature.md AC-P1-10/12 P20 挂位 + AC-P3-6 落盘闭环；§3 节奏 4 周/18-22 天 → 5 周/26-32 天；§6 加 3 项风险；§5 加范有条件同意备注；§7 加 P1 wiring 依赖；§4 升 7 AC → 10 AC；同步回写 feature.md（任务 #171）。 |
+| **v3.1** | **范-r2 CONDITIONAL（无 P1/P2，1 处 P3）**：feature.md 4 处工期残留扫尾（行 85 Phase 3 小节标题 / 行 275 风险表 / 行 287 立项材料 / 行 293 Gate 1 接受）；plan §3 Week 2 加节奏备注（5 天目标 / 7 天风险）；§6 风险表加 Week 2 过载项。范-r2 GO 条件已满足。 |
 
 ## 1. 范围
 
@@ -94,15 +95,18 @@ AC-P3-8 / AC-P3-9 不是 Phase 3 新发明的 AC —— 它们是 feature.md Pha
 | 4 | prompt-inspector 数据 API（注入 part + token 占比 + 召回 query + Adaptive Recall 状态占位）|
 | 5 | ingest preview API（5 层 sanitize + LLM 编译预览，不落盘）|
 
-### Week 2 · P20 Wiring + WS（5 天）— v3 新增
+### Week 2 · P20 Wiring + WS（5 天目标 / 7 天风险 — v3.1 修订）
 
-| Day | 任务 |
-|---|---|
-| 6 | **AC-P3-8 a**：manual confirm decision API（POST /api/rooms/:id/decisions）+ Inspector unresolved 入口数据契约（GET /api/rooms/:id/decisions/coverage）|
-| 7 | **AC-P3-9 a**：orchestrator/RoomCompiler 接 executeAdaptiveRecall 调用点（识别 wake-up + per-turn budget 注入） |
-| 8 | **AC-P3-9 b**：prompt_audit 9 字段真写入（recall_required / recall_path Level 1-5 / recall_satisfied / escalate_reason / budget_consumed 等） |
-| 9 | **AC-P3-9 c**：Level5Sink 生产实现（写 wiki_events action='recall_escalate' + 推审计通知 + Inspector UI hook） |
-| 10 | **AC-P3-10**：POST /api/wiki/ingest/commit endpoint（前端 [/ingest 编译] → 后端 update_wiki，复用 ACL/CAS/lease/fencing）+ wake-up 触发因 WS 协议改动 + job_trace → panel 读取 API |
+| Day | 任务 | 工日估 |
+|---|---|---|
+| 6 | **AC-P3-8 a**：manual confirm decision API（POST /api/rooms/:id/decisions）+ Inspector unresolved 入口数据契约（GET /api/rooms/:id/decisions/coverage）| 1d |
+| 7-8 | **AC-P3-9 a**：orchestrator/RoomCompiler 接 executeAdaptiveRecall 调用点（识别 wake-up + per-turn budget 注入） | 1.5-2d |
+| 8 | **AC-P3-9 b**：prompt_audit 9 字段真写入（recall_required / recall_path Level 1-5 / recall_satisfied / escalate_reason / budget_consumed 等） | 1d |
+| 9 | **AC-P3-9 c**：Level5Sink 生产实现（写 wiki_events action='recall_escalate' + 推审计通知 + Inspector UI hook） | 1-1.5d |
+| 9-10 | **AC-P3-10**：POST /api/wiki/ingest/commit endpoint（前端 [/ingest 编译] → 后端 update_wiki，复用 ACL/CAS/lease/fencing）| 1d |
+| 10 | wake-up 触发因 WS 协议改动 + job_trace → panel 读取 API（可吃 Week 5 buffer）| 1-1.5d |
+
+**节奏备注**（范-r2 节奏复核）：累计工日估 6.5-8d，超 5 天名义；按"5 天目标 / 7 天风险"管理 — 优先保证 AC-P3-8/9/10 后端闭环（前端 Week 3-4 接得到契约），WS 协议 + job_trace API 可推迟到 Week 5 buffer。Week 2 r1 review 时以 AC-P3-8/9/10 完成度为 GO 信号，WS 推迟允许。
 
 ### Week 3 · 前端骨架（5 天）
 
@@ -169,6 +173,7 @@ AC-P3-8 / AC-P3-9 不是 Phase 3 新发明的 AC —— 它们是 feature.md Pha
 | **wake-up WS 顺序 / 重连 / 重复事件**（v3 — 范 P3-2）| WS fixture 覆盖乱序、重复、断线重连、room 切换不串房；client 端 ack + dedupe seq |
 | **ingest commit 写入安全**（v3 — 范 P1-2）| AC-P3-10 commit endpoint 严格复用 Phase 1 `update_wiki`，不绕过 ACL/CAS/lease/fencing；失败明确不产生 `wiki_events` |
 | **scheduler duplicate-start**（v3 — 范 P2-2）| API boot 内 SchedulerRuntime 单例 + idempotent start guard + leader lease 兜底；HMR / 多进程场景 explicit 防护 |
+| **Week 2 P20 wiring 三块挤压**（v3.1 — 范 r2 节奏复核）| Week 2 累计工日估 6.5-8d > 5 天名义；按"5 天目标 / 7 天风险"管理，AC-P3-8/9/10 后端闭环优先；WS 协议 + job_trace API 可吃 Week 5 buffer 推迟；r1 review 信号以 8/9/10 完成度为准 |
 
 ## 7. 依赖（v3 加 P1 wiring 挂位）
 

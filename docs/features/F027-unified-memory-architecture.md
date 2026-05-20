@@ -82,7 +82,7 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
 
 **引用 V16.5 章节**：17 + V16.5.3 D1/D2/D3 修订段
 
-### Phase 3 · 前端（V16.5 P20）
+### Phase 3 · 前端 + P20 wiring（V16.5 P20）
 
 **核心交付物**：
 - StatusPanel 拖宽（width state in layout-store + ResizeHandle）
@@ -272,7 +272,7 @@ V16.5 chap 22 已系统化分析。F027 整套立项关注：
 | **draft 队列爆炸**（backfill 几百份 + 日常新增 → 你审批疲劳）| WeeklyDraftDigest 仅推 user-drop 主流（V16.5.3 D3 隔离 `_backfill/` `_auto/`）+ 30 天 TTL 自动 `_expired/` + 批量审批 UI（Phase 4）|
 | **memory_preflight LLM 调用成本**（每 wake-up 2-5 query × Opus 4.7）| Quality Gate 控制（chap 10）+ 高置信 ≥0.75 才注入 + per-turn budget |
 | **room_agent_sessions 文件膨胀**（10×100×100 = 100k）| sharding + yearly pack（chap 9）→ ~1k active |
-| **F027 工期长（58-80 天单人）→ 期间无法并行其他 feature**| 多 agent 并行（黄/范/桂芬 拆 phase 同时干）→ 8-13 周；中间不允许 hotfix 偷渡（hotfix 走独立 worktree）|
+| **F027 工期长（72-97 天单人 — Phase 3 v3 plan 修订）→ 期间无法并行其他 feature**| 多 agent 并行（黄/范/桂芬 拆 phase 同时干）→ 9-14 周；中间不允许 hotfix 偷渡（hotfix 走独立 worktree）|
 
 ### 中风险
 
@@ -284,13 +284,13 @@ viewfinder LLM 漂移 / lease 死锁 / 多 agent 并发 LLM API / token 超限 /
 - **优先级**: P0
 - **worktree**: `feat/F027-unified-memory-architecture`
 - **期间策略**: B022 当前 fix 保留；非紧急 feature 暂缓策略立项时拍
-- **工期**: 58-80 单人天 / 8-13 周多 agent 并行
+- **工期**: 72-97 单人天 / 9-14 周多 agent 并行（Phase 3 v3 plan 修订 — 加 AC-P1-10/12 P20 wiring 挂位 + AC-P3-6 commit endpoint）
 - **SOP**: `feat-lifecycle` skill
 
 ## Round 2 Approval（待拍）
 
 ### Gate 1 · 立项 GO
-- [ ] 小孙拍板：F027 整套（V16.5 全 22+ phase 单 F-id）GO + 工时 58-80 接受
+- [ ] 小孙拍板：F027 整套（V16.5 全 22+ phase 单 F-id）GO + 工时 72-97 接受（v3 修订）
 - [ ] 范德彪 verify F027 v2 spec（review F027 v1 已 GO with conditions, v2 修订是否覆盖原 4 条 conditions）
 
 ### Gate 2 · 配置 / MCP 安全授权（Iron Laws 3 联动）
