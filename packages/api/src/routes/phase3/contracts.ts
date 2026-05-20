@@ -1,0 +1,750 @@
+/**
+ * F027 Phase 3 P20 · Backend Contract 层 — Week 1 Day 2
+ *
+ * 真相源：docs/plans/F027-phase3-implementation-plan.md §3 Week 1 Day 2
+ *   + 范-r1 P2-1 mitigation
+ *
+ * 职责：Phase 3 全部 8 个 HTTP endpoint 的 DTO / 错误码 enum / validate helper
+ *   集中定义。Day 3-10 真 route 实施时 import 此处契约，**前端只认 HTTP 契约**。
+ *
+ * 8 endpoints（plan §3 Week 1 + Week 2）：
+ *   - GET  /api/rooms/:id/viewfinder           (Week 1 Day 3)
+ *   - GET  /api/wiki/drafts                    (Week 1 Day 3)
+ *   - GET  /api/rooms/:id/prompt-inspector     (Week 1 Day 4)
+ *   - POST /api/wiki/ingest/preview            (Week 1 Day 5)
+ *   - POST /api/rooms/:id/decisions            (Week 2 Day 6 — AC-P3-8)
+ *   - GET  /api/rooms/:id/decisions/coverage   (Week 2 Day 6 — AC-P3-8)
+ *   - POST /api/wiki/ingest/commit             (Week 2 Day 10 — AC-P3-10)
+ *   - GET  /api/scheduler/job-traces           (Week 2 Day 10)
+ *
+ * 设计原则：
+ *   - 无新 deps：跟现有路由风格（手写 interface + validate 纯函数）
+ *   - 序列化边界：date 用 ISO string，bigint 用 string
+ *   - 错误码集中 ErrorCode enum；validate 返 `{ ok: true; value } | { ok: false; error; message }`
+ *   - 空状态明示：用 null（单值）/ 空数组（列表）/ undefined（可选字段）
+ *   - 权限/roomId 边界：validateRoomId 集中入口
+ *
+ * 不做：
+ *   - 不写 fastify route 本体（Day 3-10 实施）
+ *   - 不接 service / repository（contract 层纯类型 + 校验，无 IO）
+ *   - 不引入 zod / typebox / 任何 runtime schema lib
+ *
+ * 范-r2 节奏复核 P2-1：本文件 + contracts.test.ts 是 Day 2 唯一交付。
+ */
+
+// ── 共享 ────────────────────────────────────────────────────────────
+
+/** Phase 3 全部错误码（前端按 `code` 字段路由 UI 文案）。 */
+export const ErrorCode = {
+  /** roomId 格式不合法（如非 R-XXX 模式 / 空 / 含非法字符）。 */
+  INVALID_ROOM_ID: "INVALID_ROOM_ID",
+  /** room 不存在（已归档 / soft-deleted / 从未存在）。 */
+  ROOM_NOT_FOUND: "ROOM_NOT_FOUND",
+  /** 当前请求未通过权限 / ACL 检查。 */
+  UNAUTHORIZED: "UNAUTHORIZED",
+  /** Iron Laws 3 违反（如 wiki.config.yaml 未经 Gate 2 偷偷出现）。 */
+  IRON_LAWS_3_BLOCKED: "IRON_LAWS_3_BLOCKED",
+  /** Gate 2 未批准但请求路径要求真 wiki.config.yaml。 */
+  GATE_2_NOT_APPROVED: "GATE_2_NOT_APPROVED",
+  /** wiki lease/fencing 失败（CAS 冲突 / token stale）。 */
+  LEASE_FENCING_FAILED: "LEASE_FENCING_FAILED",
+  /** draft path 不存在 / 已被 promote / 已过期 _expired。 */
+  DRAFT_NOT_FOUND: "DRAFT_NOT_FOUND",
+  /** decision 内容不合法（必填字段缺 / type 越界 / evidence 链断）。 */
+  DECISION_INVALID: "DECISION_INVALID",
+  /** Adaptive Recall per-turn budget 触顶（Phase 1 AC-P1-12 配套）。 */
+  RECALL_BUDGET_EXCEEDED: "RECALL_BUDGET_EXCEEDED",
+  /** preview/commit endpoint 输入字段不合法（mimeType 不支持 / payload 过大 等）。 */
+  VALIDATION_FAILED: "VALIDATION_FAILED",
+  /** 服务内部错误（DB / fs / 编译失败）兜底，前端走 generic 错误处理。 */
+  INTERNAL_ERROR: "INTERNAL_ERROR",
+} as const
+
+export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode]
+
+export const HTTP_STATUS_BY_ERROR: Record<ErrorCode, number> = {
+  INVALID_ROOM_ID: 400,
+  ROOM_NOT_FOUND: 404,
+  UNAUTHORIZED: 403,
+  IRON_LAWS_3_BLOCKED: 423, // Locked — 资源在合规锁定中（非典型 423，但语义最贴）
+  GATE_2_NOT_APPROVED: 403,
+  LEASE_FENCING_FAILED: 409, // Conflict
+  DRAFT_NOT_FOUND: 404,
+  DECISION_INVALID: 400,
+  RECALL_BUDGET_EXCEEDED: 429, // Too Many Requests
+  VALIDATION_FAILED: 400,
+  INTERNAL_ERROR: 500,
+}
+
+/** 标准错误响应体（所有 endpoint 失败统一形态）。 */
+export interface ErrorResponseBody {
+  error: ErrorCode
+  message: string
+  /** 可选 detail（含 field/path/value 等机器可读补充；前端透传到 inspector）。 */
+  detail?: Record<string, unknown>
+}
+
+export type ValidationResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: ErrorCode; message: string; detail?: Record<string, unknown> }
+
+/** roomId 格式：`R-` 后接 1-6 位数字，与 V16.5 P0 chap 4 命名规范一致。 */
+const ROOM_ID_RE = /^R-\d{1,6}$/
+
+export function validateRoomId(raw: unknown): ValidationResult<string> {
+  if (typeof raw !== "string" || raw.length === 0) {
+    return { ok: false, error: "INVALID_ROOM_ID", message: "roomId required" }
+  }
+  if (!ROOM_ID_RE.test(raw)) {
+    return {
+      ok: false,
+      error: "INVALID_ROOM_ID",
+      message: `roomId must match ${ROOM_ID_RE}, got ${JSON.stringify(raw)}`,
+    }
+  }
+  return { ok: true, value: raw }
+}
+
+function takeOptionalString(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw !== "string") return undefined
+  if (raw.length === 0) return undefined
+  return raw
+}
+
+function takeOptionalInt(
+  raw: unknown,
+  { min, max, field }: { min: number; max: number; field: string },
+): ValidationResult<number | undefined> {
+  if (raw === undefined || raw === null || raw === "") {
+    return { ok: true, value: undefined }
+  }
+  const n = typeof raw === "string" ? Number.parseInt(raw, 10) : Number(raw)
+  if (!Number.isFinite(n) || !Number.isInteger(n)) {
+    return {
+      ok: false,
+      error: "VALIDATION_FAILED",
+      message: `${field} must be an integer, got ${JSON.stringify(raw)}`,
+    }
+  }
+  if (n < min || n > max) {
+    return {
+      ok: false,
+      error: "VALIDATION_FAILED",
+      message: `${field} must be in [${min}, ${max}], got ${n}`,
+    }
+  }
+  return { ok: true, value: n }
+}
+
+// ── 1. GET /api/rooms/:id/viewfinder ────────────────────────────────
+
+export interface GetViewfinderPath {
+  roomId: string
+}
+
+/** ViewfinderArtifact 的 HTTP 边界版本（render 详情见 viewfinder-renderer.ts）。 */
+export interface GetViewfinderResponse {
+  /** rendered viewfinder markdown；null = 尚未编译（首次访问 + 后台任务未跑）。 */
+  viewfinder: string | null
+  /** Coverage report — Phase 1 AC-P1-10 三集合。 */
+  coverage: {
+    broad: number
+    resolved: number
+    unresolved: number
+    /** broad 为 0 时 coverage = null；否则 = resolved/broad。 */
+    coverage: number | null
+    status: "pass" | "warn" | "fail"
+  }
+  /** Viewfinder 编译时刻 ISO；null = 未编译。 */
+  lastCompiledAt: string | null
+  /** Decision ledger cursor（active 决策计数 + 最新 decision_id）。 */
+  ledger: {
+    activeCount: number
+    latestDecisionId: string | null
+  }
+}
+
+export function validateGetViewfinder(
+  pathParams: unknown,
+): ValidationResult<GetViewfinderPath> {
+  const obj = pathParams as Record<string, unknown> | null
+  const idCheck = validateRoomId(obj?.id)
+  if (!idCheck.ok) return idCheck
+  return { ok: true, value: { roomId: idCheck.value } }
+}
+
+// ── 2. GET /api/wiki/drafts ──────────────────────────────────────────
+
+export type DraftType =
+  | "feature"
+  | "bug"
+  | "lesson"
+  | "concept"
+  | "wiki-memory"
+  | "session-archive"
+
+export interface ListDraftsQuery {
+  /** 过滤 draft 类型；不传 = 全部。 */
+  type?: DraftType
+  /** mtime 区间过滤（ISO）；不传 = 不限。 */
+  mtimeFrom?: string
+  mtimeTo?: string
+  /** 分页：limit ∈ [1, 200]，默认 50；offset ≥ 0，默认 0。 */
+  limit?: number
+  offset?: number
+}
+
+export interface DraftSummary {
+  /** 相对 wiki root 的路径，如 `concepts/draft/_auto/2026-05-20-foo.md`。 */
+  path: string
+  type: DraftType
+  /** 标题（取 frontmatter.title 或文件名 fallback）。 */
+  title: string
+  /** mtime ISO。 */
+  mtime: string
+  /** 摘要前 200 字（无 frontmatter / 无 body 时返空串）。 */
+  summary: string
+  /** _backfill / _auto / user-drop 三类 origin（V16.5.3 D3）。 */
+  origin: "user-drop" | "auto" | "backfill" | "expired"
+}
+
+export interface ListDraftsResponse {
+  drafts: DraftSummary[]
+  /** 满足 filter 的总数（用于 client 分页 ui）。 */
+  total: number
+  /** 实际返回的分页参数（echo + clamp 后值）。 */
+  limit: number
+  offset: number
+}
+
+export function validateListDrafts(query: unknown): ValidationResult<ListDraftsQuery> {
+  const q = (query ?? {}) as Record<string, unknown>
+  const result: ListDraftsQuery = {}
+
+  const typeRaw = takeOptionalString(q.type)
+  if (typeRaw !== undefined) {
+    const allowed: DraftType[] = [
+      "feature",
+      "bug",
+      "lesson",
+      "concept",
+      "wiki-memory",
+      "session-archive",
+    ]
+    if (!(allowed as string[]).includes(typeRaw)) {
+      return {
+        ok: false,
+        error: "VALIDATION_FAILED",
+        message: `type must be one of ${allowed.join(", ")}, got ${typeRaw}`,
+      }
+    }
+    result.type = typeRaw as DraftType
+  }
+
+  const mtimeFrom = takeOptionalString(q.mtimeFrom)
+  if (mtimeFrom !== undefined) {
+    if (Number.isNaN(Date.parse(mtimeFrom))) {
+      return {
+        ok: false,
+        error: "VALIDATION_FAILED",
+        message: `mtimeFrom must be ISO timestamp, got ${mtimeFrom}`,
+      }
+    }
+    result.mtimeFrom = mtimeFrom
+  }
+  const mtimeTo = takeOptionalString(q.mtimeTo)
+  if (mtimeTo !== undefined) {
+    if (Number.isNaN(Date.parse(mtimeTo))) {
+      return {
+        ok: false,
+        error: "VALIDATION_FAILED",
+        message: `mtimeTo must be ISO timestamp, got ${mtimeTo}`,
+      }
+    }
+    result.mtimeTo = mtimeTo
+  }
+  if (
+    result.mtimeFrom !== undefined &&
+    result.mtimeTo !== undefined &&
+    Date.parse(result.mtimeFrom) > Date.parse(result.mtimeTo)
+  ) {
+    return {
+      ok: false,
+      error: "VALIDATION_FAILED",
+      message: "mtimeFrom must be <= mtimeTo",
+    }
+  }
+
+  const limit = takeOptionalInt(q.limit, { min: 1, max: 200, field: "limit" })
+  if (!limit.ok) return limit
+  if (limit.value !== undefined) result.limit = limit.value
+
+  const offset = takeOptionalInt(q.offset, { min: 0, max: 1_000_000, field: "offset" })
+  if (!offset.ok) return offset
+  if (offset.value !== undefined) result.offset = offset.value
+
+  return { ok: true, value: result }
+}
+
+// ── 3. GET /api/rooms/:id/prompt-inspector ──────────────────────────
+
+export interface GetPromptInspectorPath {
+  roomId: string
+}
+export interface GetPromptInspectorQuery {
+  /** 可选 threadId 过滤；不传 = room 内 active thread 默认。 */
+  threadId?: string
+}
+export interface GetPromptInspectorRequest
+  extends GetPromptInspectorPath,
+    GetPromptInspectorQuery {}
+
+export interface InjectedPart {
+  /** 注入区段名（如 `IronLaws` / `RecallPack` / `Viewfinder` / `CapabilityRegistry`）。 */
+  name: string
+  /** 区段 byte 长度（前端按比例展示 token 占比）。 */
+  bytes: number
+  /** 估算 token 数（按 4 char ≈ 1 token 经验近似）。 */
+  tokensEstimated: number
+  /** 区段渲染源（拼装 commit / 注入时刻 ISO）。 */
+  source: string
+}
+
+export type RecallGate = "high" | "mid" | "low"
+
+export interface RecallQueryItem {
+  /** 自动召回的 query 文本（task summary 抽出的 2-5 query 之一）。 */
+  query: string
+  /** Hybrid 检索 hit 数（BM25 + cosine 合并后）。 */
+  hits: number
+  /** Quality Gate 三段分类。 */
+  gate: RecallGate
+  /** 高/中置信置信度（NoopReranker 透传时是 hybrid_score；真 LLM rerank 时是校准 confidence）。 */
+  topScore: number
+}
+
+export interface AdaptiveRecallState {
+  /** 触发了 recall 流程吗。 */
+  recallRequired: boolean
+  /** 走到哪个 Level（1-5）；null = 未触发。 */
+  recallPath: 1 | 2 | 3 | 4 | 5 | null
+  /** 是否在某 Level 拿到满意结果（Critique Agent 判定）。 */
+  recallSatisfied: boolean
+  /** 触发 Level 5 escalate 的原因（如 "Level 4 strict path 不存在"）。 */
+  escalateReason: string | null
+  /** Per-turn budget 消耗 token 数。 */
+  budgetConsumed: number
+  /** Per-turn budget 上限。 */
+  budgetMax: number
+}
+
+export interface GetPromptInspectorResponse {
+  /** 当前 prompt 注入的 part 列表（IronLaws / RecallPack / Viewfinder 等）。 */
+  injectedParts: InjectedPart[]
+  /** 自动召回 query 列表 + Quality Gate 三段。 */
+  recallQueries: RecallQueryItem[]
+  /** Adaptive Recall Policy 状态（依赖 AC-P3-9 wiring 真数据）。 */
+  recallState: AdaptiveRecallState
+  /** wake-up 触发因（AC-P3-5 数据，可能为空）。 */
+  wakeUpTrigger: {
+    kind: "a2a_call" | "user_message" | "scheduler_tick" | null
+    ref: string | null
+  }
+}
+
+export function validateGetPromptInspector(
+  pathParams: unknown,
+  query: unknown,
+): ValidationResult<GetPromptInspectorRequest> {
+  const path = pathParams as Record<string, unknown> | null
+  const idCheck = validateRoomId(path?.id)
+  if (!idCheck.ok) return idCheck
+  const q = (query ?? {}) as Record<string, unknown>
+  const threadId = takeOptionalString(q.threadId)
+  return { ok: true, value: { roomId: idCheck.value, threadId } }
+}
+
+// ── 4. POST /api/wiki/ingest/preview ────────────────────────────────
+
+/** 支持的 ingest mime 类型（V16.5.3 ingest pipeline 锁定）。 */
+export const SUPPORTED_INGEST_MIME = [
+  "text/markdown",
+  "text/plain",
+  "application/json",
+] as const
+
+export type IngestMime = (typeof SUPPORTED_INGEST_MIME)[number]
+
+export interface PreviewIngestBody {
+  /** 来源路径标识（用户拖入文件的 fileName / slash 命令 args）；用于 frontmatter source_path。 */
+  sourcePath: string
+  /** 原始内容（限 ≤ 1 MB；contract 层只断长度，sanitize 在 service 层）。 */
+  content: string
+  mimeType: IngestMime
+  /** 可选目标 type override；不传时由 service 推断。 */
+  targetType?: DraftType
+}
+
+export interface PreviewIngestResponse {
+  /** 预览 ID（commit endpoint 会引用此 ID 真落盘）。 */
+  previewId: string
+  /** Sanitize 后的内容（5 层 sanitize 过；不含 .env / Gemini cookie 等敏感 token）。 */
+  sanitizedContent: string
+  /** LLM 编译预览（建议落盘的 final markdown 草稿）。 */
+  llmCompiledPreview: string
+  /** Sanitize 阶段触发的 warning 列表。 */
+  warnings: Array<{
+    kind: "sensitive_token" | "size_truncated" | "encoding" | "binary_skipped"
+    message: string
+  }>
+  /** 预览过期时刻（commit 必须在此前调用，否则 previewId 失效）。 */
+  expiresAt: string
+}
+
+const MAX_INGEST_CONTENT_BYTES = 1_048_576
+
+export function validatePreviewIngest(body: unknown): ValidationResult<PreviewIngestBody> {
+  const b = body as Record<string, unknown> | null
+  if (!b) {
+    return { ok: false, error: "VALIDATION_FAILED", message: "body required" }
+  }
+  const sourcePath = takeOptionalString(b.sourcePath)
+  if (sourcePath === undefined) {
+    return { ok: false, error: "VALIDATION_FAILED", message: "sourcePath required" }
+  }
+  const content = b.content
+  if (typeof content !== "string") {
+    return { ok: false, error: "VALIDATION_FAILED", message: "content must be string" }
+  }
+  if (content.length === 0) {
+    return { ok: false, error: "VALIDATION_FAILED", message: "content must not be empty" }
+  }
+  const bytes = Buffer.byteLength(content, "utf-8")
+  if (bytes > MAX_INGEST_CONTENT_BYTES) {
+    return {
+      ok: false,
+      error: "VALIDATION_FAILED",
+      message: `content exceeds ${MAX_INGEST_CONTENT_BYTES} bytes, got ${bytes}`,
+    }
+  }
+  const mimeType = takeOptionalString(b.mimeType)
+  if (mimeType === undefined) {
+    return { ok: false, error: "VALIDATION_FAILED", message: "mimeType required" }
+  }
+  if (!(SUPPORTED_INGEST_MIME as readonly string[]).includes(mimeType)) {
+    return {
+      ok: false,
+      error: "VALIDATION_FAILED",
+      message: `mimeType must be one of ${SUPPORTED_INGEST_MIME.join(", ")}, got ${mimeType}`,
+    }
+  }
+  const targetType = takeOptionalString(b.targetType)
+  return {
+    ok: true,
+    value: {
+      sourcePath,
+      content,
+      mimeType: mimeType as IngestMime,
+      targetType: targetType as DraftType | undefined,
+    },
+  }
+}
+
+// ── 5. POST /api/rooms/:id/decisions （AC-P3-8 manual confirm） ──────
+
+export type DecisionKind = "commit" | "reject" | "tombstone"
+
+export interface PostDecisionPath {
+  roomId: string
+}
+export interface PostDecisionBody {
+  kind: DecisionKind
+  /** decision 文本（人话描述）。 */
+  content: string
+  /** Evidence chain — msg_id / decision_id 链 ref；至少 1 条。 */
+  evidence: Array<{
+    kind: "message" | "decision"
+    /** msg_id 或 decision_id。 */
+    ref: string
+  }>
+  /** 可选 revoke 旧 decision（写新行 + UPDATE 旧行 superseded_by；Phase 1 P12 语义）。 */
+  supersedesDecisionId?: string
+}
+export interface PostDecisionRequest extends PostDecisionPath {
+  body: PostDecisionBody
+}
+
+export interface PostDecisionResponse {
+  /** 新 decision row 的 id。 */
+  decisionId: string
+  /** 新 ledger cursor（client 拿来 invalidate viewfinder cache）。 */
+  ledgerCursor: number
+  /** 写盘时刻 ISO。 */
+  appendedAt: string
+}
+
+export function validatePostDecision(
+  pathParams: unknown,
+  body: unknown,
+): ValidationResult<PostDecisionRequest> {
+  const path = pathParams as Record<string, unknown> | null
+  const idCheck = validateRoomId(path?.id)
+  if (!idCheck.ok) return idCheck
+
+  const b = body as Record<string, unknown> | null
+  if (!b) {
+    return { ok: false, error: "DECISION_INVALID", message: "body required" }
+  }
+  const kindRaw = takeOptionalString(b.kind)
+  if (kindRaw === undefined || !["commit", "reject", "tombstone"].includes(kindRaw)) {
+    return {
+      ok: false,
+      error: "DECISION_INVALID",
+      message: `kind must be commit|reject|tombstone, got ${kindRaw}`,
+    }
+  }
+  const content = takeOptionalString(b.content)
+  if (content === undefined) {
+    return { ok: false, error: "DECISION_INVALID", message: "content required" }
+  }
+  if (content.length > 4000) {
+    return { ok: false, error: "DECISION_INVALID", message: "content exceeds 4000 chars" }
+  }
+  const rawEvidence = b.evidence
+  if (!Array.isArray(rawEvidence) || rawEvidence.length === 0) {
+    return {
+      ok: false,
+      error: "DECISION_INVALID",
+      message: "evidence required (at least 1 ref)",
+    }
+  }
+  const evidence: PostDecisionBody["evidence"] = []
+  for (let i = 0; i < rawEvidence.length; i += 1) {
+    const e = rawEvidence[i] as Record<string, unknown> | null
+    if (!e) {
+      return {
+        ok: false,
+        error: "DECISION_INVALID",
+        message: `evidence[${i}] must be object`,
+      }
+    }
+    const ek = takeOptionalString(e.kind)
+    const ref = takeOptionalString(e.ref)
+    if (ek === undefined || !["message", "decision"].includes(ek)) {
+      return {
+        ok: false,
+        error: "DECISION_INVALID",
+        message: `evidence[${i}].kind must be message|decision, got ${ek}`,
+      }
+    }
+    if (ref === undefined) {
+      return {
+        ok: false,
+        error: "DECISION_INVALID",
+        message: `evidence[${i}].ref required`,
+      }
+    }
+    evidence.push({ kind: ek as "message" | "decision", ref })
+  }
+  const supersedes = takeOptionalString(b.supersedesDecisionId)
+
+  return {
+    ok: true,
+    value: {
+      roomId: idCheck.value,
+      body: {
+        kind: kindRaw as DecisionKind,
+        content,
+        evidence,
+        supersedesDecisionId: supersedes,
+      },
+    },
+  }
+}
+
+// ── 6. GET /api/rooms/:id/decisions/coverage ────────────────────────
+
+export interface GetCoveragePath {
+  roomId: string
+}
+export interface DecisionRef {
+  decisionId: string
+  /** 简要描述（取 content 前 100 字 + ellipsis）。 */
+  summary: string
+  /** 当前状态（基于 ledger 终态）。 */
+  state: "active" | "superseded" | "tombstone"
+}
+export interface GetCoverageResponse {
+  /** broad 集合：room 内所有讨论中提出的问题/议题。 */
+  broad: DecisionRef[]
+  /** resolved 集合：已有 decision 闭环的议题。 */
+  resolved: DecisionRef[]
+  /** unresolved 集合：broad - resolved；前端 AC-P3-8 入口在此列表。 */
+  unresolved: DecisionRef[]
+  /** 标量：resolved.length / broad.length（broad=0 时 null）。 */
+  coverage: number | null
+  status: "pass" | "warn" | "fail"
+  generatedAt: string
+}
+
+export function validateGetCoverage(
+  pathParams: unknown,
+): ValidationResult<GetCoveragePath> {
+  const path = pathParams as Record<string, unknown> | null
+  const idCheck = validateRoomId(path?.id)
+  if (!idCheck.ok) return idCheck
+  return { ok: true, value: { roomId: idCheck.value } }
+}
+
+// ── 7. POST /api/wiki/ingest/commit （AC-P3-10 落盘闭环） ───────────
+
+export interface PostIngestCommitBody {
+  /** 之前 preview endpoint 返回的 previewId。 */
+  previewId: string
+  /** ACL：caller alias（拿不到 leader 写权限时拒绝）。 */
+  callerAlias: string
+  /** 可选 lease token（持有 lease 写更稳；不持有时由 server 端 acquire 兜底）。 */
+  leaseToken?: string
+}
+
+export interface PostIngestCommitResponse {
+  /** 落盘后的 wiki_events row id（commit 后 client 拿来 invalidate caches）。 */
+  ingestEventId: string
+  /** 最终落盘的 wiki 相对路径（如 `concepts/draft/_auto/2026-05-20-foo.md`）。 */
+  finalPath: string
+  /** Commit 时刻 ISO。 */
+  committedAt: string
+  /** 落盘前 fencing token（用于审计）。 */
+  fencingToken: string
+}
+
+export function validatePostIngestCommit(
+  body: unknown,
+): ValidationResult<PostIngestCommitBody> {
+  const b = body as Record<string, unknown> | null
+  if (!b) {
+    return { ok: false, error: "VALIDATION_FAILED", message: "body required" }
+  }
+  const previewId = takeOptionalString(b.previewId)
+  if (previewId === undefined) {
+    return { ok: false, error: "VALIDATION_FAILED", message: "previewId required" }
+  }
+  const callerAlias = takeOptionalString(b.callerAlias)
+  if (callerAlias === undefined) {
+    return { ok: false, error: "UNAUTHORIZED", message: "callerAlias required" }
+  }
+  const leaseToken = takeOptionalString(b.leaseToken)
+  return { ok: true, value: { previewId, callerAlias, leaseToken } }
+}
+
+// ── 8. GET /api/scheduler/job-traces ────────────────────────────────
+
+export type JobTraceStatusFilter =
+  | "ok"
+  | "failed"
+  | "timeout"
+  | "skipped_reentry"
+  | "skipped_not_leader"
+  | "missed_window"
+  | "recovered_from_crash"
+  | "lease_lost"
+
+export interface ListJobTracesQuery {
+  /** 过滤 jobName（如 "room-compiler-tick"）；不传 = 全部。 */
+  jobName?: string
+  /** 过滤 status；不传 = 全部。 */
+  status?: JobTraceStatusFilter
+  /** 时间区间（ISO）；不传 = 不限。 */
+  since?: string
+  /** 默认 50，max 500。 */
+  limit?: number
+}
+
+export interface JobTraceSummary {
+  jobName: string
+  runId: string
+  status: JobTraceStatusFilter
+  scheduledFor: string
+  startedAt: string | null
+  finishedAt: string | null
+  durationMs: number | null
+  leaderTerm: string | null
+  /** 失败/超时时的 error.message（截断 200 字）；其他状态 null。 */
+  errorMessage: string | null
+}
+
+export interface ListJobTracesResponse {
+  traces: JobTraceSummary[]
+  /** 是否还有更多（client decide 分页 / 拉更多）。 */
+  hasMore: boolean
+}
+
+export function validateListJobTraces(
+  query: unknown,
+): ValidationResult<ListJobTracesQuery> {
+  const q = (query ?? {}) as Record<string, unknown>
+  const result: ListJobTracesQuery = {}
+
+  const jobName = takeOptionalString(q.jobName)
+  if (jobName !== undefined) {
+    if (!/^[a-z0-9-]{1,64}$/i.test(jobName)) {
+      return {
+        ok: false,
+        error: "VALIDATION_FAILED",
+        message: `jobName must be alnum/dash (≤64), got ${jobName}`,
+      }
+    }
+    result.jobName = jobName
+  }
+
+  const status = takeOptionalString(q.status)
+  if (status !== undefined) {
+    const allowed: JobTraceStatusFilter[] = [
+      "ok",
+      "failed",
+      "timeout",
+      "skipped_reentry",
+      "skipped_not_leader",
+      "missed_window",
+      "recovered_from_crash",
+      "lease_lost",
+    ]
+    if (!(allowed as string[]).includes(status)) {
+      return {
+        ok: false,
+        error: "VALIDATION_FAILED",
+        message: `status must be one of ${allowed.join(", ")}, got ${status}`,
+      }
+    }
+    result.status = status as JobTraceStatusFilter
+  }
+
+  const since = takeOptionalString(q.since)
+  if (since !== undefined) {
+    if (Number.isNaN(Date.parse(since))) {
+      return {
+        ok: false,
+        error: "VALIDATION_FAILED",
+        message: `since must be ISO timestamp, got ${since}`,
+      }
+    }
+    result.since = since
+  }
+
+  const limit = takeOptionalInt(q.limit, { min: 1, max: 500, field: "limit" })
+  if (!limit.ok) return limit
+  if (limit.value !== undefined) result.limit = limit.value
+
+  return { ok: true, value: result }
+}
+
+// ── helper：失败 ValidationResult → ErrorResponseBody ────────────────
+
+export function toErrorResponse<T>(
+  fail: Extract<ValidationResult<T>, { ok: false }>,
+): ErrorResponseBody {
+  const body: ErrorResponseBody = { error: fail.error, message: fail.message }
+  if (fail.detail !== undefined) body.detail = fail.detail
+  return body
+}
