@@ -12,6 +12,11 @@ import { perfCollector } from "../lib/perf-collector"
 import { A2AChainRegistry } from "../orchestrator/a2a-chain"
 import { DEFAULT_A2A_CALL_DEADLINE_MS } from "../orchestrator/a2a-gateway"
 import {
+  type AdaptiveRecallCoordinator,
+  createNoopAdaptiveRecallCoordinator,
+  deriveTriggerFromScenario,
+} from "../orchestrator/adaptive-recall-coordinator"
+import {
   type DecisionItemParsed,
   extractDecisionItems,
   extractWithdrawals,
@@ -48,6 +53,7 @@ import type {
 import { detectFBloat } from "../orchestrator/fbloat-detector"
 import { planForcedDispatch } from "../orchestrator/forced-dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
+import { toAssemblePromptHits } from "../wiki/memory-preflight/render-pack"
 
 import {
   buildForwardExtractSnippet,
@@ -68,7 +74,8 @@ import type { SkillRegistry } from "../skills/registry"
 import { applySlashCommandHint } from "../skills/slash-route"
 import type { SopTracker } from "../skills/sop-tracker"
 import type { A2ALifecycleService } from "./a2a-lifecycle"
-import type { WorklistExecutor } from "./worklist-executor"
+import { composeFinalContentOnError } from "./compose-final-content-on-error"
+import { deriveContentBlocks, mergeDerivedWithExistingBlocks } from "./content-blocks-derive"
 import {
   buildCorrectionPrompt,
   decideRetryAction,
@@ -79,12 +86,11 @@ import {
   buildDispatchRetryEventId,
   buildDispatchRetryRealtimeEvent,
 } from "./dispatch-retry-event"
-import { composeFinalContentOnError } from "./compose-final-content-on-error"
-import { deriveContentBlocks, mergeDerivedWithExistingBlocks } from "./content-blocks-derive"
 import type { MemoryService } from "./memory-service"
 import { computeEffectiveSessionId } from "./session-effectiveness"
 import type { SessionService } from "./session-service"
 import type { WorkflowSopService as WorkflowSopServiceType } from "./workflow-sop-service"
+import type { WorklistExecutor } from "./worklist-executor"
 
 type ActiveRun = ReturnType<typeof runTurn>
 type EmitEvent = (event: RealtimeServerEvent) => void
@@ -306,6 +312,11 @@ export class MessageService {
   // F026 P2 v2 · 树形 worklist 续推执行器。setWorklistExecutor() 缺省时所有 mention
   // enqueue 后续推注册全 noop —— 老路径 / 单测不 wire 时无副作用。
   private worklistExecutor: WorklistExecutor | null = null
+  // F027 Phase 3 P20 Day 7-8 a · Adaptive Recall coordinator wiring.
+  // 默认 noop（enabled=false） — 仅 wiring 到位，不真触发 LLM；Phase 4 接 backend
+  // 后 setAdaptiveRecallCoordinator() 注入真 Coordinator 启用。
+  private adaptiveRecallCoordinator: AdaptiveRecallCoordinator =
+    createNoopAdaptiveRecallCoordinator()
   private readonly chainRegistry = new A2AChainRegistry()
   private readonly pendingBoardFlushes = new Map<string, DecisionBoardEntry[]>()
   private readonly streamingFlushers = new Map<
@@ -394,9 +405,7 @@ export class MessageService {
   setWorklistExecutor(svc: WorklistExecutor) {
     this.worklistExecutor = svc
     svc.setOnDoneContinuation((args) => {
-      const ctx = args.continuationContext as
-        | { emit: EmitEvent; rootMessageId: string }
-        | undefined
+      const ctx = args.continuationContext as { emit: EmitEvent; rootMessageId: string } | undefined
       if (!ctx) return
       this.dispatchWorklistContinuation({
         parentCallId: args.parentCallId,
@@ -405,6 +414,16 @@ export class MessageService {
         rootMessageId: ctx.rootMessageId,
       })
     })
+  }
+
+  /**
+   * F027 Phase 3 P20 Day 7-8 a · 注入真 Adaptive Recall Coordinator（替换 noop 默认）。
+   *
+   * Day 7-8 a 范围 = wiring only：boot 时 server.ts 注入 enabled=false 的实例。
+   * Phase 4 接 critique LLM + level2-4 backend + Level5Sink 真实后切 enabled=true。
+   */
+  setAdaptiveRecallCoordinator(coordinator: AdaptiveRecallCoordinator) {
+    this.adaptiveRecallCoordinator = coordinator
   }
 
   /**
@@ -2294,9 +2313,7 @@ export class MessageService {
               // (deleted) buildSkillHintLine string.
               const guardianCandidateNames = !this.skillRegistry
                 ? []
-                : this.skillRegistry
-                    .match(entry.taskSnippet, a2aProvider)
-                    .map((m) => m.skill.name)
+                : this.skillRegistry.match(entry.taskSnippet, a2aProvider).map((m) => m.skill.name)
               const isGuardianMode =
                 guardianCandidateNames.includes("acceptance-guardian") ||
                 guardianCandidateNames.includes("vision-guardian")
@@ -2331,6 +2348,26 @@ export class MessageService {
                     previousDigestEmpty: a2aPreviousDigest == null,
                     roomSnapshot: entry.contextSnapshot,
                   })
+              // F027 Phase 3 P20 Day 7-8 a · Adaptive Recall coordinator 调用点。
+              //   - guardian 模式跳过（guardian = 零上下文，注入 recall 反而违反契约）
+              //   - scenario='a2a_handoff'（A2A 派发路径）— Coordinator 内 scenario 白名单决策
+              //   - 默认 noop coordinator (enabled=false) 直接 passthrough，行为不变
+              //   - Phase 4 接 backend 后 hits 非空时填入 assemblePrompt.memoryPreflight
+              const a2aScenario = "a2a_handoff" as const
+              const recallResult = isGuardianMode
+                ? null
+                : await this.adaptiveRecallCoordinator.executeIfNeeded({
+                    roomId: sessionGroupId, // Phase 1 P5 roomId 仅 metadata；Phase 4 接 F022 真 roomId
+                    alias: entry.to.agentId,
+                    scenario: a2aScenario,
+                    trigger: deriveTriggerFromScenario(a2aScenario),
+                    query: entry.taskSnippet,
+                  })
+              const memoryPreflightForAssemble =
+                recallResult && recallResult.hits.length > 0
+                  ? { hits: recallResult.hits.map(toAssemblePromptHits) }
+                  : null
+
               const assembled = await assemblePrompt(
                 {
                   provider: entry.to.provider as import("@multi-agent/shared").Provider,
@@ -2352,6 +2389,9 @@ export class MessageService {
                   previousDigest: a2aPreviousDigest,
                   recallTools: isGuardianMode ? undefined : [],
                   coldTargetBurst: a2aColdBurst,
+                  // F027 Phase 3 P20 Day 7-8 a · scenario + memoryPreflight 注入
+                  scenario: isGuardianMode ? undefined : a2aScenario,
+                  memoryPreflight: memoryPreflightForAssemble,
                 },
                 this.memoryService,
               )
@@ -2593,7 +2633,6 @@ export class MessageService {
     return null
   }
 
-
   /**
    * Present a multi-choice decision card to the user.
    * Returns the selected option IDs.
@@ -2619,7 +2658,6 @@ export class MessageService {
       .filter((d) => d.verdict === "approved" || d.verdict === "modified")
       .map((d) => d.optionId)
   }
-
 
   private advanceSopIfNeeded(input: {
     sessionGroupId: string

@@ -231,6 +231,16 @@ export async function createApiServer(options: {
   messages.setSopTracker(sopTracker)
   messages.setWorkflowSopService(workflowSopService)
   messages.setDecisionManager(decisions)
+  // F027 Phase 3 P20 Day 7-8 a · AdaptiveRecallCoordinator boot wiring。
+  // Day 7-8 a 注入 noop（enabled=false）— wiring 到位，不真触发 LLM。
+  // Phase 4 接 critique LLM + level2-4 backend + Level5Sink 生产实现后，
+  // 替换为 new AdaptiveRecallCoordinator({enabled: true, executorDeps, ...})。
+  {
+    const { createNoopAdaptiveRecallCoordinator } = await import(
+      "./orchestrator/adaptive-recall-coordinator"
+    )
+    messages.setAdaptiveRecallCoordinator(createNoopAdaptiveRecallCoordinator())
+  }
 
   // F002: Decision Board + settle → flush → single dispatch pipeline.
   // The board holds [拍板] items across raisers (dedupe by normalized
