@@ -2376,10 +2376,17 @@ export class MessageService {
               //   - 默认 noop coordinator (enabled=false) 直接 passthrough，行为不变
               //   - Phase 4 接 backend 后 hits 非空时填入 assemblePrompt.memoryPreflight
               const a2aScenario = "a2a_handoff" as const
+              // Week 2 r2 (范-r1 P1): 解析 sessionGroupId → canonical roomId (R-###);
+              // prompt-inspector 按 R-### 查 prompt_audit，sessionGroupId UUID 写进去读不到。
+              // 无 R-### 绑定 (旧数据 / 测试 fixture) → null，audit row 的 room_id 写 null。
+              const a2aCanonicalRoomId = this.sessions.getRoomId(sessionGroupId)
               const recallResult = isGuardianMode
                 ? null
                 : await this.adaptiveRecallCoordinator.executeIfNeeded({
-                    roomId: sessionGroupId, // Phase 1 P5 roomId 仅 metadata；Phase 4 接 F022 真 roomId
+                    // Coordinator/executor 内部用 roomId 作 Level3 query_messages room filter；
+                    // 没有 canonical R-### 时用 sessionGroupId 兜底（仍能隔离 session），
+                    // 但 audit 写入用真 canonical（见下文 promptAuditWriter.write）。
+                    roomId: a2aCanonicalRoomId ?? sessionGroupId,
                     alias: entry.to.agentId,
                     scenario: a2aScenario,
                     trigger: deriveTriggerFromScenario(a2aScenario),
@@ -2429,7 +2436,9 @@ export class MessageService {
                 this.promptAuditWriter.write({
                   createdAt: new Date().toISOString(),
                   alias: entry.to.agentId,
-                  roomId: sessionGroupId,
+                  // Week 2 r2 (范-r1 P1): canonical R-### roomId（不绑定时 null —
+                  // prompt-inspector 按 R-### 查时该行不会被命中是正确行为）
+                  roomId: a2aCanonicalRoomId,
                   scenario: isGuardianMode ? "a2a_handoff_guardian" : a2aScenario,
                   totalTokens: Math.ceil(assembled.content.length / 4),
                   cap: 0,

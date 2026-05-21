@@ -81,23 +81,26 @@ export class IngestCommitService {
   }
 
   commit(body: PostIngestCommitBody): CommitResult {
-    // 1. 取 preview entry（一次性消费）
-    const taken = this.store.take(body.previewId)
-    if (taken.entry === null) {
+    // 1. 读 preview entry **不消费**（Week 2 r2 范-r1 P3）。
+    //    瞬时失败（CAS conflict / lease_held / internal）后用户可重试同 previewId
+    //    而不必重 preview/sanitize；仅在 ok 路径 + 终态错误（denied_acl / path_invalid
+    //    / schema_invalid / not_implemented）时 consume。
+    const peeked = this.store.peek(body.previewId)
+    if (peeked.entry === null) {
       return {
         ok: false,
         httpStatus: HTTP_STATUS_BY_ERROR[ErrorCode.DRAFT_NOT_FOUND],
         error: {
           code: ErrorCode.DRAFT_NOT_FOUND,
           message:
-            taken.reason === "expired"
+            peeked.reason === "expired"
               ? `previewId ${body.previewId} expired`
               : `previewId ${body.previewId} not found (already consumed or never existed)`,
-          detail: { reason: taken.reason, previewId: body.previewId },
+          detail: { reason: peeked.reason, previewId: body.previewId },
         },
       }
     }
-    const entry = taken.entry
+    const entry = peeked.entry
 
     // 2. 派生 finalPath（落 wiki/concepts/draft/_auto/<filename>）
     const finalPath = derivePath(entry.sourcePath)
@@ -125,18 +128,45 @@ export class IngestCommitService {
     }
 
     // 4. 调 updateWiki 走完整 ACL / CAS / PREPARE / final-CAS / atomic-write / COMMIT
-    const response = this.updateWiki.updateWiki(
-      {
-        path: finalPath,
-        action: "write",
-        baseHash: null, // 新文件（撞名 → status=conflict）
-        content: entry.sanitizedContent,
-        fencingToken: lease.fencingToken,
-        reason: `ingest_commit previewId=${body.previewId} mime=${entry.mimeType}${entry.targetType ? ` targetType=${entry.targetType}` : ""}`,
-        sourceMessageIds: undefined,
-      },
-      { alias: body.callerAlias, isServiceIdentity: false },
-    )
+    //
+    // Week 2 r2 (范-r1 P2): commit endpoint 既然负责 acquireLease，就必须负责释放。
+    // UpdateWikiService 仅在 ok 路径 releaseLease；conflict / denied_acl / internal 等
+    // 失败路径不释放 → lease 被本 endpoint 持有到 TTL，撞名 conflict 后用户立刻重试
+    // 同 path 会被 lease_held 干扰。try/finally 兜底释放（ok 路径 double-release 是
+    // safe noop，因为 releaseLease 用 fencing_token CAS）。
+    let response: UpdateWikiResponse
+    try {
+      response = this.updateWiki.updateWiki(
+        {
+          path: finalPath,
+          action: "write",
+          baseHash: null, // 新文件（撞名 → status=conflict）
+          content: entry.sanitizedContent,
+          fencingToken: lease.fencingToken,
+          reason: `ingest_commit previewId=${body.previewId} mime=${entry.mimeType}${entry.targetType ? ` targetType=${entry.targetType}` : ""}`,
+          sourceMessageIds: undefined,
+        },
+        { alias: body.callerAlias, isServiceIdentity: false },
+      )
+    } finally {
+      // 任意失败路径 + 上面 try 块抛错都兜底释放（fencing_token CAS 保证只能释放我们拿的 lease）
+      this.leases.releaseLease({ path: finalPath, fencingToken: lease.fencingToken })
+    }
+
+    // Week 2 r2 (范-r1 P3): peek → updateWiki → consume 决策
+    //   - ok / 不可恢复终态 (denied_acl / path_invalid / schema_invalid / not_implemented)
+    //     → consume preview (重试无意义)
+    //   - 可恢复瞬时态 (conflict / lease_expired / stale_token / internal)
+    //     → 保留 preview，用户可改名/重试同 previewId 直到 TTL 过期
+    const shouldConsume =
+      response.status === "ok" ||
+      response.status === "denied_acl" ||
+      response.status === "path_invalid" ||
+      response.status === "schema_invalid" ||
+      response.status === "not_implemented"
+    if (shouldConsume) {
+      this.store.consume(body.previewId)
+    }
 
     return this.mapUpdateWikiResponse(response, finalPath, lease.fencingToken)
   }

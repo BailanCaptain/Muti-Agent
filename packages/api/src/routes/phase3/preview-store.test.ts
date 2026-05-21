@@ -82,3 +82,41 @@ test("Day 9-10 · PreviewStore · 边界：expiresAt == now → expired (≤ 比
   const r = store.take("pv-edge")
   assert.equal(r.reason, "expired", "expiresAt <= now 视为过期")
 })
+
+// ─── Week 2 r2 (范-r1 P3): peek / consume 拆分 ──────────────────────
+
+test("r2 P3 · PreviewStore · peek 不删除 entry，可重复读", () => {
+  const store = new PreviewStore()
+  store.put(makeEntry("pv-peek", "2030-01-01T00:00:00.000Z"))
+  const r1 = store.peek("pv-peek")
+  assert.equal(r1.reason, "ok")
+  assert.equal(store.size(), 1, "peek 不消费")
+  const r2 = store.peek("pv-peek")
+  assert.equal(r2.reason, "ok", "重复 peek 仍 ok")
+  assert.equal(store.size(), 1)
+})
+
+test("r2 P3 · PreviewStore · consume 真删除返回 true / 重复 consume idempotent 返 false", () => {
+  const store = new PreviewStore()
+  store.put(makeEntry("pv-c", "2030-01-01T00:00:00.000Z"))
+  assert.equal(store.consume("pv-c"), true)
+  assert.equal(store.size(), 0)
+  assert.equal(store.consume("pv-c"), false, "已被 consume 再 consume idempotent 返 false")
+})
+
+test("r2 P3 · PreviewStore · peek 过期顺手剔除 entry（防内存泄漏）", () => {
+  const fixed = new Date("2026-05-21T10:00:00.000Z")
+  const store = new PreviewStore({ clock: () => fixed })
+  store.put(makeEntry("pv-expired", "2026-05-21T09:00:00.000Z"))
+  const r = store.peek("pv-expired")
+  assert.equal(r.reason, "expired")
+  assert.equal(store.size(), 0, "过期 entry peek 时顺手剔除")
+})
+
+test("r2 P3 · PreviewStore · take 仍 backward compatible (peek + consume)", () => {
+  const store = new PreviewStore()
+  store.put(makeEntry("pv-t", "2030-01-01T00:00:00.000Z"))
+  const r = store.take("pv-t")
+  assert.equal(r.reason, "ok")
+  assert.equal(store.size(), 0, "take 仍消费（DEPRECATED 但保留语义）")
+})

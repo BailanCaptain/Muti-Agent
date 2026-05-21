@@ -57,26 +57,49 @@ export class PreviewStore {
   }
 
   /**
-   * 取出 preview entry，**同时从 store 删除**（一次性消费）。
+   * 读 preview entry **不删除**（Week 2 r2 范-r1 P3 引入）。
    *
-   * 返回 null 表示：
-   *   - previewId 不存在（commit endpoint → DRAFT_NOT_FOUND 404）
-   *   - 已过期（commit endpoint → DRAFT_NOT_FOUND 404 + detail.reason='preview_expired'）
+   * 用于 commit endpoint: peek → updateWiki(可能失败) → ok 才 consume(remove)。
+   * 瞬时失败（CAS conflict / lease_held / internal）后用户可重试同 previewId
+   * 而不必重 preview/sanitize。
    *
-   * 不区分两种 not-found 的设计原因：DRAFT_NOT_FOUND 已含 "preview/draft not found" 语义，
-   * caller 不需要区分；过期 entry 顺手剔除（防止内存泄漏）。
+   * 过期 entry 顺手剔除（与 take 一致语义，防内存泄漏）。
    */
-  take(
+  peek(
     previewId: string,
   ): { entry: PreviewStoreEntry; reason: "ok" } | { entry: null; reason: "not_found" | "expired" } {
     const e = this.entries.get(previewId)
     if (!e) return { entry: null, reason: "not_found" }
-    this.entries.delete(previewId)
     const now = this.clock().getTime()
     if (new Date(e.expiresAt).getTime() <= now) {
+      this.entries.delete(previewId) // 过期顺手剔除
       return { entry: null, reason: "expired" }
     }
     return { entry: e, reason: "ok" }
+  }
+
+  /**
+   * 显式删除 entry（Week 2 r2 范-r1 P3 引入）。
+   *
+   * 用于 commit endpoint 在 updateWiki 成功后 / 不可恢复终态时（denied_acl / path_invalid）
+   * 主动消费 preview。返回 true = 真删；false = entry 不存在（重复 consume 是 idempotent）。
+   */
+  consume(previewId: string): boolean {
+    return this.entries.delete(previewId)
+  }
+
+  /**
+   * **DEPRECATED** since Week 2 r2 — 用 peek + consume 取代。
+   *
+   * 保留是为了 Day 9-10 老测试 + caller 仍按"一次性消费"语义的兼容；
+   * 新代码应该 peek 后 commit 成功才 consume，瞬时失败保留 preview 让用户重试。
+   */
+  take(
+    previewId: string,
+  ): { entry: PreviewStoreEntry; reason: "ok" } | { entry: null; reason: "not_found" | "expired" } {
+    const r = this.peek(previewId)
+    if (r.reason === "ok") this.consume(previewId)
+    return r
   }
 
   /**

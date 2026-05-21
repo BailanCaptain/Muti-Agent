@@ -69,6 +69,21 @@ export class SessionService {
     })
   }
 
+  /**
+   * F027 Phase 3 P20 Week 2 r2 (范-r1 P1) — 解析 sessionGroupId → canonical roomId。
+   *
+   * 用途：A2A 拼装路径（message-service.ts）需要给 AdaptiveRecallCoordinator /
+   * PromptAuditWriter 传 R-### 形式的 canonical roomId（而非 sessionGroup UUID），
+   * 让 prompt-inspector endpoint 按 R-### 查 prompt_audit row 能命中。
+   *
+   * 返回 null：sessionGroup 不存在 / roomId 字段未填（旧数据 / 测试 fixture）。
+   * caller 应把 null 解释为"无 canonical room"，prompt_audit.room_id 写 null。
+   */
+  getRoomId(sessionGroupId: string): string | null {
+    const row = this.repository.getSessionGroupById(sessionGroupId)
+    return row?.roomId ?? null
+  }
+
   listSessionGroups(): SessionGroupSummary[] {
     return this.repository.listSessionGroups().map((group) => ({
       id: group.id,

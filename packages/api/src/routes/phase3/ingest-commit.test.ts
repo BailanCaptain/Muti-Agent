@@ -270,7 +270,7 @@ test("Day 9-10 · IngestCommit · sanitizedContent 空（preview blocked）也�
   }
 })
 
-test("Day 9-10 · IngestCommit · 同 previewId 重复 commit 第二次 → DRAFT_NOT_FOUND (一次性消费)", async () => {
+test("Day 9-10 · IngestCommit · 同 previewId ok 路径后再 commit → DRAFT_NOT_FOUND（ok 时 consume）", async () => {
   const { preview, commit, close, tmp } = makeStack()
   try {
     const p = preview.preview({
@@ -284,6 +284,88 @@ test("Day 9-10 · IngestCommit · 同 previewId 重复 commit 第二次 → DRAF
     assert.equal(r2.ok, false)
     if (r2.ok) throw new Error("unreachable")
     assert.equal(r2.error.code, "DRAFT_NOT_FOUND")
+  } finally {
+    close()
+    safeCleanup(tmp)
+  }
+})
+
+// ─── Week 2 r2 修复验证 ──────────────────────────────────────────
+
+test("r2 P2 · IngestCommit · CAS conflict 后 lease 被释放，store 保留 preview（P3）", async () => {
+  const { wikiRoot, store, preview, commit, wikiServices, close, tmp } = makeStack()
+  try {
+    // 第 1 次成功
+    const p1 = preview.preview({
+      sourcePath: "concepts/r2.md",
+      content: "first",
+      mimeType: "text/markdown",
+    })
+    const r1 = commit.commit({ previewId: p1.previewId, callerAlias: "黄仁勋" })
+    assert.equal(r1.ok, true)
+    if (!r1.ok) throw new Error("unreachable")
+    assert.equal(fs.existsSync(path.join(wikiRoot, r1.response.finalPath)), true)
+
+    // 第 2 次撞名 → CAS conflict
+    const p2 = preview.preview({
+      sourcePath: "concepts/r2.md",
+      content: "second",
+      mimeType: "text/markdown",
+    })
+    const beforeSize = store.size()
+    assert.equal(beforeSize, 1, "preview 落 store")
+    const r2 = commit.commit({ previewId: p2.previewId, callerAlias: "黄仁勋" })
+    assert.equal(r2.ok, false)
+    if (r2.ok) throw new Error("unreachable")
+    assert.equal(r2.error.code, "LEASE_FENCING_FAILED")
+    assert.equal(r2.error.detail?.reason, "conflict")
+
+    // r2 P2 验证：conflict 后 lease 应已释放（不在 leases 表中）
+    const rawDb = wikiServices.events
+    void rawDb // 不需要直接查；leases repo 暴露 wikiServices.leases
+    const heldNow = wikiServices.leases.acquireLease({
+      path: r1.response.finalPath,
+      ownerAlias: "another-writer",
+      ttlSeconds: 5,
+      leaderTerm: "0",
+    })
+    assert.ok(
+      heldNow,
+      "r2 P2: CAS conflict 后 commit endpoint 释放了 lease（另一个 writer 能立即拿到）",
+    )
+
+    // r2 P3 验证：conflict 是可恢复瞬时态，preview 留在 store
+    assert.equal(store.size(), 1, "r2 P3: 可恢复瞬时态保留 preview 让用户重试")
+  } finally {
+    close()
+    safeCleanup(tmp)
+  }
+})
+
+test("r2 P2 · IngestCommit · ok 路径 lease 释放 + r2 P3 ok 路径 consume preview", async () => {
+  const { wikiRoot, store, preview, commit, wikiServices, close, tmp } = makeStack()
+  try {
+    const p = preview.preview({
+      sourcePath: "concepts/ok-r2.md",
+      content: "ok content",
+      mimeType: "text/markdown",
+    })
+    assert.equal(store.size(), 1)
+    const r = commit.commit({ previewId: p.previewId, callerAlias: "黄仁勋" })
+    assert.equal(r.ok, true)
+    if (!r.ok) throw new Error("unreachable")
+    // P2: ok 路径 update-wiki 已 release lease + finally double-release (idempotent)
+    // 另一 owner 能立即 acquire（虽然 path 已有 committed 文件，但 lease 不阻塞 — CAS 才阻塞）
+    const newLease = wikiServices.leases.acquireLease({
+      path: r.response.finalPath,
+      ownerAlias: "other",
+      ttlSeconds: 5,
+      leaderTerm: "0",
+    })
+    assert.ok(newLease, "ok 路径后 lease 也已释放")
+    // P3: ok 路径 consume preview
+    assert.equal(store.size(), 0, "ok 路径消费 preview")
+    void wikiRoot
   } finally {
     close()
     safeCleanup(tmp)
