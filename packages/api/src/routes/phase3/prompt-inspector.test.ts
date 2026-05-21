@@ -48,10 +48,7 @@ interface InsertAuditOpts {
   ironLawsCount?: number
 }
 
-function insertAudit(
-  db: ReturnType<typeof createDrizzleDb>["db"],
-  opts: InsertAuditOpts,
-): number {
+function insertAudit(db: ReturnType<typeof createDrizzleDb>["db"], opts: InsertAuditOpts): number {
   const client = (
     db as unknown as {
       $client: {
@@ -155,9 +152,7 @@ test("Day 4 · PromptInspector · parts_json 替代字段名兼容（kind/byteLe
   const dbPath = path.join(tmp, "test.sqlite")
   const { db, close } = createDrizzleDb(dbPath)
   try {
-    const parts = [
-      { kind: "ALT", byteLength: 800, tokenCount: 200, from: "alt-source.md" },
-    ]
+    const parts = [{ kind: "ALT", byteLength: 800, tokenCount: 200, from: "alt-source.md" }]
     insertAudit(db, { roomId: "R-201", partsJson: JSON.stringify(parts) })
 
     const svc = new PromptInspectorService({ db })
@@ -197,9 +192,15 @@ test("Day 4 · PromptInspector · recall_queries + results index 对齐 + gate �
   try {
     const queries = ["high-score query", "mid query", "low query"]
     const results = [
-      [{ id: 1, score: 0.9 }, { id: 2, score: 0.85 }],
+      [
+        { id: 1, score: 0.9 },
+        { id: 2, score: 0.85 },
+      ],
       [{ id: 3, score: 0.7 }],
-      [{ id: 4, score: 0.4 }, { id: 5, score: 0.3 }],
+      [
+        { id: 4, score: 0.4 },
+        { id: 5, score: 0.3 },
+      ],
     ]
     insertAudit(db, {
       roomId: "R-201",

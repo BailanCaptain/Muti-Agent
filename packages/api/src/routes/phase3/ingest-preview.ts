@@ -29,11 +29,7 @@
 import { randomUUID } from "node:crypto"
 import type { FastifyInstance } from "fastify"
 import { sanitizeRawDrop } from "../../wiki/sanitize/sanitize-raw-drop"
-import type {
-  QuarantinedSegment,
-  RedLineTrigger,
-  SanitizeResult,
-} from "../../wiki/sanitize/types"
+import type { QuarantinedSegment, RedLineTrigger, SanitizeResult } from "../../wiki/sanitize/types"
 import {
   type DraftType,
   ErrorCode,

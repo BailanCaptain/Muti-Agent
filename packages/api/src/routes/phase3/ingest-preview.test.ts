@@ -52,9 +52,7 @@ test("Day 5 · ingest preview · jailbreak template → blocked + subkind=jailbr
   assert.equal(r.llmCompiledPreview, "")
   assert.ok(r.warnings.length > 0)
   assert.ok(
-    r.warnings.some(
-      (w) => w.kind === "sensitive_token" && w.subkind === "jailbreak_template",
-    ),
+    r.warnings.some((w) => w.kind === "sensitive_token" && w.subkind === "jailbreak_template"),
     "should have jailbreak_template subkind warning (P2-3 透传)",
   )
 })
@@ -187,8 +185,7 @@ test("Day 5 · ingest preview · base64 高熵段 → encoding warning（非 blo
   const svc = build()
   // 构造一段长度 > base64MinLength 的 base64（>40 chars）+ 干净文本
   const base64 = "aGVsbG8gd29ybGQgaGVsbG8gd29ybGQgaGVsbG8gd29ybGQgaGVsbG8gd29ybGQ="
-  const longClean =
-    "This is a fairly long clean text segment for ratio safety. ".repeat(5)
+  const longClean = "This is a fairly long clean text segment for ratio safety. ".repeat(5)
   const r = svc.preview({
     sourcePath: "mix.md",
     content: `${longClean}\n\nattached: ${base64}\n\n${longClean}`,

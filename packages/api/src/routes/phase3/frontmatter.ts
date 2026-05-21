@@ -47,10 +47,7 @@ export function parseFrontmatter<T = Record<string, unknown>>(
   try {
     parsed = yaml.parse(yamlBlock)
   } catch (err) {
-    throw new FrontmatterParseError(
-      `YAML parse failed: ${(err as Error).message}`,
-      err as Error,
-    )
+    throw new FrontmatterParseError(`YAML parse failed: ${(err as Error).message}`, err as Error)
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return { frontmatter: null, body }

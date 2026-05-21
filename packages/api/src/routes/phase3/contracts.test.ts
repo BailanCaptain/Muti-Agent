@@ -272,13 +272,14 @@ test("Day 2 · POST preview · body 为 null → VALIDATION_FAILED", () => {
 
 // ── 5. POST /api/rooms/:id/decisions （AC-P3-8） ────────────────────
 
-test("Day 2 · POST decision · 合法 commit + 1 evidence", () => {
+test("Day 2 · POST decision · 合法 commit + 1 evidence + callerAlias（Day 6 锁）", () => {
   const r = validatePostDecision(
     { id: "R-201" },
     {
       kind: "commit",
       content: "F027 Phase 3 plan v3 frozen",
       evidence: [{ kind: "message", ref: "msg-001" }],
+      callerAlias: "小孙",
     },
   )
   assert.equal(r.ok, true)
@@ -286,22 +287,24 @@ test("Day 2 · POST decision · 合法 commit + 1 evidence", () => {
     assert.equal(r.value.roomId, "R-201")
     assert.equal(r.value.body.kind, "commit")
     assert.equal(r.value.body.evidence.length, 1)
+    assert.equal(r.value.body.callerAlias, "小孙")
   }
 })
 
-test("Day 2 · POST decision · 合法 revoke 走 supersedesDecisionId", () => {
+test("Day 2 · POST decision · 合法 tombstone + 数字 supersedesDecisionId（Day 6 锁 ROWID）", () => {
   const r = validatePostDecision(
     { id: "R-201" },
     {
       kind: "tombstone",
       content: "撤回 2026-05-19 决策",
-      evidence: [{ kind: "decision", ref: "dec-042" }],
-      supersedesDecisionId: "dec-042",
+      evidence: [{ kind: "decision", ref: "42" }],
+      supersedesDecisionId: "42",
+      callerAlias: "小孙",
     },
   )
   assert.equal(r.ok, true)
   if (r.ok) {
-    assert.equal(r.value.body.supersedesDecisionId, "dec-042")
+    assert.equal(r.value.body.supersedesDecisionId, "42")
   }
 })
 
@@ -322,10 +325,7 @@ test("Day 2 · POST decision · kind 越界 → DECISION_INVALID", () => {
 })
 
 test("Day 2 · POST decision · evidence 数组空 → DECISION_INVALID", () => {
-  const r = validatePostDecision(
-    { id: "R-201" },
-    { kind: "commit", content: "ok", evidence: [] },
-  )
+  const r = validatePostDecision({ id: "R-201" }, { kind: "commit", content: "ok", evidence: [] })
   assert.equal(r.ok, false)
   if (!r.ok) assert.equal(r.error, ErrorCode.DECISION_INVALID)
 })

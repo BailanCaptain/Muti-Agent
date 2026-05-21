@@ -31,11 +31,7 @@ function safeCleanup(dir: string): void {
   }
 }
 
-async function writeViewfinder(
-  wikiRoot: string,
-  roomId: string,
-  content: string,
-): Promise<void> {
+async function writeViewfinder(wikiRoot: string, roomId: string, content: string): Promise<void> {
   const abs = path.join(wikiRoot, "wiki", "rooms", roomId, "viewfinder.md")
   await fsp.mkdir(path.dirname(abs), { recursive: true })
   await fsp.writeFile(abs, content, "utf-8")
@@ -209,7 +205,11 @@ test("Day 3 · ViewfinderService · ledger 不计 tombstone=1 active 行（范-r
 
     const svc = new ViewfinderService({ db, wikiRoot: tmp })
     const r = await svc.getViewfinder("R-201")
-    assert.equal(r.ledger.activeCount, 2, "tombstone=1 active rows must NOT count toward activeCount")
+    assert.equal(
+      r.ledger.activeCount,
+      2,
+      "tombstone=1 active rows must NOT count toward activeCount",
+    )
     // latestDecisionId 仍是 ROWID（含 tombstone 行）— 它表"最新写入"，不是"最新 active"
     assert.ok(r.ledger.latestDecisionId)
   } finally {

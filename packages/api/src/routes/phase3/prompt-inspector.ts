@@ -82,10 +82,7 @@ export class PromptInspectorService {
     this.recallBudgetMax = deps.recallBudgetMax ?? DEFAULT_RECALL_BUDGET_MAX
   }
 
-  getInspector(
-    roomId: string,
-    _threadId: string | undefined,
-  ): GetPromptInspectorResponse {
+  getInspector(roomId: string, _threadId: string | undefined): GetPromptInspectorResponse {
     // _threadId 当前不参与 prompt_audit 过滤（assembler 写入只标 roomId + alias）；
     // Phase 4 P22 接 thread 维度 inspector 时再扩。
     const client = getSqliteClient(this.db)

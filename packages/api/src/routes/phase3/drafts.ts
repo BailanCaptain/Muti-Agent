@@ -63,9 +63,9 @@ export interface DraftScannerDeps {
   /** 可选 fs reader override（测试用）。 */
   fsAdapter?: {
     /** 必须返回 dirent.isDirectory() / isSymbolicLink() 这两个判定（范-r1 P1-4）。 */
-    readdir: (p: string) => Promise<
-      { name: string; isDirectory: () => boolean; isSymbolicLink: () => boolean }[]
-    >
+    readdir: (
+      p: string,
+    ) => Promise<{ name: string; isDirectory: () => boolean; isSymbolicLink: () => boolean }[]>
     readFile: (p: string) => Promise<string>
     stat: (p: string) => Promise<{ mtime: Date }>
   }
@@ -254,10 +254,7 @@ function inferTitle(fm: DraftFrontmatter | null, relPath: string): string {
   return filename.replace(/\.md$/, "")
 }
 
-export function registerDraftsRoute(
-  app: FastifyInstance,
-  scanner: DraftScanner,
-): void {
+export function registerDraftsRoute(app: FastifyInstance, scanner: DraftScanner): void {
   app.get("/api/wiki/drafts", async (request, reply) => {
     const validation = validateListDrafts(request.query)
     if (!validation.ok) {

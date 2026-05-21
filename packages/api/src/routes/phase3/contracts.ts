@@ -196,9 +196,7 @@ export interface GetViewfinderResponse {
   }
 }
 
-export function validateGetViewfinder(
-  pathParams: unknown,
-): ValidationResult<GetViewfinderPath> {
+export function validateGetViewfinder(pathParams: unknown): ValidationResult<GetViewfinderPath> {
   const obj = pathParams as Record<string, unknown> | null
   const idCheck = validateRoomId(obj?.id)
   if (!idCheck.ok) return idCheck
@@ -207,13 +205,7 @@ export function validateGetViewfinder(
 
 // ── 2. GET /api/wiki/drafts ──────────────────────────────────────────
 
-export type DraftType =
-  | "feature"
-  | "bug"
-  | "lesson"
-  | "concept"
-  | "wiki-memory"
-  | "session-archive"
+export type DraftType = "feature" | "bug" | "lesson" | "concept" | "wiki-memory" | "session-archive"
 
 export interface ListDraftsQuery {
   /** 过滤 draft 类型；不传 = 全部。 */
@@ -399,11 +391,7 @@ export function validateGetPromptInspector(
 // ── 4. POST /api/wiki/ingest/preview ────────────────────────────────
 
 /** 支持的 ingest mime 类型（V16.5.3 ingest pipeline 锁定）。 */
-export const SUPPORTED_INGEST_MIME = [
-  "text/markdown",
-  "text/plain",
-  "application/json",
-] as const
+export const SUPPORTED_INGEST_MIME = ["text/markdown", "text/plain", "application/json"] as const
 
 export type IngestMime = (typeof SUPPORTED_INGEST_MIME)[number]
 
@@ -481,6 +469,16 @@ export function validatePreviewIngest(body: unknown): ValidationResult<PreviewIn
 
 // ── 5. POST /api/rooms/:id/decisions （AC-P3-8 manual confirm） ──────
 
+/**
+ * Decision kind 语义（Day 6 Phase 1 P12 ledger 对接）:
+ *   - `commit`  → ledger.append({decisionType:'commit'})；可选 supersedesDecisionId → ledger.revoke
+ *   - `reject`  → ledger.append({decisionType:'reject'})；可选 supersedesDecisionId → ledger.revoke
+ *   - `tombstone` → ledger.markTombstone(supersedesDecisionId, fencingToken)；
+ *                   **不写新行**，UPDATE 旧行 tombstone=1（永久投影）；supersedesDecisionId 必填
+ *
+ * 注：P12 schema 里 decision_type 取值是 spec|pivot|commit|reject（无 tombstone）；
+ * tombstone 是 row 上独立的 0/1 字段。本契约 kind=tombstone 映射到 markTombstone 动作。
+ */
 export type DecisionKind = "commit" | "reject" | "tombstone"
 
 export interface PostDecisionPath {
@@ -488,7 +486,7 @@ export interface PostDecisionPath {
 }
 export interface PostDecisionBody {
   kind: DecisionKind
-  /** decision 文本（人话描述）。 */
+  /** decision 文本（人话描述）。kind=tombstone 时 content 是 mark 原因（仅审计用）。 */
   content: string
   /** Evidence chain — msg_id / decision_id 链 ref；至少 1 条。 */
   evidence: Array<{
@@ -496,20 +494,38 @@ export interface PostDecisionBody {
     /** msg_id 或 decision_id。 */
     ref: string
   }>
-  /** 可选 revoke 旧 decision（写新行 + UPDATE 旧行 superseded_by；Phase 1 P12 语义）。 */
+  /**
+   * 撤销/tombstone 的目标 decision_id。
+   *   - kind=commit/reject + 给 → ledger.revoke（写新行 + 标旧行 superseded）
+   *   - kind=commit/reject + 不给 → ledger.append（新决策）
+   *   - kind=tombstone + 必填 → ledger.markTombstone（UPDATE 旧行 tombstone=1）
+   *   - kind=tombstone + 不给 → DECISION_INVALID
+   */
   supersedesDecisionId?: string
+  /**
+   * 操作者 alias（manual confirm 真人/agent 谁拍的）。审计必填。
+   * Day 6：服务侧无 auth middleware，前端在 body 显式带，与 §7 ingest commit 一致。
+   */
+  callerAlias: string
 }
 export interface PostDecisionRequest extends PostDecisionPath {
   body: PostDecisionBody
 }
 
 export interface PostDecisionResponse {
-  /** 新 decision row 的 id。 */
+  /**
+   * 操作结果对应的 decision_id（stringified ROWID）：
+   *   - append → 新行 id
+   *   - revoke → 新 reject 行 id（旧行 id 在 supersedesDecisionId 字段）
+   *   - tombstone → 被 mark 的旧行 id（无新行）
+   */
   decisionId: string
   /** 新 ledger cursor（client 拿来 invalidate viewfinder cache）。 */
   ledgerCursor: number
   /** 写盘时刻 ISO。 */
   appendedAt: string
+  /** 本次执行的动作（前端 UI 区分 toast 文案）。 */
+  action: "append" | "revoke" | "tombstone"
 }
 
 export function validatePostDecision(
@@ -576,6 +592,32 @@ export function validatePostDecision(
     evidence.push({ kind: ek as "message" | "decision", ref })
   }
   const supersedes = takeOptionalString(b.supersedesDecisionId)
+  const callerAlias = takeOptionalString(b.callerAlias)
+  if (callerAlias === undefined) {
+    return {
+      ok: false,
+      error: "DECISION_INVALID",
+      message: "callerAlias required (manual confirm 必须知道谁拍的)",
+      detail: { reason: "caller_required" },
+    }
+  }
+  if (kindRaw === "tombstone" && supersedes === undefined) {
+    return {
+      ok: false,
+      error: "DECISION_INVALID",
+      message: "kind=tombstone requires supersedesDecisionId (mark 哪条旧行)",
+      detail: { reason: "tombstone_requires_target" },
+    }
+  }
+  // tombstone 的 ref 必须是数字 ROWID（与 P12 decision_id 一致）
+  if (supersedes !== undefined && !/^\d+$/.test(supersedes)) {
+    return {
+      ok: false,
+      error: "DECISION_INVALID",
+      message: `supersedesDecisionId must be numeric ROWID stringified, got ${supersedes}`,
+      detail: { reason: "invalid_decision_id" },
+    }
+  }
 
   return {
     ok: true,
@@ -586,6 +628,7 @@ export function validatePostDecision(
         content,
         evidence,
         supersedesDecisionId: supersedes,
+        callerAlias,
       },
     },
   }
@@ -597,18 +640,45 @@ export interface GetCoveragePath {
   roomId: string
 }
 export interface DecisionRef {
+  /** ROWID stringified（与 §5 PostDecisionResponse.decisionId 同源）。 */
   decisionId: string
   /** 简要描述（取 content 前 100 字 + ellipsis）。 */
   summary: string
-  /** 当前状态（基于 ledger 终态）。 */
-  state: "active" | "superseded" | "tombstone"
+  /**
+   * 当前状态（基于 ledger 终态）：
+   *   - active     = status='active' AND superseded_by IS NULL AND tombstone=0
+   *   - completed  = status='completed'（被新 commit sweep 完成）
+   *   - superseded = status='superseded' OR superseded_by IS NOT NULL（被 revoke 覆盖）
+   *   - tombstone  = tombstone=1（永久投影，覆盖其他 status）
+   */
+  state: "active" | "completed" | "superseded" | "tombstone"
+  /** 决策类型（commit/reject/spec/pivot）。 */
+  decisionType: string
+  /** 决策记录人 alias。 */
+  decidedBy: string
+  /** ISO 时间。 */
+  decidedAt: string
 }
+
+/**
+ * Day 6 Phase 1 P12 ledger 出发的三集合语义（contracts §1.4 plan v3.1 锁定）:
+ *
+ *   - **broad**     = room 内所有 decision rows（不论 status / tombstone）
+ *   - **resolved**  = state ∈ {completed, superseded, tombstone}（已闭环 / 已覆盖 / 已永久投影）
+ *   - **unresolved** = state = active（前端 AC-P3-8 unresolved 入口列表 — UI click → manual confirm）
+ *
+ * Day 6 暂不接 Coverage Check 候选层（Haiku 没判定的 broad_candidates message 候选）；
+ * 那部分需要 Phase 1 P12 viewfinder 写盘逻辑 ALTER（写 unresolvedMessageIds 到 frontmatter），
+ * 留 Week 5 buffer 或 Phase 4 backfill。
+ *
+ * status 阈值（与 Phase 1 CoverageReport 一致）:
+ *   - pass: coverage >= 0.95
+ *   - warn: 0 < coverage < 0.95 OR broad < 3（分母过小不确信）
+ *   - fail: broad = 0（无 decision 无法判定）
+ */
 export interface GetCoverageResponse {
-  /** broad 集合：room 内所有讨论中提出的问题/议题。 */
   broad: DecisionRef[]
-  /** resolved 集合：已有 decision 闭环的议题。 */
   resolved: DecisionRef[]
-  /** unresolved 集合：broad - resolved；前端 AC-P3-8 入口在此列表。 */
   unresolved: DecisionRef[]
   /** 标量：resolved.length / broad.length（broad=0 时 null）。 */
   coverage: number | null
@@ -616,9 +686,7 @@ export interface GetCoverageResponse {
   generatedAt: string
 }
 
-export function validateGetCoverage(
-  pathParams: unknown,
-): ValidationResult<GetCoveragePath> {
+export function validateGetCoverage(pathParams: unknown): ValidationResult<GetCoveragePath> {
   const path = pathParams as Record<string, unknown> | null
   const idCheck = validateRoomId(path?.id)
   if (!idCheck.ok) return idCheck
@@ -647,9 +715,7 @@ export interface PostIngestCommitResponse {
   fencingToken: string
 }
 
-export function validatePostIngestCommit(
-  body: unknown,
-): ValidationResult<PostIngestCommitBody> {
+export function validatePostIngestCommit(body: unknown): ValidationResult<PostIngestCommitBody> {
   const b = body as Record<string, unknown> | null
   if (!b) {
     return { ok: false, error: "VALIDATION_FAILED", message: "body required" }
@@ -715,9 +781,7 @@ export interface ListJobTracesResponse {
   hasMore: boolean
 }
 
-export function validateListJobTraces(
-  query: unknown,
-): ValidationResult<ListJobTracesQuery> {
+export function validateListJobTraces(query: unknown): ValidationResult<ListJobTracesQuery> {
   const q = (query ?? {}) as Record<string, unknown>
   const result: ListJobTracesQuery = {}
 

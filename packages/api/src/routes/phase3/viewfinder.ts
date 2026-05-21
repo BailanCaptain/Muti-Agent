@@ -27,8 +27,8 @@ import type { FastifyInstance } from "fastify"
 import type * as schema from "../../db/schema"
 import {
   ErrorCode,
-  HTTP_STATUS_BY_ERROR,
   type GetViewfinderResponse,
+  HTTP_STATUS_BY_ERROR,
   toErrorResponse,
   validateGetViewfinder,
 } from "./contracts"
@@ -68,21 +68,13 @@ export class ViewfinderService {
   constructor(deps: ViewfinderServiceDeps) {
     this.db = deps.db
     this.wikiRoot = deps.wikiRoot
-    this.readFile =
-      deps.readFile ??
-      ((p) => fs.readFile(p, "utf-8"))
+    this.readFile = deps.readFile ?? ((p) => fs.readFile(p, "utf-8"))
   }
 
   async getViewfinder(roomId: string): Promise<GetViewfinderResponse> {
     const ledger = this.queryLedgerSnapshot(roomId)
 
-    const viewfinderPath = path.join(
-      this.wikiRoot,
-      "wiki",
-      "rooms",
-      roomId,
-      "viewfinder.md",
-    )
+    const viewfinderPath = path.join(this.wikiRoot, "wiki", "rooms", roomId, "viewfinder.md")
     let raw: string | null = null
     try {
       raw = await this.readFile(viewfinderPath)
@@ -191,10 +183,7 @@ function parseCoverageFromFrontmatter(
   return emptyCoverage()
 }
 
-export function registerViewfinderRoute(
-  app: FastifyInstance,
-  service: ViewfinderService,
-): void {
+export function registerViewfinderRoute(app: FastifyInstance, service: ViewfinderService): void {
   app.get("/api/rooms/:id/viewfinder", async (request, reply) => {
     const validation = validateGetViewfinder(request.params)
     if (!validation.ok) {
