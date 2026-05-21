@@ -41,7 +41,7 @@ test("Day 5 · ingest preview · happy markdown → sanitized + compiled + 0 war
   assert.equal(r.warnings.length, 0)
 })
 
-test("Day 5 · ingest preview · jailbreak template → blocked + sanitizedContent=''", () => {
+test("Day 5 · ingest preview · jailbreak template → blocked + subkind=jailbreak_template（范-r1 P2-3）", () => {
   const svc = build()
   const r = svc.preview({
     sourcePath: "evil.md",
@@ -52,8 +52,10 @@ test("Day 5 · ingest preview · jailbreak template → blocked + sanitizedConte
   assert.equal(r.llmCompiledPreview, "")
   assert.ok(r.warnings.length > 0)
   assert.ok(
-    r.warnings.some((w) => w.kind === "sensitive_token" && w.message.includes("jailbreak_template")),
-    "should have jailbreak_template warning",
+    r.warnings.some(
+      (w) => w.kind === "sensitive_token" && w.subkind === "jailbreak_template",
+    ),
+    "should have jailbreak_template subkind warning (P2-3 透传)",
   )
 })
 

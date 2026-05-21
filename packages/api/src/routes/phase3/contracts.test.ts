@@ -409,12 +409,13 @@ test("Day 2 · POST commit · 缺 previewId → VALIDATION_FAILED", () => {
   if (!r.ok) assert.equal(r.error, ErrorCode.VALIDATION_FAILED)
 })
 
-test("Day 2 · POST commit · 缺 callerAlias → UNAUTHORIZED", () => {
+test("Day 2 · POST commit · 缺 callerAlias → VALIDATION_FAILED + detail.reason='caller_required'（范-r1 P2-2）", () => {
   const r = validatePostIngestCommit({ previewId: "pv-001" })
   assert.equal(r.ok, false)
   if (!r.ok) {
-    assert.equal(r.error, ErrorCode.UNAUTHORIZED)
+    assert.equal(r.error, ErrorCode.VALIDATION_FAILED)
     assert.match(r.message, /callerAlias/)
+    assert.equal(r.detail?.reason, "caller_required")
   }
 })
 

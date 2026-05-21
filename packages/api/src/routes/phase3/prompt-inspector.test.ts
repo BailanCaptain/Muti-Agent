@@ -403,6 +403,38 @@ test("Day 4 · PromptInspector · room 隔离", async () => {
   }
 })
 
+test("Day 4 · PromptInspector · extractTopScore 兼容 hybridScore / bm25Score 字段（范-r1 P2-4）", async () => {
+  const tmp = safeTempDir("F027-Day4-pi-hybrid-")
+  const dbPath = path.join(tmp, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  try {
+    // V16.5 P14 hybrid retriever 真实输出形态：hits[].hybridScore / bm25Score / cosineScore
+    const queries = ["q1", "q2", "q3"]
+    const results = [
+      [{ id: 1, hybridScore: 0.92 }], // hybrid retriever 主输出
+      [{ id: 2, hybrid_score: 0.65 }], // snake_case 兼容
+      [{ id: 3, bm25Score: 0.55, cosineScore: 0.4 }], // 拆分 score 子项 fallback
+    ]
+    insertAudit(db, {
+      roomId: "R-201",
+      recallQueries: JSON.stringify(queries),
+      recallResults: JSON.stringify(results),
+    })
+
+    const svc = new PromptInspectorService({ db })
+    const r = svc.getInspector("R-201", undefined)
+    assert.equal(r.recallQueries.length, 3)
+    assert.ok(r.recallQueries[0]!.topScore >= 0.9, "hybridScore 字段应被识别")
+    assert.equal(r.recallQueries[0]?.gate, "high")
+    assert.ok(r.recallQueries[1]!.topScore >= 0.6 && r.recallQueries[1]!.topScore < 0.75)
+    assert.equal(r.recallQueries[1]?.gate, "mid")
+    assert.equal(r.recallQueries[2]?.gate, "low")
+  } finally {
+    close()
+    safeCleanup(tmp)
+  }
+})
+
 test("Day 4 · PromptInspector · 自定义 budgetMax", async () => {
   const tmp = safeTempDir("F027-Day4-pi-budget-")
   const dbPath = path.join(tmp, "test.sqlite")

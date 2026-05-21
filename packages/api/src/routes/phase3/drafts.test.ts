@@ -217,6 +217,45 @@ test("Day 3 · DraftScanner · summary 取 body 前 200 字 trim", async () => {
   }
 })
 
+test("Day 3 · DraftScanner · 拒 symlink entry（范-r1 P1-4 raw drop taint 防御）", async () => {
+  const tmp = safeTempDir("F027-Day3-drafts-symlink-")
+  try {
+    // 写一个真 .md
+    await writeDraft(tmp, "real.md", { title: "Real" }, "body")
+    // 在 draft 根创建一个 symlink 指向 tmp 外（模拟 V16.5 chap 7 raw drop 攻击）
+    const draftRoot = path.join(tmp, "wiki", "concepts", "draft")
+    const outsideTarget = path.join(tmp, "outside.md")
+    await fsp.writeFile(outsideTarget, "# Outside\n\nleaked", "utf-8")
+    const linkPath = path.join(draftRoot, "evil-symlink.md")
+    try {
+      await fsp.symlink(outsideTarget, linkPath, "file")
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      // Windows 无管理员权限 / FS 不支持 symlink 时 skip 测试
+      if (code === "EPERM" || code === "ENOSYS") {
+        console.warn("symlink not supported on this FS, skipping test")
+        return
+      }
+      throw err
+    }
+
+    const warns: Array<{ obj: Record<string, unknown>; msg: string }> = []
+    const scanner = new DraftScanner({
+      wikiRoot: tmp,
+      logWarn: (obj, msg) => warns.push({ obj, msg }),
+    })
+    const r = await scanner.list({})
+    assert.equal(r.total, 1, "only real.md should be scanned, symlink skipped")
+    assert.equal(r.drafts[0]?.title, "Real")
+    assert.ok(
+      warns.some((w) => w.msg.includes("symlink")),
+      "should log warn about skipped symlink",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
 test("Day 3 · DraftScanner · 非 .md 文件忽略", async () => {
   const tmp = safeTempDir("F027-Day3-drafts-non-md-")
   try {

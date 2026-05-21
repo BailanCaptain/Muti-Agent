@@ -195,6 +195,49 @@ test("Day 3 · ViewfinderService · ledger active count + latestDecisionId", asy
   }
 })
 
+test("Day 3 · ViewfinderService · ledger 不计 tombstone=1 active 行（范-r1 P1-3）", async () => {
+  const tmp = safeTempDir("F027-Day3-vf-tombstone-")
+  const dbPath = path.join(tmp, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  try {
+    // 2 plain active + 3 tombstone=1 active（永久投影，按 P12 不算 activeCount）
+    insertDecision(db, "R-201")
+    insertDecision(db, "R-201")
+    insertDecision(db, "R-201", { tombstone: true })
+    insertDecision(db, "R-201", { tombstone: true })
+    insertDecision(db, "R-201", { tombstone: true })
+
+    const svc = new ViewfinderService({ db, wikiRoot: tmp })
+    const r = await svc.getViewfinder("R-201")
+    assert.equal(r.ledger.activeCount, 2, "tombstone=1 active rows must NOT count toward activeCount")
+    // latestDecisionId 仍是 ROWID（含 tombstone 行）— 它表"最新写入"，不是"最新 active"
+    assert.ok(r.ledger.latestDecisionId)
+  } finally {
+    close()
+    safeCleanup(tmp)
+  }
+})
+
+test("Day 3 · ViewfinderService · latestDecisionId 是 ROWID stringified（范-r1 P1-2 语义锁）", async () => {
+  const tmp = safeTempDir("F027-Day3-vf-rowid-")
+  const dbPath = path.join(tmp, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  try {
+    const id1 = insertDecision(db, "R-201")
+    const id2 = insertDecision(db, "R-201")
+
+    const svc = new ViewfinderService({ db, wikiRoot: tmp })
+    const r = await svc.getViewfinder("R-201")
+    assert.equal(r.ledger.latestDecisionId, String(id2))
+    assert.notEqual(r.ledger.latestDecisionId, String(id1))
+    // 字符串 stringified，不是 "dec-XXX" 之类的语义 ID
+    assert.match(r.ledger.latestDecisionId!, /^\d+$/)
+  } finally {
+    close()
+    safeCleanup(tmp)
+  }
+})
+
 test("Day 3 · ViewfinderService · 不同 room 隔离", async () => {
   const tmp = safeTempDir("F027-Day3-vf-isolation-")
   const dbPath = path.join(tmp, "test.sqlite")

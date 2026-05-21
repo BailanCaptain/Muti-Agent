@@ -33,6 +33,7 @@ import {
   validateGetViewfinder,
 } from "./contracts"
 import { parseFrontmatter } from "./frontmatter"
+import { getSqliteClient } from "./sqlite-helper"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
 
@@ -112,26 +113,31 @@ export class ViewfinderService {
   }
 
   private queryLedgerSnapshot(roomId: string): DecisionLedgerSnapshot {
-    // 直读 room_decisions 表 — 不依赖 DecisionLedger 类（避免拉 SqliteAdapterLike 依赖）
-    const stmt = (this.db as unknown as {
-      $client: {
-        prepare: (sql: string) => {
-          get: (...args: unknown[]) => unknown
-        }
-      }
-    }).$client
+    // 直读 room_decisions 表 — 走 getSqliteClient helper 集中 cast（范-r1 P2-6）。
+    const client = getSqliteClient(this.db)
 
-    const activeRow = stmt.prepare(
-      `SELECT COUNT(*) as cnt FROM room_decisions
-        WHERE room_id = ? AND status = 'active' AND superseded_by IS NULL`,
-    ).get(roomId) as { cnt: number } | undefined
+    // 范-r1 P1-3：tombstone=1 决策按 P12 viewfinder 语义是"永久投影"非 active，
+    // 不算进 ledger.activeCount。
+    const activeRow = client
+      .prepare(
+        `SELECT COUNT(*) as cnt FROM room_decisions
+          WHERE room_id = ?
+            AND status = 'active'
+            AND superseded_by IS NULL
+            AND tombstone = 0`,
+      )
+      .get(roomId) as { cnt: number } | undefined
     const activeCount = activeRow?.cnt ?? 0
 
-    const latestRow = stmt.prepare(
-      `SELECT decision_id FROM room_decisions
-        WHERE room_id = ?
-        ORDER BY decision_id DESC LIMIT 1`,
-    ).get(roomId) as { decision_id: number } | undefined
+    // latestDecisionId = ROWID stringified（与 POST decision response.decisionId 同源；
+    // contracts.ts GetViewfinderResponse.ledger.latestDecisionId 语义注释锁定，范-r1 P1-2）
+    const latestRow = client
+      .prepare(
+        `SELECT decision_id FROM room_decisions
+          WHERE room_id = ?
+          ORDER BY decision_id DESC LIMIT 1`,
+      )
+      .get(roomId) as { decision_id: number } | undefined
     const latestDecisionId =
       latestRow?.decision_id !== undefined ? String(latestRow.decision_id) : null
 

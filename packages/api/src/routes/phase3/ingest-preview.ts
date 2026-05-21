@@ -41,6 +41,7 @@ import {
   type IngestMime,
   type PreviewIngestBody,
   type PreviewIngestResponse,
+  type PreviewWarning,
   toErrorResponse,
   validatePreviewIngest,
 } from "./contracts"
@@ -102,25 +103,32 @@ export class IngestPreviewService {
   }
 }
 
-/** 把 SanitizeResult 的 redLineTriggers + quarantinedSegments 映射到 contract.warnings。 */
-function mapWarnings(result: SanitizeResult): PreviewIngestResponse["warnings"] {
-  const out: PreviewIngestResponse["warnings"] = []
+/**
+ * 把 SanitizeResult 的 redLineTriggers + quarantinedSegments 映射到 contract.warnings。
+ *
+ * 范-r1 P2-3：subkind 字段透传 sanitize 内部 reason，前端 UI 按 subkind 渲染不同 icon /
+ * 区分 jailbreak vs HTML vs URL scheme，不再 parse message 字符串。
+ */
+function mapWarnings(result: SanitizeResult): PreviewWarning[] {
+  const out: PreviewWarning[] = []
   for (const trig of result.redLineTriggers) {
     out.push({
       kind: redLineToWarningKind(trig),
+      subkind: trig.reason,
       message: redLineMessage(trig),
     })
   }
   for (const seg of result.quarantinedSegments) {
     out.push({
       kind: quarantineToWarningKind(seg),
+      subkind: seg.reason,
       message: quarantineMessage(seg),
     })
   }
   return out
 }
 
-function redLineToWarningKind(trig: RedLineTrigger): PreviewIngestResponse["warnings"][number]["kind"] {
+function redLineToWarningKind(trig: RedLineTrigger): PreviewWarning["kind"] {
   switch (trig.reason) {
     case "size_exceeded":
       return "size_truncated"
@@ -139,9 +147,7 @@ function redLineMessage(trig: RedLineTrigger): string {
   return trig.detail ? `${base} (${trig.detail})` : base
 }
 
-function quarantineToWarningKind(
-  seg: QuarantinedSegment,
-): PreviewIngestResponse["warnings"][number]["kind"] {
+function quarantineToWarningKind(seg: QuarantinedSegment): PreviewWarning["kind"] {
   switch (seg.reason) {
     case "encoding_base64":
     case "encoding_rot13":

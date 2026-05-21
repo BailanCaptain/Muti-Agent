@@ -37,30 +37,32 @@ import {
   toErrorResponse,
   validateGetPromptInspector,
 } from "./contracts"
+import { getSqliteClient } from "./sqlite-helper"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
 
+/**
+ * prompt_audit 行的子集（只取 inspector endpoint 真正用到的列）。
+ *
+ * 范-r1 P1-1 收敛：之前 SELECT 17 列但只用 12 列；剪掉 `not_injected_json` /
+ * `iron_laws_count` / `recall_rejected_reasons` / `top_score` / `recall_budget_exceeded`
+ * 5 个未消费列。
+ *
+ * `top_score`（audit 行级单值，跨所有 query 的 max）**不参与** per-query topScore 计算；
+ * per-query topScore 走 hits[].score（更准确，且 audit.top_score 在多 query 场景下
+ * 等价于 max(hits[i].score for i in queries)，per-query 推算更细）。
+ */
 interface PromptAuditRow {
-  id: number
-  room_id: string | null
-  alias: string
   scenario: string
-  total_tokens: number
-  cap: number
   parts_json: string
-  not_injected_json: string | null
-  iron_laws_count: number
   recall_queries: string | null
   recall_results: string | null
   recall_total_tokens: number | null
-  recall_rejected_reasons: string | null
   recall_required: number
   recall_trigger: string | null
   recall_path: number | null
-  top_score: number | null
   recall_satisfied: number
   escalate_reason: string | null
-  recall_budget_exceeded: number | null
 }
 
 const DEFAULT_RECALL_BUDGET_MAX = 4000
@@ -86,22 +88,13 @@ export class PromptInspectorService {
   ): GetPromptInspectorResponse {
     // _threadId 当前不参与 prompt_audit 过滤（assembler 写入只标 roomId + alias）；
     // Phase 4 P22 接 thread 维度 inspector 时再扩。
-    const client = (
-      this.db as unknown as {
-        $client: {
-          prepare: (sql: string) => {
-            get: (...args: unknown[]) => unknown
-          }
-        }
-      }
-    ).$client
+    const client = getSqliteClient(this.db)
     const row = client
       .prepare(
-        `SELECT id, room_id, alias, scenario, total_tokens, cap, parts_json,
-                not_injected_json, iron_laws_count,
-                recall_queries, recall_results, recall_total_tokens, recall_rejected_reasons,
-                recall_required, recall_trigger, recall_path, top_score,
-                recall_satisfied, escalate_reason, recall_budget_exceeded
+        `SELECT scenario, parts_json,
+                recall_queries, recall_results, recall_total_tokens,
+                recall_required, recall_trigger, recall_path,
+                recall_satisfied, escalate_reason
            FROM prompt_audit
           WHERE room_id = ?
           ORDER BY id DESC
@@ -278,10 +271,19 @@ function extractTopScore(hitsRaw: unknown): number {
   let top = 0
   for (const h of hitsRaw) {
     if (typeof h !== "object" || h === null) continue
+    const obj = h as Record<string, unknown>
+    // 范-r1 P2-4：与 V16.5 P14 hybrid retriever 输出对齐。优先级：
+    //   score（通用）> hybridScore（hybrid retriever 总分）
+    //   > hybrid_score（snake_case 兼容）> cosine（fallback）
+    //   > cosineScore / bm25Score / bm25_score（各 score 子项 fallback）
     const score =
-      takeNumber((h as Record<string, unknown>).score) ??
-      takeNumber((h as Record<string, unknown>).hybridScore) ??
-      takeNumber((h as Record<string, unknown>).cosine)
+      takeNumber(obj.score) ??
+      takeNumber(obj.hybridScore) ??
+      takeNumber(obj.hybrid_score) ??
+      takeNumber(obj.cosine) ??
+      takeNumber(obj.cosineScore) ??
+      takeNumber(obj.bm25Score) ??
+      takeNumber(obj.bm25_score)
     if (score !== undefined && score > top) top = score
   }
   return top

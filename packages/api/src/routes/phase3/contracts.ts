@@ -84,6 +84,25 @@ export interface ErrorResponseBody {
   detail?: Record<string, unknown>
 }
 
+/**
+ * Preview / ingest 类警告条目（contract §4 PreviewIngestResponse.warnings 等用）。
+ *
+ * 范-r1 P2-3 锁定：`subkind` 透传 sanitize redLineTrigger.reason / quarantineSegment.reason
+ * 的原始 enum，前端 UI 可按 subkind 渲染不同 icon / 颜色，不再 parse message string。
+ */
+export interface PreviewWarning {
+  /** 大类（前端 UI 路由 4 色：sensitive_token 红 / size_truncated 黄 / encoding 灰 / binary_skipped 蓝）。 */
+  kind: "sensitive_token" | "size_truncated" | "encoding" | "binary_skipped"
+  /**
+   * 子类（透传 sanitize 内部 reason），如：
+   *   - jailbreak_template / dangerous_html_tag / dangerous_url_scheme / encoded_jailbreak / size_exceeded（redline）
+   *   - encoding_base64 / encoding_rot13 / encoding_high_entropy / control_char / invisible_format_char / ...
+   *   - 缺省时 = undefined（前端只渲染 kind 大类）
+   */
+  subkind?: string
+  message: string
+}
+
 export type ValidationResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: ErrorCode; message: string; detail?: Record<string, unknown> }
@@ -158,7 +177,19 @@ export interface GetViewfinderResponse {
   }
   /** Viewfinder 编译时刻 ISO；null = 未编译。 */
   lastCompiledAt: string | null
-  /** Decision ledger cursor（active 决策计数 + 最新 decision_id）。 */
+  /**
+   * Decision ledger cursor（active 决策计数 + 最新 decision_id）。
+   *
+   * **`latestDecisionId` 语义**（范-r1 P1-2 锁定）：
+   *   - 现阶段 = `room_decisions.decision_id`（INTEGER AUTO_INCREMENT PK）的 stringified 形式
+   *   - 与 POST /api/rooms/:id/decisions 返回的 `decisionId: string` 同源（Week 2 Day 6 AC-P3-8 一致）
+   *   - **不要**按 "dec-042" 之类的语义 ID 解释；它就是数字 ROWID stringified
+   *   - 前端 ledger cursor invalidation 只需比对字符串相等性，不解析数字
+   *
+   * **`activeCount` 语义**（范-r1 P1-3 锁定）：
+   *   - = WHERE status = 'active' AND superseded_by IS NULL AND tombstone = 0
+   *   - tombstone=1 的"永久投影"决策**不算 active**（按 P12 viewfinder 语义）
+   */
   ledger: {
     activeCount: number
     latestDecisionId: string | null
@@ -393,11 +424,8 @@ export interface PreviewIngestResponse {
   sanitizedContent: string
   /** LLM 编译预览（建议落盘的 final markdown 草稿）。 */
   llmCompiledPreview: string
-  /** Sanitize 阶段触发的 warning 列表。 */
-  warnings: Array<{
-    kind: "sensitive_token" | "size_truncated" | "encoding" | "binary_skipped"
-    message: string
-  }>
+  /** Sanitize 阶段触发的 warning 列表（范-r1 P2-3：subkind 透传原始 reason）。 */
+  warnings: PreviewWarning[]
   /** 预览过期时刻（commit 必须在此前调用，否则 previewId 失效）。 */
   expiresAt: string
 }
@@ -632,7 +660,14 @@ export function validatePostIngestCommit(
   }
   const callerAlias = takeOptionalString(b.callerAlias)
   if (callerAlias === undefined) {
-    return { ok: false, error: "UNAUTHORIZED", message: "callerAlias required" }
+    // 范-r1 P2-2：缺字段 = 入参校验失败，不是权限拒绝（前端 UNAUTHORIZED 通常会走重登/refresh）。
+    // ACL 真拒绝（alias 存在但无 write 权限）走 service 层返 UNAUTHORIZED。
+    return {
+      ok: false,
+      error: "VALIDATION_FAILED",
+      message: "callerAlias required",
+      detail: { reason: "caller_required" },
+    }
   }
   const leaseToken = takeOptionalString(b.leaseToken)
   return { ok: true, value: { previewId, callerAlias, leaseToken } }

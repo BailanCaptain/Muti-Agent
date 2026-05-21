@@ -62,7 +62,10 @@ export interface DraftScannerDeps {
   wikiRoot: string
   /** 可选 fs reader override（测试用）。 */
   fsAdapter?: {
-    readdir: (p: string) => Promise<{ name: string; isDirectory: () => boolean }[]>
+    /** 必须返回 dirent.isDirectory() / isSymbolicLink() 这两个判定（范-r1 P1-4）。 */
+    readdir: (p: string) => Promise<
+      { name: string; isDirectory: () => boolean; isSymbolicLink: () => boolean }[]
+    >
     readFile: (p: string) => Promise<string>
     stat: (p: string) => Promise<{ mtime: Date }>
   }
@@ -83,6 +86,7 @@ export class DraftScanner {
         return entries.map((e) => ({
           name: e.name,
           isDirectory: () => e.isDirectory(),
+          isSymbolicLink: () => e.isSymbolicLink(),
         }))
       },
       readFile: (p) => fs.readFile(p, "utf-8"),
@@ -151,6 +155,12 @@ export class DraftScanner {
       throw err
     }
     for (const ent of entries) {
+      // 范-r1 P1-4：拒绝 symlink（V16.5 chap 7 raw drop taint model — 用户拖入的文件
+      // 可能含 symlink 逃出 wiki 根目录，符号链接不算合规 draft 来源）。
+      if (ent.isSymbolicLink()) {
+        this.logWarn({ name: ent.name, dir }, "drafts: skipped symlink entry")
+        continue
+      }
       const full = path.join(dir, ent.name)
       if (ent.isDirectory()) {
         await this.walkInto(full, acc)
@@ -190,8 +200,10 @@ export class DraftScanner {
     const origin = inferOrigin(relPath)
     const type = inferType(fmRaw)
     const title = inferTitle(fmRaw, relPath)
-    const body = stripFrontmatter(raw)
-    const summary = body.slice(0, SUMMARY_LEN).trim()
+    // 范-r1 P3-2：用 parseFrontmatter(raw).body 拿 body，去掉本地 stripFrontmatter regex 重复。
+    // 范-r1 P2-5：trim 尾部空白先于 slice，再切 SUMMARY_LEN 防"前 200 字含尾部空白"。
+    const body = parseFrontmatter(raw).body
+    const summary = body.slice(0, SUMMARY_LEN).replace(/\s+$/, "")
 
     return {
       path: relPath,
@@ -240,11 +252,6 @@ function inferTitle(fm: DraftFrontmatter | null, relPath: string): string {
   if (fm?.title && typeof fm.title === "string" && fm.title.length > 0) return fm.title
   const filename = relPath.split("/").pop() ?? relPath
   return filename.replace(/\.md$/, "")
-}
-
-function stripFrontmatter(raw: string): string {
-  const m = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/)
-  return m ? m[1] : raw
 }
 
 export function registerDraftsRoute(

@@ -52,6 +52,7 @@ import { NightlyHealthCheck } from "../services/scheduler/nightly-health-check"
 import { NightlyVacuum } from "../services/scheduler/nightly-vacuum"
 import { RoomCompilerTick } from "../services/scheduler/room-compiler-tick"
 import {
+  assertNoConfigFile,
   type SchedulerConfig,
   type ScheduledJobConfig,
   loadSchedulerConfig,
@@ -107,8 +108,14 @@ export async function bootSchedulerRuntime(
   const rootDir = opts.rootDir ?? process.cwd()
   const alertRoom = opts.alertRoom ?? "R-201"
 
-  // 1. fallback config — AC-P3-7 Iron Laws 3 fail-safe：gate2Approved=false 必抛
-  //    若 worktree root 偷偷创建了 wiki.config.yaml
+  // 1. fallback config — AC-P3-7 Iron Laws 3 fail-safe（范-r1 P2-1 双断言）
+  //
+  // 双断言：
+  //   - boot 入口显式 assertNoConfigFile(rootDir)（防 boot 后并发创建被 loader miss）
+  //   - loadSchedulerConfig 内部 gate2Approved=false 二次检查
+  //
+  // 任一抛错 → boot 失败明示 BLOCKED；不创建任何 wiki.config.yaml。
+  assertNoConfigFile(rootDir)
   const { config, fromFile, checkedPath } = loadSchedulerConfig({
     rootDir,
     gate2Approved: false,
@@ -366,6 +373,10 @@ function indexJobsByKind(
 }
 
 function buildLeaderAlias(): string {
+  // 范-r1 P3-4 备注：单 process 模型用 hostname+pid 区分实例。
+  // **容器场景（k8s pod）**：hostname=pod name + pid=1 通常稳定；副本扩缩容时不同 pod 自然有不同 hostname。
+  // **cluster mode（node cluster / pm2 多 worker）**：master + workers 共享 hostname 但 pid 不同，会各自尝试 acquire lease；
+  //   预期只有 1 个 worker 当选 leader（CompilerLeaderRepository 已实现 CAS 抢占），其余走 follower。
   return `${os.hostname()}-${process.pid}`
 }
 
