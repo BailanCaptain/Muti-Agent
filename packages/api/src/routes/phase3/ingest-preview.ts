@@ -51,23 +51,34 @@ export interface IngestPreviewServiceDeps {
   clock?: () => Date
   /** 注入 uuid（测试用确定性；默认 randomUUID()）。 */
   newId?: () => string
+  /**
+   * F027 Phase 3 P20 Day 9-10 (AC-P3-10) · PreviewStore 注入。
+   *
+   * 传 store → preview 成功（非 blocked）时 put 一条 entry，commit endpoint 凭 previewId 取。
+   * 不传 store → 老行为（仅返回 previewId 不持久化；Day 5 单元测试 backward compatible）。
+   */
+  store?: import("./preview-store").PreviewStore
 }
 
 export class IngestPreviewService {
   private readonly previewTtlMs: number
   private readonly clock: () => Date
   private readonly newId: () => string
+  private readonly store?: import("./preview-store").PreviewStore
 
   constructor(deps: IngestPreviewServiceDeps = {}) {
     this.previewTtlMs = deps.previewTtlMs ?? DEFAULT_PREVIEW_TTL_MS
     this.clock = deps.clock ?? (() => new Date())
     this.newId = deps.newId ?? (() => randomUUID())
+    this.store = deps.store
   }
 
   preview(body: PreviewIngestBody): PreviewIngestResponse {
     // 5 层 sanitize
     const sanitized = sanitizeRawDrop(body.content)
     const warnings = mapWarnings(sanitized)
+    const createdAt = this.clock()
+    const expiresAt = new Date(createdAt.getTime() + this.previewTtlMs).toISOString()
 
     // blocked: 红线触发或 quarantinedRatio 超阈值 → sanitizedContent 空 + 不生成 LLM 编译预览
     if (sanitized.blocked) {
@@ -76,7 +87,7 @@ export class IngestPreviewService {
         sanitizedContent: "",
         llmCompiledPreview: "",
         warnings,
-        expiresAt: new Date(this.clock().getTime() + this.previewTtlMs).toISOString(),
+        expiresAt,
       }
     }
 
@@ -86,15 +97,30 @@ export class IngestPreviewService {
       sanitizedContent: sanitized.sanitizedText,
       mimeType: body.mimeType,
       targetType: body.targetType,
-      generatedAt: this.clock().toISOString(),
+      generatedAt: createdAt.toISOString(),
     })
 
+    const previewId = this.newId()
+
+    // Day 9-10 (AC-P3-10)：store 注入时 put entry 供 commit endpoint 凭 previewId 取
+    if (this.store) {
+      this.store.put({
+        previewId,
+        sourcePath: body.sourcePath,
+        sanitizedContent: sanitized.sanitizedText,
+        mimeType: body.mimeType,
+        targetType: body.targetType,
+        createdAt: createdAt.toISOString(),
+        expiresAt,
+      })
+    }
+
     return {
-      previewId: this.newId(),
+      previewId,
       sanitizedContent: sanitized.sanitizedText,
       llmCompiledPreview: compiled,
       warnings,
-      expiresAt: new Date(this.clock().getTime() + this.previewTtlMs).toISOString(),
+      expiresAt,
     }
   }
 }

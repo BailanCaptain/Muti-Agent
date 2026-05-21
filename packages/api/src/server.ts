@@ -601,11 +601,17 @@ export async function createApiServer(options: {
   })
   registerMcpServer(app)
 
-  // F027 Phase 3 P20 · Phase 3 endpoint 集中注册（Week 1 Day 3+）
-  // 当前已 wire：GET /api/rooms/:id/viewfinder · GET /api/wiki/drafts
+  // F027 Phase 3 P20 · Phase 3 endpoint 集中注册（Week 1 Day 3+ / Week 2 Day 6+）
+  // 已 wire：
+  //   - GET /api/rooms/:id/viewfinder + GET /api/wiki/drafts (Week 1 Day 3)
+  //   - GET /api/rooms/:id/prompt-inspector (Week 1 Day 4)
+  //   - POST /api/wiki/ingest/preview (Week 1 Day 5)
+  //   - POST /api/rooms/:id/decisions + GET /api/rooms/:id/decisions/coverage (Week 2 Day 6 AC-P3-8)
+  //   - POST /api/wiki/ingest/commit (Week 2 Day 9-10 AC-P3-10) — 需 wikiServices 注入
   registerPhase3Routes(app, {
     db: drizzleDb,
     wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    wikiServices,
   })
 
   // F027 Phase 3 P20 · scheduler go-live（Week 1 Day 1）
