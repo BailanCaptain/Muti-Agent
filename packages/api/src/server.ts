@@ -241,6 +241,14 @@ export async function createApiServer(options: {
     )
     messages.setAdaptiveRecallCoordinator(createNoopAdaptiveRecallCoordinator())
   }
+  // F027 Phase 3 P20 Day 8 b · PromptAuditWriter boot wiring (AC-P3-9 b)。
+  // 真 writer 注入 — 每次 A2A 拼装写一行 prompt_audit row（9 V15.2 Adaptive Recall
+  // 字段 + base fields）。prompt-inspector Day 4 endpoint 起就能拿真值。
+  // Coordinator 是 noop 时 9 recall fields 走 disabled 默认（recall_required=false 等）。
+  {
+    const { PromptAuditWriter } = await import("./wiki/prompt-audit/prompt-audit-writer")
+    messages.setPromptAuditWriter(new PromptAuditWriter({ db: drizzleDb }))
+  }
 
   // F002: Decision Board + settle → flush → single dispatch pipeline.
   // The board holds [拍板] items across raisers (dedupe by normalized

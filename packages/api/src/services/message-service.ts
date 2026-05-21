@@ -54,6 +54,11 @@ import { detectFBloat } from "../orchestrator/fbloat-detector"
 import { planForcedDispatch } from "../orchestrator/forced-dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
 import { toAssemblePromptHits } from "../wiki/memory-preflight/render-pack"
+import {
+  NoopPromptAuditWriter,
+  type PromptAuditWriterLike,
+  buildRecallAuditPatch,
+} from "../wiki/prompt-audit/prompt-audit-writer"
 
 import {
   buildForwardExtractSnippet,
@@ -317,6 +322,12 @@ export class MessageService {
   // 后 setAdaptiveRecallCoordinator() 注入真 Coordinator 启用。
   private adaptiveRecallCoordinator: AdaptiveRecallCoordinator =
     createNoopAdaptiveRecallCoordinator()
+  // F027 Phase 3 P20 Day 8 b · prompt_audit writer wiring (AC-P3-9 b).
+  // 默认 noop —— wire 没接通时不写 audit row（单测 / 老路径无副作用）。
+  // server.ts boot 注入真 PromptAuditWriter（即使 Coordinator 是 noop，每次
+  // A2A 拼装也写一行 audit：9 recall fields 用 disabled 默认值，方便 prompt-inspector
+  // UI Day 4 起就能读到有 scenario / parts_json 的 row）。
+  private promptAuditWriter: PromptAuditWriterLike = new NoopPromptAuditWriter()
   private readonly chainRegistry = new A2AChainRegistry()
   private readonly pendingBoardFlushes = new Map<string, DecisionBoardEntry[]>()
   private readonly streamingFlushers = new Map<
@@ -424,6 +435,17 @@ export class MessageService {
    */
   setAdaptiveRecallCoordinator(coordinator: AdaptiveRecallCoordinator) {
     this.adaptiveRecallCoordinator = coordinator
+  }
+
+  /**
+   * F027 Phase 3 P20 Day 8 b · 注入 PromptAuditWriter（替换 noop 默认）。
+   *
+   * server.ts boot 注入真 PromptAuditWriter(db)：每次 A2A 拼装写一行 prompt_audit
+   * （含 9 V15.2 Adaptive Recall 字段 + base fields），prompt-inspector Day 4 endpoint
+   * 已可读。Coordinator 是 noop 时 9 recall fields 走 disabled 默认值。
+   */
+  setPromptAuditWriter(writer: PromptAuditWriterLike) {
+    this.promptAuditWriter = writer
   }
 
   /**
@@ -2395,6 +2417,42 @@ export class MessageService {
                 },
                 this.memoryService,
               )
+
+              // F027 Phase 3 P20 Day 8 b · prompt_audit 一行 INSERT (AC-P3-9 b)。
+              //   - 9 V15.2 Adaptive Recall 字段从 recallResult.output 派生（disabled
+              //     / scenario_skip / executor_error 时全填 default null/false/0）
+              //   - base fields best-effort：totalTokens 用 content.length 估算，
+              //     cap=0（V15.1 token 度量管线 Phase 4/5 接精确度量），parts_json='[]' 占位
+              //   - guardian / 失败路径也写 audit（recall_required=false），让 prompt-inspector
+              //     UI 拿到 scenario / parts_json 不丢
+              try {
+                this.promptAuditWriter.write({
+                  createdAt: new Date().toISOString(),
+                  alias: entry.to.agentId,
+                  roomId: sessionGroupId,
+                  scenario: isGuardianMode ? "a2a_handoff_guardian" : a2aScenario,
+                  totalTokens: Math.ceil(assembled.content.length / 4),
+                  cap: 0,
+                  partsJson: "[]",
+                  notInjectedJson: null,
+                  ironLawsCount: 0,
+                  rawText: assembled.content,
+                  sourceEventIds: JSON.stringify([entry.rootMessageId]),
+                  agentSessionRef: targetThread?.nativeSessionId ?? null,
+                  ...buildRecallAuditPatch({
+                    output: recallResult?.output,
+                    trigger: recallResult ? deriveTriggerFromScenario(a2aScenario) : null,
+                    // recall_required 标语义：guardian 跳过 / coordinator 跑过 → required=true；
+                    // 其他 disabled/skip 路径 → required=false
+                    recallRequired: !isGuardianMode && recallResult?.executed === true,
+                  }),
+                })
+              } catch (err) {
+                this.log.warn(
+                  { stage: "prompt_audit.write", err: (err as Error).message, threadId },
+                  "prompt_audit write failed (non-blocking)",
+                )
+              }
 
               // F026 P2 clean-cut · 多 @ 不再 fan-out 进 ParallelGroup；每个
               // entry 是独立 A2A 派发，groupId 用 entry.id 作为单元集合标识。
