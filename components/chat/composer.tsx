@@ -259,7 +259,15 @@ export function Composer() {
     () => (slashContext ? filterSlashCommands(slashContext.query) : []),
     [slashContext],
   )
-  const showSlashMenu = Boolean(slashContext) && slashCommands.length > 0
+  // Day 19c r2 P2 fix (范-r1): dismissed state, key = (start, query) 二元组
+  // 防 end-of-input 时 cursor 不能移走 → slashContext 仍 truthy → Escape/outside click 失效
+  // 文本/cursor 变化生成新 key → dismissed 自动失效 (重新打开 menu)
+  const [dismissedSlashKey, setDismissedSlashKey] = useState<string | null>(null)
+  const currentSlashKey = slashContext
+    ? `${slashContext.start}:${slashContext.query}`
+    : null
+  const showSlashMenu =
+    Boolean(slashContext) && slashCommands.length > 0 && currentSlashKey !== dismissedSlashKey
   const [slashHighlight, setSlashHighlight] = useState(0)
   // 默认 highlight 跳到第一个 enabled command
   useEffect(() => {
@@ -402,15 +410,11 @@ export function Composer() {
     [slashContext, value, setDraft],
   )
 
+  // Day 19c r2 P2 fix: 改用 dismissedSlashKey state, end-of-input 也能 dismiss
+  // (cursor 移末尾不再有效 — cursor 已经在末尾时 slashContext 仍存在)
   const handleSlashMenuClose = useCallback(() => {
-    // 点 outside 时 close: 把 cursor 移到 / 后, 让 slashContext null (close menu)
-    if (!slashContext) return
-    const el = textareaRef.current
-    if (el) {
-      el.selectionStart = el.selectionEnd = value.length
-      setCursor(value.length)
-    }
-  }, [slashContext, value])
+    if (currentSlashKey) setDismissedSlashKey(currentSlashKey)
+  }, [currentSlashKey])
 
   function applySuggestion(suggestion: Suggestion) {
     if (!mentionContext) return
@@ -530,9 +534,11 @@ export function Composer() {
         return
       }
       if (event.key === "Enter" || event.key === "Tab") {
+        // Day 19c r2 P3 fix (范-r1): slash menu open 时 Enter/Tab 始终 preventDefault
+        // 防 disabled command 漏出 native textarea Enter (换行) / Tab (跳焦点)
+        event.preventDefault()
         const cmd = slashCommands[slashHighlight]
         if (cmd?.enabled) {
-          event.preventDefault()
           applySlashCommand(cmd)
         }
         return

@@ -319,3 +319,108 @@ describe("Composer slash command menu (Day 19c-2)", () => {
     expect(submitBtn).toBeTruthy()
   })
 })
+
+// Day 19c r2 (范-r1 verdict): P2 + 2 P3 regression
+describe("Composer slash menu (Day 19c r2 范-r1 P2/P3 fix)", () => {
+  beforeEach(() => resetStores())
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function typeText(text: string, cursorAt = text.length) {
+    const ta = document.querySelector("textarea") as HTMLTextAreaElement
+    fireEvent.change(ta, {
+      target: { value: text, selectionStart: cursorAt, selectionEnd: cursorAt },
+    })
+    return ta
+  }
+
+  // P2 fix: end-of-input "/in" Escape → menu hide (dismissedSlashKey)
+  it("P2 fix: '/in' end-of-input + Escape → slash menu 隐藏", () => {
+    render(<Composer />)
+    const ta = typeText("/in")
+    expect(screen.queryByTestId("composer-slash-menu")).toBeTruthy()
+    fireEvent.keyDown(ta, { key: "Escape" })
+    expect(screen.queryByTestId("composer-slash-menu")).toBeNull()
+  })
+
+  // P2 fix: end-of-input "/in" outside click → menu hide
+  it("P2 fix: '/in' end-of-input + outside click → slash menu 隐藏", () => {
+    render(
+      <div>
+        <Composer />
+        <button type="button" data-testid="outside-x">
+          outside
+        </button>
+      </div>,
+    )
+    typeText("/in")
+    expect(screen.queryByTestId("composer-slash-menu")).toBeTruthy()
+    fireEvent.mouseDown(screen.getByTestId("outside-x"))
+    expect(screen.queryByTestId("composer-slash-menu")).toBeNull()
+  })
+
+  // P2 fix: dismiss 后再 typing 新字符 → key 变 → menu 重新打开
+  it("P2 fix: dismiss 后再 typing 新字符 → key 变 → menu 重新打开", () => {
+    render(<Composer />)
+    const ta = typeText("/in")
+    fireEvent.keyDown(ta, { key: "Escape" })
+    expect(screen.queryByTestId("composer-slash-menu")).toBeNull()
+    // 新输入 → 新 query → 新 key → 不在 dismissed
+    typeText("/ing")
+    expect(screen.queryByTestId("composer-slash-menu")).toBeTruthy()
+  })
+
+  // P3-a fix: disabled-only filter ('/ro' = rollback disabled) → Enter preventDefault
+  it("P3-a fix: '/ro' (rollback disabled) + Enter → preventDefault, 不插换行", () => {
+    render(<Composer />)
+    const ta = typeText("/ro")
+    expect(screen.queryByTestId("composer-slash-menu")).toBeTruthy()
+    // 模拟 Enter — preventDefault 应该被调用 (textarea value 不变)
+    const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
+    const preventSpy = vi.spyOn(event, "preventDefault")
+    ta.dispatchEvent(event)
+    expect(preventSpy).toHaveBeenCalled()
+  })
+
+  it("P3-a fix: '/ro' (rollback disabled) + Tab → preventDefault", () => {
+    render(<Composer />)
+    const ta = typeText("/ro")
+    const event = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })
+    const preventSpy = vi.spyOn(event, "preventDefault")
+    ta.dispatchEvent(event)
+    expect(preventSpy).toHaveBeenCalled()
+  })
+
+  // P3-b fix: 实际 send smoke (@agent 消息 不破 send 路径)
+  it("P3-b fix: @agent + Enter → send 触发 (slash 集成不破现有 send)", () => {
+    const sendSpy = vi.fn()
+    useChatStore.setState({
+      // biome-ignore lint/suspicious/noExplicitAny: stub
+      sendMessage: sendSpy as any,
+    })
+    render(<Composer />)
+    typeText("@黄仁勋 hello")
+    // mention 优先, slash menu 不应该出现
+    expect(screen.queryByTestId("composer-slash-menu")).toBeNull()
+    const ta = document.querySelector("textarea") as HTMLTextAreaElement
+    // Enter (无 shift) → send
+    fireEvent.keyDown(ta, { key: "Enter", shiftKey: false })
+    expect(sendSpy).toHaveBeenCalledWith("@黄仁勋 hello")
+  })
+
+  // P3-b fix: slash 打开时 Enter 不应触发 send (preventDefault 应阻断 Enter 流到 submit)
+  it("P3-b fix: slash menu open 时 Enter → send 不触发 (slash 选中或 noop, 不发原 text)", () => {
+    const sendSpy = vi.fn()
+    useChatStore.setState({
+      // biome-ignore lint/suspicious/noExplicitAny: stub
+      sendMessage: sendSpy as any,
+    })
+    render(<Composer />)
+    typeText("/")
+    const ta = document.querySelector("textarea") as HTMLTextAreaElement
+    fireEvent.keyDown(ta, { key: "Enter" })
+    // 不能发出 "/" 这种乱发
+    expect(sendSpy).not.toHaveBeenCalledWith("/")
+  })
+})
