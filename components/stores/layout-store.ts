@@ -25,6 +25,16 @@ type LayoutStore = {
   statusPanelWidth: number
   toggleSidebar: () => void
   toggleStatusPanel: () => void
+  /**
+   * 持久化 width setter — 调用立刻同步写 localStorage (zustand persist middleware)。
+   *
+   * r2 范-r1 P2-2 修：原 r1 mousemove 直接调此 setter，每帧同步 JSON.stringify +
+   * localStorage.setItem，违反 ≥ 50fps AC。r2 ResizeHandle 改成 mousemove 期间
+   * 用 React local state hold 拖动中 width（DOM 直接更新 style），mouseup 才调
+   * 此 setter 一次性持久化。
+   *
+   * Keyboard 拖动 (ArrowLeft/Right/Home/End) 离散事件低频，直接调此 setter 安全。
+   */
   setStatusPanelWidth: (width: number) => void
 }
 
