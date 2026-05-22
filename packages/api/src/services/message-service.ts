@@ -563,6 +563,8 @@ export class MessageService {
       rootMessageId: input.rootMessageId,
       parentInvocationId: null,
       dispatchedCallId: continuationCallId,
+      // r2 范-r1 P2: 续推走 A2A 链路而非 direct turn — wake.trigger scenario 显式标
+      scenario: "a2a_handoff",
     }).catch((err) => {
       this.log.error({ err }, "F026 P2 v2 worklist continuation runThreadTurn rejected")
     })
@@ -1083,6 +1085,8 @@ export class MessageService {
       emit,
       rootMessageId,
       dispatchedCallId: directTurnCallId,
+      // r2 范-r1 P2: directTurn 显式 scenario（虽然推断也对，显式更稳）
+      scenario: "direct_turn",
     })
     const queueFlush = this.flushDispatchQueue(thread.sessionGroupId, emit)
     await Promise.allSettled([directTurn, queueFlush])
@@ -1115,6 +1119,15 @@ export class MessageService {
      * On undefined, every lifecycle call is a noop — see A2ALifecycleService.
      */
     dispatchedCallId?: string
+    /**
+     * F027 Phase 3 P20 G1 r2 (范-r1 P2): wake-up scenario 显式参数。
+     * caller 应显式传：worklist 续推 → "a2a_handoff" / directTurn → "direct_turn" /
+     * A2A 派发 → "a2a_handoff" / 其他 → 未传由 deriveWakeTriggerScenario fallback。
+     *
+     * r1 推断纯靠 (systemPrompt + dispatchedCallId) 错把 worklist 续推标 direct_turn
+     * （续推没 systemPrompt 但有 dispatchedCallId），r2 改显式优先 + 推断 fallback。
+     */
+    scenario?: WakeTriggerScenario
   }): Promise<{ messageId: string; content: string } | null> {
     const thread = this.dispatch.resolveThread(options.threadId)
     if (!thread) {
@@ -1143,12 +1156,23 @@ export class MessageService {
     // F027 Phase 3 P20 G1 (AC-P3-5 物理依赖 · plan v3.1 §1.2-9):
     // wake-up 时向所有 WS connection 广播 wake.trigger event。前端 prompt-inspector
     // 顶部据此渲染 🔔 触发因块（V16.5.2），click pill 触发 in-place drawer 展开
-    // mini call tree（复用 F026 <A2ATreeView>）。scenario 从 options 推断。
+    // mini call tree（复用 F026 <A2ATreeView>）。
+    //
+    // r2 范-r1 P2: scenario 优先用 options 显式传值（caller 知 context 最准），
+    // 否则 fallback deriveWakeTriggerScenario 推断。修 r1 worklist 续推误判 direct_turn 的 bug。
+    //
     // broadcaster 未注入（测试 fixture / boot 早期）→ 静默 skip，wake-up 流程不受影响。
     const wakeBroadcast = this.broadcast
     if (wakeBroadcast) {
       try {
         const wakeCanonicalRoomId = this.sessions.getRoomId(thread.sessionGroupId)
+        const wakeScenario =
+          options.scenario ??
+          deriveWakeTriggerScenario({
+            systemPrompt: options.systemPrompt,
+            dispatchedCallId: options.dispatchedCallId,
+            parentInvocationId: options.parentInvocationId,
+          })
         wakeBroadcast({
           type: "wake.trigger",
           payload: {
@@ -1156,11 +1180,7 @@ export class MessageService {
             sessionGroupId: thread.sessionGroupId,
             roomId: wakeCanonicalRoomId,
             alias: thread.alias,
-            scenario: deriveWakeTriggerScenario({
-              systemPrompt: options.systemPrompt,
-              dispatchedCallId: options.dispatchedCallId,
-              parentInvocationId: options.parentInvocationId,
-            }),
+            scenario: wakeScenario,
             a2aCallId: options.dispatchedCallId ?? null,
             triggeredAt: new Date().toISOString(),
           },
@@ -2250,6 +2270,8 @@ export class MessageService {
             emit: options.emit,
             rootMessageId: options.rootMessageId,
             autoResumeCount: resumeCount + 1,
+            // r2 范-r1 P2: auto-resume 续接（记忆重组）显式 scenario = wake_up
+            scenario: "wake_up",
           })
           if (resumeResult) {
             return {
@@ -2541,6 +2563,8 @@ export class MessageService {
                 // F026 P1 Wiring · forward gateway callId so the turn's
                 // lifecycle hooks (advance/settle) hit the right registry row.
                 dispatchedCallId: entry.callId,
+                // r2 范-r1 P2: A2A 派发显式 scenario（虽然推断也对，显式更稳）
+                scenario: "a2a_handoff",
               })
             } finally {
               this.dispatch.releaseSlot(sessionGroupId, entry.to.provider)
