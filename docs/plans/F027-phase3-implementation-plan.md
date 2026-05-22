@@ -132,6 +132,7 @@ AC-P3-8 / AC-P3-9 不是 Phase 3 新发明的 AC —— 它们是 feature.md Pha
 | 21-22 | AC-P3-4 viewfinder 6 段视图 + §4 a2a `<AtPill>` 渲染 + in-place drawer |
 | 23-24 | **Playwright worktree preview smoke**（覆盖 AC-P3-3/4/5 — 不只组件测试，浏览器实操；F024 :3100，范 P2-5）+ evidence pack 10 AC × 双 judge（轻量复用 Phase 2 runner）|
 | 25 | buffer / 修 / 合 dev |
+| | **patch v3.3 (2026-05-23 小孙拍 C)**：Day 23-24 改走 walkthrough script + Phase 2 evidence pack runner 复用（不引入 Playwright）。理由：项目无 Playwright 基建（无 playwright.config / tests/e2e/），引入 + 写 6 AC E2E ~1.5-2d 额外工。复用 Phase 2 pattern（每 AC `result.json` + `judges/{judge1_claude-opus-4-7, judge2_codex-gpt-5.4, arbitration}.json`）+ 双 judge double-pass 0.5-1d 完成。Playwright 推 Phase 4 与 F024 worktree preview 全面同步。|
 
 每 Week 走 requesting-review → 范德彪 code-review → receiving-review chain（同 Phase 2 节奏）。
 
