@@ -228,7 +228,23 @@ describe("ViewfinderTab API base + enabled wire", () => {
     expect(url).toMatch(/\/api\/rooms\/R-201\/viewfinder$/)
   })
 
-  // 注：ViewfinderTab 当前还没 wire enabled={activeLvl2 === "viewfinder"}
-  // 防 always-render 5 tabs 启动并发 fetch（Day 14-15 r2 P2 同款修复）
-  // 这是接下来要加的（按 Day 14-15 r1 P2 同款 finding 预防）
+  // r1 P3 修：加 enabled wire 负 case (mirror Day 14-15 P2 测试)
+  // 确认 activeLvl2 != "viewfinder" 时 fetch 不触发
+
+  it("activeLvl2 != viewfinder → fetch 不触发 (enabled=false)", async () => {
+    useRuntimeLogStore.setState({ activeLvl2: "prompt-inspector" }) // 不是 viewfinder
+    const fetchMock = vi.fn(
+      (_input: RequestInfo | URL, _init?: RequestInit) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: () => Promise.resolve(makeResponse()),
+        } as Response),
+    )
+    globalThis.fetch = fetchMock
+    render(<ViewfinderTab />)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 })
