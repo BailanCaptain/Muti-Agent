@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useState } from "react"
+import { useCallback, useRef, useState } from "react"
 
 /**
  * F027 Phase 3 Week 4 Day 19a (AC-P3-6 + AC-P3-10) · IngestModal 数据 fetch hook
@@ -82,10 +82,17 @@ export function useIngestPreview(): UsePreviewReturn {
   const [data, setData] = useState<PreviewIngestResponse | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 范-r1 P1-2 fix: monotonic request id 守 stale response
+  // (preview A 慢 + preview B 后启动 → A 响应到时 reqId 已过期 → 不更 state)
+  const reqIdRef = useRef(0)
 
   const preview = useCallback(async (body: PreviewIngestBody) => {
+    const myReqId = ++reqIdRef.current
     setIsLoading(true)
     setError(null)
+    // 范-r1 P1-2 fix: 清旧 data 防 stale data 仍 commit-enabled
+    // (UI 切换 file/type 后旧 preview 不应残留)
+    setData(null)
     try {
       const res = await fetch(`${API_BASE_URL}/api/wiki/ingest/preview`, {
         method: "POST",
@@ -97,9 +104,13 @@ export function useIngestPreview(): UsePreviewReturn {
         throw new Error(errBody.message ?? `HTTP ${res.status} ${res.statusText}`)
       }
       const json = (await res.json()) as PreviewIngestResponse
+      // 范-r1 P1-2 fix: stale response (新 preview 已发出) → discard
+      if (myReqId !== reqIdRef.current) return
       setData(json)
       setIsLoading(false)
     } catch (err) {
+      // stale error 也 discard (避免覆盖新请求的 loading 状态)
+      if (myReqId !== reqIdRef.current) return
       setError(err instanceof Error ? err.message : String(err))
       setIsLoading(false)
       setData(null)
@@ -107,6 +118,8 @@ export function useIngestPreview(): UsePreviewReturn {
   }, [])
 
   const reset = useCallback(() => {
+    // 范-r1 P1-2 fix: reset 也 bump reqId 让 in-flight 响应作废
+    reqIdRef.current++
     setData(null)
     setError(null)
     setIsLoading(false)

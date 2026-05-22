@@ -291,4 +291,63 @@ describe("IngestModal type radio", () => {
     fireEvent.click(featureRadio)
     expect(featureRadio.checked).toBe(true)
   })
+
+  // 范-r1 P1-1 fix: type 改要重 preview (backend ingest-preview.ts:198 真用 targetType 写 frontmatter)
+  it("范-r1 P1-1 fix: 切换 type → 新 preview body 含新 targetType", async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: () => Promise.resolve(makePreviewResponse()),
+      } as Response),
+    )
+    globalThis.fetch = fetchMock
+    render(<IngestModal open={true} file={makeFile()} callerAlias="huang" onClose={vi.fn()} />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    // 第一次调用 body 含 targetType="concept" (默认)
+    const body1 = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))
+    expect(body1.targetType).toBe("concept")
+
+    // 切换到 feature → 重 preview
+    const featureRadio = screen
+      .getByTestId("ingest-type-radio-feature")
+      .querySelector("input") as HTMLInputElement
+    fireEvent.click(featureRadio)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    const body2 = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))
+    expect(body2.targetType).toBe("feature")
+  })
+})
+
+describe("IngestModal Escape key (范-r1 P2 fix · a11y)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("Escape key → onClose 触发", async () => {
+    mockSequence([{ ok: true, status: 200, json: makePreviewResponse() }])
+    const onClose = vi.fn()
+    render(<IngestModal open={true} file={makeFile()} callerAlias="huang" onClose={onClose} />)
+    await waitFor(() => expect(screen.queryByTestId("ingest-sanitize-clean")).toBeTruthy())
+    fireEvent.keyDown(document, { key: "Escape" })
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it("非 Escape key → 不触发 onClose", async () => {
+    mockSequence([{ ok: true, status: 200, json: makePreviewResponse() }])
+    const onClose = vi.fn()
+    render(<IngestModal open={true} file={makeFile()} callerAlias="huang" onClose={onClose} />)
+    await waitFor(() => expect(screen.queryByTestId("ingest-sanitize-clean")).toBeTruthy())
+    fireEvent.keyDown(document, { key: "Enter" })
+    fireEvent.keyDown(document, { key: "a" })
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it("open=false → Escape 不触发 (listener 已 unregister)", async () => {
+    const onClose = vi.fn()
+    render(<IngestModal open={false} file={makeFile()} callerAlias="huang" onClose={onClose} />)
+    fireEvent.keyDown(document, { key: "Escape" })
+    expect(onClose).not.toHaveBeenCalled()
+  })
 })

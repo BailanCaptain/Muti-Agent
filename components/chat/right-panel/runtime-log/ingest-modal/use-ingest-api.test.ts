@@ -152,6 +152,104 @@ describe("useIngestPreview", () => {
     expect(result.current.error).toBeNull()
     expect(result.current.isLoading).toBe(false)
   })
+
+  it("范-r1 P1-2 fix: preview() 开始立即清旧 data (防 stale UI 仍 commit-enabled)", async () => {
+    // 先发起 preview A 拿到 data
+    mockOkFetch(makePreviewResponse({ previewId: "preview-A" }))
+    const { result } = renderHook(() => useIngestPreview())
+    await act(async () => {
+      await result.current.preview({
+        sourcePath: "A.md",
+        content: "A",
+        mimeType: "text/markdown",
+      })
+    })
+    expect(result.current.data?.previewId).toBe("preview-A")
+
+    // 再发起 preview B (用 deferred mock) — 第一帧应该已 data=null
+    let resolveB: (v: Response) => void = () => {}
+    const deferredB = new Promise<Response>((r) => {
+      resolveB = r
+    })
+    globalThis.fetch = vi.fn(() => deferredB)
+    act(() => {
+      void result.current.preview({
+        sourcePath: "B.md",
+        content: "B",
+        mimeType: "text/markdown",
+      })
+    })
+    // preview B 还没 resolve, 但 data 已立即清 (防 stale A 仍 commit-enabled)
+    expect(result.current.data).toBeNull()
+    expect(result.current.isLoading).toBe(true)
+
+    // resolve B 后 data 是 B
+    await act(async () => {
+      resolveB({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: () => Promise.resolve(makePreviewResponse({ previewId: "preview-B" })),
+      } as Response)
+      await deferredB
+    })
+    expect(result.current.data?.previewId).toBe("preview-B")
+  })
+
+  it("范-r1 P1-2 fix: stale race A 慢 + B 快 → A 响应不覆盖 B (monotonic reqId)", async () => {
+    let resolveA: (v: Response) => void = () => {}
+    const deferredA = new Promise<Response>((r) => {
+      resolveA = r
+    })
+    const aborted = false
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementationOnce(() => deferredA) // A 慢
+      .mockImplementationOnce(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: () => Promise.resolve(makePreviewResponse({ previewId: "preview-B" })),
+        } as Response),
+      ) // B 快
+
+    const { result } = renderHook(() => useIngestPreview())
+    // 启动 A (慢) — 不 await
+    act(() => {
+      void result.current.preview({
+        sourcePath: "A.md",
+        content: "A",
+        mimeType: "text/markdown",
+      })
+    })
+    // 启动 B (快) — await 让 B 跑完
+    await act(async () => {
+      await result.current.preview({
+        sourcePath: "B.md",
+        content: "B",
+        mimeType: "text/markdown",
+      })
+    })
+    expect(result.current.data?.previewId).toBe("preview-B")
+
+    // 现在让 A 后到 (用 A 的 stale previewId) — reqId 守护应丢弃 A 响应
+    await act(async () => {
+      resolveA({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: () => Promise.resolve(makePreviewResponse({ previewId: "preview-A-stale" })),
+      } as Response)
+      await deferredA
+      // 等下一个 microtask
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    // data 仍是 B (A stale 被丢)
+    expect(result.current.data?.previewId).toBe("preview-B")
+    // suppress unused var lint
+    void aborted
+  })
 })
 
 describe("useIngestCommit", () => {

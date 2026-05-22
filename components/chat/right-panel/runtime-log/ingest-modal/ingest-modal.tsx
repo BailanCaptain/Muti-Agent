@@ -80,17 +80,21 @@ export function IngestModal({
 
   const mime = useMemo(() => (file ? detectIngestMime(file.name) : "text/plain"), [file])
 
-  // Modal open + file ready → auto preview 一次。targetType 故意不进 deps：
-  // 切换 type 不触发重 sanitize（preview stub 不参考 type，见组件 design notes）
+  // 范-r1 P1-1 fix: targetType 进 deps + 重 preview
+  // 旧设计错: backend ingest-preview.ts:198 真用 targetType 写 frontmatter `type` 字段,
+  // 我之前注释 "preview stub 不参考 type" 是脑补未核 backend。
+  // 切换 type 必须重 preview 拿匹配的 previewId, 不然 commit 会写旧 type 落盘。
+  // 同时 reset commit state 防 stale commit data 还显示着。
   useEffect(() => {
     if (!open || !file) return
+    commitHook.reset() // 防新 preview + 旧 commit success 同屏
     previewHook.preview({
       sourcePath: file.name,
       content: file.content,
       mimeType: mime,
       targetType,
     })
-  }, [open, file, mime, previewHook.preview])
+  }, [open, file, mime, targetType, previewHook.preview, commitHook.reset])
 
   // Commit 成功 → 触发回调 + 不立即 close（让用户看 finalPath 后手动关闭）
   useEffect(() => {
@@ -101,6 +105,23 @@ export function IngestModal({
       })
     }
   }, [commitHook.data, onCommitSuccess])
+
+  // 范-r1 P2 fix: Escape key → handleCancel (与 confirm-dialog / agent-config-drawer 一致 a11y)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: handleCancel 内联，避免依赖循环
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault()
+        previewHook.reset()
+        commitHook.reset()
+        setReason("")
+        onClose()
+      }
+    }
+    document.addEventListener("keydown", onKeyDown)
+    return () => document.removeEventListener("keydown", onKeyDown)
+  }, [open, onClose])
 
   if (!open || !file) return null
 
@@ -158,7 +179,14 @@ export function IngestModal({
           onCancel={handleCancel}
           onCommit={handleCommit}
           canCommit={
-            !!previewHook.data && !previewBlocked && !commitHook.isLoading && !commitHook.data
+            // 范-r1 P1-2 fix: commit 必须 !previewHook.isLoading
+            // (旧条件依赖 data 非 null + setData(null) on preview start 间接守住,
+            // 但显式 !isLoading 更清晰防 race window 漏)
+            !!previewHook.data &&
+            !previewHook.isLoading &&
+            !previewBlocked &&
+            !commitHook.isLoading &&
+            !commitHook.data
           }
           isCommitting={commitHook.isLoading}
           isCommitted={!!commitHook.data}
