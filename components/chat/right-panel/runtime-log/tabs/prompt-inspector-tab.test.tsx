@@ -275,14 +275,13 @@ describe("PromptInspectorTab r2 P1: fetch 用 API_BASE_URL (not same-origin)", (
   })
 
   it("fetch URL 含 http://localhost:8787 (不是 same-origin /api/...)", async () => {
-    const fetchMock = vi.fn(
-      (_input: RequestInfo | URL, _init?: RequestInit) =>
-        Promise.resolve({
-          ok: true,
-          status: 200,
-          statusText: "OK",
-          json: () => Promise.resolve(makeResponse()),
-        } as Response),
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: () => Promise.resolve(makeResponse()),
+      } as Response),
     )
     globalThis.fetch = fetchMock
     render(<PromptInspectorTab />)
