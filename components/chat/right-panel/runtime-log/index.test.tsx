@@ -255,13 +255,14 @@ describe("RuntimeLog knowledge-base [+ Drop 资料] 按钮 (Week 4 接入)", () 
   beforeEach(() => resetStore())
   afterEach(() => resetStore())
 
-  it("knowledge-base tab 含 disabled '+ Drop 资料' 按钮", () => {
+  it("knowledge-base tab 含启用的 '+ Drop 资料' 按钮 (Day 19b-1 启用)", () => {
     useRuntimeLogStore.setState({ activeLvl2: "knowledge-base" })
     render(<RuntimeLog />)
     const tab = screen.getByTestId("knowledge-base-tab")
-    const btn = tab.querySelector("button")
+    const btn = tab.querySelector("button") as HTMLButtonElement | null
     expect(btn).toBeTruthy()
-    expect(btn?.hasAttribute("disabled")).toBe(true)
+    // Day 19b-1: button 启用 (Day 19a IngestModal 就绪 + KB 接入入口 B)
+    expect(btn?.disabled).toBe(false)
     expect(btn?.textContent).toMatch(/Drop 资料/)
   })
 })
