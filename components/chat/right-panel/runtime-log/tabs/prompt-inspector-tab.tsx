@@ -1,5 +1,6 @@
 "use client"
 
+import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { useWakeTriggerStore } from "@/components/stores/wake-trigger-store"
 import {
@@ -35,7 +36,12 @@ import {
 export function PromptInspectorTab() {
   const activeGroup = useThreadStore((state) => state.activeGroup)
   const roomId = activeGroup?.roomId ?? null
-  const { data, isLoading, error } = usePromptInspectorData(roomId)
+  // r2 范-r1 P2: 只在 prompt-inspector tab 真 active 时才 fetch
+  // (Day 12-13 r2 always-render 5 tabs，无 enabled flag 会让 5 tab 启动同时 fetch)
+  const activeLvl2 = useRuntimeLogStore((state) => state.activeLvl2)
+  const { data, isLoading, error } = usePromptInspectorData(roomId, {
+    enabled: activeLvl2 === "prompt-inspector",
+  })
 
   return (
     <div className="flex flex-col gap-3 p-3 text-xs" data-testid="prompt-inspector-tab">

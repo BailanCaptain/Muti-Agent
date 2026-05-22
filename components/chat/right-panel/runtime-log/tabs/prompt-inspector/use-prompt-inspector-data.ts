@@ -3,6 +3,14 @@
 import { useEffect, useState } from "react"
 
 /**
+ * r2 范-r1 P1 修：API base URL 同 thread-store / chat-store pattern
+ * (env NEXT_PUBLIC_API_HTTP_URL 优先 / fallback localhost:8787)。
+ * r1 用 `/api/...` same-origin fetch 在 Next 默认配置下 404
+ * (next.config.ts 不 rewrite /api/*)。
+ */
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+
+/**
  * 前端 contract types（mirror packages/api/src/routes/phase3/contracts.ts
  * GetPromptInspectorResponse 子段）— 后端 contracts 不暴露 npm package，
  * 前端 inline 镜像保持同 shape。Day 14-15 起手 inline，Phase 4 评估抽
@@ -103,7 +111,7 @@ export function usePromptInspectorData(
     let cancelled = false
     setIsLoading(true)
     setError(null)
-    fetch(`/api/rooms/${encodeURIComponent(roomId)}/prompt-inspector`, {
+    fetch(`${API_BASE_URL}/api/rooms/${encodeURIComponent(roomId)}/prompt-inspector`, {
       method: "GET",
       headers: { Accept: "application/json" },
     })

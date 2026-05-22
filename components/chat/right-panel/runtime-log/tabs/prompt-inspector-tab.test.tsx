@@ -262,3 +262,76 @@ describe("PromptInspectorTab WakeTrigger (WS 优先 / API fallback)", () => {
     await waitFor(() => expect(screen.queryByText(/暂无 trigger/)).toBeTruthy())
   })
 })
+
+// ─── r2 范-r1 P1 + P2 wire fix tests ──────────────────────────────
+
+describe("PromptInspectorTab r2 P1: fetch 用 API_BASE_URL (not same-origin)", () => {
+  beforeEach(() => {
+    resetStores()
+    // 默认 activeLvl2 = prompt-inspector → enabled=true → fetch 会触发
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("fetch URL 含 http://localhost:8787 (不是 same-origin /api/...)", async () => {
+    const fetchMock = vi.fn(
+      (_input: RequestInfo | URL, _init?: RequestInit) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: () => Promise.resolve(makeResponse()),
+        } as Response),
+    )
+    globalThis.fetch = fetchMock
+    render(<PromptInspectorTab />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const url = fetchMock.mock.calls[0]?.[0]
+    expect(url).toBeTruthy()
+    // 必须含 http://localhost:8787 (env 默认 fallback) — 防 P1 regression
+    expect(String(url)).toMatch(/^http:\/\/localhost:8787\//)
+    expect(String(url)).toMatch(/\/api\/rooms\/R-201\/prompt-inspector$/)
+  })
+})
+
+describe("PromptInspectorTab r2 P2: enabled flag wired to activeLvl2", () => {
+  beforeEach(() => {
+    resetStores()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("activeLvl2=prompt-inspector → fetch 触发", async () => {
+    const { useRuntimeLogStore } = await import("@/components/stores/runtime-log-store")
+    useRuntimeLogStore.setState({ activeLvl2: "prompt-inspector" })
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(makeResponse()),
+      } as Response),
+    )
+    globalThis.fetch = fetchMock
+    render(<PromptInspectorTab />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+  })
+
+  it("activeLvl2=viewfinder → fetch 不触发 (enabled=false)", async () => {
+    const { useRuntimeLogStore } = await import("@/components/stores/runtime-log-store")
+    useRuntimeLogStore.setState({ activeLvl2: "viewfinder" })
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(makeResponse()),
+      } as Response),
+    )
+    globalThis.fetch = fetchMock
+    render(<PromptInspectorTab />)
+    // 等一点时间让任何 fetch 触发，然后断言确实没 fetch
+    await new Promise((r) => setTimeout(r, 50))
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
