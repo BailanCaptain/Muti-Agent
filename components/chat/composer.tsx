@@ -8,6 +8,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { mentionTheme, EVERYONE_THEME as everyoneTheme } from "../theme"
 import { planQueueFlush, resolveLatchAfterSend } from "./queue-flush"
 import { ProviderAvatar } from "./provider-avatar"
+import {
+  IngestModal,
+  type IngestModalFile,
+} from "./right-panel/runtime-log/ingest-modal/ingest-modal"
 
 const PROVIDER_ACCENT_TEXT: Record<Provider, string> = {
   claude: "text-violet-700",
@@ -86,6 +90,24 @@ function filterSuggestions(query: string): Suggestion[] {
 }
 
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"]
+
+// F027 Phase 3 Day 19b-2 · AC-P3-6 入口 A: composer 拖文件 → IngestModal
+// 拖图片 → 原 addFiles 走 ACCEPTED_IMAGE_TYPES; 拖非图片 .md/.json/.txt → IngestModal
+const ACCEPTED_INGEST_EXTENSIONS = [".md", ".markdown", ".json", ".txt"]
+const MAX_INGEST_BYTES = 1_048_576 // 1MB (与 contracts.MAX_INGEST_CONTENT_BYTES 一致)
+
+function isIngestFile(file: File): boolean {
+  const lower = file.name.toLowerCase()
+  return ACCEPTED_INGEST_EXTENSIONS.some((ext) => lower.endsWith(ext))
+}
+
+/**
+ * F027 Phase 3 Day 19b-1+2 · callerAlias 来源 (与 knowledge-base-tab 一致)
+ * Phase 3 无 user session store, Phase 4 接真 auth 时移除此 hack。
+ */
+function getCurrentUserAlias(): string {
+  return process.env.NEXT_PUBLIC_USER_ALIAS ?? "小孙"
+}
 
 const EMPTY_PENDING_IMAGES: { url: string; file: File }[] = []
 
@@ -231,6 +253,78 @@ export function Composer() {
     [activeGroupId, addPendingImage],
   )
 
+  // F027 Phase 3 Day 19b-2 · AC-P3-6 入口 A: composer 拖文件 → IngestModal
+  const [dragOver, setDragOver] = useState(false)
+  const [ingestModalFile, setIngestModalFile] = useState<IngestModalFile | null>(null)
+  const [ingestDropError, setIngestDropError] = useState<string | null>(null)
+  const dragCounterRef = useRef(0) // 防 child enter/leave 抖动
+
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    dragCounterRef.current += 1
+    if (e.dataTransfer.types.includes("Files")) setDragOver(true)
+  }, [])
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLFormElement>) => {
+    e.preventDefault() // 必须 preventDefault 才能触发 drop
+  }, [])
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    dragCounterRef.current -= 1
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0
+      setDragOver(false)
+    }
+  }, [])
+  const handleDrop = useCallback(
+    async (e: React.DragEvent<HTMLFormElement>) => {
+      e.preventDefault()
+      dragCounterRef.current = 0
+      setDragOver(false)
+      setIngestDropError(null)
+      const files = Array.from(e.dataTransfer.files)
+      if (files.length === 0) return
+
+      // 分流: 图片走 addFiles (走原 pendingImages); ingest 文件走 IngestModal
+      const imageFiles = files.filter((f) => ACCEPTED_IMAGE_TYPES.includes(f.type))
+      const ingestFiles = files.filter((f) => isIngestFile(f))
+      const rejected = files.filter(
+        (f) => !ACCEPTED_IMAGE_TYPES.includes(f.type) && !isIngestFile(f),
+      )
+
+      if (imageFiles.length > 0) addFiles(imageFiles)
+
+      if (rejected.length > 0) {
+        setIngestDropError(
+          `拒收 ${rejected.length} 个文件 (限图片或 .md/.markdown/.json/.txt): ${rejected.map((f) => f.name).join(", ")}`,
+        )
+      }
+
+      // Phase 3 Day 19b-2: 单文件 ingest only (multi-drop chained 防误检 Phase 4)
+      if (ingestFiles.length === 0) return
+      if (ingestFiles.length > 1) {
+        setIngestDropError(
+          `多文件 ingest Phase 4 接 series_id, 当前只取第一个: ${ingestFiles[0].name}`,
+        )
+      }
+      const file = ingestFiles[0]
+      if (file.size > MAX_INGEST_BYTES) {
+        setIngestDropError(`文件过大: ${file.name} (${Math.round(file.size / 1024)}KB > 1MB)`)
+        return
+      }
+      try {
+        const content = await file.text()
+        setIngestModalFile({ name: file.name, content, sizeBytes: file.size })
+      } catch (err) {
+        setIngestDropError(`读取失败: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    },
+    [addFiles],
+  )
+
+  const handleIngestModalClose = useCallback(() => {
+    setIngestModalFile(null)
+  }, [])
+
   function applySuggestion(suggestion: Suggestion) {
     if (!mentionContext) return
     const before = value.slice(0, mentionContext.start)
@@ -360,13 +454,48 @@ export function Composer() {
   }
 
   return (
+    <>
     <form
-      className="flex flex-col gap-3 rounded-[30px] border border-slate-200/80 bg-white/90 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur"
+      className={`flex flex-col gap-3 rounded-[30px] border bg-white/90 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur transition-colors ${
+        dragOver
+          ? "border-violet-400 bg-violet-50/70 ring-2 ring-violet-200"
+          : "border-slate-200/80"
+      }`}
+      data-testid="composer-form"
+      data-drag-over={dragOver ? "true" : "false"}
       onSubmit={(event) => {
         event.preventDefault()
         submitMessage(value)
       }}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
+      {dragOver && (
+        <div
+          className="rounded-2xl border-2 border-violet-300 border-dashed bg-violet-100/40 px-4 py-2 text-center text-[11px] text-violet-700"
+          data-testid="composer-drag-hint"
+        >
+          📎 拖入 .md / .markdown / .json / .txt → IngestModal；图片 → 附件
+        </div>
+      )}
+      {ingestDropError && (
+        <div
+          className="rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] text-red-600"
+          data-testid="composer-ingest-drop-error"
+        >
+          ⚠ {ingestDropError}
+          <button
+            type="button"
+            onClick={() => setIngestDropError(null)}
+            className="ml-2 text-red-400 hover:text-red-600"
+            aria-label="关闭提示"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {hasRunningProvider && (
         <div className="flex items-center gap-2 px-2 pt-1">
           <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
@@ -618,5 +747,12 @@ export function Composer() {
         </div>
       </div>
     </form>
+    <IngestModal
+      open={ingestModalFile !== null}
+      file={ingestModalFile}
+      callerAlias={getCurrentUserAlias()}
+      onClose={handleIngestModalClose}
+    />
+    </>
   )
 }
