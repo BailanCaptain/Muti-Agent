@@ -151,6 +151,30 @@ export interface BlockerCallRow {
   reason?: string
 }
 
+/**
+ * §2 当前进度：feature/bugfix phase 坐标（P12.b 小孙 2026-05-22 拍方案 Y）
+ *
+ * 数据流：
+ *   1. compile-fn 扫 recentMessages 内出现的 feature ID (regex `F\d+|B\d+`)
+ *   2. spawn `git log -1 --format=%s --grep="<featureId>"` 抓最新 commit subject
+ *   3. regex parse subject："Phase \d+" / "Week \d+" / "Day \d+" / "AC-P\d+-\d+"
+ *   4. 用 recentMessages 含相同 featureId 验证 "commit 属于这房间"
+ *   5. 任意步骤失败/空 → phaseInfo = null → renderer fallback (A) 当前实施列表
+ *
+ * 渲染（renderer 内）：
+ *   "F027 Phase 3 Week 2 Day 10 (commit 694fcc1)"
+ *   "已完成：- ... - ..."  ← 接 commit decisions 列表
+ */
+export interface PhaseInfo {
+  featureId: string // "F027" / "B023"
+  phase?: number // Phase 3
+  week?: number // Week 2
+  day?: number // Day 10
+  acs?: string[] // ["AC-P3-10"]
+  commitShortSha?: string // "694fcc1"
+  commitSubject: string // 完整 subject（debug 用）
+}
+
 export interface RenderViewfinderInput {
   roomId: string
   /** 当前 active 决策（status != superseded, ORDER BY decided_at DESC） */
@@ -175,6 +199,11 @@ export interface RenderViewfinderInput {
   generatedAt: string
   /** 可选：last_committed_cursor message_id（写 frontmatter） */
   lastCommittedCursor?: string | null
+  /**
+   * §2 phase 坐标（compile-fn spawn git log + 房间 ID 验证后预查好）
+   * null = 抓不到 / 验证失败 / git 不可用 → renderer fallback (A) commit decisions 列表
+   */
+  phaseInfo?: PhaseInfo | null
 }
 
 export interface ViewfinderArtifact {

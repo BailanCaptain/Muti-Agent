@@ -22,6 +22,7 @@ import type {
   BlockerCallRow,
   CoverageReport,
   DecisionRow,
+  PhaseInfo,
   RenderViewfinderInput,
   ViewfinderArtifact,
 } from "./types"
@@ -72,7 +73,7 @@ export function renderViewfinder(input: RenderViewfinderInput): ViewfinderArtifa
   lines.push(renderNextStep(input))
   lines.push("")
 
-  // §4 等谁 / blocker
+  // §4 等谁 / blocker（P12.b 小孙 2026-05-22 拍：a2a + decision-unresolved 合并 / c1 入口内联）
   lines.push("## 4. 等谁 / blocker")
   lines.push(renderBlockers(input))
   lines.push("")
@@ -131,20 +132,46 @@ function renderTopic(input: RenderViewfinderInput): string {
 // 容易抓到早期"在后台跑"等过期句子。改为从最新 active commit 决策拼"已完成"列表，
 // 因为 commit 决策本身就是"已批准 / 已完成"语义的承诺事件。
 //
-// 算法：取最新 PROGRESS_COMMIT_LIMIT 条 active commit 决策，按 decided_at DESC
-// 拼成 markdown 列表。无 commit 时 fallback 到"暂无进度信号"。
+// P12.b 小孙 2026-05-22 拍方案 Y（A+B 叠加）：
+//   - 顶部 phase 坐标行 "F027 Phase 3 Week 2 Day 10 (commit 694fcc1)"（如 caller 抓到 phaseInfo）
+//   - 下方已完成 commit decisions 列表（保留当前态）
+//   - phaseInfo=null（git 不可用 / 抓不到 / 房间无 feature ID）→ 只显示列表（语义 A fallback）
+//
+// 算法：phaseInfo 由 compile-fn spawn git log 预查 + 房间 ID 验证后传入。
+// renderer 是纯函数，不发起 IO。
 
 const PROGRESS_COMMIT_LIMIT = 5
 
 function renderProgress(input: RenderViewfinderInput): string {
+  const sections: string[] = []
+  // (B) phase 坐标行（如 caller 抓到 phaseInfo）
+  if (input.phaseInfo) {
+    sections.push(formatPhaseCoordLine(input.phaseInfo))
+  }
+  // (A) 已完成 commit decisions 列表
   const commits = input.activeDecisions
     .filter((d) => d.decisionType === "commit")
     .slice(0, PROGRESS_COMMIT_LIMIT)
   if (commits.length === 0) {
-    return "（暂无 commit 类决策入 ledger，无法描绘进度）"
+    if (sections.length === 0) {
+      return "（暂无 commit 类决策入 ledger，无法描绘进度）"
+    }
+    return sections.join("\n\n")
   }
-  const lines = commits.map((d) => `- ${d.content}（${formatDecisionRef(d)}）`)
-  return `已完成：\n${lines.join("\n")}`
+  const listLines = commits.map((d) => `- ${d.content}（${formatDecisionRef(d)}）`)
+  sections.push(`已完成：\n${listLines.join("\n")}`)
+  return sections.join("\n\n")
+}
+
+function formatPhaseCoordLine(info: PhaseInfo): string {
+  const parts: string[] = [info.featureId]
+  if (info.phase !== undefined) parts.push(`Phase ${info.phase}`)
+  if (info.week !== undefined) parts.push(`Week ${info.week}`)
+  if (info.day !== undefined) parts.push(`Day ${info.day}`)
+  let line = parts.join(" ")
+  if (info.acs && info.acs.length > 0) line += ` · ${info.acs.join(" + ")}`
+  if (info.commitShortSha) line += ` (commit ${info.commitShortSha})`
+  return line
 }
 
 // ─── §3 下一步 + 谁做 ────────────────────────────────────────────────
@@ -166,12 +193,26 @@ function renderNextStep(input: RenderViewfinderInput): string {
 // ─── §4 等谁 / blocker（含 B024 24h 防御过滤） ───────────────────────
 
 export function renderBlockers(input: RenderViewfinderInput): string {
-  if (input.blockerCalls.length === 0) {
-    return "无 blocker（无 pending/working/failed/timeout a2a_calls）"
-  }
   const lines: string[] = []
+  // (1) a2a blockers — F026 a2a_calls 实时查（B024 24h 防御过滤）
   for (const c of input.blockerCalls) {
     lines.push(`- ${renderBlockerLine(c)}`)
+  }
+  // (2) decision-unresolved 内联（P12.b 小孙 2026-05-22 拍 c1）
+  // coverage.unresolvedMessageIds 是 extractor LLM 判模糊的候选 message_id（还没入 ledger）
+  // 点 "confirm" 调 POST /api/rooms/:id/decisions（Week 2 Day 6 done）→ 升级成 D-X 入档案
+  for (const msgId of input.coverage.unresolvedMessageIds) {
+    const msg = input.recentMessages.find((m) => m.messageId === msgId)
+    const author = msg?.authorAlias ?? "unknown"
+    const excerpt = msg?.content
+      ? msg.content.length > 60
+        ? `${msg.content.slice(0, 60).replace(/\n/g, " ")}…`
+        : msg.content.replace(/\n/g, " ")
+      : "(excerpt unavailable)"
+    lines.push(`- 等 @小孙 confirm: msg_${msgId} by ${author} — "${escapeYaml(excerpt)}"`)
+  }
+  if (lines.length === 0) {
+    return "无 blocker（无 pending/working/failed/timeout a2a_calls + 无 unresolved candidates）"
   }
   return lines.join("\n")
 }
@@ -221,12 +262,10 @@ function renderDoNotList(input: RenderViewfinderInput): string {
     }
   }
   if (items.length === 0) return "（暂无 reject/tombstone 决策）"
+  // P12.b 小孙 2026-05-22 拍：tombstone 三合一拼到 ref 方括号内（不再外挂 [tombstone]）
   return items
     .slice(0, DECISIONS_LIMIT)
-    .map((d) => {
-      const tomb = d.tombstone ? " [tombstone]" : ""
-      return `- ${d.content}（${formatDecisionRef(d)}${tomb}）`
-    })
+    .map((d) => `- ${d.content}（${formatDecisionRefWithTombstone(d)}）`)
     .join("\n")
 }
 
@@ -235,6 +274,19 @@ function renderDoNotList(input: RenderViewfinderInput): string {
 function formatDecisionRef(d: DecisionRow): string {
   const msgRef = d.sourceMessageIds[0] ?? "(no msg)"
   return `D-${d.decisionId} [msg_${msgRef}, ${d.decidedBy}]`
+}
+
+/**
+ * P12.b 小孙 2026-05-22 拍 §6 三合一：tombstone 标记拼进 ref 方括号
+ * （区别 formatDecisionRef：active/§1/§5 不带 tombstone 标记，§6 单独用此 helper）
+ *
+ * 例：D-5 [msg_180, 小孙, tombstone] vs D-21 [msg_470, 小孙]
+ */
+function formatDecisionRefWithTombstone(d: DecisionRow): string {
+  const msgRef = d.sourceMessageIds[0] ?? "(no msg)"
+  const parts = [`msg_${msgRef}`, d.decidedBy]
+  if (d.tombstone) parts.push("tombstone")
+  return `D-${d.decisionId} [${parts.join(", ")}]`
 }
 
 function escapeYaml(s: string): string {

@@ -16,6 +16,8 @@
  *   - 不接 NightlyJob 调度（P19）
  */
 
+import { spawnSync } from "node:child_process"
+
 import type { SqliteAdapterLike } from "../room-compiler/sqlite-checkpoint-store"
 import type {
   CompileArtifact,
@@ -27,7 +29,7 @@ import type {
 import { computeCoverage } from "./coverage-check"
 import { type MessageInput, extractBroadCandidates, runExtractor } from "./decision-extractor"
 import type { DecisionLedger } from "./decision-ledger"
-import type { DecisionJudgeProvider } from "./types"
+import type { DecisionJudgeProvider, PhaseInfo } from "./types"
 import { queryBlockerCalls, renderViewfinder } from "./viewfinder-renderer"
 
 const RECENT_MESSAGES_LIMIT = 50
@@ -44,6 +46,19 @@ export interface CompileViewfinderDeps {
   judgeTimeoutMs?: number
   /** Claude CLI 并发上限，默认 4（防 spawn 风暴） */
   judgeConcurrency?: number
+  /**
+   * P12.b §2 phase coord 数据源（小孙 2026-05-22 拍方案 Y）
+   * 默认走 spawnSync git log 抓取。测试时注入 stub 避免真 spawn。
+   * 返回 null = 抓不到 / git 不可用 / 房间无 feature ID → renderer fallback (A) 列表
+   */
+  phaseInfoQuerier?: (
+    recentMessages: ReadonlyArray<MessageInput>,
+    nowIso: string,
+  ) => PhaseInfo | null
+  /** §2 git log spawn cwd（默认 process.cwd()），测试时注入 worktree 目录 */
+  rootDir?: string
+  /** §2 git log spawn timeout（ms），默认 5000 */
+  gitTimeoutMs?: number
 }
 
 export function createViewfinderCompileFn(deps: CompileViewfinderDeps): CompileFn {
@@ -126,6 +141,12 @@ export function createViewfinderCompileFn(deps: CompileViewfinderDeps): CompileF
     const blockerCalls =
       sessionGroupId !== input.roomId ? queryBlockerCalls(deps.db, sessionGroupId, generatedAt) : []
 
+    // 7.5 §2 phase coord（P12.b 方案 Y）— spawn git log + 房间 ID 验证 → PhaseInfo | null
+    const phaseInfo = (deps.phaseInfoQuerier ?? defaultPhaseInfoQuerier(deps))(
+      recentMessages,
+      generatedAt,
+    )
+
     // 8. renderViewfinder
     const artifact = renderViewfinder({
       roomId: input.roomId,
@@ -137,6 +158,7 @@ export function createViewfinderCompileFn(deps: CompileViewfinderDeps): CompileF
       coverage,
       generatedAt,
       lastCommittedCursor: input.prevCheckpoint?.cursorMessageId ?? null,
+      phaseInfo,
     })
 
     // 9. decisionsMd（dump active decisions for human-readable audit）
@@ -275,6 +297,100 @@ function renderDecisionsAuditMd(roomId: string, decisions: ReadonlyArray<Decisio
     lines.push("")
   }
   return `${lines.join("\n")}\n`
+}
+
+// ─── §2 phase coord querier（P12.b 方案 Y · 小孙 2026-05-22 拍） ───────
+//
+// 数据流：
+//   1. 扫 recentMessages content 抓 feature IDs (regex F\d+ | B\d+)
+//   2. spawn `git log -1 --format=%h%n%s --grep=<featureId>` 拿最新 commit
+//   3. regex parse subject "Phase \d+" / "Week \d+" / "Day \d+" / "AC-P\d+-\d+"
+//   4. 验证 commit subject 含 featureId（防误抓跨房间 commit）
+//   5. 任意失败 → 返 null → renderer fallback (A) 列表（不报错）
+//
+// 跨平台：spawnSync git 在 Windows / macOS / Linux 通用（git for Windows 装 PATH）
+// timeout 5s 防 git 卡死；spawn 失败 / 非零退出 / 空 stdout → 全部 fallback null
+
+const FEATURE_ID_REGEX = /\b([FB]\d+)\b/g
+
+function defaultPhaseInfoQuerier(
+  deps: CompileViewfinderDeps,
+): (recentMessages: ReadonlyArray<MessageInput>, nowIso: string) => PhaseInfo | null {
+  return (recentMessages, _nowIso) => {
+    // 1. 提房间消息内出现的 feature IDs
+    const featureIds = new Set<string>()
+    for (const m of recentMessages) {
+      const matches = m.content.matchAll(FEATURE_ID_REGEX)
+      for (const match of matches) {
+        featureIds.add(match[1])
+      }
+    }
+    if (featureIds.size === 0) return null
+
+    // 2-3. 依次尝试每个 featureId，找到第一个 hit 即返
+    for (const featureId of featureIds) {
+      const subject = safeGitLogSubject(featureId, {
+        cwd: deps.rootDir,
+        timeoutMs: deps.gitTimeoutMs ?? 5000,
+      })
+      if (!subject) continue
+      const info = parseSubjectToPhaseInfo(subject.shortSha, subject.message, featureId)
+      if (info) return info
+    }
+    return null
+  }
+}
+
+interface GitLogResult {
+  shortSha: string
+  message: string
+}
+
+function safeGitLogSubject(
+  featureId: string,
+  opts: { cwd?: string; timeoutMs: number },
+): GitLogResult | null {
+  try {
+    const result = spawnSync("git", ["log", "-1", "--format=%h%n%s", `--grep=${featureId}`], {
+      cwd: opts.cwd,
+      timeout: opts.timeoutMs,
+      encoding: "utf-8",
+    })
+    if (result.error || typeof result.status !== "number" || result.status !== 0) return null
+    const raw = (result.stdout ?? "").trim()
+    if (!raw) return null
+    const [shortSha, ...rest] = raw.split("\n")
+    const message = rest.join("\n").trim()
+    if (!shortSha || !message) return null
+    return { shortSha: shortSha.trim(), message }
+  } catch {
+    return null
+  }
+}
+
+function parseSubjectToPhaseInfo(
+  shortSha: string,
+  subject: string,
+  featureId: string,
+): PhaseInfo | null {
+  // 验证 — subject 必须含 featureId（防误抓跨房间 commit）
+  if (!subject.includes(featureId)) return null
+  const phaseMatch = /\bPhase (\d+)\b/.exec(subject)
+  const weekMatch = /\bWeek (\d+)\b/.exec(subject)
+  const dayMatch = /\bDay (\d+)(?:-\d+)?\b/.exec(subject) // "Day 9-10" 取 9
+  const acMatches = subject.matchAll(/\bAC-P\d+-\d+\b/g)
+  const acs = Array.from(acMatches).map((m) => m[0])
+  // 至少要 parse 到一个 phase/day/ac 才算 hit，否则返 null fallback (A)
+  if (!phaseMatch && !dayMatch && acs.length === 0) return null
+  return {
+    featureId,
+    phase: phaseMatch ? Number.parseInt(phaseMatch[1], 10) : undefined,
+    week: weekMatch ? Number.parseInt(weekMatch[1], 10) : undefined,
+    day: dayMatch ? Number.parseInt(dayMatch[1], 10) : undefined,
+    acs: acs.length > 0 ? acs : undefined,
+    commitShortSha: shortSha,
+    commitSubject: subject,
+  }
 }
 
 interface CompileLogParams {

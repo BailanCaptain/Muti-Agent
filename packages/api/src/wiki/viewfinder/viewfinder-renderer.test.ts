@@ -693,3 +693,243 @@ describe("renderBlockers (helper)", () => {
     assert.doesNotMatch(out, /reason/)
   })
 })
+
+// ─── P12.b 二轮打磨（小孙 2026-05-22 拍 5 段） ─────────────────────────
+
+describe("P12.b §4 a2a + decision-unresolved 合并（c1 内联）", () => {
+  it("coverage.unresolvedMessageIds → §4 渲染 '等 @小孙 confirm: msg_<id>' 行", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        coverage: makeCoverage({
+          status: "warn",
+          coverage: 0.5,
+          resolved: 5,
+          broad: 10,
+          unresolved: 5,
+          unresolvedMessageIds: ["msg-abc"],
+          reason: "coverage 50% < 95%",
+        }),
+        recentMessages: [
+          {
+            messageId: "msg-abc",
+            authorAlias: "黄仁勋",
+            role: "assistant",
+            content: "看到这篇 RAG paper，跟 F018 思路类似，要不要 ingest？",
+            createdAt: "t",
+          },
+        ],
+      }),
+    )
+    const section4 = r.markdown.split("## 4. 等谁")[1]?.split("##")[0] ?? ""
+    assert.match(section4, /等 @小孙 confirm: msg_msg-abc by 黄仁勋/, "decision-unresolved 行")
+    assert.match(section4, /RAG paper/, "excerpt 内容")
+  })
+
+  it("a2a + unresolved 双源混合 — 都列在 §4", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        blockerCalls: [
+          {
+            callId: "call-abc12345",
+            issuerId: "范德彪",
+            status: "pending",
+            deadlineAt: "2026-05-13T15:30:00Z",
+          },
+        ],
+        coverage: makeCoverage({
+          status: "warn",
+          coverage: 0.5,
+          resolved: 5,
+          broad: 10,
+          unresolved: 5,
+          unresolvedMessageIds: ["msg-x"],
+        }),
+        recentMessages: [
+          {
+            messageId: "msg-x",
+            authorAlias: "桂芬",
+            role: "assistant",
+            content: "preview 应该加签名吗",
+            createdAt: "t",
+          },
+        ],
+      }),
+    )
+    const section4 = r.markdown.split("## 4. 等谁")[1]?.split("##")[0] ?? ""
+    assert.match(section4, /等 范德彪.*pending/, "a2a 行")
+    assert.match(section4, /等 @小孙 confirm: msg_msg-x by 桂芬/, "decision 行")
+  })
+
+  it("excerpt 截 60 字符 + 换行替空格", () => {
+    const longContent = `${"很长的内容".repeat(20)}\n第二行内容`
+    const r = renderViewfinder(
+      defaultInput({
+        coverage: makeCoverage({
+          status: "warn",
+          coverage: 0.5,
+          resolved: 5,
+          broad: 10,
+          unresolved: 5,
+          unresolvedMessageIds: ["msg-long"],
+        }),
+        recentMessages: [
+          {
+            messageId: "msg-long",
+            authorAlias: "黄仁勋",
+            role: "assistant",
+            content: longContent,
+            createdAt: "t",
+          },
+        ],
+      }),
+    )
+    const section4 = r.markdown.split("## 4. 等谁")[1]?.split("##")[0] ?? ""
+    assert.match(section4, /…/, "截断标记")
+    assert.doesNotMatch(section4, /\n第二行/, "换行被替成空格")
+  })
+
+  it("unresolvedMessageIds 含 id 但 recentMessages 无对应 → excerpt unavailable", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        coverage: makeCoverage({
+          status: "warn",
+          coverage: 0.5,
+          resolved: 5,
+          broad: 10,
+          unresolved: 5,
+          unresolvedMessageIds: ["msg-missing"],
+        }),
+        recentMessages: [], // 空 — 无法找 excerpt
+      }),
+    )
+    const section4 = r.markdown.split("## 4. 等谁")[1]?.split("##")[0] ?? ""
+    assert.match(
+      section4,
+      /等 @小孙 confirm: msg_msg-missing by unknown/,
+      "author=unknown fallback",
+    )
+    assert.match(section4, /excerpt unavailable/, "excerpt fallback")
+  })
+
+  it("空 a2a + 空 unresolved → '无 blocker' 文案", () => {
+    const r = renderViewfinder(defaultInput())
+    const section4 = r.markdown.split("## 4. 等谁")[1]?.split("##")[0] ?? ""
+    assert.match(section4, /无 blocker/)
+  })
+})
+
+describe("P12.b §6 tombstone 三合一格式", () => {
+  it("tombstone 标记拼进 ref 方括号 — 单方括号格式", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        tombstoneDecisions: [
+          makeDecision({
+            id: 5,
+            type: "reject",
+            content: "不要回到 V12 一气呵成的拆法",
+            msgId: "msg-180",
+            tombstone: true,
+          }),
+        ],
+      }),
+    )
+    const section6 = r.markdown.split("## 6. 不要再做")[1] ?? ""
+    assert.match(
+      section6,
+      /D-5 \[msg_msg-180, 小孙, tombstone\]/,
+      "三合一 D-X [msg, decidedBy, tombstone] 单方括号",
+    )
+    assert.doesNotMatch(
+      section6,
+      /\[msg_msg-180, 小孙\] \[tombstone\]/,
+      "不再有双方括号叠加 ` [msg, by] [tombstone]`",
+    )
+  })
+
+  it("active reject 非 tombstone → 无 tombstone 标记", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        activeDecisions: [
+          makeDecision({ id: 7, type: "reject", content: "跳过 review", msgId: "msg-300" }),
+        ],
+      }),
+    )
+    const section6 = r.markdown.split("## 6. 不要再做")[1] ?? ""
+    assert.match(section6, /D-7 \[msg_msg-300, 小孙\]/, "active 无 tombstone")
+    assert.doesNotMatch(section6, /tombstone/, "无 tombstone 字面")
+  })
+})
+
+describe("P12.b §2 phaseInfo 注入 / fallback (方案 Y)", () => {
+  it("phaseInfo 注入 → 顶部 phase 坐标行 + 下方已完成列表", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        phaseInfo: {
+          featureId: "F027",
+          phase: 3,
+          week: 2,
+          day: 10,
+          acs: ["AC-P3-10"],
+          commitShortSha: "694fcc1",
+          commitSubject:
+            "feat(F027-P20): Phase 3 Week 2 Day 9-10 — ingest commit endpoint (AC-P3-10)",
+        },
+        activeDecisions: [
+          makeDecision({ id: 22, type: "commit", content: "ingest commit endpoint 落地" }),
+        ],
+      }),
+    )
+    const section2 = r.markdown.split("## 2. 当前进度")[1]?.split("##")[0] ?? ""
+    assert.match(section2, /F027 Phase 3 Week 2 Day 10 · AC-P3-10 \(commit 694fcc1\)/, "坐标行")
+    assert.match(section2, /已完成/, "下方接列表")
+    assert.match(section2, /ingest commit endpoint 落地/, "commit decision")
+  })
+
+  it("phaseInfo=null → fallback (A) 仅已完成列表（保留当前 9a1c7b3 实施）", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        phaseInfo: null,
+        activeDecisions: [makeDecision({ id: 1, type: "commit", content: "F026 进 merger-gate" })],
+      }),
+    )
+    const section2 = r.markdown.split("## 2. 当前进度")[1]?.split("##")[0] ?? ""
+    assert.doesNotMatch(section2, /Phase \d/, "无坐标行")
+    assert.match(section2, /已完成/, "fallback 列表")
+    assert.match(section2, /F026 进 merger-gate/)
+  })
+
+  it("phaseInfo 注入 + 无 commit 决策 → 只显示坐标行（无列表 + 无 fallback 文案）", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        phaseInfo: {
+          featureId: "F027",
+          phase: 3,
+          week: 3,
+          day: 11,
+          commitShortSha: "abc1234",
+          commitSubject: "feat(F027-P20): Phase 3 Week 3 Day 11 — StatusPanel 拖宽",
+        },
+        activeDecisions: [],
+      }),
+    )
+    const section2 = r.markdown.split("## 2. 当前进度")[1]?.split("##")[0] ?? ""
+    assert.match(section2, /F027 Phase 3 Week 3 Day 11/, "坐标行")
+    assert.doesNotMatch(section2, /暂无 commit/, "有坐标行时不输出 fallback 文案")
+    assert.doesNotMatch(section2, /已完成/, "无 commit 决策无列表")
+  })
+
+  it("phaseInfo 部分字段 (无 week/day/acs) → 优雅渲染只显示有的字段", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        phaseInfo: {
+          featureId: "B023",
+          commitShortSha: "xyz9876",
+          commitSubject: "fix(B023): runtime resilience",
+        },
+      }),
+    )
+    const section2 = r.markdown.split("## 2. 当前进度")[1]?.split("##")[0] ?? ""
+    assert.match(section2, /B023 \(commit xyz9876\)/, "只显示 featureId + commit")
+    assert.doesNotMatch(section2, /Phase|Week|Day/, "无 phase/week/day 字段不渲染")
+  })
+})
