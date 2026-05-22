@@ -15,7 +15,12 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
 import { createDrizzleDb } from "../../db/drizzle-instance"
-import { createViewfinderCompileFn } from "./compile-fn"
+import {
+  createViewfinderCompileFn,
+  defaultPhaseInfoQuerier,
+  parseSubjectToPhaseInfo,
+  safeGitLogSubjects,
+} from "./compile-fn"
 import { DecisionLedger } from "./decision-ledger"
 import type { BroadCandidate, DecisionJudgeProvider } from "./types"
 
@@ -505,5 +510,195 @@ describe("createViewfinderCompileFn · E2E happy path (R-201 真实场景)", () 
     } finally {
       cleanup()
     }
+  })
+})
+
+// ─── P12.b r2 范-r1 P2-1 + P2-2 修：parser + multi-commits 单元测试 ─────
+
+describe("P12.b parseSubjectToPhaseInfo (r2 范-r1 P2-2 Day range 后端)", () => {
+  it("Day 9-10 → 取后端 10", () => {
+    const info = parseSubjectToPhaseInfo(
+      "abc1234",
+      "feat(F027-P20): Phase 3 Week 2 Day 9-10 — ingest commit endpoint (AC-P3-10)",
+      "F027",
+    )
+    assert.ok(info, "应该 parse 成功")
+    assert.equal(info?.day, 10, "Day range 取后端")
+    assert.equal(info?.phase, 3)
+    assert.equal(info?.week, 2)
+    assert.deepEqual(info?.acs, ["AC-P3-10"])
+  })
+
+  it("Day 11 单值 → 11", () => {
+    const info = parseSubjectToPhaseInfo(
+      "def5678",
+      "feat(F027-P20): Phase 3 Week 3 Day 11 — StatusPanel 拖宽 (AC-P3-1)",
+      "F027",
+    )
+    assert.equal(info?.day, 11)
+  })
+
+  it("Day 11-15 跨周 → 15", () => {
+    const info = parseSubjectToPhaseInfo(
+      "xyz9999",
+      "feat(F027-P20): Phase 3 Week 3 Day 11-15 — frontend skeleton",
+      "F027",
+    )
+    assert.equal(info?.day, 15)
+  })
+
+  it("subject 不含 featureId → null (防误抓)", () => {
+    const info = parseSubjectToPhaseInfo(
+      "abc1234",
+      "feat(F026): Phase 3 Day 10",
+      "F027", // F026 commit 不能算 F027
+    )
+    assert.equal(info, null)
+  })
+
+  it("subject 不含 Phase/Day/AC → null (HEAD 自身场景 P2-1 触发点)", () => {
+    const info = parseSubjectToPhaseInfo(
+      "57a88ab",
+      "feat(F027-P12.b): viewfinder 6 段语义二轮打磨 — §2/§4/§6 收口",
+      "F027",
+    )
+    // P12.b 自己 commit subject 不含 Phase/Day/AC → null，触发 multi-commits 回溯
+    assert.equal(info, null)
+  })
+
+  it("只有 AC 没有 Phase/Day → 仍 parse（acs 非空）", () => {
+    const info = parseSubjectToPhaseInfo("abc", "fix(F027): AC-P3-9 b lint warning", "F027")
+    assert.ok(info)
+    assert.deepEqual(info?.acs, ["AC-P3-9"])
+    assert.equal(info?.day, undefined)
+    assert.equal(info?.phase, undefined)
+  })
+
+  it("多 AC → 全部 capture", () => {
+    const info = parseSubjectToPhaseInfo(
+      "abc",
+      "feat(F027): Week 2 — AC-P3-8 + AC-P3-9 + AC-P3-10 整合",
+      "F027",
+    )
+    assert.deepEqual(info?.acs, ["AC-P3-8", "AC-P3-9", "AC-P3-10"])
+  })
+})
+
+describe("P12.b safeGitLogSubjects (r2 范-r1 P2-1 multi-commits)", () => {
+  it("git 不可用 / 命令失败 → 返 [] (fallback null 路径)", () => {
+    // 不存在的 cwd → spawn 行为：ENOENT or status != 0
+    const results = safeGitLogSubjects("F027", {
+      cwd: "/nonexistent/path/that/should/not/exist",
+      timeoutMs: 1000,
+    })
+    assert.deepEqual(results, [], "无 cwd → 静默 fallback []")
+  })
+
+  it("真 git log 跑通：拿当前 worktree F027 commits（smoke test）", () => {
+    // 用 process.cwd() 跑真 git log（worktree 内 F027 提交多）
+    const results = safeGitLogSubjects("F027", {
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+      limit: 5,
+    })
+    // 至少能拿到 F027 commits（在 F027 worktree 跑测试时）
+    assert.ok(results.length > 0, "F027 worktree 内应能 grep 到 F027 commits")
+    // 每条都有 shortSha + message
+    for (const r of results) {
+      assert.match(r.shortSha, /^[0-9a-f]{7,}$/, "shortSha 是 hex")
+      assert.ok(r.message.length > 0, "message 非空")
+    }
+  })
+})
+
+describe("P12.b defaultPhaseInfoQuerier (r2 范-r1 P2-1 回溯找首个可 parse)", () => {
+  it("recentMessages 含 F027 → 找首个 Phase/Day commit (跳过 P12.b 自身 commit)", () => {
+    const querier = defaultPhaseInfoQuerier({
+      // biome-ignore lint/suspicious/noExplicitAny: test deps stub
+      db: null as any,
+      // biome-ignore lint/suspicious/noExplicitAny: test deps stub
+      ledger: null as any,
+      // biome-ignore lint/suspicious/noExplicitAny: test deps stub
+      judge: null as any,
+      fencingToken: "x",
+      leaderTerm: "x",
+      rootDir: process.cwd(),
+      gitTimeoutMs: 5000,
+    })
+    const info = querier(
+      [
+        {
+          messageId: "m1",
+          threadId: "t1",
+          authorAlias: "小孙",
+          role: "user",
+          content: "F027 Phase 3 Week 2 Day 10 开搞",
+          createdAt: "2026-05-22T00:00:00Z",
+        },
+      ],
+      "2026-05-22T00:00:00Z",
+    )
+    // 期望：HEAD 57a88ab (P12.b commit) 不含 Phase 字符串 → 跳过 → 找更早含 Phase 的 commit
+    // F027 worktree 内 694fcc1 等含 Phase 3 Week 2 — 应该被 hit
+    assert.ok(info, "回溯应找到至少一个可 parse 的 F027 commit")
+    assert.equal(info?.featureId, "F027")
+    assert.ok(info?.phase !== undefined || info?.day !== undefined || (info?.acs?.length ?? 0) > 0)
+  })
+
+  it("recentMessages 无 feature ID → 返 null", () => {
+    const querier = defaultPhaseInfoQuerier({
+      // biome-ignore lint/suspicious/noExplicitAny: test deps stub
+      db: null as any,
+      // biome-ignore lint/suspicious/noExplicitAny: test deps stub
+      ledger: null as any,
+      // biome-ignore lint/suspicious/noExplicitAny: test deps stub
+      judge: null as any,
+      fencingToken: "x",
+      leaderTerm: "x",
+      rootDir: process.cwd(),
+    })
+    const info = querier(
+      [
+        {
+          messageId: "m1",
+          threadId: "t1",
+          authorAlias: "小孙",
+          role: "user",
+          content: "闲聊，今天天气不错",
+          createdAt: "t",
+        },
+      ],
+      "t",
+    )
+    assert.equal(info, null)
+  })
+
+  it("rootDir 不存在 → 返 null (spawn 失败优雅降级)", () => {
+    const querier = defaultPhaseInfoQuerier({
+      // biome-ignore lint/suspicious/noExplicitAny: test deps stub
+      db: null as any,
+      // biome-ignore lint/suspicious/noExplicitAny: test deps stub
+      ledger: null as any,
+      // biome-ignore lint/suspicious/noExplicitAny: test deps stub
+      judge: null as any,
+      fencingToken: "x",
+      leaderTerm: "x",
+      rootDir: "/nonexistent/cwd",
+      gitTimeoutMs: 1000,
+    })
+    const info = querier(
+      [
+        {
+          messageId: "m1",
+          threadId: "t1",
+          authorAlias: "小孙",
+          role: "user",
+          content: "F027 Phase 3",
+          createdAt: "t",
+        },
+      ],
+      "t",
+    )
+    assert.equal(info, null)
   })
 })

@@ -303,8 +303,11 @@ function renderDecisionsAuditMd(roomId: string, decisions: ReadonlyArray<Decisio
 //
 // 数据流：
 //   1. 扫 recentMessages content 抓 feature IDs (regex F\d+ | B\d+)
-//   2. spawn `git log -1 --format=%h%n%s --grep=<featureId>` 拿最新 commit
+//   2. spawn `git log -N --format=%h%n%s%n--END-- --grep=<featureId>` 拿最近 N commits
+//      (r2 范-r1 P2-1 修：原 -1 命中最新 commit 若不可 parse 就 fallback null，
+//       不会回退找更早的可解析 commit；改成回溯 N=10 commits 找首个可 parse 的)
 //   3. regex parse subject "Phase \d+" / "Week \d+" / "Day \d+" / "AC-P\d+-\d+"
+//      (r2 范-r1 P2-2 修：Day range "Day 9-10" 取后端 → 10，跟"做到 Day 10"语义一致)
 //   4. 验证 commit subject 含 featureId（防误抓跨房间 commit）
 //   5. 任意失败 → 返 null → renderer fallback (A) 列表（不报错）
 //
@@ -312,8 +315,10 @@ function renderDecisionsAuditMd(roomId: string, decisions: ReadonlyArray<Decisio
 // timeout 5s 防 git 卡死；spawn 失败 / 非零退出 / 空 stdout → 全部 fallback null
 
 const FEATURE_ID_REGEX = /\b([FB]\d+)\b/g
+/** r2 范-r1 P2-1 修：单 featureId 回溯 N commits 找首个可 parse 的 */
+const PHASE_QUERY_COMMITS = 10
 
-function defaultPhaseInfoQuerier(
+export function defaultPhaseInfoQuerier(
   deps: CompileViewfinderDeps,
 ): (recentMessages: ReadonlyArray<MessageInput>, nowIso: string) => PhaseInfo | null {
   return (recentMessages, _nowIso) => {
@@ -327,15 +332,16 @@ function defaultPhaseInfoQuerier(
     }
     if (featureIds.size === 0) return null
 
-    // 2-3. 依次尝试每个 featureId，找到第一个 hit 即返
+    // 2-3. r2 范-r1 P2-1 修：每个 featureId 拿 N 个最近 commits，遍历找首个可 parse 的
     for (const featureId of featureIds) {
-      const subject = safeGitLogSubject(featureId, {
+      const subjects = safeGitLogSubjects(featureId, {
         cwd: deps.rootDir,
         timeoutMs: deps.gitTimeoutMs ?? 5000,
       })
-      if (!subject) continue
-      const info = parseSubjectToPhaseInfo(subject.shortSha, subject.message, featureId)
-      if (info) return info
+      for (const subject of subjects) {
+        const info = parseSubjectToPhaseInfo(subject.shortSha, subject.message, featureId)
+        if (info) return info
+      }
     }
     return null
   }
@@ -346,29 +352,47 @@ interface GitLogResult {
   message: string
 }
 
-function safeGitLogSubject(
+/**
+ * r2 范-r1 P2-1 修：safeGitLogSubject → safeGitLogSubjects（多 commits）
+ * 用 `--END--` sentinel 分隔多 commit 输出，subject 含换行也能 parse
+ */
+export function safeGitLogSubjects(
   featureId: string,
-  opts: { cwd?: string; timeoutMs: number },
-): GitLogResult | null {
+  opts: { cwd?: string; timeoutMs: number; limit?: number },
+): GitLogResult[] {
   try {
-    const result = spawnSync("git", ["log", "-1", "--format=%h%n%s", `--grep=${featureId}`], {
-      cwd: opts.cwd,
-      timeout: opts.timeoutMs,
-      encoding: "utf-8",
-    })
-    if (result.error || typeof result.status !== "number" || result.status !== 0) return null
+    const limit = opts.limit ?? PHASE_QUERY_COMMITS
+    const result = spawnSync(
+      "git",
+      ["log", `-${limit}`, "--format=%h%n%s%n--END--", `--grep=${featureId}`],
+      {
+        cwd: opts.cwd,
+        timeout: opts.timeoutMs,
+        encoding: "utf-8",
+      },
+    )
+    if (result.error || typeof result.status !== "number" || result.status !== 0) return []
     const raw = (result.stdout ?? "").trim()
-    if (!raw) return null
-    const [shortSha, ...rest] = raw.split("\n")
-    const message = rest.join("\n").trim()
-    if (!shortSha || !message) return null
-    return { shortSha: shortSha.trim(), message }
+    if (!raw) return []
+    // 每 commit 一段: "<shortSha>\n<subject>\n--END--"，多 commits 用 \n--END--\n 分割
+    const results: GitLogResult[] = []
+    const blocks = raw.split(/\n?--END--\n?/)
+    for (const block of blocks) {
+      const trimmed = block.trim()
+      if (!trimmed) continue
+      const lines = trimmed.split("\n")
+      const shortSha = lines[0]?.trim()
+      const message = lines.slice(1).join("\n").trim()
+      if (!shortSha || !message) continue
+      results.push({ shortSha, message })
+    }
+    return results
   } catch {
-    return null
+    return []
   }
 }
 
-function parseSubjectToPhaseInfo(
+export function parseSubjectToPhaseInfo(
   shortSha: string,
   subject: string,
   featureId: string,
@@ -377,7 +401,9 @@ function parseSubjectToPhaseInfo(
   if (!subject.includes(featureId)) return null
   const phaseMatch = /\bPhase (\d+)\b/.exec(subject)
   const weekMatch = /\bWeek (\d+)\b/.exec(subject)
-  const dayMatch = /\bDay (\d+)(?:-\d+)?\b/.exec(subject) // "Day 9-10" 取 9
+  // r2 范-r1 P2-2 修：Day range "Day 9-10" 取后端 → 10（"做到 Day 10"语义）
+  // regex 同时支持 "Day 9" 单值 / "Day 9-10" range
+  const dayMatch = /\bDay (?:\d+-)?(\d+)\b/.exec(subject)
   const acMatches = subject.matchAll(/\bAC-P\d+-\d+\b/g)
   const acs = Array.from(acMatches).map((m) => m[0])
   // 至少要 parse 到一个 phase/day/ac 才算 hit，否则返 null fallback (A)
