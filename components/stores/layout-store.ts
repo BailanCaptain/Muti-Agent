@@ -5,13 +5,16 @@ import { persist } from "zustand/middleware"
 
 /**
  * F027 Phase 3 P20 Week 3 Day 11 (AC-P3-1 · feature.md line 177):
- * StatusPanel 拖宽 360-720px 范围 + localStorage persist + reload 误差 ≤ 1px
+ * StatusPanel 拖宽 360-1200px 范围 + localStorage persist + reload 误差 ≤ 1px
  *
  * 默认 360 而非 F021 旧值 340 — AC 下限对齐（拖窄到 < 360 会被 clamp 弹回）。
  * 升级后旧用户打开应用看到面板从 340 → 360（多 20px），合理可接受。
+ *
+ * MAX 从 720 → 1200 (plan v3.4 patch, 小孙 2026-05-23 浏览器实测拍): 大屏 720 不够,
+ * Inspector 内容 (注入 part 表 / 召回 query 列表) 需要更宽视野; 1200 留余地.
  */
 const STATUS_PANEL_MIN_WIDTH = 360
-const STATUS_PANEL_MAX_WIDTH = 720
+const STATUS_PANEL_MAX_WIDTH = 1200
 const STATUS_PANEL_DEFAULT_WIDTH = 360
 
 export function clampStatusPanelWidth(width: number): number {

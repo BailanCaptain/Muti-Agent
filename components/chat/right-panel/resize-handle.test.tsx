@@ -113,14 +113,14 @@ describe("ResizeHandle mouse 拖动 (r2 P2-2: DOM 直操 + mouseup commit)", () 
     expect(aside.style.width).toBe("510px")
   })
 
-  it("拖出 max 720 → DOM clamp 720", () => {
-    useLayoutStore.setState({ statusPanelWidth: 700 })
-    renderInAside(700)
+  it("拖出 max 1200 → DOM clamp 1200 (v3.4 patch)", () => {
+    useLayoutStore.setState({ statusPanelWidth: 1180 })
+    renderInAside(1180)
     const aside = screen.getByTestId("aside-wrapper") as HTMLElement
     const handle = screen.getByTestId("status-panel-resize-handle")
     act(() => {
       fireEvent.mouseDown(handle, { clientX: 500 })
-      fireEvent.mouseMove(document, { clientX: 100 }) // 大拖到 1000 → clamp 720
+      fireEvent.mouseMove(document, { clientX: 100 }) // 大拖远超 1200 → clamp 1200
     })
     expect(aside.style.width).toBe(`${STATUS_PANEL_MAX_WIDTH}px`)
     act(() => {
@@ -203,7 +203,7 @@ describe("ResizeHandle keyboard 拖动 (r2 P3)", () => {
     expect(useLayoutStore.getState().statusPanelWidth).toBe(STATUS_PANEL_MIN_WIDTH)
   })
 
-  it("End → 跳到 max 720", () => {
+  it("End → 跳到 max 1200 (v3.4 patch)", () => {
     renderInAside()
     const handle = screen.getByTestId("status-panel-resize-handle")
     act(() => {

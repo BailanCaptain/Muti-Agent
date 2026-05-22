@@ -97,8 +97,8 @@ export function StatusPanel() {
 
   return (
     <aside
-      // F027 P3-1 (Phase 3 Week 3 Day 11 + r2 范-r1 P2-1):
-      //   - 宽度从 F021 旧值 w-[340px] 改为 zustand layout-store statusPanelWidth (360-720)
+      // F027 P3-1 (Phase 3 Week 3 Day 11 + r2 范-r1 P2-1 + v3.4 patch):
+      //   - 宽度从 F021 旧值 w-[340px] 改为 zustand layout-store statusPanelWidth (360-1200, v3.4 max 升)
       //   - r2 P2-1: 加 shrink-0 + style min/maxWidth 防 flex layout 收缩低于 360
       //     （原 r1 单纯 style width 在 flex row + 480px preview panel 同窗时会被
       //     flex shrink-1 默认行为缩到 < 360，违反 AC 实际渲染范围）
@@ -106,7 +106,7 @@ export function StatusPanel() {
       style={{
         width: `${statusPanelWidth}px`,
         minWidth: `${360}px`,
-        maxWidth: `${720}px`,
+        maxWidth: `${1200}px`,
       }}
       className="relative flex h-screen shrink-0 flex-col gap-3 overflow-hidden border-l border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(255,255,255,0.86))] px-4 py-4 shadow-[-18px_0_48px_rgba(15,23,42,0.04)] backdrop-blur-xl"
     >

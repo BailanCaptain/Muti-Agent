@@ -24,13 +24,13 @@ pnpm dev:api   # API server :8800 (worktree env vars: API_PORT + SQLITE_PATH 见
 
 ---
 
-## AC-P3-1 · StatusPanel 拖宽 ≥50fps + reload ±1px
+## AC-P3-1 · StatusPanel 拖宽 ≥50fps + reload ±1px (v3.4: max 1200)
 
 **操作**:
 1. 浏览器 worktree :3100 → 任意 room
 2. 右侧 StatusPanel 鼠标拖左边界 (resize handle)
 3. 拖到 360px (minWidth) — 不能再小
-4. 拖到 720px (maxWidth) — 不能再大
+4. 拖到 1200px (maxWidth, v3.4 升) — 不能再大
 5. 中间拖动 — DOM-direct width 平滑 (Day 11 P2-2 fix · 无 React rerender)
 6. Chrome DevTools Performance 录 5s 拖动 → 测平均 fps
 7. reload 浏览器 → 宽度持久化 (localStorage)

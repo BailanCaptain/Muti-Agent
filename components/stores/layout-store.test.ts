@@ -28,12 +28,13 @@ function resetStore() {
   localStorage.removeItem(STORE_KEY)
 }
 
-describe("clampStatusPanelWidth (AC-P3-1 范围 360-720)", () => {
+describe("clampStatusPanelWidth (AC-P3-1 范围 360-1200, plan v3.4)", () => {
   it("范围内值原样返回", () => {
     expect(clampStatusPanelWidth(400)).toBe(400)
     expect(clampStatusPanelWidth(STATUS_PANEL_MIN_WIDTH)).toBe(STATUS_PANEL_MIN_WIDTH)
     expect(clampStatusPanelWidth(STATUS_PANEL_MAX_WIDTH)).toBe(STATUS_PANEL_MAX_WIDTH)
     expect(clampStatusPanelWidth(540)).toBe(540)
+    expect(clampStatusPanelWidth(900)).toBe(900) // 旧 720 之上, v3.4 后合法
   })
 
   it("< 360 clamp 到 360", () => {
@@ -43,9 +44,10 @@ describe("clampStatusPanelWidth (AC-P3-1 范围 360-720)", () => {
     expect(clampStatusPanelWidth(-50)).toBe(STATUS_PANEL_MIN_WIDTH)
   })
 
-  it("> 720 clamp 到 720", () => {
-    expect(clampStatusPanelWidth(721)).toBe(STATUS_PANEL_MAX_WIDTH)
+  it("> 1200 clamp 到 1200 (v3.4 patch: 旧 720 升 1200)", () => {
+    expect(clampStatusPanelWidth(1201)).toBe(STATUS_PANEL_MAX_WIDTH)
     expect(clampStatusPanelWidth(9999)).toBe(STATUS_PANEL_MAX_WIDTH)
+    expect(clampStatusPanelWidth(STATUS_PANEL_MAX_WIDTH)).toBe(1200) // 显式 1200
   })
 
   it("NaN / Infinity → 默认值（防 corrupt localStorage）", () => {
