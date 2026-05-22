@@ -5,7 +5,7 @@ import { ChainStarterResolver } from "../orchestrator/chain-starter-resolver"
 import { DecisionBoard, type DecisionBoardEntry } from "../orchestrator/decision-board"
 import { DispatchOrchestrator } from "../orchestrator/dispatch"
 import { InvocationRegistry } from "../orchestrator/invocation-registry"
-import { MessageService } from "./message-service"
+import { MessageService, deriveWakeTriggerScenario } from "./message-service"
 
 type ThreadRecord = {
   id: string
@@ -883,4 +883,43 @@ test("buildDecisionSummary writes converged items as '已收敛' not '未决定'
   assert.ok(summary.includes("已收敛"), "converged item must be labeled 已收敛")
   assert.ok(!summary.includes("未决定"), "converged item must NOT be labeled 未决定")
   assert.ok(summary.includes("是"), "divergent item decision must appear")
+})
+
+// ─── F027 Phase 3 P20 G1 (AC-P3-5 物理依赖) deriveWakeTriggerScenario ─────
+
+test("G1 deriveWakeTriggerScenario: A2A 派发 (systemPrompt + dispatchedCallId) → a2a_handoff", () => {
+  const scenario = deriveWakeTriggerScenario({
+    systemPrompt: "<pre-computed by A2A assemblePrompt>",
+    dispatchedCallId: "call-abc12345",
+  })
+  assert.equal(scenario, "a2a_handoff")
+})
+
+test("G1 deriveWakeTriggerScenario: direct turn 自建 child call (无 systemPrompt + dispatchedCallId) → direct_turn", () => {
+  const scenario = deriveWakeTriggerScenario({
+    dispatchedCallId: "call-direct-9876",
+  })
+  assert.equal(scenario, "direct_turn")
+})
+
+test("G1 deriveWakeTriggerScenario: 续推 / 子调用 (parentInvocationId) → wake_up", () => {
+  const scenario = deriveWakeTriggerScenario({
+    parentInvocationId: "inv-parent-1",
+  })
+  assert.equal(scenario, "wake_up")
+})
+
+test("G1 deriveWakeTriggerScenario: fallback (all options 空) → wake_up", () => {
+  const scenario = deriveWakeTriggerScenario({})
+  assert.equal(scenario, "wake_up")
+})
+
+test("G1 deriveWakeTriggerScenario: dispatchedCallId=null 不算 A2A (null vs string 严格判)", () => {
+  const scenario = deriveWakeTriggerScenario({
+    systemPrompt: "x",
+    dispatchedCallId: null,
+  })
+  // systemPrompt 有但 dispatchedCallId=null → 不算 A2A_handoff（A2A 派发必绑 callId）
+  // → 走 parent / fallback 分支 → wake_up
+  assert.equal(scenario, "wake_up")
 })

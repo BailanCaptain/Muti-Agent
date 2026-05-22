@@ -4,6 +4,7 @@ import type {
   Provider,
   RealtimeClientEvent,
   RealtimeServerEvent,
+  WakeTriggerScenario,
 } from "@multi-agent/shared"
 import { PROVIDER_ALIASES, getContextWindowForModel } from "@multi-agent/shared"
 import type { AppEventBus } from "../events/event-bus"
@@ -99,6 +100,31 @@ import type { WorklistExecutor } from "./worklist-executor"
 
 type ActiveRun = ReturnType<typeof runTurn>
 type EmitEvent = (event: RealtimeServerEvent) => void
+
+/**
+ * F027 Phase 3 P20 G1 (AC-P3-5 物理依赖) · wake-up scenario 推断
+ *
+ * 从 runThreadTurn options 推断 scenario：
+ *   - A2A 派发：systemPrompt 已预编（assemblePrompt for A2A）+ dispatchedCallId 绑定
+ *     → "a2a_handoff"
+ *   - direct turn 自建 child call：无 systemPrompt + dispatchedCallId 绑定
+ *     → "direct_turn"
+ *   - 续推 / 子调用：parentInvocationId 标识
+ *     → "wake_up"
+ *   - fallback → "wake_up"
+ *
+ * 注：session_bootstrap 当前不走 runThreadTurn 入口，不需在此处理。
+ */
+export function deriveWakeTriggerScenario(options: {
+  systemPrompt?: string
+  dispatchedCallId?: string | null
+  parentInvocationId?: string | null
+}): WakeTriggerScenario {
+  if (options.systemPrompt && options.dispatchedCallId) return "a2a_handoff"
+  if (!options.systemPrompt && options.dispatchedCallId) return "direct_turn"
+  if (options.parentInvocationId) return "wake_up"
+  return "wake_up"
+}
 
 /**
  * F026-P3 Task7 · cold-target burst 兜底判定 + 组装。
@@ -1112,6 +1138,41 @@ export class MessageService {
         },
       })
       return null
+    }
+
+    // F027 Phase 3 P20 G1 (AC-P3-5 物理依赖 · plan v3.1 §1.2-9):
+    // wake-up 时向所有 WS connection 广播 wake.trigger event。前端 prompt-inspector
+    // 顶部据此渲染 🔔 触发因块（V16.5.2），click pill 触发 in-place drawer 展开
+    // mini call tree（复用 F026 <A2ATreeView>）。scenario 从 options 推断。
+    // broadcaster 未注入（测试 fixture / boot 早期）→ 静默 skip，wake-up 流程不受影响。
+    const wakeBroadcast = this.broadcast
+    if (wakeBroadcast) {
+      try {
+        const wakeCanonicalRoomId = this.sessions.getRoomId(thread.sessionGroupId)
+        wakeBroadcast({
+          type: "wake.trigger",
+          payload: {
+            threadId: thread.id,
+            sessionGroupId: thread.sessionGroupId,
+            roomId: wakeCanonicalRoomId,
+            alias: thread.alias,
+            scenario: deriveWakeTriggerScenario({
+              systemPrompt: options.systemPrompt,
+              dispatchedCallId: options.dispatchedCallId,
+              parentInvocationId: options.parentInvocationId,
+            }),
+            a2aCallId: options.dispatchedCallId ?? null,
+            triggeredAt: new Date().toISOString(),
+          },
+        })
+      } catch (err) {
+        // fail-soft：broadcaster 异常不阻塞 wake-up 主流程（prompt-inspector 拿不到
+        // trigger 只影响 UI 显示，不影响 LLM 调用）
+        this.log.warn(
+          { err, threadId: thread.id, alias: thread.alias },
+          "wake.trigger broadcast failed (non-blocking)",
+        )
+      }
     }
 
     // F021 Phase 5: flush pending → active and resolve effective model BEFORE
