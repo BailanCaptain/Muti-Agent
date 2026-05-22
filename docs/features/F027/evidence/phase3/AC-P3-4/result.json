@@ -1,0 +1,19 @@
+{
+  "ac_id": "AC-P3-4",
+  "ac_text": "viewfinder §4 [a2a_call=xxx] → AtPill 渲染 + click pill in-place drawer 展开 mini call tree (V16.5.2 共享 drawer)",
+  "evidence_files": [
+    "commits: 5a06a38 (Day 16-17 viewfinder 真数据) + 8c643cd (Day 16-17 r1 P3 fix enabled wire) + c72a882 (Day 20 click drawer) + f120101 (Day 20 P3 pill click → store glue)",
+    "unit-test: viewfinder-tab.test.tsx (12 cases + click drawer regression)",
+    "unit-test: use-viewfinder-data.test.ts (parseA2ARefs 8 cases)",
+    "unit-test: a2a-call-drawer.test.tsx (9 cases: render/fetch/3 close paths)",
+    "unit-test: a2a-drawer-store.test.ts (4 cases)",
+    "review: F027-Day16-17-review-r1-verdict.md (GO + P3) + F027-Day19c-r2-Day20-r1-verdict.md (Day 20 GO)",
+    "plan: §3 Week 4 Day 16-17 + Day 20 (Day 16-17 deferred click drawer)",
+    "walkthrough: AC-P3-4 (viewfinder §4 + click drawer 浏览器实操)",
+    "screenshots/BLOCKED-viewfinder-pill-click-drawer.md"
+  ],
+  "executed_at": "2026-05-23",
+  "implementation_status": "DONE",
+  "review_status": "GO (Day 16-17 + Day 20 combined GO)",
+  "browser_verification": "BLOCKED (依赖 viewfinder 编译 + a2a call 存在 — Phase 1 P12 wiring + RoomCompiler 5min tick)"
+}

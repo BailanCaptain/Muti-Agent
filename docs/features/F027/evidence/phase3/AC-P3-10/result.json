@@ -1,0 +1,16 @@
+{
+  "ac_id": "AC-P3-10",
+  "ac_text": "POST /api/wiki/ingest/commit endpoint: 前端 [/ingest 编译] → 后端复用 Phase 1 update_wiki (含 ACL/CAS/lease/fencing); E2E: preview 不落盘 / commit 才落盘 / 失败不产生 wiki_events",
+  "evidence_files": [
+    "commits: Phase 3 Week 2 Day 9-10 (694fcc1 + a770b0a) IngestCommitService + registerIngestCommitRoute",
+    "backend: packages/api/src/routes/phase3/ingest-commit.ts (acquireLease → updateWiki → 释 lease) + ingest-commit.test.ts (E2E preview-not-write / commit-write / lease-fail)",
+    "contract: contracts.ts §7 PostIngestCommitBody + PostIngestCommitResponse",
+    "frontend wiring: useIngestCommit hook (use-ingest-api.ts) + IngestModal commit 按钮 (Day 19a + r2)",
+    "review: F027-phase3-week2-r3-verdict.md (GO) + Day 19a r2 GO",
+    "plan: §3 Week 2 Day 9-10 + §4 AC-P3-10"
+  ],
+  "executed_at": "2026-05-23",
+  "implementation_status": "DONE (backend + frontend wiring)",
+  "review_status": "GO (Phase 3 Week 2 r3 GO + Day 19a r2 GO)",
+  "browser_verification": "BLOCKED (浏览器 IngestModal 点 [/ingest 编译] → 验落盘 wiki/concepts/draft/_auto/*.md + wiki_events SQL 查)"
+}

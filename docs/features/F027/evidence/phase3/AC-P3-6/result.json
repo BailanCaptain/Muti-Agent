@@ -1,0 +1,19 @@
+{
+  "ac_id": "AC-P3-6",
+  "ac_text": "IngestModal 3 入口 (composer 拖文件 / [+ Drop 资料] 按钮 / `/ingest` 命令面板) 任一触发 → 5 层 sanitize + LLM 编译预览 + multi-drop 关联 → 点 [/ingest 编译] 才落盘 (commit 路径 AC-P3-10)",
+  "evidence_files": [
+    "commits: a9d90de (Day 19a IngestModal 组件 + hooks) + 6921a27 (Day 19a r2 P1/P2 fix: targetType + race + Escape) + 5d23538 (Day 19b-1 KB tab 入口 B) + 32b538d (Day 19b-2 composer 拖入口 A) + 1d16bfe (Day 19c-1 slash 独立) + a2b6e32 (Day 19c-2 composer slash 集成入口 C) + 0cd8aaa (Day 19c r2 P2 dismissedSlashKey + P3 Enter/Tab preventDefault)",
+    "unit-test: ingest-modal/ingest-modal.test.tsx (15+6=21 cases) + use-ingest-api.test.ts (13 cases)",
+    "unit-test: knowledge-base-tab.test.tsx (9 cases)",
+    "unit-test: composer.test.tsx (25 cases: drag + slash + mention/queue P3-b regression)",
+    "unit-test: composer-slash-menu.test.tsx (30 cases)",
+    "review: F027-Day19a-review-r2-verdict.md (GO) + F027-Day19b-review-r1-verdict.md (GO) + F027-Day19c-r2-Day20-r1-verdict.md (Day 19c r2 GO)",
+    "plan: §3 Week 4 Day 19a + Day 19b-1/2 + Day 19c-1/2",
+    "walkthrough: AC-P3-6 (3 入口分别测)",
+    "screenshots/BLOCKED-3-entries-modal-open.md"
+  ],
+  "executed_at": "2026-05-23",
+  "implementation_status": "DONE",
+  "review_status": "GO (Day 19a r2 + Day 19b r1 + Day 19c r2 GO)",
+  "browser_verification": "BLOCKED (3 入口 modal open 浏览器实操)"
+}

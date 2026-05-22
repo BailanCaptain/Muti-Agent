@@ -1,0 +1,14 @@
+{
+  "ac_id": "AC-P3-5",
+  "judge": "claude-opus-4-7",
+  "verdict": "PASS",
+  "rubric": {
+    "evidence_completeness": "PASS — G1 backend WS wake.trigger broadcast (message-service.ts deriveWakeTriggerScenario + 4 callsite scenario 显式 r2 fix); wake-trigger-store 全局 state; WakeTriggerSection WS 优先 / API fallback; Day 20 WakeTriggerA2APill click → openDrawer('prompt-inspector')",
+    "ac_literal_contract": "PASS — 🔔 wake-up 触发因 文案 + a2aCallId 紧贴 amber pill + click 共用 drawer (与 viewfinder §4 同 store + 同 A2ATreeView)",
+    "design_intent_alignment": "PASS — V16.5 chap 18 line 1975-1986 wireframe + line 1980-1984 共享 drawer 拍板",
+    "residual_risk": "WS 实推依赖 agent 真触发 wake-up (orchestrator runtime), Phase 3 是 WS 协议 + 前端接收, 真触发是 Phase 1 runtime 路径"
+  },
+  "blocked_evidence": ["browser-wake-trigger-section-amber-pill", "browser-pill-click-drawer-from-prompt-inspector"],
+  "go_with_blocked_evidence": true,
+  "notes": "G1 协议 + 前端 store + Day 20 click + glue 测试全 PASS. AC-P3-5 闭环."
+}

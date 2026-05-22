@@ -1,0 +1,14 @@
+{
+  "ac_id": "AC-P3-4",
+  "judge": "claude-opus-4-7",
+  "verdict": "PASS",
+  "rubric": {
+    "evidence_completeness": "PASS — parseA2ARefs (8 cases: text/a2a 拆分 + reason/deadline/status 字段); AtPillRef 渲染 (color by status); click → useA2ADrawerStore.openDrawer('viewfinder') (Day 20 P3 fix 测了 glue line); A2ACallDrawer fetch /debug/a2a?root=callId + A2ATreeView 复用 F026",
+    "ac_literal_contract": "PASS — viewfinder §4 [a2a_call=...] → AtPillRef (button 可 click, Day 20); click → in-place drawer (overlay z-40, A2ATreeView 嵌入); 不跳 /debug/a2a page (V16.5.2 line 1973)",
+    "design_intent_alignment": "PASS — V16.5 chap 18 line 1970-1986 + chap 11 line 1268-1294 viewfinder 6 段 vision; 复用 F026 thin wrapper backend + A2ATreeView 视觉积木",
+    "residual_risk": "AtPillRef 简化版 (非完整 F026 <AtPill> 状态机六态), Phase 4 评估升级; 浏览器实测需 viewfinder 编译 + a2a call 存在"
+  },
+  "blocked_evidence": ["browser-viewfinder-section-4-screenshot", "browser-pill-click-drawer-screenshot"],
+  "go_with_blocked_evidence": true,
+  "notes": "实施 + Day 20 click drawer + P3 glue 测试全 PASS. AC-P3-4 闭环."
+}

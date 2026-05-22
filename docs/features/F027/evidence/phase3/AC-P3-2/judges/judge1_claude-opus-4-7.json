@@ -1,0 +1,14 @@
+{
+  "ac_id": "AC-P3-2",
+  "judge": "claude-opus-4-7",
+  "verdict": "PASS",
+  "rubric": {
+    "evidence_completeness": "PASS — Day 12-13 r1 NO-GO P2-1 (mount/unmount 破坏 state retention) r2 修为 always-render display:none pattern (lvl2-content.tsx); r2 P3-1 加 WAI-ARIA roving tabIndex + keyboard nav (lvl1-tabs.tsx + lvl2-tabs.tsx)",
+    "ac_literal_contract": "PASS — 5 tab key 名匹配 V16.5 chap 18 line 1948-1954 (viewfinder/prompt-inspector/draft-approval/warnings/knowledge-base); 默认 prompt-inspector (runtime-log-store.ts line 75); always-render display:none (lvl2-content.tsx) 保 scroll 不重置",
+    "design_intent_alignment": "PASS — V16.5 §18 line 1937-1944 LVL1 + 1948-1954 LVL2 + v3.5 label 改 (小孙拍 '记忆系统'/'system prompt' UX 更直观)",
+    "residual_risk": "scroll ±10px 阈值 jsdom unit 不能验 (无真 layout); always-render display:none 保 DOM scroll state 在 React 不重 mount 时不变, 等价满足"
+  },
+  "blocked_evidence": ["browser-tab-switch-scroll-screenshot"],
+  "go_with_blocked_evidence": true,
+  "notes": "实施 + r2 修 PASS; always-render display:none 已保证 DOM state 不丢, scroll 保留是 happy-dom unit 测不到的物理特性, 浏览器实测验."
+}

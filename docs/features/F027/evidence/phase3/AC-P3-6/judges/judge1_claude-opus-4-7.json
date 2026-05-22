@@ -1,0 +1,14 @@
+{
+  "ac_id": "AC-P3-6",
+  "judge": "claude-opus-4-7",
+  "verdict": "PASS",
+  "rubric": {
+    "evidence_completeness": "PASS — 3 入口完整 (composer.tsx dragover/drop + knowledge-base-tab.tsx [+ Drop] + composer-slash-menu.tsx /ingest); IngestModal 组件 + 5 段 (file/type/reason/sanitize/compile preview) + 3 关闭路径 (✕/overlay/Escape); 5 层 sanitize warnings 渲染 + sensitive_token 红线 block commit",
+    "ac_literal_contract": "PASS — 'composer 拖文件 / [+ Drop 资料] / `/ingest` 命令面板三入口任一触发' 字面 (feature.md line 182); 5 层 sanitize result + LLM 编译预览 显示; commit 走 AC-P3-10 endpoint (commit only on [/ingest 编译] click)",
+    "design_intent_alignment": "PASS — V16.5 chap 25 line 2530-2545 三入口 + chap 25 line 2547-2619 IngestModal wireframe",
+    "residual_risk": "multi-drop chained 防误检 (series_id) 推 Phase 4; LLM compile preview 是 Day 5 stub, Phase 4 接真 LLM; 备注 textarea Day 19a UI only (backend contract 无 reason)"
+  },
+  "blocked_evidence": ["browser-composer-drag-modal", "browser-kb-button-modal", "browser-slash-modal"],
+  "go_with_blocked_evidence": true,
+  "notes": "3 入口 + Modal + sanitize + commit 闭环全实施 + 全 review GO. 是 Phase 3 最复杂 AC, 实施分 4 批 (19a/19b-1/19b-2/19c)."
+}

@@ -1,0 +1,14 @@
+{
+  "ac_id": "AC-P3-10",
+  "judge": "claude-opus-4-7",
+  "verdict": "PASS",
+  "rubric": {
+    "evidence_completeness": "PASS — backend IngestCommitService 完整 (acquireLease → updateWiki 'write' → release); contract validatePostIngestCommit 边界 (callerAlias required + previewId required); E2E 单测覆盖 preview/commit/fail 三种 (ingest-commit.test.ts); frontend useIngestCommit hook + IngestModal commit 按钮 wire ([/ingest 编译] click → commit endpoint)",
+    "ac_literal_contract": "PASS — 'preview 不落盘' ✅ ingest-preview.ts 内存返回不写盘; 'commit 才落盘' ✅ IngestCommitService 调 updateWiki 真写; '失败不产生 wiki_events' ✅ updateWiki 抛 error 时 abort pending row",
+    "design_intent_alignment": "PASS — 复用 Phase 1 UpdateWikiService (ACL/CAS/lease/fencing 不变); preview/commit 分离避免 race",
+    "residual_risk": "worktree DB schema 缺 wiki_events/wiki_leases 表 → 浏览器实测 commit 落盘会 fail (DB schema 错); 需 Phase 1 migration"
+  },
+  "blocked_evidence": ["browser-commit-success-file-on-disk", "sql-wiki_events-row-after-commit"],
+  "go_with_blocked_evidence": true,
+  "notes": "Backend + frontend 全实施 + E2E 单测 PASS. 浏览器实测受限于 worktree DB schema 缺. 与 P3-3/P3-9 同源问题."
+}

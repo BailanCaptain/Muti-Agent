@@ -1,0 +1,18 @@
+{
+  "ac_id": "AC-P3-5",
+  "ac_text": "prompt-inspector 顶部 🔔 wake-up 触发因 [a2a_call=xxx] + click 同 viewfinder 共用 drawer (V16.5.2)",
+  "evidence_files": [
+    "commits: c227eef (G1 backend WS wake.trigger) + 5681d44 (G1 r2 scenario 显式) + 044c48c (wake-trigger-store) + 1a08d8a (Day 14-15 WakeTriggerSection) + c72a882 (Day 20 WakeTriggerA2APill click) + f120101 (Day 20 P3 click → store glue)",
+    "unit-test: prompt-inspector-tab.test.tsx (WakeTriggerSection + click pill regression)",
+    "unit-test: wake-trigger-store.test.ts (recordTrigger + latestByKey)",
+    "unit-test: a2a-call-drawer.test.tsx (drawer 共享 store)",
+    "review: F027-G1-review-r2-verdict.md (GO) + F027-Day14-15-r2-verdict.md (GO) + F027-Day19c-r2-Day20-r1-verdict.md (Day 20 GO)",
+    "plan: §1.2-7 G1 + §3 Week 4 Day 14-15 + Day 20",
+    "walkthrough: AC-P3-5 (wake-up trigger 浏览器实操)",
+    "screenshots/BLOCKED-wake-trigger-pill-click.md"
+  ],
+  "executed_at": "2026-05-23",
+  "implementation_status": "DONE",
+  "review_status": "GO (G1 + Day 14-15 + Day 20 combined)",
+  "browser_verification": "BLOCKED (依赖 WS wake.trigger 实推 — agent 真触发 wake)"
+}

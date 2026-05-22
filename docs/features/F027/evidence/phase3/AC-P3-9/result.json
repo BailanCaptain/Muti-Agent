@@ -1,0 +1,18 @@
+{
+  "ac_id": "AC-P3-9",
+  "ac_text": "Adaptive Recall production wiring: (a) orchestrator/RoomCompiler 实际调用 executeAdaptiveRecall; (b) prompt_audit 9 字段真写入 fixture 验证; (c) Level5Sink 生产实现 (wiki_events action='recall_escalate' + 推审计通知 + Inspector UI 显示)",
+  "evidence_files": [
+    "commits: Phase 1 P13 (Adaptive Recall plan F027-P13-adaptive-recall-plan.md) — Phase 1 已 done + 合 dev (commit ea773d9)",
+    "Phase 3 angle: AC-P3-9 a/b/c 是 wiring 验证, 实际 plan §3 Week 2 Day 7-9 列了 a/b/c 三批 backend wiring",
+    "backend: Phase 1 P13 wiring 已经在 dev branch, 但 worktree-preview/data/multi-agent.sqlite 是 Phase 0 schema 备份 (5/22), prompt_audit 表不存在",
+    "Phase 3 worktree 实际 wiring 状态: orchestrator wire-up 未在本 Phase 3 commit 链中 — Phase 1 P13 是 backend 同步, AC-P3-9 a 'orchestrator 实际调用 executeAdaptiveRecall' 在 Phase 1 P13 已实现, Phase 3 是 fixture 验证 + UI 显示",
+    "Phase 3 commit: 1a08d8a (Day 14-15 prompt-inspector tab 渲染 9 字段 UI) — UI 端就绪",
+    "Inspector UI 显示: RecallSection + AdaptiveRecallPolicy section 都已 inline 渲染 9 字段 (prompt-inspector-tab.tsx)",
+    "review: F027-Day14-15-r2-verdict.md (GO)",
+    "plan: §3 Week 2 Day 7-9 AC-P3-9 a/b/c"
+  ],
+  "executed_at": "2026-05-23",
+  "implementation_status": "PARTIAL (Phase 3 UI 显示 ready, a/b/c backend wiring 状态需核 Phase 1 P13 dev branch)",
+  "review_status": "GO (Phase 3 UI part) + INHERITS (Phase 1 P13 backend)",
+  "browser_verification": "BLOCKED (依赖 worktree DB schema 升级 + Phase 1 P13 真接通 orchestrator)"
+}

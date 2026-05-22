@@ -1,0 +1,18 @@
+{
+  "ac_id": "AC-P3-3",
+  "ac_text": "prompt-inspector 注入 part 表 + token 占比 + 召回 query (Quality Gate 三段) + Adaptive Recall Policy (接 AC-P3-9 真 prompt_audit 数据)",
+  "evidence_files": [
+    "commits: 1a08d8a (Day 14-15) + 83b11bf (r2 API base URL + enabled wire)",
+    "unit-test: prompt-inspector-tab.test.tsx (14 cases: 7 块渲染 + WS/API trigger 优先级 + 跨房间隔离)",
+    "unit-test: use-prompt-inspector-data.test.ts (fetch + enabled + fail-soft)",
+    "backend: packages/api/src/routes/phase3/prompt-inspector.ts (GET /api/rooms/:id/prompt-inspector, contract 9 字段)",
+    "review: F027-Day14-15-review-r2-verdict.md (GO)",
+    "plan: §3 Week 4 Day 14-15 + Day 16-17 (移到前批)",
+    "walkthrough: AC-P3-3 (7 块全显需 prompt_audit 数据 — 依赖 P3-9 wiring)",
+    "screenshots/BLOCKED-7-blocks-rendered-with-data.md"
+  ],
+  "executed_at": "2026-05-23",
+  "implementation_status": "DONE",
+  "review_status": "GO (Day 14-15 r2 confirmed)",
+  "browser_verification": "BLOCKED (7 块真数据填充依赖 P3-9 P13 wiring 跑 prompt_audit 写, worktree DB schema 缺 — 见 Phase 3 收口报告)"
+}

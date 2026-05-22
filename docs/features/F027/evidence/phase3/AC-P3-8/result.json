@@ -1,0 +1,16 @@
+{
+  "ac_id": "AC-P3-8",
+  "ac_text": "manual confirm decision API (POST /api/rooms/:id/decisions) + Inspector Coverage warning unresolved 列表入口 UI click → manual confirm 写新行; Phase 1 P12 ledger append-only + tombstone 语义不变",
+  "evidence_files": [
+    "commits: Phase 3 Week 2 Day 6 (a770b0a 等, DecisionService + registerDecisionsRoute)",
+    "backend: packages/api/src/routes/phase3/decisions.ts + decisions.test.ts (POST + coverage GET)",
+    "contract: contracts.ts §5 PostDecisionBody + §6 GetCoverageResponse",
+    "unit-test: decisions.test.ts (POST commit/reject/tombstone + coverage 3 集合)",
+    "review: F027-phase3-week2-r3-verdict.md (GO)",
+    "plan: §3 Week 2 Day 6 (AC-P3-8 a backend) + AC-P3-8 b (frontend Inspector unresolved UI 推 Phase 4 — feature.md line 184 仅 'inspector 入口 UI 接 manual confirm', 当前 prompt-inspector tab 7 块未含 Coverage section, 推 Phase 4)"
+  ],
+  "executed_at": "2026-05-23",
+  "implementation_status": "PARTIAL (a 完成 backend + contract + test, b frontend Inspector 入口 UI 推 Phase 4)",
+  "review_status": "GO (a backend) + DEFERRED (b frontend UI)",
+  "browser_verification": "N/A backend (curl 可验) + BLOCKED frontend (Phase 4 实施)"
+}
