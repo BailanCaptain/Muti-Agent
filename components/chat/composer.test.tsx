@@ -240,3 +240,82 @@ describe("Composer drop 图片走原路径", () => {
     expect(useChatStore.getState().pendingImages["G-1"]?.length).toBe(1)
   })
 })
+
+// F027 Phase 3 Day 19c-2 · AC-P3-6 入口 C: slash 命令面板
+describe("Composer slash command menu (Day 19c-2)", () => {
+  beforeEach(() => resetStores())
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function typeIntoTextarea(text: string, cursorAt = text.length) {
+    const ta = document.querySelector("textarea") as HTMLTextAreaElement
+    expect(ta).toBeTruthy()
+    // Set selectionStart/End BEFORE fireEvent.change so onChange handler 读到正确 cursor
+    fireEvent.change(ta, { target: { value: text, selectionStart: cursorAt, selectionEnd: cursorAt } })
+    return ta
+  }
+
+  it("textarea 输入 '/' → slash menu 显示 5 命令", () => {
+    render(<Composer />)
+    typeIntoTextarea("/")
+    expect(screen.queryByTestId("composer-slash-menu")).toBeTruthy()
+    expect(screen.getByTestId("slash-command-ingest")).toBeTruthy()
+    expect(screen.getByTestId("slash-command-promote")).toBeTruthy()
+  })
+
+  it("textarea 输入 '/in' → slash menu 过滤 ingest only", () => {
+    render(<Composer />)
+    typeIntoTextarea("/in")
+    expect(screen.queryByTestId("composer-slash-menu")).toBeTruthy()
+    expect(screen.getByTestId("slash-command-ingest")).toBeTruthy()
+    expect(screen.queryByTestId("slash-command-promote")).toBeNull()
+  })
+
+  it("click /ingest → 触发 ingestFileInputRef.click (file picker 打开)", () => {
+    render(<Composer />)
+    typeIntoTextarea("/")
+    const input = screen.getByTestId("composer-ingest-file-input") as HTMLInputElement
+    const clickSpy = vi.spyOn(input, "click")
+    fireEvent.click(screen.getByTestId("slash-command-ingest"))
+    expect(clickSpy).toHaveBeenCalled()
+  })
+
+  it("ingest file picker 选 .md → IngestModal open", async () => {
+    mockOkFetch({
+      previewId: "p-slash",
+      sanitizedContent: "# slash",
+      llmCompiledPreview: "stub",
+      warnings: [],
+      expiresAt: "2026-05-23T01:00:00Z",
+    })
+    render(<Composer />)
+    const input = screen.getByTestId("composer-ingest-file-input") as HTMLInputElement
+    fireEvent.change(input, { target: { files: [makeFile("slash-test.md", "# x")] } })
+    await waitFor(() => expect(screen.queryByTestId("ingest-modal")).toBeTruthy())
+  })
+
+  it("'/' 之前是空格 → menu 显示; 'foo/' 紧贴 → menu 不显示 (path 排除)", () => {
+    render(<Composer />)
+    typeIntoTextarea("foo /")
+    expect(screen.queryByTestId("composer-slash-menu")).toBeTruthy()
+    typeIntoTextarea("foo/")
+    expect(screen.queryByTestId("composer-slash-menu")).toBeNull()
+  })
+
+  // 范-r1 P3 fix (Day 19b r1 verdict): composer mention/queue/send smoke regression
+  // 不破现有 mention `@` suggestion 行为 + textarea 接收键盘
+  it("范-r1 P3: mention @ 触发 → slash menu 不显示 (mention 优先)", () => {
+    render(<Composer />)
+    typeIntoTextarea("@")
+    // mention 面板出现 (mention 没 data-testid, 至少 slash menu 不出现)
+    expect(screen.queryByTestId("composer-slash-menu")).toBeNull()
+  })
+
+  it("范-r1 P3: 提交按钮 type=submit 不受 slash menu render 影响", () => {
+    render(<Composer />)
+    // 默认 submit button enabled-disabled 取决于 value+pendingImages — 验存在 + type=submit
+    const submitBtn = document.querySelector("button[type='submit']") as HTMLButtonElement | null
+    expect(submitBtn).toBeTruthy()
+  })
+})

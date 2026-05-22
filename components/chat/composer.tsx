@@ -12,6 +12,13 @@ import {
   IngestModal,
   type IngestModalFile,
 } from "./right-panel/runtime-log/ingest-modal/ingest-modal"
+import {
+  SlashCommandMenu,
+  type SlashCommand,
+  filterSlashCommands,
+  findSlashContext,
+  nextHighlightOnKey,
+} from "./composer-slash-menu"
 
 const PROVIDER_ACCENT_TEXT: Record<Provider, string> = {
   claude: "text-violet-700",
@@ -242,6 +249,25 @@ export function Composer() {
     if (highlight >= suggestions.length) setHighlight(0)
   }, [suggestions.length, highlight])
 
+  // F027 Phase 3 Day 19c-2 · AC-P3-6 入口 C: composer / 命令面板
+  // mention `@` 优先 (showSuggestions); 无 mention 时才检测 slash `/`
+  const slashContext = useMemo(
+    () => (mentionContext ? null : findSlashContext(value, cursor)),
+    [value, cursor, mentionContext],
+  )
+  const slashCommands = useMemo(
+    () => (slashContext ? filterSlashCommands(slashContext.query) : []),
+    [slashContext],
+  )
+  const showSlashMenu = Boolean(slashContext) && slashCommands.length > 0
+  const [slashHighlight, setSlashHighlight] = useState(0)
+  // 默认 highlight 跳到第一个 enabled command
+  useEffect(() => {
+    if (slashCommands.length === 0) return
+    const firstEnabled = slashCommands.findIndex((c) => c.enabled)
+    setSlashHighlight(firstEnabled >= 0 ? firstEnabled : 0)
+  }, [slashCommands])
+
   const addFiles = useCallback(
     (files: FileList | File[]) => {
       for (const file of Array.from(files)) {
@@ -324,6 +350,67 @@ export function Composer() {
   const handleIngestModalClose = useCallback(() => {
     setIngestModalFile(null)
   }, [])
+
+  // F027 Phase 3 Day 19c-2 · /ingest 选中 → 触发隐藏 ingest file picker
+  const ingestFileInputRef = useRef<HTMLInputElement>(null)
+  const handleIngestFilePicked = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      e.target.value = ""
+      if (!file) return
+      if (!isIngestFile(file)) {
+        setIngestDropError(`不支持的文件类型：${file.name}`)
+        return
+      }
+      if (file.size > MAX_INGEST_BYTES) {
+        setIngestDropError(`文件过大：${file.name}`)
+        return
+      }
+      try {
+        const content = await file.text()
+        setIngestModalFile({ name: file.name, content, sizeBytes: file.size })
+      } catch (err) {
+        setIngestDropError(`读取失败：${err instanceof Error ? err.message : String(err)}`)
+      }
+    },
+    [],
+  )
+
+  // / 选中 → 清 textarea 里的 /xxx + 触发 file picker (ingest only Phase 3)
+  const applySlashCommand = useCallback(
+    (cmd: SlashCommand) => {
+      if (!cmd.enabled || !slashContext) return
+      // 清除 /xxx 字符
+      const before = value.slice(0, slashContext.start)
+      const after = value.slice(slashContext.start + 1 + slashContext.query.length)
+      setDraft(`${before}${after}`)
+      const nextCursor = before.length
+      requestAnimationFrame(() => {
+        const el = textareaRef.current
+        if (el) {
+          el.selectionStart = nextCursor
+          el.selectionEnd = nextCursor
+          el.focus()
+        }
+        setCursor(nextCursor)
+      })
+      // 触发对应动作 (Phase 3 只 ingest)
+      if (cmd.key === "ingest") {
+        ingestFileInputRef.current?.click()
+      }
+    },
+    [slashContext, value, setDraft],
+  )
+
+  const handleSlashMenuClose = useCallback(() => {
+    // 点 outside 时 close: 把 cursor 移到 / 后, 让 slashContext null (close menu)
+    if (!slashContext) return
+    const el = textareaRef.current
+    if (el) {
+      el.selectionStart = el.selectionEnd = value.length
+      setCursor(value.length)
+    }
+  }, [slashContext, value])
 
   function applySuggestion(suggestion: Suggestion) {
     if (!mentionContext) return
@@ -432,7 +519,32 @@ export function Composer() {
       }
     }
 
-    if (event.key === "Enter" && !event.shiftKey && !showSuggestions) {
+    // F027 Phase 3 Day 19c-2 · slash menu 键盘导航 (mention 优先, slash 次之)
+    if (showSlashMenu) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        const next = nextHighlightOnKey(event.key, slashCommands, slashHighlight)
+        if (next !== null) {
+          event.preventDefault()
+          setSlashHighlight(next)
+        }
+        return
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        const cmd = slashCommands[slashHighlight]
+        if (cmd?.enabled) {
+          event.preventDefault()
+          applySlashCommand(cmd)
+        }
+        return
+      }
+      if (event.key === "Escape") {
+        event.preventDefault()
+        handleSlashMenuClose()
+        return
+      }
+    }
+
+    if (event.key === "Enter" && !event.shiftKey && !showSuggestions && !showSlashMenu) {
       event.preventDefault()
       submitMessage(value)
     }
@@ -627,6 +739,16 @@ export function Composer() {
           }}
         />
 
+        {/* F027 Phase 3 Day 19c-2 · /ingest 触发的隐藏 ingest file picker */}
+        <input
+          ref={ingestFileInputRef}
+          type="file"
+          accept=".md,.markdown,.json,.txt,text/markdown,text/plain,application/json"
+          className="hidden"
+          onChange={handleIngestFilePicked}
+          data-testid="composer-ingest-file-input"
+        />
+
         <button
           type="button"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
@@ -686,6 +808,16 @@ export function Composer() {
             })}
           </div>
         )}
+
+        {/* F027 Phase 3 Day 19c-2 · slash 命令面板 (AC-P3-6 入口 C) */}
+        <SlashCommandMenu
+          open={showSlashMenu}
+          commands={slashCommands}
+          highlight={slashHighlight}
+          onSelect={applySlashCommand}
+          onHighlightChange={setSlashHighlight}
+          onClose={handleSlashMenuClose}
+        />
 
         {/* Stop 按钮：busy 时小尺寸并存在 Send 左边，允许中止 active turn。
             Send 按钮始终可点：immediate 直发；queue + busy 入前端 buffer；queue + idle 直发。 */}
