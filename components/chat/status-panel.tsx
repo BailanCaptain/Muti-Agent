@@ -18,6 +18,8 @@ import { ResizeHandle } from "./right-panel/resize-handle"
 import { resolveDisplayModel } from "./right-panel/resolve-display-model"
 import { RoomBadge } from "./right-panel/room-badge"
 import { RoomSwitches } from "./right-panel/room-switches"
+// F027 P3-2 (Day 12-13) · RuntimeLog 5-tab 容器，挂在 5 sticky 段下方
+import { RuntimeLog } from "./right-panel/runtime-log"
 import { SessionOverridesTab } from "./right-panel/session-overrides-tab"
 
 export function StatusPanel() {
@@ -137,6 +139,9 @@ export function StatusPanel() {
       />
       <FoldControls />
       <RoomSwitches showThinking={showThinking} onToggleThinking={setShowThinking} />
+
+      {/* F027 P3-2 (Day 12-13) · ★ RuntimeLog 5-tab 容器 — 挂在 5 sticky 段下方 */}
+      <RuntimeLog />
 
       {drawerProvider ? (
         <AgentConfigDrawer
