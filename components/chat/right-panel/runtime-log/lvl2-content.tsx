@@ -11,26 +11,37 @@ import { WarningsTab } from "./tabs/warnings-tab"
  * F027 Phase 3 Week 3 Day 12-13 (AC-P3-2) · RuntimeLog 二级 tab 内容路由
  * 真相源：V16.5 §18 line 1948-1954
  *
- * 当前是 switch 直接渲染当前 tab。Phase 3 Week 4 真实数据接入后，每个 Tab
- * 组件内部管 fetch state — switch 一次性 render 让所有 tab state 自然保留
- * (React 状态生命周期由组件 mount/unmount 决定)。
+ * r2 范-r1 P2-1 修：**always-render 5 tabs** + display 控制 active visibility，
+ * 不再 mount/unmount 切换。AC-P3-2 line 178 契约 "切换 tab 内 fetch 状态保留
+ * (不重新 loading) + scroll 位置 reload 误差 ≤ 10px" 物理依赖各 tab 组件持续
+ * mount (state 才不丢)。
  *
- * AC-P3-2 状态保留契约: 切换 tab 各自 fetch 状态不重新 loading + scroll 位置
- * reload 误差 ≤ 10px。骨架阶段先保证 tab 切换 + 路由对，真实保留 Week 4 加。
- *
- * 注：当前是 unmount/remount pattern（switch render 一个）。若需要保留 scroll/fetch
- * state 跨 tab 切换，可改 always-render + visibility (display:none) — Week 4 评估。
+ * 副作用：app 启动时 5 个 tab 都 mount → 各 tab 内 useEffect fetch 同时触发。
+ * Week 4 真实接入时各 tab 内部应：
+ *   - 首次 mount 时不 fetch (按需懒触发，如 activeLvl2 === my-key 才 fetch)
+ *   - 或保留 fetch 但加 cache layer 避免重复请求
+ * 当前骨架 placeholder 无 fetch，无副作用。
  */
 export function Lvl2Content() {
   const activeLvl2 = useRuntimeLogStore((state) => state.activeLvl2)
 
   return (
     <div className="flex-1 overflow-auto" role="tabpanel" data-testid="runtime-log-lvl2-content">
-      {activeLvl2 === "viewfinder" && <ViewfinderTab />}
-      {activeLvl2 === "prompt-inspector" && <PromptInspectorTab />}
-      {activeLvl2 === "draft-approval" && <DraftApprovalTab />}
-      {activeLvl2 === "warnings" && <WarningsTab />}
-      {activeLvl2 === "knowledge-base" && <KnowledgeBaseTab />}
+      <div style={{ display: activeLvl2 === "viewfinder" ? "block" : "none" }}>
+        <ViewfinderTab />
+      </div>
+      <div style={{ display: activeLvl2 === "prompt-inspector" ? "block" : "none" }}>
+        <PromptInspectorTab />
+      </div>
+      <div style={{ display: activeLvl2 === "draft-approval" ? "block" : "none" }}>
+        <DraftApprovalTab />
+      </div>
+      <div style={{ display: activeLvl2 === "warnings" ? "block" : "none" }}>
+        <WarningsTab />
+      </div>
+      <div style={{ display: activeLvl2 === "knowledge-base" ? "block" : "none" }}>
+        <KnowledgeBaseTab />
+      </div>
     </div>
   )
 }
