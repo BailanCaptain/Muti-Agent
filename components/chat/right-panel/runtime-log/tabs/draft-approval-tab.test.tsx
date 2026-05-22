@@ -149,6 +149,59 @@ describe("DraftApprovalTab 基础渲染", () => {
   })
 })
 
+describe("DraftApprovalTab formatRelative 边界 (范-r1 P3 fix)", () => {
+  beforeEach(() => resetStores())
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("mtime 在 future (clock skew) → 不显示 '-Ns 前'，clamp 为 '0s 前'", async () => {
+    const futureIso = new Date(Date.now() + 5000).toISOString() // 5s 未来
+    mockFetchResponse(makeResponse({ drafts: [makeDraft({ mtime: futureIso })], total: 1 }))
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByTestId("draft-approval-list")).toBeTruthy())
+    const row = screen.getByTestId("draft-approval-row-concepts/draft/_auto/2026-05-22-foo.md")
+    expect(row.textContent).not.toMatch(/-\d+s 前/) // 不能 -5s 前
+    expect(row.textContent).toMatch(/0s 前/) // clamp 0
+  })
+
+  it("mtime 30s 前 → '30s 前'", async () => {
+    const iso = new Date(Date.now() - 30_000).toISOString()
+    mockFetchResponse(makeResponse({ drafts: [makeDraft({ mtime: iso })], total: 1 }))
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByTestId("draft-approval-list")).toBeTruthy())
+    const row = screen.getByTestId("draft-approval-row-concepts/draft/_auto/2026-05-22-foo.md")
+    expect(row.textContent).toMatch(/3\ds 前/) // 30s 或 31s (执行漂移)
+  })
+
+  it("mtime 5m 前 → 'Nm 前' (60s 边界 → 分钟)", async () => {
+    const iso = new Date(Date.now() - 5 * 60_000).toISOString()
+    mockFetchResponse(makeResponse({ drafts: [makeDraft({ mtime: iso })], total: 1 }))
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByTestId("draft-approval-list")).toBeTruthy())
+    const row = screen.getByTestId("draft-approval-row-concepts/draft/_auto/2026-05-22-foo.md")
+    expect(row.textContent).toMatch(/5m 前/)
+  })
+
+  it("mtime 3h 前 → 'Nh 前' (3600s 边界 → 小时)", async () => {
+    const iso = new Date(Date.now() - 3 * 3600_000).toISOString()
+    mockFetchResponse(makeResponse({ drafts: [makeDraft({ mtime: iso })], total: 1 }))
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByTestId("draft-approval-list")).toBeTruthy())
+    const row = screen.getByTestId("draft-approval-row-concepts/draft/_auto/2026-05-22-foo.md")
+    expect(row.textContent).toMatch(/3h 前/)
+  })
+
+  it("mtime 7d 前 → 'Nd 前' (86400s 边界 → 天)", async () => {
+    const iso = new Date(Date.now() - 7 * 86400_000).toISOString()
+    mockFetchResponse(makeResponse({ drafts: [makeDraft({ mtime: iso })], total: 1 }))
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByTestId("draft-approval-list")).toBeTruthy())
+    const row = screen.getByTestId("draft-approval-row-concepts/draft/_auto/2026-05-22-foo.md")
+    expect(row.textContent).toMatch(/7d 前/)
+  })
+})
+
 describe("DraftApprovalTab error 态", () => {
   beforeEach(() => resetStores())
   afterEach(() => {

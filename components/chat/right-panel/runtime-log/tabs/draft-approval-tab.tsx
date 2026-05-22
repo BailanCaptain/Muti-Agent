@@ -200,7 +200,9 @@ function truncate(s: string, max: number): string {
 function formatRelative(iso: string): string {
   const ms = Date.parse(iso)
   if (Number.isNaN(ms)) return iso
-  const deltaSec = Math.floor((Date.now() - ms) / 1000)
+  // 范-r1 P3 fix: clamp delta ≥ 0 防 backend mtime 略超 browser clock 时
+  // UI 显示 `-5s 前` (clock skew 边界 glitch)
+  const deltaSec = Math.max(0, Math.floor((Date.now() - ms) / 1000))
   if (deltaSec < 60) return `${deltaSec}s 前`
   if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)}m 前`
   if (deltaSec < 86400) return `${Math.floor(deltaSec / 3600)}h 前`
