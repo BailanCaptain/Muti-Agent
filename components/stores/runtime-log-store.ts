@@ -42,9 +42,13 @@ export interface RuntimeLogLvl2Item {
 /**
  * V16.5 §18 line 1938-1941 LVL1_ITEMS 真相源
  * 未来扩展：LVL1_ITEMS.push({ key: 'new', label: '新页面', enabled: true })
+ *
+ * label 改名 (2026-05-23 小孙浏览器实测拍 · v3.5 patch):
+ *   - lvl1 "system prompt" → "记忆系统" (1 级容器 = 整个 LLM 接到的 context = 记忆系统总称)
+ *   - key 保留 "system-prompt" (avoid schema break, 仅 UI label 改)
  */
 export const RUNTIME_LOG_LVL1_ITEMS: ReadonlyArray<RuntimeLogLvl1Item> = [
-  { key: "system-prompt", label: "system prompt", enabled: true },
+  { key: "system-prompt", label: "记忆系统", enabled: true },
   { key: "logs", label: "日志", enabled: false, futureTag: true },
 ] as const
 
@@ -52,10 +56,15 @@ export const RUNTIME_LOG_LVL1_ITEMS: ReadonlyArray<RuntimeLogLvl1Item> = [
  * V16.5 §18 line 1948-1954 二级 5 tab 真相源（label/component/API 见 plan）
  * 实施分批：Day 12-13 骨架 placeholder / Day 14-15 prompt-inspector + viewfinder /
  * Week 4 draft-approval + knowledge-base + warnings 真实数据接入
+ *
+ * label 改名 (2026-05-23 小孙浏览器实测拍 · v3.5 patch):
+ *   - "检视" → "system prompt" (prompt-inspector 显示 LLM 实际接的 system prompt 内容,
+ *     比抽象的 "检视" 更直观)
+ *   - key 保留 "prompt-inspector" (avoid schema break, 仅 UI label 改)
  */
 export const RUNTIME_LOG_LVL2_ITEMS: ReadonlyArray<RuntimeLogLvl2Item> = [
   { key: "viewfinder", label: "取景器" },
-  { key: "prompt-inspector", label: "检视" }, // 默认 — V16.5 §18 line 1951 "Prompt 检视（默认）"
+  { key: "prompt-inspector", label: "system prompt" }, // 默认 — v3.5 改 "检视" → "system prompt"
   { key: "draft-approval", label: "审批" },
   { key: "warnings", label: "警告" },
   { key: "knowledge-base", label: "知识库" },
