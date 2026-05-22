@@ -2,6 +2,7 @@
 
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { useThreadStore } from "@/components/stores/thread-store"
+import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
 import { useWakeTriggerStore } from "@/components/stores/wake-trigger-store"
 import {
   type GetPromptInspectorResponse,
@@ -296,16 +297,15 @@ function WakeTriggerSection({
             <span className="font-semibold">{wsLatest.alias}</span> @{" "}
             <span className="font-mono">{wsLatest.triggeredAt}</span>
           </div>
-          <div>
+          <div className="mt-1 flex items-center gap-1">
             scenario: <span className="font-mono">{wsLatest.scenario}</span>
             {wsLatest.a2aCallId && (
               <>
                 {" · "}
-                <span className="font-mono">[a2a_call={wsLatest.a2aCallId}]</span>
+                <WakeTriggerA2APill callId={wsLatest.a2aCallId} />
               </>
             )}
           </div>
-          {/* click pill drawer 留 Week 4 实施 — 现在只显示 trigger info */}
         </div>
       ) : apiTrigger.kind ? (
         <div
@@ -316,7 +316,11 @@ function WakeTriggerSection({
           {apiTrigger.ref && (
             <>
               {" · ref: "}
-              <span className="font-mono">{apiTrigger.ref}</span>
+              {apiTrigger.kind === "a2a_call" ? (
+                <WakeTriggerA2APill callId={apiTrigger.ref} />
+              ) : (
+                <span className="font-mono">{apiTrigger.ref}</span>
+              )}
             </>
           )}
         </div>
@@ -326,6 +330,24 @@ function WakeTriggerSection({
         </div>
       )}
     </section>
+  )
+}
+
+// F027 Phase 3 Day 20 (AC-P3-5) · wake-trigger 内 a2a callId pill (click 打开 drawer)
+// V16.5.2 line 1980-1984 拍: 与 viewfinder §4 a2a pill 共用同一 drawer + 同一 fetch
+function WakeTriggerA2APill({ callId }: { callId: string }) {
+  const openDrawer = useA2ADrawerStore((s) => s.openDrawer)
+  return (
+    <button
+      type="button"
+      onClick={() => openDrawer(callId, "prompt-inspector")}
+      className="inline-flex items-center rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] text-amber-800 hover:brightness-95"
+      title="click 打开 a2a 调用树"
+      data-testid={`wake-trigger-a2a-pill-${callId.slice(0, 13)}`}
+      data-call-id={callId}
+    >
+      [a2a_call={callId.length > 13 ? `${callId.slice(0, 13)}…` : callId}]
+    </button>
   )
 }
 

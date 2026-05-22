@@ -1,5 +1,6 @@
 "use client"
 
+import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import ReactMarkdown from "react-markdown"
@@ -170,31 +171,35 @@ function renderSegments(segments: ViewfinderSegment[]): React.ReactNode {
 }
 
 /**
- * 简化版 a2a 引用 pill — Week 5 evaluate 是否升级到 F026 <AtPill> 完整状态机
- * + click drawer 展开 mini call tree（V16.5.2 拍 in-place drawer · 复用
- * F026 <A2ATreeView> + 自己 fetch /debug/a2a?root=callId）。
+ * F027 Phase 3 Day 20 (AC-P3-4 完整) · a2a 引用 pill + click drawer
+ * V16.5.2 line 1970-1973 拍 in-place drawer · 复用 F026 <A2ATreeView> +
+ * 自己 fetch /debug/a2a?root=callId · 与 prompt-inspector wake-trigger pill 共用同一 drawer
  *
- * Day 16-17 范围：只渲染 pill 视觉 + tooltip 显示 callId/status/deadline/reason
+ * Day 16-17 简化版 (span) → Day 20 升级 button + click → openDrawer
  */
 function AtPillRef({ segment }: { segment: ViewfinderSegment & { kind: "a2a" } }) {
+  const openDrawer = useA2ADrawerStore((s) => s.openDrawer)
   const colorClass = statusToColorClass(segment.status)
   const tooltipParts: string[] = [
     `call=${segment.callId}`,
     `status=${segment.status}`,
     segment.deadline ? `deadline ${segment.deadline}` : null,
     segment.reason ? `reason "${segment.reason}"` : null,
+    "click 打开调用树",
   ].filter((p): p is string => Boolean(p))
   const tooltip = tooltipParts.join(" · ")
   return (
-    <span
-      className={`mx-0.5 inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[9px] ${colorClass}`}
+    <button
+      type="button"
+      onClick={() => openDrawer(segment.callId, "viewfinder")}
+      className={`mx-0.5 inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[9px] hover:brightness-95 ${colorClass}`}
       title={tooltip}
       data-testid={`viewfinder-a2a-ref-${segment.callId.slice(0, 13)}`}
       data-call-id={segment.callId}
       data-status={segment.status}
     >
       {segment.callId.slice(0, 13)}·{segment.status}
-    </span>
+    </button>
   )
 }
 

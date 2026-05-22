@@ -235,7 +235,9 @@ describe("PromptInspectorTab WakeTrigger (WS 优先 / API fallback)", () => {
     )
     render(<PromptInspectorTab />)
     await waitFor(() => expect(screen.queryByTestId("wake-trigger-api")).toBeTruthy())
-    expect(screen.getByText(/call-xyz-from-audit/)).toBeTruthy()
+    // Day 20: a2a_call kind ref 走 WakeTriggerA2APill (data-call-id 保留 full id)
+    const pill = screen.getByTestId("wake-trigger-a2a-pill-call-xyz-from")
+    expect(pill.getAttribute("data-call-id")).toBe("call-xyz-from-audit")
   })
 
   it("WS 跨房间不串 — 只渲染当前 roomId 的 trigger", async () => {

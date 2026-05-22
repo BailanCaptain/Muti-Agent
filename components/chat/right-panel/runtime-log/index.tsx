@@ -1,6 +1,7 @@
 "use client"
 
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
+import { A2ACallDrawer } from "./a2a-call-drawer"
 import { Lvl1Tabs } from "./lvl1-tabs"
 import { Lvl2Content } from "./lvl2-content"
 import { Lvl2Tabs } from "./lvl2-tabs"
@@ -42,6 +43,9 @@ export function RuntimeLog() {
           <Lvl2Content />
         </>
       )}
+      {/* F027 Phase 3 Day 20 (AC-P3-5/4) · shared a2a click drawer.
+          Portal-style fixed overlay 不受 collapsed 影响, viewfinder + prompt-inspector pill 共享 store. */}
+      <A2ACallDrawer />
     </div>
   )
 }
