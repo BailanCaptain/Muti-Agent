@@ -114,7 +114,8 @@ AC-P3-8 / AC-P3-9 不是 Phase 3 新发明的 AC —— 它们是 feature.md Pha
 |---|---|
 | 11 | AC-P3-1 StatusPanel 拖宽（layout-store width + ResizeHandle + localStorage）|
 | 12-13 | AC-P3-2 RuntimeLog 5-tab 容器骨架（1 级 tabs + 2 级 5 tab + 切换保 fetch 状态）|
-| 14-15 | knowledge-base tab + warnings tab + draft-approval tab（只读列表，接 Week 1-2 API）+ **AC-P3-8 b**：prompt-inspector unresolved 入口 UI 接 manual confirm |
+| 14-15 | draft-approval tab（只读列表，接 GET /api/wiki/drafts）+ **AC-P3-8 b**：prompt-inspector unresolved 入口 UI 接 manual confirm |
+| | **patch v3.2 (2026-05-23 小孙拍 B)**：knowledge-base tab + warnings tab 推 Phase 4 — Week 1-2 8 endpoint 未列 `/api/wiki/warnings` + `/api/wiki/index`（V16.5 chap 18 line 1953-1954 引用属 plan bug），后端依赖 wiki 写盘 + 派生 jobs 上线，本 Phase scope 外 |
 
 ### Week 4 · 核心面板 + IngestModal（5 天）
 
