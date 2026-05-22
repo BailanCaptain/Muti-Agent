@@ -13,9 +13,10 @@
  */
 
 import type { GetPromptInspectorResponse } from "@/components/chat/right-panel/runtime-log/tabs/prompt-inspector/use-prompt-inspector-data"
+import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { useWakeTriggerStore } from "@/components/stores/wake-trigger-store"
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { PromptInspectorTab } from "./prompt-inspector-tab"
 
@@ -238,6 +239,30 @@ describe("PromptInspectorTab WakeTrigger (WS 优先 / API fallback)", () => {
     // Day 20: a2a_call kind ref 走 WakeTriggerA2APill (data-call-id 保留 full id)
     const pill = screen.getByTestId("wake-trigger-a2a-pill-call-xyz-from")
     expect(pill.getAttribute("data-call-id")).toBe("call-xyz-from-audit")
+  })
+
+  // Day 20 r1 P3 fix (范-r1): wake-trigger pill click → store glue
+  it("Day 20 P3 fix: WS trigger pill click → openDrawer('prompt-inspector')", async () => {
+    useA2ADrawerStore.setState({ callId: null, source: null })
+    mockFetchResponse(makeResponse())
+    useWakeTriggerStore.getState().recordTrigger({
+      threadId: "T-1",
+      sessionGroupId: "G-1",
+      roomId: "R-201",
+      alias: "黄仁勋",
+      scenario: "a2a_handoff",
+      a2aCallId: "call-ws-click-test",
+      triggeredAt: "2026-05-23T01:00:00Z",
+    })
+    render(<PromptInspectorTab />)
+    await waitFor(() =>
+      expect(screen.queryByTestId("wake-trigger-a2a-pill-call-ws-click")).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByTestId("wake-trigger-a2a-pill-call-ws-click"))
+    const drawerState = useA2ADrawerStore.getState()
+    expect(drawerState.callId).toBe("call-ws-click-test")
+    expect(drawerState.source).toBe("prompt-inspector")
+    useA2ADrawerStore.setState({ callId: null, source: null })
   })
 
   it("WS 跨房间不串 — 只渲染当前 roomId 的 trigger", async () => {

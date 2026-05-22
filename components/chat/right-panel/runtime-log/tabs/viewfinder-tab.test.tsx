@@ -12,9 +12,10 @@
  *   - enabled flag wire activeLvl2 === "viewfinder"
  */
 
+import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { useThreadStore } from "@/components/stores/thread-store"
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ViewfinderTab } from "./viewfinder-tab"
 import type { GetViewfinderResponse } from "./viewfinder/use-viewfinder-data"
@@ -148,6 +149,26 @@ describe("ViewfinderTab markdown 渲染", () => {
     expect(pill.getAttribute("title")).toMatch(/call=call-abc12345/)
     expect(pill.getAttribute("title")).toMatch(/status=pending/)
     expect(pill.getAttribute("title")).toMatch(/deadline 17:30/)
+  })
+
+  // Day 20 r1 P3 fix (范-r1): pill click → store glue (onClick → openDrawer 那行)
+  it("Day 20 P3 fix: a2a pill click → useA2ADrawerStore.openDrawer('viewfinder')", async () => {
+    useA2ADrawerStore.setState({ callId: null, source: null })
+    mockFetchResponse(
+      makeResponse({
+        viewfinder: "[a2a_call=call-click-test, status=pending]",
+      }),
+    )
+    render(<ViewfinderTab />)
+    await waitFor(() =>
+      expect(screen.queryByTestId("viewfinder-a2a-ref-call-click-te")).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByTestId("viewfinder-a2a-ref-call-click-te"))
+    const drawerState = useA2ADrawerStore.getState()
+    expect(drawerState.callId).toBe("call-click-test")
+    expect(drawerState.source).toBe("viewfinder")
+    // cleanup
+    useA2ADrawerStore.setState({ callId: null, source: null })
   })
 
   it("a2a 引用 status=failed → 红色 pill class", async () => {
