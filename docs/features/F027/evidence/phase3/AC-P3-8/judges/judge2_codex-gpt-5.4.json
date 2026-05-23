@@ -1,0 +1,17 @@
+{
+  "ac_id": "AC-P3-8",
+  "judge": "codex-gpt-5.4",
+  "verdict": "CONDITIONAL_PASS",
+  "rubric": {
+    "evidence_completeness": "PARTIAL - backend DecisionService, POST /decisions, coverage GET, append/revoke/tombstone semantics, and contract tests are present; the Inspector unresolved-list UI click path is not implemented in Phase 3 evidence.",
+    "ac_literal_contract": "PARTIAL - manual confirm API and ledger semantics pass; 'Inspector Coverage warning unresolved list UI click -> manual confirm writes new row' remains missing against the AC text.",
+    "design_intent_alignment": "CONDITIONAL_PASS - pushing the frontend Coverage section to Phase 4 can be reasonable only if the plan/feature AC is patched and explicitly accepted; current AC wording still makes it Phase 3 scope.",
+    "residual_risk": "Without the UI entry, users cannot complete the manual-confirm workflow from Inspector even though the backend can accept the decision."
+  },
+  "blocked_evidence": [
+    "frontend-inspector-coverage-section-unresolved-list",
+    "browser-ui-click-manual-confirm"
+  ],
+  "go_with_blocked_evidence": false,
+  "notes": "I ran decisions.test.ts successfully. This is missing frontend implementation, not merely blocked evidence. Condition for acceptance: add the Coverage section now or record an explicit 小孙/plan decision moving this AC fragment to Phase 4."
+}

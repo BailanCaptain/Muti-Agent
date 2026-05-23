@@ -1,0 +1,17 @@
+{
+  "ac_id": "AC-P3-10",
+  "judge": "codex-gpt-5.4",
+  "verdict": "PASS",
+  "rubric": {
+    "evidence_completeness": "PASS - backend IngestCommitService tests cover preview-not-write, commit write, wiki_events commit, missing/expired preview, conflict, lease-held, and consume semantics; frontend hook/modal wiring is covered by component tests.",
+    "ac_literal_contract": "PASS - commit goes through the updateWiki/lease path, preview alone does not write, successful commit writes file plus wiki_events, and failure paths do not produce committed write events.",
+    "design_intent_alignment": "PASS - AC-P3-10 closes the AC-P3-6 durable-write boundary without bypassing ACL/CAS/lease/fencing.",
+    "residual_risk": "The worktree browser/SQL walkthrough is blocked by preview DB schema mismatch, but the service-level E2E stack creates its own schema and verifies the behavior directly."
+  },
+  "blocked_evidence": [
+    "browser-commit-success-file-on-disk",
+    "sql-wiki_events-row-after-commit"
+  ],
+  "go_with_blocked_evidence": true,
+  "notes": "I ran ingest-commit.test.ts and the related IngestModal/use-ingest-api component tests; they passed. The remaining blocked evidence is environment-specific browser proof, not a missing implementation."
+}

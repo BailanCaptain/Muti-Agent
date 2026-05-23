@@ -1,0 +1,8 @@
+{
+  "ac_id": "AC-P3-6",
+  "judge1_verdict": "PASS",
+  "judge2_verdict": "CONDITIONAL_PASS",
+  "double_pass": false,
+  "arbitration_verdict": "CONDITIONAL_PASS",
+  "rationale": "3 入口 (composer 拖 / KB 按钮 / slash) + IngestModal + sanitize + commit 闭环全实施 + 全单测 PASS; 3 入口 browser modal open 实测 BLOCKED. arbitration 取 j2 → CONDITIONAL_PASS."
+}

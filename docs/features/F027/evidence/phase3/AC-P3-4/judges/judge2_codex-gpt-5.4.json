@@ -1,0 +1,17 @@
+{
+  "ac_id": "AC-P3-4",
+  "judge": "codex-gpt-5.4",
+  "verdict": "PASS",
+  "rubric": {
+    "evidence_completeness": "PASS - parser, viewfinder tab rendering, shared drawer store, drawer component, and click-to-store regression are covered by targeted component/unit tests.",
+    "ac_literal_contract": "PASS - [a2a_call=...] references render as clickable pill-style refs and open the in-place A2A drawer rather than navigating away.",
+    "design_intent_alignment": "PASS - the shared drawer direction matches the V16.5.2 viewfinder/prompt-inspector convergence and reuses the existing A2A tree display path.",
+    "residual_risk": "The evidence pack lacks a browser screenshot, and real runtime data still depends on viewfinder compilation producing a call ref; the core behavior is nevertheless covered at the component/store boundary."
+  },
+  "blocked_evidence": [
+    "browser-viewfinder-section-4-screenshot",
+    "browser-pill-click-drawer-screenshot"
+  ],
+  "go_with_blocked_evidence": true,
+  "notes": "Targeted viewfinder and A2A drawer tests passed. I consider the browser screenshots useful corroboration, not blocking for this AC."
+}

@@ -1,0 +1,8 @@
+{
+  "ac_id": "AC-P3-10",
+  "judge1_verdict": "PASS",
+  "judge2_verdict": "PASS",
+  "double_pass": true,
+  "arbitration_verdict": "PASS",
+  "rationale": "双 judge PASS-PASS — backend IngestCommitService + E2E 单测 (preview 不落盘 / commit 落盘 / 失败不写 wiki_events) + frontend useIngestCommit hook + IngestModal commit 按钮 全实施. AC-P3-10 闭环."
+}

@@ -1,0 +1,17 @@
+{
+  "ac_id": "AC-P3-3",
+  "judge": "codex-gpt-5.4",
+  "verdict": "CONDITIONAL_PASS",
+  "rubric": {
+    "evidence_completeness": "PARTIAL - prompt-inspector UI sections, API contract, and fetch hook are covered by tests; real populated Adaptive Recall data is blocked by the unresolved AC-P3-9 production wiring and worktree DB schema state.",
+    "ac_literal_contract": "CONDITIONAL_PASS - injected parts, recall query display, and AdaptiveRecallPolicy rendering are implemented as UI/contract surfaces; the promised real prompt_audit-backed data path is not independently proven here.",
+    "design_intent_alignment": "PASS - the visible inspector sections align with the walkthrough's 7-block target and V16.5 inspector intent.",
+    "residual_risk": "If AC-P3-9 remains disabled in production boot, this panel will only show empty/default recall state for real turns; that is not just a browser-screenshot gap."
+  },
+  "blocked_evidence": [
+    "browser-7-blocks-with-real-data",
+    "prompt_audit-real-row-backed-inspector-data"
+  ],
+  "go_with_blocked_evidence": false,
+  "notes": "The prompt-inspector component tests passed, but I tie the full AC to real data availability. Because AC-P3-9 is not production-enabled, this should remain conditional rather than PASS."
+}

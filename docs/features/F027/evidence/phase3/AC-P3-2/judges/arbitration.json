@@ -1,0 +1,8 @@
+{
+  "ac_id": "AC-P3-2",
+  "judge1_verdict": "PASS",
+  "judge2_verdict": "CONDITIONAL_PASS",
+  "double_pass": false,
+  "arbitration_verdict": "CONDITIONAL_PASS",
+  "rationale": "j1+j2 一致: 5-tab always-render + ARIA keyboard 单测 PASS; scroll ±10px browser 实测 BLOCKED. arbitration 取 j2 立场 → CONDITIONAL_PASS."
+}

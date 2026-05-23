@@ -1,0 +1,16 @@
+{
+  "ac_id": "AC-P3-2",
+  "judge": "codex-gpt-5.4",
+  "verdict": "CONDITIONAL_PASS",
+  "rubric": {
+    "evidence_completeness": "PARTIAL - component/store tests cover the 5-tab container, default prompt-inspector tab, always-render behavior, and keyboard navigation; no browser scroll-preservation artifact is present.",
+    "ac_literal_contract": "CONDITIONAL_PASS - the tab list and default state are covered; scroll +/-10px is a real layout/browser assertion and is not directly proven by jsdom/happy-dom tests.",
+    "design_intent_alignment": "PASS - the RuntimeLog two-level tab structure and v3.5 labels match the Phase 3 plan and walkthrough.",
+    "residual_risk": "display:none always-render is the right mechanism for keeping DOM scroll state, but final acceptance still needs a real-browser tab-switch check because layout engines, overflow containers, and focus movement are not fully modeled in the unit environment."
+  },
+  "blocked_evidence": [
+    "browser-tab-switch-scroll-screenshot"
+  ],
+  "go_with_blocked_evidence": true,
+  "notes": "Targeted RuntimeLog tests passed. This is acceptable to carry as a conditional evidence gap, not as an unqualified browser-verified PASS."
+}

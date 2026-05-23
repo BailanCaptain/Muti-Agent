@@ -1,0 +1,17 @@
+{
+  "ac_id": "AC-P3-5",
+  "judge": "codex-gpt-5.4",
+  "verdict": "PASS",
+  "rubric": {
+    "evidence_completeness": "PASS - wake trigger store, prompt-inspector WakeTriggerSection, shared drawer store, and A2A drawer tests cover the visible trigger and click path.",
+    "ac_literal_contract": "PASS - wake-up trigger with a2a_call renders as a clickable trigger pill and opens the same in-place drawer used by viewfinder.",
+    "design_intent_alignment": "PASS - the implementation matches the V16.5.2 shared-drawer intent and keeps WS/API trigger handling fail-soft.",
+    "residual_risk": "A real wake-up event from the full runtime is still not demonstrated in a browser session; this is an integration-evidence gap, not a missing UI implementation."
+  },
+  "blocked_evidence": [
+    "browser-wake-trigger-section-amber-pill",
+    "browser-pill-click-drawer-from-prompt-inspector"
+  ],
+  "go_with_blocked_evidence": true,
+  "notes": "Targeted prompt-inspector and drawer tests passed. The remaining blocked evidence is live-runtime/browser proof."
+}

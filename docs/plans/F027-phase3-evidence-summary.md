@@ -84,23 +84,44 @@ Phase 3 = 前端 RuntimeLog 容器 + Inspector 数据 + IngestModal 3 入口 + v
 | Phase 1 Phase | (历史 commit ea773d9) | (前置) |
 | Phase 2 Phase | (历史 commit 944b7b1 风) | (前置 11 jobs) |
 
-## 10 AC double-pass 状态 (judge1 完成, judge2 codex 跑中)
+## 10 AC double-pass 最终 verdict (judge1 + judge2 + arbitration 全 close)
 
 每 AC 落点: `docs/features/F027/evidence/phase3/AC-P3-<N>/`
 三件套: `result.json` + `judges/{judge1_claude-opus-4-7, judge2_codex-gpt-5.4, arbitration}.json` + `screenshots/`
 
-| AC | judge1 verdict | 重点 (待 judge2 + arbitration) |
-|---|---|---|
-| AC-P3-1 拖宽 | PASS (with BLOCKED browser fps/reload screenshot) | v3.4 max 1200 |
-| AC-P3-2 5 tab | PASS (with BLOCKED browser tab switch scroll) | always-render display:none |
-| AC-P3-3 inspector 7 块 | PASS (with BLOCKED browser real data render) | 真数据填依赖 P3-9 wiring + DB schema |
-| AC-P3-4 viewfinder pill + click drawer | PASS (with BLOCKED browser pill click) | Day 20 闭环 |
-| AC-P3-5 wake-trigger pill + click drawer | PASS (with BLOCKED browser pill click) | G1 + Day 14-15 + Day 20 闭环 |
-| AC-P3-6 IngestModal 3 入口 | PASS (with BLOCKED browser 3 入口 modal) | 4 批实施 (19a/19b-1/19b-2/19c) |
-| AC-P3-7 调度器 go-live + Iron Laws 3 | **PASS (无 BLOCKED, 命令行可全验)** | 唯一不依赖浏览器 AC |
-| AC-P3-8 manual decision + Inspector unresolved | **CONDITIONAL_PASS** | b frontend Inspector 入口 UI 推 Phase 4 — **升级小孙拍是否补 Phase 3 commit 加 Coverage section 还是接受 Phase 4** |
-| AC-P3-9 Adaptive Recall wiring | **CONDITIONAL_PASS** | a/b/c wiring 跨 Phase 1/3 — Phase 1 P13 已 done, Phase 3 plan v3 line 103-106 列工作可能重复, 需明示 |
-| AC-P3-10 ingest commit endpoint | PASS (with BLOCKED browser commit + SQL wiki_events) | backend + frontend 完整 |
+**结果分布**: 4 PASS / 5 CONDITIONAL_PASS / 1 **FAIL**
+
+| AC | j1 | j2 | arbitration | 备注 |
+|---|---|---|---|---|
+| AC-P3-1 拖宽 | PASS | CONDITIONAL_PASS | CONDITIONAL_PASS | browser fps + reload 像素 实测 BLOCKED |
+| AC-P3-2 5 tab | PASS | CONDITIONAL_PASS | CONDITIONAL_PASS | browser scroll ±10px 实测 BLOCKED |
+| AC-P3-3 inspector 7 块 | PASS | CONDITIONAL_PASS | CONDITIONAL_PASS | 真数据依赖 P3-9 + DB schema |
+| AC-P3-4 viewfinder pill 点击 drawer | PASS | PASS | **✅ PASS** | Day 20 闭环 |
+| AC-P3-5 wake-trigger pill 点击 drawer | PASS | PASS | **✅ PASS** | G1 + Day 14-15 + Day 20 闭环 |
+| AC-P3-6 IngestModal 3 入口 | PASS | CONDITIONAL_PASS | CONDITIONAL_PASS | 3 入口 browser modal 实测 BLOCKED |
+| AC-P3-7 调度器 go-live + Iron Laws 3 | PASS | PASS | **✅ PASS** | dev:api 启动 log 实证 |
+| AC-P3-8 manual decision + Inspector unresolved | CONDITIONAL_PASS | CONDITIONAL_PASS | **⚠️ CONDITIONAL_PASS** | b Inspector unresolved UI 推 Phase 4 — 升级小孙拍 |
+| AC-P3-9 Adaptive Recall wiring | CONDITIONAL_PASS | **FAIL** | **❌ FAIL** | server.ts line 239 用 noop coordinator, production wiring 未真接 — 升级小孙拍 |
+| AC-P3-10 ingest commit endpoint | PASS | PASS | **✅ PASS** | backend + frontend 完整 |
+
+## 升级小孙 3 件拍板 (Phase 3 合 dev 前必经)
+
+### O1 AC-P3-9 FAIL 路径选 (重要)
+**实证**: `packages/api/src/server.ts:239-242` 用 `createNoopAdaptiveRecallCoordinator()` 而非生产 `AdaptiveRecallCoordinator({enabled:true, executorDeps})`. 注释明示推 Phase 4. plan v3.1 §3 Week 2 Day 7-9 字面是 "production wiring", 与实施 gap.
+
+- A: Phase 3 加 commit 改 server.ts 真接生产 coordinator (scope creep 大, critique LLM + level2-4 backend + Level5Sink 都是 Phase 4 deps, 假接也不行)
+- B: 修 plan v3.6 patch — AC-P3-9 重写为 "ready-for-Phase-4 wiring (代码/接口/单测 ready, server.ts boot 推 Phase 4 接 critique LLM 后启用)" + 接受 CONDITIONAL_PASS (而非 FAIL)
+- C: 维持 FAIL, 等 Phase 4 一并做 (诚实但 block 合 dev)
+
+### O2 AC-P3-8 b 推 Phase 4 还是 Phase 3 补
+feature.md line 184 字面 "Inspector unresolved 入口 UI click → manual confirm" Phase 3 必做。当前 prompt-inspector tab 7 块无 Coverage section。
+- A: 加 Phase 3 commit 补 Coverage section (~30min, 单测可覆盖)
+- B: 修 plan v3.6 patch 明示 b 推 Phase 4 + 接受 CONDITIONAL_PASS
+
+### O3 5 个 CONDITIONAL_PASS (browser 实测 BLOCKED) 怎么走
+AC-P3-1/2/3/6 + 部分 P3-10 浏览器实测项 BLOCKED. j2 严格不让 PASS-with-BLOCKED.
+- A: 你抽 1-2h 跑 walkthrough script (浏览器实测 5 AC + 截图) + 我补 screenshots/ + arbitration 升 PASS — Phase 3 完美收口
+- B: 接受 5 CONDITIONAL_PASS, 合 dev (浏览器真验等 Phase 4 与 worktree DB schema 一起做)
 
 ## 浏览器实测受限 — 跨 Phase 1 wiring 缺口
 

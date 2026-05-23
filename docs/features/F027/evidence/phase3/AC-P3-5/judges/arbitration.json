@@ -1,0 +1,8 @@
+{
+  "ac_id": "AC-P3-5",
+  "judge1_verdict": "PASS",
+  "judge2_verdict": "PASS",
+  "double_pass": true,
+  "arbitration_verdict": "PASS",
+  "rationale": "双 judge PASS-PASS — G1 backend WS + wake-trigger-store + WakeTriggerSection + Day 20 WakeTriggerA2APill click + glue 测试全 close. AC-P3-5 闭环."
+}

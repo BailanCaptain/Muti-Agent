@@ -1,0 +1,19 @@
+{
+  "ac_id": "AC-P3-9",
+  "judge": "codex-gpt-5.4",
+  "verdict": "FAIL",
+  "rubric": {
+    "evidence_completeness": "PARTIAL - PromptAuditWriter, AdaptiveRecallCoordinator, and ProductionLevel5Sink have unit tests, but the production boot path explicitly installs createNoopAdaptiveRecallCoordinator() with enabled=false and does not wire executorDeps/ProductionLevel5Sink.",
+    "ac_literal_contract": "FAIL - the AC requires production wiring: actual orchestrator/RoomCompiler executeAdaptiveRecall call, prompt_audit real 9-field write for that path, and Level5Sink production write/display. Current server boot keeps adaptive recall disabled and comments defer true deps/Level5Sink wiring to Phase 4.",
+    "design_intent_alignment": "FAIL - the implemented pieces are useful Phase 4 foundations, but the Phase 3 plan text says Day 7-9 should close a/b/c production wiring. A disabled/noop coordinator does not satisfy that intent.",
+    "residual_risk": "Inspector can show default/empty recall state while tests still pass. This creates a false-positive evidence pack unless the AC is re-scoped or the production wiring is enabled with real deps and an integration test."
+  },
+  "blocked_evidence": [
+    "fixture-prompt_audit-9-fields-sql-query",
+    "end-to-end-wake-up-to-executeAdaptiveRecall",
+    "Level5Sink-production-boot-wire",
+    "browser-inspector-real-data"
+  ],
+  "go_with_blocked_evidence": false,
+  "notes": "API subset tests passed, including coordinator, prompt-audit writer, and ProductionLevel5Sink. The failure is not test health; it is the production wiring boundary. server.ts injects the noop coordinator and states true executor deps/Level5Sink boot wire are Phase 4."
+}
