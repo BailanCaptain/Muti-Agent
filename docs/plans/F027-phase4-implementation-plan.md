@@ -1,7 +1,7 @@
 ---
 id: F027-phase4-implementation-plan
 title: F027 Phase 4 实施 plan — 审批 UI + 记忆生产 go-live + 验证收口
-status: v3 final（范-r2 CONDITIONAL → 全接受 P1×1 + P2×2；黄独立 verify 出 3 dependency gap；小孙 2026-05-23 拍跳 r3 review 直接 commit final）
+status: v5 final（范-r3 CONDITIONAL P2×6 全接受 + 小孙拍节奏 20-22 + Day 23-24 buffer + r4 self-review GO 含 2 P3 已 inline；codex CLI 2 轮卡 → 小孙拍接 self-review）
 created: 2026-05-23
 feature: docs/features/F027-unified-memory-architecture.md
 phase: Phase 4 · 审批 UI + 验证（V16.5 P20 + P18 + P22）— **F027 最后一个 phase**
@@ -16,7 +16,9 @@ parent: docs/plans/F027-phase3-evidence-summary.md（Phase 3 收稿 4 PASS / 6 C
 |---|---|
 | v1 | 首稿。基于 feature.md Phase 4 立项 6 AC + Phase 3 推 go-live 3 件。小孙拍 scope = 9 AC，节奏 4 周 / 16-20 天，worktree 沿用 `.worktrees/F027`。待范-r1。 |
 | v2 | 范-r1 CONDITIONAL（P1×2 + P2×4 + P3×3 + 8 Open 全意见）小孙拍 3 方向全接受：① 节奏 16-20 → 20-24 天 / 4-5 周 ② AC-P4-3 重设计右侧面板为主 ③ AC-P4-9 自带 fixture seed。加附录 §10/§11/§12。AC-P4-7 改 copy/dry-run/atomic swap。AC-P4-8 删 Level 2 占位 + 拆 5 子项。风险表 +6 项。 |
-| **v3 final** | **范-r2 CONDITIONAL（P1×1 + P2×2）+ 黄 verify 3 dependency gap 全接受**：① **AC-P4-7 WAL 安全协议**（P1 Iron Law 1 failure mode）— 主 DB 替换补 `-wal`/`-shm` 文件组同步、checkpoint/SQLite backup API、Windows ReplaceFile/os.replace 原子替换 ② **§11 矩阵修正**（P2）— 删 AC-P3-10（已 PASS double-pass）补 AC-P3-9（CONDITIONAL_PASS 才该升）③ **AC-P4-8 依赖明细**（P2）— Level 2 thin adapter Day 3 gate + Level 5 e2/e3 列 AuditBroadcaster/Inspector pull 依赖 ④ **AC-P4-1 V14 二次审计 service 新实现**（黄 verify gap C）— V16.5 line 838-846 3 步检测，不是"复用 Phase 1" ⑤ **AC-P4-3 (e) IngestModal "加入系列"字段必补**（黄 verify gap B）— ingest-modal.tsx:37 注释明示 Phase 3 未实现 ⑥ **节奏 20-24 → 22-26 天**（+2d 吸收 3 gap 工时，仍 4-5 周）。小孙拍跳 r3 review 直接 commit final。Week 1 Day 1 开干。 |
+| v3 final | 范-r2 CONDITIONAL (P1×1 + P2×2) + 黄 verify 3 dependency gap 全接受：WAL 安全协议 / §11 矩阵 / AC-P4-8 依赖明细 / V14 audit service 新实现 / IngestModal 系列字段必补 / 节奏 20-24 → 22-26 天。commit `2829776`。 |
+| **v5** | **范-r3 CONDITIONAL P2×6 全接受**（范实测 sqlite3 验证 v4 前提全对——不重蹈 v3 翻车）：① **AC-P4-9 d 重写**：per-table idempotent（每表 `COUNT(*)=0` 才 seed）+ 单事务 INSERT/rollback + 明示不做 DB 文件 copy/swap/checkpoint + prompt_audit 永不 fixture seed ② **d3 删 released row**（wiki_leases schema 无 status/released_at 字段，drizzle-instance.ts:386-395 实证）+ 改 seed active/expired 2 种 ③ **WORKTREE_PREVIEW gate 来源明示**（修 scripts/worktree-preview.ts 加 env，SQLITE_PATH 路径作 second guard，不改 .env） ④ **Week 1 GO 加真 R-001 recall stimulus** 验 d4（prompt_audit 9 字段写入） ⑤ **§10 场景 1 前置改 d1-d3 非空** + prompt_audit 非空移到 step 1.5 后置 evidence（修 d4 vs 前置内部冲突） ⑥ **节奏 18-22 → 20-22 天 + Day 23-24 buffer**（吸 v3 翻车 + 不乐观） ⑦ 全文 9 AC → 8 AC（grep verify 9 处）。小孙拍节奏 + 走 r4 review 不跳。 |
+| v4 | v3 commit 5min 后实测翻车 — plan 全员（v1/v2/v3 + 范 r1/r2 + 小孙）基于错误前提"worktree DB 缺 6 张表"。实测 `sqlite3 .tables`：5 张已有（`prompt_audit`/`wiki_events`/`wiki_leases`/`room_decisions` + `session_groups` 是真房间表非 `rooms`）+ 1 张（`viewfinder_cache`）在 codebase **从不存在**（viewfinder 实时计算不用 cache）；真问题是 **4 张表 0 rows**（数据缺，不是表缺）。**根因**：Phase 3 evidence summary line 121-124 写错 → 我 plan v1 沿用未 verify → 范 r1/r2 也未 verify（feedback `measure_before_assert` 又一次教训）。**v4 改动**：① **AC-P4-7 整个取消**（DB 已自动 migrate via `CREATE TABLE IF NOT EXISTS` 模式，drizzle-instance.ts:91 INIT_SQL 25 张表）② **AC-P4-9 扩范围** — 从 "warnings + KB fixture" 扩到 "warnings + KB + 4 张 Phase 1 空表 data seed"（prompt_audit/wiki_events/room_decisions/wiki_leases） ③ **节奏 22-26 → 18-22 天**（-4d AC-P4-7 + 2d AC-P4-9 扩 = 净 -2 ~ -4d）④ AC 数 9 → 8 ⑤ §10 walkthrough / §11 矩阵 引用 AC-P4-7 → AC-P4-9 ⑥ §6 风险表删 DB 半迁移/空库（已不适用） ⑦ §7 依赖删 AC-P4-7 相关。待范-r3 review。 |
 
 ## 1. 范围
 
@@ -27,7 +29,7 @@ Phase 4 = **F027 最后一个 phase**（feature.md:199-205 工期表 4 个 phase
 
 收口目标：Phase 3 留下的 6 CONDITIONAL_PASS（浏览器实测 BLOCKED）全升 PASS，F027 整体进入生产可用状态。
 
-### 1.1 交付物（9 AC）
+### 1.1 交付物（8 AC）
 
 **主线 A · 审批 UI（6 AC，feature.md AC-P4-1 ~ AC-P4-6 原立项）**
 
@@ -44,16 +46,7 @@ Phase 4 = **F027 最后一个 phase**（feature.md:199-205 工期表 4 个 phase
 
 **主线 B · go-live（3 AC，Phase 3 推过来）**
 
-7. **AC-P4-7 worktree DB schema 升 Phase 1 migration（v3 修：WAL 安全协议 — 范-r2 P1）** — `.runtime/worktree-preview/data/multi-agent.sqlite` 当前是 Phase 0 备份，缺 6 张表（`rooms` / `prompt_audit` / `wiki_events` / `wiki_leases` / `room_decisions` / `viewfinder_cache`）。**SQLite WAL 模式 `-wal` 是 DB 持久状态**（sqlite.org/wal.html），主文件单独 mv/替换会丢已提交事务/损坏 DB（Iron Law 1 failure mode）。Phase 4 实施：
-   - (a) **停止 API 写连接**: boot pre-migration 阶段 graceful 关闭所有 DB connection（drizzle `client.close()`）+ 校验无活跃事务
-   - (b) **WAL checkpoint TRUNCATE**: `PRAGMA wal_checkpoint(TRUNCATE)` 合并 `-wal` 到主 DB + 清空 `-wal` 文件（保 DB 状态原子收敛到单文件）
-   - (c) **SQLite backup API copy backup**: 用 `sqlite3_backup_init` 复制到 `multi-agent.sqlite.backup-phase0-{ISO ts}`（不裸 cp，避免捕获中间状态；Iron Law 1 守护：copy 不 rm 不 mv 原文件）
-   - (d) **working copy**: 同上 backup API 复制到 `multi-agent.sqlite.working`，所有 migration 在 working copy 上跑（同目录同卷以保 atomic replace）
-   - (e) **dry-run + 校验**: 跑 drizzle migrate → 校验 `__drizzle_migrations` 行数 + 6 张表全建好 + 旧表关键 row count（rooms / messages 等）保持
-   - (f) **atomic replace + WAL 同步**: 校验通过 → Node `fs.renameSync(working, main)`（封装 Windows ReplaceFile / POSIX rename）+ **同步清理/合并 `multi-agent.sqlite-wal` 与 `multi-agent.sqlite-shm`**（working copy 跑完应已 checkpoint，主 -wal 已空；如残留先单独删 `-wal`/`-shm` 再 replace）
-   - (g) **boot 校验 + re-open**: replace 后 boot 重新 open DB connection → 跑 schema 探针（query 6 张表 SELECT 1）+ row count 二次校验 → 全过才接 API 写流量
-   - (h) **fail-closed restore**: 任一步失败 → 保留原 `multi-agent.sqlite` + `-wal` + `-shm` 文件组不动 + boot fail-closed + log 写失败步骤 + alert 小孙
-   - **单测**：(1) 插入人为 failing migration → 原 DB 文件组（主 + -wal + -shm）仍可打开 + working copy 不替换；(2) 模拟 -wal 残留场景 → restore 路径不丢提交事务；(3) Windows ReplaceFile 同卷/跨卷行为单测
+7. ~~**AC-P4-7 worktree DB schema 升 Phase 1 migration**~~ — **v4 取消**：实测 `sqlite3 .tables` 显示 worktree DB 5 张 Phase 1 表已全有（drizzle-instance.ts:91 INIT_SQL `CREATE TABLE IF NOT EXISTS` 25 张表 boot 自动跑）。原立项前提"缺 6 张表"是 Phase 3 evidence summary line 121-124 写错（`rooms` 是命名错——真表名 `session_groups` 含 `room_id` 列；`viewfinder_cache` 在 codebase 从不存在——viewfinder 实时计算不缓存）。真问题是 **4 张表 0 rows** 数据缺，归 AC-P4-9 扩范围处理。
 8. **AC-P4-8 AdaptiveRecallCoordinator production boot（v2 拆 5 子项 — 范 P1-1）** — `packages/api/src/server.ts:239` 当前用 `createNoopAdaptiveRecallCoordinator()`。Phase 4 必须完整 wire：
    - (a) **critique LLM**: `new LlmCritiqueAgent({model: 'claude-sonnet-4-6'})`（feature.md:155 指定）+ OAuth quota 用尽 fallback Haiku 4.5（不等价 PASS，记 BLOCKED）
    - (b) **Level 2 search_wiki backend**（**v3 verify：必新写 adapter**）: `Level2Backend` interface 在 `packages/api/src/wiki/adaptive-recall/types.ts:68` 已定义但 **无 production 实现**（注释 "P13.3+ 接真 backend"，grep 0 implements + 全 test stub）。Phase 4 必新写 thin adapter `class Level2HybridSearchBackend implements Level2Backend` wrap 现有 `HybridSearchProvider`（`packages/api/src/wiki/memory-preflight/hybrid-search-provider.ts:63` Phase 1 P11 已完成 BM25 + cosine + LLM rerank stub）。Day 3 gate：adapter 完成 + 单测 + 接通才能开 Day 4；缺则阻塞 AC-P4-8 BLOCKED
@@ -64,15 +57,22 @@ Phase 4 = **F027 最后一个 phase**（feature.md:199-205 工期表 4 个 phase
      - e2: `NotificationBroadcast` — 推审计通知到 R-001 房间（**依赖**：`AuditBroadcaster` service or WS pub/sub channel — 核对 Phase 1/2 是否已有；缺则 Day 4-5 新写 thin pub/sub wrapper）
      - e3: `InspectorProjection` — Inspector UI hook 显示 escalate（**依赖**：Inspector pull endpoint or realtime projection — 当前 prompt-inspector-tab 7 块靠 pull `/api/rooms/:id/prompt-inspector`，escalate 进第 8 块 Coverage section 走相同 pull 模式即可）
    - 验收：`server.ts:239` 改 `new AdaptiveRecallCoordinator({enabled: true, executorDeps: {critiqueAgent, levelBackends: {level2, level3, level4, level5}}})` + boot log `enabled=true, levels=[2,3,4,5]` + 真房间 recall 触发 → `prompt_audit` 9 字段真写入
-9. **AC-P4-9 warnings + knowledge-base 真数据 + Inspector Coverage UI（v2 加 fixture seed — 范 P2-3 + 小孙拍 Q3）** —
-   - (a) **warnings tab 真数据**：派生数据源读 `wiki/warnings/*.md` + `wiki_events` action='warning_raised' → tab 列表显示（type/severity/source/mtime）；**fixture seed**：`tests/fixtures/wiki/warnings/*.md` 造 5-10 份示例（含 chained_suspect / acl_violation / drift_detected 类），AC-P4-7 migration 后拷到 `.runtime/worktree-preview/data/wiki/warnings/`
-   - (b) **knowledge-base tab 真数据**：派生视图读 `wiki/index/*.md`（V16.5 chap 18 line 1953-1954）→ tab 列表显示（type/path/owner/mtime）；**fixture seed**：`tests/fixtures/wiki/index/*.md` 造 5-10 份样例（含 concepts / rules / methods / people 4 大类索引）
+9. **AC-P4-9 warnings + KB + 4 张 Phase 1 表真数据 + Inspector Coverage UI（v4 扩范围 — 吃 AC-P4-7 取消后 data seed 责任）** —
+   - (a) **warnings tab 真数据**：派生数据源读 `wiki/warnings/*.md` + `wiki_events` action='warning_raised' → tab 列表显示；**fixture seed**：`tests/fixtures/wiki/warnings/*.md` 造 5-10 份（含 chained_suspect / acl_violation / drift_detected 类），boot 时拷到 `.runtime/worktree-preview/data/wiki/warnings/`
+   - (b) **knowledge-base tab 真数据**：派生视图读 `wiki/index/*.md`（V16.5 chap 18 line 1953-1954）→ tab 列表显示；**fixture seed**：`tests/fixtures/wiki/index/*.md` 造 5-10 份（含 concepts/rules/methods/people 4 大类索引）
    - (c) **Inspector Coverage section UI**（AC-P3-8 b 接）：prompt-inspector 加第 8 块 unresolved 列表（GET `/api/rooms/:id/decisions/coverage`）+ click → PromoteModal trigger（接 AC-P4-1）
+   - **(d) v4 新增 · Phase 1 表 data seed**：worktree DB 实测 4 张 Phase 1 表 0 rows（`prompt_audit` / `wiki_events` / `room_decisions` / `wiki_leases`），browser 实测 viewfinder/inspector 显示 placeholder 的真原因
+     - d1: `room_decisions` seed — `tests/fixtures/db-seed/room-decisions.json` 造 5-10 行（R-001 房间含 spec/pivot/commit/reject 4 种 type，含 1 个用于场景 3 drift 触发的核心 spec）
+     - d2: `wiki_events` seed — `tests/fixtures/db-seed/wiki-events.json` 造 5-10 行（含 action='ingest_commit'/'promote'/'warning_raised'）
+     - d3: `wiki_leases` seed — 2-3 行覆盖典型 lease 状态（active / expired / released）
+     - d4: `prompt_audit` 不预 seed — 等 AC-P4-8 enabled 后真房间对话自然写入（fixture seed 与 production write 路径冲突）
+     - d5: seed loader — boot 时检测 `seed.json` 存在 + 表 0 rows → 自动 seed；含 rows 跳过（不覆盖真数据）
+   - **不污染生产**：fixture 在 `tests/fixtures/` commit + runtime 在 `.runtime/` .gitignore + seed loader 仅 worktree-preview 模式启用（生产 boot 不跑）
 
 ### 1.2 plan 追加交付物
 
 - **Phase 3 6 CONDITIONAL_PASS → PASS 升级映射矩阵（v2 新增附录 §11 — 范 P3-2）**：AC-P3-1/2/3/6/10/P3-8 分别由哪个 P4 AC、哪条 walkthrough step、哪份截图/log/judge artifact 升 PASS
-- **evidence pack 收稿（artifact schema 锁，见 §12）**：Phase 4 9 AC 双 judge + arbitration（Phase 2/3 evidence pack runner 复用，不重建框架）
+- **evidence pack 收稿（artifact schema 锁，见 §12）**：Phase 4 8 AC 双 judge + arbitration（Phase 2/3 evidence pack runner 复用，不重建框架）
 
 ### 1.3 不做（明确划走）
 
@@ -88,15 +88,15 @@ Phase 4 = **F027 最后一个 phase**（feature.md:199-205 工期表 4 个 phase
 
 | 主线 A AC | 依赖主线 B | 说明 |
 |---|---|---|
-| AC-P4-1 PromoteModal | AC-P4-7 worktree DB | PromoteModal 需要真 draft 数据 + wiki_events 写入；DB 没 schema 没法验 |
-| AC-P4-2 审计回退 | AC-P4-7 | 同上 |
+| AC-P4-1 PromoteModal | AC-P4-9 d | PromoteModal 需要 wiki_events 写入流通；seed 后端到端可验 |
+| AC-P4-2 审计回退 | AC-P4-9 d | 同上 |
 | AC-P4-3 右侧面板按钮（v2 重设计）| AC-P4-1（[Promote] 复用）| 按钮 trigger PromoteModal/DemoteModal/RollbackPreviewModal；不依赖 composer slash menu |
 | AC-P4-4 批量审批 | AC-P4-1 | 复用 PromoteModal 的 promote 调用 |
 | AC-P4-5 三层验证 | - | 验证框架本身无依赖 |
-| AC-P4-6 walkthrough | **全部** | 端到端三场景必须 9 AC 全 done |
+| AC-P4-6 walkthrough | **全部** | 端到端三场景必须 8 AC 全 done |
 | AC-P4-9 c Inspector Coverage | AC-P4-1（PromoteModal）| Coverage section click → manual confirm 复用 PromoteModal 流程 |
 
-**关键耦合：AC-P4-7 worktree DB migration 是所有端到端验证的前置门**，必须 Week 1 先做。
+**v4 关键耦合**：AC-P4-9 d Phase 1 表 data seed 是所有端到端验证前置（替代原 AC-P4-7 角色）。worktree DB schema 已 OK（boot 自动 migrate），只需 seed 数据，Week 1 Day 1 先做。
 
 ## 2. 现状盘点
 
@@ -111,7 +111,7 @@ Phase 4 = **F027 最后一个 phase**（feature.md:199-205 工期表 4 个 phase
 | PromoteModal / DemoteModal / RollbackPreviewModal | 不存在 | 从零（AC-P4-1 / AC-P4-3）|
 | 审计回退 UI | 不存在 | 从零（AC-P4-2）|
 | Inspector Coverage section | prompt-inspector 7 块，无第 8 块 | 加 unresolved 列表 + click（AC-P4-9 c）|
-| worktree DB | Phase 0 备份缺 6 张表 | copy/dry-run/atomic swap migrate（AC-P4-7）|
+| worktree DB | **v4 修**：schema 已全 OK（drizzle-instance.ts:91 INIT_SQL 25 张表 boot 自动 `CREATE TABLE IF NOT EXISTS`）；4 张 Phase 1 表 0 rows 数据缺 | data seed 而非 migration（AC-P4-9 d）|
 | AdaptiveRecallCoordinator boot | `server.ts:239` noop | production wiring 5 子项（AC-P4-8）|
 | warnings tab | placeholder | 接 fixture seed 派生（AC-P4-9 a）|
 | Phase 2 evidence pack runner | 已用于 Phase 3 双 judge | 复用 + artifact schema 锁（AC-P4-5 + §12）|
@@ -131,21 +131,24 @@ Phase 4 = **F027 最后一个 phase**（feature.md:199-205 工期表 4 个 phase
 
 技术栈：Next.js 16 + React 19 + Zustand + Tailwind + vitest 4.1.4（同 Phase 3）。
 
-## 3. 里程碑（4-5 周 / 22-26 单人天 — v3 修订）
+## 3. 里程碑（4-5 周 / 20-22 单人天 + Day 23-24 buffer — v5 修订）
 
-> v1 16-20 天偏乐观；v2 改 20-24 天吸收 Phase 3 教训；**v3 改 22-26 天**吸收 3 个 dependency gap +2d（V14 audit service +1d / Level 2 adapter +0.5d / IngestModal series 字段 +0.5d）。Week 5 buffer 不变；scope 不裁。如超 28 天小孙强制 review 是否裁 AC-P4-9 a/b。
+> v1 16-20；v2 20-24；v3 22-26；v4 18-22；**v5 20-22 天 implementation + Day 23-24 merge/final buffer**（范-r3 P2-6 修：吸 v3 翻车教训 + Week 5 evidence pack 收稿不乐观；总口径 22-24 天含 merge/final）。如 implementation 超 24 天小孙强制 review 是否裁 AC-P4-9 a/b。
 
-### Week 1 · go-live 后端基础设施（5 天 — go-live spike）
+### Week 1 · go-live 后端基础设施（4 天 — v4 -1d 因 AC-P4-7 取消）
 
 | Day | 任务 | 工日估 |
 |---|---|---|
-| 1 | **AC-P4-7 a/b**: copy backup + working copy 设计 — `worktree-preview.ts` boot 加 schema 版本检测 + copy/working/dry-run/atomic swap 4 步 | 1d |
-| 2 | **AC-P4-7 c/d/e**: 跑全套 migration + 校验 + atomic swap + fail-closed restore + 单测（含人为 failing migration） | 1d |
-| 3 | **AC-P4-8 a/b (v3)**: critique LLM (Sonnet 4.6) + **新写 Level 2 thin adapter `Level2HybridSearchBackend`** wrap HybridSearchProvider + 单测 + boot 接通（Day 3 gate：adapter 完成才能开 Day 4） | 1.5d |
-| 4 | **AC-P4-8 c/d**: Level 3 messages FTS + Level 4 file read backend wire（复用 Phase 1 P13/P14 已有） | 1d |
-| 5 | **AC-P4-8 e1/e2/e3**: Level5Sink 3 子件 + `server.ts:239` 切 `enabled: true` + Week 1 r1 review | 1d |
+| 1 | **AC-P4-9 d Phase 1 表 data seed (v4 新)**: tests/fixtures/db-seed/ 造 room-decisions.json / wiki-events.json / wiki-leases.json（10-15 rows）+ seed loader（boot 检测 4 表 0 rows → 自动 seed；含 rows 跳过；仅 worktree-preview 模式启用，生产不跑）+ 单测 | 1d |
+| 2 | **AC-P4-8 a/b (v3+v4)**: critique LLM (Sonnet 4.6) + **新写 Level 2 thin adapter `Level2HybridSearchBackend`** wrap HybridSearchProvider + 单测 + boot 接通（Day 2 gate：adapter 完成才能开 Day 3） | 1.5d |
+| 3 | **AC-P4-8 c/d**: Level 3 messages FTS + Level 4 file read backend wire（复用 Phase 1 P13/P14 已有） | 1d |
+| 4 | **AC-P4-8 e1/e2/e3**: Level5Sink 3 子件 + `server.ts:239` 切 `enabled: true` + Week 1 r1 review | 1d |
 
-**Week 1 r1 review GO 条件**：worktree-preview 启动后 R-001 房间 viewfinder/inspector tab 渲染真数据（非 placeholder），AdaptiveRecallCoordinator boot log 显示 `enabled=true, levels=[2,3,4,5]`，单测覆盖 fail-closed restore 路径。
+**Week 1 r1 review GO 条件（v5 + 范-r3 P2-5）**：
+1. worktree-preview 启动后 R-001 房间 viewfinder/inspector tab 渲染真数据（非 placeholder，得益于 d1-d3 seed）
+2. AdaptiveRecallCoordinator boot log 显示 `enabled=true, levels=[2,3,4,5]`
+3. **真 R-001 recall stimulus**（小孙在 R-001 房间发 **冻结 query**: "RAG 论文里如何处理 long context?"（同场景 1 step 1.5 — r4 self P3-2 冻结，保 Week 1 GO 测试可复现））→ `prompt_audit` 表写入新行 + 9 字段（recall_path / recall_satisfied / escalate_reason / budget_consumed 等）齐全；缺这步不得宣称 d4 完成
+4. seed loader 单测 4 项全过（preview gate on/off / 已有 rows 跳过 / 事务 rollback）
 
 ### Week 2 · 审批 UI 核心（5 天）
 
@@ -170,7 +173,7 @@ Phase 4 = **F027 最后一个 phase**（feature.md:199-205 工期表 4 个 phase
 
 | Day | 任务 | 工日估 |
 |---|---|---|
-| 16 | **AC-P4-9 a/b**: warnings + KB tab fixture seed（`tests/fixtures/wiki/{warnings,index}/*.md` 造 10-20 份）+ AC-P4-7 migration 后拷到 `.runtime/worktree-preview/data/wiki/` | 1d |
+| 16 | **AC-P4-9 a/b**: warnings + KB tab fixture seed（`tests/fixtures/wiki/{warnings,index}/*.md` 造 10-20 份）+ boot 时拷到 `.runtime/worktree-preview/data/wiki/`（v4 改：复用 Week 1 Day 1 已建的 seed loader 走相同 gate） | 1d |
 | 17 | **AC-P4-9 a/b**: 派生 API 接通 + browser 验非空 rows | 1d |
 | 18-20 | **AC-P4-6**: 小孙手动走 walkthrough 三场景（脚本 §10）+ 截图 evidence + Phase 3 6 CONDITIONAL_PASS 升 PASS（按映射矩阵 §11） | 2-3d |
 
@@ -178,13 +181,13 @@ Phase 4 = **F027 最后一个 phase**（feature.md:199-205 工期表 4 个 phase
 
 | Day | 任务 | 工日估 |
 |---|---|---|
-| 21-22 | **evidence pack 收稿**：Phase 4 9 AC 双 judge + arbitration（artifact schema §12）+ Phase 3 升 PASS 矩阵 mapping | 1-2d |
+| 21-22 | **evidence pack 收稿**：Phase 4 8 AC 双 judge + arbitration（artifact schema §12）+ Phase 3 升 PASS 矩阵 mapping | 1-2d |
 | 23 | **合 dev gate**：merge-gate check + 合 dev + push origin | 1d |
 | 24 | **F027 整体收稿** + Phase 5/F028 follow-up 立项 backlog 整理 | 1d |
 
-**Week 5 r1 review GO 条件 = Phase 4 终结条件**：9 AC 全 PASS（或明示推 F028 的 CONDITIONAL_PASS）+ Phase 3 6 CONDITIONAL_PASS 全升 PASS（按 §11 矩阵）+ walkthrough 三场景小孙签字 + evidence pack 完整。
+**Week 5 r1 review GO 条件 = Phase 4 终结条件**：8 AC 全 PASS（或明示推 F028 的 CONDITIONAL_PASS）+ Phase 3 6 CONDITIONAL_PASS 全升 PASS（按 §11 矩阵）+ walkthrough 三场景小孙签字 + evidence pack 完整。
 
-## 4. AC 列表（9 AC 详）
+## 4. AC 列表（8 AC 详）
 
 ### 主线 A · 审批 UI（6 AC）
 
@@ -215,30 +218,22 @@ Phase 4 = **F027 最后一个 phase**（feature.md:199-205 工期表 4 个 phase
 - **Then** 后端串行/并行 promote 每份（一份失败不阻塞其他）→ 最终弹报告 modal `success: N / failed: M (列 audit_reason)`，失败 draft 留原位等手动 retry；成功 draft 已 mv 到正式区
 
 #### AC-P4-5 · 三层验证套件（P18 + artifact schema §12）
-- **Given** Phase 4 9 AC 走双 judge 验证
+- **Given** Phase 4 8 AC 走双 judge 验证
 - **When** 任一 judge 跑
 - **Then** judge1 (claude-opus-4-7) + judge2 (codex-gpt-5.4) + arbitration（黄）；j2 OAuth quota 用尽 → 标 **BLOCKED 不是 SKIP=PASS**（feedback `codex_judge2_finds_real_gaps` 锁死）；evidence pack 不完整（缺 §12 任一字段）→ INCONCLUSIVE 不通过
 
 #### AC-P4-6 · 手 walkthrough 三场景（P22 — 脚本附录 §10）
-- **Given** 9 AC 全 done + worktree DB 真数据 + AdaptiveRecallCoordinator enabled + fixture seed 拷贝完成
+- **Given** 8 AC 全 done + worktree DB 真数据 + AdaptiveRecallCoordinator enabled + fixture seed 拷贝完成
 - **When** 小孙按 §10 三场景脚本端到端走（场景 1+2 V16.5 line 150 + 154-156；场景 3 v2 新增基于 P12 anti-drift 端到端需求）
 - **Then** 每场景独立 evidence（截图 + 操作步骤 + 后端 log），三场景全 PASS
 
 ### 主线 B · go-live（3 AC）
 
-#### AC-P4-7 · worktree DB schema 升 Phase 1 migration（v3 改 WAL 安全协议 — 范-r2 P1）
-- **Given** `.runtime/worktree-preview/data/multi-agent.sqlite` 是 Phase 0 备份（缺 `rooms` / `prompt_audit` / `wiki_events` / `wiki_leases` / `room_decisions` / `viewfinder_cache`）；WAL 模式 `-wal` 是 DB 持久状态（sqlite.org/wal.html）
-- **When** `pnpm worktree:preview` 启动 → boot 检测 schema 版本（drizzle `__drizzle_migrations` 表 vs `packages/api/migrations/` 目录）
-- **Then** 缺 migration → 8 步流程（WAL 安全）：
-  1. **停止 API 写连接**: pre-migration graceful 关闭所有 DB connection + 校验无活跃事务
-  2. **WAL checkpoint TRUNCATE**: `PRAGMA wal_checkpoint(TRUNCATE)` 合并 `-wal` 到主 DB + 清空 `-wal`
-  3. **SQLite backup API copy backup**: `sqlite3_backup_init` 复制到 `multi-agent.sqlite.backup-phase0-{ISO ts}`（Iron Law 1：copy 不 rm 不 mv 原文件；不裸 cp 避免捕获中间状态）
-  4. **working copy**: 同 backup API 复制到 `multi-agent.sqlite.working`（同目录同卷 保 atomic replace）
-  5. **dry-run + 校验**: working copy 跑全套 drizzle migrate + 校验 `__drizzle_migrations` 行数 + 6 张表 + 旧表 row count（rooms / messages 等）保持
-  6. **atomic replace + WAL 同步**: Node `fs.renameSync(working, main)`（封装 Windows ReplaceFile / POSIX rename）+ 同步清理/合并 `multi-agent.sqlite-wal` 与 `multi-agent.sqlite-shm`（working copy 已 checkpoint，主 -wal 应空；残留则单独删 `-wal`/`-shm` 再 replace）
-  7. **boot 校验 + re-open**: replace 后重新 open DB connection + schema 探针（query 6 表 SELECT 1）+ row count 二次校验 → 全过才接 API 写流量
-  8. **fail-closed restore**: 任一步失败 → 保留原 `multi-agent.sqlite` + `-wal` + `-shm` 文件组不动 + boot fail-closed + log 写失败步骤 + alert 小孙
-- **单测**：(1) 插入人为 failing migration → 原 DB 文件组（主 + -wal + -shm）仍可打开 + working copy 不替换；(2) 模拟 -wal 残留 → restore 路径不丢提交事务；(3) Windows ReplaceFile 同卷/跨卷行为单测；(4) WAL checkpoint TRUNCATE 后 backup API 一致性
+#### ~~AC-P4-7 · worktree DB schema 升 Phase 1 migration~~ — **v4 取消（归 AC-P4-9 d）**
+- **取消原因**：v3 commit 5min 后实测 `sqlite3 .tables` 显示 worktree DB schema 已全 OK（drizzle-instance.ts:91 INIT_SQL `CREATE TABLE IF NOT EXISTS` 25 表 boot 自动跑覆盖所有 Phase 1 表）
+- 原立项前提（"缺 6 张表"）= Phase 3 evidence summary line 121-124 写错：`rooms` 是命名错（真表 `session_groups` 含 `room_id` 列）；`viewfinder_cache` 在 codebase 从不存在（viewfinder 实时计算不缓存）
+- 真问题（4 张表 0 rows 数据缺）转 **AC-P4-9 d** 处理
+- **教训**：plan/review/decision 三方未实测 → 写入 memory `feedback-measure-before-assert` 续案（v3 review chain 全员翻车的具体 case）
 
 #### AC-P4-8 · AdaptiveRecallCoordinator production boot（v2 拆 5 子项）
 - **Given** `packages/api/src/server.ts:239` 用 `createNoopAdaptiveRecallCoordinator()`
@@ -254,26 +249,32 @@ Phase 4 = **F027 最后一个 phase**（feature.md:199-205 工期表 4 个 phase
     - e3 `InspectorProjection` — Inspector UI hook 显示 escalate（依赖：Inspector pull endpoint，当前 prompt-inspector-tab 7 块靠 pull `/api/rooms/:id/prompt-inspector`，escalate 进第 8 块 Coverage section 走相同 pull 模式）
   - 验收：`server.ts:239` 改 `new AdaptiveRecallCoordinator({enabled: true, executorDeps: {critiqueAgent, levelBackends: {level2, level3, level4, level5}}})` + boot log `enabled=true, levels=[2,3,4,5]` + 真房间 recall 触发 → `prompt_audit` 9 字段真写入
 
-#### AC-P4-9 · warnings + knowledge-base 真数据 + Inspector Coverage UI（v2 加 fixture seed）
-- **(a) warnings tab**：
-  - 派生数据源读 `wiki/warnings/*.md` + `wiki_events` action='warning_raised' → tab 列表显示（type/severity/source/mtime）
-  - **fixture seed**: `tests/fixtures/wiki/warnings/*.md` 造 5-10 份示例
-    - 含 type: chained_suspect / acl_violation / drift_detected / tainted_source / quota_exhausted
-    - AC-P4-7 migration 后 boot 时拷到 `.runtime/worktree-preview/data/wiki/warnings/`
-    - 不污染生产 wiki（fixture 在 `tests/fixtures/` commit + runtime 在 `.runtime/` .gitignore）
-- **(b) knowledge-base tab**：
-  - 派生视图读 `wiki/index/*.md`（V16.5 chap 18 line 1953-1954）→ tab 列表显示（type/path/owner/mtime）+ multi-select hook（接 AC-P4-4）
-  - **fixture seed**: `tests/fixtures/wiki/index/*.md` 造 5-10 份样例（含 wiki/concepts/ / rules/ / methods/ / people/ 4 大类索引）
-- **(c) Inspector Coverage section UI**（AC-P3-8 b 接）：
-  - prompt-inspector 加第 8 块 unresolved 列表（GET `/api/rooms/:id/decisions/coverage`）
-  - click → PromoteModal trigger（接 AC-P4-1）
+#### AC-P4-9 · warnings + KB + 4 张 Phase 1 表真数据 + Inspector Coverage UI（v4 扩范围 — 吃 AC-P4-7 取消后 data seed 责任）
+- **(a) warnings tab**：派生数据源读 `wiki/warnings/*.md` + `wiki_events` action='warning_raised' → tab 列表显示（type/severity/source/mtime）；**fixture seed**：`tests/fixtures/wiki/warnings/*.md` 造 5-10 份（含 chained_suspect / acl_violation / drift_detected / tainted_source / quota_exhausted），boot 时拷到 `.runtime/worktree-preview/data/wiki/warnings/`
+- **(b) knowledge-base tab**：派生视图读 `wiki/index/*.md`（V16.5 chap 18 line 1953-1954）→ tab 列表显示（type/path/owner/mtime）+ multi-select hook（接 AC-P4-4）；**fixture seed**：`tests/fixtures/wiki/index/*.md` 造 5-10 份（4 大类）
+- **(c) Inspector Coverage section UI**（AC-P3-8 b 接）：prompt-inspector 加第 8 块 unresolved 列表（GET `/api/rooms/:id/decisions/coverage`）+ click → PromoteModal trigger（接 AC-P4-1）
+- **(d) v5 重写 · Phase 1 表 data seed**（范-r3 P2-1/2/3/4 修）：
+  - **背景**：实测 worktree DB 4 表 0 rows（prompt_audit / wiki_events / room_decisions / wiki_leases），browser placeholder 真根因
+  - **d1 `room_decisions` seed**：`tests/fixtures/db-seed/room-decisions.json` 5-10 行覆盖 R-001 房间 spec/pivot/commit/reject 4 种 type，含 1 个**场景 3 drift 触发用的核心 spec**
+  - **d2 `wiki_events` seed**：`tests/fixtures/db-seed/wiki-events.json` 5-10 行（含 action='ingest_commit'/'promote'/'warning_raised'）
+  - **d3 `wiki_leases` seed（v5 改）**：seed `active` + `expired` 2 类 rows（删 `released`，schema 不支持 status/released_at，drizzle-instance.ts:386-395 实证）；released 状态走 absence（该 path 不存在 lease row）或 acquire/release API 集成测试证明，不作静态 row seed
+  - **d4 `prompt_audit` 永不 fixture seed**：fixture vs production write 路径冲突避免；只在 AC-P4-8 真房间 recall stimulus 后**真实**写入（Week 1 GO 条件验非空 + 含 recall_path/recall_satisfied/budget_consumed/escalate_reason 等 9 字段）
+  - **d5 seed loader（v5 重写）**：
+    - **per-table idempotent**：仅 seed 3 表（room_decisions / wiki_events / wiki_leases）— `prompt_audit` 永不触；每表独立 `COUNT(*)=0` 才 seed，有 rows 跳过（不覆盖真数据）
+    - **单事务**：3 表 INSERT 在单个 `BEGIN IMMEDIATE` 事务内，失败 rollback 不留半 seed
+    - **不做 DB 文件操作**：仅 INSERT，不 copy/swap/checkpoint/rename（不是 r2 P1 WAL 协议路径，纯单事务写）
+    - **gate 来源（v5 明示 — 范 P2-4）**：双重 guard：
+      - **primary**: `scripts/worktree-preview.ts` 生成 process env 加 `WORKTREE_PREVIEW=1`（Week 1 Day 1 实施时修 scripts/worktree-preview.ts 加这个 env，不改 .env 不碰 Iron Law 3）
+      - **secondary**: SQLITE_PATH 路径包含 `.runtime/worktree-preview/` 作 second defense（防 env 误删后误触生产）
+    - **单测（v5 final + r4 self P3-1）**：(1) preview gate on + 3 表空 → seed；(2) preview gate off → 不 seed；(3) 任一表已有 rows → 整事务跳过；(4) 事务中 INSERT 失败 → rollback 验 0 rows；(5) fixture JSON schema invalid → fail-closed 整事务不 INSERT 半数据 + log alert
+- **不污染生产**：fixture 在 `tests/fixtures/` commit + runtime 在 `.runtime/` .gitignore + WORKTREE_PREVIEW=1 + SQLITE_PATH 路径 double guard + `prompt_audit` 0 接触 fixture（write 路径只有 production recall）
 
 ## 5. Open 拍板（8 个 — 小孙 2026-05-23 全过）
 
 | # | 问题 | 拍板 |
 |---|---|---|
 | O1 | critique LLM 模型选 | ✅ **A** — Sonnet 4.6（feature.md:155 指定）+ Haiku fallback（fallback 不等价 PASS） |
-| O2 | worktree DB migration 策略 | ✅ **A+约束** — 跑全套 migration + copy/dry-run/atomic swap/fail-closed restore（v2 改 AC-P4-7） |
+| O2 | worktree DB migration 策略 | ~~A+约束 v2~~ → **v4 整个作废**：实测 schema 已 OK 不需 migration，AC-P4-7 取消归 AC-P4-9 d data seed |
 | O3 | warnings 派生 job | ✅ **B** — 复用 `wiki_events` 查询不新增第 12 job + fixture seed 验真数据 |
 | O4 | walkthrough 三场景原文 | ✅ **C** — v2 附录 §10 inline 三场景脚本（场景 1+2 V16.5 line 150/154-156；场景 3 v2 新增） |
 | O5 | series/rollback modal 范围 | ✅ **C** — Series 复用 IngestModal "加入系列"字段（V16.5 line 2563-2564）；Rollback read-only preview；写型 rollback 推 F028 |
@@ -285,7 +286,8 @@ Phase 4 = **F027 最后一个 phase**（feature.md:199-205 工期表 4 个 phase
 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
-| **worktree DB migration 翻车** | Week 1 阻塞 / 所有端到端验证 BLOCKED | copy/dry-run/atomic swap + fail-closed restore（AC-P4-7 v2）+ sandbox sqlite copy dry-run 预演 |
+| ~~worktree DB migration 翻车~~ | **v4 删**：AC-P4-7 取消，schema 已 OK 无 migration | — |
+| **🆕 v4 AC-P4-9 d seed loader 误触生产** | seed 覆盖生产真 wiki_events/room_decisions | `WORKTREE_PREVIEW=1` 环境变量 gate + boot 检测 4 表 0 rows 才 seed（含 rows 跳过）+ 单测 |
 | **AdaptiveRecallCoordinator critique LLM OAuth quota 用尽** | AC-P4-8 BLOCKED / AC-P4-5 验证连锁 BLOCKED | Sonnet 4.6 切 Haiku 4.5 fallback；critique 不命中走 rule-based |
 | **工期超 26 天**（Phase 3 教训：估 26-32 实际 30+）| Phase 4 滑到 6-7 周 | Week 3 r1 review 强制裁 AC（AC-P4-9 a/b 可降为 empty-state 接通，go-live 目标显式降级）|
 | **F028 边界扯不清** | AC scope 蔓延 | O8 严守 + 任何"顺手"PR 必须升级小孙 |
@@ -294,7 +296,7 @@ Phase 4 = **F027 最后一个 phase**（feature.md:199-205 工期表 4 个 phase
 | **PromoteModal target 路径选择 UX** | 用户填错路径 → audit reject 多 | 提供 wiki/{concepts,rules,methods,people}/ 下拉 + path validator + recently used |
 | **Inspector Coverage section UI 与 PromoteModal 耦合**（AC-P4-9 c 依赖 AC-P4-1）| Week 3 Day 13 阻塞 if AC-P4-1 未完 | Week 2 必须 Day 6-7 完成 AC-P4-1 |
 | **🆕 Level 2 placeholder 假 go-live**（范 P2-4 + P1-1）| AC-P4-8 误判 PASS / 真 wiki 召回失效 / prompt_audit recall_path 错记 | r2 AC-P4-8 写 "Level 2 未就绪 → BLOCKED 不可 PASS"；boot 时核对 `Level2Backend.searchWiki()` 存在 |
-| **🆕 DB 半迁移 / 空库 / 运行路径丢失** | 数据丢失 / boot 异常 / 多 phase 阻塞 | AC-P4-7 v2 copy/dry-run/atomic swap + 单测人为 failing migration |
+| ~~DB 半迁移 / 空库 / 运行路径丢失~~ | **v4 删**：AC-P4-7 取消，无 migration 步骤 | — |
 | **🆕 API origin 误连 Next server / worktree port 未分配 / Iron Law 4** | 浏览器实测打错端口 / Iron Law 4 违规 | 统一 API base helper (`getApiBaseUrl()`) + 只用 `pnpm worktree:preview` 输出 URL + Iron Law 4 lint |
 | **🆕 AC-P4-9 无非空派生数据** | tab API 接通但显示空白 / 不能验"真数据 go-live" | fixture seed 5-10 份（v2 加）+ AC 要求 browser 截图显示非空 rows |
 | **🆕 manual browser evidence 不足** | walkthrough 截图丢失 / 后端 log artifact 缺 | §12 artifact schema 锁定 screenshots/logs 必字段 + AC-P4-5 INCONCLUSIVE 规则 |
@@ -338,7 +340,7 @@ Phase 4 = **F027 最后一个 phase**（feature.md:199-205 工期表 4 个 phase
 3. ✅ **v2 → 范-r2 CONDITIONAL** (P1×1 + P2×2)
 4. ✅ **v3 final**（范-r2 全接受 + 黄 verify 3 dependency gap + 小孙拍跳 r3 review）
 5. **commit plan** 到 `docs/plans/F027-phase4-implementation-plan.md` + `docs(F027-P4): Phase 4 立项 plan v1 → v3 final（范 r1+r2 review chain + 3 gap verify）`
-6. **Week 1 Day 1 开干**：worktree DB WAL-safe migration（AC-P4-7 8 步流程）
+6. **Week 1 Day 1 开干**：AC-P4-9 d Phase 1 表 data seed（v5：scripts/worktree-preview.ts 加 WORKTREE_PREVIEW=1 env + 写 seed loader 单事务 INSERT 3 表 + 单测 4 项）
 
 ## 9. 实施流程约定
 
@@ -365,7 +367,7 @@ evidence pack（result.json + judges/* + arbitration + screenshots）落 `docs/f
 
 ### 场景 1 · 外部资料 drop → 召回命中端到端
 
-**前置**：worktree-preview 启动；DB 已 migrate；fixture seed 已拷贝；R-001 房间已建。
+**前置（v5 + 范-r3 P2-5）**：worktree-preview 启动（schema 已自动 OK 无需 migration）；AC-P4-9 d seed loader 跑过（**d1-d3 = `room_decisions`/`wiki_events`/`wiki_leases` 非 0 rows**；`prompt_audit` 允许为 0，等 step 1.5 后必须变非空）；AC-P4-9 a/b fixture wiki 拷贝；R-001 房间已存（worktree DB 实测 5 rows session_groups）；AC-P4-8 AdaptiveRecallCoordinator enabled。
 
 | Step | 操作 | 期望结果 | Evidence |
 |---|---|---|---|
@@ -420,8 +422,8 @@ evidence pack（result.json + judges/* + arbitration + screenshots）落 `docs/f
 |---|---|---|---|---|
 | AC-P3-1 拖宽 | CONDITIONAL_PASS (browser fps + reload 像素 BLOCKED) | 间接 | Week 4 Day 18 walkthrough 启动时手测拖宽 | screenshot 拖宽 360→1200 reload 后像素一致 |
 | AC-P3-2 5-tab 切换 | CONDITIONAL_PASS (browser scroll ±10px BLOCKED) | 间接 | walkthrough 三场景全程 tab 切换 | screenshot tab 切换前后 scroll position 一致 |
-| AC-P3-3 inspector 7 块 | CONDITIONAL_PASS (真数据依赖 P3-9 + DB schema) | AC-P4-7 + AC-P4-8 | 场景 1 step 1.5 + 场景 3 step 3.3-3.4 | screenshot inspector 7 块非空（含 recall_path 真数据） |
-| AC-P3-6 IngestModal 3 入口 | CONDITIONAL_PASS (3 入口 browser modal BLOCKED) | AC-P4-7（DB 真数据）| 场景 1 step 1.1-1.4 走入口 A（拖）+ 入口 B（[+ Drop]）+ 入口 C（`/ingest`） | screenshot 3 入口分别触发 IngestModal |
+| AC-P3-3 inspector 7 块 | CONDITIONAL_PASS (真数据依赖 P3-9 + DB schema) | AC-P4-9 d + AC-P4-8 | 场景 1 step 1.5 + 场景 3 step 3.3-3.4 | screenshot inspector 7 块非空（含 recall_path 真数据） |
+| AC-P3-6 IngestModal 3 入口 | CONDITIONAL_PASS (3 入口 browser modal BLOCKED) | AC-P4-9 d（DB seed 后真数据）| 场景 1 step 1.1-1.4 走入口 A（拖）+ 入口 B（[+ Drop]）+ 入口 C（`/ingest`） | screenshot 3 入口分别触发 IngestModal |
 | AC-P3-8 b Inspector unresolved UI | CONDITIONAL_PASS (推 Phase 4) | **AC-P4-9 c** | 场景 3 step 3.4-3.5 | screenshot Coverage section 非空 + click trigger PromoteModal |
 | AC-P3-9 Adaptive Recall wiring（v3 补 — 范-r2 P2-2）| CONDITIONAL_PASS (server.ts:239 noop; ready-for-Phase-4 wiring) | **AC-P4-8** | 场景 1 step 1.5 真房间 recall 触发 | screenshot inspector recall_path + DB `prompt_audit` 9 字段真写入 + boot log `enabled=true, levels=[2,3,4,5]` + double-judge artifact `evidence/phase4/AC-P4-8/` |
 
@@ -507,4 +509,4 @@ AC-P4-<N>/
 
 ---
 
-**v3 final 由黄仁勋（Claude opus-4-7）2026-05-23 修订；范德彪（Codex gpt-5.4）r1 CONDITIONAL + r2 CONDITIONAL 双 review chain GO；小孙 2026-05-23 拍跳 r3 review 直接 commit final。Week 1 Day 1 开干 AC-P4-7 WAL-safe migration。**
+**v5 由黄仁勋（Claude opus-4-7）2026-05-23 修订；v3 翻车 → v4 重设计 → 范-r3 CONDITIONAL P2×6 全接受 → v5 修；待范-r4 review 后小孙拍 final。Week 1 Day 1 开干 AC-P4-9 d Phase 1 表 data seed（单事务 + per-table idempotent + double gate）。**
