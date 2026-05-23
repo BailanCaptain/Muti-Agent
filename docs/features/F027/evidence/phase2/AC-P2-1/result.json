@@ -1,0 +1,23 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-1",
+  "reason": "NightlyJobScheduler 起停 + croner lifecycle + guard/onSkip/onGuardError hook 全覆盖；SchedulerRuntime 集成层把 11 jobs（9 scheduled + 2 event-driven）三分类接入并落 job_trace（含时间窗 scheduledFor/windowStart/windowEnd）。",
+  "checks": {
+    "test_files": [
+      "packages/api/src/services/scheduler/nightly-job-scheduler.test.ts",
+      "packages/api/src/services/scheduler/scheduler-runtime.test.ts"
+    ],
+    "tests_total": 35,
+    "tests_passed": 35,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/nightly-job-scheduler.test.ts packages/api/src/services/scheduler/scheduler-runtime.test.ts",
+    "key_assertions": [
+      "register/start/stop/health lifecycle idempotent",
+      "computePlannedSlot 用 previousRuns 推导 cron 计划槽位（非 callback entry wall clock）",
+      "cron job 触发 → job_trace 落盘 status=ok + 时间窗字段完整",
+      "cron job throw/timeout/missed_window → trace 对应 status",
+      "11 jobs 三分类（cron/startup/event-driven）接入 SchedulerRuntime",
+      "reentrancy guard：ghost job 未结束 → 下一轮 skipped_reentry，绝不并发"
+    ]
+  }
+}

@@ -25,7 +25,13 @@ type MessageRow = {
   // F026 P2 v2 Step 7: 旧 a2a_handoff / a2a_handoff_mcp 入参已退役
   // (appendAssistantMessage 签名收窄到 progress | final)；DB schema MessageType
   // 仍保留旧标识符兼容历史行 (sqlite.ts:23-25 / mapTimelineMessage)。
-  messageType: "final" | "progress" | "a2a_handoff" | "a2a_handoff_mcp" | "connector" | "system_notice"
+  messageType:
+    | "final"
+    | "progress"
+    | "a2a_handoff"
+    | "a2a_handoff_mcp"
+    | "connector"
+    | "system_notice"
   connectorSource: string | null
   groupId: string | null
   groupRole: string | null
@@ -33,7 +39,11 @@ type MessageRow = {
   contentBlocks: string
 }
 
-function createMockRepository(threads: ThreadRecord[], messages: MessageRow[]) {
+function createMockRepository(
+  threads: ThreadRecord[],
+  messages: MessageRow[],
+  groupOverrides: { roomId?: string | null } = {},
+) {
   return {
     reconcileLegacyDefaultModels: () => {},
     getSessionGroupById: (groupId: string) => ({
@@ -41,6 +51,7 @@ function createMockRepository(threads: ThreadRecord[], messages: MessageRow[]) {
       title: "Test",
       updatedAt: "2026-01-01T00:00:00Z",
       projectTag: null,
+      roomId: groupOverrides.roomId ?? null,
     }),
     listThreadsByGroup: (groupId: string) => threads.filter((t) => t.sessionGroupId === groupId),
     listMessages: (threadId: string) =>
@@ -545,4 +556,34 @@ test("F022-P3 AC-15: SessionService.listSessionGroups 对缺失 participants/mes
   assert.equal(row.roomId, null)
   assert.deepEqual(row.participants, [])
   assert.equal(row.messageCount, 0)
+})
+
+// ─── F027 Phase 3 Week 2 r2 (范-r1 P1) — getRoomId 解析 ──────────────
+
+test("r2 P1 · SessionService · getRoomId 返回 group.roomId (R-###)", () => {
+  const repo = createMockRepository([], [], { roomId: "R-201" })
+  const service = new SessionService(repo as never, [])
+  assert.equal(service.getRoomId("group-1"), "R-201")
+})
+
+test("r2 P1 · SessionService · getRoomId 无 roomId 字段 → null", () => {
+  const repo = createMockRepository([], [], { roomId: null })
+  const service = new SessionService(repo as never, [])
+  assert.equal(service.getRoomId("group-1"), null)
+})
+
+test("r2 P1 · SessionService · getRoomId group 不存在 → null", () => {
+  const repo = {
+    reconcileLegacyDefaultModels: () => {},
+    getSessionGroupById: () => undefined,
+    listThreadsByGroup: () => [],
+    listMessages: () => [],
+    listMessagesSince: () => [],
+    listRecentMessages: () => [],
+    createSessionGroup: () => "group-1",
+    ensureDefaultThreads: () => {},
+    listSessionGroups: () => [],
+  }
+  const service = new SessionService(repo as never, [])
+  assert.equal(service.getRoomId("nonexistent"), null)
 })

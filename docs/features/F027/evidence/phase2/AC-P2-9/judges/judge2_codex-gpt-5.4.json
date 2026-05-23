@@ -1,0 +1,1 @@
+{"verdict":"PASS","reason":"result.json 为 PASS，checks=22/22/0；静态核对 backfill-docs.test.ts 正好 22 个 test，含真跑、state.jsonl、resume、frontmatter marker。","weak_points":["动态测试复跑被 spawn EPERM 拦截","AC-P2-8/9 共用同一测试文件"]}

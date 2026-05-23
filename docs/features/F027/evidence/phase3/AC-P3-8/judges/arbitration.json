@@ -1,0 +1,8 @@
+{
+  "ac_id": "AC-P3-8",
+  "judge1_verdict": "CONDITIONAL_PASS",
+  "judge2_verdict": "CONDITIONAL_PASS",
+  "double_pass": true,
+  "arbitration_verdict": "CONDITIONAL_PASS",
+  "rationale": "双 judge CONDITIONAL_PASS-CONDITIONAL_PASS 一致 — a (POST/GET decisions endpoint + tombstone 语义) PASS; b (Inspector unresolved 入口 UI click → manual confirm) 推 Phase 4 (prompt-inspector tab 当前 7 块无 Coverage section). 升级小孙拍: A 加 Phase 3 commit 补 Coverage section ~30min / B 修 plan v3.6 明示 b 推 Phase 4 接受 CONDITIONAL_PASS."
+}

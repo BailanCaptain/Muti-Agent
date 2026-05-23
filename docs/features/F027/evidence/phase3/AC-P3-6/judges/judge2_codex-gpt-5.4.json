@@ -1,0 +1,18 @@
+{
+  "ac_id": "AC-P3-6",
+  "judge": "codex-gpt-5.4",
+  "verdict": "CONDITIONAL_PASS",
+  "rubric": {
+    "evidence_completeness": "PARTIAL - component tests cover IngestModal, API hooks, KB entry, composer drag/drop, slash menu, and related regressions; no actual browser walkthrough artifact proves the three entries in the integrated app shell.",
+    "ac_literal_contract": "PASS - the three entry surfaces and sanitize/preview/commit-button flow are covered by unit/component evidence; true landing behavior is delegated to AC-P3-10.",
+    "design_intent_alignment": "PASS - implementation follows the Phase 3 boundary: preview in AC-P3-6, durable commit through AC-P3-10.",
+    "residual_risk": "Drag/drop, hidden file picker, and slash-menu focus interactions are browser-sensitive; component tests reduce risk but do not replace one integrated browser pass."
+  },
+  "blocked_evidence": [
+    "browser-composer-drag-modal",
+    "browser-kb-button-modal",
+    "browser-slash-modal"
+  ],
+  "go_with_blocked_evidence": true,
+  "notes": "Targeted component tests passed, including IngestModal, use-ingest-api, knowledge-base tab, composer, and slash menu. I mark conditional only because the blocked evidence is integrated UX proof."
+}

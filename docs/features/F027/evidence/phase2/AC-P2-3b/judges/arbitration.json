@@ -1,0 +1,1 @@
+{"verdict":"BLOCKED","reason":"double-blocked: 两 judge 一致确认 AC-P2-3b 因 feature.md Gate 2 (Iron Laws 3) 未批准而合规阻塞，非实现缺陷；待 Gate 2 解锁后补真文件验证","judge1_verdict":"BLOCKED","judge2_verdict":"BLOCKED","judge1":"claude-opus-4-7","judge2":"codex-gpt-5.4"}

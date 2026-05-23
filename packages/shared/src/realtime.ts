@@ -81,7 +81,13 @@ export type TimelineMessage = {
   role: "user" | "assistant"
   content: string
   thinking?: string
-  messageType: "progress" | "final" | "a2a_handoff" | "a2a_handoff_mcp" | "connector" | "system_notice"
+  messageType:
+    | "progress"
+    | "final"
+    | "a2a_handoff"
+    | "a2a_handoff_mcp"
+    | "connector"
+    | "system_notice"
   connectorSource?: ConnectorSource
   /** Inline confirmation cards embedded in this message bubble */
   inlineConfirmations?: InlineConfirmation[]
@@ -497,6 +503,16 @@ export type RealtimeServerEvent =
       type: "pending.change"
       payload: PendingChangePayload
     }
+  | {
+      /**
+       * F027 Phase 3 P20 G1 (AC-P3-5 物理依赖 · plan v3.1 §1.2-9):
+       * agent wake-up 时（A2A 派发 / direct turn / session bootstrap 等）后端推
+       * wake.trigger event。前端 prompt-inspector 顶部据此渲染 🔔 触发因块（V16.5.2）+
+       * click pill 触发 in-place drawer 展开 mini call tree（复用 F026 <A2ATreeView>）
+       */
+      type: "wake.trigger"
+      payload: WakeTriggerPayload
+    }
 
 /**
  * F026 P3.1: 派发协议 retry 事件 payload。
@@ -593,6 +609,40 @@ export type PendingChangePayload = {
   }>
   /** ISO timestamp */
   occurredAt: string
+}
+
+/**
+ * F027 Phase 3 P20 G1 (AC-P3-5 物理依赖 · plan v3.1 §1.2-9) wake.trigger payload。
+ *
+ * agent wake-up 时（A2A 派发 / direct turn / 续推 / session bootstrap）后端推一条
+ * wake.trigger event，前端 prompt-inspector 顶部据此渲染 🔔 触发因块（V16.5.2 修订），
+ * click pill → in-place drawer 复用 F026 <A2ATreeView> 展开 mini call tree。
+ *
+ * scenario 与 adaptive-recall-coordinator 的 scenario 枚举对齐（wake_up / a2a_handoff
+ * / session_bootstrap / direct_turn）。
+ */
+export type WakeTriggerScenario = "wake_up" | "a2a_handoff" | "session_bootstrap" | "direct_turn"
+
+export interface WakeTriggerPayload {
+  /** thread 主键（agent 实例 thread.id） */
+  threadId: string
+  /** room session group ID */
+  sessionGroupId: string
+  /** canonical roomId (R-###) 如绑定 — 旧数据 / 测试 fixture 无绑定时 null */
+  roomId: string | null
+  /** agent alias (黄仁勋/桂芬/范德彪/小孙/...) */
+  alias: string
+  /** wake-up 场景 */
+  scenario: WakeTriggerScenario
+  /**
+   * a2a 派发 / direct turn child call 的 callId（绑 wake-up 源头）。
+   * F026 callRegistry callId 形如 "call-<uuid>"；前端 click pill 时用此 ID
+   * fetch GET /debug/a2a?root=<callId> 展开 mini call tree。
+   * 当 scenario 与 a2a 无关时（session_bootstrap 等）可为 null。
+   */
+  a2aCallId: string | null
+  /** 触发时间 ISO */
+  triggeredAt: string
 }
 
 /**

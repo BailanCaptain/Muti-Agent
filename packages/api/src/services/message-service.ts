@@ -4,6 +4,7 @@ import type {
   Provider,
   RealtimeClientEvent,
   RealtimeServerEvent,
+  WakeTriggerScenario,
 } from "@multi-agent/shared"
 import { PROVIDER_ALIASES, getContextWindowForModel } from "@multi-agent/shared"
 import type { AppEventBus } from "../events/event-bus"
@@ -11,6 +12,11 @@ import { createLogger } from "../lib/logger"
 import { perfCollector } from "../lib/perf-collector"
 import { A2AChainRegistry } from "../orchestrator/a2a-chain"
 import { DEFAULT_A2A_CALL_DEADLINE_MS } from "../orchestrator/a2a-gateway"
+import {
+  type AdaptiveRecallCoordinator,
+  createNoopAdaptiveRecallCoordinator,
+  deriveTriggerFromScenario,
+} from "../orchestrator/adaptive-recall-coordinator"
 import {
   type DecisionItemParsed,
   extractDecisionItems,
@@ -48,6 +54,12 @@ import type {
 import { detectFBloat } from "../orchestrator/fbloat-detector"
 import { planForcedDispatch } from "../orchestrator/forced-dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
+import { toAssemblePromptHits } from "../wiki/memory-preflight/render-pack"
+import {
+  NoopPromptAuditWriter,
+  type PromptAuditWriterLike,
+  buildRecallAuditPatch,
+} from "../wiki/prompt-audit/prompt-audit-writer"
 
 import {
   buildForwardExtractSnippet,
@@ -68,7 +80,8 @@ import type { SkillRegistry } from "../skills/registry"
 import { applySlashCommandHint } from "../skills/slash-route"
 import type { SopTracker } from "../skills/sop-tracker"
 import type { A2ALifecycleService } from "./a2a-lifecycle"
-import type { WorklistExecutor } from "./worklist-executor"
+import { composeFinalContentOnError } from "./compose-final-content-on-error"
+import { deriveContentBlocks, mergeDerivedWithExistingBlocks } from "./content-blocks-derive"
 import {
   buildCorrectionPrompt,
   decideRetryAction,
@@ -79,15 +92,39 @@ import {
   buildDispatchRetryEventId,
   buildDispatchRetryRealtimeEvent,
 } from "./dispatch-retry-event"
-import { composeFinalContentOnError } from "./compose-final-content-on-error"
-import { deriveContentBlocks, mergeDerivedWithExistingBlocks } from "./content-blocks-derive"
 import type { MemoryService } from "./memory-service"
 import { computeEffectiveSessionId } from "./session-effectiveness"
 import type { SessionService } from "./session-service"
 import type { WorkflowSopService as WorkflowSopServiceType } from "./workflow-sop-service"
+import type { WorklistExecutor } from "./worklist-executor"
 
 type ActiveRun = ReturnType<typeof runTurn>
 type EmitEvent = (event: RealtimeServerEvent) => void
+
+/**
+ * F027 Phase 3 P20 G1 (AC-P3-5 物理依赖) · wake-up scenario 推断
+ *
+ * 从 runThreadTurn options 推断 scenario：
+ *   - A2A 派发：systemPrompt 已预编（assemblePrompt for A2A）+ dispatchedCallId 绑定
+ *     → "a2a_handoff"
+ *   - direct turn 自建 child call：无 systemPrompt + dispatchedCallId 绑定
+ *     → "direct_turn"
+ *   - 续推 / 子调用：parentInvocationId 标识
+ *     → "wake_up"
+ *   - fallback → "wake_up"
+ *
+ * 注：session_bootstrap 当前不走 runThreadTurn 入口，不需在此处理。
+ */
+export function deriveWakeTriggerScenario(options: {
+  systemPrompt?: string
+  dispatchedCallId?: string | null
+  parentInvocationId?: string | null
+}): WakeTriggerScenario {
+  if (options.systemPrompt && options.dispatchedCallId) return "a2a_handoff"
+  if (!options.systemPrompt && options.dispatchedCallId) return "direct_turn"
+  if (options.parentInvocationId) return "wake_up"
+  return "wake_up"
+}
 
 /**
  * F026-P3 Task7 · cold-target burst 兜底判定 + 组装。
@@ -306,6 +343,17 @@ export class MessageService {
   // F026 P2 v2 · 树形 worklist 续推执行器。setWorklistExecutor() 缺省时所有 mention
   // enqueue 后续推注册全 noop —— 老路径 / 单测不 wire 时无副作用。
   private worklistExecutor: WorklistExecutor | null = null
+  // F027 Phase 3 P20 Day 7-8 a · Adaptive Recall coordinator wiring.
+  // 默认 noop（enabled=false） — 仅 wiring 到位，不真触发 LLM；Phase 4 接 backend
+  // 后 setAdaptiveRecallCoordinator() 注入真 Coordinator 启用。
+  private adaptiveRecallCoordinator: AdaptiveRecallCoordinator =
+    createNoopAdaptiveRecallCoordinator()
+  // F027 Phase 3 P20 Day 8 b · prompt_audit writer wiring (AC-P3-9 b).
+  // 默认 noop —— wire 没接通时不写 audit row（单测 / 老路径无副作用）。
+  // server.ts boot 注入真 PromptAuditWriter（即使 Coordinator 是 noop，每次
+  // A2A 拼装也写一行 audit：9 recall fields 用 disabled 默认值，方便 prompt-inspector
+  // UI Day 4 起就能读到有 scenario / parts_json 的 row）。
+  private promptAuditWriter: PromptAuditWriterLike = new NoopPromptAuditWriter()
   private readonly chainRegistry = new A2AChainRegistry()
   private readonly pendingBoardFlushes = new Map<string, DecisionBoardEntry[]>()
   private readonly streamingFlushers = new Map<
@@ -394,9 +442,7 @@ export class MessageService {
   setWorklistExecutor(svc: WorklistExecutor) {
     this.worklistExecutor = svc
     svc.setOnDoneContinuation((args) => {
-      const ctx = args.continuationContext as
-        | { emit: EmitEvent; rootMessageId: string }
-        | undefined
+      const ctx = args.continuationContext as { emit: EmitEvent; rootMessageId: string } | undefined
       if (!ctx) return
       this.dispatchWorklistContinuation({
         parentCallId: args.parentCallId,
@@ -405,6 +451,27 @@ export class MessageService {
         rootMessageId: ctx.rootMessageId,
       })
     })
+  }
+
+  /**
+   * F027 Phase 3 P20 Day 7-8 a · 注入真 Adaptive Recall Coordinator（替换 noop 默认）。
+   *
+   * Day 7-8 a 范围 = wiring only：boot 时 server.ts 注入 enabled=false 的实例。
+   * Phase 4 接 critique LLM + level2-4 backend + Level5Sink 真实后切 enabled=true。
+   */
+  setAdaptiveRecallCoordinator(coordinator: AdaptiveRecallCoordinator) {
+    this.adaptiveRecallCoordinator = coordinator
+  }
+
+  /**
+   * F027 Phase 3 P20 Day 8 b · 注入 PromptAuditWriter（替换 noop 默认）。
+   *
+   * server.ts boot 注入真 PromptAuditWriter(db)：每次 A2A 拼装写一行 prompt_audit
+   * （含 9 V15.2 Adaptive Recall 字段 + base fields），prompt-inspector Day 4 endpoint
+   * 已可读。Coordinator 是 noop 时 9 recall fields 走 disabled 默认值。
+   */
+  setPromptAuditWriter(writer: PromptAuditWriterLike) {
+    this.promptAuditWriter = writer
   }
 
   /**
@@ -496,6 +563,8 @@ export class MessageService {
       rootMessageId: input.rootMessageId,
       parentInvocationId: null,
       dispatchedCallId: continuationCallId,
+      // r2 范-r1 P2: 续推走 A2A 链路而非 direct turn — wake.trigger scenario 显式标
+      scenario: "a2a_handoff",
     }).catch((err) => {
       this.log.error({ err }, "F026 P2 v2 worklist continuation runThreadTurn rejected")
     })
@@ -1016,6 +1085,8 @@ export class MessageService {
       emit,
       rootMessageId,
       dispatchedCallId: directTurnCallId,
+      // r2 范-r1 P2: directTurn 显式 scenario（虽然推断也对，显式更稳）
+      scenario: "direct_turn",
     })
     const queueFlush = this.flushDispatchQueue(thread.sessionGroupId, emit)
     await Promise.allSettled([directTurn, queueFlush])
@@ -1048,6 +1119,15 @@ export class MessageService {
      * On undefined, every lifecycle call is a noop — see A2ALifecycleService.
      */
     dispatchedCallId?: string
+    /**
+     * F027 Phase 3 P20 G1 r2 (范-r1 P2): wake-up scenario 显式参数。
+     * caller 应显式传：worklist 续推 → "a2a_handoff" / directTurn → "direct_turn" /
+     * A2A 派发 → "a2a_handoff" / 其他 → 未传由 deriveWakeTriggerScenario fallback。
+     *
+     * r1 推断纯靠 (systemPrompt + dispatchedCallId) 错把 worklist 续推标 direct_turn
+     * （续推没 systemPrompt 但有 dispatchedCallId），r2 改显式优先 + 推断 fallback。
+     */
+    scenario?: WakeTriggerScenario
   }): Promise<{ messageId: string; content: string } | null> {
     const thread = this.dispatch.resolveThread(options.threadId)
     if (!thread) {
@@ -1071,6 +1151,48 @@ export class MessageService {
         },
       })
       return null
+    }
+
+    // F027 Phase 3 P20 G1 (AC-P3-5 物理依赖 · plan v3.1 §1.2-9):
+    // wake-up 时向所有 WS connection 广播 wake.trigger event。前端 prompt-inspector
+    // 顶部据此渲染 🔔 触发因块（V16.5.2），click pill 触发 in-place drawer 展开
+    // mini call tree（复用 F026 <A2ATreeView>）。
+    //
+    // r2 范-r1 P2: scenario 优先用 options 显式传值（caller 知 context 最准），
+    // 否则 fallback deriveWakeTriggerScenario 推断。修 r1 worklist 续推误判 direct_turn 的 bug。
+    //
+    // broadcaster 未注入（测试 fixture / boot 早期）→ 静默 skip，wake-up 流程不受影响。
+    const wakeBroadcast = this.broadcast
+    if (wakeBroadcast) {
+      try {
+        const wakeCanonicalRoomId = this.sessions.getRoomId(thread.sessionGroupId)
+        const wakeScenario =
+          options.scenario ??
+          deriveWakeTriggerScenario({
+            systemPrompt: options.systemPrompt,
+            dispatchedCallId: options.dispatchedCallId,
+            parentInvocationId: options.parentInvocationId,
+          })
+        wakeBroadcast({
+          type: "wake.trigger",
+          payload: {
+            threadId: thread.id,
+            sessionGroupId: thread.sessionGroupId,
+            roomId: wakeCanonicalRoomId,
+            alias: thread.alias,
+            scenario: wakeScenario,
+            a2aCallId: options.dispatchedCallId ?? null,
+            triggeredAt: new Date().toISOString(),
+          },
+        })
+      } catch (err) {
+        // fail-soft：broadcaster 异常不阻塞 wake-up 主流程（prompt-inspector 拿不到
+        // trigger 只影响 UI 显示，不影响 LLM 调用）
+        this.log.warn(
+          { err, threadId: thread.id, alias: thread.alias },
+          "wake.trigger broadcast failed (non-blocking)",
+        )
+      }
     }
 
     // F021 Phase 5: flush pending → active and resolve effective model BEFORE
@@ -2148,6 +2270,8 @@ export class MessageService {
             emit: options.emit,
             rootMessageId: options.rootMessageId,
             autoResumeCount: resumeCount + 1,
+            // r2 范-r1 P2: auto-resume 续接（记忆重组）显式 scenario = wake_up
+            scenario: "wake_up",
           })
           if (resumeResult) {
             return {
@@ -2294,9 +2418,7 @@ export class MessageService {
               // (deleted) buildSkillHintLine string.
               const guardianCandidateNames = !this.skillRegistry
                 ? []
-                : this.skillRegistry
-                    .match(entry.taskSnippet, a2aProvider)
-                    .map((m) => m.skill.name)
+                : this.skillRegistry.match(entry.taskSnippet, a2aProvider).map((m) => m.skill.name)
               const isGuardianMode =
                 guardianCandidateNames.includes("acceptance-guardian") ||
                 guardianCandidateNames.includes("vision-guardian")
@@ -2331,6 +2453,33 @@ export class MessageService {
                     previousDigestEmpty: a2aPreviousDigest == null,
                     roomSnapshot: entry.contextSnapshot,
                   })
+              // F027 Phase 3 P20 Day 7-8 a · Adaptive Recall coordinator 调用点。
+              //   - guardian 模式跳过（guardian = 零上下文，注入 recall 反而违反契约）
+              //   - scenario='a2a_handoff'（A2A 派发路径）— Coordinator 内 scenario 白名单决策
+              //   - 默认 noop coordinator (enabled=false) 直接 passthrough，行为不变
+              //   - Phase 4 接 backend 后 hits 非空时填入 assemblePrompt.memoryPreflight
+              const a2aScenario = "a2a_handoff" as const
+              // Week 2 r2 (范-r1 P1): 解析 sessionGroupId → canonical roomId (R-###);
+              // prompt-inspector 按 R-### 查 prompt_audit，sessionGroupId UUID 写进去读不到。
+              // 无 R-### 绑定 (旧数据 / 测试 fixture) → null，audit row 的 room_id 写 null。
+              const a2aCanonicalRoomId = this.sessions.getRoomId(sessionGroupId)
+              const recallResult = isGuardianMode
+                ? null
+                : await this.adaptiveRecallCoordinator.executeIfNeeded({
+                    // Coordinator/executor 内部用 roomId 作 Level3 query_messages room filter；
+                    // 没有 canonical R-### 时用 sessionGroupId 兜底（仍能隔离 session），
+                    // 但 audit 写入用真 canonical（见下文 promptAuditWriter.write）。
+                    roomId: a2aCanonicalRoomId ?? sessionGroupId,
+                    alias: entry.to.agentId,
+                    scenario: a2aScenario,
+                    trigger: deriveTriggerFromScenario(a2aScenario),
+                    query: entry.taskSnippet,
+                  })
+              const memoryPreflightForAssemble =
+                recallResult && recallResult.hits.length > 0
+                  ? { hits: recallResult.hits.map(toAssemblePromptHits) }
+                  : null
+
               const assembled = await assemblePrompt(
                 {
                   provider: entry.to.provider as import("@multi-agent/shared").Provider,
@@ -2352,9 +2501,50 @@ export class MessageService {
                   previousDigest: a2aPreviousDigest,
                   recallTools: isGuardianMode ? undefined : [],
                   coldTargetBurst: a2aColdBurst,
+                  // F027 Phase 3 P20 Day 7-8 a · scenario + memoryPreflight 注入
+                  scenario: isGuardianMode ? undefined : a2aScenario,
+                  memoryPreflight: memoryPreflightForAssemble,
                 },
                 this.memoryService,
               )
+
+              // F027 Phase 3 P20 Day 8 b · prompt_audit 一行 INSERT (AC-P3-9 b)。
+              //   - 9 V15.2 Adaptive Recall 字段从 recallResult.output 派生（disabled
+              //     / scenario_skip / executor_error 时全填 default null/false/0）
+              //   - base fields best-effort：totalTokens 用 content.length 估算，
+              //     cap=0（V15.1 token 度量管线 Phase 4/5 接精确度量），parts_json='[]' 占位
+              //   - guardian / 失败路径也写 audit（recall_required=false），让 prompt-inspector
+              //     UI 拿到 scenario / parts_json 不丢
+              try {
+                this.promptAuditWriter.write({
+                  createdAt: new Date().toISOString(),
+                  alias: entry.to.agentId,
+                  // Week 2 r2 (范-r1 P1): canonical R-### roomId（不绑定时 null —
+                  // prompt-inspector 按 R-### 查时该行不会被命中是正确行为）
+                  roomId: a2aCanonicalRoomId,
+                  scenario: isGuardianMode ? "a2a_handoff_guardian" : a2aScenario,
+                  totalTokens: Math.ceil(assembled.content.length / 4),
+                  cap: 0,
+                  partsJson: "[]",
+                  notInjectedJson: null,
+                  ironLawsCount: 0,
+                  rawText: assembled.content,
+                  sourceEventIds: JSON.stringify([entry.rootMessageId]),
+                  agentSessionRef: targetThread?.nativeSessionId ?? null,
+                  ...buildRecallAuditPatch({
+                    output: recallResult?.output,
+                    trigger: recallResult ? deriveTriggerFromScenario(a2aScenario) : null,
+                    // recall_required 标语义：guardian 跳过 / coordinator 跑过 → required=true；
+                    // 其他 disabled/skip 路径 → required=false
+                    recallRequired: !isGuardianMode && recallResult?.executed === true,
+                  }),
+                })
+              } catch (err) {
+                this.log.warn(
+                  { stage: "prompt_audit.write", err: (err as Error).message, threadId },
+                  "prompt_audit write failed (non-blocking)",
+                )
+              }
 
               // F026 P2 clean-cut · 多 @ 不再 fan-out 进 ParallelGroup；每个
               // entry 是独立 A2A 派发，groupId 用 entry.id 作为单元集合标识。
@@ -2373,6 +2563,8 @@ export class MessageService {
                 // F026 P1 Wiring · forward gateway callId so the turn's
                 // lifecycle hooks (advance/settle) hit the right registry row.
                 dispatchedCallId: entry.callId,
+                // r2 范-r1 P2: A2A 派发显式 scenario（虽然推断也对，显式更稳）
+                scenario: "a2a_handoff",
               })
             } finally {
               this.dispatch.releaseSlot(sessionGroupId, entry.to.provider)
@@ -2593,7 +2785,6 @@ export class MessageService {
     return null
   }
 
-
   /**
    * Present a multi-choice decision card to the user.
    * Returns the selected option IDs.
@@ -2619,7 +2810,6 @@ export class MessageService {
       .filter((d) => d.verdict === "approved" || d.verdict === "modified")
       .map((d) => d.optionId)
   }
-
 
   private advanceSopIfNeeded(input: {
     sessionGroupId: string

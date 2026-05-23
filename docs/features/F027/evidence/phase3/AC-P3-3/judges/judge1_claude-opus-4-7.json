@@ -1,0 +1,14 @@
+{
+  "ac_id": "AC-P3-3",
+  "judge": "claude-opus-4-7",
+  "verdict": "PASS",
+  "rubric": {
+    "evidence_completeness": "PASS — 7 块 inline render (HeaderRow + InjectedPartsTable + NotInjectedSection + RecallSection + AdaptiveRecallPolicy + AgentSessionSection + WakeTriggerSection + BottomButtonsBar); contract 9 字段 (injectedParts/recallQueries/recallState 9 fields/wakeUpTrigger) 在 backend prompt-inspector.ts + frontend inline mirror",
+    "ac_literal_contract": "PASS — 注入 part 表 InjectedPart{name/bytes/tokensEstimated/source}; 召回 query Quality Gate 三段 RecallGate high/mid/low; Adaptive Recall State recall_path Level 1-5",
+    "design_intent_alignment": "PASS — V16.5 chap 18 line 2030-2079 wireframe 完整对齐",
+    "residual_risk": "真数据填充依赖 P3-9 P13 wiring (orchestrator 真触发 executeAdaptiveRecall → prompt_audit 9 字段写入), Phase 3 是 wiring; 实际写流是 Phase 1 P13 工作; worktree DB schema 缺 prompt_audit 表 → frontend 7 块全显 placeholder/empty 是 expected"
+  },
+  "blocked_evidence": ["browser-7-blocks-with-real-data"],
+  "go_with_blocked_evidence": true,
+  "notes": "UI 实施 + contract + 单测全 PASS; 浏览器看 7 块空是 DB schema 缺 + Phase 1 wiring 待接通的 expected 行为, 非 Phase 3 bug."
+}

@@ -1,0 +1,18 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-16",
+  "reason": "ChainedAlertNotifier：chained_suspect 事件 → 构造 alert → pushAlert R-201（默认 room）；dedup 窗口防 alert 风暴；push 失败不记 dedup（下次可推）；in-flight set 防并发 double-push。",
+  "checks": {
+    "test_files": ["packages/api/src/services/scheduler/chained-alert-notifier.test.ts"],
+    "tests_total": 12,
+    "tests_passed": 12,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/chained-alert-notifier.test.ts",
+    "key_assertions": [
+      "chained_suspect 事件 → pushAlert R-201",
+      "dedup 窗口内同 draftPath 只推 1 次",
+      "push 失败 → 不记 dedup（下次可推）",
+      "in-flight set 防并发同 draftPath double-push"
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "result.json verdict=PASS；nightly-health-check.test.ts 27 tests 覆盖 5 类问题红绿 fixture（deadLinks/orphans/missingFrontmatter/canonicalOwnerDrift/draftExpired）+ reviewing:true draft 跳过归档。",
+  "weak_points": [
+    "Phase 2 精简 evidence：仅 result.json，无 raw transcript",
+    "5 类问题用注入 fixture 验证，非真实 wiki 全量扫描",
+    "judge1 由 claude-opus-4-7 直接评估产出（p18-judge runner 环境受限）"
+  ]
+}

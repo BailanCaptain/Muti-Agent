@@ -1,0 +1,17 @@
+{
+  "ac_id": "AC-P3-2",
+  "ac_text": "5 tab 渲染 + 切换保 fetch 状态 (scroll ±10px) + 默认 prompt-inspector",
+  "evidence_files": [
+    "commits: 36647e6 (Day 12-13) + 922a935 (r2 always-render + keyboard nav) + 55b587c (v3.5 label 改名)",
+    "unit-test: runtime-log/index.test.tsx (20 cases: 5 tab 全渲染 + 默认 + ARIA + always-render)",
+    "unit-test: components/stores/runtime-log-store.test.ts (state + tab switch logic)",
+    "review: F027-Day12-13-review-r2-verdict.md (GO)",
+    "plan: §3 Week 3 Day 12-13 + v3.5 (label 改名: lvl1 '记忆系统' / lvl2 'system prompt')",
+    "walkthrough: AC-P3-2 (5 tab 切换 + scroll 保留浏览器实操)",
+    "screenshots/BLOCKED-tab-switch-scroll-persistence.md"
+  ],
+  "executed_at": "2026-05-23",
+  "implementation_status": "DONE",
+  "review_status": "GO (Day 12-13 r2 confirmed)",
+  "browser_verification": "BLOCKED (scroll ±10px 需浏览器实测)"
+}

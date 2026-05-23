@@ -1,0 +1,14 @@
+{
+  "ac_id": "AC-P3-8",
+  "judge": "claude-opus-4-7",
+  "verdict": "CONDITIONAL_PASS",
+  "rubric": {
+    "evidence_completeness": "PARTIAL — a 完整 (DecisionService + POST/GET endpoint + contract + 单测); b 未实施 (Inspector unresolved 列表 UI click → manual confirm, prompt-inspector tab 当前 7 块无 Coverage section)",
+    "ac_literal_contract": "PARTIAL — a 'manual confirm decision API' ✅ POST /api/rooms/:id/decisions; b 'Inspector unresolved 入口 UI click → manual confirm 写新行' 未做; 'Phase 1 P12 ledger append-only + tombstone 语义' ✅ 通过 decision_type=tombstone + supersedes 实现",
+    "design_intent_alignment": "a PASS; b 推 Phase 4 (feature.md line 184 字面 'UI 接 manual confirm' 是 Phase 3 必做, 但 Phase 3 prompt-inspector 7 块不含 Coverage warning section — 这是 Phase 3 实施时的 scope 决策, 应升级到 plan v3.X 备注)",
+    "residual_risk": "AC-P3-8 b frontend UI 推 Phase 4 是 design 决策, 应在 Phase 3 收口 evidence pack 中明示 + 升级小孙拍 (合 dev 前 confirm 或加 Phase 3 fix commit 加 Coverage section)"
+  },
+  "blocked_evidence": ["frontend-inspector-coverage-section-unresolved-list"],
+  "go_with_blocked_evidence": false,
+  "notes": "**升级 Phase 3 收口**: AC-P3-8 b 是 missing implementation, 不是 BLOCKED evidence. 选项: 1) 加 Phase 3 commit 补 Coverage section UI; 2) 修 plan v3.X patch 明示 b 推 Phase 4; 3) 让小孙拍."
+}

@@ -1,0 +1,11 @@
+{
+  "verdict": "BLOCKED",
+  "ac": "AC-P2-3b",
+  "reason": "AC-P2-3b（真 wiki.config.yaml 加载 + wiki.config.example.yaml 模板）绑死 Iron Laws 3 — 必须 feature.md Gate 2 小孙显式批准并留证据 commit 后才能启动。Gate 2 未批，本 AC 保持 BLOCKED，不创建真配置文件。loader 代码路径（YAML 解析）已在 P19.3a 实现完整以便 Gate 2 后直接接入；in-memory fallback 兼容性由 AC-P2-3a 覆盖。",
+  "checks": {
+    "blocker": "feature.md Gate 2 (Iron Laws 3 配置不可变) 未批准",
+    "blocker_ref": "docs/features/F027-unified-memory-architecture.md Gate 2 + plan §1 Iron Laws 3 gate",
+    "unblock_condition": "小孙显式批准 Gate 2 + 留证据 commit → 创建 wiki.config.example.yaml + 真 wiki.config.yaml → scheduler-config-realfile.test.ts",
+    "partial_coverage": "loadSchedulerConfig 的 YAML 解析路径（parseAndValidateConfig）已实现并由 P19.3a 单测覆盖；fromFile=true 分支待 Gate 2 后真文件验证"
+  }
+}

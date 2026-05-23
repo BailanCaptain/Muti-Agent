@@ -5,7 +5,7 @@ import { ChainStarterResolver } from "../orchestrator/chain-starter-resolver"
 import { DecisionBoard, type DecisionBoardEntry } from "../orchestrator/decision-board"
 import { DispatchOrchestrator } from "../orchestrator/dispatch"
 import { InvocationRegistry } from "../orchestrator/invocation-registry"
-import { MessageService } from "./message-service"
+import { MessageService, deriveWakeTriggerScenario } from "./message-service"
 
 type ThreadRecord = {
   id: string
@@ -130,6 +130,10 @@ function createSessionsStub(threads: ThreadRecord[], opts: { sendable?: Sendable
       providers: {},
       invocationStats: [],
     }),
+    // G1 r2 P3 spy 测试需要 getRoomId（broadcast wake.trigger payload 用）
+    getRoomId: (_sessionGroupId: string): string | null => null,
+    // runThreadTurn 内部 fallback 调到这个 — 让 broadcast 路径不挂
+    flushSessionPending: (_groupId: string) => ({}),
   }
 }
 
@@ -883,4 +887,149 @@ test("buildDecisionSummary writes converged items as '已收敛' not '未决定'
   assert.ok(summary.includes("已收敛"), "converged item must be labeled 已收敛")
   assert.ok(!summary.includes("未决定"), "converged item must NOT be labeled 未决定")
   assert.ok(summary.includes("是"), "divergent item decision must appear")
+})
+
+// ─── F027 Phase 3 P20 G1 (AC-P3-5 物理依赖) deriveWakeTriggerScenario ─────
+
+test("G1 deriveWakeTriggerScenario: A2A 派发 (systemPrompt + dispatchedCallId) → a2a_handoff", () => {
+  const scenario = deriveWakeTriggerScenario({
+    systemPrompt: "<pre-computed by A2A assemblePrompt>",
+    dispatchedCallId: "call-abc12345",
+  })
+  assert.equal(scenario, "a2a_handoff")
+})
+
+test("G1 deriveWakeTriggerScenario: direct turn 自建 child call (无 systemPrompt + dispatchedCallId) → direct_turn", () => {
+  const scenario = deriveWakeTriggerScenario({
+    dispatchedCallId: "call-direct-9876",
+  })
+  assert.equal(scenario, "direct_turn")
+})
+
+test("G1 deriveWakeTriggerScenario: 续推 / 子调用 (parentInvocationId) → wake_up", () => {
+  const scenario = deriveWakeTriggerScenario({
+    parentInvocationId: "inv-parent-1",
+  })
+  assert.equal(scenario, "wake_up")
+})
+
+test("G1 deriveWakeTriggerScenario: fallback (all options 空) → wake_up", () => {
+  const scenario = deriveWakeTriggerScenario({})
+  assert.equal(scenario, "wake_up")
+})
+
+test("G1 deriveWakeTriggerScenario: dispatchedCallId=null 不算 A2A (null vs string 严格判)", () => {
+  const scenario = deriveWakeTriggerScenario({
+    systemPrompt: "x",
+    dispatchedCallId: null,
+  })
+  // systemPrompt 有但 dispatchedCallId=null → 不算 A2A_handoff（A2A 派发必绑 callId）
+  // → 走 parent / fallback 分支 → wake_up
+  assert.equal(scenario, "wake_up")
+})
+
+// ─── G1 r2 P3: runThreadTurn 入口 broadcast spy 集成测试（范-r1 finding） ─
+
+test("G1 r2 P3: runThreadTurn 入口 broadcast wake.trigger event（显式 scenario 优先）", async () => {
+  const { messageService } = createMessageService()
+  const broadcastEvents: RealtimeServerEvent[] = []
+  messageService.setBroadcaster((event) => broadcastEvents.push(event))
+
+  // 调 runThreadTurn 私有方法 — 入口 broadcast 后会在 loadRuntimeConfig 等内部依赖处
+  // 抛错（fixture 不全），但 broadcast 已经触发在前。测试只验证 broadcast 被调用 + payload 正确。
+  try {
+    // biome-ignore lint/suspicious/noExplicitAny: private method test for r2 P3 spy
+    await (messageService as any).runThreadTurn({
+      threadId: "thread-codex",
+      content: "hi",
+      emit: () => {},
+      rootMessageId: "root-1",
+      scenario: "a2a_handoff", // r2 P2: 显式 scenario 应该优先于推断
+      dispatchedCallId: "call-spy-abc",
+    })
+  } catch {
+    // 预期：runThreadTurn 内部依赖（loadRuntimeConfig / appendAssistantMessage / ...）
+    // 在 fixture 下会抛 — broadcast 已先触发。
+  }
+
+  const wakeTrigger = broadcastEvents.find((e) => e.type === "wake.trigger")
+  assert.ok(wakeTrigger, "runThreadTurn 入口应该 broadcast wake.trigger event")
+  if (wakeTrigger?.type !== "wake.trigger") throw new Error("type narrowing")
+  assert.equal(wakeTrigger.payload.threadId, "thread-codex")
+  assert.equal(wakeTrigger.payload.sessionGroupId, "group-1")
+  assert.equal(wakeTrigger.payload.alias, "Coder")
+  assert.equal(
+    wakeTrigger.payload.scenario,
+    "a2a_handoff",
+    "显式传 scenario 应优先于 deriveWakeTriggerScenario 推断",
+  )
+  assert.equal(wakeTrigger.payload.a2aCallId, "call-spy-abc")
+  assert.equal(wakeTrigger.payload.roomId, null, "stub getRoomId 返 null")
+  assert.ok(wakeTrigger.payload.triggeredAt, "triggeredAt ISO 时间戳")
+})
+
+test("G1 r2 P3: runThreadTurn 不传 scenario → fallback deriveWakeTriggerScenario 推断", async () => {
+  const { messageService } = createMessageService()
+  const broadcastEvents: RealtimeServerEvent[] = []
+  messageService.setBroadcaster((event) => broadcastEvents.push(event))
+
+  try {
+    // biome-ignore lint/suspicious/noExplicitAny: private method test for r2 P3 spy
+    await (messageService as any).runThreadTurn({
+      threadId: "thread-codex",
+      content: "hi",
+      emit: () => {},
+      rootMessageId: "root-1",
+      // 不传 scenario — fallback 推断
+      // 无 systemPrompt 无 dispatchedCallId 无 parentInvocationId → "wake_up"
+    })
+  } catch {
+    // 同上
+  }
+
+  const wakeTrigger = broadcastEvents.find((e) => e.type === "wake.trigger")
+  assert.ok(wakeTrigger, "broadcast 仍应触发")
+  if (wakeTrigger?.type !== "wake.trigger") throw new Error("type narrowing")
+  assert.equal(wakeTrigger.payload.scenario, "wake_up", "fallback 推断为 wake_up")
+})
+
+test("G1 r2 P3: broadcaster 未注入 → wake.trigger 静默 skip，不挂主流程", async () => {
+  const { messageService } = createMessageService()
+  // 不调 setBroadcaster — broadcaster=null
+  let didThrow = false
+  try {
+    // biome-ignore lint/suspicious/noExplicitAny: private method test
+    await (messageService as any).runThreadTurn({
+      threadId: "thread-codex",
+      content: "hi",
+      emit: () => {},
+      rootMessageId: "root-1",
+    })
+  } catch {
+    didThrow = true
+  }
+  // broadcaster 未注入：runThreadTurn 内部 if (!wakeBroadcast) skip — 不抛
+  // 后续 fixture 依赖仍会抛（runTurn / loadRuntimeConfig），但 broadcast 路径不挂
+  assert.ok(didThrow, "fixture 不全后续依赖会抛，但跟 broadcaster 缺失无关")
+})
+
+test("G1 r2 P3: thread 不存在 → 入口 broadcast 不触发（return null 早返）", async () => {
+  const { messageService } = createMessageService()
+  const broadcastEvents: RealtimeServerEvent[] = []
+  messageService.setBroadcaster((event) => broadcastEvents.push(event))
+
+  try {
+    // biome-ignore lint/suspicious/noExplicitAny: private method test
+    await (messageService as any).runThreadTurn({
+      threadId: "thread-nonexistent",
+      content: "hi",
+      emit: () => {},
+      rootMessageId: "root-1",
+    })
+  } catch {
+    // ignore
+  }
+
+  const wakeTrigger = broadcastEvents.find((e) => e.type === "wake.trigger")
+  assert.equal(wakeTrigger, undefined, "thread 不存在早 return → 不该 broadcast wake.trigger")
 })

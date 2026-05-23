@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "result.json verdict=PASS；startup-reconciler.test.ts 7 tests 覆盖 crash injection：wiki_events.state='pending'→'aborted'、room_checkpoints.committed_at IS NULL 删除、无残留 noop、重复幂等。",
+  "weak_points": [
+    "Phase 2 精简 evidence：仅 result.json，无 raw transcript",
+    "用真 SQLite 临时实例注入 crash 状态，非真实进程崩溃复现",
+    "judge1 由 claude-opus-4-7 直接评估产出（p18-judge runner 环境受限）"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "result.json verdict=PASS；wiki-compiler-debounce.test.ts 10 tests 覆盖 onWikiEvent 重置 5s debounce、burst 收敛成 1 次、reentrancy guard 本轮后补跑、recompile throw 不打断、stop() 清 pending。",
+  "weak_points": [
+    "Phase 2 精简 evidence：仅 result.json，无 raw transcript",
+    "测试用极短 debounceMs（40ms）压缩耗时；recompileDerivedViews 由 caller 注入 mock",
+    "judge1 由 claude-opus-4-7 直接评估产出（p18-judge runner 环境受限）"
+  ]
+}

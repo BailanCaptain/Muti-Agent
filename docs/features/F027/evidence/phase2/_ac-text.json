@@ -1,0 +1,21 @@
+{
+  "AC-P2-1": "NightlyJobScheduler 起停 + 11 jobs（9 scheduled + 2 event-driven）全部触发命中目标时间窗 + job_trace 落盘。证据 result.json 应含 nightly-job-scheduler + scheduler-runtime 测试全过、cron/startup/event-driven 三分类接入、trace 时间窗字段完整。",
+  "AC-P2-2": "Runtime owner election：双 runtime → 1 leader/1 follower；winner crash → follower ≤60s 接管；lease-lost-live（renewLeader 返 null → selfDemote 清 lease + demotedReason=heartbeat_failed）；lease-expired 兜底第三段 guard。",
+  "AC-P2-3a": "ConfigLoader + 默认 schema + cron 校验 + Asia/Shanghai 时区 + DST fixture；无 wiki.config.yaml → fallback 内置默认调度；断言测试前后 worktree 内 wiki.config.yaml 不存在/未创建（绑 Iron Laws 3 gate）。",
+  "AC-P2-3b": "Gate 2 后启动：真 wiki.config.yaml 加载 + wiki.config.example.yaml 模板；loader 在 in-memory fallback ↔ 真文件之间无 schema diff。绑 Iron Laws 3 — Gate 2 未批时本 AC 应为 BLOCKED（不创建真配置文件即合规）。",
+  "AC-P2-4": "job_trace JSON schema 契约 + Phase 3 panel 可读；status enum 8 种全覆盖 fixture，reason enum 至少 4 种；时间窗字段 scheduledFor/windowStart/windowEnd 必填。",
+  "AC-P2-5": "StartupReconciler crash injection：启动后清理 wiki_events.state='pending'、删除 room_checkpoints.committed_at IS NULL。",
+  "AC-P2-6": "RoomCompilerTick：5min + idle 30min + reentrancy guard 长跑期间新触发跳过 + missed window 走 skip policy 落 trace。",
+  "AC-P2-7": "DocsWatcher：chokidar mock + 真 fs temp integration + 半写 race mitigation（size/mtime 稳定 + 忽略 *.tmp/*~）。",
+  "AC-P2-8": "backfill-docs --dry-run 输出类型分布 + 高 cross_refs 密度 + 失败文件列表，不写盘。",
+  "AC-P2-9": "backfill 正式跑全量 docs/* 落 _backfill/ + 写 wiki_events；kill -9 + --resume 跳过已成功（marker 双源）；断言 wiki_events schema/索引/CHECK diff = ∅。",
+  "AC-P2-10": "NightlyHealthCheck 5 类问题红绿 fixture（死链/孤岛/frontmatter/漂桶/draft TTL）；draft frontmatter reviewing:true 不归档。",
+  "AC-P2-11": "NightlyVacuum：30 天前 events 产 snapshot + archive jsonl + job_trace；DB 行/state/schema 全不变（sqlite_master diff = ∅）。",
+  "AC-P2-12": "WeeklyDraftDigest：user-drop only，4 类子目录 draft 不推；混合 5+4 fixture。",
+  "AC-P2-13": "DriftDetector：new_lesson / model_upgrade / handoff_failure 三类 trigger fixture → update draft。",
+  "AC-P2-14": "MonthlySnapshot：backup + viewfinder full recompile + drift > 30% replace + Jan-1 边界 + 幂等 + 100k mock pressure。",
+  "AC-P2-15": "ArchiveYearlySessions：100k session fixture → yearly pack + mv archive + Jan-1 边界（mock clock）。",
+  "AC-P2-16": "ChainedAlertNotifier：chained_suspect 事件驱动 → R-201 收 alert（含 dedup 防风暴）。",
+  "AC-P2-17": "WikiCompilerDebounce：写 wiki_events 后 5s debounce → 派生视图重生成（事件驱动）。",
+  "AC-P2-18": "Phase 2 evidence pack 19/19 double-pass（精简 3 件套；generic p18-judge.ts）+ crash lease recovery fixture。AC-P2-3b BLOCKED（Gate 2 外部门禁）时应为 18 PASS + 1 BLOCKED，judge 据实判定 evidence pack 框架完整性。"
+}

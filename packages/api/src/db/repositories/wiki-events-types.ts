@@ -20,6 +20,13 @@ export type WikiEventAction =
   | "promote"
   | "demote"
   | "delete"
+  /**
+   * F027 Phase 3 P20 Day 9 c (AC-P3-9 c) — Adaptive Recall L5 escalate audit。
+   * 不写文件、不改 wiki entity；纯 audit row，path 用 `audit/recall/<roomId>/<ts>` 约定。
+   * 由 ProductionLevel5Sink (wiki/adaptive-recall/level5-escalate-sink.ts) 写入：
+   * appendPending → 立即 commit（contentHash = attemptedHash = sha256(reason)）。
+   */
+  | "recall_escalate"
 
 /**
  * V16.5 chap 5 列表：write 流程的 result 枚举（写意图的结局）。

@@ -2,21 +2,23 @@
 
 import { ChatHeader } from "@/components/chat/chat-header"
 import { Composer } from "@/components/chat/composer"
-import { SettingsModal } from "@/components/chat/settings-modal"
 import { SessionSidebar } from "@/components/chat/session-sidebar"
+import { SettingsModal } from "@/components/chat/settings-modal"
 import { StatusPanel } from "@/components/chat/status-panel"
 import { TimelinePanel } from "@/components/chat/timeline-panel"
+import { BrowserPanel } from "@/components/preview/browser-panel"
+import { dispatchArchiveStateChanged } from "@/components/stores/archive-event-handler"
 import { useChatStore } from "@/components/stores/chat-store"
-import { useLayoutStore } from "@/components/stores/layout-store"
-import { useSettingsStore } from "@/components/stores/settings-store"
 import { useDecisionBoardStore } from "@/components/stores/decision-board-store"
 import { useDecisionStore } from "@/components/stores/decision-store"
 import { useDispatchRetryStore } from "@/components/stores/dispatch-retry-store"
+import { useLayoutStore } from "@/components/stores/layout-store"
+import { useSettingsStore } from "@/components/stores/settings-store"
 import { useThreadStore } from "@/components/stores/thread-store"
-import { dispatchArchiveStateChanged } from "@/components/stores/archive-event-handler"
-import { PROVIDER_ALIASES, type BlockedDispatchAttempt } from "@multi-agent/shared"
+// F027 P3-5 (Day 14-15) · wake-up 触发因 store · WS event "wake.trigger" 拦截入这里
+import { useWakeTriggerStore } from "@/components/stores/wake-trigger-store"
 import { connectRealtime } from "@/components/ws/client"
-import { BrowserPanel } from "@/components/preview/browser-panel"
+import { type BlockedDispatchAttempt, PROVIDER_ALIASES } from "@multi-agent/shared"
 import { PanelLeft, PanelLeftClose, PanelRight, PanelRightClose } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 
@@ -125,6 +127,16 @@ export default function HomePage() {
         if (event.type === "assistant_content_block") {
           if (!isCurrentSession(event.payload.sessionGroupId)) return
           applyContentBlock(event.payload.messageId, event.payload.block)
+          return
+        }
+
+        // F027 P3-5 (Day 14-15) · wake-up 触发因 — G1 commit c227eef 后端广播
+        // wake.trigger event；前端 record 到 wake-trigger-store，prompt-inspector
+        // 顶部读取渲染 🔔 触发因块（V16.5.2）+ click pill in-place drawer 复用
+        // F026 <A2ATreeView>。跨房间 — 不做 isCurrentSession 过滤（多 room 都记，
+        // PromptInspectorTab 按 (roomId, alias) 查自己的）。
+        if (event.type === "wake.trigger") {
+          useWakeTriggerStore.getState().recordTrigger(event.payload)
           return
         }
 
@@ -260,7 +272,8 @@ export default function HomePage() {
         }
 
         if (event.type === "status") {
-          if (event.payload.sessionGroupId && !isCurrentSession(event.payload.sessionGroupId)) return
+          if (event.payload.sessionGroupId && !isCurrentSession(event.payload.sessionGroupId))
+            return
           setStatus(event.payload.message)
         }
       },

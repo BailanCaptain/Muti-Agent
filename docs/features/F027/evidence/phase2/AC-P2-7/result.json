@@ -1,0 +1,18 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-7",
+  "reason": "DocsWatcher（chokidar v5）：监听 docs/{features|bugReport|lessons}；真 fs temp integration + 半写 race mitigation（awaitWriteFinish size/mtime 稳定）+ 忽略 *.tmp/*~/*.swp；60s debounce；add+change kind 收敛。",
+  "checks": {
+    "test_files": ["packages/api/src/services/scheduler/docs-watcher.test.ts"],
+    "tests_total": 10,
+    "tests_passed": 10,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/docs-watcher.test.ts",
+    "key_assertions": [
+      "chokidar v5 ESM await import + 真 fs temp 目录监听",
+      "半写 race mitigation：awaitWriteFinish 稳定后才入 ingest",
+      "忽略 *.tmp / *~ / *.swp 临时文件",
+      "60s debounce；add+change → add 收敛"
+    ]
+  }
+}

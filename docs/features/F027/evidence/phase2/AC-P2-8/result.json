@@ -1,0 +1,19 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-8",
+  "reason": "backfill-docs --dry-run：扫全量 docs/* 输出类型分布 + 高 cross_refs 密度 + 失败文件列表报告，不写盘。",
+  "checks": {
+    "test_files": ["packages/api/scripts/backfill-docs.test.ts"],
+    "tests_total": 22,
+    "tests_passed": 22,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/scripts/backfill-docs.test.ts",
+    "key_assertions": [
+      "--dry-run 扫 docs/* 产类型分布报告",
+      "高 cross_refs 密度文件标注",
+      "失败文件列表",
+      "dry-run 不写盘（无 wiki_events / 无 draft 文件）"
+    ],
+    "note": "AC-P2-8 与 AC-P2-9 共用 backfill-docs.test.ts（22 tests 覆盖 dry-run + resume 两段）"
+  }
+}

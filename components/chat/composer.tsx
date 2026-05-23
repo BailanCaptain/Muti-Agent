@@ -8,6 +8,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { mentionTheme, EVERYONE_THEME as everyoneTheme } from "../theme"
 import { planQueueFlush, resolveLatchAfterSend } from "./queue-flush"
 import { ProviderAvatar } from "./provider-avatar"
+import {
+  IngestModal,
+  type IngestModalFile,
+} from "./right-panel/runtime-log/ingest-modal/ingest-modal"
+import {
+  SlashCommandMenu,
+  type SlashCommand,
+  filterSlashCommands,
+  findSlashContext,
+  nextHighlightOnKey,
+} from "./composer-slash-menu"
 
 const PROVIDER_ACCENT_TEXT: Record<Provider, string> = {
   claude: "text-violet-700",
@@ -86,6 +97,24 @@ function filterSuggestions(query: string): Suggestion[] {
 }
 
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"]
+
+// F027 Phase 3 Day 19b-2 · AC-P3-6 入口 A: composer 拖文件 → IngestModal
+// 拖图片 → 原 addFiles 走 ACCEPTED_IMAGE_TYPES; 拖非图片 .md/.json/.txt → IngestModal
+const ACCEPTED_INGEST_EXTENSIONS = [".md", ".markdown", ".json", ".txt"]
+const MAX_INGEST_BYTES = 1_048_576 // 1MB (与 contracts.MAX_INGEST_CONTENT_BYTES 一致)
+
+function isIngestFile(file: File): boolean {
+  const lower = file.name.toLowerCase()
+  return ACCEPTED_INGEST_EXTENSIONS.some((ext) => lower.endsWith(ext))
+}
+
+/**
+ * F027 Phase 3 Day 19b-1+2 · callerAlias 来源 (与 knowledge-base-tab 一致)
+ * Phase 3 无 user session store, Phase 4 接真 auth 时移除此 hack。
+ */
+function getCurrentUserAlias(): string {
+  return process.env.NEXT_PUBLIC_USER_ALIAS ?? "小孙"
+}
 
 const EMPTY_PENDING_IMAGES: { url: string; file: File }[] = []
 
@@ -220,6 +249,33 @@ export function Composer() {
     if (highlight >= suggestions.length) setHighlight(0)
   }, [suggestions.length, highlight])
 
+  // F027 Phase 3 Day 19c-2 · AC-P3-6 入口 C: composer / 命令面板
+  // mention `@` 优先 (showSuggestions); 无 mention 时才检测 slash `/`
+  const slashContext = useMemo(
+    () => (mentionContext ? null : findSlashContext(value, cursor)),
+    [value, cursor, mentionContext],
+  )
+  const slashCommands = useMemo(
+    () => (slashContext ? filterSlashCommands(slashContext.query) : []),
+    [slashContext],
+  )
+  // Day 19c r2 P2 fix (范-r1): dismissed state, key = (start, query) 二元组
+  // 防 end-of-input 时 cursor 不能移走 → slashContext 仍 truthy → Escape/outside click 失效
+  // 文本/cursor 变化生成新 key → dismissed 自动失效 (重新打开 menu)
+  const [dismissedSlashKey, setDismissedSlashKey] = useState<string | null>(null)
+  const currentSlashKey = slashContext
+    ? `${slashContext.start}:${slashContext.query}`
+    : null
+  const showSlashMenu =
+    Boolean(slashContext) && slashCommands.length > 0 && currentSlashKey !== dismissedSlashKey
+  const [slashHighlight, setSlashHighlight] = useState(0)
+  // 默认 highlight 跳到第一个 enabled command
+  useEffect(() => {
+    if (slashCommands.length === 0) return
+    const firstEnabled = slashCommands.findIndex((c) => c.enabled)
+    setSlashHighlight(firstEnabled >= 0 ? firstEnabled : 0)
+  }, [slashCommands])
+
   const addFiles = useCallback(
     (files: FileList | File[]) => {
       for (const file of Array.from(files)) {
@@ -230,6 +286,135 @@ export function Composer() {
     },
     [activeGroupId, addPendingImage],
   )
+
+  // F027 Phase 3 Day 19b-2 · AC-P3-6 入口 A: composer 拖文件 → IngestModal
+  const [dragOver, setDragOver] = useState(false)
+  const [ingestModalFile, setIngestModalFile] = useState<IngestModalFile | null>(null)
+  const [ingestDropError, setIngestDropError] = useState<string | null>(null)
+  const dragCounterRef = useRef(0) // 防 child enter/leave 抖动
+
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    dragCounterRef.current += 1
+    if (e.dataTransfer.types.includes("Files")) setDragOver(true)
+  }, [])
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLFormElement>) => {
+    e.preventDefault() // 必须 preventDefault 才能触发 drop
+  }, [])
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    dragCounterRef.current -= 1
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0
+      setDragOver(false)
+    }
+  }, [])
+  const handleDrop = useCallback(
+    async (e: React.DragEvent<HTMLFormElement>) => {
+      e.preventDefault()
+      dragCounterRef.current = 0
+      setDragOver(false)
+      setIngestDropError(null)
+      const files = Array.from(e.dataTransfer.files)
+      if (files.length === 0) return
+
+      // 分流: 图片走 addFiles (走原 pendingImages); ingest 文件走 IngestModal
+      const imageFiles = files.filter((f) => ACCEPTED_IMAGE_TYPES.includes(f.type))
+      const ingestFiles = files.filter((f) => isIngestFile(f))
+      const rejected = files.filter(
+        (f) => !ACCEPTED_IMAGE_TYPES.includes(f.type) && !isIngestFile(f),
+      )
+
+      if (imageFiles.length > 0) addFiles(imageFiles)
+
+      if (rejected.length > 0) {
+        setIngestDropError(
+          `拒收 ${rejected.length} 个文件 (限图片或 .md/.markdown/.json/.txt): ${rejected.map((f) => f.name).join(", ")}`,
+        )
+      }
+
+      // Phase 3 Day 19b-2: 单文件 ingest only (multi-drop chained 防误检 Phase 4)
+      if (ingestFiles.length === 0) return
+      if (ingestFiles.length > 1) {
+        setIngestDropError(
+          `多文件 ingest Phase 4 接 series_id, 当前只取第一个: ${ingestFiles[0].name}`,
+        )
+      }
+      const file = ingestFiles[0]
+      if (file.size > MAX_INGEST_BYTES) {
+        setIngestDropError(`文件过大: ${file.name} (${Math.round(file.size / 1024)}KB > 1MB)`)
+        return
+      }
+      try {
+        const content = await file.text()
+        setIngestModalFile({ name: file.name, content, sizeBytes: file.size })
+      } catch (err) {
+        setIngestDropError(`读取失败: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    },
+    [addFiles],
+  )
+
+  const handleIngestModalClose = useCallback(() => {
+    setIngestModalFile(null)
+  }, [])
+
+  // F027 Phase 3 Day 19c-2 · /ingest 选中 → 触发隐藏 ingest file picker
+  const ingestFileInputRef = useRef<HTMLInputElement>(null)
+  const handleIngestFilePicked = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      e.target.value = ""
+      if (!file) return
+      if (!isIngestFile(file)) {
+        setIngestDropError(`不支持的文件类型：${file.name}`)
+        return
+      }
+      if (file.size > MAX_INGEST_BYTES) {
+        setIngestDropError(`文件过大：${file.name}`)
+        return
+      }
+      try {
+        const content = await file.text()
+        setIngestModalFile({ name: file.name, content, sizeBytes: file.size })
+      } catch (err) {
+        setIngestDropError(`读取失败：${err instanceof Error ? err.message : String(err)}`)
+      }
+    },
+    [],
+  )
+
+  // / 选中 → 清 textarea 里的 /xxx + 触发 file picker (ingest only Phase 3)
+  const applySlashCommand = useCallback(
+    (cmd: SlashCommand) => {
+      if (!cmd.enabled || !slashContext) return
+      // 清除 /xxx 字符
+      const before = value.slice(0, slashContext.start)
+      const after = value.slice(slashContext.start + 1 + slashContext.query.length)
+      setDraft(`${before}${after}`)
+      const nextCursor = before.length
+      requestAnimationFrame(() => {
+        const el = textareaRef.current
+        if (el) {
+          el.selectionStart = nextCursor
+          el.selectionEnd = nextCursor
+          el.focus()
+        }
+        setCursor(nextCursor)
+      })
+      // 触发对应动作 (Phase 3 只 ingest)
+      if (cmd.key === "ingest") {
+        ingestFileInputRef.current?.click()
+      }
+    },
+    [slashContext, value, setDraft],
+  )
+
+  // Day 19c r2 P2 fix: 改用 dismissedSlashKey state, end-of-input 也能 dismiss
+  // (cursor 移末尾不再有效 — cursor 已经在末尾时 slashContext 仍存在)
+  const handleSlashMenuClose = useCallback(() => {
+    if (currentSlashKey) setDismissedSlashKey(currentSlashKey)
+  }, [currentSlashKey])
 
   function applySuggestion(suggestion: Suggestion) {
     if (!mentionContext) return
@@ -338,7 +523,34 @@ export function Composer() {
       }
     }
 
-    if (event.key === "Enter" && !event.shiftKey && !showSuggestions) {
+    // F027 Phase 3 Day 19c-2 · slash menu 键盘导航 (mention 优先, slash 次之)
+    if (showSlashMenu) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        const next = nextHighlightOnKey(event.key, slashCommands, slashHighlight)
+        if (next !== null) {
+          event.preventDefault()
+          setSlashHighlight(next)
+        }
+        return
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        // Day 19c r2 P3 fix (范-r1): slash menu open 时 Enter/Tab 始终 preventDefault
+        // 防 disabled command 漏出 native textarea Enter (换行) / Tab (跳焦点)
+        event.preventDefault()
+        const cmd = slashCommands[slashHighlight]
+        if (cmd?.enabled) {
+          applySlashCommand(cmd)
+        }
+        return
+      }
+      if (event.key === "Escape") {
+        event.preventDefault()
+        handleSlashMenuClose()
+        return
+      }
+    }
+
+    if (event.key === "Enter" && !event.shiftKey && !showSuggestions && !showSlashMenu) {
       event.preventDefault()
       submitMessage(value)
     }
@@ -360,13 +572,48 @@ export function Composer() {
   }
 
   return (
+    <>
     <form
-      className="flex flex-col gap-3 rounded-[30px] border border-slate-200/80 bg-white/90 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur"
+      className={`flex flex-col gap-3 rounded-[30px] border bg-white/90 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur transition-colors ${
+        dragOver
+          ? "border-violet-400 bg-violet-50/70 ring-2 ring-violet-200"
+          : "border-slate-200/80"
+      }`}
+      data-testid="composer-form"
+      data-drag-over={dragOver ? "true" : "false"}
       onSubmit={(event) => {
         event.preventDefault()
         submitMessage(value)
       }}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
+      {dragOver && (
+        <div
+          className="rounded-2xl border-2 border-violet-300 border-dashed bg-violet-100/40 px-4 py-2 text-center text-[11px] text-violet-700"
+          data-testid="composer-drag-hint"
+        >
+          📎 拖入 .md / .markdown / .json / .txt → IngestModal；图片 → 附件
+        </div>
+      )}
+      {ingestDropError && (
+        <div
+          className="rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] text-red-600"
+          data-testid="composer-ingest-drop-error"
+        >
+          ⚠ {ingestDropError}
+          <button
+            type="button"
+            onClick={() => setIngestDropError(null)}
+            className="ml-2 text-red-400 hover:text-red-600"
+            aria-label="关闭提示"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {hasRunningProvider && (
         <div className="flex items-center gap-2 px-2 pt-1">
           <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
@@ -498,6 +745,16 @@ export function Composer() {
           }}
         />
 
+        {/* F027 Phase 3 Day 19c-2 · /ingest 触发的隐藏 ingest file picker */}
+        <input
+          ref={ingestFileInputRef}
+          type="file"
+          accept=".md,.markdown,.json,.txt,text/markdown,text/plain,application/json"
+          className="hidden"
+          onChange={handleIngestFilePicked}
+          data-testid="composer-ingest-file-input"
+        />
+
         <button
           type="button"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
@@ -557,6 +814,16 @@ export function Composer() {
             })}
           </div>
         )}
+
+        {/* F027 Phase 3 Day 19c-2 · slash 命令面板 (AC-P3-6 入口 C) */}
+        <SlashCommandMenu
+          open={showSlashMenu}
+          commands={slashCommands}
+          highlight={slashHighlight}
+          onSelect={applySlashCommand}
+          onHighlightChange={setSlashHighlight}
+          onClose={handleSlashMenuClose}
+        />
 
         {/* Stop 按钮：busy 时小尺寸并存在 Send 左边，允许中止 active turn。
             Send 按钮始终可点：immediate 直发；queue + busy 入前端 buffer；queue + idle 直发。 */}
@@ -618,5 +885,12 @@ export function Composer() {
         </div>
       </div>
     </form>
+    <IngestModal
+      open={ingestModalFile !== null}
+      file={ingestModalFile}
+      callerAlias={getCurrentUserAlias()}
+      onClose={handleIngestModalClose}
+    />
+    </>
   )
 }

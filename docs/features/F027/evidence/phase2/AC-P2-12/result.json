@@ -1,0 +1,18 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-12",
+  "reason": "WeeklyDraftDigest：只推 user-drop 顶层 draft；4 类子目录（_auto/_backfill/_quarantined/_expired）不推；混合 5+4 fixture → digest 只含 5。",
+  "checks": {
+    "test_files": ["packages/api/src/services/scheduler/weekly-draft-digest.test.ts"],
+    "tests_total": 11,
+    "tests_passed": 11,
+    "tests_failed": 0,
+    "test_command": "pnpm exec tsx --test packages/api/src/services/scheduler/weekly-draft-digest.test.ts",
+    "key_assertions": [
+      "classifyDraftPath：user-drop / subdir / non-draft 三分类",
+      "只推 user-drop 顶层 draft",
+      "_auto/_backfill/_quarantined/_expired 子目录 draft 不推",
+      "混合 5 user-drop + 4 子目录 fixture → digest 只含 5"
+    ]
+  }
+}

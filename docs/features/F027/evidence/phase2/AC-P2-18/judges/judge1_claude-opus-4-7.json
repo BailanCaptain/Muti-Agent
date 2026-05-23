@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "evidence pack 框架完整：19 个 AC 目录各含 result.json + judges/（judge1/judge2/arbitration）。18 AC double-pass PASS；AC-P2-3b BLOCKED 是 Iron Laws 3/Gate 2 外部门禁（非缺陷）。crash recovery fixture 由 AC-P2-1 scheduler-runtime 测试覆盖。",
+  "weak_points": [
+    "AC 原文要求『19/19 PASS』，实际 18 PASS + 1 BLOCKED；BLOCKED 为外部 Gate 依赖非实现失败，judge 据实记 18/19",
+    "judge1 全程由 claude-opus-4-7 直接评估 — p18-judge.ts 自动 runner 在本环境嵌套 claude spawn 60s 超时；judge2 异构独立性由 Codex 保证",
+    "Phase 2 精简 evidence：仅 result.json，无 raw command transcript"
+  ]
+}

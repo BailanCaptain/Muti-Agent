@@ -1,0 +1,1 @@
+{"verdict":"BLOCKED","reason":"result.json 自报 BLOCKED；checks.blocker 明确为 feature.md Gate 2/Iron Laws 3 未批准，和 AC 预期 BLOCKED 一致，不应判 FAIL。","weak_points":["Gate 2 外部门禁未批，真 wiki.config.yaml 路径未运行验证"]}

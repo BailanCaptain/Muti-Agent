@@ -1,0 +1,18 @@
+{
+  "ac_id": "AC-P3-1",
+  "ac_text": "StatusPanel 360-1200px 拖宽 ≥50fps + localStorage persist + reload ±1px (v3.4 max 升 1200)",
+  "evidence_files": [
+    "commits: 29ae449 (Day 11) + 7a30ef8 (Day 11 r2) + 91df33d (v3.4 max 1200)",
+    "unit-test: components/stores/layout-store.test.ts (clamp 边界 + persist)",
+    "unit-test: components/chat/right-panel/resize-handle.test.ts (拖动 DOM-direct + 360/1200 边界 + keyboard nav Home/End)",
+    "review: .runtime/reviews/F027-Day11-review-r1-verdict.md (GO) + F027-Day11-review-r2-verdict.md (GO)",
+    "plan: docs/plans/F027-phase3-implementation-plan.md §3 Week 3 Day 11 + v3.4 patch",
+    "walkthrough: docs/plans/F027-phase3-walkthrough.md AC-P3-1 (浏览器实操 step 7)",
+    "screenshots/BLOCKED-user-browser-step.md (小孙浏览器实测 — fps + reload diff 需用户截图)"
+  ],
+  "walkthrough_log": "在 docs/plans/F027-phase3-walkthrough.md AC-P3-1 § 中",
+  "executed_at": "2026-05-23",
+  "implementation_status": "DONE",
+  "review_status": "GO (Day 11 r2 confirmed)",
+  "browser_verification": "BLOCKED (需用户浏览器实测 + 截图)"
+}

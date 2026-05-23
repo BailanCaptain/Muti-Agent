@@ -1,0 +1,17 @@
+{
+  "ac_id": "AC-P3-1",
+  "judge": "codex-gpt-5.4",
+  "verdict": "CONDITIONAL_PASS",
+  "rubric": {
+    "evidence_completeness": "PARTIAL - commits and unit/component tests cover width clamp, persistence, DOM-direct drag, and keyboard behavior; the literal browser artifacts for >=50fps and reload pixel diff are absent and recorded only as BLOCKED.",
+    "ac_literal_contract": "CONDITIONAL_PASS - 360-1200 clamp and localStorage persistence are covered by code/tests; >=50fps and reload +/-1px are browser/performance assertions and are not proven by the evidence pack.",
+    "design_intent_alignment": "PASS - v3.4 max-width change to 1200 is reflected in plan/result evidence and the implementation direction matches the inspector wide-panel intent.",
+    "residual_risk": "A React/DOM-direct implementation can still pass unit tests while missing the runtime fps threshold on the real app shell; manual DevTools or equivalent browser proof remains required for plain PASS."
+  },
+  "blocked_evidence": [
+    "browser-fps-recording",
+    "reload-pixel-diff-screenshot"
+  ],
+  "go_with_blocked_evidence": true,
+  "notes": "I ran the targeted frontend suite including layout-store and resize-handle; it passed. I do not treat missing browser fps evidence as a code blocker, but I would not label this a clean PASS without the two manual browser artifacts."
+}

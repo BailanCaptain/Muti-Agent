@@ -1,0 +1,18 @@
+{
+  "verdict": "PASS",
+  "ac": "AC-P2-18",
+  "reason": "Phase 2 evidence pack 框架完整：19 个 AC 目录各含 result.json + judges/（judge1 Claude Opus / judge2 Codex 异构 / arbitration）。18 个 AC double-pass PASS；AC-P2-3b BLOCKED 是 Iron Laws 3 / feature.md Gate 2 外部门禁依赖（非实现缺陷），待 Gate 2 批准解锁。crash lease recovery fixture（runtime crash → 备机接管 trace recovered_from_crash）由 AC-P2-1 的 scheduler-runtime.test.ts『follower→leader 提升』case 覆盖。",
+  "checks": {
+    "acs_total": 19,
+    "acs_pass": 18,
+    "acs_blocked": 1,
+    "blocked_ac": "AC-P2-3b",
+    "blocked_reason": "feature.md Gate 2 (Iron Laws 3 配置不可变) 未批准 — 不创建真 wiki.config.yaml",
+    "double_pass_mechanism": "judge1 (claude-opus-4-7 via generic p18-judge.ts) + judge2 (codex 异构) + arbitration.json",
+    "phase2_test_total": 248,
+    "phase2_test_passed": 248,
+    "phase2_test_failed": 0,
+    "crash_recovery_fixture": "scheduler-runtime.test.ts『范-r2 P2-1: follower→leader 提升 → recovered_from_crash』",
+    "full_suite": "pnpm test:api → 2412 pass / 8 skip / 1 todo / 0 fail"
+  }
+}

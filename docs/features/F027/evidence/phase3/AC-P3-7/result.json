@@ -1,0 +1,16 @@
+{
+  "ac_id": "AC-P3-7",
+  "ac_text": "调度器 go-live: API server 启动 → SchedulerRuntime 实例化 + 11 job 注册 + 真 job_trace 落 .runtime/job-traces/ + Iron Laws 3 负断言 (不存在/不创建/不写入 wiki.config.yaml + fallback config 来源可观测 + Gate 2 未批保持 BLOCKED)",
+  "evidence_files": [
+    "commits: Phase 2 整批 (P19.1-P19.16 + integration layer SchedulerRuntime 等)",
+    "unit-test: packages/api/src/scheduler/runtime/scheduler-runtime.test.ts (lease + 11 job 注册 + crash recovery)",
+    "live-log: dev:api 启动 log 显示 'F027 P20 scheduler go-live cronJobs=7 startupJobs=1 eventDrivenJobs=2 configSource=fallback:default' (.runtime/.../bn2i0i9b0.output)",
+    "iron-laws-3: ls wiki.config.yaml → 不存在 ✅ + worktree-preview env 未设 WIKI_CONFIG_PATH → fallback default loader (Phase 2 evidence AC-P2-3a)",
+    "review: Phase 2 evidence pack (docs/features/F027/evidence/phase2/) double-pass GO",
+    "walkthrough: AC-P3-7 (命令行验证 11 job + Iron Laws 3 ls)"
+  ],
+  "executed_at": "2026-05-23",
+  "implementation_status": "DONE (Phase 2 P19 + Phase 3 dev:api 启动 wire)",
+  "review_status": "GO (Phase 2 double-pass + AC-P3-7 inherits Phase 2 evidence)",
+  "browser_verification": "N/A (命令行验, 不依赖浏览器)"
+}

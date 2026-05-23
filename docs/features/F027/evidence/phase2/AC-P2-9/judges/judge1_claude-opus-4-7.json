@@ -1,0 +1,9 @@
+{
+  "verdict": "PASS",
+  "reason": "result.json verdict=PASS；backfill-docs.test.ts 22 tests 全过；正式跑落 _backfill/ draft + 写 wiki_events，--resume 双源 marker（frontmatter ingest_event_id + state.jsonl），kill -9 后跳过已成功，wiki_events schema diff=∅。",
+  "weak_points": [
+    "AC-P2-8 与 AC-P2-9 共用 backfill-docs.test.ts，result.json 未拆分各自子计数",
+    "kill -9 用模拟中断 fixture 验证；wiki_events schema diff=∅ 断言依赖测试内部 assert",
+    "judge1 由 claude-opus-4-7 直接评估产出（p18-judge runner 环境受限）"
+  ]
+}

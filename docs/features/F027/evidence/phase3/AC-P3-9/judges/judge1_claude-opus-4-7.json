@@ -1,0 +1,14 @@
+{
+  "ac_id": "AC-P3-9",
+  "judge": "claude-opus-4-7",
+  "verdict": "CONDITIONAL_PASS",
+  "rubric": {
+    "evidence_completeness": "PARTIAL — Phase 3 frontend Inspector UI 9 字段 ready (RecallSection + AdaptiveRecallPolicy); a/b/c backend wiring 在 Phase 1 P13 不在 Phase 3 commit 链 (plan §3 Week 2 Day 7-9 是 Phase 3 显式列 a/b/c 工作但实施可能滑到 Phase 1 P13 — 需要核 dev branch)",
+    "ac_literal_contract": "frontend PASS; backend a/b/c 待核; 'fixture 验证写入' 在 Phase 1 P13 单测应该有 — Phase 3 不重做",
+    "design_intent_alignment": "wiring 跨 Phase 1/Phase 3 是 plan 设计 (Phase 3 plan v3 line 103-106 显式列 Week 2 Day 7-9 a/b/c, 但 Phase 1 P13 已 done 时再做 Week 2 重复 — 需要明示 Phase 3 a/b/c 是 'fixture-level 验证' 而非 backend 重做)",
+    "residual_risk": "Phase 3 收口前需核 Phase 1 P13 wiring 真接通了 a (orchestrator executeAdaptiveRecall 真调) + b (prompt_audit 9 字段写入 fixture) + c (Level5Sink wiki_events); worktree DB schema 缺 prompt_audit 表 → 浏览器实测验 b 不可行"
+  },
+  "blocked_evidence": ["fixture-prompt_audit-9-fields-sql-query", "browser-inspector-real-data"],
+  "go_with_blocked_evidence": false,
+  "notes": "**升级 Phase 3 收口**: AC-P3-9 a/b/c wiring 状态需明确确认 — Phase 1 P13 已完成时, Phase 3 Week 2 Day 7-9 列工作是否重复? 应在收口 summary md 中明示."
+}

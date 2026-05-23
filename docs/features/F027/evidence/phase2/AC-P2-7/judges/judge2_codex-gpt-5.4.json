@@ -1,0 +1,1 @@
+{"verdict":"PASS","reason":"result.json 为 PASS，checks=10/10/0；静态核对 docs-watcher.test.ts 正好 10 个 test，覆盖 chokidar、fs temp、awaitWriteFinish、忽略临时文件。","weak_points":["动态测试复跑被 spawn EPERM 拦截"]}

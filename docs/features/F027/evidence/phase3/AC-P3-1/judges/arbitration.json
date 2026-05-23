@@ -1,0 +1,8 @@
+{
+  "ac_id": "AC-P3-1",
+  "judge1_verdict": "PASS",
+  "judge2_verdict": "CONDITIONAL_PASS",
+  "double_pass": false,
+  "arbitration_verdict": "CONDITIONAL_PASS",
+  "rationale": "j1+j2 一致: 360-1200 clamp + persist + DOM-direct drag 单测 PASS; ≥50fps + reload ±1px browser 实测 BLOCKED. j2 更严格 — 不允许 'PASS-with-BLOCKED' 标签, 要 browser 实测才纯 PASS. arbitration 取 j2 立场 → CONDITIONAL_PASS, 不阻 Phase 3 收口 (browser proof 推到合 dev 前小孙手动 walkthrough)."
+}

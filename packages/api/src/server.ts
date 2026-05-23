@@ -33,6 +33,7 @@ import { registerCallbackRoutes } from "./routes/callbacks"
 import { registerDebugA2ARoutes } from "./routes/debug-a2a"
 import { registerDecisionBoardRoutes } from "./routes/decision-board"
 import { registerMessageRoutes } from "./routes/messages"
+import { registerPhase3Routes } from "./routes/phase3"
 import { registerPreviewRoutes } from "./routes/preview"
 import { registerRuntimeConfigRoutes } from "./routes/runtime-config"
 import { registerSessionRuntimeConfigRoutes } from "./routes/session-runtime-config"
@@ -42,6 +43,7 @@ import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
 import { createHaikuRunner } from "./runtime/haiku-runner"
 import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
+import { bootSchedulerRuntime } from "./runtime/scheduler-bootstrap"
 import { awaitRunsToStop } from "./runtime/shutdown"
 import { MemoryService } from "./services/memory-service"
 import { MessageService } from "./services/message-service"
@@ -229,6 +231,24 @@ export async function createApiServer(options: {
   messages.setSopTracker(sopTracker)
   messages.setWorkflowSopService(workflowSopService)
   messages.setDecisionManager(decisions)
+  // F027 Phase 3 P20 Day 7-8 a · AdaptiveRecallCoordinator boot wiring。
+  // Day 7-8 a 注入 noop（enabled=false）— wiring 到位，不真触发 LLM。
+  // Phase 4 接 critique LLM + level2-4 backend + Level5Sink 生产实现后，
+  // 替换为 new AdaptiveRecallCoordinator({enabled: true, executorDeps, ...})。
+  {
+    const { createNoopAdaptiveRecallCoordinator } = await import(
+      "./orchestrator/adaptive-recall-coordinator"
+    )
+    messages.setAdaptiveRecallCoordinator(createNoopAdaptiveRecallCoordinator())
+  }
+  // F027 Phase 3 P20 Day 8 b · PromptAuditWriter boot wiring (AC-P3-9 b)。
+  // 真 writer 注入 — 每次 A2A 拼装写一行 prompt_audit row（9 V15.2 Adaptive Recall
+  // 字段 + base fields）。prompt-inspector Day 4 endpoint 起就能拿真值。
+  // Coordinator 是 noop 时 9 recall fields 走 disabled 默认（recall_required=false 等）。
+  {
+    const { PromptAuditWriter } = await import("./wiki/prompt-audit/prompt-audit-writer")
+    messages.setPromptAuditWriter(new PromptAuditWriter({ db: drizzleDb }))
+  }
 
   // F002: Decision Board + settle → flush → single dispatch pipeline.
   // The board holds [拍板] items across raisers (dedupe by normalized
@@ -581,11 +601,55 @@ export async function createApiServer(options: {
   })
   registerMcpServer(app)
 
+  // F027 Phase 3 P20 · Phase 3 endpoint 集中注册（Week 1 Day 3+ / Week 2 Day 6+）
+  // 已 wire：
+  //   - GET /api/rooms/:id/viewfinder + GET /api/wiki/drafts (Week 1 Day 3)
+  //   - GET /api/rooms/:id/prompt-inspector (Week 1 Day 4)
+  //   - POST /api/wiki/ingest/preview (Week 1 Day 5)
+  //   - POST /api/rooms/:id/decisions + GET /api/rooms/:id/decisions/coverage (Week 2 Day 6 AC-P3-8)
+  //   - POST /api/wiki/ingest/commit (Week 2 Day 9-10 AC-P3-10) — 需 wikiServices 注入
+  registerPhase3Routes(app, {
+    db: drizzleDb,
+    wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    wikiServices,
+  })
+
+  // F027 Phase 3 P20 · scheduler go-live（Week 1 Day 1）
+  //
+  // boot 11 真 job adapter + SchedulerRuntime + start；走 fallback config（不等
+  // Gate 2）。Iron Laws 3 fail-safe：worktree root 有 wiki.config.yaml 会抛错。
+  //
+  // MULTI_AGENT_SKIP_SCHEDULER=1 跳过（CI / 单测）。
+  // 单元测试用 createApiServer 时默认跳过 — vitest 跑 next-app 组件测试只起 fastify
+  // 不应起 scheduler。
+  const schedulerRuntime = await bootSchedulerRuntime({
+    db: drizzleDb,
+    log: app.log,
+    // 调度告警走 ws broadcast（lazy resolve broadcaster.broadcast — registerWsRoute
+    // 已在上面装好实际实现，此处闭包捕获最新引用）。
+    pushAlert: (trace) =>
+      broadcaster.broadcast({ type: "scheduler.alert", payload: trace } as never),
+    pushChainedAlert: (alert) =>
+      broadcaster.broadcast({ type: "scheduler.chained_alert", payload: alert } as never),
+    rootDir: process.cwd(),
+    skipBoot: process.env.MULTI_AGENT_SKIP_SCHEDULER === "1",
+  })
+  app.addHook("onClose", async () => {
+    if (schedulerRuntime) {
+      try {
+        await schedulerRuntime.stop()
+      } catch (err) {
+        app.log.warn({ err }, "schedulerRuntime.stop() threw on close (ignored)")
+      }
+    }
+  })
+
   Object.assign(app, {
     multiAgentContext: {
       repository,
       sessions,
       invocations,
+      schedulerRuntime,
     },
   })
 

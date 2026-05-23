@@ -267,7 +267,7 @@ export const wikiEvents = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     ts: text("ts").notNull(),
     alias: text("alias").notNull(),
-    action: text("action").notNull(), // write|append|patch|ingest|promote|demote|delete
+    action: text("action").notNull(), // write|append|patch|ingest|promote|demote|delete|recall_escalate (F027 P20 Day 9 c)
     path: text("path").notNull(),
     baseHash: text("base_hash"),
     contentHash: text("content_hash"),
