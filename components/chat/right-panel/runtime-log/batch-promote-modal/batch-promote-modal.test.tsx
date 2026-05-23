@@ -320,6 +320,54 @@ describe("BatchPromoteModal", () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it("(10a) codex mid-r1 P1: open=true 状态下 rows 变 → phase 不被重置 (防 batch report 被清)", async () => {
+    mockOnce({
+      ok: true,
+      status: 200,
+      json: {
+        ok: true,
+        total: 1,
+        success: [
+          {
+            srcDraftPath: "wiki/concepts/draft/_auto/a.md",
+            destWikiPath: "wiki/concepts/a.md",
+            finalPath: "/tmp/wiki/concepts/a.md",
+            eventId: 1,
+          },
+        ],
+        failed: [],
+      },
+    })
+
+    // Wrapper 允许动态改 rows
+    function Wrapper({ rows }: { rows: readonly { srcDraftPath: string }[] }) {
+      return (
+        <BatchPromoteModal
+          open={true}
+          rows={rows}
+          callerAlias="小孙"
+          onClose={() => {}}
+          onBatchComplete={() => {}}
+        />
+      )
+    }
+
+    const initialRows = [{ srcDraftPath: "wiki/concepts/draft/_auto/a.md" }]
+    const { rerender } = render(<Wrapper rows={initialRows} />)
+
+    // 提交 + 等 report phase
+    fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: "首批" } })
+    fireEvent.click(screen.getByTestId("batch-promote-submit"))
+    await waitFor(() => screen.getByTestId("batch-promote-report"))
+
+    // 关键: parent re-render 传新 rows (模拟成功后 selectedPaths 被清/数据 refetch 导致 rows 变 [])
+    rerender(<Wrapper rows={[]} />)
+
+    // 仍应停在 report phase, 不被重置回 compose
+    expect(screen.getByTestId("batch-promote-report")).toBeTruthy()
+    expect(screen.queryByTestId("batch-promote-rows")).toBeNull()
+  })
+
   it("(11) suggestDestWikiPath helper 推断正确", () => {
     expect(suggestDestWikiPath("wiki/concepts/draft/_auto/rag.md")).toBe("wiki/concepts/rag.md")
     expect(suggestDestWikiPath("wiki/methods/draft/x.md")).toBe("wiki/methods/x.md")

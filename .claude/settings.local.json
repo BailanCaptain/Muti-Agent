@@ -215,7 +215,8 @@
       "Bash(codex status *)",
       "Bash(codex --help)",
       "Bash(codex cloud *)",
-      "Bash(codex review *)"
+      "Bash(codex review *)",
+      "Bash(command -v codex)"
     ]
   },
   "enableAllProjectMcpServers": true,

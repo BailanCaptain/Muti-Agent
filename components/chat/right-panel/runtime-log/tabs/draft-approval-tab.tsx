@@ -78,13 +78,18 @@ export function DraftApprovalTab() {
   }, [])
 
   const handleBatchClose = useCallback(() => {
+    // codex mid-r1 P1 修: clear selection + refetch 推迟到 modal close
+    // (handleBatchComplete 仍 open 时清 selectedPaths 会让 batchRows 变 []
+    //  → modal effect 重置回 compose phase → 报告 view 被清，用户看不到结果)
     setBatchOpen(false)
-  }, [])
+    setSelectedPaths(new Set())
+    refetch()
+  }, [refetch])
 
   const handleBatchComplete = useCallback(() => {
-    refetch()
-    setSelectedPaths(new Set())
-  }, [refetch])
+    // modal 提交完成 — 不动 selectedPaths / refetch，留给 handleBatchClose
+    // (保持 modal 在 report phase 显示，直到用户主动关闭)
+  }, [])
 
   // 多选 rows 给 BatchPromoteModal 用
   const batchRows = useMemo(() => {

@@ -103,9 +103,17 @@ export function BatchPromoteModal({
 
   const submitHook = useBatchPromote()
 
-  // Modal open 时初始化 editableRows (从 props.rows 推 dest path)
+  // codex mid-r1 P1 修: 只在 open 从 false→true 边沿初始化一次，
+  // 不在 rows 变时重置 phase (否则 submit 成功后 parent 清 selectedPaths/refetch
+  // 导致 rows 变 [] → 立刻重置回 compose → 用户看不到 success/failed 报告)
+  const isFirstOpenRef = useRef(true)
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      isFirstOpenRef.current = true
+      return
+    }
+    if (!isFirstOpenRef.current) return // 已初始化过，不重置
+    isFirstOpenRef.current = false
     setEditableRows(
       rows.map((r) => ({
         srcDraftPath: r.srcDraftPath,
@@ -116,8 +124,7 @@ export function BatchPromoteModal({
     setReason("")
     setPhase("compose")
     submitHook.reset()
-    // 仅当 modal 打开/rows 变时重置；submitHook.reset identity 在 useCallback 内稳定
-    // (use-batch-promote-api.ts setReset useCallback([]))
+    // 仅当 modal 打开边沿时初始化；rows 是 first-open 快照
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, rows])
 

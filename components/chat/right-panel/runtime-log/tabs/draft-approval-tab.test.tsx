@@ -394,6 +394,70 @@ describe("DraftApprovalTab AC-P4-4 multi-select 批量审批 (Day 12)", () => {
     expect(btn.textContent).toMatch(/批量审批 2 份/)
   })
 
+  it("(P4-D12-4) codex mid-r1 P1: submit 成功后 modal 仍开 + 显示 report (不被 selectedPaths 清触发重置)", async () => {
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/api/wiki/drafts/batch-promote")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              ok: true,
+              total: 2,
+              success: [
+                {
+                  srcDraftPath: "wiki/concepts/draft/_auto/p1.md",
+                  destWikiPath: "wiki/concepts/p1.md",
+                  finalPath: "/tmp/wiki/concepts/p1.md",
+                  eventId: 1,
+                },
+                {
+                  srcDraftPath: "wiki/concepts/draft/_auto/p2.md",
+                  destWikiPath: "wiki/concepts/p2.md",
+                  finalPath: "/tmp/wiki/concepts/p2.md",
+                  eventId: 2,
+                },
+              ],
+              failed: [],
+            }),
+        } as Response)
+      }
+      // drafts list endpoint
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve(
+            makeResponse({
+              drafts: [
+                makeDraft({ path: "wiki/concepts/draft/_auto/p1.md", title: "P1" }),
+                makeDraft({ path: "wiki/concepts/draft/_auto/p2.md", title: "P2" }),
+              ],
+              total: 2,
+            }),
+          ),
+      } as Response)
+    }) as unknown as typeof fetch
+
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByTestId("draft-approval-list")).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId("draft-approval-checkbox-wiki/concepts/draft/_auto/p1.md"))
+    fireEvent.click(screen.getByTestId("draft-approval-checkbox-wiki/concepts/draft/_auto/p2.md"))
+    fireEvent.click(screen.getByTestId("draft-approval-batch-button"))
+    await waitFor(() => screen.getByText(/批量审批 2 份 draft → wiki/))
+
+    fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: "首批" } })
+    fireEvent.click(screen.getByTestId("batch-promote-submit"))
+
+    // 关键: submit 成功后 report view 应仍可见，不被立即关闭/重置
+    await waitFor(() => expect(screen.getByTestId("batch-promote-report")).toBeTruthy())
+    expect(screen.getByText("✅ Success: 2 份")).toBeTruthy()
+    // 关闭按钮仍可点
+    expect(screen.getByTestId("batch-promote-close")).toBeTruthy()
+  })
+
   it("(P4-D12-3) 点 [批量审批] → BatchPromoteModal 弹出含 2 行 src", async () => {
     mockFetchResponse(
       makeResponse({
