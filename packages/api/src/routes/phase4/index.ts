@@ -8,16 +8,20 @@
  *   - POST /api/wiki/drafts/promote          (AC-P4-1 · full promote 含 mv + wiki_events)
  *
  * Week 2-3 待加 (TBD):
+ *   - POST /api/wiki/drafts/batch-promote   (AC-P4-4 · 批量审批 部分失败语义)
+ *
+ * Week 3-4 待加 (TBD):
  *   - POST /api/wiki/drafts/demote     (AC-P4-3 · DemoteModal)
  *   - GET  /api/wiki/drafts/rollback   (AC-P4-3 · RollbackPreview read-only)
- *   - POST /api/wiki/drafts/batch-promote (AC-P4-4)
  */
 
 import type { FastifyInstance } from "fastify"
 
 import type { WikiServices } from "../../wiki/wiki-services"
+import { BatchPromoteService } from "../../wiki/promote-audit/batch-promote-service"
 import { PromoteWikiService } from "../../wiki/promote-audit/promote-wiki-service"
 import { V14PromoteAuditService } from "../../wiki/promote-audit/v14-promote-audit-service"
+import { registerBatchPromoteRoutes } from "./batch-promote"
 import { registerPromoteRoutes } from "./promote"
 
 export interface Phase4RoutesDeps {
@@ -43,6 +47,14 @@ export function registerPhase4Routes(app: FastifyInstance, deps: Phase4RoutesDep
     wikiRoot: deps.wikiServices.wikiRoot,
     leaderTerm: () => deps.wikiServices.leader.getCurrent()?.currentTerm ?? "999",
   })
+
+  const batch = new BatchPromoteService({
+    promote,
+    leases: deps.wikiServices.leases,
+    currentLeaderTerm: () => deps.wikiServices.leader.getCurrent()?.currentTerm ?? "999",
+  })
+  registerBatchPromoteRoutes(app, { batch })
 }
 
 export { registerPromoteRoutes } from "./promote"
+export { registerBatchPromoteRoutes } from "./batch-promote"
