@@ -1,7 +1,13 @@
 "use client"
 
 import { useCallback, useRef, useState } from "react"
+
+import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { IngestModal, type IngestModalFile } from "../ingest-modal/ingest-modal"
+import {
+  type IndexViewSummary,
+  useIndexData,
+} from "./wiki-meta/use-wiki-meta-data"
 
 /**
  * F027 Phase 3 Week 4 Day 19b-1 (AC-P3-6 入口 B) · KnowledgeBaseTab
@@ -41,9 +47,11 @@ function getCurrentUserAlias(): string {
 }
 
 export function KnowledgeBaseTab() {
+  const activeLvl2 = useRuntimeLogStore((s) => s.activeLvl2)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [modalFile, setModalFile] = useState<IngestModalFile | null>(null)
   const [pickerError, setPickerError] = useState<string | null>(null)
+  const indexData = useIndexData({ enabled: activeLvl2 === "knowledge-base" })
 
   const handleDropClick = useCallback(() => {
     setPickerError(null)
@@ -123,10 +131,11 @@ export function KnowledgeBaseTab() {
             ⚠ {pickerError}
           </div>
         )}
-        <div className="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-slate-400">
-          ⏳ Phase 4 上线 — 接 GET /api/wiki/index（wiki/index.md + wiki/index/concepts.md /
-          rules.md / rooms-active.md 派生视图）
-        </div>
+        <IndexList
+          data={indexData.data}
+          isLoading={indexData.isLoading}
+          error={indexData.error}
+        />
       </div>
       <IngestModal
         open={modalFile !== null}
@@ -137,4 +146,88 @@ export function KnowledgeBaseTab() {
       />
     </>
   )
+}
+
+function IndexList({
+  data,
+  isLoading,
+  error,
+}: {
+  data: { views: IndexViewSummary[]; total: number }
+  isLoading: boolean
+  error: string | null
+}) {
+  if (isLoading) {
+    return (
+      <div
+        className="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-[10px] text-slate-400"
+        data-testid="kb-loading"
+      >
+        ⏳ 加载派生视图…
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div
+        className="rounded border border-red-300 bg-red-50 p-3 text-[10px] text-red-700"
+        data-testid="kb-error"
+      >
+        ⚠ 加载失败：{error}
+      </div>
+    )
+  }
+  if (data.total === 0) {
+    return (
+      <div
+        className="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-[10px] text-slate-400"
+        data-testid="kb-empty"
+      >
+        暂无派生视图 (wiki/index/ 空; worktree-preview fixture 应自动 seed)
+      </div>
+    )
+  }
+  return (
+    <ul className="flex flex-col gap-1.5" data-testid="kb-index-list">
+      {data.views.map((v) => (
+        <li key={v.path}>
+          <IndexRow view={v} />
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function IndexRow({ view }: { view: IndexViewSummary }) {
+  return (
+    <div
+      className="rounded border border-slate-200 bg-white px-2 py-1.5 hover:border-slate-300"
+      data-testid={`kb-index-row-${view.bucket}`}
+      data-bucket={view.bucket}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="inline-flex items-center rounded border border-violet-300 bg-violet-50 px-1.5 py-0.5 font-mono text-[9px] font-medium text-violet-700">
+          {view.bucket}
+        </span>
+        <span className="shrink-0 text-[9px] text-slate-400" title={view.generatedAt ?? ""}>
+          {view.generatedAt ? formatRelative(view.generatedAt) : "—"}
+        </span>
+      </div>
+      {view.summary && (
+        <div className="mt-1 text-[10px] text-slate-500" title={view.summary}>
+          {view.summary.length > 100 ? `${view.summary.slice(0, 100)}…` : view.summary}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function formatRelative(iso: string): string {
+  const ms = Date.parse(iso)
+  if (Number.isNaN(ms)) return iso
+  const deltaSec = Math.max(0, Math.floor((Date.now() - ms) / 1000))
+  if (deltaSec < 60) return `${deltaSec}s 前`
+  if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)}m 前`
+  if (deltaSec < 86400) return `${Math.floor(deltaSec / 3600)}h 前`
+  return `${Math.floor(deltaSec / 86400)}d 前`
 }

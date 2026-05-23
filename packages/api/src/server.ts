@@ -694,7 +694,12 @@ export async function createApiServer(options: {
   // F027 Phase 4 P4 Day 7 · AC-P4-1 PromoteModal endpoints
   //   - POST /api/wiki/drafts/promote/preview  (V14 audit preview)
   //   - POST /api/wiki/drafts/promote          (full promote: V14 + mv + wiki_events)
-  registerPhase4Routes(app, { wikiServices })
+  //   - POST /api/wiki/drafts/batch-promote   (Day 11 AC-P4-4)
+  //   - GET  /api/wiki/warnings + /api/wiki/index (Day 17 AC-P4-9 a/b)
+  //
+  // metaWikiRoot 显式传 destWikiRoot (跟 fixture copier 一致, 不用 wikiServices.wikiRoot
+  // — 后者跟 fixture dest 在 worktree-preview 模式不一致, pre-existing follow-up)
+  registerPhase4Routes(app, { wikiServices, metaWikiRoot: destWikiRoot })
 
   // F027 Phase 3 P20 · scheduler go-live（Week 1 Day 1）
   //
