@@ -43,6 +43,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 
 // ─── §12 artifact schema types ────────────────────────────────────────────────
 
@@ -328,6 +329,15 @@ export function validateResultJsonSchema(r: Partial<ResultJson>): string[] {
     if (!isVerdict(r.double_pass.judge1_verdict)) missing.push("double_pass.judge1_verdict")
     if (!isVerdict(r.double_pass.judge2_verdict)) missing.push("double_pass.judge2_verdict")
     if (typeof r.double_pass.consensus !== "boolean") missing.push("double_pass.consensus")
+    // codex end-r2 P2 修: arbitration_verdict 字段必须 present (允许 null 但不能 undefined)
+    if (!("arbitration_verdict" in r.double_pass)) {
+      missing.push("double_pass.arbitration_verdict (must be present, can be null)")
+    } else if (
+      r.double_pass.arbitration_verdict !== null &&
+      !isVerdict(r.double_pass.arbitration_verdict)
+    ) {
+      missing.push("double_pass.arbitration_verdict (must be null or a valid Verdict)")
+    }
   }
   if (!r.evidence_paths) missing.push("evidence_paths")
   else {
@@ -412,7 +422,24 @@ function inferAcIdFromPath(p: string): string {
 
 // ─── CLI entry (optional, for manual runner trigger) ─────────────────────────
 
-if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}`) {
+/**
+ * codex end-r2 P1 修: 原本用 `import.meta.url === \`file://${argv1}\`` 在 Windows 下永不匹配
+ * (import.meta.url 是 `file:///C:/...` 三斜杠, argv1 是 `C:\\...` 反斜杠), 导致 CLI fail open
+ * (script 啥都不做 exit 0)。改用 fileURLToPath + path.resolve cross-platform safe 比较。
+ *
+ * Exported for test (避免 mock process / direct call CLI 路径)。
+ */
+export function isInvokedAsMain(metaUrl: string, argv1: string | undefined): boolean {
+  if (!argv1) return false
+  try {
+    const scriptPath = fileURLToPath(metaUrl)
+    return path.resolve(argv1) === scriptPath
+  } catch {
+    return false
+  }
+}
+
+if (isInvokedAsMain(import.meta.url, process.argv[1])) {
   const dir = process.argv[2]
   if (!dir) {
     console.error("Usage: tsx scripts/f027-phase4-evidence-runner.ts <evidence-dir>")

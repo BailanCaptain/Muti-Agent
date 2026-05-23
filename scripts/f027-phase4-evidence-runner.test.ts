@@ -4,8 +4,10 @@ import os from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
 
+import { pathToFileURL } from "node:url"
 import {
   type ArbitrationJson,
+  isInvokedAsMain,
   type JudgeJson,
   type ResultJson,
   runEvidence,
@@ -112,10 +114,52 @@ function goodJudge(judgeId: JudgeJson["judge_id"], verdict: JudgeJson["verdict"]
   }
 }
 
+describe("AC-P4-5 evidence runner · isInvokedAsMain (codex end-r2 P1)", () => {
+  // Cross-platform 验: Windows `file:///C:/...` 三斜杠 + argv1 反斜杠
+  it("(R1-1) script 同路径调用 → true", () => {
+    const scriptPath = "C:\\Users\\foo\\runner.ts"
+    const metaUrl = pathToFileURL(scriptPath).href // "file:///C:/Users/foo/runner.ts"
+    assert.equal(isInvokedAsMain(metaUrl, scriptPath), true)
+  })
+
+  it("(R1-2) script 不同路径调用 → false (其他文件 import 此 module)", () => {
+    const scriptPath = "C:\\Users\\foo\\runner.ts"
+    const metaUrl = pathToFileURL(scriptPath).href
+    assert.equal(isInvokedAsMain(metaUrl, "C:\\Users\\foo\\other.ts"), false)
+  })
+
+  it("(R1-3) argv1 undefined → false", () => {
+    const metaUrl = pathToFileURL("C:\\Users\\foo\\runner.ts").href
+    assert.equal(isInvokedAsMain(metaUrl, undefined), false)
+  })
+
+  it("(R1-4) POSIX 路径同样 work (cross-platform)", () => {
+    const scriptPath = "/home/foo/runner.ts"
+    const metaUrl = pathToFileURL(scriptPath).href // "file:///home/foo/runner.ts"
+    assert.equal(isInvokedAsMain(metaUrl, scriptPath), true)
+  })
+})
+
 describe("AC-P4-5 evidence runner · schema validators", () => {
   it("(1) result.json 缺 ac_id → 报字段", () => {
     const missing = validateResultJsonSchema({} as Partial<ResultJson>)
     assert.ok(missing.includes("ac_id"))
+  })
+
+  it("(1a) codex end-r2 P2: double_pass 缺 arbitration_verdict 字段 → 报字段", () => {
+    const missing = validateResultJsonSchema({
+      ...GOOD_RESULT,
+      double_pass: {
+        judge1_verdict: "PASS",
+        judge2_verdict: "PASS",
+        consensus: true,
+        // arbitration_verdict 字段缺
+      } as ResultJson["double_pass"],
+    })
+    assert.ok(
+      missing.some((s) => s.includes("arbitration_verdict")),
+      `expected 'arbitration_verdict' missing-field but got: ${missing.join(", ")}`,
+    )
   })
 
   it("(2) verdict=BLOCKED 缺 blocked_reason → 报字段", () => {
