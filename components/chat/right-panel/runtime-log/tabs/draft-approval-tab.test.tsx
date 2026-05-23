@@ -345,3 +345,80 @@ describe("DraftApprovalTab AC-P4-3 [Promote] 按钮 (Day 9)", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
   })
 })
+
+describe("DraftApprovalTab AC-P4-4 multi-select 批量审批 (Day 12)", () => {
+  beforeEach(() => resetStores())
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("(P4-D12-1) 每 row 渲染 checkbox; 0 selected → 无 [批量审批] 按钮", async () => {
+    mockFetchResponse(
+      makeResponse({
+        drafts: [
+          makeDraft({ path: "p1.md", title: "P1" }),
+          makeDraft({ path: "p2.md", title: "P2" }),
+        ],
+        total: 2,
+      }),
+    )
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByTestId("draft-approval-list")).toBeTruthy())
+    expect(screen.getByTestId("draft-approval-checkbox-p1.md")).toBeTruthy()
+    expect(screen.getByTestId("draft-approval-checkbox-p2.md")).toBeTruthy()
+    expect(screen.queryByTestId("draft-approval-batch-button")).toBeNull()
+    expect(screen.getByTestId("draft-approval-header").textContent).toMatch(
+      /勾选多份后可批量审批/,
+    )
+  })
+
+  it("(P4-D12-2) 勾 2 份 → header 显示 '已选 2' + [批量审批 2 份] 按钮启用", async () => {
+    mockFetchResponse(
+      makeResponse({
+        drafts: [
+          makeDraft({ path: "p1.md", title: "P1" }),
+          makeDraft({ path: "p2.md", title: "P2" }),
+          makeDraft({ path: "p3.md", title: "P3" }),
+        ],
+        total: 3,
+      }),
+    )
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByTestId("draft-approval-list")).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId("draft-approval-checkbox-p1.md"))
+    fireEvent.click(screen.getByTestId("draft-approval-checkbox-p2.md"))
+
+    expect(screen.getByTestId("draft-approval-header").textContent).toMatch(/已选 2/)
+    const btn = screen.getByTestId("draft-approval-batch-button")
+    expect(btn.textContent).toMatch(/批量审批 2 份/)
+  })
+
+  it("(P4-D12-3) 点 [批量审批] → BatchPromoteModal 弹出含 2 行 src", async () => {
+    mockFetchResponse(
+      makeResponse({
+        drafts: [
+          makeDraft({ path: "wiki/concepts/draft/_auto/p1.md", title: "P1" }),
+          makeDraft({ path: "wiki/concepts/draft/_auto/p2.md", title: "P2" }),
+        ],
+        total: 2,
+      }),
+    )
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByTestId("draft-approval-list")).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId("draft-approval-checkbox-wiki/concepts/draft/_auto/p1.md"))
+    fireEvent.click(screen.getByTestId("draft-approval-checkbox-wiki/concepts/draft/_auto/p2.md"))
+    fireEvent.click(screen.getByTestId("draft-approval-batch-button"))
+
+    // BatchPromoteModal opens, displays 2 rows with P1/P2 title
+    await waitFor(() => expect(screen.getByText(/批量审批 2 份 draft → wiki/)).toBeTruthy())
+    expect(screen.getByTestId("batch-promote-row-wiki/concepts/draft/_auto/p1.md")).toBeTruthy()
+    expect(screen.getByTestId("batch-promote-row-wiki/concepts/draft/_auto/p2.md")).toBeTruthy()
+    // dest input 默认 suggestDestWikiPath
+    const dest1 = screen.getByLabelText(
+      "dest path for wiki/concepts/draft/_auto/p1.md",
+    ) as HTMLInputElement
+    expect(dest1.value).toBe("wiki/concepts/p1.md")
+  })
+})
