@@ -65,6 +65,23 @@ function createPhase1Tables(db: DatabaseSync): void {
       reserved_1 TEXT,
       reserved_2 TEXT
     );
+    CREATE TABLE compiler_leader (
+      id INTEGER PRIMARY KEY,
+      current_term TEXT NOT NULL,
+      leader_alias TEXT,
+      acquired_at TEXT,
+      renewed_at TEXT,
+      lease_expires_at TEXT,
+      reserved_1 TEXT,
+      reserved_2 TEXT
+    );
+    CREATE TRIGGER reject_stale_leader
+      BEFORE INSERT ON wiki_events
+      WHEN EXISTS (SELECT 1 FROM compiler_leader WHERE id = 1)
+        AND CAST(NEW.leader_term AS INTEGER) < CAST((SELECT current_term FROM compiler_leader WHERE id = 1) AS INTEGER)
+      BEGIN
+        SELECT RAISE(ABORT, 'stale leader_term');
+      END;
   `)
 }
 
@@ -192,6 +209,88 @@ describe("applyWorktreePreviewSeed", () => {
     // room_decisions should remain empty (whole tx skipped, not just wiki_events)
     const rd = db.prepare("SELECT COUNT(*) AS n FROM room_decisions").get() as { n: number }
     assert.equal(rd.n, 0)
+  })
+
+  it("(6) fixture wiki_events leader_term CAST→0 < current_term → trigger abort, whole tx rollback (Day 4 inflight bug regression)", () => {
+    // Production bug reproduce (Day 4 worktree-preview boot 实测):
+    //   - compiler_leader.current_term='4' (scheduler boot 推到 term=4)
+    //   - fixture leader_term="seed-term-001" CAST AS INTEGER = 0
+    //   - 0 < 4 → reject_stale_leader trigger ABORT 'stale leader_term'
+    //   - 整事务 rollback → 3 表全空
+    // 修复：fixture leader_term 用纯数字 "999" 永远 ≥ current_term。
+    const db = new DatabaseSync(":memory:")
+    createPhase1Tables(db)
+    // Simulate production: compiler_leader has been promoted to term 4
+    db.prepare(`
+      INSERT INTO compiler_leader (id, current_term, leader_alias) VALUES (1, '4', 'test-leader')
+    `).run()
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seed-t6-"))
+    // writeValidFixtures 用 leader_term="t1" CAST→0 < 4 → trigger 触发
+    writeValidFixtures(tmpDir)
+
+    const report = applyWorktreePreviewSeed({
+      db, sqlitePath: PREVIEW_PATH,
+      worktreePreview: "1",
+      fixtureDir: tmpDir, repoRoot: "/",
+    })
+
+    assert.ok(report.failed, "should fail at INSERT stage when trigger aborts")
+    assert.equal(report.failed.stage, "insert")
+    assert.match(report.failed.error, /stale leader_term/)
+    // Rollback 干净：3 表全空
+    const rd = db.prepare("SELECT COUNT(*) AS n FROM room_decisions").get() as { n: number }
+    const we = db.prepare("SELECT COUNT(*) AS n FROM wiki_events").get() as { n: number }
+    const wl = db.prepare("SELECT COUNT(*) AS n FROM wiki_leases").get() as { n: number }
+    assert.equal(rd.n, 0)
+    assert.equal(we.n, 0)
+    assert.equal(wl.n, 0)
+  })
+
+  it("(7) fixture leader_term as integer string '999' + current_term=4 → trigger pass, all 3 tables seeded (Day 4 fix verify)", () => {
+    const db = new DatabaseSync(":memory:")
+    createPhase1Tables(db)
+    db.prepare(`
+      INSERT INTO compiler_leader (id, current_term, leader_alias) VALUES (1, '4', 'test-leader')
+    `).run()
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seed-t7-"))
+    fs.writeFileSync(
+      path.join(tmpDir, "room-decisions.json"),
+      JSON.stringify([{
+        room_id: "R-001", decided_at: "2026-05-23T10:00:00Z", decided_by: "tester",
+        decision_type: "spec", content: "test", source_message_ids: "[]",
+        source_quote: "q", source_hash: "h1", tombstone: 0, fencing_token: "f1",
+      }]),
+    )
+    fs.writeFileSync(
+      path.join(tmpDir, "wiki-events.json"),
+      JSON.stringify([{
+        ts: "2026-05-23T10:00:00Z", alias: "tester", action: "ingest_commit",
+        path: "wiki/x.md", fencing_token: "f1",
+        leader_term: "999", // fixed: CAST→999 > current_term=4
+        result: "ok", state: "committed",
+      }]),
+    )
+    fs.writeFileSync(
+      path.join(tmpDir, "wiki-leases.json"),
+      JSON.stringify([{
+        path: "wiki/x.md", fencing_token: "f1", owner_alias: "tester",
+        acquired_at: "2026-05-23T10:00:00Z", expires_at: "2099-12-31T00:00:00Z",
+        leader_term: "999",
+      }]),
+    )
+
+    const report = applyWorktreePreviewSeed({
+      db, sqlitePath: PREVIEW_PATH,
+      worktreePreview: "1",
+      fixtureDir: tmpDir, repoRoot: "/",
+    })
+
+    assert.ok(report.inserted)
+    assert.equal(report.inserted.room_decisions, 1)
+    assert.equal(report.inserted.wiki_events, 1)
+    assert.equal(report.inserted.wiki_leases, 1)
   })
 
   it("(5) fixture JSON schema invalid → fail-closed, no rows inserted (r4 self P3-1)", () => {
