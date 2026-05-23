@@ -39,6 +39,14 @@ export interface PreviewIngestBody {
   content: string
   mimeType: IngestMime
   targetType?: DraftType
+  /**
+   * F027 P4 Day 10 AC-P4-3 e · Series 标记（防 chained 误检）
+   * V16.5 chap 25 line 2563-2564 "🔗 系列 (防 chained 误检)"
+   *
+   * 限制: 1-64 chars + [a-zA-Z0-9_-]+ pattern (空字符串视为 undefined)。
+   * commit 时 backend inject 到落盘 markdown frontmatter `series_id: <id>`。
+   */
+  seriesId?: string
 }
 
 export interface PreviewIngestResponse {

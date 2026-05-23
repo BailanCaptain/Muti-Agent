@@ -74,6 +74,8 @@ export function IngestModal({
 }: IngestModalProps) {
   const [targetType, setTargetType] = useState<DraftType>("concept")
   const [reason, setReason] = useState<string>("") // Day 19a UI only
+  // F027 P4 Day 10 AC-P4-3 e · Series 字段 (防 chained 误检)
+  const [seriesId, setSeriesId] = useState<string>("")
 
   const previewHook = useIngestPreview()
   const commitHook = useIngestCommit()
@@ -87,14 +89,17 @@ export function IngestModal({
   // 同时 reset commit state 防 stale commit data 还显示着。
   useEffect(() => {
     if (!open || !file) return
+    // F027 P4 Day 10 AC-P4-3 e: seriesId UI invalid → 不 trigger preview (避免 backend reject 浪费)
+    if (seriesId.length > 0 && !isValidSeriesId(seriesId)) return
     commitHook.reset() // 防新 preview + 旧 commit success 同屏
     previewHook.preview({
       sourcePath: file.name,
       content: file.content,
       mimeType: mime,
       targetType,
+      seriesId: seriesId.length > 0 ? seriesId : undefined,
     })
-  }, [open, file, mime, targetType, previewHook.preview, commitHook.reset])
+  }, [open, file, mime, targetType, seriesId, previewHook.preview, commitHook.reset])
 
   // Commit 成功 → 触发回调 + 不立即 close（让用户看 finalPath 后手动关闭）
   useEffect(() => {
@@ -116,6 +121,7 @@ export function IngestModal({
         previewHook.reset()
         commitHook.reset()
         setReason("")
+        setSeriesId("")
         onClose()
       }
     }
@@ -129,6 +135,7 @@ export function IngestModal({
     previewHook.reset()
     commitHook.reset()
     setReason("")
+    setSeriesId("")
     onClose()
   }
 
@@ -162,6 +169,7 @@ export function IngestModal({
         <div className="flex-1 overflow-y-auto px-4 py-3 text-xs">
           <FileSection file={file} />
           <TypeSection value={targetType} onChange={setTargetType} />
+          <SeriesSection value={seriesId} onChange={setSeriesId} />
           <ReasonSection value={reason} onChange={setReason} />
           <SanitizeSection
             isLoading={previewHook.isLoading}
@@ -282,6 +290,63 @@ function ReasonSection({
         rows={2}
         data-testid="ingest-reason-textarea"
       />
+    </section>
+  )
+}
+
+/**
+ * F027 P4 Day 10 AC-P4-3 e · SeriesSection (V16.5 chap 25 line 2563-2564)
+ *
+ * 🔗 系列 (防 chained 误检) — 可选 free-text input
+ *   - 用户分多次 drop 同一长 paper 的章节时填同一 series_id (例 "rag-paper-v1")
+ *   - backend ingest commit 时 inject 到落盘 markdown frontmatter `series_id: <id>`
+ *   - 后续 multi-drop cross-correlation chained_suspect 检测会跳过同 series_id 命中
+ *   - 限制: 1-64 chars + [a-zA-Z0-9_-]+ (backend contract 强约束; UI 端实时校验)
+ *
+ * 不做 (Week 3+ 范围):
+ *   - dropdown 已有 series list (需 GET /api/wiki/series endpoint, Phase 4+ 接)
+ *   - [+ 新建系列] 按钮 (现在 free-text 就够)
+ */
+const SERIES_ID_PATTERN = /^[a-zA-Z0-9_-]+$/
+
+function isValidSeriesId(value: string): boolean {
+  return value.length > 0 && value.length <= 64 && SERIES_ID_PATTERN.test(value)
+}
+function SeriesSection({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
+  const tooLong = value.length > 64
+  const invalidChars = value.length > 0 && !SERIES_ID_PATTERN.test(value)
+  const hasError = tooLong || invalidChars
+  return (
+    <section className="mb-3" data-testid="ingest-section-series">
+      <h3 className="font-semibold text-[10px] uppercase tracking-wider text-slate-500">
+        🔗 系列 (可选 · 防 chained 误检)
+      </h3>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="如 'rag-paper-v1' — 分多次 drop 同 paper 章节时填同 id"
+        className={`mt-1 w-full rounded border px-2 py-1 text-[11px] font-mono ${
+          hasError ? "border-red-300 text-red-700" : "border-slate-200 text-slate-700"
+        }`}
+        data-testid="ingest-series-input"
+      />
+      {tooLong && (
+        <div className="mt-0.5 text-[10px] text-red-600" data-testid="ingest-series-error-toolong">
+          系列 id 最多 64 字符（当前 {value.length}）
+        </div>
+      )}
+      {invalidChars && !tooLong && (
+        <div className="mt-0.5 text-[10px] text-red-600" data-testid="ingest-series-error-chars">
+          系列 id 只允许字母 / 数字 / _ / -（不可含空格或特殊字符）
+        </div>
+      )}
     </section>
   )
 }
