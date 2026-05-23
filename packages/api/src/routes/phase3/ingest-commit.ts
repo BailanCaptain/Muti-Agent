@@ -134,6 +134,13 @@ export class IngestCommitService {
     // 失败路径不释放 → lease 被本 endpoint 持有到 TTL，撞名 conflict 后用户立刻重试
     // 同 path 会被 lease_held 干扰。try/finally 兜底释放（ok 路径 double-release 是
     // safe noop，因为 releaseLease 用 fencing_token CAS）。
+    //
+    // F027 P4 Day 10 AC-P4-3 e: 落盘前 inject series_id 进 frontmatter（如 caller 在 preview
+    // 时填写了 seriesId）。后续 multi-drop cross-correlation 查 frontmatter 判 chained 跳过。
+    const finalContent = entry.seriesId
+      ? injectSeriesIdIntoFrontmatter(entry.sanitizedContent, entry.seriesId)
+      : entry.sanitizedContent
+
     let response: UpdateWikiResponse
     try {
       response = this.updateWiki.updateWiki(
@@ -141,9 +148,9 @@ export class IngestCommitService {
           path: finalPath,
           action: "write",
           baseHash: null, // 新文件（撞名 → status=conflict）
-          content: entry.sanitizedContent,
+          content: finalContent,
           fencingToken: lease.fencingToken,
-          reason: `ingest_commit previewId=${body.previewId} mime=${entry.mimeType}${entry.targetType ? ` targetType=${entry.targetType}` : ""}`,
+          reason: `ingest_commit previewId=${body.previewId} mime=${entry.mimeType}${entry.targetType ? ` targetType=${entry.targetType}` : ""}${entry.seriesId ? ` seriesId=${entry.seriesId}` : ""}`,
           sourceMessageIds: undefined,
         },
         { alias: body.callerAlias, isServiceIdentity: false },
@@ -278,6 +285,37 @@ export type CommitResult =
         detail?: Record<string, unknown>
       }
     }
+
+/**
+ * F027 P4 Day 10 AC-P4-3 e · 把 series_id 注入到落盘 markdown 的 frontmatter。
+ *
+ * 两种情形:
+ *   1. content 已有 frontmatter (---\n ... \n---\n) → 在闭合 --- 之前插一行 series_id
+ *   2. content 无 frontmatter → prepend minimal frontmatter ---\nseries_id: <id>\n---\n
+ *
+ * 已有 frontmatter 检测:
+ *   - 必须以 "---" 开头 (允许尾随 \n 或 \r\n)
+ *   - 第二个 "---" 必须在合理距离内 (5KB 内, 防 false-positive)
+ *   - 否则当作无 frontmatter 处理 (prepend minimal)
+ *
+ * 不做 (Day 10 范围外):
+ *   - YAML 解析 (KISS — string 操作即可)
+ *   - 已有 series_id 字段 dedupe (caller 不应传同 seriesId 二次 commit)
+ */
+export function injectSeriesIdIntoFrontmatter(content: string, seriesId: string): string {
+  const MAX_FM_SCAN = 5 * 1024 // 5KB 内找闭合 ---
+  const headerMatch = content.match(/^---\s*\n/)
+  if (headerMatch) {
+    const startBodyIdx = headerMatch[0].length
+    const closeIdx = content.indexOf("\n---", startBodyIdx)
+    if (closeIdx > 0 && closeIdx < MAX_FM_SCAN) {
+      // 已有 frontmatter — 在闭合 \n--- 之前插 series_id 行
+      return `${content.slice(0, closeIdx)}\nseries_id: ${seriesId}${content.slice(closeIdx)}`
+    }
+  }
+  // 无 frontmatter (或闭合 --- 太远) — prepend minimal
+  return `---\nseries_id: ${seriesId}\n---\n${content}`
+}
 
 /**
  * 把 sourcePath 派生成 wiki 内 final path。

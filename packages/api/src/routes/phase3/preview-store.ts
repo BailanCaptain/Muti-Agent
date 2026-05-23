@@ -29,6 +29,11 @@ export interface PreviewStoreEntry {
   mimeType: string
   /** caller 可选的 targetType (feature/bug/lesson/concept) */
   targetType?: string
+  /**
+   * F027 P4 Day 10 AC-P4-3 e · seriesId (防 chained 误检)。
+   * preview 时 caller 传入 → store 保留 → commit 时落盘 frontmatter `series_id: <id>`。
+   */
+  seriesId?: string
   /** preview 创建时刻 ISO */
   createdAt: string
   /** preview 过期时刻 ISO（< now 时 take 返 null + 自动剔除） */

@@ -403,6 +403,21 @@ export interface PreviewIngestBody {
   mimeType: IngestMime
   /** 可选目标 type override；不传时由 service 推断。 */
   targetType?: DraftType
+  /**
+   * F027 P4 Day 10 (AC-P4-3 e) · Series 标记（防 chained 误检）。
+   *
+   * 真相源: V16.5 chap 25 line 2563-2564 "🔗 系列 (防 chained 误检)"
+   *   + plan v5 line 42 "Series 标记走 IngestModal '加入系列'字段"
+   *
+   * 用户在 IngestModal "🔗 系列" 字段填写，表示这个 drop 是某系列的一部分
+   * （e.g., 分多次 drop 长 paper 各章节）。落盘时写入 frontmatter `series_id: <id>`。
+   * 后续 multi-drop cross-correlation chained_suspect 检测会跳过同 series_id 的命中
+   * （避免连续 drop 同 series 触发误报）。
+   *
+   * 长度限制: 1-64 chars; allowed pattern [a-zA-Z0-9_-]+。
+   * 不传 / 空 → 不写 series_id metadata。
+   */
+  seriesId?: string
 }
 
 export interface PreviewIngestResponse {
@@ -456,6 +471,26 @@ export function validatePreviewIngest(body: unknown): ValidationResult<PreviewIn
     }
   }
   const targetType = takeOptionalString(b.targetType)
+  // F027 P4 Day 10 AC-P4-3 e · seriesId 校验 (1-64 chars + [a-zA-Z0-9_-]+ pattern)
+  const seriesIdRaw = takeOptionalString(b.seriesId)
+  let seriesId: string | undefined
+  if (seriesIdRaw !== undefined && seriesIdRaw.length > 0) {
+    if (seriesIdRaw.length > 64) {
+      return {
+        ok: false,
+        error: "VALIDATION_FAILED",
+        message: `seriesId max 64 chars, got ${seriesIdRaw.length}`,
+      }
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(seriesIdRaw)) {
+      return {
+        ok: false,
+        error: "VALIDATION_FAILED",
+        message: `seriesId must match [a-zA-Z0-9_-]+ (no spaces / special chars), got: ${seriesIdRaw}`,
+      }
+    }
+    seriesId = seriesIdRaw
+  }
   return {
     ok: true,
     value: {
@@ -463,6 +498,7 @@ export function validatePreviewIngest(body: unknown): ValidationResult<PreviewIn
       content,
       mimeType: mimeType as IngestMime,
       targetType: targetType as DraftType | undefined,
+      seriesId,
     },
   }
 }

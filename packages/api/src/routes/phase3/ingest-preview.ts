@@ -103,6 +103,7 @@ export class IngestPreviewService {
     const previewId = this.newId()
 
     // Day 9-10 (AC-P3-10)：store 注入时 put entry 供 commit endpoint 凭 previewId 取
+    // F027 P4 Day 10 AC-P4-3 e: 透传 seriesId 给 store，commit 时 inject 到 frontmatter
     if (this.store) {
       this.store.put({
         previewId,
@@ -110,6 +111,7 @@ export class IngestPreviewService {
         sanitizedContent: sanitized.sanitizedText,
         mimeType: body.mimeType,
         targetType: body.targetType,
+        seriesId: body.seriesId,
         createdAt: createdAt.toISOString(),
         expiresAt,
       })
