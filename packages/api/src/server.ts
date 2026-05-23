@@ -281,12 +281,19 @@ export async function createApiServer(options: {
       level5,
     })
 
+    // codex r1 P2-1 修: DEFAULT_RECALL_BUDGET.maxLevels=3 (defaults.ts) — 不传
+    // defaultBudget.maxLevels 时 Level 4 read_wiki backend 永远没跑 (跟 boot log "levels=[2,3,4,5]"
+    // 不符 — 虚假承诺)。wire 时显式 override maxLevels=5 让 critique 真按 5 级阶梯走。
     messages.setAdaptiveRecallCoordinator(
-      new AdaptiveRecallCoordinator({ enabled: true, executorDeps }),
+      new AdaptiveRecallCoordinator({
+        enabled: true,
+        executorDeps,
+        defaultBudget: { maxLevels: 5 },
+      }),
     )
     // eslint-disable-next-line no-console
     console.log(
-      "[F027-P4 AC-P4-8] AdaptiveRecallCoordinator wired: enabled=true, levels=[2,3,4,5]",
+      "[F027-P4 AC-P4-8] AdaptiveRecallCoordinator wired: enabled=true, levels=[2,3,4,5], maxLevels=5",
     )
   }
   // F027 Phase 3 P20 Day 8 b · PromptAuditWriter boot wiring (AC-P3-9 b)。

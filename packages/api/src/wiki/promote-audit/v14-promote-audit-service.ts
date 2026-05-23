@@ -37,16 +37,22 @@ const IMPERATIVE_PATTERNS_CN: readonly string[] = [
   "切勿",
 ] as const
 
-const IMPERATIVE_PATTERNS_EN_LOWER: readonly string[] = [
-  "must ",
-  "shall ",
-  "should ",
-  "ignore ",
-  "override ",
-  "must not",
-  "do not ",
-  "you have to",
-  "you need to",
+/**
+ * EN imperative word-boundary patterns (P2-3 r1 修):
+ *   旧版本用 "must " / "ignore " 等 space 后缀字符串匹配，被 `Ignore.` / `ignore\n` /
+ *   句尾 `you must` 全部 bypass (codex r1 P2-3)。
+ *   改 \b regex 用 word boundary，覆盖标点 / newline / 句尾。
+ *   case-insensitive 包词根 + 复合短语两类。
+ */
+const IMPERATIVE_PATTERNS_EN_REGEX: readonly { pattern: RegExp; label: string }[] = [
+  { pattern: /\bmust\b/i, label: "must" },
+  { pattern: /\bshall\b/i, label: "shall" },
+  { pattern: /\bshould\b/i, label: "should" },
+  { pattern: /\bignore\b/i, label: "ignore" },
+  { pattern: /\boverride\b/i, label: "override" },
+  { pattern: /\bdisregard\b/i, label: "disregard" },
+  { pattern: /\bforget\b/i, label: "forget" },
+  { pattern: /\breveal\b/i, label: "reveal" },
 ] as const
 
 const PROMPT_STRUCTURE_PATTERNS: readonly { pattern: RegExp; label: string }[] = [
@@ -140,9 +146,8 @@ function detectImperative(body: string): string[] {
   for (const cn of IMPERATIVE_PATTERNS_CN) {
     if (body.includes(cn)) matched.add(cn)
   }
-  const lower = body.toLowerCase()
-  for (const en of IMPERATIVE_PATTERNS_EN_LOWER) {
-    if (lower.includes(en)) matched.add(en.trim())
+  for (const { pattern, label } of IMPERATIVE_PATTERNS_EN_REGEX) {
+    if (pattern.test(body)) matched.add(label)
   }
   return Array.from(matched)
 }
