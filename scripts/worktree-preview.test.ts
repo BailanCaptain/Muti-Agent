@@ -30,6 +30,17 @@ test("F024 buildPreviewEnv points sqlite to .runtime and evidence to .agents", (
   assert.equal(env.RUNTIME_EVENTS_DIR, "C:/repo/.agents/acceptance/runtime-events")
 })
 
+test("F027 P4 buildPreviewEnv sets WORKTREE_PREVIEW=1 (primary gate for d5 seed loader)", () => {
+  const env = buildPreviewEnv({
+    repoRoot: "C:/repo",
+    worktreeName: "feat/F027",
+    apiPort: 8800,
+    webPort: 3100,
+  })
+
+  assert.equal(env.WORKTREE_PREVIEW, "1")
+})
+
 test("F024 buildPreviewEnv wires api/web ports and next public urls", () => {
   const env = buildPreviewEnv({
     repoRoot: "C:/repo",

@@ -137,6 +137,23 @@ export async function createApiServer(options: {
   const { SqliteStore } = await import("./db/sqlite")
   const { EmbeddingService, formatRecallResults } = await import("./services/embedding-service")
   const embeddingStore = new SqliteStore(options.sqlitePath)
+  // F027 P4 AC-P4-9 d5 · worktree-preview-only data seed loader. Double gate:
+  // WORKTREE_PREVIEW=1 (scripts/worktree-preview.ts) + sqlitePath containing
+  // .runtime/worktree-preview/. Both off in prod → no-op. Per-table idempotent +
+  // single tx + fail-closed on fixture schema invalid. 5 unit tests cover all paths.
+  const { applyWorktreePreviewSeed } = await import("./db/worktree-preview-seed")
+  const seedReport = applyWorktreePreviewSeed({
+    db: embeddingStore.db,
+    sqlitePath: options.sqlitePath,
+  })
+  if (seedReport.inserted) {
+    console.log(
+      `[worktree-preview-seed] inserted: room_decisions=${seedReport.inserted.room_decisions}, ` +
+      `wiki_events=${seedReport.inserted.wiki_events}, wiki_leases=${seedReport.inserted.wiki_leases}`,
+    )
+  } else if (seedReport.failed) {
+    console.error(`[worktree-preview-seed] FAILED stage=${seedReport.failed.stage}: ${seedReport.failed.error}`)
+  }
   // F026 P3 sibling-guard · WorklistRegistry 提前创建，传给 installA2AGateway
   // 让 a2a-gateway 反查 caller 的 sibling 集合 —— planBetaDispatch / planAssistantCallTagDispatch
   // 都在 openCall 之前命中即拒（reason=sibling-cross-call）。
