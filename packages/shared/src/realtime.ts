@@ -513,6 +513,29 @@ export type RealtimeServerEvent =
       type: "wake.trigger"
       payload: WakeTriggerPayload
     }
+  | {
+      /**
+       * F027 Phase 4 AC-P4-8 (e2) (codex Week 5 j2 FAIL Red→Green):
+       * AdaptiveRecall Level 5 escalate → 推 realtime 通知到房间, 让 Inspector UI / toast
+       * 显示 "recall escalated". 后端 wiki_events action='recall_escalate' 已落, 这是
+       * 额外 realtime 通道 (Inspector pull 是补充)。
+       *
+       * payload 跟 ProductionLevel5Sink broadcast 结构对齐 (level5-escalate-sink.ts:88-92).
+       */
+      type: "recall.escalated"
+      payload: {
+        roomId: string
+        alias: string
+        trigger: string
+        visitedLevels: ReadonlyArray<number>
+        reason: string
+        totalMs: number
+        critiqueCalls: number
+        wikiEventId: number
+        eventPath: string
+        ts: string
+      }
+    }
 
 /**
  * F026 P3.1: 派发协议 retry 事件 payload。

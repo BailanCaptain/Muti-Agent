@@ -6,7 +6,8 @@ import type * as schema from "../db/schema"
 import type { EmbeddingService } from "../services/embedding-service"
 import type { MessagesFtsRepository } from "../wiki/wiki-search"
 
-import { createSonnetRunner, type HaikuRunner } from "../runtime/haiku-runner"
+import { createHaikuRunner, createSonnetRunner, type HaikuRunner } from "../runtime/haiku-runner"
+import { createRunnerWithFallback } from "../runtime/runner-with-fallback"
 import { LlmCritiqueAgent, type ClaudeRunner } from "../wiki/adaptive-recall/critique-agent"
 import { FileSystemLevel4Backend } from "../wiki/adaptive-recall/level4-readwiki-backend"
 import { MessagesFtsLevel3Backend } from "../wiki/adaptive-recall/level3-messages-backend"
@@ -59,6 +60,10 @@ export interface ProductionRecallExecutorDepsOptions {
   logger?: MinimalLogger
   /** Sonnet runner: 测试注入. 默认 createSonnetRunner(). */
   sonnetRunner?: HaikuRunner
+  /** Haiku fallback runner: 测试注入. 默认 createHaikuRunner(). codex Week 5 j2 FAIL P4-8(a) 修. */
+  haikuFallbackRunner?: HaikuRunner
+  /** 禁用 Haiku fallback (测试场景). 默认 false (启用 fallback). */
+  disableFallback?: boolean
   /** Critique timeout ms. 默认 30000. */
   critiqueTimeoutMs?: number
 }
@@ -66,10 +71,18 @@ export interface ProductionRecallExecutorDepsOptions {
 export function createProductionRecallExecutorDeps(
   opts: ProductionRecallExecutorDepsOptions,
 ): ExecutorDeps {
-  // ─── critique (Day 2 a) ──────────────────────────────────────────────────
+  // ─── critique (Day 2 a) — codex Week 5 j2 FAIL P4-8(a) Red→Green: 加 Haiku 4.5 fallback
+  // primary Sonnet 4.6 → quota/rate-limit/timeout 失败 → Haiku 4.5 retry
+  // (per plan AC-P4-8 a: "fallback 不等价 PASS, 记 BLOCKED" — 见 runner-with-fallback.ts)
   const sonnetRunner = opts.sonnetRunner ?? createSonnetRunner()
+  const critiqueRunner: HaikuRunner = opts.disableFallback
+    ? sonnetRunner
+    : createRunnerWithFallback({
+        primary: sonnetRunner,
+        fallback: opts.haikuFallbackRunner ?? createHaikuRunner(),
+      })
   // HaikuRunner interface = ClaudeRunner structural (return shape same)
-  const critique = new LlmCritiqueAgent(sonnetRunner as ClaudeRunner, {
+  const critique = new LlmCritiqueAgent(critiqueRunner as ClaudeRunner, {
     timeoutMs: opts.critiqueTimeoutMs ?? 30_000,
   })
 

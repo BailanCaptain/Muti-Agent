@@ -1,9 +1,13 @@
 "use client"
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
+import { BatchPromoteModal } from "../batch-promote-modal/batch-promote-modal"
+import { DemoteModal } from "../demote-modal/demote-modal"
 import { IngestModal, type IngestModalFile } from "../ingest-modal/ingest-modal"
+import { PromoteModal } from "../promote-modal/promote-modal"
+import { type DraftSummary, useDraftsData } from "./draft-approval/use-drafts-data"
 import {
   type IndexViewSummary,
   useIndexData,
@@ -52,6 +56,70 @@ export function KnowledgeBaseTab() {
   const [modalFile, setModalFile] = useState<IngestModalFile | null>(null)
   const [pickerError, setPickerError] = useState<string | null>(null)
   const indexData = useIndexData({ enabled: activeLvl2 === "knowledge-base" })
+
+  // codex Week 5 j2 FAIL P4-3 (b) + P4-4 Red→Green: KB tab 加 drafts list 行 Promote/Demote + multi-select
+  const draftsData = useDraftsData({ enabled: activeLvl2 === "knowledge-base" })
+  const [promotingDraft, setPromotingDraft] = useState<DraftSummary | null>(null)
+  const [demotingDraft, setDemotingDraft] = useState<DraftSummary | null>(null)
+  const [selectedDraftPaths, setSelectedDraftPaths] = useState<Set<string>>(new Set())
+  const [batchOpen, setBatchOpen] = useState(false)
+
+  const handleToggleSelect = useCallback((path: string) => {
+    setSelectedDraftPaths((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }, [])
+
+  const handlePromoteClick = useCallback((draft: DraftSummary) => {
+    setPromotingDraft(draft)
+  }, [])
+
+  const handleDemoteClick = useCallback((draft: DraftSummary) => {
+    setDemotingDraft(draft)
+  }, [])
+
+  const handlePromoteModalClose = useCallback(() => {
+    setPromotingDraft(null)
+  }, [])
+
+  const handleDemoteModalClose = useCallback(() => {
+    setDemotingDraft(null)
+  }, [])
+
+  const handlePromoteSuccess = useCallback(() => {
+    draftsData.refetch()
+    setPromotingDraft(null)
+  }, [draftsData])
+
+  const handleDemoteSuccess = useCallback(() => {
+    draftsData.refetch()
+    setDemotingDraft(null)
+  }, [draftsData])
+
+  const handleBatchOpen = useCallback(() => {
+    setBatchOpen(true)
+  }, [])
+
+  const handleBatchClose = useCallback(() => {
+    setBatchOpen(false)
+    setSelectedDraftPaths(new Set())
+    draftsData.refetch()
+  }, [draftsData])
+
+  const handleBatchComplete = useCallback(() => {
+    // 留 modal 在 report phase 显示 (跟 draft-approval-tab 一致)
+  }, [])
+
+  const batchRows = useMemo(() => {
+    if (selectedDraftPaths.size === 0) return []
+    const drafts = draftsData.data.drafts ?? []
+    return drafts
+      .filter((d) => selectedDraftPaths.has(d.path))
+      .map((d) => ({ srcDraftPath: d.path, displayTitle: d.title }))
+  }, [draftsData.data.drafts, selectedDraftPaths])
 
   const handleDropClick = useCallback(() => {
     setPickerError(null)
@@ -131,10 +199,23 @@ export function KnowledgeBaseTab() {
             ⚠ {pickerError}
           </div>
         )}
+        {/* §A · 派生视图 wiki/index/*.md (AC-P4-9 b) */}
         <IndexList
           data={indexData.data}
           isLoading={indexData.isLoading}
           error={indexData.error}
+        />
+        {/* §B · drafts list (codex Week 5 j2 FAIL P4-3 b + P4-4 Red→Green) */}
+        <KbDraftsSection
+          drafts={draftsData.data.drafts ?? []}
+          total={draftsData.data.total ?? 0}
+          isLoading={draftsData.isLoading}
+          error={draftsData.error}
+          selectedPaths={selectedDraftPaths}
+          onToggleSelect={handleToggleSelect}
+          onPromote={handlePromoteClick}
+          onDemote={handleDemoteClick}
+          onOpenBatch={handleBatchOpen}
         />
       </div>
       <IngestModal
@@ -144,7 +225,171 @@ export function KnowledgeBaseTab() {
         onClose={handleModalClose}
         onCommitSuccess={handleCommitSuccess}
       />
+      <PromoteModal
+        open={promotingDraft !== null}
+        srcDraftPath={promotingDraft?.path ?? null}
+        callerAlias={getCurrentUserAlias()}
+        onClose={handlePromoteModalClose}
+        onPromoteSuccess={handlePromoteSuccess}
+      />
+      <DemoteModal
+        open={demotingDraft !== null}
+        srcWikiPath={demotingDraft?.path ?? null}
+        callerAlias={getCurrentUserAlias()}
+        onClose={handleDemoteModalClose}
+        onDemoteSuccess={handleDemoteSuccess}
+      />
+      <BatchPromoteModal
+        open={batchOpen}
+        rows={batchRows}
+        callerAlias={getCurrentUserAlias()}
+        onClose={handleBatchClose}
+        onBatchComplete={handleBatchComplete}
+      />
     </>
+  )
+}
+
+function KbDraftsSection({
+  drafts,
+  total,
+  isLoading,
+  error,
+  selectedPaths,
+  onToggleSelect,
+  onPromote,
+  onDemote,
+  onOpenBatch,
+}: {
+  drafts: DraftSummary[]
+  total: number
+  isLoading: boolean
+  error: string | null
+  selectedPaths: Set<string>
+  onToggleSelect: (path: string) => void
+  onPromote: (draft: DraftSummary) => void
+  onDemote: (draft: DraftSummary) => void
+  onOpenBatch: () => void
+}) {
+  return (
+    <div className="flex flex-col gap-2" data-testid="kb-drafts-section">
+      <div className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-2 py-1.5">
+        <div className="text-[10px] uppercase tracking-wider text-slate-500">
+          Drafts · {total}{" "}
+          {selectedPaths.size > 0
+            ? `（已选 ${selectedPaths.size}）`
+            : "（勾选多份后可批量审批）"}
+        </div>
+        <div className="flex items-center gap-2">
+          {selectedPaths.size > 0 && (
+            <button
+              type="button"
+              onClick={onOpenBatch}
+              className="rounded bg-purple-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-purple-700"
+              data-testid="kb-batch-button"
+              title="对已选 draft 批量 promote (共用 reason, 部分失败留原位)"
+            >
+              批量审批 {selectedPaths.size} 份
+            </button>
+          )}
+          {isLoading && (
+            <span className="text-[10px] text-slate-400" data-testid="kb-drafts-loading">
+              ⏳
+            </span>
+          )}
+          {error && (
+            <span
+              className="text-[10px] text-red-500"
+              data-testid="kb-drafts-error"
+              title={error}
+            >
+              ⚠ 加载失败
+            </span>
+          )}
+        </div>
+      </div>
+      {drafts.length === 0 ? (
+        <div
+          className="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-[10px] text-slate-400"
+          data-testid="kb-drafts-empty"
+        >
+          无 draft (wiki/concepts/draft/ 空)
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-1.5" data-testid="kb-drafts-list">
+          {drafts.map((d) => (
+            <li key={d.path}>
+              <KbDraftRow
+                draft={d}
+                selected={selectedPaths.has(d.path)}
+                onToggleSelect={onToggleSelect}
+                onPromote={onPromote}
+                onDemote={onDemote}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function KbDraftRow({
+  draft,
+  selected,
+  onToggleSelect,
+  onPromote,
+  onDemote,
+}: {
+  draft: DraftSummary
+  selected: boolean
+  onToggleSelect: (path: string) => void
+  onPromote: (draft: DraftSummary) => void
+  onDemote: (draft: DraftSummary) => void
+}) {
+  return (
+    <div
+      className="rounded border border-slate-200 bg-white px-2 py-1.5 hover:border-slate-300"
+      data-testid={`kb-draft-row-${draft.path}`}
+      data-path={draft.path}
+      data-selected={selected ? "true" : "false"}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <label className="flex items-center gap-1.5 truncate flex-1 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect(draft.path)}
+            className="shrink-0"
+            aria-label={`select ${draft.path}`}
+            data-testid={`kb-draft-checkbox-${draft.path}`}
+          />
+          <span className="truncate font-medium text-[11px] text-slate-700" title={draft.path}>
+            {draft.title}
+          </span>
+        </label>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => onPromote(draft)}
+            className="rounded bg-blue-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-blue-700"
+            data-testid={`kb-draft-promote-${draft.path}`}
+            title="提升此 draft 到正式 wiki path (走 V14 二次审计)"
+          >
+            Promote
+          </button>
+          <button
+            type="button"
+            onClick={() => onDemote(draft)}
+            className="rounded bg-orange-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-orange-700"
+            data-testid={`kb-draft-demote-${draft.path}`}
+            title="拒绝此 draft (mv 到 wiki/_rejected/)"
+          >
+            Demote
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 

@@ -1,0 +1,30 @@
+{
+  "judge_id": "codex-gpt-5.4",
+  "ac_id": "AC-P4-3",
+  "verdict": "FAIL",
+  "reasoning": "Independent Judge2 validation. AC-P4-3 requires draft-approval rows and KB rows to expose Promote/Demote/Rollback, plus DemoteModal endpoint, RollbackPreviewModal read-only, series_id persistence, and slash commands remaining disabled. Partial implementation exists: DraftApprovalTab opens PromoteModal at components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx:118-124 and row-level Promote at :267-275; IngestModal seriesId is present and validated/posted at components/chat/right-panel/runtime-log/ingest-modal/ingest-modal.tsx:78, :104, :185, :206-213, with backend validation in packages/api/src/routes/phase3/contracts.ts:474-501 and frontmatter injection in packages/api/src/routes/phase3/ingest-commit.ts:138-153. However Demote/Rollback are not implemented: rg found no DemoteModal/RollbackPreviewModal implementation, and packages/api/src/routes/phase4/index.ts:13-15 explicitly marks POST /api/wiki/drafts/demote and GET /api/wiki/drafts/rollback as Week 4-5 TBD. KnowledgeBaseTab does not render row Promote/Demote/Rollback or multi-select; it renders +Drop and IndexList only at components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:91-139 and :182-214. Tests run: backend related tests 195 pass; frontend related tests 129 pass, but they only prove implemented subsets. j1-blind-spot check: seriesId is genuinely carried into preview/store/commit/frontmatter and cross-correlation tests pass, but the main operation-entry surface is incomplete.",
+  "cited_evidence": [
+    "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx:267",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:91",
+    "packages/api/src/routes/phase4/index.ts:13",
+    "components/chat/right-panel/runtime-log/ingest-modal/ingest-modal.tsx:104",
+    "packages/api/src/routes/phase3/ingest-commit.ts:138"
+  ],
+  "spec_gate": "FAIL",
+  "mechanism_gate": "FAIL",
+  "feature_gate": "FAIL",
+  "p1_findings": [],
+  "p2_findings": [
+    {
+      "file": "packages/api/src/routes/phase4/index.ts:13",
+      "issue": "AC-P4-3 Demote/Rollback routes and modals are not implemented; comments mark them TBD.",
+      "suggestion": "Add DemoteModal + POST demote route and RollbackPreviewModal + read-only rollback endpoint, then wire row buttons in draft-approval and KB tabs."
+    },
+    {
+      "file": "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:91",
+      "issue": "KB tab has no Promote/Demote/Rollback row actions and no multi-select hook required by AC-P4-3(b).",
+      "suggestion": "Render actionable KB/draft rows with the same three controls and selection state, or narrow the AC formally if KB operation entry is moved out of scope."
+    }
+  ],
+  "p3_findings": []
+}

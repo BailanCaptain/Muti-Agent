@@ -1,0 +1,19 @@
+{
+  "judge_id": "codex-gpt-5.4",
+  "ac_id": "AC-P4-1",
+  "verdict": "CONDITIONAL_PASS",
+  "reasoning": "Independent Judge2 validation. Code path exists: V14PromoteAuditService implements the three required layers at packages/api/src/wiki/promote-audit/v14-promote-audit-service.ts:98 (audit entry), :102-112 (imperative_statement), :114-124 (prompt_structure), and :126-138 (tainted_source_direct_quote). PromoteWikiService runs audit before write at packages/api/src/wiki/promote-audit/promote-wiki-service.ts:144-156, writes wiki_events promote pending row with target/reason/fencing/leader at :185-199, commits at :222-245, and route-level finally releases lease at packages/api/src/routes/phase4/promote.ts:182-188. PromoteModal collects target path + reason and gates Promote on audit pass at components/chat/right-panel/runtime-log/promote-modal/promote-modal.tsx:107-120, :130-138, :161-201. Tests run: pnpm.cmd exec tsx --test ... promote/v14/batch/wiki-meta/seed/runner group => tests 195, pass 195; frontend vitest group => Test Files 8 passed, Tests 129 passed. DB schema checked against real .runtime/worktree-preview/data/multi-agent.sqlite: wiki_events has promotion_target/reason/fencing_token/leader_term columns and reject_stale_leader trigger exists. Conditional because AC-P4-1 is marked needsBrowser=true and needsBackendLogs=true in scripts/f027-phase4-evidence-runner.ts:113, but the evidence pack currently has no screenshots/logs; I did not run the manual walkthrough. j1-blind-spot check: V14 is not a stub; the production service is imported by PromoteWikiService and exercised by route/service tests.",
+  "cited_evidence": [
+    "packages/api/src/wiki/promote-audit/v14-promote-audit-service.ts:98",
+    "packages/api/src/wiki/promote-audit/promote-wiki-service.ts:144",
+    "packages/api/src/routes/phase4/promote.ts:182",
+    "components/chat/right-panel/runtime-log/promote-modal/promote-modal.tsx:107",
+    "scripts/f027-phase4-evidence-runner.ts:113"
+  ],
+  "spec_gate": "PASS",
+  "mechanism_gate": "PASS",
+  "feature_gate": "PASS",
+  "p1_findings": [],
+  "p2_findings": [],
+  "p3_findings": []
+}

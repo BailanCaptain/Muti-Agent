@@ -1,0 +1,26 @@
+{
+  "judge_id": "codex-gpt-5.4",
+  "ac_id": "AC-P4-4",
+  "verdict": "FAIL",
+  "reasoning": "Independent Judge2 validation. Backend batch mechanics pass: BatchPromoteService processes each item independently at packages/api/src/wiki/promote-audit/batch-promote-service.ts:76-95, acquires per-item lease at :102-107, releases in finally at :131-136, and returns success/failure entries without aborting later items at :138-159. Route validation enforces non-empty items, duplicate src/dest rejection, and items > 50 rejection at packages/api/src/routes/phase4/batch-promote.ts:86-128. BatchPromoteModal renders success/failed report and auditReject details at components/chat/right-panel/runtime-log/batch-promote-modal/batch-promote-modal.tsx:377-410 and :429-450. Tests run: backend batch route/service are included in the 195 passing tests; frontend BatchPromoteModal/DraftApproval tests included in 129 passing tests. But the AC requires KB tab multi-select + batch approval; the actual multi-select/batch button is in DraftApprovalTab at components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx:159-168 and :245-252, while KnowledgeBaseTab has no multi-select or batch action at components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:91-139. j1-blind-spot check: continue-on-error, per-item lease release, and <=50 validation are verified; the failing gap is the required KB-tab UI surface.",
+  "cited_evidence": [
+    "packages/api/src/wiki/promote-audit/batch-promote-service.ts:76",
+    "packages/api/src/wiki/promote-audit/batch-promote-service.ts:131",
+    "packages/api/src/routes/phase4/batch-promote.ts:99",
+    "components/chat/right-panel/runtime-log/batch-promote-modal/batch-promote-modal.tsx:377",
+    "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx:159",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:91"
+  ],
+  "spec_gate": "FAIL",
+  "mechanism_gate": "PASS",
+  "feature_gate": "FAIL",
+  "p1_findings": [],
+  "p2_findings": [
+    {
+      "file": "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:91",
+      "issue": "AC-P4-4 batch approval UI is not on the KB tab; KB rows have no selectable draft list or batch button.",
+      "suggestion": "Move or duplicate batch selection/action controls onto the KB approval list required by the AC, while keeping the existing backend service."
+    }
+  ],
+  "p3_findings": []
+}

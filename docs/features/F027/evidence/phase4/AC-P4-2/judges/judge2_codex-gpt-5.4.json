@@ -1,0 +1,20 @@
+{
+  "judge_id": "codex-gpt-5.4",
+  "ac_id": "AC-P4-2",
+  "verdict": "CONDITIONAL_PASS",
+  "reasoning": "Independent Judge2 validation. Reject path exists and is fail-closed before filesystem mutation: PromoteWikiService returns audit_rejected immediately at packages/api/src/wiki/promote-audit/promote-wiki-service.ts:150-156; the write/unlink path is only after :208-245. The HTTP route maps audit_rejected to 422 with audit details at packages/api/src/routes/phase4/promote.ts:156-162 and releases the acquired lease in finally at :182-188. PromoteModal renders both preview-time and commit-time reject details, including layer/matchedPatterns/hint, at components/chat/right-panel/runtime-log/promote-modal/promote-modal.tsx:203-210 and :282-300. Tests run: backend command included promote route/service and V14 tests => tests 195, pass 195; frontend vitest group included PromoteModal => Test Files 8 passed, Tests 129 passed. Real DB schema check: wiki_events rows have state/result and no promote event is written on audit_rejected in the service tests; wiki_leases real schema has only path/fencing_token/owner/acquired/expires/leader/reserved columns, so release is absence-based, not stale status. Conditional because AC-P4-2 needs browser screenshots and backend logs per scripts/f027-phase4-evidence-runner.ts:114, and evidence pack screenshots/logs are empty. j1-blind-spot check: reject path does not leave pending wiki_events, because appendPending occurs only after audit pass at promote-wiki-service.ts:180-199.",
+  "cited_evidence": [
+    "packages/api/src/wiki/promote-audit/promote-wiki-service.ts:150",
+    "packages/api/src/wiki/promote-audit/promote-wiki-service.ts:180",
+    "packages/api/src/routes/phase4/promote.ts:156",
+    "packages/api/src/routes/phase4/promote.ts:182",
+    "components/chat/right-panel/runtime-log/promote-modal/promote-modal.tsx:282",
+    "scripts/f027-phase4-evidence-runner.ts:114"
+  ],
+  "spec_gate": "PASS",
+  "mechanism_gate": "PASS",
+  "feature_gate": "PASS",
+  "p1_findings": [],
+  "p2_findings": [],
+  "p3_findings": []
+}

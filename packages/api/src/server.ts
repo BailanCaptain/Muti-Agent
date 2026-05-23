@@ -273,9 +273,10 @@ export async function createApiServer(options: {
   // F027 Phase 4 P4 Day 4 · AdaptiveRecallCoordinator 真启用 (AC-P4-8)。
   // 装配 5 级 ExecutorDeps + ProductionLevel5Sink + 启用 wake_up/a2a_handoff 触发。
   //
-  // broadcaster 暂缺：RealtimeServerEvent union 不含 'recall.escalated' type；Week 2/3
-  // 接 Inspector UI escalate 实时推送时一起扩 union。Level 5 DB 路径 (wiki_events
-  // append_pending + commit) Day 4 起即生效，Inspector pull 拿得到 row。
+  // codex Week 5 j2 FAIL P4-8 (e2) Red→Green: NotificationBroadcast 接入 —
+  // RealtimeServerEvent union 已加 'recall.escalated' (shared/realtime.ts) + 写
+  // RealtimeAuditBroadcaster adapter (wiki/adaptive-recall/realtime-audit-broadcaster.ts)
+  // 把 ProductionLevel5Sink 的 AuditBroadcaster 接到 RealtimeBroadcaster (WS pub/sub)。
   //
   // prompt_audit 9 字段写入由 PromptAuditWriter (line 266) 负责，跟 Coordinator
   // 启用解耦：Coordinator enabled=true → 9 字段填真 recall output；
@@ -288,12 +289,17 @@ export async function createApiServer(options: {
       "./orchestrator/production-recall-executor-deps"
     )
     const { ProductionLevel5Sink } = await import("./wiki/adaptive-recall/level5-escalate-sink")
+    const { createRealtimeAuditBroadcaster } = await import(
+      "./wiki/adaptive-recall/realtime-audit-broadcaster"
+    )
     const { WikiEventsRepository } = await import("./db/repositories/wiki-events-repository")
 
     const wikiEventsRepo = new WikiEventsRepository(drizzleDb)
+    const auditBroadcaster = createRealtimeAuditBroadcaster(broadcaster)
     const level5 = new ProductionLevel5Sink({
       wikiEventsRepo,
       leaderContext: createSimpleLeaderContext(),
+      broadcaster: auditBroadcaster,
     })
     const executorDeps = createProductionRecallExecutorDeps({
       drizzleDb,
@@ -315,7 +321,7 @@ export async function createApiServer(options: {
     )
     // eslint-disable-next-line no-console
     console.log(
-      "[F027-P4 AC-P4-8] AdaptiveRecallCoordinator wired: enabled=true, levels=[2,3,4,5], maxLevels=5",
+      "[F027-P4 AC-P4-8] AdaptiveRecallCoordinator wired: enabled=true, levels=[2,3,4,5], maxLevels=5, broadcaster=on",
     )
   }
   // F027 Phase 3 P20 Day 8 b · PromptAuditWriter boot wiring (AC-P3-9 b)。

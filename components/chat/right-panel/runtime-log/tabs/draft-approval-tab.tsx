@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react"
 
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { BatchPromoteModal } from "../batch-promote-modal/batch-promote-modal"
+import { DemoteModal } from "../demote-modal/demote-modal"
 import { PromoteModal } from "../promote-modal/promote-modal"
 import {
   type DraftOrigin,
@@ -26,11 +27,12 @@ import {
  *   - 每 row 加 multi-select checkbox + tab 级 selected: Set<path>
  *   - Header 显示 selected.size + [批量审批 N 份] 按钮 (enabled when ≥1 selected)
  *   - 点 [批量审批] → BatchPromoteModal (传 selected rows)
- *   - 决策: KB tab list 在 AC-P4-9 b Week 4 才接入，先在 draft-approval 落地
  *
- * 不做（Day 12 范围外）:
- *   - [Demote] 按钮 (wiki → draft 反向，KB list 接入后做)
- *   - [Rollback] 按钮 (history preview)
+ * Phase 4 Week 5 (codex j2 FAIL Red→Green, AC-P4-3 a/d):
+ *   - 每 row 加 [Demote] 按钮 → DemoteModal (mv 到 wiki/_rejected/ + wiki_events action='demote')
+ *
+ * 不做 (推 F028-2):
+ *   - [Rollback] 按钮 (写型 rollback)
  */
 
 /**
@@ -47,6 +49,7 @@ export function DraftApprovalTab() {
   })
 
   const [promotingDraft, setPromotingDraft] = useState<DraftSummary | null>(null)
+  const [demotingDraft, setDemotingDraft] = useState<DraftSummary | null>(null)
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set())
   const [batchOpen, setBatchOpen] = useState(false)
 
@@ -54,14 +57,28 @@ export function DraftApprovalTab() {
     setPromotingDraft(draft)
   }, [])
 
-  const handleModalClose = useCallback(() => {
+  const handleDemote = useCallback((draft: DraftSummary) => {
+    setDemotingDraft(draft)
+  }, [])
+
+  const handlePromoteModalClose = useCallback(() => {
     setPromotingDraft(null)
+  }, [])
+
+  const handleDemoteModalClose = useCallback(() => {
+    setDemotingDraft(null)
   }, [])
 
   const handlePromoteSuccess = useCallback(() => {
     // Promote 成功 → src draft 已 unlink, dest wiki 已写 → refetch drafts list 刷新
     refetch()
     setPromotingDraft(null)
+  }, [refetch])
+
+  const handleDemoteSuccess = useCallback(() => {
+    // Demote 成功 → src 已 mv 到 wiki/_rejected/, draft list 应刷新 (虽然 draft list 通常只列 draft/_drafts/)
+    refetch()
+    setDemotingDraft(null)
   }, [refetch])
 
   const handleToggleSelect = useCallback((path: string) => {
@@ -113,6 +130,7 @@ export function DraftApprovalTab() {
           drafts={data.drafts}
           selectedPaths={selectedPaths}
           onPromote={handlePromote}
+          onDemote={handleDemote}
           onToggleSelect={handleToggleSelect}
         />
       </div>
@@ -120,8 +138,15 @@ export function DraftApprovalTab() {
         open={promotingDraft !== null}
         srcDraftPath={promotingDraft?.path ?? null}
         callerAlias={getCurrentUserAlias()}
-        onClose={handleModalClose}
+        onClose={handlePromoteModalClose}
         onPromoteSuccess={handlePromoteSuccess}
+      />
+      <DemoteModal
+        open={demotingDraft !== null}
+        srcWikiPath={demotingDraft?.path ?? null}
+        callerAlias={getCurrentUserAlias()}
+        onClose={handleDemoteModalClose}
+        onDemoteSuccess={handleDemoteSuccess}
       />
       <BatchPromoteModal
         open={batchOpen}
@@ -191,11 +216,13 @@ function DraftList({
   drafts,
   selectedPaths,
   onPromote,
+  onDemote,
   onToggleSelect,
 }: {
   drafts: DraftSummary[]
   selectedPaths: Set<string>
   onPromote: (draft: DraftSummary) => void
+  onDemote: (draft: DraftSummary) => void
   onToggleSelect: (path: string) => void
 }) {
   if (drafts.length === 0) {
@@ -216,6 +243,7 @@ function DraftList({
             draft={d}
             selected={selectedPaths.has(d.path)}
             onPromote={onPromote}
+            onDemote={onDemote}
             onToggleSelect={onToggleSelect}
           />
         </li>
@@ -228,11 +256,13 @@ function DraftRow({
   draft,
   selected,
   onPromote,
+  onDemote,
   onToggleSelect,
 }: {
   draft: DraftSummary
   selected: boolean
   onPromote: (draft: DraftSummary) => void
+  onDemote: (draft: DraftSummary) => void
   onToggleSelect: (path: string) => void
 }) {
   return (
@@ -268,15 +298,26 @@ function DraftRow({
       <div className="mt-0.5 flex flex-wrap items-center gap-1">
         <Badge label={draft.type} kind="type" value={draft.type} />
         <Badge label={originLabel(draft.origin)} kind="origin" value={draft.origin} />
-        <button
-          type="button"
-          onClick={() => onPromote(draft)}
-          className="ml-auto rounded bg-blue-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-blue-700"
-          data-testid={`draft-approval-promote-${draft.path}`}
-          title="提升此 draft 到正式 wiki path (走 V14 二次审计)"
-        >
-          Promote
-        </button>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => onPromote(draft)}
+            className="rounded bg-blue-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-blue-700"
+            data-testid={`draft-approval-promote-${draft.path}`}
+            title="提升此 draft 到正式 wiki path (走 V14 二次审计)"
+          >
+            Promote
+          </button>
+          <button
+            type="button"
+            onClick={() => onDemote(draft)}
+            className="rounded bg-orange-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-orange-700"
+            data-testid={`draft-approval-demote-${draft.path}`}
+            title="拒绝此 draft (mv 到 wiki/_rejected/ + 写 wiki_events action='demote')"
+          >
+            Demote
+          </button>
+        </div>
       </div>
       {draft.summary && (
         <div className="mt-1 text-[10px] text-slate-500" title={draft.summary}>

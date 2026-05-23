@@ -1,0 +1,32 @@
+{
+  "judge_id": "codex-gpt-5.4",
+  "ac_id": "AC-P4-8",
+  "verdict": "FAIL",
+  "reasoning": "Independent Judge2 validation. Positive evidence: production boot no longer uses noop; server.ts imports AdaptiveRecallCoordinator and createProductionRecallExecutorDeps at packages/api/src/server.ts:283-290, constructs ProductionLevel5Sink at :293-297, wires executorDeps at :298-304, enables coordinator with maxLevels=5 at :309-315, and logs enabled=true levels=[2,3,4,5] at :316-319. Level2HybridSearchBackend is a real production adapter implementing searchWiki at packages/api/src/wiki/adaptive-recall/level2-hybrid-search-backend.ts:14-19 and is used by createProductionRecallExecutorDeps at packages/api/src/orchestrator/production-recall-executor-deps.ts:75-95. PromptAuditWriter is injected at server.ts:325-328. Tests run: AC-P4-8-related backend tests pass in two groups: 195 pass for production deps/level2 adapter plus 63 pass for coordinator, ProductionLevel5Sink, and PromptAuditWriter. Real DB checked: prompt_audit has recall fields recall_required/recall_trigger/recall_path/top_score/recall_satisfied/escalate_reason/recall_total_ms/recall_critique_calls/recall_budget_exceeded; wiki_events has recall_escalate row and reject_stale_leader trigger. Failures: AC-P4-8(a) requires Sonnet 4.6 plus Haiku 4.5 fallback; production deps create only createSonnetRunner at production-recall-executor-deps.ts:69-73 and rg found no Haiku fallback in critique-agent/production deps. AC-P4-8(e2) requires NotificationBroadcast; server constructs ProductionLevel5Sink without broadcaster at server.ts:293-297, while the sink only broadcasts if this.broadcaster exists at level5-escalate-sink.ts:170-186. j1-blind-spot check: boot wire is real, not import-only, but the required fallback and notification broadcast subitems are missing from production boot.",
+  "cited_evidence": [
+    "packages/api/src/server.ts:283",
+    "packages/api/src/server.ts:293",
+    "packages/api/src/server.ts:309",
+    "packages/api/src/orchestrator/production-recall-executor-deps.ts:69",
+    "packages/api/src/wiki/adaptive-recall/level2-hybrid-search-backend.ts:14",
+    "packages/api/src/wiki/adaptive-recall/level5-escalate-sink.ts:170",
+    "packages/api/src/server.ts:325"
+  ],
+  "spec_gate": "FAIL",
+  "mechanism_gate": "FAIL",
+  "feature_gate": "FAIL",
+  "p1_findings": [],
+  "p2_findings": [
+    {
+      "file": "packages/api/src/orchestrator/production-recall-executor-deps.ts:69",
+      "issue": "AC-P4-8(a) Sonnet 4.6 critique is wired, but Haiku 4.5 fallback is not implemented.",
+      "suggestion": "Add an explicit fallback runner path and tests proving quota/failure does not become PASS silently."
+    },
+    {
+      "file": "packages/api/src/server.ts:293",
+      "issue": "AC-P4-8(e2) NotificationBroadcast is not wired in production boot; ProductionLevel5Sink is created without broadcaster.",
+      "suggestion": "Inject a real AuditBroadcaster/WS wrapper or formally downgrade e2; add a boot-level test that broadcast is configured."
+    }
+  ],
+  "p3_findings": []
+}

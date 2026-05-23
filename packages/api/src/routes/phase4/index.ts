@@ -7,21 +7,23 @@
  *   - POST /api/wiki/drafts/promote/preview  (AC-P4-1 b · V14 audit preview)
  *   - POST /api/wiki/drafts/promote          (AC-P4-1 · full promote 含 mv + wiki_events)
  *   - POST /api/wiki/drafts/batch-promote   (AC-P4-4 · 批量审批 部分失败语义)
+ *   - POST /api/wiki/drafts/demote          (AC-P4-3 d · DemoteModal — mv 到 wiki/_rejected/ + wiki_events action='demote')
  *   - GET  /api/wiki/warnings               (AC-P4-9 a · warnings tab 派生)
  *   - GET  /api/wiki/index                  (AC-P4-9 b · KB tab 派生)
  *
- * Week 4-5 待加 (TBD):
- *   - POST /api/wiki/drafts/demote     (AC-P4-3 · DemoteModal)
- *   - GET  /api/wiki/drafts/rollback   (AC-P4-3 · RollbackPreview read-only)
+ * 推 F028 (per F028-FOLLOWUP-BACKLOG.md):
+ *   - GET  /api/wiki/drafts/rollback   (推 F028-2 · 写型 rollback 一起做)
  */
 
 import type { FastifyInstance } from "fastify"
 
 import type { WikiServices } from "../../wiki/wiki-services"
 import { BatchPromoteService } from "../../wiki/promote-audit/batch-promote-service"
+import { DemoteWikiService } from "../../wiki/promote-audit/demote-wiki-service"
 import { PromoteWikiService } from "../../wiki/promote-audit/promote-wiki-service"
 import { V14PromoteAuditService } from "../../wiki/promote-audit/v14-promote-audit-service"
 import { registerBatchPromoteRoutes } from "./batch-promote"
+import { registerDemoteRoutes } from "./demote"
 import { registerPromoteRoutes } from "./promote"
 import { registerWikiMetaRoutes, WikiMetaScanner } from "./wiki-meta"
 
@@ -61,6 +63,20 @@ export function registerPhase4Routes(app: FastifyInstance, deps: Phase4RoutesDep
   })
   registerBatchPromoteRoutes(app, { batch })
 
+  // AC-P4-3 (d) · DemoteService + route (codex Week 5 j2 FAIL Red→Green)
+  const demote = new DemoteWikiService({
+    events: deps.wikiServices.events,
+    leases: deps.wikiServices.leases,
+    acl: deps.wikiServices.acl,
+    wikiRoot: deps.wikiServices.wikiRoot,
+    currentLeaderTerm: () => deps.wikiServices.leader.getCurrent()?.currentTerm ?? "999",
+  })
+  registerDemoteRoutes(app, {
+    demote,
+    leases: deps.wikiServices.leases,
+    leaderTerm: () => deps.wikiServices.leader.getCurrent()?.currentTerm ?? "999",
+  })
+
   // AC-P4-9 a/b · wiki/warnings + wiki/index 派生视图 endpoint (Day 17)
   // codex Week 4 mid-r1 P2 修: 注入 events repo merge wiki_events warning_raised rows
   const metaScanner = new WikiMetaScanner({
@@ -72,4 +88,5 @@ export function registerPhase4Routes(app: FastifyInstance, deps: Phase4RoutesDep
 
 export { registerPromoteRoutes } from "./promote"
 export { registerBatchPromoteRoutes } from "./batch-promote"
+export { registerDemoteRoutes } from "./demote"
 export { registerWikiMetaRoutes, WikiMetaScanner } from "./wiki-meta"
