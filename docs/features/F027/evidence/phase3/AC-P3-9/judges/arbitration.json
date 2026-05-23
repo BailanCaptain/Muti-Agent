@@ -3,6 +3,9 @@
   "judge1_verdict": "CONDITIONAL_PASS",
   "judge2_verdict": "FAIL",
   "double_pass": false,
-  "arbitration_verdict": "FAIL",
-  "rationale": "j2 给 FAIL 论据扎实并已实测验证 (server.ts line 239-242 createNoopAdaptiveRecallCoordinator + 注释明示 Phase 4 才真 wire). plan v3.1 §3 Week 2 Day 7-9 字面 AC-P3-9 a/b/c 是 'production wiring', 与实际 server boot 用 noop 是 plan vs 实施 gap. arbitration 取 j2 → FAIL. **升级小孙拍** 路径 A/B/C: A 改 server.ts 真接 production AdaptiveRecallCoordinator (但 plan 注释明示 critique LLM + level2-4 backend + Level5Sink production 都是 Phase 4, scope creep 大); B 修 plan v3.6 patch AC-P3-9 重写为 'ready-for-Phase-4 wiring (代码/测试/接口 ready, boot wire 推 Phase 4)', 评估接受 CONDITIONAL_PASS; C 维持 FAIL 等 Phase 4 一并做 (诚实, 但 block 合 dev)."
+  "arbitration_verdict": "CONDITIONAL_PASS",
+  "rationale_v1": "j2 FAIL 论据扎实 (server.ts:239 用 noop coordinator, 注释明示推 Phase 4). 与 plan v3.1 字面 'production wiring' 有 gap.",
+  "small-sun_decision_2026-05-23": "拍 B — 修 plan v3.6 patch 重写 AC-P3-9 为 'ready-for-Phase-4 wiring' (代码/接口/单测 ready, server.ts boot 推 Phase 4 接 critique LLM + level2-4 backend + Level5Sink 生产实现后启用)",
+  "arbitration_verdict_final": "CONDITIONAL_PASS",
+  "rationale_v2": "按 plan v3.6 重新定义 AC-P3-9, j2 实证 (server.ts:239 noop) 转为 ready-for-Phase-4 wiring 的预期行为而非 gap. j1+j2 共同点 (代码 + 单测 ready) 满足新 AC 定义. arbitration 升 CONDITIONAL_PASS (评估 'ready, 推 Phase 4 boot wire'), 不阻 Phase 3 合 dev."
 }

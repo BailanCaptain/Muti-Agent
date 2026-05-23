@@ -89,7 +89,7 @@ Phase 3 = 前端 RuntimeLog 容器 + Inspector 数据 + IngestModal 3 入口 + v
 每 AC 落点: `docs/features/F027/evidence/phase3/AC-P3-<N>/`
 三件套: `result.json` + `judges/{judge1_claude-opus-4-7, judge2_codex-gpt-5.4, arbitration}.json` + `screenshots/`
 
-**结果分布**: 4 PASS / 5 CONDITIONAL_PASS / 1 **FAIL**
+**结果分布** (按 plan v3.6 patch 小孙 2026-05-23 拍 B 路径重判后): 4 PASS / 6 CONDITIONAL_PASS / 0 FAIL ✅
 
 | AC | j1 | j2 | arbitration | 备注 |
 |---|---|---|---|---|
@@ -100,28 +100,21 @@ Phase 3 = 前端 RuntimeLog 容器 + Inspector 数据 + IngestModal 3 入口 + v
 | AC-P3-5 wake-trigger pill 点击 drawer | PASS | PASS | **✅ PASS** | G1 + Day 14-15 + Day 20 闭环 |
 | AC-P3-6 IngestModal 3 入口 | PASS | CONDITIONAL_PASS | CONDITIONAL_PASS | 3 入口 browser modal 实测 BLOCKED |
 | AC-P3-7 调度器 go-live + Iron Laws 3 | PASS | PASS | **✅ PASS** | dev:api 启动 log 实证 |
-| AC-P3-8 manual decision + Inspector unresolved | CONDITIONAL_PASS | CONDITIONAL_PASS | **⚠️ CONDITIONAL_PASS** | b Inspector unresolved UI 推 Phase 4 — 升级小孙拍 |
-| AC-P3-9 Adaptive Recall wiring | CONDITIONAL_PASS | **FAIL** | **❌ FAIL** | server.ts line 239 用 noop coordinator, production wiring 未真接 — 升级小孙拍 |
+| AC-P3-8 manual decision + Inspector unresolved | CONDITIONAL_PASS | CONDITIONAL_PASS | **⚠️ CONDITIONAL_PASS** | b Inspector unresolved UI 推 Phase 4 (plan v3.6 patch B: 与 PromoteModal 一同上线) |
+| AC-P3-9 Adaptive Recall wiring | CONDITIONAL_PASS | FAIL | **⚠️ CONDITIONAL_PASS** | plan v3.6 patch B 重写 AC 为 "ready-for-Phase-4 wiring" — 代码/接口/单测 ready, server.ts boot 推 Phase 4 |
 | AC-P3-10 ingest commit endpoint | PASS | PASS | **✅ PASS** | backend + frontend 完整 |
 
-## 升级小孙 3 件拍板 (Phase 3 合 dev 前必经)
+## 收口决策 (2026-05-23 小孙拍 B / B / B)
 
-### O1 AC-P3-9 FAIL 路径选 (重要)
-**实证**: `packages/api/src/server.ts:239-242` 用 `createNoopAdaptiveRecallCoordinator()` 而非生产 `AdaptiveRecallCoordinator({enabled:true, executorDeps})`. 注释明示推 Phase 4. plan v3.1 §3 Week 2 Day 7-9 字面是 "production wiring", 与实施 gap.
+### O1 AC-P3-9 → plan v3.6 patch B ✅
+旧 AC 字面 "production wiring" 与实施 gap (server.ts:239 用 noop). plan v3.6 patch 重写为 "ready-for-Phase-4 wiring": 代码 (AdaptiveRecallCoordinator + PromptAuditWriter + ProductionLevel5Sink class)、接口 (executeAdaptiveRecall 签名)、单测全 ready；server.ts boot 用 noop 等 Phase 4 critique LLM + level2-4 backend + Level5Sink 生产实现接入后启用 enabled=true。arbitration FAIL → CONDITIONAL_PASS。
 
-- A: Phase 3 加 commit 改 server.ts 真接生产 coordinator (scope creep 大, critique LLM + level2-4 backend + Level5Sink 都是 Phase 4 deps, 假接也不行)
-- B: 修 plan v3.6 patch — AC-P3-9 重写为 "ready-for-Phase-4 wiring (代码/接口/单测 ready, server.ts boot 推 Phase 4 接 critique LLM 后启用)" + 接受 CONDITIONAL_PASS (而非 FAIL)
-- C: 维持 FAIL, 等 Phase 4 一并做 (诚实但 block 合 dev)
+### O2 AC-P3-8 b → plan v3.6 patch B ✅
+Inspector unresolved 入口 UI 推 Phase 4 与 PromoteModal (AC-P4-1) 一同上线。Phase 3 AC-P3-8 仅含 a backend (POST/GET decisions + tombstone)。
 
-### O2 AC-P3-8 b 推 Phase 4 还是 Phase 3 补
-feature.md line 184 字面 "Inspector unresolved 入口 UI click → manual confirm" Phase 3 必做。当前 prompt-inspector tab 7 块无 Coverage section。
-- A: 加 Phase 3 commit 补 Coverage section (~30min, 单测可覆盖)
-- B: 修 plan v3.6 patch 明示 b 推 Phase 4 + 接受 CONDITIONAL_PASS
-
-### O3 5 个 CONDITIONAL_PASS (browser 实测 BLOCKED) 怎么走
-AC-P3-1/2/3/6 + 部分 P3-10 浏览器实测项 BLOCKED. j2 严格不让 PASS-with-BLOCKED.
-- A: 你抽 1-2h 跑 walkthrough script (浏览器实测 5 AC + 截图) + 我补 screenshots/ + arbitration 升 PASS — Phase 3 完美收口
-- B: 接受 5 CONDITIONAL_PASS, 合 dev (浏览器真验等 Phase 4 与 worktree DB schema 一起做)
+### O3 5 CONDITIONAL_PASS browser BLOCKED → 接受合 dev ✅
+AC-P3-1/2/3/6 + P3-10 浏览器实测项 BLOCKED。j2 严格不让 PASS-with-BLOCKED。
+合 dev 接受现状, Phase 4 与 worktree DB schema 升级一起做真端到端验。
 
 ## 浏览器实测受限 — 跨 Phase 1 wiring 缺口
 
@@ -147,15 +140,15 @@ plan v3 line 103-106 列 Phase 3 Week 2 Day 7-9 做 a/b/c, 但 Phase 1 P13 commi
 - 是 Phase 3 a/b/c 'fixture 验证' (不重做 backend wire) → 应该有 fixture test pass evidence
 - 或 Phase 1 P13 已经端到端 wire 完 (a 真触发 + b 真写 + c Level5Sink) → Phase 3 a/b/c 是冗余 plan, 应在收口明示
 
-## Phase 3 状态
+## Phase 3 状态 — 收口 ready ✅
 
-代码本体 + 集成层 + plan v3.5 + walkthrough script + 10 AC evidence pack (judge1 完成, judge2 codex 跑中) 完成, commit 全程留在 worktree branch `feat/F027-unified-memory-architecture`.
+代码本体 + 集成层 + plan v3.6 + walkthrough script + 10 AC evidence pack (judge1 + judge2 + arbitration 全 close) 完成, commit 全程留在 worktree branch `feat/F027-unified-memory-architecture`.
 
-**未合 dev**: feature 级合并需:
-1. judge2 codex 跑完 (~5-10min) → 写 arbitration
-2. 小孙拍 O1 + O2 决策
-3. 小孙最终拍合 dev
+**最终结果**: 4 PASS + 6 CONDITIONAL_PASS + 0 FAIL (按 plan v3.6 patch 重判后)
+- 4 PASS double-pass: AC-P3-4 / P3-5 / P3-7 / P3-10
+- 6 CONDITIONAL_PASS: AC-P3-1/2/3/6 (browser 实测 BLOCKED 推 Phase 4) + AC-P3-8 (b 推 Phase 4) + AC-P3-9 (ready-for-Phase-4 wiring)
 
-按 feedback `feature_completion_before_merge`: feature 全 AC + worktree 验收 + 小孙拍合后才合 dev.
+**未合 dev**: 仅等小孙最终拍合 dev (按 feedback `feature_completion_before_merge` 小孙拍后才合).
+
 按 feedback `no_commit_review_docs`: review-request/confirmation md 不 commit, 写 .runtime/reviews/ scratch.
 本 evidence summary md + result.json + judges/* 可 commit (evidence pack 是产物不是 review scratch).
