@@ -9,9 +9,11 @@ import Fastify from "fastify"
 import { createDrizzleDb } from "../../db/drizzle-instance"
 import { WikiEventsRepository } from "../../db/repositories/wiki-events-repository"
 import { WikiLeasesRepository } from "../../db/repositories/wiki-leases-repository"
-import { compileACL } from "../../wiki/acl-engine"
+import { compileACL, loadACLConfig } from "../../wiki/acl-engine"
+import type { ACLConfig } from "../../wiki/acl-types"
 import { PromoteWikiService } from "../../wiki/promote-audit/promote-wiki-service"
 import { V14PromoteAuditService } from "../../wiki/promote-audit/v14-promote-audit-service"
+import { DEFAULT_ACL_YAML } from "../../wiki/wiki-services"
 import { registerPromoteRoutes } from "./promote"
 
 /**
@@ -38,7 +40,7 @@ const ACL_OPEN = {
   ],
 }
 
-async function setupApp(): Promise<{
+async function setupApp(opts: { useDefaultAcl?: boolean } = {}): Promise<{
   app: ReturnType<typeof Fastify>
   wikiRoot: string
   leases: WikiLeasesRepository
@@ -49,7 +51,9 @@ async function setupApp(): Promise<{
   const { db, close } = createDrizzleDb(dbPath)
   const events = new WikiEventsRepository(db)
   const leases = new WikiLeasesRepository(db)
-  const compiled = compileACL(ACL_OPEN)
+  const compiled = opts.useDefaultAcl
+    ? compileACL(loadACLConfig(DEFAULT_ACL_YAML))
+    : compileACL(ACL_OPEN)
   const wikiRoot = path.join(tempDir, "wiki-root")
   fs.mkdirSync(wikiRoot, { recursive: true })
 
@@ -169,6 +173,39 @@ describe("promote routes (AC-P4-1)", () => {
         await t.cleanup()
       }
     })
+
+    it("(4a) codex r2 P2-1: '../' path traversal → 400 PATH_INVALID (不 readFile 越界)", async () => {
+      const t = await setupApp()
+      try {
+        const resp = await t.app.inject({
+          method: "POST",
+          url: "/api/wiki/drafts/promote/preview",
+          payload: { srcDraftPath: "../../../etc/passwd" },
+        })
+
+        assert.equal(resp.statusCode, 400)
+        assert.equal(resp.json().code, "PATH_INVALID")
+      } finally {
+        await t.cleanup()
+      }
+    })
+
+    it("(4b) codex r2 P2-1: 非 draft 路径 (wiki/concepts/x.md 但无 /draft/) → 400 PATH_INVALID", async () => {
+      const t = await setupApp()
+      try {
+        const resp = await t.app.inject({
+          method: "POST",
+          url: "/api/wiki/drafts/promote/preview",
+          payload: { srcDraftPath: "wiki/concepts/x.md" },
+        })
+
+        assert.equal(resp.statusCode, 400)
+        assert.equal(resp.json().code, "PATH_INVALID")
+        assert.match(resp.json().error, /draft/)
+      } finally {
+        await t.cleanup()
+      }
+    })
   })
 
   describe("POST /api/wiki/drafts/promote", () => {
@@ -249,6 +286,35 @@ describe("promote routes (AC-P4-1)", () => {
         assert.equal(resp.statusCode, 400)
         assert.equal(resp.json().code, "VALIDATION_ERROR")
         assert.match(resp.json().error, /destWikiPath/)
+      } finally {
+        await t.cleanup()
+      }
+    })
+
+    it("(7a) codex r2 P1: DEFAULT_ACL_YAML wire 时 promote wiki/concepts → 真 200 (不 403)", async () => {
+      // production wire 走 createWikiServices 默认 ACL — Day 7 缺 promote 时这 case 真 403
+      const t = await setupApp({ useDefaultAcl: true })
+      try {
+        const src = "wiki/concepts/draft/_auto/rag.md"
+        const dest = "wiki/concepts/rag.md"
+        writeDraft(t.wikiRoot, src, "# RAG\n\nRetrieval augmented generation.")
+
+        const resp = await t.app.inject({
+          method: "POST",
+          url: "/api/wiki/drafts/promote",
+          payload: {
+            srcDraftPath: src,
+            destWikiPath: dest,
+            callerAlias: "黄仁勋",
+            reason: "首批整理",
+          },
+        })
+
+        assert.equal(
+          resp.statusCode,
+          200,
+          `DEFAULT_ACL_YAML should allow promote on wiki/concepts/**, got ${resp.statusCode}: ${resp.body}`,
+        )
       } finally {
         await t.cleanup()
       }

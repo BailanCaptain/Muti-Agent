@@ -28,9 +28,10 @@ import type { FastifyInstance } from "fastify"
 
 import type { WikiLeasesRepository } from "../../db/repositories/wiki-leases-repository"
 import type { PromoteWikiService } from "../../wiki/promote-audit/promote-wiki-service"
+import { isDraftRelativePath } from "../../wiki/promote-audit/promote-wiki-service"
 import type { V14PromoteAuditService } from "../../wiki/promote-audit/v14-promote-audit-service"
+import { WikiPathInvalidError, safeWikiPath } from "../../wiki/path-containment"
 import fs from "node:fs"
-import path from "node:path"
 
 const DEFAULT_PROMOTE_LEASE_TTL_SECONDS = 30
 
@@ -69,10 +70,29 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
       return { ok: false, code: "VALIDATION_ERROR", error: "srcDraftPath required" }
     }
 
+    // codex r2 P2-1 修: path containment + draft 校验，防 caller 传 '../' 或绝对路径越界读
+    let absSrcPath: string
+    try {
+      absSrcPath = safeWikiPath(deps.wikiRoot, body.srcDraftPath)
+    } catch (err) {
+      if (err instanceof WikiPathInvalidError) {
+        reply.code(400)
+        return { ok: false, code: "PATH_INVALID", error: err.message }
+      }
+      throw err
+    }
+    if (!isDraftRelativePath(body.srcDraftPath)) {
+      reply.code(400)
+      return {
+        ok: false,
+        code: "PATH_INVALID",
+        error: `src must be a draft path (contain '/draft/' or '/_drafts/'), got: ${body.srcDraftPath}`,
+      }
+    }
+
     let srcContent: string
     try {
-      const abs = path.resolve(deps.wikiRoot, body.srcDraftPath)
-      srcContent = fs.readFileSync(abs, "utf-8")
+      srcContent = fs.readFileSync(absSrcPath, "utf-8")
     } catch (err) {
       const e = err as NodeJS.ErrnoException
       if (e.code === "ENOENT") {

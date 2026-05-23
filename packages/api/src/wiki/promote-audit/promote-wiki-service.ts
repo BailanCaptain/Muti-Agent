@@ -246,9 +246,18 @@ export class PromoteWikiService {
   }
 
   private isDraftPath(p: string): boolean {
-    const normalized = p.replace(/\\/g, "/")
-    return normalized.includes("/draft/") || normalized.includes("/_drafts/")
+    return isDraftRelativePath(p)
   }
+}
+
+/**
+ * Module-level draft-path predicate (codex r2 P2-1 修):
+ *   - 复用给 routes/phase4/promote.ts preview endpoint，防止 preview 越界 readFile
+ *   - normalize backslash 兼容 Windows path
+ */
+export function isDraftRelativePath(p: string): boolean {
+  const normalized = p.replace(/\\/g, "/")
+  return normalized.includes("/draft/") || normalized.includes("/_drafts/")
 }
 
 function sha256(content: string): string {
