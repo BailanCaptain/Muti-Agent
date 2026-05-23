@@ -697,9 +697,15 @@ export async function createApiServer(options: {
   //   - POST /api/wiki/drafts/batch-promote   (Day 11 AC-P4-4)
   //   - GET  /api/wiki/warnings + /api/wiki/index (Day 17 AC-P4-9 a/b)
   //
-  // metaWikiRoot 显式传 destWikiRoot (跟 fixture copier 一致, 不用 wikiServices.wikiRoot
-  // — 后者跟 fixture dest 在 worktree-preview 模式不一致, pre-existing follow-up)
-  registerPhase4Routes(app, { wikiServices, metaWikiRoot: destWikiRoot })
+  // codex Week 4 mid-r1 P1 修: metaWikiRoot 仅在 worktree-preview 模式下覆盖 wikiServices.wikiRoot;
+  // 否则 default fallback wikiServices.wikiRoot (prod 部署 / WIKI_ROOT env 路径正确)
+  const isWorktreePreview =
+    process.env.WORKTREE_PREVIEW === "1" &&
+    options.sqlitePath.replace(/\\/g, "/").includes(".runtime/worktree-preview/")
+  registerPhase4Routes(app, {
+    wikiServices,
+    metaWikiRoot: isWorktreePreview ? destWikiRoot : undefined,
+  })
 
   // F027 Phase 3 P20 · scheduler go-live（Week 1 Day 1）
   //

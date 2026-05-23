@@ -62,8 +62,10 @@ export function registerPhase4Routes(app: FastifyInstance, deps: Phase4RoutesDep
   registerBatchPromoteRoutes(app, { batch })
 
   // AC-P4-9 a/b · wiki/warnings + wiki/index 派生视图 endpoint (Day 17)
+  // codex Week 4 mid-r1 P2 修: 注入 events repo merge wiki_events warning_raised rows
   const metaScanner = new WikiMetaScanner({
     wikiRoot: deps.metaWikiRoot ?? deps.wikiServices.wikiRoot,
+    events: deps.wikiServices.events,
   })
   registerWikiMetaRoutes(app, { scanner: metaScanner })
 }

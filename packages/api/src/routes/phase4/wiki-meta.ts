@@ -30,6 +30,7 @@ import path from "node:path"
 
 import type { FastifyInstance } from "fastify"
 
+import type { WikiEventsRepository } from "../../db/repositories/wiki-events-repository"
 import { parseFrontmatter } from "../phase3/frontmatter"
 
 // ─── contracts (inline; mirror Phase 4 endpoint shapes) ──────────────────────
@@ -100,6 +101,12 @@ export interface WikiMetaScannerDeps {
     readFile: (p: string) => Promise<string>
     stat: (p: string) => Promise<{ mtime: Date }>
   }
+  /**
+   * codex Week 4 mid-r1 P2 修: warnings 列表 merge wiki_events action='warning_raised' rows
+   * (plan AC-P4-9 a line 253 "派生数据源读 wiki/warnings/*.md + wiki_events action='warning_raised'")
+   * 可选注入: 缺则 fallback 仅 scan fs (向后兼容单测), 注入后 merge by path 去重.
+   */
+  events?: WikiEventsRepository
   logWarn?: (obj: Record<string, unknown>, msg: string) => void
 }
 
@@ -114,6 +121,7 @@ const ALLOWED_SEVERITY: ReadonlySet<WarningSeverity> = new Set<WarningSeverity>(
 export class WikiMetaScanner {
   private readonly wikiRoot: string
   private readonly fsAdapter: NonNullable<WikiMetaScannerDeps["fsAdapter"]>
+  private readonly events: WikiEventsRepository | undefined
   private readonly logWarn: (obj: Record<string, unknown>, msg: string) => void
 
   constructor(deps: WikiMetaScannerDeps) {
@@ -130,25 +138,61 @@ export class WikiMetaScanner {
       readFile: (p) => fs.readFile(p, "utf-8"),
       stat: (p) => fs.stat(p),
     }
+    this.events = deps.events
     this.logWarn = deps.logWarn ?? (() => {})
   }
 
   async listWarnings(): Promise<ListWarningsResponse> {
     const dir = path.join(this.wikiRoot, "warnings")
     const files = await this.listMdFiles(dir)
-    const out: WarningSummary[] = []
+    const byPath = new Map<string, WarningSummary>()
     for (const fileName of files) {
       const summary = await this.summarizeWarning(dir, fileName)
-      if (summary) out.push(summary)
+      if (summary) byPath.set(summary.path, summary)
     }
+
+    // codex mid-r1 P2: merge wiki_events action='warning_raised' rows
+    // (plan AC-P4-9 a 字面要求, fs file 缺时 events row 兜底, fs 优先 events 兜底)
+    if (this.events) {
+      try {
+        const events = this.events.getByAction("warning_raised", 200)
+        for (const ev of events) {
+          if (byPath.has(ev.path)) continue // fs file 优先, events 仅补缺
+          byPath.set(ev.path, this.eventToWarning(ev))
+        }
+      } catch (err) {
+        this.logWarn({ err }, "wiki-meta: events.getByAction failed (skip merge)")
+      }
+    }
+
     // sort by detectedAt DESC (新→老); null 排末尾
-    out.sort((a, b) => {
+    const out = [...byPath.values()].sort((a, b) => {
       if (a.detectedAt === null && b.detectedAt === null) return 0
       if (a.detectedAt === null) return 1
       if (b.detectedAt === null) return -1
       return Date.parse(b.detectedAt) - Date.parse(a.detectedAt)
     })
     return { warnings: out, total: out.length }
+  }
+
+  private eventToWarning(ev: {
+    path: string
+    alias: string
+    ts: string
+    diffSummary?: string | null
+    reason?: string | null
+  }): WarningSummary {
+    return {
+      path: ev.path,
+      type: "warning",
+      subtype: "warning_raised",
+      severity: null,
+      source: "wiki_events",
+      detectedAt: ev.ts,
+      raisedBy: ev.alias,
+      summary: (ev.reason ?? ev.diffSummary ?? "").slice(0, SUMMARY_LEN),
+      mtime: ev.ts,
+    }
   }
 
   async listIndex(): Promise<ListIndexResponse> {

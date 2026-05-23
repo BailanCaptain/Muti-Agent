@@ -6,6 +6,8 @@ import { describe, it } from "node:test"
 
 import Fastify from "fastify"
 
+import { createDrizzleDb } from "../../db/drizzle-instance"
+import { WikiEventsRepository } from "../../db/repositories/wiki-events-repository"
 import { registerWikiMetaRoutes, WikiMetaScanner } from "./wiki-meta"
 
 /**
@@ -129,6 +131,87 @@ describe("WikiMetaScanner · listWarnings", () => {
       assert.equal(result.warnings[0].path, "wiki/warnings/good.md")
       assert.ok(warnings.some((m) => m.includes("frontmatter parse failed")))
     } finally {
+      t.cleanup()
+    }
+  })
+
+  it("(W6) codex Week 4 mid-r1 P2: events 注入 → merge warning_raised rows (fs 缺时)", async () => {
+    const t = setup()
+    const dbPath = path.join(t.wikiRoot, "test.sqlite")
+    const { db, close } = createDrizzleDb(dbPath)
+    try {
+      const events = new WikiEventsRepository(db)
+      // 1 份 fs warning + 1 份 wiki_events row (fs 没对应文件)
+      t.writeWarning(
+        "fs-only.md",
+        "type: warning\nsubtype: drift\nseverity: warn\ndetected_at: 2026-04-10T00:00:00Z\nraised_by: alice",
+        "fs body",
+      )
+      const pendingEvent = events.appendPending({
+        ts: "2026-04-15T11:00:00Z",
+        alias: "桂芬",
+        action: "warning_raised",
+        path: "wiki/warnings/events-only.md",
+        baseHash: null,
+        attemptedHash: "abc123",
+        diffSummary: "tainted_source detected",
+        reason: "V14 layer 3 fired",
+        fencingToken: "ft-1",
+        leaderTerm: "999",
+        result: "ok",
+      })
+      events.commit(pendingEvent.id, { contentHash: "abc123" })
+
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot, events })
+      const result = await scanner.listWarnings()
+      // fs + events 合并: 2 行
+      assert.equal(result.warnings.length, 2)
+      const eventsOnly = result.warnings.find(
+        (w) => w.path === "wiki/warnings/events-only.md",
+      )
+      assert.ok(eventsOnly, "events-only row should be merged")
+      assert.equal(eventsOnly?.subtype, "warning_raised")
+      assert.equal(eventsOnly?.source, "wiki_events")
+      assert.equal(eventsOnly?.raisedBy, "桂芬")
+    } finally {
+      close()
+      t.cleanup()
+    }
+  })
+
+  it("(W7) codex Week 4 mid-r1 P2: events 注入 + fs 文件存在 → fs 优先 (不 dup)", async () => {
+    const t = setup()
+    const dbPath = path.join(t.wikiRoot, "test.sqlite")
+    const { db, close } = createDrizzleDb(dbPath)
+    try {
+      const events = new WikiEventsRepository(db)
+      t.writeWarning(
+        "same.md",
+        "type: warning\nsubtype: drift\nseverity: warn\ndetected_at: 2026-04-10T00:00:00Z\nraised_by: fs-author",
+        "fs body",
+      )
+      const pendingEvent = events.appendPending({
+        ts: "2026-04-15T00:00:00Z",
+        alias: "events-author",
+        action: "warning_raised",
+        path: "wiki/warnings/same.md",
+        baseHash: null,
+        attemptedHash: "abc",
+        diffSummary: "events row for same path",
+        fencingToken: "ft-2",
+        leaderTerm: "999",
+        result: "ok",
+      })
+      events.commit(pendingEvent.id, { contentHash: "abc" })
+
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot, events })
+      const result = await scanner.listWarnings()
+      // 仅 1 行 (fs 优先去重)
+      assert.equal(result.warnings.length, 1)
+      assert.equal(result.warnings[0].raisedBy, "fs-author") // fs 优先 (not events-author)
+      assert.equal(result.warnings[0].subtype, "drift") // fs subtype, 不是 events 的 warning_raised
+    } finally {
+      close()
       t.cleanup()
     }
   })
