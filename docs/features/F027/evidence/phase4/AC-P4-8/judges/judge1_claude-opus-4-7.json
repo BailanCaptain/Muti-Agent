@@ -2,16 +2,17 @@
   "judge_id": "claude-opus-4-7",
   "ac_id": "AC-P4-8",
   "verdict": "CONDITIONAL_PASS",
-  "reasoning": "AdaptiveRecallCoordinator production boot v2 拆 5 子项全落地：(1) AdaptiveRecallCoordinator 主类 — packages/api/src/wiki/adaptive-recall/index.ts + executor.ts 含 levels 2/3/4 backend (hybrid-search/messages/readwiki) + level5 escalate sink + judge-block 决策 + critique-agent; (2) ProductionLevel5Sink (level5-escalate-sink.ts) appendPending → 立即 commit, contentHash = attemptedHash = sha256(reason), 路径约定 audit/recall/<roomId>/<ts>; (3) LLMRecallJudge 真 model call (llm-recall-judge.ts); (4) server.ts boot wire: AdaptiveRecallCoordinator instance + 注入 ProductionRecallExecutor + enabled=true/levels=[2,3,4,5] 配置打印; (5) 全单测覆盖 (executor.test / critique-agent.test / judge-block.test / level2-4 backend.test / level5-escalate-sink.test / llm-recall-judge.test). 539/539 测试绿. 本 AC needsBrowser=false + needsBackendLogs=true. 待 boot log `[AdaptiveRecallCoordinator] enabled=true levels=[2,3,4,5]` 真采 + DB prompt_audit 9 字段真写入 query 结果存 logs/ → 升 PASS. 同时跨绑 AC-P3-9 升 PASS (per §11 矩阵).",
+  "reasoning": "**第二轮 (post-codex j2 FAIL Red→Green commit 7603f35)**: j1 第一轮 CONDITIONAL_PASS 高估了 (没逐项核 plan §AC-P4-8 (a) Haiku fallback 和 (e2) NotificationBroadcast). codex j2 第一轮 FAIL 是对的. 已 Red→Green: (a) **Haiku 4.5 fallback**: createRunnerWithFallback (packages/api/src/runtime/runner-with-fallback.ts) — primary Sonnet → quota/rate-limit/timeout fail → Haiku retry, 实现 'fallback 不等价 PASS 记 BLOCKED' (didFallback() helper, ok=true && error='fallback-haiku-success'). production-recall-executor-deps.ts:69 critique runner 走 fallback wrapper. 11 node:test 覆盖 primary success / 5 种 fallback 触发条件 / 业务错不 fallback / both fail / custom override; (e2) **NotificationBroadcast**: RealtimeServerEvent union 加 'recall.escalated' (shared/realtime.ts) + createRealtimeAuditBroadcaster adapter (wiki/adaptive-recall/realtime-audit-broadcaster.ts) + server.ts:293 ProductionLevel5Sink 注入 auditBroadcaster, boot log 改 'broadcaster=on'; 4 node:test 覆盖 broadcast 转发 / payload 完整 / event.type / 错误透传. 全测试绿: 546/546 vitest + 2783 node:test. AC-P4-8 (b) Level2 + (c) Level3 + (d) Level4 + (e1) WikiEventsPersist + (e3) InspectorProjection 第一轮已落. 待 boot log 真采 + walkthrough 场景 1 step 1.5 真 recall 触发 → 升 PASS.",
   "cited_evidence": [
-    "packages/api/src/wiki/adaptive-recall/index.ts",
-    "packages/api/src/wiki/adaptive-recall/executor.ts",
-    "packages/api/src/wiki/adaptive-recall/level5-escalate-sink.ts",
-    "packages/api/src/wiki/adaptive-recall/llm-recall-judge.ts",
-    "packages/api/src/wiki/adaptive-recall/judge-block.ts",
-    "packages/api/src/wiki/adaptive-recall/critique-agent.ts",
-    "packages/api/src/server.ts (AdaptiveRecallCoordinator boot wire)",
-    "test: 539/539 vitest pass (含 adaptive-recall 全套单测)"
+    "packages/api/src/runtime/runner-with-fallback.ts (createRunnerWithFallback + defaultShouldFallback + didFallback)",
+    "packages/api/src/runtime/runner-with-fallback.test.ts (11 node:test)",
+    "packages/api/src/orchestrator/production-recall-executor-deps.ts (critique runner wrap fallback, disableFallback opts)",
+    "packages/api/src/orchestrator/production-recall-executor-deps.test.ts (4+2 node:test)",
+    "packages/shared/src/realtime.ts (RealtimeServerEvent union 'recall.escalated')",
+    "packages/api/src/wiki/adaptive-recall/realtime-audit-broadcaster.ts (createRealtimeAuditBroadcaster)",
+    "packages/api/src/wiki/adaptive-recall/realtime-audit-broadcaster.test.ts (4 node:test)",
+    "packages/api/src/server.ts (ProductionLevel5Sink 注入 auditBroadcaster, boot log)",
+    "commit 7603f35"
   ],
   "spec_gate": "PASS",
   "mechanism_gate": "PASS",
@@ -19,6 +20,7 @@
   "p1_findings": [],
   "p2_findings": [],
   "p3_findings": [
-    "boot log 真采 + DB prompt_audit query 结果待 walkthrough 场景 1 step 1.5 期间收"
+    "boot log 真采待 walkthrough 期间从 .runtime/worktree-preview/api.log 摘录 (\"AdaptiveRecallCoordinator wired: enabled=true, levels=[2,3,4,5], maxLevels=5, broadcaster=on\")",
+    "DB prompt_audit query 待 walkthrough 场景 1 step 1.5 后采"
   ]
 }

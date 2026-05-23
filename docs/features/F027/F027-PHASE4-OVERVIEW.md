@@ -13,22 +13,22 @@ Phase 4 把 F027 (统一记忆架构) 从 Phase 3 留下的 "approval 流闭环"
 
 ---
 
-## 1. 8 AC 完成状态
+## 1. 8 AC 完成状态 (post-codex j2 重评 + Red→Green)
 
 | AC | 标题 | 代码 | 单测 | walkthrough | judge1 | judge2 | 当前 verdict |
 |---|---|---|---|---|---|---|---|
-| AC-P4-1 | PromoteModal 流程 (V14 新实现) | ✅ | ✅ | ⏳ | CONDITIONAL_PASS | ⏳ | CONDITIONAL_PASS |
-| AC-P4-2 | 审计失败回退 (V14 reject) | ✅ | ✅ | ⏳ | CONDITIONAL_PASS | ⏳ | CONDITIONAL_PASS |
-| AC-P4-3 | 审批操作入口 (v2 重设计) | ✅ | ✅ | ⏳ | CONDITIONAL_PASS | ⏳ | CONDITIONAL_PASS |
-| AC-P4-4 | 批量审批 (continue-on-error) | ✅ | ✅ | ⏳ | CONDITIONAL_PASS | ⏳ | CONDITIONAL_PASS |
-| AC-P4-5 | 三层验证套件 runner | ✅ | ✅ | n/a | PASS | ⏳ | PASS (待 j2) |
-| AC-P4-6 | 手 walkthrough 三场景 | ✅ 脚本 | n/a | ⏳ | INCONCLUSIVE | ⏳ | INCONCLUSIVE |
-| AC-P4-8 | AdaptiveRecallCoordinator boot | ✅ | ✅ | ⏳ boot log | CONDITIONAL_PASS | ⏳ | CONDITIONAL_PASS |
-| AC-P4-9 | warnings + KB + Inspector + DB seed | ✅ | ✅ | ⏳ | CONDITIONAL_PASS | ⏳ | CONDITIONAL_PASS |
+| AC-P4-1 | PromoteModal 流程 (V14 新实现) | ✅ | ✅ | ⏳ | CONDITIONAL_PASS | CONDITIONAL_PASS | CONDITIONAL_PASS |
+| AC-P4-2 | 审计失败回退 (V14 reject) | ✅ | ✅ | ⏳ | CONDITIONAL_PASS | CONDITIONAL_PASS | CONDITIONAL_PASS |
+| AC-P4-3 | 审批操作入口 (v2 重设计) | ✅+Demote 修 | ✅ | ⏳ | CONDITIONAL_PASS | r1=FAIL→r2 待 | CONDITIONAL_PASS (post-fix) |
+| AC-P4-4 | 批量审批 (continue-on-error) | ✅+KB 接 | ✅ | ⏳ | CONDITIONAL_PASS | r1=FAIL→r2 待 | CONDITIONAL_PASS (post-fix) |
+| AC-P4-5 | 三层验证套件 runner | ✅ | ✅ | n/a | PASS | PASS | PASS |
+| AC-P4-6 | 手 walkthrough 三场景 | ✅ 脚本 | n/a | ⏳ | INCONCLUSIVE | INCONCLUSIVE | INCONCLUSIVE |
+| AC-P4-8 | AdaptiveRecallCoordinator boot | ✅+Haiku+Broadcaster | ✅ | ⏳ boot log | CONDITIONAL_PASS | r1=FAIL→r2 待 | CONDITIONAL_PASS (post-fix) |
+| AC-P4-9 | warnings + KB + Inspector + DB seed | ✅+KB multi-select | ✅ | ⏳ | CONDITIONAL_PASS | r1=FAIL→r2 待 | CONDITIONAL_PASS (post-fix) |
 
-**测试统计**: 539/539 vitest + 11+24+17 node:test 全 PASS.
+**测试统计**: 546/546 vitest + 2783/2792 node:test (含新 27 demote/runner/broadcaster) 全 PASS, 0 fail.
 
-**升 PASS 条件**: walkthrough screenshots + 后端 logs 收齐 → 8 AC 全升 PASS (除 AC-P4-6 自身就是 walkthrough).
+**升 PASS 条件**: codex j2 r2 重评 PASS/CONDITIONAL_PASS + walkthrough screenshots + 后端 logs → 全升 PASS.
 
 ---
 
@@ -64,11 +64,13 @@ Phase 4 把 F027 (统一记忆架构) 从 Phase 3 留下的 "approval 流闭环"
 
 ### Week 5 — 收稿 (Day 21-24)
 
-- Day 21: evidence pack 8 AC 骨架 + placeholder result.json + §11 Phase 3 升 PASS 矩阵 (PHASE3_UPGRADE_MAPPING.md)
-- Day 22: F028 follow-up backlog (10 项 P0/P1/P2 分级) + judge1 (claude-opus-4-7) 8 AC 自评
-- Day 23: judge2 (codex-gpt-5.4) 8 AC 独立评 + 不一致仲裁
-- Day 23: walkthrough 三场景 (小孙手动)
-- Day 23: Phase 3 6 项 升 PASS (按 PHASE3_UPGRADE_MAPPING.md)
+- Day 21: evidence pack 8 AC 骨架 + placeholder result.json + §11 Phase 3 升 PASS 矩阵 (PHASE3_UPGRADE_MAPPING.md) — commit 464068e
+- Day 22: F028 follow-up backlog (10 项 P0/P1/P2 分级) + judge1 (claude-opus-4-7) 8 AC 自评 — commit 464068e
+- Day 23 a: judge2 (codex-gpt-5.4) 8 AC 独立评 — r1 verdict 4 FAIL (P4-3/4/8/9) — commit 7603f35 (j2 r1 落入 evidence)
+- Day 23 b: codex j2 FAIL Red→Green 实施 (DemoteService + Haiku fallback + Broadcaster + KB tab 接入) — commit 7603f35
+- Day 23 c: codex j2 r2 重评 4 修复 AC (in-flight, agent a6899678fcac5a3e7) → arbitration → result.json final
+- Day 23 d: walkthrough 三场景 (小孙手动)
+- Day 23 e: Phase 3 6 项 升 PASS (按 PHASE3_UPGRADE_MAPPING.md)
 - Day 24: 合 dev (小孙物理操作, Iron Law 边界) + push origin + 整体签字
 
 ---
@@ -78,7 +80,8 @@ Phase 4 把 F027 (统一记忆架构) 从 Phase 3 留下的 "approval 流闭环"
 - Week 2 mid-r1 + end-r2: 全 reconcile
 - Week 3 mid-r1 + end-r2 (047c948): 全 reconcile (含 CLI guard Windows + arbitration_verdict schema)
 - Week 4 mid-r1 (a5963a4): 全 reconcile (含 metaWikiRoot prod 错配 + wiki_events warning_raised merge)
-- Week 5 (this): judge2 codex 独立评 8 AC (本次)
+- Week 5 judge2 r1 + Red→Green (7603f35): 4 AC FAIL (P4-3/4/8/9) — Demote + Haiku fallback + Broadcaster + KB tab 接入 全 reconcile
+- Week 5 judge2 r2 (待): 4 修复 AC 重评 → arbitration → result.json final
 
 ---
 
@@ -92,9 +95,11 @@ Phase 4 把 F027 (统一记忆架构) 从 Phase 3 留下的 "approval 流闭环"
 12e6262 feat(F027-P4): Week 4 Day 16 AC-P4-9 a/b — wiki/{warnings,index} fixture seed + boot copier wire
 1195217 feat(F027-P4): Week 4 Day 17 AC-P4-9 a/b 派生 API + tabs 接入真 fixture
 a5963a4 fix(F027-P4): codex Week 4 mid-r1 review 修 — P1 metaWikiRoot prod 错配 + P2 wiki_events warning_raised merge
+464068e docs(F027-P4): Week 5 Day 21-22 evidence pack 骨架 + judge1 8 AC + 收稿 doc
+7603f35 fix(F027-P4): codex Week 5 j2 FAIL 4 项 Red→Green — Demote + Haiku fallback + Broadcaster + KB tab 接入
 ```
 
-待 Week 5 Day 24 加 evidence pack + walkthrough 收稿 commit.
+待 Week 5 Day 24 加 codex j2 r2 + arbitration + result.json final + walkthrough screenshots 收稿 commit.
 
 ---
 
@@ -124,11 +129,12 @@ AC-P3-1 拖宽 / AC-P3-2 5-tab scroll / AC-P3-3 inspector 7 块 / AC-P3-6 Ingest
 
 per plan line 188:
 
-- [x] 8 AC 代码完成
-- [x] 8 AC 单测 PASS (539/539)
-- [x] judge1 8 AC 自评完成
-- [ ] judge2 8 AC 独立评完成 (此刻 codex 跑中)
-- [ ] judge1+judge2 不一致仲裁
+- [x] 8 AC 代码完成 (含 codex j2 r1 FAIL 4 项 Red→Green 修)
+- [x] 8 AC 单测 PASS (546/546 vitest + 2783/2792 node:test)
+- [x] judge1 8 AC 自评完成 (第二轮 reflect Red→Green)
+- [x] judge2 8 AC r1 评完成 (4 FAIL → 已 Red→Green)
+- [ ] judge2 r2 重评 4 修复 AC (in-flight)
+- [ ] judge1+judge2 不一致仲裁 (待 j2 r2)
 - [ ] walkthrough 三场景小孙签字 (待小孙)
 - [ ] Phase 3 6 项升 PASS (按矩阵)
 - [ ] evidence pack 完整 (screenshots + logs 收齐)
@@ -141,10 +147,10 @@ per plan line 188:
 代码层 placeholder (设计内, 推 F028):
 
 - Inspector Coverage UnresolvedRow click → window.alert (Day 13 占位, 真 supersede/reject UI 推 F028-1)
-- RollbackPreviewModal 只显示历史 + 不写盘 (写型 rollback 推 F028-2)
+- RollbackPreviewModal **未实施** (写型 rollback 推 F028-2; codex j2 r1 提到, 我承认按 plan §1.1 line 80 允许推 F028)
 - composer slash menu 4 写命令 disabled (推 F028-3 evaluate)
 - WarningsTab 无"解决"按钮 (推 F028-8)
-- KB tab 仅 index .md path/title 显示 (markdown entity parse + multi-select 推 F028-9)
+- KB tab markdown entity parse 未做 (multi-select 已做 满足 plan §AC-P4-9 b; entity parse 推 F028-9)
 
 测试层全绿, 无 skip/xfail. 无技术债.
 

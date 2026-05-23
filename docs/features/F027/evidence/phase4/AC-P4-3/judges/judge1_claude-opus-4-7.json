@@ -2,12 +2,19 @@
   "judge_id": "claude-opus-4-7",
   "ac_id": "AC-P4-3",
   "verdict": "CONDITIONAL_PASS",
-  "reasoning": "审批操作入口 v2 重设计落地：(1) draft-approval-tab.tsx 真 list endpoint + [Promote] 按钮逐份触发 PromoteModal — components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx; (2) seriesId 透传 PromoteModal/PromoteWikiService 全链路；(3) 多选 checkbox + [批量审批 N 份] 按钮 = AC-P4-4 入口 (双 AC 同一入口); (4) draft-approval-tab.test.tsx 单测覆盖单选 + 多选 + seriesId 透传. 539/539 测试绿. 待 walkthrough 场景 2 step 进入 draft-approval tab 截图 → 升 PASS.",
+  "reasoning": "**第二轮 (post-codex j2 FAIL Red→Green commit 7603f35)**: 之前 j1 自评 CONDITIONAL_PASS 高估了, 漏看 plan §AC-P4-3 (a)(b)(c)(d) 字面要求 (Demote/Rollback 3 按钮 + DemoteModal + KB tab 接入). codex j2 第一轮 FAIL 是对的. 已 Red→Green 修复: (1) DemoteWikiService (PREPARE+COMMIT pattern + lease + ACL + wiki_events action='demote' + atomic mv to wiki/_rejected/), packages/api/src/wiki/promote-audit/demote-wiki-service.ts; (2) POST /api/wiki/drafts/demote endpoint with lease try/finally, packages/api/src/routes/phase4/demote.ts + 注册到 phase4/index.ts; (3) DemoteModal 3 phase UI + use-demote-api hook, components/chat/right-panel/runtime-log/demote-modal/; (4) draft-approval-tab row 加 [Demote] 按钮 + DemoteModal 接入; (5) knowledge-base-tab 加 KbDraftsSection (drafts list + multi-select + 行 [Promote] [Demote]). (c) RollbackPreviewModal 推 F028-2 (plan §1.1 line 80 允许写型 rollback 推 F028); (f) composer slash menu 4 写命令保持 disabled 不变. 全测试绿: 546/546 vitest + 2783 node:test. 待 walkthrough screenshot 验 (draft-approval [Demote] 行 + KB tab Drafts section + DemoteModal 弹) → 升 PASS.",
   "cited_evidence": [
-    "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx",
-    "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.test.tsx",
-    "components/chat/right-panel/runtime-log/promote-modal/promote-modal.tsx (seriesId 透传)",
-    "test: 539/539 vitest pass"
+    "packages/api/src/wiki/promote-audit/demote-wiki-service.ts (DemoteWikiService)",
+    "packages/api/src/wiki/promote-audit/demote-wiki-service.test.ts (9 node:test pass)",
+    "packages/api/src/routes/phase4/demote.ts (POST endpoint)",
+    "packages/api/src/routes/phase4/demote.test.ts (7 node:test pass)",
+    "packages/api/src/routes/phase4/index.ts (registerDemoteRoutes)",
+    "components/chat/right-panel/runtime-log/demote-modal/demote-modal.tsx",
+    "components/chat/right-panel/runtime-log/demote-modal/use-demote-api.ts",
+    "components/chat/right-panel/runtime-log/demote-modal/demote-modal.test.tsx (7 vitest pass)",
+    "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx (DraftRow [Demote] + DemoteModal)",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx (KbDraftsSection)",
+    "commit 7603f35 (codex j2 FAIL Red→Green)"
   ],
   "spec_gate": "PASS",
   "mechanism_gate": "PASS",
@@ -15,6 +22,7 @@
   "p1_findings": [],
   "p2_findings": [],
   "p3_findings": [
-    "browser tab entry screenshot 待 walkthrough"
+    "browser walkthrough screenshot 待 (draft-approval + KB tab Drafts section + DemoteModal 三处)",
+    "RollbackPreviewModal 推 F028-2 (写型 rollback 一起, per plan §1.1 line 80 允许)"
   ]
 }

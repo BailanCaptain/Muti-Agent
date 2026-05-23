@@ -11,14 +11,14 @@
 | # | 项目 | 类别 | 来源 | F027 占位状态 | F028 立项工作量预估 |
 |---|------|------|------|---------------|----------------------|
 | **F028-1** | 真 supersede / reject UI (Inspector Coverage section) | 写型 UI | plan §1.1; prompt-inspector-tab.tsx:44-45,442 | Day 13 占位: click → window.alert | 1-2 周 (新 endpoint + DecisionRef→draftPath 映射 + Modal) |
-| **F028-2** | 写型 rollback (真改 wiki 文件 rollback) | 写型 backend + UI | plan §1.1 line 80; O5 拍 C | Phase 4 仅 read-only preview (RollbackPreviewModal 不写盘) | 2 周 (CAS / lease / fencing / 二次审计 / wiki_events action='rollback' / 并发 promote 拒绝测试) |
+| **F028-2** | 写型 rollback + RollbackPreviewModal (codex j2 r1 确认 scope) | 写型 backend + UI | plan §1.1 line 80; O5 拍 C; codex Week 5 j2 r1 P4-3 finding | Phase 4 不实施 (codex j2 r1 确认 RollbackPreviewModal + endpoint 都未实施 — 按 plan 允许推 F028) | 2 周 (CAS / lease / fencing / 二次审计 / wiki_events action='rollback' / 并发 promote 拒绝测试 + RollbackPreviewModal UI) |
 | **F028-3** | composer slash menu 4 写命令启用 (`/promote` `/demote` `/series` `/rollback`) | UX evaluate | plan §1.1 line 81; §6 O8 | 4 items 已加但 disabled | 1 周 (evaluate "命令面板原意 V16.5 line 2539-2545 vs 右侧面板按钮入口" 用户偏好 → 启用 + UX 完善) |
 | **F028-4** | promote-only memory_preflight | 写型 backend | plan §1.1 line 79; §6 O8 | 未实现 | 1-2 周 (V16.5 划走的 5 项之一) |
 | **F028-5** | sessions ledger | 写型 backend | plan §1.1 line 79; §6 O8 | 未实现 | 1-2 周 (V16.5 划走的 5 项之一) |
 | **F028-6** | Adaptive Recall Level 6 | 写型 backend | plan §1.1 line 79; §6 O8 | F027 Level 5 escalate 已落 (P3-9 c); Level 6 推 F028 | 1-2 周 (V16.5 划走的 5 项之一; 复用 Level 5 sink 模式) |
 | **F028-7** | Prompt Inspector 升级 | UI | plan §1.1 line 79; §6 O8 | F027 Day 13 加了 Coverage 第 8 块占位 | 1 周 (V16.5 划走的 5 项之一; 具体升级点待 V16.5 line 重读) |
 | **F028-8** | WarningsTab "解决" / 删除 / mark resolved 按钮 | 写型 UI | warnings-tab.tsx:24 | Day 17 仅 list 显示, 无操作按钮 | 1 周 (后端 endpoint + UI button + wiki_events action='warning_resolved') |
-| **F028-9** | KB tab markdown 表格 entity-level parse + multi-select | UI | wiki-meta.ts:23 | Day 17 仅 index .md path/title 显示 | 1 周 (parse markdown 表格 row → entity 列表; multi-select → BatchPromoteModal 复用) |
+| **F028-9** | KB tab markdown 表格 entity-level parse | UI | wiki-meta.ts:23; codex Week 5 j2 r1 P4-9(b) finding | Day 17 仅 index .md path/title 显示; **multi-select 已在 commit 7603f35 实施** (KbDraftsSection 加入 + 行 [Promote] [Demote] + 顶部批量按钮); entity-level markdown 表格 row 解析未做 | 1 周 (parse markdown 表格 row → entity 列表; BatchPromoteModal 已挂 KB tab) |
 | **F028-10** | EmbeddedWikiRecord boot load + 多房间并行 ingest 压测 | 性能/scale | production-recall-executor-deps.ts:36; plan §1.1 line 83 | Phase 4 单 R-001 房间 single record load | 2 周 (multi-room concurrency lease 测试 + EmbeddedWikiRecord cold-start load) |
 
 ---
@@ -45,9 +45,16 @@ F028 范围:
 ```
 prompt-inspector-tab.tsx:44-45,442,447,473   → F028-1 (supersede/reject UI)
 warnings-tab.tsx:24                          → F028-8 (warnings 解决按钮)
-wiki-meta.ts:23                              → F028-9 (KB markdown parse)
+wiki-meta.ts:23                              → F028-9 (KB markdown entity parse; multi-select 已 commit 7603f35 落)
 production-recall-executor-deps.ts:36        → F028-10 (前半: EmbeddedWikiRecord boot)
 promote-modal.tsx:39                         → F028-3 (slash menu trigger 配合)
+```
+
+### D. codex Week 5 j2 r1 review 确认推 F028 (commit 7603f35 期间 scope 决策)
+
+```
+P4-3 (c) RollbackPreviewModal              → F028-2 (写型 rollback 一起做)
+P4-9 (b) KB entity-level markdown parse    → F028-9 (multi-select 已实施 但 markdown 表格 entity 解析推后)
 ```
 
 ### C. plan §11 Phase 3 升 PASS 引用 (1 项)
