@@ -430,6 +430,48 @@ describe("IngestModal SeriesSection (F027 P4 Day 10 AC-P4-3 e)", () => {
     expect(screen.getByTestId("ingest-series-error-toolong")).toBeTruthy()
   })
 
+  it("(P4-D10-6) codex r3 P2: invalid seriesId 时 preview 被 reset + commit 按钮 disabled (防 stale preview commit)", async () => {
+    // 序列: 初始 preview (合法 file + 空 seriesId) → 成功
+    //   → 用户输 invalid seriesId → preview 应被 reset → commit 按钮 disabled
+    let previewCount = 0
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/api/wiki/ingest/preview")) {
+        previewCount++
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(makePreviewResponse()),
+      } as Response)
+    }) as unknown as typeof fetch
+
+    render(<IngestModal open={true} file={makeFile()} callerAlias="huang" onClose={vi.fn()} />)
+    await waitFor(() => expect(previewCount).toBe(1)) // 初始 preview 已成功
+
+    // 此时 commit 应可点 (合法 file + 空 seriesId + preview 成功)
+    const commitBtn = screen.getByTestId("ingest-modal-commit") as HTMLButtonElement
+    expect(commitBtn.disabled).toBe(false)
+
+    // 输 invalid seriesId
+    fireEvent.change(screen.getByTestId("ingest-series-input"), {
+      target: { value: "has space" },
+    })
+    expect(screen.getByTestId("ingest-series-error-chars")).toBeTruthy()
+
+    // P2 防御: commit 按钮 disabled (preview.reset + seriesValid 二重保护)
+    await waitFor(() => {
+      expect(commitBtn.disabled).toBe(true)
+    })
+
+    // 用户改回 valid → preview 重新跑 + commit 重新 enabled
+    fireEvent.change(screen.getByTestId("ingest-series-input"), {
+      target: { value: "valid-series" },
+    })
+    await waitFor(() => expect(previewCount).toBe(2)) // re-preview
+    await waitFor(() => expect(commitBtn.disabled).toBe(false))
+  })
+
   it("(P4-D10-5) 空 seriesId → preview body 不含 seriesId 字段", async () => {
     const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
       Promise.resolve({

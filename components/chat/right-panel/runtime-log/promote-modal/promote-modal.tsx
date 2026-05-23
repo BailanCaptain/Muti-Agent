@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
   type PromoteCommitSuccess,
@@ -91,11 +91,18 @@ export function PromoteModal({
     // (avoid re-preview on every render)
   }, [open, srcDraftPath, skipAutoPreview, auditHook.preview])
 
-  // Notify caller on promote success
+  // codex end-r3 P1 修: ref 追踪已 notify 的 success object，防 onPromoteSuccess identity
+  // 不稳 (parent useDraftsData refetch 每次 render 新 identity) 导致 effect 重 trigger 多次
+  // 调 callback → refetch loop。同一 PromoteCommitSuccess reference 只 notify 一次。
+  const notifiedRef = useRef<PromoteCommitSuccess | null>(null)
   useEffect(() => {
-    if (commitHook.data && onPromoteSuccess) {
-      onPromoteSuccess(commitHook.data)
+    if (!commitHook.data) {
+      notifiedRef.current = null
+      return
     }
+    if (notifiedRef.current === commitHook.data) return
+    notifiedRef.current = commitHook.data
+    onPromoteSuccess?.(commitHook.data)
   }, [commitHook.data, onPromoteSuccess])
 
   const destPathValid = useMemo(() => {

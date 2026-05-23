@@ -12,6 +12,7 @@
  *   - (8) 取消按钮 → onClose
  */
 
+import { useState } from "react"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -245,6 +246,55 @@ describe("PromoteModal", () => {
     })
     expect(screen.getByText(/Prompt 结构/)).toBeTruthy()
     expect(screen.getByText(/system: 行/)).toBeTruthy()
+  })
+
+  it("(7a) codex r3 P1: onPromoteSuccess 多次 render 只 call 一次 (防 refetch loop)", async () => {
+    mockSequence([
+      { ok: true, status: 200, json: { ok: true, audit: { passed: true } } },
+      {
+        ok: true,
+        status: 200,
+        json: { ok: true, finalPath: "/tmp/wiki/concepts/rag.md", eventId: 42 },
+      },
+    ])
+
+    let callCount = 0
+    // Wrapper component that re-renders parent multiple times after promote success
+    // (simulates real-world parent using useDraftsData whose refetch identity changes per render)
+    function Wrapper() {
+      const [_, setForceRerender] = useState(0)
+      const onPromoteSuccess = () => {
+        callCount++
+        // simulate parent re-rendering (refetch identity change)
+        setTimeout(() => setForceRerender((n) => n + 1), 0)
+        setTimeout(() => setForceRerender((n) => n + 1), 10)
+        setTimeout(() => setForceRerender((n) => n + 1), 20)
+      }
+      return (
+        <PromoteModal
+          open={true}
+          srcDraftPath="wiki/concepts/draft/_auto/rag.md"
+          callerAlias="黄仁勋"
+          onClose={() => {}}
+          onPromoteSuccess={onPromoteSuccess}
+        />
+      )
+    }
+
+    render(<Wrapper />)
+    await waitFor(() => screen.getByText(/V14 二次审计 PASS/))
+    fireEvent.change(screen.getByLabelText("Target wiki path"), {
+      target: { value: "wiki/concepts/rag.md" },
+    })
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "首批整理" } })
+    fireEvent.click(screen.getByRole("button", { name: "Promote" }))
+
+    // wait for the simulated re-renders to complete (50ms covers all 3 setTimeout)
+    await new Promise((r) => setTimeout(r, 80))
+
+    // P1 guard: 即使 parent re-render 多次 + onPromoteSuccess identity 变,
+    //   notifiedRef 已 set 防 effect 重 call → callCount 仍是 1
+    expect(callCount).toBe(1)
   })
 
   it("(8) 取消按钮 → onClose", async () => {

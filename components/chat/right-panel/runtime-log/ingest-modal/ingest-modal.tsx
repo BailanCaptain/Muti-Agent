@@ -89,8 +89,12 @@ export function IngestModal({
   // 同时 reset commit state 防 stale commit data 还显示着。
   useEffect(() => {
     if (!open || !file) return
-    // F027 P4 Day 10 AC-P4-3 e: seriesId UI invalid → 不 trigger preview (避免 backend reject 浪费)
-    if (seriesId.length > 0 && !isValidSeriesId(seriesId)) return
+    // codex end-r3 P2 修: invalid seriesId 时 reset stale previewHook.data,
+    // 防止用户改 seriesId 前留下的 valid preview 仍可被 commit (落盘不带新 series_id)
+    if (seriesId.length > 0 && !isValidSeriesId(seriesId)) {
+      previewHook.reset()
+      return
+    }
     commitHook.reset() // 防新 preview + 旧 commit success 同屏
     previewHook.preview({
       sourcePath: file.name,
@@ -99,7 +103,16 @@ export function IngestModal({
       targetType,
       seriesId: seriesId.length > 0 ? seriesId : undefined,
     })
-  }, [open, file, mime, targetType, seriesId, previewHook.preview, commitHook.reset])
+  }, [
+    open,
+    file,
+    mime,
+    targetType,
+    seriesId,
+    previewHook.preview,
+    previewHook.reset,
+    commitHook.reset,
+  ])
 
   // Commit 成功 → 触发回调 + 不立即 close（让用户看 finalPath 后手动关闭）
   useEffect(() => {
@@ -190,11 +203,14 @@ export function IngestModal({
             // 范-r1 P1-2 fix: commit 必须 !previewHook.isLoading
             // (旧条件依赖 data 非 null + setData(null) on preview start 间接守住,
             // 但显式 !isLoading 更清晰防 race window 漏)
+            // codex end-r3 P2 第二道防御: seriesId UI invalid 时禁 commit
+            // (preview.reset 已让 data null, 但显式 seriesValid 防 race window)
             !!previewHook.data &&
             !previewHook.isLoading &&
             !previewBlocked &&
             !commitHook.isLoading &&
-            !commitHook.data
+            !commitHook.data &&
+            (seriesId.length === 0 || isValidSeriesId(seriesId))
           }
           isCommitting={commitHook.isLoading}
           isCommitted={!!commitHook.data}
