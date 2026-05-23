@@ -1,6 +1,9 @@
 "use client"
 
+import { useCallback, useState } from "react"
+
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
+import { PromoteModal } from "../promote-modal/promote-modal"
 import {
   type DraftOrigin,
   type DraftSummary,
@@ -9,33 +12,73 @@ import {
 } from "./draft-approval/use-drafts-data"
 
 /**
- * F027 Phase 3 Week 4 Day 18-19 (AC-P3-2 子需求) · DraftApprovalTab 真实数据
+ * F027 Phase 3-4 (AC-P3-2 + AC-P4-1 + AC-P4-3) · DraftApprovalTab
  *
  * 真相源：
  *   - V16.5 chap 18 line 1952 (DraftApprovalTab → GET /api/wiki/drafts)
  *   - feature.md plan §3 line 48 (Phase 3 只读列表 + Phase 4 加 promote)
  *   - GET /api/wiki/drafts (Phase 3 Week 1 Day 3 done)
+ *   - PromoteModal (Phase 4 Day 8 done) + POST /api/wiki/drafts/promote (Day 7 done)
  *
- * 实施:
+ * Phase 3 已实施:
  *   - 读取 drafts 列表（sorted by mtime DESC）
  *   - 每行渲染：title / type badge / origin badge / mtime relative / summary 100 字截断
  *   - empty / loading / error 三态
  *   - enabled wire = activeLvl2 === "draft-approval" (防 always-render 启动并发 fetch)
  *
- * 不做（Phase 4 范围）：
- *   - promote / demote / 批量审批按钮（feature.md AC-P4-1/3/4）
+ * Phase 4 Day 9 (AC-P4-3 主线 A):
+ *   - 每 row 加 [Promote] 按钮 → 触发 PromoteModal (Day 8 组件)
+ *   - tab 级 state 维护 promotingDraft: DraftSummary | null
+ *   - promote success → invalidate drafts list (auto refresh by useDraftsData)
+ *
+ * 不做（Day 9 范围外，待 KB tab list 接入后做）:
+ *   - [Demote] 按钮 (wiki → draft 反向，需要 KB list 列出 wiki entity 才有 wire 点)
+ *   - [Rollback] 按钮 (history preview，同理在 KB list 旁)
  */
+
+/**
+ * callerAlias 来源 (同 knowledge-base-tab.tsx / composer.tsx pattern — Phase 4 未拍 user session)
+ */
+function getCurrentUserAlias(): string {
+  return process.env.NEXT_PUBLIC_USER_ALIAS ?? "小孙"
+}
+
 export function DraftApprovalTab() {
   const activeLvl2 = useRuntimeLogStore((state) => state.activeLvl2)
-  const { data, isLoading, error } = useDraftsData({
+  const { data, isLoading, error, refetch } = useDraftsData({
     enabled: activeLvl2 === "draft-approval",
   })
 
+  const [promotingDraft, setPromotingDraft] = useState<DraftSummary | null>(null)
+
+  const handlePromote = useCallback((draft: DraftSummary) => {
+    setPromotingDraft(draft)
+  }, [])
+
+  const handleModalClose = useCallback(() => {
+    setPromotingDraft(null)
+  }, [])
+
+  const handlePromoteSuccess = useCallback(() => {
+    // Promote 成功 → src draft 已 unlink, dest wiki 已写 → refetch drafts list 刷新
+    refetch()
+    setPromotingDraft(null)
+  }, [refetch])
+
   return (
-    <div className="flex flex-col gap-2 p-3 text-xs" data-testid="draft-approval-tab">
-      <Header total={data.total} isLoading={isLoading} error={error} />
-      <DraftList drafts={data.drafts} />
-    </div>
+    <>
+      <div className="flex flex-col gap-2 p-3 text-xs" data-testid="draft-approval-tab">
+        <Header total={data.total} isLoading={isLoading} error={error} />
+        <DraftList drafts={data.drafts} onPromote={handlePromote} />
+      </div>
+      <PromoteModal
+        open={promotingDraft !== null}
+        srcDraftPath={promotingDraft?.path ?? null}
+        callerAlias={getCurrentUserAlias()}
+        onClose={handleModalClose}
+        onPromoteSuccess={handlePromoteSuccess}
+      />
+    </>
   )
 }
 
@@ -54,7 +97,7 @@ function Header({
       data-testid="draft-approval-header"
     >
       <div className="text-[10px] uppercase tracking-wider text-slate-500">
-        审批待办 · {total} draft（Phase 3 只读 · Phase 4 加 promote）
+        审批待办 · {total} draft（点 [Promote] 提升到正式 wiki）
       </div>
       {isLoading && (
         <span className="text-[10px] text-slate-400" data-testid="draft-approval-loading">
@@ -70,7 +113,13 @@ function Header({
   )
 }
 
-function DraftList({ drafts }: { drafts: DraftSummary[] }) {
+function DraftList({
+  drafts,
+  onPromote,
+}: {
+  drafts: DraftSummary[]
+  onPromote: (draft: DraftSummary) => void
+}) {
   if (drafts.length === 0) {
     return (
       <div
@@ -85,14 +134,20 @@ function DraftList({ drafts }: { drafts: DraftSummary[] }) {
     <ul className="flex flex-col gap-1.5" data-testid="draft-approval-list">
       {drafts.map((d) => (
         <li key={d.path}>
-          <DraftRow draft={d} />
+          <DraftRow draft={d} onPromote={onPromote} />
         </li>
       ))}
     </ul>
   )
 }
 
-function DraftRow({ draft }: { draft: DraftSummary }) {
+function DraftRow({
+  draft,
+  onPromote,
+}: {
+  draft: DraftSummary
+  onPromote: (draft: DraftSummary) => void
+}) {
   return (
     <div
       className="rounded border border-slate-200 bg-white px-2 py-1.5 hover:border-slate-300"
@@ -109,9 +164,18 @@ function DraftRow({ draft }: { draft: DraftSummary }) {
           {formatRelative(draft.mtime)}
         </span>
       </div>
-      <div className="mt-0.5 flex flex-wrap gap-1">
+      <div className="mt-0.5 flex flex-wrap items-center gap-1">
         <Badge label={draft.type} kind="type" value={draft.type} />
         <Badge label={originLabel(draft.origin)} kind="origin" value={draft.origin} />
+        <button
+          type="button"
+          onClick={() => onPromote(draft)}
+          className="ml-auto rounded bg-blue-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-blue-700"
+          data-testid={`draft-approval-promote-${draft.path}`}
+          title="提升此 draft 到正式 wiki path (走 V14 二次审计)"
+        >
+          Promote
+        </button>
       </div>
       {draft.summary && (
         <div className="mt-1 text-[10px] text-slate-500" title={draft.summary}>
