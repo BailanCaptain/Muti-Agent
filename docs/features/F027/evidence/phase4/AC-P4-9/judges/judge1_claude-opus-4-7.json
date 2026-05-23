@@ -1,0 +1,31 @@
+{
+  "judge_id": "claude-opus-4-7",
+  "ac_id": "AC-P4-9",
+  "verdict": "CONDITIONAL_PASS",
+  "reasoning": "v4 扩范围 4 子项全落地：(a) warnings + (b) KB + (c) Inspector Coverage + (d) DB seed. **(a) warnings**: packages/api/src/routes/phase4/wiki-meta.ts WikiMetaScanner.listWarnings 实施 (fs *.md 优先 + wiki_events action='warning_raised' merge by path dedup); WikiEventsRepository.getByAction (a5963a4 codex r1 fix); WarningsTab UI 替换 placeholder list 渲染. **(b) KB**: WikiMetaScanner.listIndex 扫 wiki/index/*.md; KnowledgeBaseTab IndexList 含 bucket badge (concepts/rules/methods/rooms-active). **(c) Coverage**: prompt-inspector-tab.tsx 第 8 块 CoverageSection + useDecisionsCoverageData hook (V16.5 chap 11 jaccard 0.7 阈值); UnresolvedRow click → window.alert 占位 (真 supersede/reject UI 推 F028, 见 F028-FOLLOWUP-BACKLOG.md F028-1). **(d) DB seed**: tests/fixtures/wiki/warnings/*.md (5 份) + tests/fixtures/wiki/index/*.md (4 份); worktree-preview-wiki-fixtures.ts boot copier double gate (WORKTREE_PREVIEW=1 + path.contains('.runtime/worktree-preview/')) + per-bucket idempotent; server.ts:702 isWorktreePreview gate 区分 prod vs preview (codex r1 P1 fix a5963a4). 单测齐全 (wiki-meta.test.ts 11 node:test + use-wiki-meta-data.test.ts + warnings-tab.test.tsx + knowledge-base-tab.test.tsx + prompt-inspector-tab.test.tsx Coverage section + use-decisions-coverage-data.test.ts + wiki-events-repository.test.ts 24 node:test). 539/539 vitest + 24+11 node:test 全绿. 待 walkthrough warnings/KB/Coverage tab 非空 screenshots + boot fixture seed log 收齐 → 升 PASS.",
+  "cited_evidence": [
+    "packages/api/src/db/worktree-preview-wiki-fixtures.ts (boot copier + double gate + per-bucket idempotent)",
+    "packages/api/src/routes/phase4/wiki-meta.ts (WikiMetaScanner listWarnings + listIndex)",
+    "packages/api/src/routes/phase4/wiki-meta.test.ts (11 node:test 含 W6 + W7 events merge)",
+    "packages/api/src/db/repositories/wiki-events-repository.ts (getByAction)",
+    "packages/api/src/db/repositories/wiki-events-types.ts (warning_raised literal)",
+    "packages/api/src/server.ts:702 (isWorktreePreview gate codex r1 P1 fix)",
+    "components/chat/right-panel/runtime-log/tabs/wiki-meta/use-wiki-meta-data.ts",
+    "components/chat/right-panel/runtime-log/tabs/warnings-tab.tsx",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx",
+    "components/chat/right-panel/runtime-log/prompt-inspector/use-decisions-coverage-data.ts",
+    "components/chat/right-panel/runtime-log/tabs/prompt-inspector-tab.tsx (Coverage section 第 8 块)",
+    "tests/fixtures/wiki/warnings/{chained-suspect,acl-violation,drift-detected,tainted-source,quota-exhausted}.md",
+    "tests/fixtures/wiki/index/{concepts,rules,methods,rooms-active}.md",
+    "test: 539/539 vitest + 11+24 node:test pass"
+  ],
+  "spec_gate": "PASS",
+  "mechanism_gate": "PASS",
+  "feature_gate": "PASS",
+  "p1_findings": [],
+  "p2_findings": [],
+  "p3_findings": [
+    "browser tab 非空截图待 walkthrough 收 (warnings/KB/Coverage 三个 tab 各一张)",
+    "boot fixture seed log 待 walkthrough 期间从 .runtime/worktree-preview/api.log 摘录"
+  ]
+}

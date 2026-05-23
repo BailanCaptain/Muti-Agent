@@ -1,0 +1,30 @@
+{
+  "ac_id": "AC-P4-9",
+  "title": "warnings + KB + 4 张 Phase 1 表真数据 + Inspector Coverage UI (v4 扩范围)",
+  "phase": "phase4",
+  "verdict": "INCONCLUSIVE",
+  "double_pass": {
+    "judge1_verdict": "INCONCLUSIVE",
+    "judge2_verdict": "INCONCLUSIVE",
+    "arbitration_verdict": null,
+    "consensus": false
+  },
+  "evidence_paths": {
+    "screenshots": [],
+    "logs": [],
+    "code_anchors": [
+      "packages/api/src/db/worktree-preview-wiki-fixtures.ts",
+      "packages/api/src/routes/phase4/wiki-meta.ts",
+      "packages/api/src/routes/phase4/wiki-meta.test.ts",
+      "packages/api/src/db/repositories/wiki-events-repository.ts (getByAction)",
+      "components/chat/right-panel/runtime-log/tabs/wiki-meta/use-wiki-meta-data.ts",
+      "components/chat/right-panel/runtime-log/tabs/warnings-tab.tsx",
+      "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx",
+      "components/chat/right-panel/runtime-log/prompt-inspector/use-decisions-coverage-data.ts",
+      "components/chat/right-panel/runtime-log/prompt-inspector/prompt-inspector-tab.tsx (Coverage section)",
+      "tests/fixtures/wiki/warnings/*.md (5 份)",
+      "tests/fixtures/wiki/index/*.md (4 份)"
+    ]
+  },
+  "inconclusive_reason": "placeholder — Week 5 Day 22 跑 judge1 + judge2 后填，待 walkthrough warnings/KB/Coverage tab 非空 screenshots + boot fixture seed logs 收齐"
+}

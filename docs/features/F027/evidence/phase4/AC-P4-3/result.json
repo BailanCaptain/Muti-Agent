@@ -1,0 +1,21 @@
+{
+  "ac_id": "AC-P4-3",
+  "title": "审批操作入口 (v2 重设计 — seriesId 透传 + draft-approval 入口)",
+  "phase": "phase4",
+  "verdict": "INCONCLUSIVE",
+  "double_pass": {
+    "judge1_verdict": "INCONCLUSIVE",
+    "judge2_verdict": "INCONCLUSIVE",
+    "arbitration_verdict": null,
+    "consensus": false
+  },
+  "evidence_paths": {
+    "screenshots": [],
+    "logs": [],
+    "code_anchors": [
+      "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx",
+      "components/chat/right-panel/runtime-log/promote-modal/promote-modal.tsx"
+    ]
+  },
+  "inconclusive_reason": "placeholder — Week 5 Day 22 跑 judge1 + judge2 后填，待 walkthrough draft-approval entry screenshots 收齐"
+}

@@ -1,0 +1,24 @@
+{
+  "ac_id": "AC-P4-4",
+  "title": "批量审批 (部分失败语义锁定 — BatchPromoteService 串行 continue-on-error)",
+  "phase": "phase4",
+  "verdict": "INCONCLUSIVE",
+  "double_pass": {
+    "judge1_verdict": "INCONCLUSIVE",
+    "judge2_verdict": "INCONCLUSIVE",
+    "arbitration_verdict": null,
+    "consensus": false
+  },
+  "evidence_paths": {
+    "screenshots": [],
+    "logs": [],
+    "code_anchors": [
+      "packages/api/src/wiki/promote-audit/batch-promote-service.ts",
+      "packages/api/src/wiki/promote-audit/batch-promote-service.test.ts",
+      "packages/api/src/routes/phase4/batch-promote.ts",
+      "components/chat/right-panel/runtime-log/batch-promote-modal/batch-promote-modal.tsx",
+      "components/chat/right-panel/runtime-log/batch-promote-modal/use-batch-promote-api.ts"
+    ]
+  },
+  "inconclusive_reason": "placeholder — Week 5 Day 22 跑 judge1 + judge2 后填，待 walkthrough batch report screenshots 收齐 (success/failed 双列表)"
+}

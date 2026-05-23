@@ -1,0 +1,20 @@
+{
+  "judge_id": "claude-opus-4-7",
+  "ac_id": "AC-P4-3",
+  "verdict": "CONDITIONAL_PASS",
+  "reasoning": "审批操作入口 v2 重设计落地：(1) draft-approval-tab.tsx 真 list endpoint + [Promote] 按钮逐份触发 PromoteModal — components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx; (2) seriesId 透传 PromoteModal/PromoteWikiService 全链路；(3) 多选 checkbox + [批量审批 N 份] 按钮 = AC-P4-4 入口 (双 AC 同一入口); (4) draft-approval-tab.test.tsx 单测覆盖单选 + 多选 + seriesId 透传. 539/539 测试绿. 待 walkthrough 场景 2 step 进入 draft-approval tab 截图 → 升 PASS.",
+  "cited_evidence": [
+    "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx",
+    "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.test.tsx",
+    "components/chat/right-panel/runtime-log/promote-modal/promote-modal.tsx (seriesId 透传)",
+    "test: 539/539 vitest pass"
+  ],
+  "spec_gate": "PASS",
+  "mechanism_gate": "PASS",
+  "feature_gate": "PASS",
+  "p1_findings": [],
+  "p2_findings": [],
+  "p3_findings": [
+    "browser tab entry screenshot 待 walkthrough"
+  ]
+}

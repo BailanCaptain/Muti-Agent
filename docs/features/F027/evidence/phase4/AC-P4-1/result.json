@@ -1,0 +1,24 @@
+{
+  "ac_id": "AC-P4-1",
+  "title": "PromoteModal 流程 (V14 新实现)",
+  "phase": "phase4",
+  "verdict": "INCONCLUSIVE",
+  "double_pass": {
+    "judge1_verdict": "INCONCLUSIVE",
+    "judge2_verdict": "INCONCLUSIVE",
+    "arbitration_verdict": null,
+    "consensus": false
+  },
+  "evidence_paths": {
+    "screenshots": [],
+    "logs": [],
+    "code_anchors": [
+      "packages/api/src/wiki/promote-audit/v14-audit-service.ts",
+      "packages/api/src/wiki/promote-audit/promote-wiki-service.ts",
+      "packages/api/src/routes/phase4/promote.ts",
+      "components/chat/right-panel/runtime-log/promote-modal/promote-modal.tsx",
+      "components/chat/right-panel/runtime-log/promote-modal/use-promote-api.ts"
+    ]
+  },
+  "inconclusive_reason": "placeholder — Week 5 Day 22 跑 judge1 + judge2 后填，待 walkthrough screenshots/logs 收齐"
+}

@@ -1,0 +1,24 @@
+{
+  "judge_id": "claude-opus-4-7",
+  "ac_id": "AC-P4-8",
+  "verdict": "CONDITIONAL_PASS",
+  "reasoning": "AdaptiveRecallCoordinator production boot v2 拆 5 子项全落地：(1) AdaptiveRecallCoordinator 主类 — packages/api/src/wiki/adaptive-recall/index.ts + executor.ts 含 levels 2/3/4 backend (hybrid-search/messages/readwiki) + level5 escalate sink + judge-block 决策 + critique-agent; (2) ProductionLevel5Sink (level5-escalate-sink.ts) appendPending → 立即 commit, contentHash = attemptedHash = sha256(reason), 路径约定 audit/recall/<roomId>/<ts>; (3) LLMRecallJudge 真 model call (llm-recall-judge.ts); (4) server.ts boot wire: AdaptiveRecallCoordinator instance + 注入 ProductionRecallExecutor + enabled=true/levels=[2,3,4,5] 配置打印; (5) 全单测覆盖 (executor.test / critique-agent.test / judge-block.test / level2-4 backend.test / level5-escalate-sink.test / llm-recall-judge.test). 539/539 测试绿. 本 AC needsBrowser=false + needsBackendLogs=true. 待 boot log `[AdaptiveRecallCoordinator] enabled=true levels=[2,3,4,5]` 真采 + DB prompt_audit 9 字段真写入 query 结果存 logs/ → 升 PASS. 同时跨绑 AC-P3-9 升 PASS (per §11 矩阵).",
+  "cited_evidence": [
+    "packages/api/src/wiki/adaptive-recall/index.ts",
+    "packages/api/src/wiki/adaptive-recall/executor.ts",
+    "packages/api/src/wiki/adaptive-recall/level5-escalate-sink.ts",
+    "packages/api/src/wiki/adaptive-recall/llm-recall-judge.ts",
+    "packages/api/src/wiki/adaptive-recall/judge-block.ts",
+    "packages/api/src/wiki/adaptive-recall/critique-agent.ts",
+    "packages/api/src/server.ts (AdaptiveRecallCoordinator boot wire)",
+    "test: 539/539 vitest pass (含 adaptive-recall 全套单测)"
+  ],
+  "spec_gate": "PASS",
+  "mechanism_gate": "PASS",
+  "feature_gate": "PASS",
+  "p1_findings": [],
+  "p2_findings": [],
+  "p3_findings": [
+    "boot log 真采 + DB prompt_audit query 结果待 walkthrough 场景 1 step 1.5 期间收"
+  ]
+}

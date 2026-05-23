@@ -1,0 +1,20 @@
+{
+  "judge_id": "claude-opus-4-7",
+  "ac_id": "AC-P4-2",
+  "verdict": "CONDITIONAL_PASS",
+  "reasoning": "审计失败回退路径完整：(1) V14PromoteAuditService 失败 = throws V14AuditRejection — packages/api/src/wiki/promote-audit/v14-promote-audit-service.ts; (2) PromoteWikiService 在 lease try/finally 内 rethrow，确保 abort wiki_events row 不留 pending — promote-wiki-service.ts; (3) PromoteModal report phase 显示 reject reason — promote-modal.tsx; (4) reject 路径单测齐全 (v14-promote-audit-service.test.ts 含 imperative reject / structure reject / tainted-quote reject). 539/539 测试绿. 待 walkthrough 场景 2 step '故意触发 V14 reject' 收 screenshot + 后端 abort log → 升 PASS.",
+  "cited_evidence": [
+    "packages/api/src/wiki/promote-audit/v14-promote-audit-service.ts",
+    "packages/api/src/wiki/promote-audit/v14-promote-audit-service.test.ts (imperative/structure/tainted-quote 三 reject 场景)",
+    "components/chat/right-panel/runtime-log/promote-modal/promote-modal.tsx (report phase reject 显示)",
+    "test: 539/539 vitest pass"
+  ],
+  "spec_gate": "PASS",
+  "mechanism_gate": "PASS",
+  "feature_gate": "PASS",
+  "p1_findings": [],
+  "p2_findings": [],
+  "p3_findings": [
+    "browser reject UI screenshot 待 walkthrough"
+  ]
+}

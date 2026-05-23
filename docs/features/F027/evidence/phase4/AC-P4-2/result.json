@@ -1,0 +1,22 @@
+{
+  "ac_id": "AC-P4-2",
+  "title": "审计失败回退 (V14 reject 路径)",
+  "phase": "phase4",
+  "verdict": "INCONCLUSIVE",
+  "double_pass": {
+    "judge1_verdict": "INCONCLUSIVE",
+    "judge2_verdict": "INCONCLUSIVE",
+    "arbitration_verdict": null,
+    "consensus": false
+  },
+  "evidence_paths": {
+    "screenshots": [],
+    "logs": [],
+    "code_anchors": [
+      "packages/api/src/wiki/promote-audit/v14-audit-service.ts",
+      "packages/api/src/wiki/promote-audit/v14-audit-service.test.ts",
+      "components/chat/right-panel/runtime-log/promote-modal/promote-modal.tsx"
+    ]
+  },
+  "inconclusive_reason": "placeholder — Week 5 Day 22 跑 judge1 + judge2 后填，待 walkthrough reject screenshots 收齐"
+}

@@ -1,0 +1,23 @@
+{
+  "judge_id": "claude-opus-4-7",
+  "ac_id": "AC-P4-4",
+  "verdict": "CONDITIONAL_PASS",
+  "reasoning": "批量审批部分失败语义锁定：(1) BatchPromoteService 串行 promote + per-item lease try/finally + continue-on-error — packages/api/src/wiki/promote-audit/batch-promote-service.ts; (2) BatchPromoteSummary 返回 {success[], failed[], totals} — 不抛错聚合; (3) POST /api/wiki/promote/batch endpoint 校验 callerAlias/reason 必填 + items ≤ 50 + src/dest 不重复 — packages/api/src/routes/phase4/batch-promote.ts; (4) BatchPromoteModal 3 phase (compose/submitting/report) 共用 reason + 报告 modal success/failed 双列表 — components/chat/right-panel/runtime-log/batch-promote-modal/batch-promote-modal.tsx; (5) 单测覆盖部分失败 (5 promote 3 success 2 failed) + lease 释放确认 + suggestDestWikiPath helper. 539/539 测试绿. 待 walkthrough 场景 2 step '批量审批 N 份' 收报告 modal screenshot → 升 PASS.",
+  "cited_evidence": [
+    "packages/api/src/wiki/promote-audit/batch-promote-service.ts",
+    "packages/api/src/wiki/promote-audit/batch-promote-service.test.ts",
+    "packages/api/src/routes/phase4/batch-promote.ts",
+    "packages/api/src/routes/phase4/batch-promote.test.ts",
+    "components/chat/right-panel/runtime-log/batch-promote-modal/batch-promote-modal.tsx",
+    "components/chat/right-panel/runtime-log/batch-promote-modal/batch-promote-modal.test.tsx",
+    "test: 539/539 vitest pass"
+  ],
+  "spec_gate": "PASS",
+  "mechanism_gate": "PASS",
+  "feature_gate": "PASS",
+  "p1_findings": [],
+  "p2_findings": [],
+  "p3_findings": [
+    "browser 报告 modal screenshot 待 walkthrough"
+  ]
+}
