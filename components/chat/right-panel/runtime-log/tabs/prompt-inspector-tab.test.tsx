@@ -12,6 +12,7 @@
  * 注：fetch 调用通过 vitest mock 全局 fetch（避免真发请求）。
  */
 
+import type { GetCoverageResponse } from "@/components/chat/right-panel/runtime-log/tabs/prompt-inspector/use-decisions-coverage-data"
 import type { GetPromptInspectorResponse } from "@/components/chat/right-panel/runtime-log/tabs/prompt-inspector/use-prompt-inspector-data"
 import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
 import { useThreadStore } from "@/components/stores/thread-store"
@@ -39,15 +40,36 @@ function makeResponse(
   }
 }
 
-function mockFetchResponse(payload: GetPromptInspectorResponse) {
-  globalThis.fetch = vi.fn(() =>
-    Promise.resolve({
+function makeCoverageResponse(overrides: Partial<GetCoverageResponse> = {}): GetCoverageResponse {
+  return {
+    broad: [],
+    resolved: [],
+    unresolved: [],
+    coverage: null,
+    status: "fail",
+    generatedAt: new Date(0).toISOString(),
+    ...overrides,
+  }
+}
+
+/**
+ * Mock fetch — 按 URL 分流 prompt-inspector vs decisions/coverage endpoint。
+ * (Day 13 加 coverage section 后单一 mock response 不再适用 — coverage shape 不同)
+ */
+function mockFetchResponse(
+  payload: GetPromptInspectorResponse,
+  coverage: GetCoverageResponse = makeCoverageResponse(),
+) {
+  globalThis.fetch = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+    const url = String(input)
+    const body = url.includes("/decisions/coverage") ? coverage : payload
+    return Promise.resolve({
       ok: true,
       status: 200,
       statusText: "OK",
-      json: () => Promise.resolve(payload),
-    } as Response),
-  )
+      json: () => Promise.resolve(body),
+    } as Response)
+  })
 }
 
 function resetStores() {
@@ -329,19 +351,25 @@ describe("PromptInspectorTab r2 P2: enabled flag wired to activeLvl2", () => {
     vi.restoreAllMocks()
   })
 
-  it("activeLvl2=prompt-inspector → fetch 触发", async () => {
+  it("activeLvl2=prompt-inspector → fetch 触发 (prompt-inspector + decisions/coverage 各 1)", async () => {
     const { useRuntimeLogStore } = await import("@/components/stores/runtime-log-store")
     useRuntimeLogStore.setState({ activeLvl2: "prompt-inspector" })
-    const fetchMock = vi.fn(() =>
-      Promise.resolve({
+    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input)
+      const body = url.includes("/decisions/coverage") ? makeCoverageResponse() : makeResponse()
+      return Promise.resolve({
         ok: true,
         status: 200,
-        json: () => Promise.resolve(makeResponse()),
-      } as Response),
-    )
+        json: () => Promise.resolve(body),
+      } as Response)
+    })
     globalThis.fetch = fetchMock
     render(<PromptInspectorTab />)
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    // Day 13 加 coverage section → fetch 改成 2 个 (prompt-inspector + decisions/coverage)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(urls.some((u) => u.endsWith("/prompt-inspector"))).toBe(true)
+    expect(urls.some((u) => u.endsWith("/decisions/coverage"))).toBe(true)
   })
 
   it("activeLvl2=viewfinder → fetch 不触发 (enabled=false)", async () => {
@@ -359,5 +387,140 @@ describe("PromptInspectorTab r2 P2: enabled flag wired to activeLvl2", () => {
     // 等一点时间让任何 fetch 触发，然后断言确实没 fetch
     await new Promise((r) => setTimeout(r, 50))
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe("PromptInspectorTab AC-P4-9 c Coverage section (Day 13)", () => {
+  beforeEach(async () => {
+    resetStores()
+    const { useRuntimeLogStore } = await import("@/components/stores/runtime-log-store")
+    useRuntimeLogStore.setState({ activeLvl2: "prompt-inspector" })
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("(P4-D13-1) empty coverage → empty 占位 + fail status badge", async () => {
+    mockFetchResponse(makeResponse(), makeCoverageResponse())
+    render(<PromptInspectorTab />)
+    await waitFor(() => expect(screen.queryByTestId("prompt-inspector-coverage")).toBeTruthy())
+    expect(screen.getByTestId("coverage-empty")).toBeTruthy()
+    expect(screen.getByText(/FAIL/)).toBeTruthy()
+  })
+
+  it("(P4-D13-2) unresolved 2 份 + 88% coverage → 列表 + WARN badge", async () => {
+    mockFetchResponse(
+      makeResponse(),
+      makeCoverageResponse({
+        broad: Array.from({ length: 10 }, (_, i) => ({
+          decisionId: `${i}`,
+          summary: `b${i}`,
+          state: "active",
+          decisionType: "spec",
+          decidedBy: "alice",
+          decidedAt: "2026-05-23T00:00:00Z",
+        })),
+        resolved: Array.from({ length: 8 }, (_, i) => ({
+          decisionId: `r${i}`,
+          summary: `r${i}`,
+          state: "completed",
+          decisionType: "commit",
+          decidedBy: "bob",
+          decidedAt: "2026-05-23T00:00:00Z",
+        })),
+        unresolved: [
+          {
+            decisionId: "u1",
+            summary: "未闭环的 spec — RAG 召回 budget 上限",
+            state: "active",
+            decisionType: "spec",
+            decidedBy: "小孙",
+            decidedAt: "2026-05-23T03:00:00Z",
+          },
+          {
+            decisionId: "u2",
+            summary: "未闭环的 pivot — V14 三步检测顺序",
+            state: "active",
+            decisionType: "pivot",
+            decidedBy: "黄仁勋",
+            decidedAt: "2026-05-23T05:00:00Z",
+          },
+        ],
+        coverage: 0.8,
+        status: "warn",
+      }),
+    )
+    render(<PromptInspectorTab />)
+    await waitFor(() => expect(screen.queryByTestId("coverage-unresolved-list")).toBeTruthy())
+    expect(screen.getByText(/WARN/)).toBeTruthy()
+    expect(screen.getByText(/80%/)).toBeTruthy()
+    expect(screen.getByText(/8 resolved \/ 10 broad, 2 unresolved/)).toBeTruthy()
+    expect(screen.getByTestId("coverage-unresolved-u1")).toBeTruthy()
+    expect(screen.getByTestId("coverage-unresolved-u2")).toBeTruthy()
+    expect(screen.getByTestId("coverage-decision-type-u1").textContent).toMatch(/spec/)
+    expect(screen.getByText(/RAG 召回 budget 上限/)).toBeTruthy()
+  })
+
+  it("(P4-D13-3) click [Confirm] → window.alert 弹出 (Day 13 占位 / F028 接真 supersede UI)", async () => {
+    mockFetchResponse(
+      makeResponse(),
+      makeCoverageResponse({
+        broad: [
+          {
+            decisionId: "u1",
+            summary: "test",
+            state: "active",
+            decisionType: "spec",
+            decidedBy: "小孙",
+            decidedAt: "2026-05-23T00:00:00Z",
+          },
+        ],
+        resolved: [],
+        unresolved: [
+          {
+            decisionId: "u1",
+            summary: "test",
+            state: "active",
+            decisionType: "spec",
+            decidedBy: "小孙",
+            decidedAt: "2026-05-23T00:00:00Z",
+          },
+        ],
+        coverage: 0,
+        status: "warn",
+      }),
+    )
+    // jsdom 默认无 window.alert — 用 stub assign 替代 vi.spyOn
+    const alertStub = vi.fn()
+    window.alert = alertStub
+    render(<PromptInspectorTab />)
+    await waitFor(() => expect(screen.queryByTestId("coverage-confirm-button-u1")).toBeTruthy())
+    fireEvent.click(screen.getByTestId("coverage-confirm-button-u1"))
+    expect(alertStub).toHaveBeenCalledTimes(1)
+    const msg = String(alertStub.mock.calls[0]?.[0] ?? "")
+    expect(msg).toMatch(/decision=u1/)
+    expect(msg).toMatch(/F028/)
+  })
+
+  it("(P4-D13-4) coverage fetch 失败 → coverage-error 显示", async () => {
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/decisions/coverage")) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          statusText: "Internal Server Error",
+          json: () => Promise.resolve({}),
+        } as Response)
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(makeResponse()),
+      } as Response)
+    })
+    render(<PromptInspectorTab />)
+    await waitFor(() => expect(screen.queryByTestId("coverage-error")).toBeTruthy())
+    expect(screen.getByTestId("coverage-error").textContent).toMatch(/coverage 加载失败/)
   })
 })

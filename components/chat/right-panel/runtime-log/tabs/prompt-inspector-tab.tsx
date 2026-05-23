@@ -1,9 +1,14 @@
 "use client"
 
+import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { useThreadStore } from "@/components/stores/thread-store"
-import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
 import { useWakeTriggerStore } from "@/components/stores/wake-trigger-store"
+import {
+  type DecisionRef,
+  type GetCoverageResponse,
+  useDecisionsCoverageData,
+} from "./prompt-inspector/use-decisions-coverage-data"
 import {
   type GetPromptInspectorResponse,
   type RecallGate,
@@ -11,28 +16,33 @@ import {
 } from "./prompt-inspector/use-prompt-inspector-data"
 
 /**
- * F027 Phase 3 Week 4 Day 14-15 (AC-P3-3 + AC-P3-5) · PromptInspectorTab 7 块真实数据
+ * F027 Phase 3 Week 4 Day 14-15 (AC-P3-3 + AC-P3-5) +
+ * F027 Phase 4 Week 3 Day 13 (AC-P4-9 c) · PromptInspectorTab 8 块真实数据
  *
  * 真相源：
  *   - V16.5 chap 18 line 2030-2079 (7 块原文 mockup)
+ *   - V16.5 chap 11 line 1238-1247 (Decision Coverage Check)
  *   - feature.md line 179 (AC-P3-3 透明显示)
  *   - feature.md line 181 (AC-P3-5 顶部 wake-up 触发因 V16.5.2)
+ *   - F027-phase4-implementation-plan.md AC-P4-9 c (第 8 块 Coverage section)
  *
- * 7 块按 chap 18 顺序:
- *   1. 标题行 (room → agent wake-up @ time · token 总账)
- *   2. ✅ 注入的 part 表 (含 token 占比)
- *   3. ❌ 未注入预期 part (含 B022 防回归 Iron Laws 重复检测)
- *   4. 🤖 自动召回 (Quality Gate 三段：high/mid/low)
- *   5. 📊 Adaptive Recall Policy (recall_required / path Level 1-5 / satisfied)
- *   6. 🤝 当前 agent session (Day 14-15 暂占位 · Phase 4 接 agent-sessions ledger)
- *   7. 🔔 wake-up 触发因 (V16.5.2 · 取 WS event 优先 / API fallback)
- *   8. 底部 4 按钮 [查看 raw text] [对比上一次注入] [追溯 wiki_events] [复制全文]
- *      （Day 14-15 暂禁用 · Week 5 实施真功能）
+ * 8 块按 chap 18 顺序:
+ *   1. 标题行
+ *   2. ✅ 注入的 part 表
+ *   3. ❌ 未注入预期 part
+ *   4. 🤖 自动召回
+ *   5. 📊 Adaptive Recall Policy
+ *   6. 🤝 当前 agent session
+ *   7. 🔔 wake-up 触发因
+ *   8. 🛡️ Decision Coverage (Day 13 AC-P4-9 c · 第 8 块)
+ *   底部 4 按钮 [查看 raw text] [对比上一次注入] [追溯 wiki_events] [复制全文]
  *
- * 数据流:
- *   - usePromptInspectorData(roomId) fetch GET /api/rooms/:id/prompt-inspector
- *   - useWakeTriggerStore.getLatest(roomId, alias) 取 WS 实时 trigger (G1 commit c227eef)
- *   - 顶部 🔔 触发因优先用 store latest（实时），无则用 API.wakeUpTrigger（snapshot）
+ * Day 13 Coverage section 范围:
+ *   - 读 GET /api/rooms/:id/decisions/coverage (Phase 3 Day 6 done)
+ *   - 显示 coverage 标量 + pass/warn/fail badge + unresolved 列表
+ *   - 每个 unresolved item 加 click 按钮 → 触发 onUnresolvedClick callback (plan v5 AC-P4-9 c)
+ *   - 真 supersede/reject UI 推 F028 (DecisionRef 无 srcDraftPath，无法直接复用 PromoteModal)
+ *   - Day 13 占位：click 触发 alert (Week 5 / F028 完善真 confirm UI)
  */
 export function PromptInspectorTab() {
   const activeGroup = useThreadStore((state) => state.activeGroup)
@@ -40,9 +50,9 @@ export function PromptInspectorTab() {
   // r2 范-r1 P2: 只在 prompt-inspector tab 真 active 时才 fetch
   // (Day 12-13 r2 always-render 5 tabs，无 enabled flag 会让 5 tab 启动同时 fetch)
   const activeLvl2 = useRuntimeLogStore((state) => state.activeLvl2)
-  const { data, isLoading, error } = usePromptInspectorData(roomId, {
-    enabled: activeLvl2 === "prompt-inspector",
-  })
+  const enabled = activeLvl2 === "prompt-inspector"
+  const { data, isLoading, error } = usePromptInspectorData(roomId, { enabled })
+  const coverage = useDecisionsCoverageData(roomId, { enabled })
 
   return (
     <div className="flex flex-col gap-3 p-3 text-xs" data-testid="prompt-inspector-tab">
@@ -53,6 +63,7 @@ export function PromptInspectorTab() {
       <AdaptiveRecallPolicy state={data.recallState} />
       <AgentSessionSection roomId={roomId} />
       <WakeTriggerSection roomId={roomId} apiTrigger={data.wakeUpTrigger} />
+      <CoverageSection data={coverage.data} isLoading={coverage.isLoading} error={coverage.error} />
       <BottomButtonsBar />
     </div>
   )
@@ -351,7 +362,128 @@ function WakeTriggerA2APill({ callId }: { callId: string }) {
   )
 }
 
-// ─── 8. 底部 4 按钮 (Day 14-15 暂禁用 · Week 5 实施) ──────────────
+// ─── 8. 🛡️ Decision Coverage section (Day 13 AC-P4-9 c) ─────────────
+
+function CoverageSection({
+  data,
+  isLoading,
+  error,
+}: {
+  data: GetCoverageResponse
+  isLoading: boolean
+  error: string | null
+}) {
+  // Defensive fallbacks (防 server response shape 异常或空字段)
+  const status = data.status ?? "fail"
+  const broad = data.broad ?? []
+  const resolved = data.resolved ?? []
+  const unresolved = data.unresolved ?? []
+  const pct =
+    data.coverage !== null && data.coverage !== undefined ? Math.round(data.coverage * 100) : null
+  const statusColor =
+    status === "pass"
+      ? "border-green-300 bg-green-50 text-green-800"
+      : status === "warn"
+        ? "border-amber-300 bg-amber-50 text-amber-800"
+        : "border-red-300 bg-red-50 text-red-800"
+
+  return (
+    <section data-testid="prompt-inspector-coverage">
+      <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500">
+        <span>🛡️ Decision Coverage</span>
+        <span className={`rounded border px-1.5 py-0.5 font-semibold ${statusColor}`}>
+          {status.toUpperCase()}
+        </span>
+      </div>
+      {isLoading ? (
+        <div
+          className="rounded border border-dashed border-slate-300 p-2 text-[10px] text-slate-400"
+          data-testid="coverage-loading"
+        >
+          ⏳ 加载 coverage…
+        </div>
+      ) : error ? (
+        <div
+          className="rounded border border-red-300 bg-red-50 p-2 text-[10px] text-red-700"
+          data-testid="coverage-error"
+        >
+          ⚠ coverage 加载失败：{error}
+        </div>
+      ) : (
+        <>
+          <div className="mb-1 rounded border border-slate-200 bg-slate-50 p-2 text-[10px] text-slate-600">
+            <span className="font-mono">{pct !== null ? `${pct}%` : "—"}</span>
+            <span className="ml-2 text-slate-500">
+              ({resolved.length} resolved / {broad.length} broad, {unresolved.length} unresolved)
+            </span>
+          </div>
+          {unresolved.length === 0 ? (
+            <div
+              className="rounded border border-dashed border-slate-300 p-2 text-[10px] text-slate-400"
+              data-testid="coverage-empty"
+            >
+              暂无 unresolved decision (coverage check pass 或 broad=0)
+            </div>
+          ) : (
+            <ul className="space-y-1" data-testid="coverage-unresolved-list">
+              {unresolved.map((d) => (
+                <UnresolvedRow key={d.decisionId} decision={d} />
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
+function UnresolvedRow({ decision }: { decision: DecisionRef }) {
+  // Day 13 范围: click 触发占位提示
+  // 真 supersede/reject UI 推 F028 (DecisionRef 无 srcDraftPath 不能直接接 PromoteModal)
+  const handleClick = () => {
+    if (typeof window !== "undefined") {
+      window.alert(
+        `Coverage Unresolved · decision=${decision.decisionId} (${decision.decisionType})\n\n` +
+          "Day 13 范围占位：真 supersede / reject UI 推 F028\n" +
+          "(DecisionRef 不含 srcDraftPath，无法直接接 PromoteModal)",
+      )
+    }
+  }
+  return (
+    <li
+      className="rounded border border-amber-200 bg-amber-50 p-1.5 text-[10px]"
+      data-testid={`coverage-unresolved-${decision.decisionId}`}
+      data-decision-id={decision.decisionId}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span
+          className="inline-flex shrink-0 items-center rounded border border-amber-300 bg-amber-100 px-1 py-0.5 font-mono text-[9px] text-amber-700"
+          data-testid={`coverage-decision-type-${decision.decisionId}`}
+        >
+          {decision.decisionType}
+        </span>
+        <span className="truncate text-[10px] text-slate-700 flex-1" title={decision.summary}>
+          {decision.summary}
+        </span>
+        <button
+          type="button"
+          onClick={handleClick}
+          className="shrink-0 rounded bg-blue-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-blue-700"
+          data-testid={`coverage-confirm-button-${decision.decisionId}`}
+          title="manual confirm (Day 13 占位 / F028 接真 supersede/reject)"
+        >
+          Confirm
+        </button>
+      </div>
+      <div className="mt-0.5 text-[9px] text-slate-500">
+        by <span className="font-mono">{decision.decidedBy}</span> @{" "}
+        <span className="font-mono">{decision.decidedAt}</span>
+      </div>
+    </li>
+  )
+}
+
+// ─── 底部 4 按钮 (Day 14-15 暂禁用 · Week 5 实施) ─────────────────
 
 function BottomButtonsBar() {
   const buttons = ["查看 raw text", "对比上一次注入", "追溯 wiki_events", "复制全文"]
