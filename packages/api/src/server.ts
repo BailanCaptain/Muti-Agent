@@ -248,15 +248,46 @@ export async function createApiServer(options: {
   messages.setSopTracker(sopTracker)
   messages.setWorkflowSopService(workflowSopService)
   messages.setDecisionManager(decisions)
-  // F027 Phase 3 P20 Day 7-8 a · AdaptiveRecallCoordinator boot wiring。
-  // Day 7-8 a 注入 noop（enabled=false）— wiring 到位，不真触发 LLM。
-  // Phase 4 接 critique LLM + level2-4 backend + Level5Sink 生产实现后，
-  // 替换为 new AdaptiveRecallCoordinator({enabled: true, executorDeps, ...})。
+  // F027 Phase 4 P4 Day 4 · AdaptiveRecallCoordinator 真启用 (AC-P4-8)。
+  // 装配 5 级 ExecutorDeps + ProductionLevel5Sink + 启用 wake_up/a2a_handoff 触发。
+  //
+  // broadcaster 暂缺：RealtimeServerEvent union 不含 'recall.escalated' type；Week 2/3
+  // 接 Inspector UI escalate 实时推送时一起扩 union。Level 5 DB 路径 (wiki_events
+  // append_pending + commit) Day 4 起即生效，Inspector pull 拿得到 row。
+  //
+  // prompt_audit 9 字段写入由 PromptAuditWriter (line 266) 负责，跟 Coordinator
+  // 启用解耦：Coordinator enabled=true → 9 字段填真 recall output；
+  // enabled=false → 9 字段走 disabled 默认（recall_required=false 等）。
   {
-    const { createNoopAdaptiveRecallCoordinator } = await import(
+    const { AdaptiveRecallCoordinator } = await import(
       "./orchestrator/adaptive-recall-coordinator"
     )
-    messages.setAdaptiveRecallCoordinator(createNoopAdaptiveRecallCoordinator())
+    const { createProductionRecallExecutorDeps, createSimpleLeaderContext } = await import(
+      "./orchestrator/production-recall-executor-deps"
+    )
+    const { ProductionLevel5Sink } = await import("./wiki/adaptive-recall/level5-escalate-sink")
+    const { WikiEventsRepository } = await import("./db/repositories/wiki-events-repository")
+
+    const wikiEventsRepo = new WikiEventsRepository(drizzleDb)
+    const level5 = new ProductionLevel5Sink({
+      wikiEventsRepo,
+      leaderContext: createSimpleLeaderContext(),
+    })
+    const executorDeps = createProductionRecallExecutorDeps({
+      drizzleDb,
+      wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+      messagesFtsRepo,
+      embeddingService,
+      level5,
+    })
+
+    messages.setAdaptiveRecallCoordinator(
+      new AdaptiveRecallCoordinator({ enabled: true, executorDeps }),
+    )
+    // eslint-disable-next-line no-console
+    console.log(
+      "[F027-P4 AC-P4-8] AdaptiveRecallCoordinator wired: enabled=true, levels=[2,3,4,5]",
+    )
   }
   // F027 Phase 3 P20 Day 8 b · PromptAuditWriter boot wiring (AC-P3-9 b)。
   // 真 writer 注入 — 每次 A2A 拼装写一行 prompt_audit row（9 V15.2 Adaptive Recall
