@@ -155,6 +155,27 @@ export async function createApiServer(options: {
   } else if (seedReport.failed) {
     console.error(`[worktree-preview-seed] FAILED stage=${seedReport.failed.stage}: ${seedReport.failed.error}`)
   }
+  // F027 P4 AC-P4-9 a/b · worktree-preview wiki/{warnings,index}/*.md fixture copier.
+  // 同 gate 模式 (WORKTREE_PREVIEW=1 + .runtime/worktree-preview/ path check)。
+  // destWikiRoot 从 sqlitePath 推 (路径同根: .runtime/worktree-preview/data/{multi-agent.sqlite,wiki/})
+  // 跟 plan AC-P4-9 a/b line 253-254 显式目标路径一致。
+  // Note: 当前 wikiServices.wikiRoot 用 process.env.WIKI_ROOT || cwd/.runtime/wiki/，
+  //       跟 fixture copier dest 不一致 (pre-existing 配置 mismatch — Week 5 follow-up)。
+  const { applyWorktreePreviewWikiFixtures } = await import("./db/worktree-preview-wiki-fixtures")
+  const destWikiRoot = path.join(path.dirname(options.sqlitePath), "wiki")
+  const wikiFixturesReport = applyWorktreePreviewWikiFixtures({ destWikiRoot })
+  if (!wikiFixturesReport.gateClosed) {
+    for (const [bucket, status] of Object.entries(wikiFixturesReport.buckets)) {
+      if (!status) continue
+      if ("copied" in status) {
+        console.log(`[worktree-preview-wiki-fixtures] ${bucket}: copied ${status.copied} files`)
+      } else if ("skipped" in status) {
+        console.log(`[worktree-preview-wiki-fixtures] ${bucket}: skipped (${status.existingFiles} existing)`)
+      } else if ("failed" in status) {
+        console.error(`[worktree-preview-wiki-fixtures] ${bucket}: FAILED ${status.failed}`)
+      }
+    }
+  }
   // F026 P3 sibling-guard · WorklistRegistry 提前创建，传给 installA2AGateway
   // 让 a2a-gateway 反查 caller 的 sibling 集合 —— planBetaDispatch / planAssistantCallTagDispatch
   // 都在 openCall 之前命中即拒（reason=sibling-cross-call）。
