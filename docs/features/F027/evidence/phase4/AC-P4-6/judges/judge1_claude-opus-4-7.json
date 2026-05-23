@@ -11,7 +11,7 @@
   ],
   "spec_gate": "PASS",
   "mechanism_gate": "PASS",
-  "feature_gate": "INCONCLUSIVE",
+  "feature_gate": "FAIL",
   "p1_findings": [],
   "p2_findings": [
     "walkthrough 三场景未执行 (Iron Law 边界: 必须小孙物理操作 UI)"

@@ -2,21 +2,23 @@
   "ac_id": "AC-P4-2",
   "title": "审计失败回退 (V14 reject 路径)",
   "phase": "phase4",
-  "verdict": "INCONCLUSIVE",
+  "verdict": "CONDITIONAL_PASS",
   "double_pass": {
-    "judge1_verdict": "INCONCLUSIVE",
-    "judge2_verdict": "INCONCLUSIVE",
+    "judge1_verdict": "CONDITIONAL_PASS",
+    "judge2_verdict": "CONDITIONAL_PASS",
     "arbitration_verdict": null,
-    "consensus": false
+    "consensus": true
   },
   "evidence_paths": {
     "screenshots": [],
     "logs": [],
     "code_anchors": [
-      "packages/api/src/wiki/promote-audit/v14-audit-service.ts",
-      "packages/api/src/wiki/promote-audit/v14-audit-service.test.ts",
-      "components/chat/right-panel/runtime-log/promote-modal/promote-modal.tsx"
+      "packages/api/src/wiki/promote-audit/v14-promote-audit-service.ts",
+      "packages/api/src/wiki/promote-audit/v14-promote-audit-service.test.ts",
+      "packages/api/src/wiki/promote-audit/promote-wiki-service.ts:150",
+      "packages/api/src/routes/phase4/promote.ts:156",
+      "components/chat/right-panel/runtime-log/promote-modal/promote-modal.tsx:282"
     ]
   },
-  "inconclusive_reason": "placeholder — Week 5 Day 22 跑 judge1 + judge2 后填，待 walkthrough reject screenshots 收齐"
+  "inconclusive_reason": "consensus CONDITIONAL_PASS — 待 walkthrough 场景 2 step (V14 reject UI 截图 + 后端 abort log + lease 释放确认) 收齐后升 PASS"
 }

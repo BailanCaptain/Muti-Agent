@@ -1,21 +1,28 @@
 {
   "ac_id": "AC-P4-3",
-  "title": "审批操作入口 (v2 重设计 — seriesId 透传 + draft-approval 入口)",
+  "title": "审批操作入口 (v2 重设计 — seriesId + draft-approval + KB tab + Demote)",
   "phase": "phase4",
-  "verdict": "INCONCLUSIVE",
+  "verdict": "CONDITIONAL_PASS",
   "double_pass": {
-    "judge1_verdict": "INCONCLUSIVE",
-    "judge2_verdict": "INCONCLUSIVE",
+    "judge1_verdict": "CONDITIONAL_PASS",
+    "judge2_verdict": "CONDITIONAL_PASS",
     "arbitration_verdict": null,
-    "consensus": false
+    "consensus": true
   },
   "evidence_paths": {
     "screenshots": [],
     "logs": [],
     "code_anchors": [
-      "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx",
-      "components/chat/right-panel/runtime-log/promote-modal/promote-modal.tsx"
+      "packages/api/src/wiki/promote-audit/demote-wiki-service.ts (DemoteWikiService 新)",
+      "packages/api/src/routes/phase4/demote.ts (POST /api/wiki/drafts/demote 新)",
+      "packages/api/src/routes/phase4/index.ts:66 (registerDemoteRoutes 注册)",
+      "components/chat/right-panel/runtime-log/demote-modal/demote-modal.tsx (DemoteModal 新)",
+      "components/chat/right-panel/runtime-log/demote-modal/use-demote-api.ts",
+      "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx:144 (DemoteModal 接入 + [Demote] 按钮)",
+      "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:253 (KbDraftsSection + [Demote] 按钮)",
+      "components/chat/right-panel/runtime-log/ingest-modal/ingest-modal.tsx:104 (seriesId 透传)",
+      "commits: codex j2 r1 FAIL → 7603f35 Red→Green; codex j2 r2 CONDITIONAL_PASS consensus"
     ]
   },
-  "inconclusive_reason": "placeholder — Week 5 Day 22 跑 judge1 + judge2 后填，待 walkthrough draft-approval entry screenshots 收齐"
+  "inconclusive_reason": "consensus CONDITIONAL_PASS — RollbackPreviewModal 推 F028-2 (写型 rollback 一起); 待 walkthrough screenshot (draft-approval [Demote] + KB Drafts section + DemoteModal 三处) 收齐升 PASS"
 }

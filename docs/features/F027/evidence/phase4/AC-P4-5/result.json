@@ -2,20 +2,23 @@
   "ac_id": "AC-P4-5",
   "title": "三层验证套件 runner (P18 + artifact schema §12)",
   "phase": "phase4",
-  "verdict": "INCONCLUSIVE",
+  "verdict": "PASS",
   "double_pass": {
-    "judge1_verdict": "INCONCLUSIVE",
-    "judge2_verdict": "INCONCLUSIVE",
+    "judge1_verdict": "PASS",
+    "judge2_verdict": "PASS",
     "arbitration_verdict": null,
-    "consensus": false
+    "consensus": true
   },
   "evidence_paths": {
     "screenshots": [],
     "logs": [],
     "code_anchors": [
-      "scripts/f027-phase4-evidence-runner.ts",
-      "scripts/f027-phase4-evidence-runner.test.ts"
+      "scripts/f027-phase4-evidence-runner.ts:73 (Verdict type)",
+      "scripts/f027-phase4-evidence-runner.ts:209 (BLOCKED 优先)",
+      "scripts/f027-phase4-evidence-runner.ts:237 (INCONCLUSIVE 规则)",
+      "scripts/f027-phase4-evidence-runner.ts:319 (Windows main 检测 isInvokedAsMain)",
+      "scripts/f027-phase4-evidence-runner.test.ts (17 node:test)",
+      "commits: 3a2d683 + 047c948 (codex end-r2 fix CLI guard + schema)"
     ]
-  },
-  "inconclusive_reason": "placeholder — Week 5 Day 22 跑 judge1 + judge2 后填。本 AC needsBrowser=false + needsBackendLogs=false (runner 自验证不需 walkthrough)"
+  }
 }

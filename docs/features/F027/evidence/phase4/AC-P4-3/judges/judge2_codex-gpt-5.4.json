@@ -1,30 +1,38 @@
 {
   "judge_id": "codex-gpt-5.4",
   "ac_id": "AC-P4-3",
-  "verdict": "FAIL",
-  "reasoning": "Independent Judge2 validation. AC-P4-3 requires draft-approval rows and KB rows to expose Promote/Demote/Rollback, plus DemoteModal endpoint, RollbackPreviewModal read-only, series_id persistence, and slash commands remaining disabled. Partial implementation exists: DraftApprovalTab opens PromoteModal at components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx:118-124 and row-level Promote at :267-275; IngestModal seriesId is present and validated/posted at components/chat/right-panel/runtime-log/ingest-modal/ingest-modal.tsx:78, :104, :185, :206-213, with backend validation in packages/api/src/routes/phase3/contracts.ts:474-501 and frontmatter injection in packages/api/src/routes/phase3/ingest-commit.ts:138-153. However Demote/Rollback are not implemented: rg found no DemoteModal/RollbackPreviewModal implementation, and packages/api/src/routes/phase4/index.ts:13-15 explicitly marks POST /api/wiki/drafts/demote and GET /api/wiki/drafts/rollback as Week 4-5 TBD. KnowledgeBaseTab does not render row Promote/Demote/Rollback or multi-select; it renders +Drop and IndexList only at components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:91-139 and :182-214. Tests run: backend related tests 195 pass; frontend related tests 129 pass, but they only prove implemented subsets. j1-blind-spot check: seriesId is genuinely carried into preview/store/commit/frontmatter and cross-correlation tests pass, but the main operation-entry surface is incomplete.",
+  "verdict": "CONDITIONAL_PASS",
+  "reasoning": "Judge2 recheck after commit 7603f35. First-round verdict was FAIL because Demote backend/modal were absent, phase4/index.ts still marked demote/rollback TBD, and KnowledgeBaseTab had no operation-entry rows or multi-select. Spec requires right-panel operation entry at docs/plans/F027-phase4-implementation-plan.md:204-213, including KB rows with 3 buttons + multi-select at :209, read-only rollback/F028 boundary at :210, and disabled slash commands at :213; the implementation schedule also names the draft-approval + KB tab buttons and DemoteModal/RollbackPreviewModal at :159. The Red->Green hunk closes the Demote and KB-entry gaps: DemoteWikiService implements PREPARE appendPending action='demote', atomic move into wiki/_rejected, COMMIT, and source unlink at packages/api/src/wiki/promote-audit/demote-wiki-service.ts:150, :159, :179, :192, :201; POST /api/wiki/drafts/demote validates input and maps service statuses in packages/api/src/routes/phase4/demote.ts:44-83, while phase4 route registration constructs DemoteWikiService and calls registerDemoteRoutes at packages/api/src/routes/phase4/index.ts:66-74. Frontend DemoteModal and API hook were added at components/chat/right-panel/runtime-log/demote-modal/demote-modal.tsx:33, :78, :127 and components/chat/right-panel/runtime-log/demote-modal/use-demote-api.ts:53-72; DraftApprovalTab now wires DemoteModal and row Demote at components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx:144-149 and :313-318. KnowledgeBaseTab now has selectedDraftPaths, KbDraftsSection, row Promote/Demote, and the DemoteModal/BatchPromoteModal wiring at components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:60-64, :209-217, :235-242, :253-327, :383-388. Rollback is not newly implemented as a code path; for this recheck I accept the prompt's repair evidence that rollback is explicitly bound to F028-2, matching the Phase 4 F028 boundary at docs/plans/F027-phase4-implementation-plan.md:80 and F028 backlog docs/features/F027/evidence/phase4/F028-FOLLOWUP-BACKLOG.md:14. Tests actually rerun in this recheck: `pnpm.cmd exec tsx --test packages/api/src/wiki/promote-audit/demote-wiki-service.test.ts packages/api/src/routes/phase4/demote.test.ts packages/api/src/runtime/runner-with-fallback.test.ts packages/api/src/orchestrator/production-recall-executor-deps.test.ts packages/api/src/wiki/adaptive-recall/realtime-audit-broadcaster.test.ts` => 37/37 pass, including DemoteWikiService 9 tests at packages/api/src/wiki/promote-audit/demote-wiki-service.test.ts:109-274 and demote route 7 tests at packages/api/src/routes/phase4/demote.test.ts:103-265. `pnpm.cmd exec vitest run components/chat/right-panel/runtime-log/demote-modal/demote-modal.test.tsx components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.test.tsx components/chat/right-panel/runtime-log/tabs/draft-approval-tab.test.tsx components/chat/right-panel/runtime-log/batch-promote-modal/batch-promote-modal.test.tsx` => 52/52 pass, including DemoteModal 7 tests at components/chat/right-panel/runtime-log/demote-modal/demote-modal.test.tsx:37-144. Gap status: the original Demote and KB operation-entry gaps are closed; remaining condition is browser walkthrough/screenshot for draft-approval Demote, KB Drafts section, and DemoteModal behavior, which the prompt says is not run in this recheck.",
   "cited_evidence": [
-    "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx:267",
-    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:91",
-    "packages/api/src/routes/phase4/index.ts:13",
-    "components/chat/right-panel/runtime-log/ingest-modal/ingest-modal.tsx:104",
-    "packages/api/src/routes/phase3/ingest-commit.ts:138"
+    "docs/plans/F027-phase4-implementation-plan.md:204",
+    "docs/plans/F027-phase4-implementation-plan.md:209",
+    "docs/plans/F027-phase4-implementation-plan.md:210",
+    "docs/plans/F027-phase4-implementation-plan.md:213",
+    "packages/api/src/wiki/promote-audit/demote-wiki-service.ts:150",
+    "packages/api/src/wiki/promote-audit/demote-wiki-service.ts:159",
+    "packages/api/src/wiki/promote-audit/demote-wiki-service.ts:179",
+    "packages/api/src/wiki/promote-audit/demote-wiki-service.ts:192",
+    "packages/api/src/routes/phase4/demote.ts:44",
+    "packages/api/src/routes/phase4/index.ts:66",
+    "components/chat/right-panel/runtime-log/demote-modal/demote-modal.tsx:33",
+    "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx:313",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:253",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:383",
+    "packages/api/src/wiki/promote-audit/demote-wiki-service.test.ts:109",
+    "packages/api/src/routes/phase4/demote.test.ts:103",
+    "components/chat/right-panel/runtime-log/demote-modal/demote-modal.test.tsx:37",
+    "docs/features/F027/evidence/phase4/F028-FOLLOWUP-BACKLOG.md:14"
   ],
-  "spec_gate": "FAIL",
-  "mechanism_gate": "FAIL",
-  "feature_gate": "FAIL",
+  "spec_gate": "PASS",
+  "mechanism_gate": "PASS",
+  "feature_gate": "PASS",
   "p1_findings": [],
-  "p2_findings": [
+  "p2_findings": [],
+  "p3_findings": [
     {
-      "file": "packages/api/src/routes/phase4/index.ts:13",
-      "issue": "AC-P4-3 Demote/Rollback routes and modals are not implemented; comments mark them TBD.",
-      "suggestion": "Add DemoteModal + POST demote route and RollbackPreviewModal + read-only rollback endpoint, then wire row buttons in draft-approval and KB tabs."
-    },
-    {
-      "file": "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:91",
-      "issue": "KB tab has no Promote/Demote/Rollback row actions and no multi-select hook required by AC-P4-3(b).",
-      "suggestion": "Render actionable KB/draft rows with the same three controls and selection state, or narrow the AC formally if KB operation entry is moved out of scope."
+      "file": "docs/plans/F027-phase4-implementation-plan.md:188",
+      "issue": "Browser walkthrough/screenshot evidence was not collected in this recheck by task boundary.",
+      "suggestion": "During final walkthrough, capture draft-approval [Demote], KB Drafts section, and DemoteModal success/error screenshots."
     }
-  ],
-  "p3_findings": []
+  ]
 }

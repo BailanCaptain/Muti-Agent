@@ -1,28 +1,36 @@
 {
   "judge_id": "codex-gpt-5.4",
   "ac_id": "AC-P4-9",
-  "verdict": "FAIL",
-  "reasoning": "Independent Judge2 validation. Positive evidence: WikiMetaScanner.listWarnings reads wiki/warnings/*.md and merges wiki_events action='warning_raised' rows at packages/api/src/routes/phase4/wiki-meta.ts:145-173, with eventToWarning at :176-194. listIndex reads wiki/index/*.md at :196-207. Worktree seed loader has the required double gate at packages/api/src/db/worktree-preview-seed.ts:57-67, per-table idempotence at :69-75, schema validation fail-closed at :77-96, single BEGIN IMMEDIATE transaction/rollback at :98-110, and inserts only room_decisions/wiki_events/wiki_leases at :166-239. scripts/worktree-preview.ts sets WORKTREE_PREVIEW=1 at :41-44, and server.ts applies the seed plus wiki fixture copier at :141-166. server.ts also protects metaWikiRoot with isWorktreePreview at :702-708. Prompt_audit is not seeded by the loader. Real DB checked: room_decisions=5, wiki_events=6, wiki_leases=2, prompt_audit=2; wiki_events actions include warning_raised=2; wiki_leases has no status/released_at columns; reject_stale_leader trigger exists on the true DB. Tests run: wiki-meta and seed tests included in 195 passing backend tests; Warnings/Knowledge/PromptInspector frontend tests included in 129 passing Vitest tests. Failure: AC-P4-9(b) requires the knowledge-base tab to show type/path/owner/mtime plus a multi-select hook, but the backend contract only exposes path/bucket/generatedAt/compilerVersion/summary/mtime at wiki-meta.ts:61-69 and explicitly says entity-level parse and KB multi-select are not implemented at :22-23. KnowledgeBaseTab renders bucket and summary only at components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:193-214. AC-P4-9(c) click currently window.alert placeholder at prompt-inspector-tab.tsx:430-466; per prompt special-case I did not fail on that placeholder. j1-blind-spot check: warning_raised merge, double-gated seed, no released lease field, true DB trigger, and worktree-preview boot gate are verified; KB entity/multiselect scope is the blocking gap.",
+  "verdict": "CONDITIONAL_PASS",
+  "reasoning": "Judge2 recheck after commit 7603f35. First-round verdict was FAIL on AC-P4-9(b) because KB entity-level markdown parse and the multi-select hook were both missing; warnings, seed loader, prompt_audit non-seed policy, true DB trigger, and Inspector placeholder exception were already accepted. Spec requires the knowledge-base tab derived view from wiki/index/*.md to show type/path/owner/mtime plus a multi-select hook connected to AC-P4-4 at docs/plans/F027-phase4-implementation-plan.md:252-254, and the overall AC-P4-9 scope and prompt_audit non-fixture policy are at :60-68 and :261. The repair closes the multi-select side by reusing the AC-P4-4 KB Drafts section: KnowledgeBaseTab now tracks selectedDraftPaths at components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:64, derives selectedBatchItems at :117-122, renders KbDraftsSection at :209-217, and provides the batch button and row checkboxes/actions at :281-327 and :353-388. The entity-level markdown parse remains intentionally deferred to F028-9, not hidden: F028-FOLLOWUP-BACKLOG documents it at docs/features/F027/evidence/phase4/F028-FOLLOWUP-BACKLOG.md:21 and the Phase 4 overview repeats the boundary at docs/features/F027/F027-PHASE4-OVERVIEW.md:147. Existing AC-P4-9 accepted mechanisms remain in place: wiki-meta derived index rows expose path/bucket/generatedAt/compilerVersion/summary/mtime at packages/api/src/routes/phase4/wiki-meta.ts:61-69 and listIndex reads wiki/index/*.md at :196-207; worktree seed and boot gates cited in first-round evidence were not changed by this repair. Tests actually rerun in this recheck: targeted Vitest suites 52/52 pass including KnowledgeBaseTab index-list tests at components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.test.tsx:56-110, and targeted node suites 37/37 pass for the related P4-8/P4-3 repair dependencies. Gap status: the original multi-select hook gap is closed; entity-level parse is an explicit F028-9 follow-up accepted by the recheck prompt, so it is not a current F027 blocking P2. Remaining condition is walkthrough evidence for non-empty KB rows plus KB batch selection.",
   "cited_evidence": [
-    "packages/api/src/routes/phase4/wiki-meta.ts:22",
-    "packages/api/src/routes/phase4/wiki-meta.ts:145",
-    "packages/api/src/db/worktree-preview-seed.ts:57",
-    "packages/api/src/db/worktree-preview-seed.ts:98",
-    "scripts/worktree-preview.ts:41",
-    "packages/api/src/server.ts:702",
-    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:193",
-    "components/chat/right-panel/runtime-log/tabs/prompt-inspector-tab.tsx:430"
+    "docs/plans/F027-phase4-implementation-plan.md:60",
+    "docs/plans/F027-phase4-implementation-plan.md:68",
+    "docs/plans/F027-phase4-implementation-plan.md:252",
+    "docs/plans/F027-phase4-implementation-plan.md:254",
+    "docs/plans/F027-phase4-implementation-plan.md:261",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:64",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:117",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:209",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:281",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:327",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:353",
+    "packages/api/src/routes/phase4/wiki-meta.ts:61",
+    "packages/api/src/routes/phase4/wiki-meta.ts:196",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.test.tsx:56",
+    "docs/features/F027/evidence/phase4/F028-FOLLOWUP-BACKLOG.md:21",
+    "docs/features/F027/F027-PHASE4-OVERVIEW.md:147"
   ],
-  "spec_gate": "FAIL",
+  "spec_gate": "PASS",
   "mechanism_gate": "PASS",
-  "feature_gate": "FAIL",
+  "feature_gate": "PASS",
   "p1_findings": [],
-  "p2_findings": [
+  "p2_findings": [],
+  "p3_findings": [
     {
-      "file": "packages/api/src/routes/phase4/wiki-meta.ts:22",
-      "issue": "AC-P4-9(b) KB entity-level parse and multi-select hook are explicitly not implemented and pushed out of current scope.",
-      "suggestion": "Implement entity-level KB rows with type/path/owner/mtime and selection state, or revise AC-P4-9(b) before final arbitration."
+      "file": "docs/plans/F027-phase4-implementation-plan.md:393",
+      "issue": "KB tab real-data walkthrough evidence was not collected in this recheck.",
+      "suggestion": "During final walkthrough, capture non-empty KB index rows and the KB draft multi-select/batch action."
     }
-  ],
-  "p3_findings": []
+  ]
 }

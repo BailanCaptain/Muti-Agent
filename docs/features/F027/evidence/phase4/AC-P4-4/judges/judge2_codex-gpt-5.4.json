@@ -1,26 +1,33 @@
 {
   "judge_id": "codex-gpt-5.4",
   "ac_id": "AC-P4-4",
-  "verdict": "FAIL",
-  "reasoning": "Independent Judge2 validation. Backend batch mechanics pass: BatchPromoteService processes each item independently at packages/api/src/wiki/promote-audit/batch-promote-service.ts:76-95, acquires per-item lease at :102-107, releases in finally at :131-136, and returns success/failure entries without aborting later items at :138-159. Route validation enforces non-empty items, duplicate src/dest rejection, and items > 50 rejection at packages/api/src/routes/phase4/batch-promote.ts:86-128. BatchPromoteModal renders success/failed report and auditReject details at components/chat/right-panel/runtime-log/batch-promote-modal/batch-promote-modal.tsx:377-410 and :429-450. Tests run: backend batch route/service are included in the 195 passing tests; frontend BatchPromoteModal/DraftApproval tests included in 129 passing tests. But the AC requires KB tab multi-select + batch approval; the actual multi-select/batch button is in DraftApprovalTab at components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx:159-168 and :245-252, while KnowledgeBaseTab has no multi-select or batch action at components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:91-139. j1-blind-spot check: continue-on-error, per-item lease release, and <=50 validation are verified; the failing gap is the required KB-tab UI surface.",
+  "verdict": "CONDITIONAL_PASS",
+  "reasoning": "Judge2 recheck after commit 7603f35. First-round verdict was FAIL because batch mechanics existed, but the required KB-tab batch UI was only in DraftApprovalTab. Spec requires the knowledge-base tab to expose [批量审批], type/mtime sorted list view, multi-select, common reason, continue-on-error, and final report at docs/plans/F027-phase4-implementation-plan.md:43 and the formal AC at :215-218; implementation schedule repeats KB tab multi-select + common reason/report modal at :168 and walkthrough step 2.5 expects KB tab multi-select + [批量审批] at :395. The repair hunk adds the missing KB surface: KnowledgeBaseTab imports BatchPromoteModal at components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:6, tracks selectedDraftPaths at :64, derives selectedBatchItems at :117-122, renders KbDraftsSection at :209-217, opens BatchPromoteModal at :242-250, renders the top [批量审批 N 份] button at :281-293, and row selection + Promote/Demote actions at :327-388. Existing backend batch semantics remain covered by the first-round evidence and are still aligned with AC-P4-4. Tests actually rerun in this recheck: targeted node suites 37/37 pass and targeted Vitest suites 52/52 pass; the relevant frontend batch suites include DraftApprovalTab multi-select tests at components/chat/right-panel/runtime-log/tabs/draft-approval-tab.test.tsx:349-479 and BatchPromoteModal report tests at components/chat/right-panel/runtime-log/batch-promote-modal/batch-promote-modal.test.tsx:66-159. Static inspection confirms the previously missing KB-tab button and selection state are now present in the 7603f35 hunk. Gap status: the original KB-tab batch UI gap is closed; remaining condition is browser walkthrough evidence that the KB tab can select drafts and open the shared BatchPromoteModal.",
   "cited_evidence": [
-    "packages/api/src/wiki/promote-audit/batch-promote-service.ts:76",
-    "packages/api/src/wiki/promote-audit/batch-promote-service.ts:131",
-    "packages/api/src/routes/phase4/batch-promote.ts:99",
-    "components/chat/right-panel/runtime-log/batch-promote-modal/batch-promote-modal.tsx:377",
-    "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx:159",
-    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:91"
+    "docs/plans/F027-phase4-implementation-plan.md:43",
+    "docs/plans/F027-phase4-implementation-plan.md:168",
+    "docs/plans/F027-phase4-implementation-plan.md:215",
+    "docs/plans/F027-phase4-implementation-plan.md:395",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:6",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:64",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:117",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:209",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:242",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:281",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:327",
+    "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.test.tsx:349",
+    "components/chat/right-panel/runtime-log/batch-promote-modal/batch-promote-modal.test.tsx:66"
   ],
-  "spec_gate": "FAIL",
+  "spec_gate": "PASS",
   "mechanism_gate": "PASS",
-  "feature_gate": "FAIL",
+  "feature_gate": "PASS",
   "p1_findings": [],
-  "p2_findings": [
+  "p2_findings": [],
+  "p3_findings": [
     {
-      "file": "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:91",
-      "issue": "AC-P4-4 batch approval UI is not on the KB tab; KB rows have no selectable draft list or batch button.",
-      "suggestion": "Move or duplicate batch selection/action controls onto the KB approval list required by the AC, while keeping the existing backend service."
+      "file": "docs/plans/F027-phase4-implementation-plan.md:395",
+      "issue": "KB-tab batch approval still needs walkthrough screenshot/log evidence.",
+      "suggestion": "During scenario 2.5, capture KB tab multi-select, [批量审批], report modal, and DB query evidence."
     }
-  ],
-  "p3_findings": []
+  ]
 }
