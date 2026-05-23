@@ -92,11 +92,15 @@ describe("createProductionRecallExecutorDeps", () => {
 })
 
 describe("createSimpleLeaderContext", () => {
-  it("(4) returns const term='1' + unique fencing tokens", () => {
+  it("(4) returns term='999' (CAST→999 > prod compiler_leader.current_term, won't trip reject_stale_leader trigger) + unique fencing tokens", () => {
+    // Day 4 inflight bug fix: term 之前是 "1", CAST AS INTEGER → 1, < production
+    // compiler_leader.current_term (boot 后通常推到 4/5/N), trigger ABORT 'stale leader_term'
+    // → ProductionLevel5Sink fail-soft swallow → wiki_events 无 recall_escalate row.
+    // 改 "999" 保证 escalate 写入 trigger pass.
     const ctx = createSimpleLeaderContext()
 
-    assert.equal(ctx.currentLeaderTerm(), "1")
-    assert.equal(ctx.currentLeaderTerm(), "1") // stable
+    assert.equal(ctx.currentLeaderTerm(), "999")
+    assert.equal(ctx.currentLeaderTerm(), "999") // stable
 
     const t1 = ctx.newFencingToken()
     const t2 = ctx.newFencingToken()

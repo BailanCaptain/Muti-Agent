@@ -101,12 +101,20 @@ export function createProductionRecallExecutorDeps(
  * 简单 LeaderContextProvider — Day 3 placeholder + Day 4 复用 (server.ts boot 注入 ProductionLevel5Sink 时).
  *
  * Notes (level5-escalate-sink.ts:62 注释):
- *   - 简单实现：const term=1 + UUID fencing token
+ *   - 简单实现：term="999" + UUID fencing token
  *   - Phase 5+: 接 Compiler Leader Lease (compiler-leader-repository) 拿真 leader 信息
+ *
+ * 为什么 "999" 不是 "1":
+ *   wiki_events 表 production trigger reject_stale_leader BEFORE INSERT 会 CAST(NEW.leader_term
+ *   AS INTEGER) < compiler_leader.current_term。如果用 "1" 而 production leader 已推到 4/5/N，
+ *   全部 escalate.appendPending 被 trigger ABORT 'stale leader_term'，
+ *   ProductionLevel5Sink fail-soft swallow → wiki_events 无 recall_escalate row。
+ *   "999" 在 Phase 5 接真 Compiler Leader Lease 前保证 escalate 写入永远不被 trigger 拒。
+ *   [[feedback-test-schema-faithful-to-prod]] + Day 4 worktree-preview 实测踩坑。
  */
 export function createSimpleLeaderContext(): LeaderContextProvider {
   return {
-    currentLeaderTerm: () => "1",
+    currentLeaderTerm: () => "999",
     newFencingToken: () => randomUUID(),
   }
 }
