@@ -34,6 +34,7 @@ import { registerDebugA2ARoutes } from "./routes/debug-a2a"
 import { registerDecisionBoardRoutes } from "./routes/decision-board"
 import { registerMessageRoutes } from "./routes/messages"
 import { registerPhase3Routes } from "./routes/phase3"
+import { registerPhase4Routes } from "./routes/phase4"
 import { registerPreviewRoutes } from "./routes/preview"
 import { registerRuntimeConfigRoutes } from "./routes/runtime-config"
 import { registerSessionRuntimeConfigRoutes } from "./routes/session-runtime-config"
@@ -668,6 +669,11 @@ export async function createApiServer(options: {
     wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
     wikiServices,
   })
+
+  // F027 Phase 4 P4 Day 7 · AC-P4-1 PromoteModal endpoints
+  //   - POST /api/wiki/drafts/promote/preview  (V14 audit preview)
+  //   - POST /api/wiki/drafts/promote          (full promote: V14 + mv + wiki_events)
+  registerPhase4Routes(app, { wikiServices })
 
   // F027 Phase 3 P20 · scheduler go-live（Week 1 Day 1）
   //
