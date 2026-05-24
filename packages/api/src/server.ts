@@ -41,7 +41,7 @@ import { registerSessionRuntimeConfigRoutes } from "./routes/session-runtime-con
 import { registerThreadRoutes } from "./routes/threads"
 import { registerUploadRoutes } from "./routes/uploads"
 import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
-import { createHaikuRunner } from "./runtime/haiku-runner"
+import { createHaikuRunner, createSonnetRunner } from "./runtime/haiku-runner"
 import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
 import { bootSchedulerRuntime } from "./runtime/scheduler-bootstrap"
@@ -721,6 +721,37 @@ export async function createApiServer(options: {
   // MULTI_AGENT_SKIP_SCHEDULER=1 跳过（CI / 单测）。
   // 单元测试用 createApiServer 时默认跳过 — vitest 跑 next-app 组件测试只起 fastify
   // 不应起 scheduler。
+  // Week 5 hotfix · 真 RoomCompiler 接入 (小孙浏览器实测 viewfinder=null 根因修).
+  // 复用 P4-8 Sonnet+Haiku fallback runner 作为 judge runner (Sonnet 决策识别 +
+  // quota fail 降级 Haiku).
+  const { createProductionRoomCompileExecutor } = await import(
+    "./orchestrator/production-room-compile-executor"
+  )
+  const { createRunnerWithFallback } = await import("./runtime/runner-with-fallback")
+  const { createSimpleLeaderContext } = await import(
+    "./orchestrator/production-recall-executor-deps"
+  )
+  const judgeRunner = createRunnerWithFallback({
+    primary: createSonnetRunner(),
+    fallback: createHaikuRunner(),
+  })
+  // ViewfinderService 读 `<wikiRoot>/wiki/rooms/<id>/viewfinder.md`
+  // (注意 path.join wikiRoot + "wiki" + "rooms"); 但 RoomCompiler.run() 直接
+  // 写 `<wikiRoot>/rooms/<id>/viewfinder.md`. 让 RoomCompileExecutor 用
+  // `<wikiServicesRoot>/wiki/` 作 wikiRoot — 写 `<wikiServicesRoot>/wiki/rooms/...`
+  // 跟 ViewfinderService 期望对齐.
+  const roomCompileWikiServicesRoot =
+    process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki")
+  const roomCompileWikiRoot = path.join(roomCompileWikiServicesRoot, "wiki")
+  const roomCompileExecutor = createProductionRoomCompileExecutor({
+    db: drizzleDb,
+    wikiRoot: roomCompileWikiRoot,
+    judgeRunner,
+    leaderContext: createSimpleLeaderContext(),
+    logger: app.log,
+    rootDir: process.cwd(),
+  })
+
   const schedulerRuntime = await bootSchedulerRuntime({
     db: drizzleDb,
     log: app.log,
@@ -732,6 +763,7 @@ export async function createApiServer(options: {
       broadcaster.broadcast({ type: "scheduler.chained_alert", payload: alert } as never),
     rootDir: process.cwd(),
     skipBoot: process.env.MULTI_AGENT_SKIP_SCHEDULER === "1",
+    roomCompileExecutor,
   })
   app.addHook("onClose", async () => {
     if (schedulerRuntime) {
@@ -742,6 +774,24 @@ export async function createApiServer(options: {
       }
     }
   })
+
+  // Week 5 hotfix · 第一次 RoomCompiler tick 立即触发 (而不是等 5min cron),
+  // 让 worktree-preview / dev 启起来后 viewfinder 立即有数据.
+  // 失败 fail-soft (warn 不阻塞 boot).
+  ;(async () => {
+    try {
+      const result = await roomCompileExecutor()
+      app.log.info(
+        { roomsProcessed: result.roomsProcessed },
+        "[room-compile-executor] boot-time compile tick complete",
+      )
+    } catch (err) {
+      app.log.warn(
+        { err: (err as Error).message },
+        "[room-compile-executor] boot-time tick failed (ignored, cron will retry)",
+      )
+    }
+  })()
 
   Object.assign(app, {
     multiAgentContext: {

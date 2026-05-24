@@ -86,6 +86,12 @@ export interface SchedulerBootOptions {
   alertRoom?: string
   /** 跳过 boot（CI / 单测）；默认 false。 */
   skipBoot?: boolean
+  /**
+   * Week 5 hotfix · RoomCompiler 真业务接入 (替换 noop compileExecutor).
+   * 见 packages/api/src/orchestrator/production-room-compile-executor.ts.
+   * 缺 → fallback noop (跟 Phase 3 行为一致).
+   */
+  roomCompileExecutor?: () => Promise<{ roomsProcessed: number }>
 }
 
 /**
@@ -132,8 +138,11 @@ export async function bootSchedulerRuntime(
   // 3. 11 job instances — 业务回调按 Day 1 范围注入 noop / minimal stub
   const reconciler = new StartupReconciler({ db: opts.db, logger: opts.log })
 
+  // Week 5 hotfix: 如果 caller 注入了真 roomCompileExecutor (server.ts 走真业务),
+  // 用真; 否则 fallback 到 noop (跟 Phase 3 行为一致, 测试 / CI 用).
   const tick = new RoomCompilerTick({
-    compileExecutor: async () => ({ roomsProcessed: 0 }),
+    compileExecutor:
+      opts.roomCompileExecutor ?? (async () => ({ roomsProcessed: 0 })),
     logger: opts.log,
   })
 
