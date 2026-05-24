@@ -36,6 +36,10 @@ function makeResponse(
       budgetMax: 4000,
     },
     wakeUpTrigger: { kind: null, ref: null },
+    // P4 hotfix 新 3 字段默认值
+    rawText: null,
+    ironLawsCount: 0,
+    scenario: null,
     ...overrides,
   }
 }
@@ -111,7 +115,8 @@ describe("PromptInspectorTab 7 块渲染", () => {
     expect(screen.getByText(/暂无召回 query/)).toBeTruthy()
   })
 
-  it("底部 4 按钮全 disabled (Week 5 实施)", async () => {
+  it("底部 4 按钮：空 audit 时全 disabled，rawText 在时'查看原文/复制全文'可点", async () => {
+    // 空 response（rawText=null）→ 全 disabled
     render(<PromptInspectorTab />)
     await waitFor(() => expect(screen.queryByTestId("prompt-inspector-loading")).toBeNull())
     const bar = screen.getByTestId("prompt-inspector-buttons")
@@ -120,6 +125,34 @@ describe("PromptInspectorTab 7 块渲染", () => {
     for (const btn of buttons) {
       expect(btn.hasAttribute("disabled")).toBe(true)
     }
+  })
+
+  it("rawText 非空 → '查看原文' + '复制全文' enabled，另两个仍 disabled (F028)", async () => {
+    mockFetchResponse(
+      makeResponse({
+        rawText: "SYSTEM: 你是黄仁勋\n\n---\n\n[task] 你好",
+        ironLawsCount: 1,
+      }),
+    )
+    render(<PromptInspectorTab />)
+    await waitFor(() => expect(screen.queryByTestId("prompt-inspector-buttons")).toBeTruthy())
+    const bar = screen.getByTestId("prompt-inspector-buttons")
+    const buttons = bar.querySelectorAll("button")
+    expect(buttons.length).toBe(4)
+    // 头两个 enabled (查看原文 + 复制全文)
+    expect(buttons[0].hasAttribute("disabled")).toBe(false)
+    expect(buttons[1].hasAttribute("disabled")).toBe(false)
+    // 后两个 disabled (对比上次 + 追溯 wiki)
+    expect(buttons[2].hasAttribute("disabled")).toBe(true)
+    expect(buttons[3].hasAttribute("disabled")).toBe(true)
+    // 点击 "查看原文" → pre 出现
+    fireEvent.click(buttons[0])
+    await waitFor(() =>
+      expect(screen.queryByTestId("prompt-inspector-raw-text")).toBeTruthy(),
+    )
+    expect(screen.getByTestId("prompt-inspector-raw-text").textContent).toMatch(/黄仁勋/)
+    // Iron Laws 检测显示
+    expect(bar.textContent).toMatch(/Iron Laws 检测/)
   })
 })
 

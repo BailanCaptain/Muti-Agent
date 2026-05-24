@@ -374,6 +374,19 @@ export interface GetPromptInspectorResponse {
     kind: "a2a_call" | "user_message" | "scheduler_tick" | null
     ref: string | null
   }
+  /**
+   * F027 P4 hotfix · 完整 raw prompt 文本 (systemPrompt + content)。
+   * V16.5 §18 line 2078 "[查看 raw text]" + "[复制全文]" 按钮源数据。
+   * null = 当前 room 还没 audit row（没拼装过）。
+   */
+  rawText: string | null
+  /**
+   * F027 P4 hotfix · Iron Laws 出现次数 (B022 防回归 — V16.5 §2 line 246)。
+   * runtime 端期望 = 1; ≥ 3 警告"4 源冗余回归"; 0 警告"base prompt 漏注"。
+   */
+  ironLawsCount: number
+  /** F027 P4 hotfix · 最新 audit row 的 scenario，inspector header 显示用。 */
+  scenario: string | null
 }
 
 export function validateGetPromptInspector(

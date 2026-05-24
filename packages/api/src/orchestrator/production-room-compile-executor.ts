@@ -232,6 +232,92 @@ function queryNewSeals(
   }
 }
 
+/**
+ * F027 P4 hotfix · 单 room 强制重编 (小孙浏览器手动触发).
+ *
+ * scheduler 5min tick 间隔太长 + 新房间没等 boot tick → "取景器还是没有".
+ * 加 UI 按钮调本 helper → 后端立刻编单 room → 5s 内 viewfinder.md 落盘.
+ *
+ * force=true: 清 store cursor → RoomCompiler 重跑该 room 所有历史 messages (LIMIT 200).
+ * force=false: 同 executor — 按 cursor 增量, newMessages=0 则 skip.
+ *
+ * 用 same deps (judge / ledger / store / compileFn) — 不重新 init.
+ */
+export function createSingleRoomRecompiler(
+  opts: ProductionRoomCompileExecutorOptions,
+): (roomId: string, opts?: { force?: boolean }) => Promise<RoomCompileAttempt> {
+  const adapter = adaptDrizzleDb(opts.db)
+  const store = new SqliteCheckpointStore(adapter)
+  const ledger = new DecisionLedger(adapter)
+  const judge = new HaikuDecisionJudge(
+    opts.judgeRunner as HaikuLike,
+    opts.judgeTimeoutMs ?? 30_000,
+  )
+
+  return async (
+    roomId: string,
+    callOpts: { force?: boolean } = {},
+  ): Promise<RoomCompileAttempt> => {
+    try {
+      backfillMessageCommitSeq(adapter)
+    } catch (err) {
+      opts.logger?.warn(
+        { err: (err as Error).message },
+        "[single-room-recompile] backfill failed (continue)",
+      )
+    }
+
+    let prevCursor = 0
+    let prevSealedCursor = 0
+    if (!callOpts.force) {
+      const prev = store.read(roomId)
+      prevCursor = prev?.cursorCommitSeq ?? 0
+      prevSealedCursor = prev?.sealedCursorSeq ?? 0
+    }
+
+    const newMessages = queryNewMessages(adapter, roomId, prevCursor)
+    const newSeals = queryNewSeals(adapter, roomId, prevSealedCursor)
+
+    if (newMessages.length === 0) {
+      return {
+        roomId,
+        newMessagesCount: 0,
+        status: "skipped_no_messages",
+      }
+    }
+
+    try {
+      const compileFn = createViewfinderCompileFn({
+        db: adapter,
+        ledger,
+        judge,
+        fencingToken: opts.leaderContext.newFencingToken(),
+        leaderTerm: opts.leaderContext.currentLeaderTerm(),
+        judgeTimeoutMs: opts.judgeTimeoutMs,
+        judgeConcurrency: opts.judgeConcurrency,
+        rootDir: opts.rootDir,
+      })
+      const compiler = new RoomCompiler({
+        store,
+        wikiRoot: opts.wikiRoot,
+        compileFn,
+        fencingToken: opts.leaderContext.newFencingToken(),
+        leaderTerm: opts.leaderContext.currentLeaderTerm(),
+      })
+      await compiler.run({ roomId, newMessages, newSeals })
+      opts.logger?.info(
+        { roomId, newMessagesCount: newMessages.length, force: callOpts.force ?? false },
+        "[single-room-recompile] ok",
+      )
+      return { roomId, newMessagesCount: newMessages.length, status: "ok" }
+    } catch (err) {
+      const error = (err as Error).message
+      opts.logger?.warn({ roomId, err: error }, "[single-room-recompile] failed")
+      return { roomId, newMessagesCount: -1, status: "failed", error }
+    }
+  }
+}
+
 export function createProductionRoomCompileExecutor(
   opts: ProductionRoomCompileExecutorOptions,
 ): () => Promise<CompileExecutorResult> {

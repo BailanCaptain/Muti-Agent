@@ -49,6 +49,12 @@ export interface GetPromptInspectorResponse {
     kind: "a2a_call" | "user_message" | "scheduler_tick" | null
     ref: string | null
   }
+  /** F027 P4 hotfix · 完整 prompt 原文（systemPrompt + content），供"查看原文/复制全文"按钮。 */
+  rawText: string | null
+  /** F027 P4 hotfix · Iron Laws 出现次数（B022 防回归 · 期望=1）。 */
+  ironLawsCount: number
+  /** F027 P4 hotfix · 最新 audit row 的 scenario。 */
+  scenario: string | null
 }
 
 /**
@@ -81,6 +87,9 @@ function emptyResponse(): GetPromptInspectorResponse {
       budgetMax: DEFAULT_RECALL_BUDGET_MAX,
     },
     wakeUpTrigger: { kind: null, ref: null },
+    rawText: null,
+    ironLawsCount: 0,
+    scenario: null,
   }
 }
 

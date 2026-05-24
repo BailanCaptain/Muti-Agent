@@ -740,7 +740,7 @@ export async function createApiServer(options: {
   // Week 5 hotfix · 真 RoomCompiler 接入 (小孙浏览器实测 viewfinder=null 根因修).
   // 复用 P4-8 Sonnet+Haiku fallback runner 作为 judge runner (Sonnet 决策识别 +
   // quota fail 降级 Haiku).
-  const { createProductionRoomCompileExecutor } = await import(
+  const { createProductionRoomCompileExecutor, createSingleRoomRecompiler } = await import(
     "./orchestrator/production-room-compile-executor"
   )
   const { createRunnerWithFallback } = await import("./runtime/runner-with-fallback")
@@ -759,14 +759,23 @@ export async function createApiServer(options: {
   const roomCompileWikiServicesRoot =
     process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki")
   const roomCompileWikiRoot = path.join(roomCompileWikiServicesRoot, "wiki")
-  const roomCompileExecutor = createProductionRoomCompileExecutor({
+  const roomCompileSharedOpts = {
     db: drizzleDb,
     wikiRoot: roomCompileWikiRoot,
     judgeRunner,
     leaderContext: createSimpleLeaderContext(),
     logger: app.log,
     rootDir: process.cwd(),
-  })
+  }
+  const roomCompileExecutor = createProductionRoomCompileExecutor(roomCompileSharedOpts)
+  // F027 P4 hotfix · single-room recompile (POST /api/rooms/:id/viewfinder/recompile)
+  const singleRoomRecompiler = createSingleRoomRecompiler(roomCompileSharedOpts)
+  {
+    const { registerViewfinderRecompileRoute } = await import(
+      "./routes/phase3/viewfinder-recompile"
+    )
+    registerViewfinderRecompileRoute(app, singleRoomRecompiler)
+  }
 
   const schedulerRuntime = await bootSchedulerRuntime({
     db: drizzleDb,

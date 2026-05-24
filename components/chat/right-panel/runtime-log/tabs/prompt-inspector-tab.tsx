@@ -4,6 +4,7 @@ import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { useWakeTriggerStore } from "@/components/stores/wake-trigger-store"
+import { useState } from "react"
 import {
   type DecisionRef,
   type GetCoverageResponse,
@@ -64,7 +65,7 @@ export function PromptInspectorTab() {
       <AgentSessionSection roomId={roomId} />
       <WakeTriggerSection roomId={roomId} apiTrigger={data.wakeUpTrigger} />
       <CoverageSection data={coverage.data} isLoading={coverage.isLoading} error={coverage.error} />
-      <BottomButtonsBar />
+      <BottomButtonsBar rawText={data.rawText} ironLawsCount={data.ironLawsCount} />
     </div>
   )
 }
@@ -483,26 +484,98 @@ function UnresolvedRow({ decision }: { decision: DecisionRef }) {
   )
 }
 
-// ─── 底部 4 按钮 (Day 14-15 暂禁用 · Week 5 实施) ─────────────────
+// ─── 底部 4 按钮 (F027 P4 hotfix · 查看 raw text + 复制全文 真实现) ─────────────────
 
-function BottomButtonsBar() {
-  const buttons = ["查看 raw text", "对比上一次注入", "追溯 wiki_events", "复制全文"]
+function BottomButtonsBar({
+  rawText,
+  ironLawsCount,
+}: {
+  rawText: string | null
+  ironLawsCount: number
+}) {
+  const [showRaw, setShowRaw] = useState(false)
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle")
+  // 防御：老 mock / 老 API response 可能没 rawText 字段 (undefined) — string 严格判
+  const hasData = typeof rawText === "string" && rawText.length > 0
+
+  const handleCopy = async () => {
+    if (!rawText) return
+    try {
+      await navigator.clipboard.writeText(rawText)
+      setCopyState("copied")
+      setTimeout(() => setCopyState("idle"), 1500)
+    } catch {
+      setCopyState("failed")
+      setTimeout(() => setCopyState("idle"), 1500)
+    }
+  }
+
   return (
-    <div
-      className="flex gap-1 border-slate-200 border-t pt-2"
-      data-testid="prompt-inspector-buttons"
-    >
-      {buttons.map((label) => (
+    <div className="flex flex-col gap-2 border-slate-200 border-t pt-2" data-testid="prompt-inspector-buttons">
+      <div className="flex flex-wrap gap-1.5">
         <button
-          key={label}
+          type="button"
+          onClick={() => setShowRaw((v) => !v)}
+          disabled={!hasData}
+          className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          title={hasData ? "展开/收起完整 prompt 原文" : "本房间还无 prompt 审计记录"}
+        >
+          {showRaw ? "收起原文" : "查看原文"}
+        </button>
+        <button
+          type="button"
+          onClick={handleCopy}
+          disabled={!hasData}
+          className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          title={hasData ? "复制完整 prompt 原文到剪贴板" : "本房间还无 prompt 审计记录"}
+        >
+          {copyState === "copied" ? "已复制 ✓" : copyState === "failed" ? "复制失败" : "复制全文"}
+        </button>
+        <button
           type="button"
           disabled
-          className="cursor-not-allowed rounded bg-slate-100 px-2 py-0.5 text-[9px] text-slate-400"
-          title="Week 5 接入"
+          className="cursor-not-allowed rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-400"
+          title="F028 接入：对比上一次注入差异"
         >
-          {label}
+          对比上次注入
         </button>
-      ))}
+        <button
+          type="button"
+          disabled
+          className="cursor-not-allowed rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-400"
+          title="F028 接入：追溯本次注入对应的 wiki_events"
+        >
+          追溯 wiki 事件
+        </button>
+      </div>
+      {hasData && (
+        <div className="text-xs text-slate-500">
+          Iron Laws 检测：
+          <span
+            className={
+              ironLawsCount === 1
+                ? "ml-1 text-green-600"
+                : ironLawsCount === 0
+                  ? "ml-1 text-red-500"
+                  : "ml-1 text-amber-600"
+            }
+          >
+            {ironLawsCount === 1
+              ? `${ironLawsCount} 次（正常，B022 防回归通过）`
+              : ironLawsCount === 0
+                ? "0 次（异常，base prompt 漏注？）"
+                : `${ironLawsCount} 次（异常，疑似多源冗余回归）`}
+          </span>
+        </div>
+      )}
+      {showRaw && rawText && (
+        <pre
+          className="max-h-96 overflow-auto rounded border border-slate-200 bg-slate-50 p-2 font-mono text-xs leading-relaxed text-slate-700 whitespace-pre-wrap"
+          data-testid="prompt-inspector-raw-text"
+        >
+          {rawText}
+        </pre>
+      )}
     </div>
   )
 }

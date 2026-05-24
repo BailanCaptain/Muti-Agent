@@ -63,6 +63,9 @@ interface PromptAuditRow {
   recall_path: number | null
   recall_satisfied: number
   escalate_reason: string | null
+  // F027 P4 hotfix · raw text / iron_laws_count 给 BottomButtonsBar "查看 raw text" + "复制全文"
+  raw_text: string
+  iron_laws_count: number
 }
 
 const DEFAULT_RECALL_BUDGET_MAX = 4000
@@ -91,7 +94,8 @@ export class PromptInspectorService {
         `SELECT scenario, parts_json,
                 recall_queries, recall_results, recall_total_tokens,
                 recall_required, recall_trigger, recall_path,
-                recall_satisfied, escalate_reason
+                recall_satisfied, escalate_reason,
+                raw_text, iron_laws_count
            FROM prompt_audit
           WHERE room_id = ?
           ORDER BY id DESC
@@ -108,6 +112,10 @@ export class PromptInspectorService {
       recallQueries: parseRecallQueries(row.recall_queries, row.recall_results),
       recallState: parseRecallState(row, this.recallBudgetMax),
       wakeUpTrigger: parseWakeUpTrigger(row.recall_trigger, row.scenario),
+      // F027 P4 hotfix · raw_text + iron_laws_count + scenario 给 inspector UI
+      rawText: row.raw_text ?? null,
+      ironLawsCount: row.iron_laws_count ?? 0,
+      scenario: row.scenario ?? null,
     }
   }
 }
@@ -125,6 +133,9 @@ function emptyInspectorResponse(budgetMax: number): GetPromptInspectorResponse {
       budgetMax,
     },
     wakeUpTrigger: { kind: null, ref: null },
+    rawText: null,
+    ironLawsCount: 0,
+    scenario: null,
   }
 }
 
