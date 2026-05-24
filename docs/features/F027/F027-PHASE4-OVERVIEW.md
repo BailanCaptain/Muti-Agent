@@ -97,21 +97,28 @@ Phase 4 把 F027 (统一记忆架构) 从 Phase 3 留下的 "approval 流闭环"
 a5963a4 fix(F027-P4): codex Week 4 mid-r1 review 修 — P1 metaWikiRoot prod 错配 + P2 wiki_events warning_raised merge
 464068e docs(F027-P4): Week 5 Day 21-22 evidence pack 骨架 + judge1 8 AC + 收稿 doc
 7603f35 fix(F027-P4): codex Week 5 j2 FAIL 4 项 Red→Green — Demote + Haiku fallback + Broadcaster + KB tab 接入
+ab8c242 docs(F027-P4): Week 5 Day 23 j1 重评 + overview + F028 backlog 反映 j2 r1 + Red→Green
+a5cd21b docs(F027-P4): Week 5 Day 23 codex j2 r2 + 8 AC result.json final verdict (consensus 一致)
+b6ff088 fix(F027-P4): hotfix viewfinder=null + system prompt 空 — RoomCompile noop + message_commit_seq 链路全断接通
 ```
 
-待 Week 5 Day 24 加 codex j2 r2 + arbitration + result.json final + walkthrough screenshots 收稿 commit.
+待 Week 5 Day 24 加 walkthrough screenshots 收稿 commit.
 
 ---
 
-## 5. F028 follow-up (10 项)
+## 5. F028 follow-up (19 项, Week 5 Day 23 hotfix b6ff088 后加 9 项 scheduler/P7)
 
 详见 `evidence/phase4/F028-FOLLOWUP-BACKLOG.md`. 概要:
 
 ```
-P0: F028-1 supersede/reject UI, F028-2 写型 rollback
+P0: F028-1 supersede/reject UI, F028-2 写型 rollback, F028-19 IngestService LLM
 P1: F028-4 memory_preflight, F028-5 sessions ledger, F028-6 Level 6, F028-7 Inspector 升级
-P2: F028-3 slash menu 4 cmd, F028-8 warnings 解决按钮, F028-9 KB markdown parse, F028-10 多房间压测 + EmbeddedWikiRecord boot
+    F028-11 DocsWatcher, F028-12 NightlyHealthCheck, F028-14 DriftDetector, F028-15 MonthlySnapshot
+P2: F028-3 slash menu 4 cmd, F028-8 warnings 解决按钮, F028-9 KB markdown parse, F028-10 多房间压测
+    F028-13 WeeklyDraftDigest, F028-16 ArchiveYearlySessions, F028-17 WikiCompilerDebounce, F028-18 ChainedAlertNotifier
 ```
+
+总 19 项 ~16-18 周. Week 5 hotfix b6ff088 修了 #1 (RoomCompiler) + #1.1 (P7 message_commit_seq), 剩 #11-#19 推 F028.
 
 ---
 
@@ -151,6 +158,8 @@ per plan line 188:
 - composer slash menu 4 写命令 disabled (推 F028-3 evaluate)
 - WarningsTab 无"解决"按钮 (推 F028-8)
 - KB tab markdown entity parse 未做 (multi-select 已做 满足 plan §AC-P4-9 b; entity parse 推 F028-9)
+- **8 个 scheduler 业务回调 noop** (Week 5 Day 23 实测发现): DocsWatcher/NightlyHealthCheck/WeeklyDraftDigest/DriftDetector/MonthlySnapshot/ArchiveYearlySessions/WikiCompilerDebounce/ChainedAlertNotifier — 推 F028-11~18 (RoomCompiler 已修, 其他 8 项 cron job 不阻塞 walkthrough)
+- **IngestService 用 stub LLM** (`ingest-preview.ts:192`) — 推 F028-19, 影响 walkthrough 场景 1 step 1.3 preview 是 minimal markdown 不是真 LLM 编译
 
 测试层全绿, 无 skip/xfail. 无技术债.
 

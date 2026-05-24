@@ -6,7 +6,10 @@
 
 ---
 
-## 推 F028 项总览 (10 项)
+## 推 F028 项总览 (19 项)
+
+> **Week 5 Day 23 hotfix b6ff088 后增 F028-11 ~ F028-19** — 见末尾 §E "scheduler 业务回调 8 项 + Phase 1 P7 漏接 1 项".
+> 全量 audit: `.runtime/reviews/F027-NOOP-GAP-AUDIT.md`
 
 | # | 项目 | 类别 | 来源 | F027 占位状态 | F028 立项工作量预估 |
 |---|------|------|------|---------------|----------------------|
@@ -108,3 +111,91 @@ Phase 4 Week 1-4 实施全程未越界 (源码 10 处 `推 F028` 注释全部为
 - **Phase 3 升 PASS 矩阵**: `PHASE3_UPGRADE_MAPPING.md` (AC-P3-8 b 等条目引本 backlog)
 - **plan**: `docs/plans/F027-phase4-implementation-plan.md` §1.1 / §6 O5 O8 / §7
 - **V16.5 spec**: `docs/plans/V16.5-final.md` (line 2539-2545 命令面板原意; line 2563-2564 Series 字段)
+
+---
+
+## E. scheduler 业务回调 + Phase 1 P7 漏接 (Week 5 Day 23 实测发现, hotfix b6ff088 修了主因后)
+
+> **触发**: 小孙浏览器实测 viewfinder=null + system prompt 空 → 全面 grep "noop" → 14 项 gap
+> **本次修复**: 已修 #1 RoomCompiler noop + Phase 1 P7 message_commit_seq 漏接 (commit b6ff088)
+> **本节列剩余 8 项推 F028**
+
+### F028-11: DocsWatcher.onEvent 真业务接入
+- **位置**: `scheduler-bootstrap.ts:148` `onEvent: async () => {}`
+- **症状**: docs/features/* / docs/lessons/* / docs/bugReport/* 改动不自动触发 ingest pipeline
+- **预算**: 0.5d — onEvent 内调 IngestService (sanitize + LLM 编译 + commit)
+- **walkthrough 影响**: 场景 2 step 2.1 改 F999-test.md 自动 ingest, quickref 已说跳改用 draft-approval
+
+### F028-12: NightlyHealthCheck.scanEntities 真 wiki 扫描
+- **位置**: `scheduler-bootstrap.ts:154` `scanEntities: async () => []`
+- **症状**: 每晚 4:00 cron 跑空 — 无 wiki entity 扫描 + chained_suspect / drift 检测
+- **预算**: 1d — 扫 wiki/concepts/*.md + wiki/rules/*.md... 计 mtime / acl violation
+- **影响**: 长期产生 warnings 缺失, 短期不阻塞
+
+### F028-13: WeeklyDraftDigest.scanDrafts 真 draft 列表
+- **位置**: `scheduler-bootstrap.ts:161` `scanDrafts: async () => []`
+- **症状**: 每周一 9:00 cron 跑空 — 不推 weekly digest
+- **预算**: 0.5d — 复用 GET /api/wiki/drafts query
+
+### F028-14: DriftDetector.scanTriggers 真 trigger 扫描
+- **位置**: `scheduler-bootstrap.ts:166` `scanTriggers: async () => []`
+- **澄清**: 跟 viewfinder anti-drift jaccard 不同 — DriftDetector 是 V16.5 P19.11 (new_lesson / model_upgrade / handoff_failure 3 类 trigger 开 update draft); jaccard drift 已在 RoomCompiler 内 computeCoverage 跑 ✅
+- **预算**: 1d — scanTriggers 扫 lessons/*.md 新加 + model_runtime 表升级 + a2a 失败 history
+
+### F028-15: MonthlySnapshot.recompileAllRooms 全量重编
+- **位置**: `scheduler-bootstrap.ts:171` `recompileAllRooms: async () => []`
+- **症状**: 每月 1 号 3:00 cron 跑空 — 无 viewfinder drift backup + replace
+- **预算**: 1d — 复用 ProductionRoomCompileExecutor + readFile current + diff drift ratio
+
+### F028-16: ArchiveYearlySessions.scanSessions 年归档
+- **位置**: `scheduler-bootstrap.ts:176` `scanSessions: async () => []`
+- **症状**: 每年 1 月 1 日 cron 跑空 — 无 session yearly pack
+- **预算**: 1d — scan 12 月前 session_groups → 写 yearly archive .md
+
+### F028-17: WikiCompilerDebounce.recompileDerivedViews 派生视图重编
+- **位置**: `scheduler-bootstrap.ts:181` `recompileDerivedViews: async () => {}`
+- **症状**: wiki/concepts/*.md 写入后, wiki/index/concepts.md 派生视图不刷新 (V16.5 chap 22)
+- **预算**: 1d — 写 wiki indexer 跑 markdown 表格 row 生成 index.md
+- **影响**: KB tab 显示是 boot fixture 复制的, 之后 wiki 变化不刷新
+
+### F028-18: ChainedAlertNotifier.pushAlert 推真 room
+- **位置**: scheduler-bootstrap.ts 已实例化 ChainedAlertNotifier 但 `pushChainedAlert` 默认 undefined
+- **症状**: chained_suspect 命中后 notifier noop, 不推 R-201
+- **预算**: 0.5d — server.ts wire pushChainedAlert → broadcaster (扩 RealtimeServerEvent union 加 'wiki.chained_alert')
+
+### F028-19: IngestService 接真 LLM compile pipeline
+- **位置**: `ingest-preview.ts:11,18,94,192` `ingest-commit.ts:29`
+- **症状**: preview 用 minimal stub markdown (sanitized + frontmatter, 无真 LLM 编译); commit 也不重新 LLM 编译
+- **预算**: 1d — 接已有 `wiki/llm-compile/compile-pipeline.ts` (plan 提到但没 wire) + Sonnet/Haiku fallback runner
+- **walkthrough 影响**: 场景 1 step 1.3 preview 是 stub 不是真 LLM 编译; 用户能跑流程但 LLM 编译内容简化
+
+### F028 优先级 (新 9 项)
+
+```
+P0 (核心 spec gap, F027 留下硬阻塞):
+- F028-1 supersede / reject UI         (Inspector Coverage 闭环)
+- F028-2 写型 rollback                (rollback 不能 read-only forever)
+- F028-19 IngestService LLM           (preview 是 stub 影响真 LLM 编译质量)
+
+P1 (V16.5 划走 + scheduler 业务):
+- F028-4 memory_preflight
+- F028-5 sessions ledger
+- F028-6 Adaptive Recall Level 6
+- F028-7 Prompt Inspector 升级
+- F028-11 DocsWatcher 真业务
+- F028-12 NightlyHealthCheck 真扫描
+- F028-14 DriftDetector 真 trigger 扫描
+- F028-15 MonthlySnapshot 全量重编
+
+P2 (UX evaluate + 长期):
+- F028-3 composer slash menu 4 写命令
+- F028-8 WarningsTab 解决按钮
+- F028-9 KB markdown entity parse
+- F028-10 多房间压测 + EmbeddedWikiRecord boot
+- F028-13 WeeklyDraftDigest
+- F028-16 ArchiveYearlySessions
+- F028-17 WikiCompilerDebounce 派生视图
+- F028-18 ChainedAlertNotifier broadcaster wire
+```
+
+总 19 项, 估 ~16-18 周 (4-5 个月 F028).
