@@ -49,7 +49,7 @@ import {
 } from "../wiki/viewfinder/decision-extractor"
 import { DecisionLedger } from "../wiki/viewfinder/decision-ledger"
 import { createViewfinderCompileFn } from "../wiki/viewfinder/compile-fn"
-import { RoomCompiler } from "../wiki/room-compiler/room-compiler"
+import { RoomCompiler, type WikiEventsSinkLike } from "../wiki/room-compiler/room-compiler"
 import { SqliteCheckpointStore } from "../wiki/room-compiler/sqlite-checkpoint-store"
 import type {
   MessageCommitRow,
@@ -84,6 +84,12 @@ export interface ProductionRoomCompileExecutorOptions {
   judgeConcurrency?: number
   /** rootDir for git log spawn (compile-fn 内 phase coord), 默认 process.cwd(). */
   rootDir?: string
+  /**
+   * F027 P4 hotfix · 可选 wiki_events sink (RoomCompiler 写 viewfinder.md 时留 audit row).
+   * 真相源 V16.5 §5 line 452. 未注入时回退到旧行为 (只 room_checkpoints).
+   * server.ts boot 注入 WikiEventsRepository wrap.
+   */
+  wikiEventsSink?: WikiEventsSinkLike | null
 }
 
 export interface CompileExecutorResult {
@@ -303,6 +309,7 @@ export function createSingleRoomRecompiler(
         compileFn,
         fencingToken: opts.leaderContext.newFencingToken(),
         leaderTerm: opts.leaderContext.currentLeaderTerm(),
+        wikiEventsSink: opts.wikiEventsSink ?? null,
       })
       await compiler.run({ roomId, newMessages, newSeals })
       opts.logger?.info(

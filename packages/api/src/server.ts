@@ -759,6 +759,23 @@ export async function createApiServer(options: {
   const roomCompileWikiServicesRoot =
     process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki")
   const roomCompileWikiRoot = path.join(roomCompileWikiServicesRoot, "wiki")
+  // F027 P4 hotfix · WikiEventsSink wrap — 让 RoomCompiler 写 viewfinder.md 时留 wiki_events row
+  // (V16.5 §5 line 452 "所有 wiki 写操作走 append-only event log")。
+  // Prompt Inspector 「追溯 wiki 事件」按钮按 path 反查这条 row。
+  const { WikiEventsRepository: WikiEventsRepoCls } = await import(
+    "./db/repositories/wiki-events-repository"
+  )
+  const wikiEventsRepoForCompiler = new WikiEventsRepoCls(drizzleDb)
+  const roomCompileWikiEventsSink: import(
+    "./wiki/room-compiler/room-compiler"
+  ).WikiEventsSinkLike = {
+    appendPending: (input) => {
+      const evt = wikiEventsRepoForCompiler.appendPending(input)
+      return { id: evt.id }
+    },
+    commit: (id, input) => wikiEventsRepoForCompiler.commit(id, input),
+    abort: (id, input) => wikiEventsRepoForCompiler.abort(id, input),
+  }
   const roomCompileSharedOpts = {
     db: drizzleDb,
     wikiRoot: roomCompileWikiRoot,
@@ -766,6 +783,7 @@ export async function createApiServer(options: {
     leaderContext: createSimpleLeaderContext(),
     logger: app.log,
     rootDir: process.cwd(),
+    wikiEventsSink: roomCompileWikiEventsSink,
   }
   const roomCompileExecutor = createProductionRoomCompileExecutor(roomCompileSharedOpts)
   // F027 P4 hotfix · single-room recompile (POST /api/rooms/:id/viewfinder/recompile)
@@ -775,6 +793,11 @@ export async function createApiServer(options: {
       "./routes/phase3/viewfinder-recompile"
     )
     registerViewfinderRecompileRoute(app, singleRoomRecompiler)
+  }
+  // F027 P4 hotfix · GET /api/wiki/events?path=X&limit=N — Prompt Inspector「追溯 wiki 事件」按钮
+  {
+    const { registerWikiEventsRoute } = await import("./routes/phase3/wiki-events")
+    registerWikiEventsRoute(app, drizzleDb)
   }
 
   const schedulerRuntime = await bootSchedulerRuntime({

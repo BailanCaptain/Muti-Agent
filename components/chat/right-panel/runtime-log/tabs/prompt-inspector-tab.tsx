@@ -4,7 +4,7 @@ import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { useWakeTriggerStore } from "@/components/stores/wake-trigger-store"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   type DecisionRef,
   type GetCoverageResponse,
@@ -59,7 +59,7 @@ export function PromptInspectorTab() {
   return (
     <div className="flex flex-col gap-3 p-3 text-xs" data-testid="prompt-inspector-tab">
       <HeaderRow roomId={roomId} isLoading={isLoading} error={error} data={data} />
-      <InjectedPartsTable parts={data.injectedParts} />
+      <InjectedPartsTable parts={data.injectedParts} roomId={roomId} />
       <NotInjectedSection />
       <RecallSection queries={data.recallQueries} />
       <AdaptiveRecallPolicy state={data.recallState} />
@@ -122,28 +122,43 @@ function HeaderRow({
 
 // ─── 2. ✅ 注入的 part 表 ─────────────────────────────────────────
 
-function InjectedPartsTable({ parts }: { parts: GetPromptInspectorResponse["injectedParts"] }) {
+function InjectedPartsTable({
+  parts,
+  roomId,
+}: {
+  parts: GetPromptInspectorResponse["injectedParts"]
+  roomId: string | null
+}) {
+  const [tracePart, setTracePart] = useState<string | null>(null)
   const totalTokens = parts.reduce((sum, p) => sum + p.tokensEstimated, 0)
+  // F027 P4 hotfix · 追溯支持 part → wiki path 映射 (V16.5 §18 line 2078)。
+  // 当前仅 viewfinder 接通; 其他 part (capability/handbook/recall-pack) 推 F028。
+  const traceablePath = (name: string): string | null => {
+    if (name === "viewfinder" && roomId) return `wiki/rooms/${roomId}/viewfinder.md`
+    return null
+  }
   return (
     <section data-testid="prompt-inspector-injected">
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">✅ 注入的 part</div>
+      <div className="mb-1 text-xs uppercase tracking-wider text-slate-500">✅ 注入的 part</div>
       {parts.length === 0 ? (
-        <div className="rounded border border-dashed border-slate-300 p-2 text-[10px] text-slate-400">
+        <div className="rounded border border-dashed border-slate-300 p-2 text-xs text-slate-400">
           暂无 part 数据（prompt_audit 表为空）
         </div>
       ) : (
-        <table className="w-full text-[10px]">
+        <table className="w-full text-xs">
           <thead>
             <tr className="border-slate-200 border-b text-slate-500">
               <th className="text-left">名称</th>
               <th className="text-right">tokens</th>
               <th className="text-right">%</th>
               <th className="text-left">来源</th>
+              <th className="text-center">追溯</th>
             </tr>
           </thead>
           <tbody>
             {parts.map((p) => {
               const pct = totalTokens > 0 ? Math.round((p.tokensEstimated / totalTokens) * 100) : 0
+              const tracePath = traceablePath(p.name)
               return (
                 <tr key={`${p.name}-${p.source}`} className="border-slate-100 border-b">
                   <td className="py-0.5">{p.name}</td>
@@ -152,13 +167,178 @@ function InjectedPartsTable({ parts }: { parts: GetPromptInspectorResponse["inje
                   <td className="truncate text-slate-400" title={p.source}>
                     {p.source}
                   </td>
+                  <td className="text-center">
+                    {tracePath ? (
+                      <button
+                        type="button"
+                        onClick={() => setTracePart(p.name)}
+                        className="rounded border border-blue-300 bg-blue-50 px-1.5 py-0.5 text-xs text-blue-700 transition-colors hover:bg-blue-100"
+                        title="查看本 part 对应的 wiki_events 写入历史"
+                        data-testid={`trace-btn-${p.name}`}
+                      >
+                        🔍
+                      </button>
+                    ) : (
+                      <span
+                        className="text-slate-300"
+                        title="本 part 暂不支持追溯（F028 接其他 part → wiki_events 映射）"
+                      >
+                        —
+                      </span>
+                    )}
+                  </td>
                 </tr>
               )
             })}
           </tbody>
         </table>
       )}
+      {tracePart && roomId && (
+        <WikiEventsTraceModal
+          partName={tracePart}
+          path={traceablePath(tracePart) ?? ""}
+          onClose={() => setTracePart(null)}
+        />
+      )}
     </section>
+  )
+}
+
+/**
+ * F027 P4 hotfix · 追溯 modal — 显示本 part 对应 wiki 文件的最近 10 条 wiki_events row。
+ * V16.5 §18 line 2078 "[追溯 wiki_events]" 按钮真实现 (仅 viewfinder, 其他 F028)。
+ *
+ * 显示字段对齐 V16.5 §5 schema：ts / alias / action / state / reason；
+ * hash + source 进 details 折叠（避免主表格视觉过载）。
+ */
+function WikiEventsTraceModal({
+  partName,
+  path,
+  onClose,
+}: {
+  partName: string
+  path: string
+  onClose: () => void
+}) {
+  const apiBase = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+  const [events, setEvents] = useState<Array<{
+    id: number
+    ts: string
+    alias: string
+    action: string
+    state: string
+    baseHash: string | null
+    contentHash: string | null
+    sourceMessageIds: string[] | null
+    reason: string | null
+  }> | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${apiBase}/api/wiki/events?path=${encodeURIComponent(path)}&limit=10`)
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json() as Promise<{ events: typeof events }>
+      })
+      .then((json) => {
+        if (cancelled) return
+        setEvents(json.events ?? [])
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : String(err))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [apiBase, path])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onClose()
+      }}
+      role="dialog"
+      aria-modal="true"
+      data-testid="wiki-events-trace-modal"
+    >
+      <div
+        className="max-h-[80vh] w-full max-w-2xl overflow-auto rounded-lg border border-slate-300 bg-white p-4 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+        role="document"
+      >
+        <div className="mb-2 flex items-center justify-between">
+          <div>
+            <div className="text-sm font-semibold text-slate-800">追溯 wiki 事件</div>
+            <div className="text-xs text-slate-500">
+              part: <code className="font-mono">{partName}</code> · path:{" "}
+              <code className="font-mono">{path}</code>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100"
+          >
+            关闭
+          </button>
+        </div>
+        {error && (
+          <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-600">
+            加载失败：{error}
+          </div>
+        )}
+        {!error && events === null && (
+          <div className="p-2 text-xs text-slate-400">⏳ 加载中…</div>
+        )}
+        {!error && events && events.length === 0 && (
+          <div className="rounded border border-dashed border-slate-300 p-3 text-xs text-slate-500">
+            本 wiki 文件还没有 wiki_events 记录。说明 viewfinder 还未编译过、或 RoomCompiler
+            写入时未接 wiki_events sink（若属后者，需查 server.ts wikiEventsSink 是否注入）。
+          </div>
+        )}
+        {!error && events && events.length > 0 && (
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-slate-200 border-b text-slate-500">
+                <th className="text-left">时间</th>
+                <th className="text-left">操作者</th>
+                <th className="text-left">动作</th>
+                <th className="text-left">状态</th>
+                <th className="text-left">原因</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((e) => (
+                <tr key={e.id} className="border-slate-100 border-b align-top">
+                  <td className="py-1 font-mono text-slate-700">{formatLocalTime(e.ts)}</td>
+                  <td className="py-1 text-slate-700">{e.alias}</td>
+                  <td className="py-1 text-slate-700">{e.action}</td>
+                  <td
+                    className={`py-1 ${e.state === "committed" ? "text-green-600" : e.state === "pending" ? "text-amber-600" : "text-red-500"}`}
+                  >
+                    {e.state}
+                  </td>
+                  <td className="py-1 text-slate-500">{e.reason ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {!error && events && events.length > 0 && (
+          <details className="mt-2 text-xs text-slate-500">
+            <summary className="cursor-pointer hover:text-slate-700">查看 hash + source 详情</summary>
+            <pre className="mt-1 max-h-48 overflow-auto rounded bg-slate-50 p-2 font-mono text-xs leading-relaxed text-slate-600">
+              {JSON.stringify(events, null, 2)}
+            </pre>
+          </details>
+        )}
+      </div>
+    </div>
   )
 }
 
