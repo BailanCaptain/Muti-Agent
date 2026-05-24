@@ -989,3 +989,68 @@ describe("RoomCompiler · 二次 run 覆盖 prepare 行（commit 之间无 race�
     }
   })
 })
+
+/**
+ * 范-r1 P1（sync codex review）抓出：
+ *   appendPending swallow 异常 → viewfinder.md 落盘但无 wiki_events 留痕 →
+ *   破坏 V16.5 §5 "所有 wiki 写操作走 append-only event log" 强契约 + 「追溯按钮」空。
+ * 修复：fail-closed — appendPending 抛 → deletePrepare rollback room_checkpoints + 抛错。
+ */
+describe("RoomCompiler · 范-r1 P1 wiki_events fail-closed", () => {
+  it("appendPending 抛错 → RoomCompiler.run 抛 RoomCompilerError + rollback prepare 行", async () => {
+    const { db, close } = makeDb()
+    const { root, cleanup } = makeWikiRoot()
+    const store = new SqliteCheckpointStore(db)
+
+    // 模拟 sink: appendPending 总抛错
+    let appendCalls = 0
+    const failingSink = {
+      appendPending: () => {
+        appendCalls++
+        throw new Error("DB connection lost during appendPending")
+      },
+      commit: () => true,
+      abort: () => true,
+    }
+
+    const compiler = new RoomCompiler({
+      store,
+      wikiRoot: root,
+      compileFn: async () => makeArtifact({ cursorCommitSeq: 1, cursorMessageId: "m-1" }),
+      fencingToken: "fake-token",
+      leaderTerm: "fake-term",
+      wikiEventsSink: failingSink,
+    })
+
+    try {
+      const msgs = [userMsg("m-1", 1)]
+      let thrown: Error | null = null
+      try {
+        await compiler.run({ roomId: "R-fail", newMessages: msgs, newSeals: [] })
+      } catch (err) {
+        thrown = err as Error
+      }
+      // 必须抛 RoomCompilerError，phase=prepare
+      assert.ok(thrown, "应抛错")
+      assert.match(
+        thrown!.message,
+        /wiki_events\.appendPending failed/,
+        "错误信息应明示 wiki_events failure (V16.5 §5 强契约)",
+      )
+      assert.equal(appendCalls, 1, "appendPending 被调一次")
+      // rollback 验证：room_checkpoints 不应留 prepare 行（防 reconciler 复用半成品）
+      const remaining = store.read("R-fail")
+      assert.equal(remaining, null, "deletePrepare 应已 rollback prepare 行")
+      // 文件不应被写（write 在 audit prepare 之后）
+      try {
+        await fsAsync.access(path.join(root, "rooms", "R-fail", "viewfinder.md"))
+        assert.fail("viewfinder.md 不应存在（fail-closed 在 write 前抛）")
+      } catch (err) {
+        assert.equal((err as NodeJS.ErrnoException).code, "ENOENT", "viewfinder.md 应不存在")
+      }
+    } finally {
+      cleanup()
+      close()
+    }
+  })
+})

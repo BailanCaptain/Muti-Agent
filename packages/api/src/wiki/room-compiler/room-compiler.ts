@@ -206,8 +206,10 @@ export class RoomCompiler {
       )
     }
     // F027 P4 hotfix · wiki_events append-only 留痕（V16.5 §5 line 452）。
-    // 失败时不阻断主流程（fail-soft）— RoomCompiler 主任务是 compile，留痕是 audit 副产品。
-    // PREPARE → write → COMMIT 三阶段对齐 V16.5 chap 5 单一提交协议。
+    // 范-r1 P1 修：fail-closed — appendPending 故障必须抛错，否则 viewfinder.md
+    // 落盘但无 audit row → 违反 V16.5 §5 "所有 wiki 写操作走 append-only event log"
+    // 强契约，破坏「追溯 wiki 事件」按钮的 traceability invariant。
+    // 抛错前先 deletePrepare 反向回滚 room_checkpoints，保持双表一致性。
     let viewfinderEventId: number | null = null
     if (this.opts.wikiEventsSink) {
       try {
@@ -226,9 +228,18 @@ export class RoomCompiler {
         })
         viewfinderEventId = event.id
       } catch (err) {
-        // wiki_events sink 故障不应卡死 compile（room_checkpoints 已 PREPARE 成功）
-        // 但下面 abort 链就走不了 — 留 null 让 caller 通过 wiki_events 反查发现"无 audit"。
-        viewfinderEventId = null
+        // fail-closed: rollback room_checkpoints prepare row then 抛错
+        // (caller 重试时 retry 一致 — 不会留半成品 wiki write without audit)
+        try {
+          this.opts.store.deletePrepare(input.roomId, compiledAt)
+        } catch {
+          // deletePrepare 失败也吞 — 主 throw 优先；reconciler 会清残留 prepare 行
+        }
+        throw new RoomCompilerError(
+          "prepare",
+          `wiki_events.appendPending failed (V16.5 §5 audit log mandatory): ${err instanceof Error ? err.message : String(err)}`,
+          err,
+        )
       }
     }
 

@@ -406,6 +406,9 @@ export function createProductionRoomCompileExecutor(
           compileFn,
           fencingToken: opts.leaderContext.newFencingToken(),
           leaderTerm: opts.leaderContext.currentLeaderTerm(),
+          // 范-r1 P1 修：scheduler 5min tick 路径也必须传 sink，否则
+          // 自动编译写 viewfinder.md 不留 wiki_events row（追溯按钮空）
+          wikiEventsSink: opts.wikiEventsSink ?? null,
         })
 
         await compiler.run({ roomId, newMessages, newSeals })
