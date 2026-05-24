@@ -333,6 +333,22 @@ export async function createApiServer(options: {
     messages.setPromptAuditWriter(new PromptAuditWriter({ db: drizzleDb }))
   }
 
+  // F027 P4 hotfix · ViewfinderLoader boot wiring（V16.5 §11 + §4 line 396 + §18 line 2117）。
+  // direct turn + A2A caller 用它读 wiki/rooms/<roomId>/viewfinder.md body 注入 assemblePrompt.viewfinder。
+  // Phase 1-3 RoomCompiler 写出 viewfinder.md（writer 侧已通），但 reader 侧从未接通 —
+  // viewfinder 永远不进 agent prompt。本 hotfix 接通最后一公里。
+  {
+    const { ViewfinderService } = await import("./routes/phase3/viewfinder")
+    const viewfinderSvc = new ViewfinderService({
+      db: drizzleDb,
+      wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    })
+    messages.setViewfinderLoader(async (roomId) => {
+      const r = await viewfinderSvc.getViewfinder(roomId).catch(() => null)
+      return r?.viewfinder ? { body: r.viewfinder } : null
+    })
+  }
+
   // F002: Decision Board + settle → flush → single dispatch pipeline.
   // The board holds [拍板] items across raisers (dedupe by normalized
   // question hash). SettlementDetector arms a 2s debounce after each

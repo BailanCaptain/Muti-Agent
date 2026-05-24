@@ -87,9 +87,31 @@ export type AssemblePromptInput = {
   handoffContext?: { receiverAlias: string; taskSummary: string } | null
 }
 
+/**
+ * F027 P4 hotfix · Prompt Inspector parts metadata.
+ *
+ * V16.5-final.md §18 line 2030-2079："让你亲眼验证 V14 的'唯一注入合约'真的工作了"
+ * — Prompt Inspector tab 每条 part 必须展示 name + tokens。
+ *
+ * `tokens` 用 char/4 估算（V16.5 §18 line 2515 同口径，token 精确度量留 Phase 5）。
+ * `surface` 标识落到 systemPrompt 还是 content，前端按颜色分组。
+ */
+export type PromptPart = {
+  name: string
+  tokens: number
+  surface: "systemPrompt" | "content"
+}
+
 export type AssemblePromptResult = {
   systemPrompt: string
   content: string
+  /** F027 P4 hotfix · 每注入一段就 push 一条；caller 传给 promptAuditWriter.partsJson。 */
+  parts: PromptPart[]
+}
+
+/** F027 P4 hotfix · char/4 token 估算（V16.5 §18 line 2515 同口径）。 */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4)
 }
 
 /**
@@ -104,17 +126,30 @@ export async function assemblePrompt(
   memoryService: MemoryService | null,
 ): Promise<AssemblePromptResult> {
   const { provider, policy, roomSnapshot, targetAlias } = input
+  const parts: PromptPart[] = []
 
   // ── System Prompt ──────────────────────────────────────────────────
   // Guardian mode: zero-context custom prompt, no identity/team/rules injection.
   if (input.guardianMode) {
+    parts.push({
+      name: "guardian-prompt",
+      tokens: estimateTokens(ACCEPTANCE_GUARDIAN_PROMPT),
+      surface: "systemPrompt",
+    })
     return {
       systemPrompt: ACCEPTANCE_GUARDIAN_PROMPT,
       content: input.task,
+      parts,
     }
   }
 
-  const systemParts: string[] = [AGENT_SYSTEM_PROMPTS[provider]]
+  const baseIdentity = AGENT_SYSTEM_PROMPTS[provider]
+  const systemParts: string[] = [baseIdentity]
+  parts.push({
+    name: "base-identity",
+    tokens: estimateTokens(baseIdentity),
+    surface: "systemPrompt",
+  })
 
   if (policy.injectRollingSummary && memoryService) {
     const summary = await memoryService.getOrCreateSummary(input.sessionGroupId)
@@ -134,6 +169,11 @@ export async function assemblePrompt(
         systemParts.push("## 本房间摘要")
         systemParts.push(capped)
         systemParts.push("请参考上述背景信息继续协作。")
+        parts.push({
+          name: "rolling-summary",
+          tokens: estimateTokens(capped),
+          surface: "systemPrompt",
+        })
       }
     }
   }
@@ -144,6 +184,11 @@ export async function assemblePrompt(
       systemParts.push("")
       systemParts.push("## 当前执行状态")
       systemParts.push(bookmarkLine)
+      parts.push({
+        name: "sop-bookmark",
+        tokens: estimateTokens(bookmarkLine),
+        surface: "systemPrompt",
+      })
     }
   }
 
@@ -157,6 +202,11 @@ export async function assemblePrompt(
       systemParts.push("")
       systemParts.push("## Capability Digest")
       systemParts.push(sanitized)
+      parts.push({
+        name: "capability-digest",
+        tokens: estimateTokens(sanitized),
+        surface: "systemPrompt",
+      })
     }
   }
 
@@ -188,6 +238,11 @@ export async function assemblePrompt(
     })
     contentSections.push(bootstrap.text)
     contentSections.push("")
+    parts.push({
+      name: "session-bootstrap",
+      tokens: estimateTokens(bootstrap.text),
+      surface: "content",
+    })
   }
 
   // F026-P3 Task6 · cold-target burst 注入（SessionBootstrap 之后 / header 之前）
@@ -195,8 +250,18 @@ export async function assemblePrompt(
   // previousDigest == null）；本段在的 = caller 已判定要注入。Source 不限。
   if (input.coldTargetBurst) {
     contentSections.push(input.coldTargetBurst.burstSection)
+    parts.push({
+      name: "cold-target-burst",
+      tokens: estimateTokens(input.coldTargetBurst.burstSection),
+      surface: "content",
+    })
     if (input.coldTargetBurst.tombstoneSection) {
       contentSections.push(input.coldTargetBurst.tombstoneSection)
+      parts.push({
+        name: "cold-target-tombstone",
+        tokens: estimateTokens(input.coldTargetBurst.tombstoneSection),
+        surface: "content",
+      })
     }
     contentSections.push("")
   }
@@ -214,6 +279,11 @@ export async function assemblePrompt(
       contentSections.push(sanitized)
       contentSections.push("[/Viewfinder]")
       contentSections.push("")
+      parts.push({
+        name: "viewfinder",
+        tokens: estimateTokens(sanitized),
+        surface: "content",
+      })
     }
   }
 
@@ -231,6 +301,11 @@ export async function assemblePrompt(
       lines.push("[/Recall Pack]")
       lines.push("")
       contentSections.push(...lines)
+      parts.push({
+        name: "recall-pack",
+        tokens: estimateTokens(lines.join("\n")),
+        surface: "content",
+      })
     }
   }
 
@@ -244,6 +319,11 @@ export async function assemblePrompt(
       contentSections.push(sanitized)
       contentSections.push("[/Handbook]")
       contentSections.push("")
+      parts.push({
+        name: "handbook-agent-actions",
+        tokens: estimateTokens(sanitized),
+        surface: "content",
+      })
     }
   }
 
@@ -254,13 +334,19 @@ export async function assemblePrompt(
     const sanitizedReceiver = sanitizeHandoffBody(input.handoffContext.receiverAlias)
     const sanitizedTask = sanitizeHandoffBody(input.handoffContext.taskSummary)
     if (sanitizedReceiver || sanitizedTask) {
-      contentSections.push("[Collaboration Contract — Reference Only]")
-      contentSections.push(`receiver_alias: ${sanitizedReceiver}`)
-      if (sanitizedTask) {
-        contentSections.push(`task_summary: ${sanitizedTask}`)
-      }
-      contentSections.push("[/Collaboration Contract]")
+      const block: string[] = [
+        "[Collaboration Contract — Reference Only]",
+        `receiver_alias: ${sanitizedReceiver}`,
+      ]
+      if (sanitizedTask) block.push(`task_summary: ${sanitizedTask}`)
+      block.push("[/Collaboration Contract]")
+      contentSections.push(...block)
       contentSections.push("")
+      parts.push({
+        name: "collaboration-contract",
+        tokens: estimateTokens(block.join("\n")),
+        surface: "content",
+      })
     }
   }
 
@@ -295,9 +381,17 @@ export async function assemblePrompt(
   contentSections.push("")
   contentSections.push(`你是 ${targetAlias}。请完成上述任务。`)
 
+  // F027 P4 hotfix · task 段单独算 part，让 inspector 看清"agent 收到的 user message" 占多少。
+  parts.push({
+    name: "task",
+    tokens: estimateTokens(input.task),
+    surface: "content",
+  })
+
   return {
     systemPrompt,
     content: contentSections.join("\n"),
+    parts,
   }
 }
 
@@ -329,6 +423,24 @@ export type AssembleDirectTurnInput = {
   previousDigest?: ExtractiveDigestV1 | null
   /** F026-P3 Task6 · cold-target burst（user-mention 路径同等覆盖） */
   coldTargetBurst?: { burstSection: string; tombstoneSection: string | null }
+
+  // ─── F027 P4 hotfix · reader 侧 wire-up（V16.5 §4 line 396-400） ──────
+  // direct turn 也应注入 viewfinder / capability digest / handbook / recall pack；
+  // P5 commit 6d75a9e 扩了 assemblePrompt 接口但 assembleDirectTurnPrompt 没转发。
+  /** F027 chap 11 防漂移 viewfinder 视图（user content 注入）。 */
+  viewfinder?: { body: string } | null
+  /** F027 chap 13 capability digest 自身 6 槽（systemPrompt 注入）。 */
+  capabilityDigest?: string | null
+  /** F027 chap 27 handbook agent actions H2 切片（first wake-up only）。 */
+  handbookSlices?: { agentActions: string } | null
+  /** F027 chap 10 memory_preflight 高置信召回（≥ 0.75）。 */
+  memoryPreflight?: {
+    hits: Array<{ score: number; summary: string; path?: string }>
+  } | null
+  /** 显式区分 wake_up / session_bootstrap（direct turn 默认 wake_up）。 */
+  scenario?: "session_bootstrap" | "wake_up"
+  /** room alias（R-###）— 给 caller 拿 viewfinder / inspector roomId 标识用。 */
+  roomId?: string | null
 }
 
 export async function assembleDirectTurnPrompt(
@@ -355,6 +467,13 @@ export async function assembleDirectTurnPrompt(
       recallTools: input.recallTools,
       previousDigest: input.previousDigest,
       coldTargetBurst: input.coldTargetBurst,
+      // F027 P4 hotfix · 5 字段转发
+      viewfinder: input.viewfinder,
+      capabilityDigest: input.capabilityDigest,
+      handbookSlices: input.handbookSlices,
+      memoryPreflight: input.memoryPreflight,
+      scenario: input.scenario ?? "wake_up",
+      roomId: input.roomId,
     },
     memoryService,
   )

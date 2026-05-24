@@ -38,6 +38,7 @@ import {
 import type { ChainStarterResolver } from "../orchestrator/chain-starter-resolver"
 import {
   type AssemblePromptResult,
+  type PromptPart,
   assembleDirectTurnPrompt,
   assemblePrompt,
 } from "../orchestrator/context-assembler"
@@ -354,6 +355,13 @@ export class MessageService {
   // A2A 拼装也写一行 audit：9 recall fields 用 disabled 默认值，方便 prompt-inspector
   // UI Day 4 起就能读到有 scenario / parts_json 的 row）。
   private promptAuditWriter: PromptAuditWriterLike = new NoopPromptAuditWriter()
+  // F027 P4 hotfix · viewfinder loader DI（V16.5 §11 + §4 line 396）。
+  // direct turn / A2A caller 用它读 wiki/rooms/<roomId>/viewfinder.md body 传给
+  // assemblePrompt.viewfinder。未注入时不传 viewfinder（行为同 Phase 1-3 现状）。
+  // server.ts 把 ViewfinderService.getViewfinder 包一层注进来 — 避免 service 层引 routes 层。
+  private viewfinderLoader:
+    | ((roomId: string) => Promise<{ body: string } | null>)
+    | null = null
   private readonly chainRegistry = new A2AChainRegistry()
   private readonly pendingBoardFlushes = new Map<string, DecisionBoardEntry[]>()
   private readonly streamingFlushers = new Map<
@@ -472,6 +480,97 @@ export class MessageService {
    */
   setPromptAuditWriter(writer: PromptAuditWriterLike) {
     this.promptAuditWriter = writer
+  }
+
+  /**
+   * F027 P4 hotfix · viewfinder loader DI。server.ts boot 注入：
+   *   messages.setViewfinderLoader(async (roomId) => {
+   *     const r = await vfSvc.getViewfinder(roomId).catch(() => null)
+   *     return r?.viewfinder ? { body: r.viewfinder } : null
+   *   })
+   * 未注入时 direct turn / A2A caller 不传 viewfinder（行为同 Phase 1-3 现状）。
+   */
+  setViewfinderLoader(loader: (roomId: string) => Promise<{ body: string } | null>) {
+    this.viewfinderLoader = loader
+  }
+
+  /**
+   * F027 P4 hotfix · 安全加载 viewfinder。room 没绑定 / loader 没注入 / 文件读不到都返 null
+   * 不抛错，让 caller fail-soft 继续 assemble（degrade 到 viewfinder=null 的旧行为）。
+   */
+  private async loadViewfinderSafe(roomId: string | null): Promise<{ body: string } | null> {
+    if (!roomId || !this.viewfinderLoader) return null
+    try {
+      return await this.viewfinderLoader(roomId)
+    } catch (err) {
+      this.log.warn(
+        { roomId, err: (err as Error).message },
+        "viewfinder loader threw (non-blocking)",
+      )
+      return null
+    }
+  }
+
+  /**
+   * F027 P4 hotfix · prompt_audit 写入 helper（V16.5 §18 line 2117 "每次拼装同步写一行"）。
+   *
+   * direct turn 和 A2A 都用这条路径；caller 传 scenario + assembled (含 .parts) + 元信息。
+   *
+   * `parts_json` 来自 assembled.parts（含 name + tokens + surface 三字段，前端按 surface 分组）；
+   * `iron_laws_count` grep "Iron Laws" 在 systemPrompt+content 出现次数（B022 防回归断言）；
+   * `total_tokens` 用 assembled.parts 总和（比 content.length/4 单独估算更准）。
+   *
+   * 全程 try/catch fail-soft：audit 失败不阻塞 agent 运行（Phase 3 A2A 路径同口径）。
+   */
+  private writePromptAuditSafe(args: {
+    scenario: "direct_turn" | "a2a_handoff" | "a2a_handoff_guardian" | "wake_up"
+    alias: string
+    roomId: string | null
+    assembled: AssemblePromptResult
+    sourceEventIds: string[]
+    agentSessionRef: string | null
+    /** A2A 路径的 recall patch（direct turn 不跑 Coordinator，传 undefined 即可）。 */
+    recallPatch?: ReturnType<typeof buildRecallAuditPatch>
+  }): void {
+    try {
+      const totalTokens = args.assembled.parts.reduce((sum, p) => sum + p.tokens, 0)
+      const ironLawsCount = this.countIronLaws(
+        args.assembled.systemPrompt + "\n" + args.assembled.content,
+      )
+      const patch = args.recallPatch ?? buildRecallAuditPatch({ output: undefined })
+      this.promptAuditWriter.write({
+        createdAt: new Date().toISOString(),
+        alias: args.alias,
+        roomId: args.roomId,
+        scenario: args.scenario,
+        totalTokens,
+        cap: 0,
+        partsJson: JSON.stringify(args.assembled.parts),
+        notInjectedJson: null,
+        ironLawsCount,
+        rawText: args.assembled.systemPrompt + "\n\n---\n\n" + args.assembled.content,
+        sourceEventIds: JSON.stringify(args.sourceEventIds),
+        agentSessionRef: args.agentSessionRef,
+        ...patch,
+      })
+    } catch (err) {
+      this.log.warn(
+        { stage: "prompt_audit.write", err: (err as Error).message, scenario: args.scenario },
+        "prompt_audit write failed (non-blocking)",
+      )
+    }
+  }
+
+  /**
+   * F027 P4 hotfix · 数 "Iron Laws" 在 prompt 全文出现次数。
+   *
+   * V16.5 §2 line 246 + §18 line 2053："runtime 端 grep Iron Laws = 1"（B022 防回归）。
+   * runtime+harness 合并 ≤ 2 是 V16.5 接受边界（CLI harness CLAUDE.md 一份 + runtime 一份）。
+   * Inspector 看到 1 = PASS / 0 = base prompt 漏注 / ≥3 = 4 源冗余回归。
+   */
+  private countIronLaws(text: string): number {
+    const matches = text.match(/Iron Laws/g)
+    return matches ? matches.length : 0
   }
 
   /**
@@ -1350,6 +1449,11 @@ export class MessageService {
         previousDigestEmpty: previousDigest == null,
         roomSnapshot,
       })
+      // F027 P4 hotfix · 加载 viewfinder（room 绑定 + loader 已注入时）。
+      // V16.5 §4 line 407："加 [Viewfinder — Reference Only] 区段（room 防漂移视图）"
+      // 失败 fail-soft：viewfinder 读不到不阻塞 direct turn。
+      const directTurnRoomId = this.sessions.getRoomId(thread.sessionGroupId)
+      const directTurnViewfinder = await this.loadViewfinderSafe(directTurnRoomId)
       assembledDirectTurn = await assembleDirectTurnPrompt(
         {
           provider: thread.provider,
@@ -1367,9 +1471,24 @@ export class MessageService {
           previousDigest,
           recallTools: [],
           coldTargetBurst: directTurnColdBurst,
+          // F027 P4 hotfix · 注 viewfinder + roomId（scenario 默认 wake_up）
+          viewfinder: directTurnViewfinder,
+          roomId: directTurnRoomId,
         },
         this.memoryService,
       )
+
+      // F027 P4 hotfix · direct turn 也写一行 prompt_audit（V16.5 §18 line 2117
+      // "assembler 每次拼装完成时同步写一条 prompt_audit"）。Phase 1-3 只 A2A 写 →
+      // prompt-inspector UI 看 direct turn 房间永远 0 row 是 bug。
+      this.writePromptAuditSafe({
+        scenario: "direct_turn",
+        alias: thread.alias,
+        roomId: directTurnRoomId,
+        assembled: assembledDirectTurn,
+        sourceEventIds: options.rootMessageId ? [options.rootMessageId] : [],
+        agentSessionRef: thread.nativeSessionId,
+      })
     }
     const systemPrompt = options.systemPrompt ?? assembledDirectTurn!.systemPrompt
     // When direct turn assembled its own envelope, send that envelope as the
@@ -2480,6 +2599,11 @@ export class MessageService {
                   ? { hits: recallResult.hits.map(toAssemblePromptHits) }
                   : null
 
+              // F027 P4 hotfix · A2A 路径也加载 viewfinder（V16.5 §4 line 407）。
+              // guardian 模式跳过（零上下文契约不许注 viewfinder）。
+              const a2aViewfinder = isGuardianMode
+                ? null
+                : await this.loadViewfinderSafe(a2aCanonicalRoomId)
               const assembled = await assemblePrompt(
                 {
                   provider: entry.to.provider as import("@multi-agent/shared").Provider,
@@ -2504,47 +2628,30 @@ export class MessageService {
                   // F027 Phase 3 P20 Day 7-8 a · scenario + memoryPreflight 注入
                   scenario: isGuardianMode ? undefined : a2aScenario,
                   memoryPreflight: memoryPreflightForAssemble,
+                  // F027 P4 hotfix · viewfinder 接通（Phase 3 缺接）
+                  viewfinder: a2aViewfinder,
+                  roomId: a2aCanonicalRoomId,
                 },
                 this.memoryService,
               )
 
-              // F027 Phase 3 P20 Day 8 b · prompt_audit 一行 INSERT (AC-P3-9 b)。
-              //   - 9 V15.2 Adaptive Recall 字段从 recallResult.output 派生（disabled
-              //     / scenario_skip / executor_error 时全填 default null/false/0）
-              //   - base fields best-effort：totalTokens 用 content.length 估算，
-              //     cap=0（V15.1 token 度量管线 Phase 4/5 接精确度量），parts_json='[]' 占位
-              //   - guardian / 失败路径也写 audit（recall_required=false），让 prompt-inspector
-              //     UI 拿到 scenario / parts_json 不丢
-              try {
-                this.promptAuditWriter.write({
-                  createdAt: new Date().toISOString(),
-                  alias: entry.to.agentId,
-                  // Week 2 r2 (范-r1 P1): canonical R-### roomId（不绑定时 null —
-                  // prompt-inspector 按 R-### 查时该行不会被命中是正确行为）
-                  roomId: a2aCanonicalRoomId,
-                  scenario: isGuardianMode ? "a2a_handoff_guardian" : a2aScenario,
-                  totalTokens: Math.ceil(assembled.content.length / 4),
-                  cap: 0,
-                  partsJson: "[]",
-                  notInjectedJson: null,
-                  ironLawsCount: 0,
-                  rawText: assembled.content,
-                  sourceEventIds: JSON.stringify([entry.rootMessageId]),
-                  agentSessionRef: targetThread?.nativeSessionId ?? null,
-                  ...buildRecallAuditPatch({
-                    output: recallResult?.output,
-                    trigger: recallResult ? deriveTriggerFromScenario(a2aScenario) : null,
-                    // recall_required 标语义：guardian 跳过 / coordinator 跑过 → required=true；
-                    // 其他 disabled/skip 路径 → required=false
-                    recallRequired: !isGuardianMode && recallResult?.executed === true,
-                  }),
-                })
-              } catch (err) {
-                this.log.warn(
-                  { stage: "prompt_audit.write", err: (err as Error).message, threadId },
-                  "prompt_audit write failed (non-blocking)",
-                )
-              }
+              // F027 P4 hotfix · A2A audit 改走 writePromptAuditSafe helper。
+              // direct turn / A2A 现统一一条路径写 prompt_audit（parts_json/iron_laws/raw_text/
+              // total_tokens 全真）；V16.5 §18 line 2117 "每次拼装同步写一条" 接通。
+              const a2aRecallPatch = buildRecallAuditPatch({
+                output: recallResult?.output,
+                trigger: recallResult ? deriveTriggerFromScenario(a2aScenario) : null,
+                recallRequired: !isGuardianMode && recallResult?.executed === true,
+              })
+              this.writePromptAuditSafe({
+                scenario: isGuardianMode ? "a2a_handoff_guardian" : a2aScenario,
+                alias: entry.to.agentId,
+                roomId: a2aCanonicalRoomId,
+                assembled,
+                sourceEventIds: [entry.rootMessageId],
+                agentSessionRef: targetThread?.nativeSessionId ?? null,
+                recallPatch: a2aRecallPatch,
+              })
 
               // F026 P2 clean-cut · 多 @ 不再 fan-out 进 ParallelGroup；每个
               // entry 是独立 A2A 派发，groupId 用 entry.id 作为单元集合标识。
