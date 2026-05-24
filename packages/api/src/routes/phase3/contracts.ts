@@ -318,6 +318,12 @@ export interface GetPromptInspectorPath {
 export interface GetPromptInspectorQuery {
   /** 可选 threadId 过滤；不传 = room 内 active thread 默认。 */
   threadId?: string
+  /**
+   * F027 P4 hotfix · 可选 limit 控制返几条 audit row（默认 1，最新一条）。
+   * limit=2 用于「对比上次注入」按钮：拿 [当前, 上一次] 做 part-by-part diff。
+   * 范围 [1, 10]；越界回 1。
+   */
+  limit?: number
 }
 export interface GetPromptInspectorRequest
   extends GetPromptInspectorPath,
@@ -387,6 +393,18 @@ export interface GetPromptInspectorResponse {
   ironLawsCount: number
   /** F027 P4 hotfix · 最新 audit row 的 scenario，inspector header 显示用。 */
   scenario: string | null
+  /**
+   * F027 P4 hotfix · 历史 audit 行（按 id DESC 第 2 条起）。
+   * limit=1 时为 []，limit=2 时长度 ≤ 1（如有上一次拼装）。
+   * 用于「对比上次注入」按钮做 part-by-part diff。
+   */
+  previousAudits: Array<{
+    injectedParts: InjectedPart[]
+    rawText: string
+    ironLawsCount: number
+    scenario: string
+    createdAt: string
+  }>
 }
 
 export function validateGetPromptInspector(
@@ -398,7 +416,16 @@ export function validateGetPromptInspector(
   if (!idCheck.ok) return idCheck
   const q = (query ?? {}) as Record<string, unknown>
   const threadId = takeOptionalString(q.threadId)
-  return { ok: true, value: { roomId: idCheck.value, threadId } }
+  // limit query 解析：未传/空/越界 → 默认 1；clamp [1, 10]
+  let limit = 1
+  const rawLimit = q.limit
+  if (typeof rawLimit === "string" && rawLimit.length > 0) {
+    const parsed = Number(rawLimit)
+    if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 10) limit = Math.floor(parsed)
+  } else if (typeof rawLimit === "number" && Number.isFinite(rawLimit)) {
+    if (rawLimit >= 1 && rawLimit <= 10) limit = Math.floor(rawLimit)
+  }
+  return { ok: true, value: { roomId: idCheck.value, threadId, limit } }
 }
 
 // ── 4. POST /api/wiki/ingest/preview ────────────────────────────────

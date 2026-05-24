@@ -36,10 +36,11 @@ function makeResponse(
       budgetMax: 4000,
     },
     wakeUpTrigger: { kind: null, ref: null },
-    // P4 hotfix 新 3 字段默认值
+    // P4 hotfix 新 4 字段默认值
     rawText: null,
     ironLawsCount: 0,
     scenario: null,
+    previousAudits: [],
     ...overrides,
   }
 }
@@ -372,7 +373,8 @@ describe("PromptInspectorTab r2 P1: fetch 用 API_BASE_URL (not same-origin)", (
     expect(url).toBeTruthy()
     // 必须含 http://localhost:8787 (env 默认 fallback) — 防 P1 regression
     expect(String(url)).toMatch(/^http:\/\/localhost:8787\//)
-    expect(String(url)).toMatch(/\/api\/rooms\/R-201\/prompt-inspector$/)
+    // P4 hotfix · 加 ?limit=N 参数支持"对比上次"按钮
+    expect(String(url)).toMatch(/\/api\/rooms\/R-201\/prompt-inspector(\?|$)/)
   })
 })
 
@@ -401,7 +403,8 @@ describe("PromptInspectorTab r2 P2: enabled flag wired to activeLvl2", () => {
     // Day 13 加 coverage section → fetch 改成 2 个 (prompt-inspector + decisions/coverage)
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     const urls = fetchMock.mock.calls.map((c) => String(c[0]))
-    expect(urls.some((u) => u.endsWith("/prompt-inspector"))).toBe(true)
+    // P4 hotfix · prompt-inspector URL 现在带 ?limit=2
+    expect(urls.some((u) => /\/prompt-inspector(\?|$)/.test(u))).toBe(true)
     expect(urls.some((u) => u.endsWith("/decisions/coverage"))).toBe(true)
   })
 

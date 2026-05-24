@@ -12,6 +12,7 @@ import {
 } from "./prompt-inspector/use-decisions-coverage-data"
 import {
   type GetPromptInspectorResponse,
+  type InjectedPart,
   type RecallGate,
   usePromptInspectorData,
 } from "./prompt-inspector/use-prompt-inspector-data"
@@ -65,7 +66,12 @@ export function PromptInspectorTab() {
       <AgentSessionSection roomId={roomId} />
       <WakeTriggerSection roomId={roomId} apiTrigger={data.wakeUpTrigger} />
       <CoverageSection data={coverage.data} isLoading={coverage.isLoading} error={coverage.error} />
-      <BottomButtonsBar rawText={data.rawText} ironLawsCount={data.ironLawsCount} />
+      <BottomButtonsBar
+        rawText={data.rawText}
+        ironLawsCount={data.ironLawsCount}
+        currentParts={data.injectedParts}
+        previousAudits={data.previousAudits}
+      />
     </div>
   )
 }
@@ -489,14 +495,20 @@ function UnresolvedRow({ decision }: { decision: DecisionRef }) {
 function BottomButtonsBar({
   rawText,
   ironLawsCount,
+  currentParts,
+  previousAudits,
 }: {
   rawText: string | null
   ironLawsCount: number
+  currentParts: InjectedPart[]
+  previousAudits: GetPromptInspectorResponse["previousAudits"]
 }) {
   const [showRaw, setShowRaw] = useState(false)
+  const [showDiff, setShowDiff] = useState(false)
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle")
   // 防御：老 mock / 老 API response 可能没 rawText 字段 (undefined) — string 严格判
   const hasData = typeof rawText === "string" && rawText.length > 0
+  const hasPrev = previousAudits.length > 0
 
   const handleCopy = async () => {
     if (!rawText) return
@@ -533,17 +545,22 @@ function BottomButtonsBar({
         </button>
         <button
           type="button"
-          disabled
-          className="cursor-not-allowed rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-400"
-          title="F028 接入：对比上一次注入差异"
+          onClick={() => setShowDiff((v) => !v)}
+          disabled={!hasPrev}
+          className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          title={
+            hasPrev
+              ? "对比当前与上一次注入的 part 列表 + token 数变化"
+              : "本房间还无历史 audit（需≥2 次拼装才能对比）"
+          }
         >
-          对比上次注入
+          {showDiff ? "收起对比" : "对比上次注入"}
         </button>
         <button
           type="button"
           disabled
           className="cursor-not-allowed rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-400"
-          title="F028 接入：追溯本次注入对应的 wiki_events"
+          title="F028 接入：追溯本次注入对应的 wiki_events（需建 part → wiki_events 反查协议）"
         >
           追溯 wiki 事件
         </button>
@@ -576,8 +593,138 @@ function BottomButtonsBar({
           {rawText}
         </pre>
       )}
+      {showDiff && hasPrev && (
+        <DiffPanel
+          currentParts={currentParts}
+          previous={previousAudits[0]}
+          currentRawText={rawText ?? ""}
+          currentIronLawsCount={ironLawsCount}
+        />
+      )}
     </div>
   )
+}
+
+/**
+ * F027 P4 hotfix · 「对比上次注入」面板。
+ *
+ * V16.5 §18 line 2078 "[对比上一次注入]" 按钮真实现。
+ * 显示 part-by-part 对比：哪些 part 新增 (+) / 移除 (-) / token 变化 (was X → now Y)。
+ * 不做 textual diff（rawText 几 k 字 textual diff 太杂）—— part-level 对比已经够看决策面。
+ */
+function DiffPanel({
+  currentParts,
+  previous,
+  currentRawText,
+  currentIronLawsCount,
+}: {
+  currentParts: InjectedPart[]
+  previous: GetPromptInspectorResponse["previousAudits"][number]
+  currentRawText: string
+  currentIronLawsCount: number
+}) {
+  const prevByName = new Map(previous.injectedParts.map((p) => [p.name, p]))
+  const currByName = new Map(currentParts.map((p) => [p.name, p]))
+  const allNames = Array.from(new Set([...prevByName.keys(), ...currByName.keys()]))
+  const rows = allNames.map((name) => {
+    const prev = prevByName.get(name)
+    const curr = currByName.get(name)
+    let kind: "added" | "removed" | "changed" | "same" = "same"
+    if (!prev && curr) kind = "added"
+    else if (prev && !curr) kind = "removed"
+    else if (prev && curr && prev.tokensEstimated !== curr.tokensEstimated) kind = "changed"
+    return { name, prev, curr, kind }
+  })
+  const summary = {
+    added: rows.filter((r) => r.kind === "added").length,
+    removed: rows.filter((r) => r.kind === "removed").length,
+    changed: rows.filter((r) => r.kind === "changed").length,
+    same: rows.filter((r) => r.kind === "same").length,
+  }
+  const ironLawsDelta = currentIronLawsCount - previous.ironLawsCount
+  const rawLenDelta = currentRawText.length - previous.rawText.length
+  return (
+    <div
+      className="rounded border border-blue-200 bg-blue-50/40 p-2 text-xs"
+      data-testid="prompt-inspector-diff-panel"
+    >
+      <div className="mb-1 flex flex-wrap gap-2 text-xs text-slate-600">
+        <span>对比上一次（{formatLocalTime(previous.createdAt)} · {previous.scenario || "—"}）</span>
+        <span className="text-slate-400">·</span>
+        <span className="text-green-600">+{summary.added} 新增</span>
+        <span className="text-red-500">−{summary.removed} 移除</span>
+        <span className="text-amber-600">~{summary.changed} 变化</span>
+        <span className="text-slate-500">={summary.same} 不变</span>
+      </div>
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          <tr className="border-slate-200 border-b text-slate-500">
+            <th className="py-0.5 text-left">part</th>
+            <th className="py-0.5 text-right">上次 tokens</th>
+            <th className="py-0.5 text-right">当前 tokens</th>
+            <th className="py-0.5 text-center">变化</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const colorClass =
+              r.kind === "added"
+                ? "text-green-700"
+                : r.kind === "removed"
+                  ? "text-red-600"
+                  : r.kind === "changed"
+                    ? "text-amber-700"
+                    : "text-slate-500"
+            const marker =
+              r.kind === "added" ? "+" : r.kind === "removed" ? "−" : r.kind === "changed" ? "~" : "="
+            return (
+              <tr key={r.name} className="border-slate-100 border-b" data-testid={`diff-row-${r.name}`}>
+                <td className={`py-0.5 font-mono ${colorClass}`}>
+                  {marker} {r.name}
+                </td>
+                <td className="py-0.5 text-right text-slate-500">{r.prev?.tokensEstimated ?? "—"}</td>
+                <td className="py-0.5 text-right text-slate-700">{r.curr?.tokensEstimated ?? "—"}</td>
+                <td className={`py-0.5 text-center ${colorClass}`}>
+                  {r.prev && r.curr
+                    ? r.prev.tokensEstimated === r.curr.tokensEstimated
+                      ? "—"
+                      : `${r.prev.tokensEstimated > r.curr.tokensEstimated ? "↓" : "↑"} ${Math.abs(r.curr.tokensEstimated - r.prev.tokensEstimated)}`
+                    : r.kind === "added"
+                      ? "新增"
+                      : "移除"}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <div className="mt-1 text-xs text-slate-500">
+        Iron Laws: {previous.ironLawsCount} → {currentIronLawsCount}
+        {ironLawsDelta !== 0 && (
+          <span className={ironLawsDelta > 0 ? "ml-1 text-amber-600" : "ml-1 text-red-500"}>
+            ({ironLawsDelta > 0 ? "+" : ""}{ironLawsDelta})
+          </span>
+        )}
+        <span className="mx-2 text-slate-400">·</span>
+        原文长度: {previous.rawText.length} → {currentRawText.length}
+        {rawLenDelta !== 0 && (
+          <span className={rawLenDelta > 0 ? "ml-1 text-amber-600" : "ml-1 text-slate-500"}>
+            ({rawLenDelta > 0 ? "+" : ""}{rawLenDelta} 字符)
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function formatLocalTime(iso: string): string {
+  try {
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return iso
+    return d.toLocaleString("zh-CN", { hour12: false })
+  } catch {
+    return iso
+  }
 }
 
 // ─── helpers ──────────────────────────────────────────────────────

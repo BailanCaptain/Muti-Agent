@@ -66,6 +66,8 @@ interface PromptAuditRow {
   // F027 P4 hotfix · raw text / iron_laws_count 给 BottomButtonsBar "查看 raw text" + "复制全文"
   raw_text: string
   iron_laws_count: number
+  // P4 hotfix · created_at 给 previousAudits 时间标识
+  created_at: string
 }
 
 const DEFAULT_RECALL_BUDGET_MAX = 4000
@@ -85,37 +87,51 @@ export class PromptInspectorService {
     this.recallBudgetMax = deps.recallBudgetMax ?? DEFAULT_RECALL_BUDGET_MAX
   }
 
-  getInspector(roomId: string, _threadId: string | undefined): GetPromptInspectorResponse {
+  getInspector(
+    roomId: string,
+    _threadId: string | undefined,
+    limit = 1,
+  ): GetPromptInspectorResponse {
     // _threadId 当前不参与 prompt_audit 过滤（assembler 写入只标 roomId + alias）；
     // Phase 4 P22 接 thread 维度 inspector 时再扩。
+    // P4 hotfix · limit ≥ 1 用于「对比上次注入」按钮，最新一条进 head fields，
+    // 余下进 previousAudits 数组。clamp 在 contracts.validateGetPromptInspector 已做。
     const client = getSqliteClient(this.db)
-    const row = client
+    const rows = client
       .prepare(
         `SELECT scenario, parts_json,
                 recall_queries, recall_results, recall_total_tokens,
                 recall_required, recall_trigger, recall_path,
                 recall_satisfied, escalate_reason,
-                raw_text, iron_laws_count
+                raw_text, iron_laws_count, created_at
            FROM prompt_audit
           WHERE room_id = ?
           ORDER BY id DESC
-          LIMIT 1`,
+          LIMIT ?`,
       )
-      .get(roomId) as PromptAuditRow | undefined
+      .all(roomId, limit) as PromptAuditRow[]
 
-    if (!row) {
+    if (rows.length === 0) {
       return emptyInspectorResponse(this.recallBudgetMax)
     }
+
+    const [row, ...prev] = rows
 
     return {
       injectedParts: parseInjectedParts(row.parts_json),
       recallQueries: parseRecallQueries(row.recall_queries, row.recall_results),
       recallState: parseRecallState(row, this.recallBudgetMax),
       wakeUpTrigger: parseWakeUpTrigger(row.recall_trigger, row.scenario),
-      // F027 P4 hotfix · raw_text + iron_laws_count + scenario 给 inspector UI
       rawText: row.raw_text ?? null,
       ironLawsCount: row.iron_laws_count ?? 0,
       scenario: row.scenario ?? null,
+      previousAudits: prev.map((r) => ({
+        injectedParts: parseInjectedParts(r.parts_json),
+        rawText: r.raw_text ?? "",
+        ironLawsCount: r.iron_laws_count ?? 0,
+        scenario: r.scenario ?? "",
+        createdAt: r.created_at,
+      })),
     }
   }
 }
@@ -136,6 +152,7 @@ function emptyInspectorResponse(budgetMax: number): GetPromptInspectorResponse {
     rawText: null,
     ironLawsCount: 0,
     scenario: null,
+    previousAudits: [],
   }
 }
 
@@ -318,7 +335,11 @@ export function registerPromptInspectorRoute(
       return toErrorResponse(validation)
     }
     try {
-      const body = service.getInspector(validation.value.roomId, validation.value.threadId)
+      const body = service.getInspector(
+        validation.value.roomId,
+        validation.value.threadId,
+        validation.value.limit ?? 1,
+      )
       return body
     } catch (err) {
       request.log.error({ err, roomId: validation.value.roomId }, "prompt-inspector threw")

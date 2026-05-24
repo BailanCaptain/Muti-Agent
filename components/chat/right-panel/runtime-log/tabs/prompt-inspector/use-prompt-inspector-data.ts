@@ -55,6 +55,14 @@ export interface GetPromptInspectorResponse {
   ironLawsCount: number
   /** F027 P4 hotfix · 最新 audit row 的 scenario。 */
   scenario: string | null
+  /** F027 P4 hotfix · 历史 audit 行（limit≥2 时返），用于「对比上次注入」按钮。 */
+  previousAudits: Array<{
+    injectedParts: InjectedPart[]
+    rawText: string
+    ironLawsCount: number
+    scenario: string
+    createdAt: string
+  }>
 }
 
 /**
@@ -90,6 +98,7 @@ function emptyResponse(): GetPromptInspectorResponse {
     rawText: null,
     ironLawsCount: 0,
     scenario: null,
+    previousAudits: [],
   }
 }
 
@@ -102,9 +111,11 @@ export interface UsePromptInspectorDataReturn {
 
 export function usePromptInspectorData(
   roomId: string | null,
-  options: { enabled?: boolean } = {},
+  options: { enabled?: boolean; limit?: number } = {},
 ): UsePromptInspectorDataReturn {
   const enabled = options.enabled !== false
+  // P4 hotfix · 默认 limit=2 拿到上一次 audit，BottomButtonsBar「对比上次」按钮直接用
+  const limit = options.limit ?? 2
   const [data, setData] = useState<GetPromptInspectorResponse>(emptyResponse())
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -120,7 +131,7 @@ export function usePromptInspectorData(
     let cancelled = false
     setIsLoading(true)
     setError(null)
-    fetch(`${API_BASE_URL}/api/rooms/${encodeURIComponent(roomId)}/prompt-inspector`, {
+    fetch(`${API_BASE_URL}/api/rooms/${encodeURIComponent(roomId)}/prompt-inspector?limit=${limit}`, {
       method: "GET",
       headers: { Accept: "application/json" },
     })
@@ -146,7 +157,7 @@ export function usePromptInspectorData(
     return () => {
       cancelled = true
     }
-  }, [roomId, enabled, refetchTrigger])
+  }, [roomId, enabled, limit, refetchTrigger])
 
   return {
     data,

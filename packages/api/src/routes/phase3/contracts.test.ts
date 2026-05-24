@@ -192,7 +192,23 @@ test("Day 2 · GET drafts · query 字段串 (来自 URL) 也接受", () => {
 test("Day 2 · GET prompt-inspector · 合法 path + 空 query", () => {
   const r = validateGetPromptInspector({ id: "R-201" }, {})
   assert.equal(r.ok, true)
-  if (r.ok) assert.deepEqual(r.value, { roomId: "R-201", threadId: undefined })
+  // P4 hotfix · limit 默认 1（未传 query 时）
+  if (r.ok) assert.deepEqual(r.value, { roomId: "R-201", threadId: undefined, limit: 1 })
+})
+
+test("P4 hotfix · GET prompt-inspector · limit=2 query 解析", () => {
+  const r = validateGetPromptInspector({ id: "R-201" }, { limit: "2" })
+  assert.equal(r.ok, true)
+  if (r.ok) assert.equal(r.value.limit, 2)
+})
+
+test("P4 hotfix · GET prompt-inspector · limit 越界 → fallback 1", () => {
+  const r1 = validateGetPromptInspector({ id: "R-201" }, { limit: "0" })
+  assert.equal(r1.ok, true)
+  if (r1.ok) assert.equal(r1.value.limit, 1)
+  const r2 = validateGetPromptInspector({ id: "R-201" }, { limit: "99" })
+  assert.equal(r2.ok, true)
+  if (r2.ok) assert.equal(r2.value.limit, 1)
 })
 
 test("Day 2 · GET prompt-inspector · threadId 传入", () => {
