@@ -348,6 +348,23 @@ export async function createApiServer(options: {
       return r?.viewfinder ? { body: r.viewfinder } : null
     })
   }
+    try {
+      const { loadCapabilityRegistryFromRoot } = await import(
+        "./wiki/capability-registry/loader"
+      )
+      const capRoot = process.env.CAPABILITY_REGISTRY_ROOT || process.cwd()
+      const registry = loadCapabilityRegistryFromRoot(capRoot)
+      messages.setCapabilityRegistry(registry)
+      // eslint-disable-next-line no-console
+      console.log(
+        `[F027-P4-A1] CapabilityRegistry loaded: ${registry.agents.size} agents (sourcePath=${registry.sourcePath})`,
+      )
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[F027-P4-A1] CapabilityRegistry load failed (non-blocking): ${(err as Error).message}`,
+      )
+    }
 
   // F002: Decision Board + settle → flush → single dispatch pipeline.
   // The board holds [拍板] items across raisers (dedupe by normalized

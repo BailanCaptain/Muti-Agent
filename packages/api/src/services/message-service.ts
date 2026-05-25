@@ -362,6 +362,12 @@ export class MessageService {
   private viewfinderLoader:
     | ((roomId: string) => Promise<{ body: string } | null>)
     | null = null
+  // F027 P4-A1 · capability registry DI（V16.5 §13 line 1447-1525）。
+  // assemblePrompt.capabilityDigest 真相源；server.ts boot 加载 wiki/agents/agent-capabilities.yaml
+  // 注入。未注入时 caller 不传 capabilityDigest（degrade 到 Phase 1-3 行为）。
+  private capabilityRegistry:
+    | { agents: Map<string, { capability_digest_for_self: string }> }
+    | null = null
   private readonly chainRegistry = new A2AChainRegistry()
   private readonly pendingBoardFlushes = new Map<string, DecisionBoardEntry[]>()
   private readonly streamingFlushers = new Map<
@@ -509,6 +515,28 @@ export class MessageService {
       )
       return null
     }
+  }
+
+  /**
+   * F027 P4-A1 · capability registry DI（V16.5 §13 line 1449-1476）。
+   * server.ts boot 时 loadCapabilityRegistryFromRoot(repoRoot) → setCapabilityRegistry。
+   * 未注入时 caller 不传 capabilityDigest（degrade 到 Phase 1-3 行为）。
+   */
+  setCapabilityRegistry(
+    registry: { agents: Map<string, { capability_digest_for_self: string }> } | null,
+  ) {
+    this.capabilityRegistry = registry
+  }
+
+  /**
+   * F027 P4-A1 · 取 receiver alias 的 capability_digest_for_self。
+   * Registry 未注入 / alias 不在 registry → 返 null（caller 不注入 capabilityDigest 段）。
+   * V16.5 §13 line 1490 — guardian 模式由 caller 决策跳过（零上下文契约）。
+   */
+  private getSelfCapabilityDigest(alias: string | null | undefined): string | null {
+    if (!alias || !this.capabilityRegistry) return null
+    const cap = this.capabilityRegistry.agents.get(alias)
+    return cap?.capability_digest_for_self ?? null
   }
 
   /**
@@ -1474,6 +1502,8 @@ export class MessageService {
           // F027 P4 hotfix · 注 viewfinder + roomId（scenario 默认 wake_up）
           viewfinder: directTurnViewfinder,
           roomId: directTurnRoomId,
+          // F027 P4-A1 · capability_digest 注入（V16.5 §13）— receiver = thread.alias 自己
+          capabilityDigest: this.getSelfCapabilityDigest(thread.alias),
         },
         this.memoryService,
       )
@@ -2631,6 +2661,11 @@ export class MessageService {
                   // F027 P4 hotfix · viewfinder 接通（Phase 3 缺接）
                   viewfinder: a2aViewfinder,
                   roomId: a2aCanonicalRoomId,
+                  // F027 P4-A1 · capability_digest 注入（V16.5 §13）— receiver = entry.to.agentId
+                  // guardian 模式跳过（V16.5 §13 line 1490 零上下文契约不许注 capability digest）
+                  capabilityDigest: isGuardianMode
+                    ? null
+                    : this.getSelfCapabilityDigest(entry.to.agentId),
                 },
                 this.memoryService,
               )

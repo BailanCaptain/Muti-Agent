@@ -1033,3 +1033,63 @@ test("G1 r2 P3: thread 不存在 → 入口 broadcast 不触发（return null �
   const wakeTrigger = broadcastEvents.find((e) => e.type === "wake.trigger")
   assert.equal(wakeTrigger, undefined, "thread 不存在早 return → 不该 broadcast wake.trigger")
 })
+
+// ─── F027 P4-A1 · CapabilityRegistry DI + getSelfCapabilityDigest ─────────────
+// 真相源: V16.5-final.md §13 line 1449-1476 + assemblePrompt.capabilityDigest
+// 集成: server.ts boot 加载 wiki/agents/agent-capabilities.yaml → setCapabilityRegistry
+//       direct turn / A2A caller 拿 receiver alias 自己的 capability_digest_for_self
+test("F027 P4-A1: registry 未注入 → getSelfCapabilityDigest 返 null（degrade Phase 1-3 行为）", () => {
+  const { messageService } = createMessageService()
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const digest = (messageService as any).getSelfCapabilityDigest("黄仁勋")
+  assert.equal(digest, null, "registry 未注入时不传 capabilityDigest")
+})
+
+test("F027 P4-A1: registry 已注入 + alias 在 registry → 返 capability_digest_for_self", () => {
+  const { messageService } = createMessageService()
+  messageService.setCapabilityRegistry({
+    agents: new Map([
+      ["黄仁勋", { capability_digest_for_self: "黄仁勋·主架构师·digest" }],
+      ["范德彪", { capability_digest_for_self: "范德彪·reviewer·digest" }],
+    ]),
+  })
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const huang = (messageService as any).getSelfCapabilityDigest("黄仁勋")
+  assert.equal(huang, "黄仁勋·主架构师·digest")
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const fan = (messageService as any).getSelfCapabilityDigest("范德彪")
+  assert.equal(fan, "范德彪·reviewer·digest")
+})
+
+test("F027 P4-A1: registry 已注入但 alias 不在 registry → 返 null（caller 不传 capabilityDigest）", () => {
+  const { messageService } = createMessageService()
+  messageService.setCapabilityRegistry({
+    agents: new Map([["黄仁勋", { capability_digest_for_self: "x" }]]),
+  })
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const digest = (messageService as any).getSelfCapabilityDigest("陌生 alias")
+  assert.equal(digest, null)
+})
+
+test("F027 P4-A1: alias 为 null / 空串 → 返 null（防御 thread.alias 异常）", () => {
+  const { messageService } = createMessageService()
+  messageService.setCapabilityRegistry({
+    agents: new Map([["黄仁勋", { capability_digest_for_self: "x" }]]),
+  })
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  assert.equal((messageService as any).getSelfCapabilityDigest(null), null)
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  assert.equal((messageService as any).getSelfCapabilityDigest(""), null)
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  assert.equal((messageService as any).getSelfCapabilityDigest(undefined), null)
+})
+
+test("F027 P4-A1: setCapabilityRegistry(null) → getSelfCapabilityDigest 立刻返 null（unregister）", () => {
+  const { messageService } = createMessageService()
+  messageService.setCapabilityRegistry({
+    agents: new Map([["黄仁勋", { capability_digest_for_self: "x" }]]),
+  })
+  messageService.setCapabilityRegistry(null)
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  assert.equal((messageService as any).getSelfCapabilityDigest("黄仁勋"), null)
+})
