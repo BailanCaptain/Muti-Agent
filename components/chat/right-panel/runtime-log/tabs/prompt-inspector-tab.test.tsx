@@ -180,6 +180,36 @@ describe("PromptInspectorTab 注入 part 表渲染", () => {
     // 总账：150 + 1180 = 1330
     expect(screen.getByText(/总计 1330 tok/)).toBeTruthy()
   })
+
+  // F027 P4-A5 · 追溯按钮扩接 capability-digest + handbook-agent-actions
+  it("P4-A5: viewfinder / capability-digest / handbook-agent-actions part 都显示追溯按钮（其他 part —）", async () => {
+    mockFetchResponse(
+      makeResponse({
+        injectedParts: [
+          { name: "viewfinder", bytes: 100, tokensEstimated: 25, source: "viewfinder.md" },
+          {
+            name: "capability-digest",
+            bytes: 200,
+            tokensEstimated: 50,
+            source: "agent-capabilities.yaml",
+          },
+          {
+            name: "handbook-agent-actions",
+            bytes: 300,
+            tokensEstimated: 75,
+            source: "agent-wiki-handbook.md",
+          },
+          { name: "rolling-summary", bytes: 400, tokensEstimated: 100, source: "summary" },
+        ],
+      }),
+    )
+    render(<PromptInspectorTab />)
+    await waitFor(() => expect(screen.queryByTestId("trace-btn-viewfinder")).toBeTruthy())
+    expect(screen.getByTestId("trace-btn-capability-digest")).toBeTruthy()
+    expect(screen.getByTestId("trace-btn-handbook-agent-actions")).toBeTruthy()
+    // rolling-summary 不应有追溯按钮（动态派生 part 无固定 wiki 源）
+    expect(screen.queryByTestId("trace-btn-rolling-summary")).toBeNull()
+  })
 })
 
 describe("PromptInspectorTab Recall Quality Gate badges", () => {

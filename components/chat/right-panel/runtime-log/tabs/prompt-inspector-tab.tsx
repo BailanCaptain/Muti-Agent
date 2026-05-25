@@ -131,10 +131,16 @@ function InjectedPartsTable({
 }) {
   const [tracePart, setTracePart] = useState<string | null>(null)
   const totalTokens = parts.reduce((sum, p) => sum + p.tokensEstimated, 0)
-  // F027 P4 hotfix · 追溯支持 part → wiki path 映射 (V16.5 §18 line 2078)。
-  // 当前仅 viewfinder 接通; 其他 part (capability/handbook/recall-pack) 推 F028。
+  // F027 P4-A5 · 追溯 part → wiki path 映射 (V16.5 §18 line 2078)。
+  // 接通：viewfinder（RoomCompiler 派生）+ capability-digest（wiki/agents YAML）+
+  //       handbook-agent-actions（wiki/rules MD）。这三个 part 的源都是 wiki 文件，
+  //       wiki_events 会留 audit row（promote / update_wiki / RoomCompiler 三阶段）。
+  // 不接通：recall-pack（动态 query 派生，无固定 wiki path；F028 扩 audit schema 追 source_event_ids）；
+  //         其他 part（rolling-summary / sop-bookmark / base-identity 等）走 prompt 自身，不写 wiki。
   const traceablePath = (name: string): string | null => {
     if (name === "viewfinder" && roomId) return `wiki/rooms/${roomId}/viewfinder.md`
+    if (name === "capability-digest") return "wiki/agents/agent-capabilities.yaml"
+    if (name === "handbook-agent-actions") return "wiki/rules/agent-wiki-handbook.md"
     return null
   }
   return (
@@ -181,7 +187,7 @@ function InjectedPartsTable({
                     ) : (
                       <span
                         className="text-slate-300"
-                        title="本 part 暂不支持追溯（F028 接其他 part → wiki_events 映射）"
+                        title="本 part 无固定 wiki 源（动态派生 / prompt 自身），不支持 wiki_events 追溯"
                       >
                         —
                       </span>
@@ -193,7 +199,9 @@ function InjectedPartsTable({
           </tbody>
         </table>
       )}
-      {tracePart && roomId && (
+      {tracePart && traceablePath(tracePart) && (
+        // F027 P4-A5 · 移除 `&& roomId` 约束 — capability-digest / handbook-agent-actions
+        // 的源是 wiki/agents/* / wiki/rules/*，不依赖 roomId（只有 viewfinder 需要）。
         <WikiEventsTraceModal
           partName={tracePart}
           path={traceablePath(tracePart) ?? ""}
@@ -297,8 +305,12 @@ function WikiEventsTraceModal({
         )}
         {!error && events && events.length === 0 && (
           <div className="rounded border border-dashed border-slate-300 p-3 text-xs text-slate-500">
-            本 wiki 文件还没有 wiki_events 记录。说明 viewfinder 还未编译过、或 RoomCompiler
-            写入时未接 wiki_events sink（若属后者，需查 server.ts wikiEventsSink 是否注入）。
+            本 wiki 文件还没有 wiki_events 记录。可能原因：
+            <ul className="ml-4 mt-1 list-disc">
+              <li>viewfinder：room 还没编译过（写入会同步 audit 三行）</li>
+              <li>capability-digest / handbook：YAML / MD 仅 git 管理，没走过 update_wiki MCP / promote 流程</li>
+              <li>writer 侧 wikiEventsSink 未注入（查 server.ts boot 是否 wire）</li>
+            </ul>
           </div>
         )}
         {!error && events && events.length > 0 && (
