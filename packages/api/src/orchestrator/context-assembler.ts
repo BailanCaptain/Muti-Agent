@@ -329,7 +329,11 @@ export async function assemblePrompt(
 
   // 4. Collaboration Contract — Reference Only（仅 a2a_handoff）
   // V16.5 chap 4 行 422-431：handoffContext 由 F026 EnvelopeBuilder 派发时填充。
-  // P9 capability registry rewriteHandoffForReceiver 已保证不含 sender risks。
+  // sender risks 不泄漏的保护：caller (message-service.buildA2AHandoffContext) 限定
+  // 只透 receiverAlias + entry.taskSnippet，不读任何 sender capabilities/risks 字段；
+  // 等价于 P9 rewriter 白名单输出 4 字段 envelope 的 2 字段子集 (V16.5 §4 line 429-431)。
+  // P9 capability-registry/handoff-rewriter.ts 完整 4 字段 leak-detection 在 P9 fixture 跑，
+  // 不在本 path 调用 (rewriter 是 fixture 校验用，runtime path 简化)。
   if (input.scenario === "a2a_handoff" && input.handoffContext) {
     const sanitizedReceiver = sanitizeHandoffBody(input.handoffContext.receiverAlias)
     const sanitizedTask = sanitizeHandoffBody(input.handoffContext.taskSummary)

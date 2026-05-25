@@ -56,6 +56,16 @@ C. Scheduler/UX 长尾 - 单独立 feature 做（不归 F027）
 
 **说明**: 这 5 项 V16.5 plan §1.1 line 79-80 明示「不在 F027 scope」，**不算 F027 愿景缺**。小孙立 F029/F030 时 picking 即可。
 
+### 类别 B 追加（2026-05-26 fallback j2 P3 finding 上移）
+
+> 原归类别 C，按 plan §1.3 line 81-83 写的「推 F028 evaluate」语义跟「V16.5 划走」更接近，**P3 上移到 B**。
+
+| # | 项目 | 工作量 |
+|---|------|------|
+| **B6** | composer slash menu 4 写命令启用（`/promote` `/demote` `/series` `/rollback`） | 1 周（B5 写型 rollback 做完才能 enable `/rollback`） |
+| **B7** | EmbeddedWikiRecord boot load + 多房间并行 ingest 压测 | 2 周 |
+| **B8** | Inspector Coverage 真 supersede / reject UI（click → endpoint + Modal） | 1-2 周（Day 13 占位 click → window.alert） |
+
 ---
 
 ## 类别 C · Scheduler / UX 长尾 - 单独立 feature（9 项）
@@ -75,20 +85,16 @@ C. Scheduler/UX 长尾 - 单独立 feature 做（不归 F027）
 | C1.6 | `ArchiveYearlySessions.scanSessions` (line 176) | 每年 cron 跑空 | 1d |
 | C1.7 | `WikiCompilerDebounce.recompileDerivedViews` (line 181) | wiki/concepts/*.md 改后 index.md 不刷 | 1d |
 
-### C2 · UX 长尾（4 项）
+### C2 · UX 长尾（2 项；C2.1/C2.4/C3.1 已上移到类别 B — fallback j2 finding P3）
+
+> **2026-05-26 fallback j2 finding**: C2.1 (composer slash menu) / C2.4 (多房间压测) / C3.1 (supersede/reject UI)
+> 原 plan §1.3 line 81-83 写的是「推 F028 evaluate」语义，跟 V16.5/plan 明示划走更接近 —
+> 归类别 B6/B7/B8 比 C 更准确（避免「实施期偶然 noop/UI 长尾」的误读）。
 
 | # | 项 | 现状 | 预算 |
 |---|------|------|------|
-| C2.1 | composer slash menu 4 写命令启用（`/promote` `/demote` `/series` `/rollback`） | 4 items 已加但 disabled (B5 写型 rollback 完才能启用) | 1 周 |
 | C2.2 | WarningsTab "解决" / 删除按钮 | 当前仅 list, 无操作按钮 | 1 周 |
 | C2.3 | KB tab markdown 表格 entity-level parse | 仅 index .md path/title 显示, entity row 解析未做 (multi-select UI 已落 commit 7603f35) | 1 周 |
-| C2.4 | EmbeddedWikiRecord boot load + 多房间并行 ingest 压测 | 单 R-001 single record load, 无 multi-room concurrency lease 测试 | 2 周 |
-
-### C3 · supersede / reject 写型 UI（1 项）
-
-| # | 项 | 现状 | 预算 |
-|---|------|------|------|
-| C3.1 | Inspector Coverage 真 supersede / reject UI（click → endpoint + Modal） | Day 13 占位: click → window.alert | 1-2 周 |
 
 ### C4 · 推迟到追溯 audit schema 扩（1 项）
 

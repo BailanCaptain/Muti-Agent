@@ -752,7 +752,7 @@ function BottomButtonsBar({
           type="button"
           disabled
           className="cursor-not-allowed rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-400"
-          title="F028 接入：追溯本次注入对应的 wiki_events（需建 part → wiki_events 反查协议）"
+          title="按 part 追溯（每行右侧 🔍 按钮）— 此 prompt 由多 part 拼装，无全局 wiki 源"
         >
           追溯 wiki 事件
         </button>
