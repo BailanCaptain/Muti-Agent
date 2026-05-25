@@ -29,15 +29,21 @@ C. Scheduler/UX 长尾 - 单独立 feature 做（不归 F027）
 
 | # | 项目 | V16.5 §  | commit | review |
 |---|------|---------|--------|--------|
-| **A1** | capability_digest YAML 真相源 + caller 集成 | §13 line 1449-1476 | `bbb378c` | 范-r1 待 |
-| **A2** | handbook H2 切片 caller 集成 | §27.4 + §4 line 365 | `bffa065` | 范-r1 待 |
-| **A3** | handoffContext F026 EnvelopeBuilder 集成 | §4 line 422-431 + §13 中性改写 | `bffa065` | 范-r1 待 |
-| **A4** | RoomCompiler 3 文件全 audit (decisions+log) | §5 line 452 + §8 line 533 | `736590c` | 范-r1 待 |
-| **A5** | 追溯按钮扩 capability/handbook 两 part | §18 line 2078 | `736590c` | 范-r1 待 |
+| **A1** | capability_digest YAML 真相源 + caller 集成 | §13 line 1449-1476 | `bbb378c` | fallback j2 PASS |
+| **A2** | handbook H2 切片 caller 集成（first wake-up only） | §27.4 + §4 line 365 | `bffa065` + `397e7f1` | fallback j2 P1.2 → 修后 PASS |
+| **A3** | handoffContext F026 EnvelopeBuilder 集成（dispatch 路径） | §M1 line 422-431 + §13 | `bffa065` + `397e7f1` | fallback j2 P1.1 → 修后 PASS |
+| **A4** | RoomCompiler 3 文件全 audit (decisions+log) | §5 line 452 + §8 line 533 | `736590c` | fallback j2 PASS |
+| **A5** | 追溯按钮扩 capability/handbook 两 part | §18 line 2078 | `736590c` + `ad59916` | fallback j2 PASS |
+
+**fallback j2 ensemble 抓出 2 个 P1 + 1 P2 + 3 P3 全修**（2026-05-26）:
+- **P1.1** (`397e7f1`): handoffContext 改走 F026 envelope (dispatch.ts derive + 透传到 entry，message-service caller fallback) — V16.5 §M1 line 422-431
+- **P1.2** (`397e7f1`): handbook 仅 first wake-up 注入 (thread.nativeSessionId === null 判定) — V16.5 §4 line 364-365
+- **P2** (`397e7f1`): server.ts boot loader fail-soft → fail-closed + ENV opt-in `MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1` — V16.5 §4
+- **P3 × 3** (`ad59916`): bottom 追溯按钮 F028 文案残留 / context-assembler 注释 misleading / RESIDUAL-DEBT 三分类边界（C2.1/C2.4/C3.1 上移到 B6/B7/B8）
 
 **A5 不闭环子项**：recall-pack 追溯（动态 query 派生，需扩 audit schema 追 source_event_ids）→ 归 C 类长尾
 
-**当前 P4 闭环度估算（修后）**: ~9/10（5 项愿景全闭环 + 双 judge 已对账；剩 0.5-1 分扣点全在 V16.5 划走类 B + scheduler 长尾类 C）
+**当前 P4 闭环度（修后双 fallback j2 对账）**: 9/10（5 项愿景核心全闭环 + 0 P1 + 0 未修 P2；剩 1 分扣点在 C 类长尾 6 项 + B 类划走 8 项）
 
 ---
 
@@ -106,13 +112,49 @@ C. Scheduler/UX 长尾 - 单独立 feature 做（不归 F027）
 
 | # | 项 | 现状 | 预算 |
 |---|------|------|------|
-| C5.1 | IngestService 接真 LLM compile（接 `wiki/llm-compile/compile-pipeline.ts` + Sonnet/Haiku fallback） | preview/commit 用 minimal stub markdown，无真 LLM 编译 | 1 周 |
+| C5.1 | IngestService 接真 LLM compile（接 `wiki/llm-compile/compile-pipeline.ts` + Sonnet/Haiku fallback） | **Phase 3 user-driven simplification by design** — preview/commit 用 sanitized markdown 是性能选择（preview 实时性 + commit 时小孙 review 内容不需要 LLM 编译 schema-only JSON 多此一举）；未来 batch ingest / agent-initiated draft 才需要接 | 1 周 |
 
 ### C6 · ChainedAlertNotifier broadcaster wire（1 项）
 
 | # | 项 | 现状 | 预算 |
 |---|------|------|------|
 | C6.1 | `pushChainedAlert` broadcaster wire（chained_suspect 推真 room R-201） | 已实例化 ChainedAlertNotifier 但 `pushChainedAlert` 默认 undefined | 0.5 周 |
+
+---
+
+## 类别 D · 设计决策推后（不在 ABC 三分类内 — final vision r2 round 2 新增）
+
+> **2026-05-26 fallback j2 r2 round 2 共识**：以下项目 by design 不接，不算缺；
+> 区别于「未做」(类 A/C) 和「划走」(类 B)，标 D 显式记录 design 决策避免被未来 review 误判为 silent skip。
+
+### D1 · update_wiki MCP 4 actions (patch/promote/demote/ingest) by design 不接
+
+| 项 | 状态 | V16.5 reference |
+|------|------|------|
+| `packages/api/src/wiki/update-wiki-service.ts:240-252` 4 actions 返 `not_implemented` | by design | V16.5 §6 ACL + §17 一致性原则 |
+
+**理由**：
+- agent 不应自动 promote/demote/patch/ingest canonical wiki — 应 user-driven
+- promote/demote 走 HTTP POST `/api/wiki/drafts/promote|demote` + PromoteWikiService/DemoteService + IngestModal UI（小孙审计 + 二次审计 + ledger）
+- ingest 走 `IngestModal` 用户拖拽 raw → preview → commit 流程，不走 MCP
+- patch 是 surgical edit 必须人工 — V16.5 §6 安全契约
+- MCP path 暴露 promote/demote 会让 agent 绕过 user 审计直写 canonical wiki — 违反 V16.5 §17 一致性
+
+**反对意见**：「MCP 通用 API 应支持所有 actions 让 future agent flow 可用」 — 拒绝；agent flow 应该走 HTTP route + UI gate，MCP 仅留 read/write/append 是 minimal viable surface。
+
+### D2 · `rewriteHandoffForReceiver` 完整 4 字段 envelope production 0 caller（by design 留）
+
+| 项 | 状态 | V16.5 reference |
+|------|------|------|
+| `packages/api/src/wiki/capability-registry/handoff-rewriter.ts:28` 完整 4 字段 envelope rewriter | spec-locked by test caller | V16.5 §M1 line 422-431 + §13 line 1481-1492 + ADR-003 |
+
+**理由**：
+- V16.5 §M1 line 422-431 明示 production 可简化 2 字段（receiverAlias + taskSummary）
+- 4 字段 envelope（receiver_must_do / expected_evidence / do_not_section）是 ADR-003 反向路由复杂场景才需要
+- 当前 A2A 路径不需要，但 `capability-registry.test.ts` 8 处 test caller + leak-detector e2e 覆盖 — **不是 dead code，是 spec-locked 测试覆盖**
+- 未来 ADR-003 反向路由 enable 时 dispatch.ts 接通 rewriter 即可
+
+**反对意见**：「YAGNI 删了」— 拒绝；删了未来 enable 反向路由还要重写 + leak-detection 风险。
 
 ---
 

@@ -100,9 +100,27 @@ a5963a4 fix(F027-P4): codex Week 4 mid-r1 review 修 — P1 metaWikiRoot prod �
 ab8c242 docs(F027-P4): Week 5 Day 23 j1 重评 + overview + F028 backlog 反映 j2 r1 + Red→Green
 a5cd21b docs(F027-P4): Week 5 Day 23 codex j2 r2 + 8 AC result.json final verdict (consensus 一致)
 b6ff088 fix(F027-P4): hotfix viewfinder=null + system prompt 空 — RoomCompile noop + message_commit_seq 链路全断接通
+2d385d2 docs(F027-P4): hotfix b6ff088 后更新 — F028 backlog 加 F028-11~19 + OVERVIEW 反映
+
+# Week 5 Day 24-25 P4 内修（撤 F028 + reader 侧愿景闭环）
+e8e842c fix(F027-P4): hotfix viewfinder + Prompt Inspector reader 侧 wire-up
+e37300d feat(F027-P4): 取景器手动编译 + Prompt Inspector raw text + 中文化/字体统一
+c6ab3f6 feat(F027-P4): Prompt Inspector「对比上次注入」按钮真实现（不推 F028）
+ea4e3f3 feat(F027-P4): 追溯 wiki_events 愿景闭环 — RoomCompiler 接 wiki_events + 前端追溯按钮
+b09b982 fix(F027-P4): 范-r1 hetero review P1 修 — scheduler 漏传 sink + fail-soft 改 fail-closed
+
+# Day 25 P4-A 6 项内修（撤 F028 + 5 项愿景闭环）
+bbb378c feat(F027-P4-A1): capability_digest YAML 真相源 caller 集成 — wiki/agents 闭环
+bffa065 feat(F027-P4-A2/A3): handbook H2 切片 + handoffContext caller 集成 — V16.5 §4/§27 闭环
+736590c feat(F027-P4-A4/A5): RoomCompiler 3 文件全 audit + 追溯按钮扩 capability/handbook
+11fe3a0 docs(F027-P4): Phase 4 Day 25 — 撤 F028 backlog + 残债重新三分类 + viewfinder limit 修
+
+# Day 25 fallback j2 ensemble verdict 修（codex 翻车，Claude general-purpose subagent fallback）
+ad59916 chore(F027-P4-A): fallback j2 P3 cleanup × 3 — Day 25 reclassify Phase 4
+397e7f1 fix(F027-P4-A): Phase 4 Day 25 fallback j2 P1 修 × 2 + P2 × 1 — handoffContext envelope 集成 + handbook first-wake-up only + boot fail-closed
 ```
 
-待 Week 5 Day 24 加 walkthrough screenshots 收稿 commit.
+待 Week 5 Day 26 加 walkthrough screenshots（小孙手动浏览器实测）+ final vision review 闭环.
 
 ---
 

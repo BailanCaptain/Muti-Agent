@@ -595,6 +595,11 @@ export class MessageService {
    * 完整 4 字段 envelope（rewriteHandoffForReceiver 输出）保护在 P9 fixture 跑
    * （capability-registry.test.ts leak-detector 端到端），这里仅取 2 简化字段
    * 喂 assembler — 跟 V16.5 §4 line 429-431 shape 一致。
+   *
+   * V16.5 §M1 line 422-431 明示 production 可简化 2 字段。完整 4 字段 envelope（含
+   * receiver_must_do / expected_evidence / do_not_section）是 ADR-003 反向路由复杂场景才需要
+   * — capability-registry.test.ts 8 处 caller spec-locked 测试覆盖，不是 dead code。
+   * 待 ADR-003 反向路由 enable 时 dispatch.ts 接通 rewriter 即可（见 F027-RESIDUAL-DEBT.md D2）。
    */
   private buildA2AHandoffContext(args: {
     receiverAlias: string | null | undefined

@@ -587,7 +587,7 @@ export function getTools() {
     {
       name: "update_wiki",
       description:
-        "F027 chap 6: 写 wiki 文件，全套 ACL + CAS + lease + fencing 校验。流程：1) acquire_wiki_lease 拿 token；2) read_wiki 拿 base_hash；3) update_wiki 提交。status 枚举：ok / denied_acl / conflict（base_hash 不符）/ lease_expired（token 不持有）/ stale_token（写入临界区被抢占）/ schema_invalid / path_invalid（路径含 ../ 逃逸 / 非 wiki/ 前缀）/ internal（atomic-write IO 失败 / revert 失败，由服务端 5xx 兜）/ not_implemented。actions: write|append|delete 已支持；patch/promote/demote/ingest 暂未实现。",
+        "F027 chap 6: 写 wiki 文件，全套 ACL + CAS + lease + fencing 校验。流程：1) acquire_wiki_lease 拿 token；2) read_wiki 拿 base_hash；3) update_wiki 提交。status 枚举：ok / denied_acl / conflict（base_hash 不符）/ lease_expired（token 不持有）/ stale_token（写入临界区被抢占）/ schema_invalid / path_invalid（路径含 ../ 逃逸 / 非 wiki/ 前缀）/ internal（atomic-write IO 失败 / revert 失败，由服务端 5xx 兜）/ not_implemented。actions: write|append|delete 已支持；patch/promote/demote/ingest by design 不接 MCP 路径（防 agent 越权写 canonical wiki，V16.5 §6 ACL + §17）— promote/demote 走 HTTP POST /api/wiki/drafts/promote|demote + IngestModal UI（user-driven + 小孙审计 + ledger），见 F027-RESIDUAL-DEBT.md 类别 D1。",
       inputSchema: {
         type: "object",
         properties: {
