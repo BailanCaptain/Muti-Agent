@@ -365,6 +365,21 @@ export async function createApiServer(options: {
         `[F027-P4-A1] CapabilityRegistry load failed (non-blocking): ${(err as Error).message}`,
       )
     }
+    try {
+      const { loadHandbookSlices } = await import("./wiki/handbook-slicer")
+      const handbookRoot = process.env.WIKI_HANDBOOK_ROOT || process.cwd()
+      const slices = await loadHandbookSlices(handbookRoot)
+      messages.setHandbookSlices({ agentActions: slices.agentActions })
+      // eslint-disable-next-line no-console
+      console.log(
+        `[F027-P4-A2] Handbook agentActions slice loaded: ${slices.agentActions.length} chars (handbookRoot=${handbookRoot})`,
+      )
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[F027-P4-A2] Handbook slice load failed (non-blocking): ${(err as Error).message}`,
+      )
+    }
 
   // F002: Decision Board + settle → flush → single dispatch pipeline.
   // The board holds [拍板] items across raisers (dedupe by normalized

@@ -368,6 +368,12 @@ export class MessageService {
   private capabilityRegistry:
     | { agents: Map<string, { capability_digest_for_self: string }> }
     | null = null
+  // F027 P4-A2 · handbook H2 切片 DI（V16.5 §27.4 + §4 line 365）。
+  // assemblePrompt.handbookSlices 真相源（agentActions 切片），server.ts boot 加载
+  // wiki/rules/agent-wiki-handbook.md 切片注入。assembler 内仅 scenario === 'wake_up'
+  // 时才把 agentActions 注入 content（A2A 不注；direct turn 默认 wake_up 会注）。
+  // 未注入时 caller 不传 handbookSlices（degrade 同 Phase 1-3 行为）。
+  private handbookSlicesCache: { agentActions: string } | null = null
   private readonly chainRegistry = new A2AChainRegistry()
   private readonly pendingBoardFlushes = new Map<string, DecisionBoardEntry[]>()
   private readonly streamingFlushers = new Map<
@@ -537,6 +543,51 @@ export class MessageService {
     if (!alias || !this.capabilityRegistry) return null
     const cap = this.capabilityRegistry.agents.get(alias)
     return cap?.capability_digest_for_self ?? null
+  }
+
+  /**
+   * F027 P4-A2 · handbook H2 切片 DI setter（V16.5 §27.4 + §4 line 365）。
+   * server.ts boot 调 loadHandbookSlices(wikiRoot) 后注入；进程级常量缓存。
+   * 设 null 即 unregister（caller 不再传 handbookSlices）。
+   */
+  setHandbookSlices(slices: { agentActions: string } | null) {
+    this.handbookSlicesCache = slices
+  }
+
+  /**
+   * F027 P4-A2 · 取 handbook agentActions 切片供 direct turn caller 注入。
+   * Caller 透传给 assemblePrompt.handbookSlices；assembler 内仅 scenario==='wake_up'
+   * 且 agentActions 非空才注 [Handbook — Agent Actions] 区段（V16.5 §4 line 365）。
+   */
+  private getHandbookSlices(): { agentActions: string } | null {
+    return this.handbookSlicesCache
+  }
+
+  /**
+   * F027 P4-A3 · A2A handoffContext 构造 helper（V16.5 §4 line 422-431）。
+   *
+   * Assembler 拿到后渲染 [Collaboration Contract — Reference Only] 区段
+   * （receiver_alias + task_summary 简化 2 字段，V16.5 §4 line 429-431）。
+   *
+   * guardian 模式跳过（零上下文契约不许注 collaboration contract）。
+   * receiverAlias / taskSummary 任一空 → 返 null（caller 不传 handoffContext 段；
+   * assembler 内 sanitize 空字符串也会 skip）。
+   *
+   * 完整 4 字段 envelope（rewriteHandoffForReceiver 输出）保护在 P9 fixture 跑
+   * （capability-registry.test.ts leak-detector 端到端），这里仅取 2 简化字段
+   * 喂 assembler — 跟 V16.5 §4 line 429-431 shape 一致。
+   */
+  private buildA2AHandoffContext(args: {
+    receiverAlias: string | null | undefined
+    taskSummary: string | null | undefined
+    isGuardianMode: boolean
+  }): { receiverAlias: string; taskSummary: string } | null {
+    if (args.isGuardianMode) return null
+    if (!args.receiverAlias || !args.taskSummary) return null
+    return {
+      receiverAlias: args.receiverAlias,
+      taskSummary: args.taskSummary,
+    }
   }
 
   /**
@@ -1504,6 +1555,9 @@ export class MessageService {
           roomId: directTurnRoomId,
           // F027 P4-A1 · capability_digest 注入（V16.5 §13）— receiver = thread.alias 自己
           capabilityDigest: this.getSelfCapabilityDigest(thread.alias),
+          // F027 P4-A2 · handbook agentActions 切片注入（V16.5 §27.4 + §4 line 365）
+          // direct turn 默认 scenario='wake_up'，assembler 内自判注入；A2A 路径不传。
+          handbookSlices: this.getHandbookSlices(),
         },
         this.memoryService,
       )
@@ -2666,6 +2720,13 @@ export class MessageService {
                   capabilityDigest: isGuardianMode
                     ? null
                     : this.getSelfCapabilityDigest(entry.to.agentId),
+                  // F027 P4-A3 · handoffContext 注入（V16.5 §4 line 422-431 + §13 中性改写）。
+                  // helper 内做 guardian / 空值兜底；assembler 内 sanitize + scenario 判断。
+                  handoffContext: this.buildA2AHandoffContext({
+                    receiverAlias: entry.to.agentId,
+                    taskSummary: entry.taskSnippet,
+                    isGuardianMode,
+                  }),
                 },
                 this.memoryService,
               )

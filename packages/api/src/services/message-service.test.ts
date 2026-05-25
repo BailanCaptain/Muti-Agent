@@ -1093,3 +1093,69 @@ test("F027 P4-A1: setCapabilityRegistry(null) → getSelfCapabilityDigest 立刻
   // biome-ignore lint/suspicious/noExplicitAny: private method test
   assert.equal((messageService as any).getSelfCapabilityDigest("黄仁勋"), null)
 })
+
+// ─── F027 P4-A2 · Handbook H2 切片 DI + getHandbookSlices ───────────────────
+// 真相源: V16.5-final.md §27.4 + §4 line 365 + handbook-slicer.ts
+// 集成: server.ts boot 调 loadHandbookSlices(wikiRoot) → setHandbookSlices；
+//       direct turn caller 透传给 assemblePrompt.handbookSlices；
+//       assembler 内 scenario==='wake_up' 且 agentActions 非空才注入
+test("F027 P4-A2: handbookSlices 未注入 → getHandbookSlices 返 null", () => {
+  const { messageService } = createMessageService()
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  assert.equal((messageService as any).getHandbookSlices(), null)
+})
+
+test("F027 P4-A2: setHandbookSlices 注入后 → getHandbookSlices 返同对象", () => {
+  const { messageService } = createMessageService()
+  const slices = { agentActions: "# Agent 动作手册\n- 看 SOP\n- 找证据\n" }
+  messageService.setHandbookSlices(slices)
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const got = (messageService as any).getHandbookSlices()
+  assert.equal(got, slices, "返回的应该是 setter 注入的同对象")
+  assert.equal(got.agentActions, "# Agent 动作手册\n- 看 SOP\n- 找证据\n")
+})
+
+test("F027 P4-A2: setHandbookSlices(null) → unregister（caller 不再传 handbook）", () => {
+  const { messageService } = createMessageService()
+  messageService.setHandbookSlices({ agentActions: "x" })
+  messageService.setHandbookSlices(null)
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  assert.equal((messageService as any).getHandbookSlices(), null)
+})
+
+// ─── F027 P4-A3 · buildA2AHandoffContext helper ─────────────────────────────
+// 真相源: V16.5-final.md §4 line 422-431 + §13 中性改写
+// 集成: A2A caller 用 helper 拼 handoffContext，guardian / 空值统一兜底；
+//       assembler 内 sanitize + scenario 判断后渲染
+//       [Collaboration Contract — Reference Only] 区段
+test("F027 P4-A3: buildA2AHandoffContext 正常路径 → 返 {receiverAlias, taskSummary}", () => {
+  const { messageService } = createMessageService()
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const ctx = (messageService as any).buildA2AHandoffContext({
+    receiverAlias: "桂芬",
+    taskSummary: "改 F018 schema",
+    isGuardianMode: false,
+  })
+  assert.deepEqual(ctx, { receiverAlias: "桂芬", taskSummary: "改 F018 schema" })
+})
+
+test("F027 P4-A3: guardian 模式 → 返 null（零上下文契约不许注 collaboration contract）", () => {
+  const { messageService } = createMessageService()
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const ctx = (messageService as any).buildA2AHandoffContext({
+    receiverAlias: "桂芬",
+    taskSummary: "改 F018 schema",
+    isGuardianMode: true,
+  })
+  assert.equal(ctx, null)
+})
+
+test("F027 P4-A3: receiverAlias 空 / taskSummary 空 → 返 null（caller 不传 handoffContext）", () => {
+  const { messageService } = createMessageService()
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const svc = messageService as any
+  assert.equal(svc.buildA2AHandoffContext({ receiverAlias: "", taskSummary: "x", isGuardianMode: false }), null)
+  assert.equal(svc.buildA2AHandoffContext({ receiverAlias: "桂芬", taskSummary: "", isGuardianMode: false }), null)
+  assert.equal(svc.buildA2AHandoffContext({ receiverAlias: null, taskSummary: "x", isGuardianMode: false }), null)
+  assert.equal(svc.buildA2AHandoffContext({ receiverAlias: "桂芬", taskSummary: undefined, isGuardianMode: false }), null)
+})
