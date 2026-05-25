@@ -9,7 +9,7 @@
 
 ## 0. 一句话
 
-Phase 4 把 F027 (统一记忆架构) 从 Phase 3 留下的 "approval 流闭环" 推到生产可用: PromoteModal/BatchPromoteModal 双 UI + V14 二次审计 + AdaptiveRecallCoordinator boot wire + Phase 1 表真数据 seed + Inspector Coverage 第 8 块 anti-drift. 留 10 项 F028 follow-up (见 evidence/phase4/F028-FOLLOWUP-BACKLOG.md).
+Phase 4 把 F027 (统一记忆架构) 从 Phase 3 留下的 "approval 流闭环" 推到生产可用: PromoteModal/BatchPromoteModal 双 UI + V14 二次审计 + AdaptiveRecallCoordinator boot wire + Phase 1 表真数据 seed + Inspector Coverage 第 8 块 anti-drift. Week 5 Day 25 P4-A1~A6 完成 reader 侧愿景闭环（capability/handbook/handoff/RoomCompiler 3 文件 audit/追溯按钮扩接），撤 F028 概念，残债重新三分类（见 `evidence/phase4/F027-RESIDUAL-DEBT.md`）.
 
 ---
 
@@ -106,19 +106,38 @@ b6ff088 fix(F027-P4): hotfix viewfinder=null + system prompt 空 — RoomCompile
 
 ---
 
-## 5. F028 follow-up (19 项, Week 5 Day 23 hotfix b6ff088 后加 9 项 scheduler/P7)
+## 5. 残债重新分类（撤 F028，三分类生效 2026-05-26）
 
-详见 `evidence/phase4/F028-FOLLOWUP-BACKLOG.md`. 概要:
+> Week 5 Day 25 小孙拍板撤 F028（未经合法立项）；原 19 项按真实归属重新分类。
+> **新真相源**: `evidence/phase4/F027-RESIDUAL-DEBT.md`（替代 `F028-FOLLOWUP-BACKLOG.md`）
+
+### 类别 A · 愿景未闭环 → P4 内修（5 项全做完，2026-05-26）
+
+| # | 项 | V16.5 § | commit |
+|---|------|---------|--------|
+| A1 | capability_digest YAML caller 集成 | §13 | `bbb378c` |
+| A2 | handbook H2 切片 caller 集成 | §27.4 + §4 | `bffa065` |
+| A3 | handoffContext F026 EnvelopeBuilder | §4 line 422-431 | `bffa065` |
+| A4 | RoomCompiler 3 文件全 audit | §5 + §8 | `736590c` |
+| A5 | 追溯按钮扩 capability/handbook | §18 line 2078 | `736590c` |
+
+### 类别 B · V16.5 划走（5 项，等新 feature 立项）
 
 ```
-P0: F028-1 supersede/reject UI, F028-2 写型 rollback, F028-19 IngestService LLM
-P1: F028-4 memory_preflight, F028-5 sessions ledger, F028-6 Level 6, F028-7 Inspector 升级
-    F028-11 DocsWatcher, F028-12 NightlyHealthCheck, F028-14 DriftDetector, F028-15 MonthlySnapshot
-P2: F028-3 slash menu 4 cmd, F028-8 warnings 解决按钮, F028-9 KB markdown parse, F028-10 多房间压测
-    F028-13 WeeklyDraftDigest, F028-16 ArchiveYearlySessions, F028-17 WikiCompilerDebounce, F028-18 ChainedAlertNotifier
+memory_preflight / sessions ledger / Adaptive Recall Level 6 / Prompt Inspector 升级 / 写型 rollback
 ```
 
-总 19 项 ~16-18 周. Week 5 hotfix b6ff088 修了 #1 (RoomCompiler) + #1.1 (P7 message_commit_seq), 剩 #11-#19 推 F028.
+### 类别 C · scheduler / UX 长尾（9 项，各自小孙拍单独立项）
+
+```
+scheduler noop 7 项（DocsWatcher / NightlyHealthCheck / WeeklyDraftDigest / DriftDetector /
+                  MonthlySnapshot / ArchiveYearlySessions / WikiCompilerDebounce）
+UX 4 项（slash menu 4 cmd / warnings 解决按钮 / KB markdown entity parse / EmbeddedWikiRecord 压测）
+supersede/reject 写型 UI / recall-pack 追溯 audit schema 扩 / IngestService 真 LLM compile /
+ChainedAlertNotifier broadcaster wire
+```
+
+详细每项 reference + 工作量 + commit 见 `F027-RESIDUAL-DEBT.md`.
 
 ---
 

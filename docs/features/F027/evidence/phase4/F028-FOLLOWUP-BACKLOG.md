@@ -1,7 +1,17 @@
-# F027 → F028 Follow-up Backlog
+# F027 → F028 Follow-up Backlog 【已弃用 · 2026-05-26】
 
-> **真相源**: F027 Phase 4 plan v5 §1.1 Out of Scope + §6 O8 + 各源码内 `推 F028` 注释 (10 处, 见末尾)
-> **目的**: Phase 4 严守 O8 不蔓延; 此 backlog 记录所有"明示推 F028"的项, 供 F028 立项时直接 picking
+> **DEPRECATED**: F028 概念未经合法立项 — 小孙 2026-05-26 拍板撤回；
+> 本文档保留作历史归档，**不再被引用**。
+>
+> **新真相源**: `F027-RESIDUAL-DEBT.md` — 19 项按三分类（A. 愿景未闭环 P4 内修 /
+> B. V16.5 划走等新 feature / C. scheduler/UX 长尾单独立项）重新分类。
+>
+> 类别 A 5 项已在 P4-A1~A5 commit chain `bbb378c` / `bffa065` / `736590c` 实施。
+
+---
+
+> **原真相源**: F027 Phase 4 plan v5 §1.1 Out of Scope + §6 O8 + 各源码内 `推 F028` 注释 (10 处, 见末尾)
+> **原目的**: Phase 4 严守 O8 不蔓延; 此 backlog 记录所有"明示推 F028"的项, 供 F028 立项时直接 picking
 > **建立时间**: Week 5 Day 22 (Phase 4 收稿阶段)
 
 ---

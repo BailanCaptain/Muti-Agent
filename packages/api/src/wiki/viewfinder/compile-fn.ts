@@ -316,7 +316,10 @@ function renderDecisionsAuditMd(roomId: string, decisions: ReadonlyArray<Decisio
 
 const FEATURE_ID_REGEX = /\b([FB]\d+)\b/g
 /** r2 范-r1 P2-1 修：单 featureId 回溯 N commits 找首个可 parse 的 */
-const PHASE_QUERY_COMMITS = 10
+// P4-A6 (2026-05-26)：从 10 提到 30。10 个 commits 在密集 commit 期间（如 Phase 4
+// 收稿 + hotfix 链）可能全是 "P4-A1" / "hotfix" 这种非 "Phase X / Day X" subject，
+// 回溯失败 → viewfinder phase 字段为空。扩到 30 让密集 commit 期也能命中历史 Phase 锚。
+const PHASE_QUERY_COMMITS = 30
 
 export function defaultPhaseInfoQuerier(
   deps: CompileViewfinderDeps,

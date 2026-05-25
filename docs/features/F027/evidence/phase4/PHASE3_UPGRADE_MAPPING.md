@@ -52,7 +52,7 @@
 ### AC-P3-8 b
 - [ ] Coverage section unresolved 列表非空截图
 - [ ] click [Confirm] → window.alert 截图 (Day 13 占位)
-- [ ] F028 follow-up note 引用 `docs/features/F027/evidence/phase4/F028-FOLLOWUP-BACKLOG.md` 中真 supersede/reject UI 项
+- [ ] supersede/reject 真 UI follow-up note 引用 `docs/features/F027/evidence/phase4/F027-RESIDUAL-DEBT.md` 类别 C C3.1 项（原 F028-1，2026-05-26 撤 F028 后重分类）
 - [ ] 修改 `evidence/phase3/AC-P3-8/result.json` 同上
 
 ### AC-P3-9
