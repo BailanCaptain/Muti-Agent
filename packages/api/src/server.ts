@@ -348,6 +348,11 @@ export async function createApiServer(options: {
       return r?.viewfinder ? { body: r.viewfinder } : null
     })
   }
+    // F027 P4-A1 + fallback j2 P2 修 · CapabilityRegistry boot wiring (V16.5 §13 + §4 fail-closed)。
+    // V16.5 §4 强契约: "wiki 缺失行为: fail-closed 拒启 agent"。
+    // 默认 fail-closed (boot 抛错让 process 退出)；ENV `MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1`
+    // 显式 opt-in degraded mode（worktree-preview / 单测 fixture 不全 wiki 时用）。
+    const wikiLoaderFailSoft = process.env.MULTI_AGENT_WIKI_LOADER_FAIL_SOFT === "1"
     try {
       const { loadCapabilityRegistryFromRoot } = await import(
         "./wiki/capability-registry/loader"
@@ -360,10 +365,16 @@ export async function createApiServer(options: {
         `[F027-P4-A1] CapabilityRegistry loaded: ${registry.agents.size} agents (sourcePath=${registry.sourcePath})`,
       )
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[F027-P4-A1] CapabilityRegistry load failed (non-blocking): ${(err as Error).message}`,
-      )
+      const msg = `[F027-P4-A1] CapabilityRegistry load failed: ${(err as Error).message}`
+      if (wikiLoaderFailSoft) {
+        // eslint-disable-next-line no-console
+        console.warn(`${msg} — degraded mode (MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1)`)
+      } else {
+        // V16.5 §4 fail-closed: 拒启 agent，避免 silent capability_digest 缺失污染 prompt
+        throw new Error(
+          `${msg}\n  → V16.5 §4 fail-closed: process abort. Set MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1 to opt-in degraded mode (dev only).`,
+        )
+      }
     }
     try {
       const { loadHandbookSlices } = await import("./wiki/handbook-slicer")
@@ -375,10 +386,16 @@ export async function createApiServer(options: {
         `[F027-P4-A2] Handbook agentActions slice loaded: ${slices.agentActions.length} chars (handbookRoot=${handbookRoot})`,
       )
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[F027-P4-A2] Handbook slice load failed (non-blocking): ${(err as Error).message}`,
-      )
+      const msg = `[F027-P4-A2] Handbook slice load failed: ${(err as Error).message}`
+      if (wikiLoaderFailSoft) {
+        // eslint-disable-next-line no-console
+        console.warn(`${msg} — degraded mode (MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1)`)
+      } else {
+        // V16.5 §4 fail-closed (同上)
+        throw new Error(
+          `${msg}\n  → V16.5 §4 fail-closed: process abort. Set MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1 to opt-in degraded mode (dev only).`,
+        )
+      }
     }
 
   // F002: Decision Board + settle → flush → single dispatch pipeline.

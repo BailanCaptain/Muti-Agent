@@ -1123,6 +1123,44 @@ test("F027 P4-A2: setHandbookSlices(null) → unregister（caller 不再传 hand
   assert.equal((messageService as any).getHandbookSlices(), null)
 })
 
+// ─── F027 P4-A2 fallback j2 P1 修：仅 first wake-up 注入 handbook ──────────
+// V16.5 §4 line 364-365 严契约：handbook 仅 first wake-up 注入
+// 判定 (零新状态)：thread.nativeSessionId === null = first wake-up
+test("F027 P4-A2 fallback j2 P1: thread.nativeSessionId === null (first wake-up) → 返 handbook slices", () => {
+  const { messageService } = createMessageService()
+  messageService.setHandbookSlices({ agentActions: "# Agent 动作\n- 看 SOP" })
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const result = (messageService as any).maybeGetHandbookSlicesForFirstWakeUp({
+    nativeSessionId: null,
+  })
+  assert.ok(result, "first wake-up 应返非空 handbook slices")
+  assert.equal(result.agentActions, "# Agent 动作\n- 看 SOP")
+})
+
+test("F027 P4-A2 fallback j2 P1: thread.nativeSessionId !== null (后续 turn) → 返 null（V16.5 §4 line 364）", () => {
+  const { messageService } = createMessageService()
+  messageService.setHandbookSlices({ agentActions: "# Agent 动作\n- 看 SOP" })
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const result = (messageService as any).maybeGetHandbookSlicesForFirstWakeUp({
+    nativeSessionId: "sess-abc123",
+  })
+  assert.equal(
+    result,
+    null,
+    "non-first wake-up 必返 null — 防 token regression + reference-only 区段污染",
+  )
+})
+
+test("F027 P4-A2 fallback j2 P1: handbook 未 setHandbookSlices 注入 + nativeSessionId=null → 返 null（无可注的 slices）", () => {
+  const { messageService } = createMessageService()
+  // 不调 setHandbookSlices
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const result = (messageService as any).maybeGetHandbookSlicesForFirstWakeUp({
+    nativeSessionId: null,
+  })
+  assert.equal(result, null, "first wake-up 但 cache 空 → 仍返 null（getHandbookSlices() 返 null）")
+})
+
 // ─── F027 P4-A3 · buildA2AHandoffContext helper ─────────────────────────────
 // 真相源: V16.5-final.md §4 line 422-431 + §13 中性改写
 // 集成: A2A caller 用 helper 拼 handoffContext，guardian / 空值统一兜底；

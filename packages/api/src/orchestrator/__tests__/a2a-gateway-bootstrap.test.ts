@@ -385,6 +385,72 @@ test("R-204 follow-up · 多跳 call tree 护栏：链式 user→A→B→C 全 r
   }
 })
 
+// ─── F027 P4-A3 fallback j2 P1 修：handoffContext F026 envelope 集成（V16.5 §M1） ──
+
+test("F027 P4-A3 fallback j2: gateway 路径 entry.handoffContext 由 envelope derive（非空且符合 V16.5 §M1）", () => {
+  const { store, cleanup } = mkStore()
+  try {
+    const dispatch = new DispatchOrchestrator(createSessionsStub() as never, aliases)
+    installA2AGateway(dispatch, { db: store.db, aliases })
+    dispatch.registerUserRoot("root-HC", "group-1")
+
+    withFlag(true, () => {
+      const result = dispatch.enqueuePublicMentions({
+        messageId: "msg-HC",
+        sessionGroupId: "group-1",
+        sourceProvider: "codex",
+        sourceAlias: "范德彪",
+        rootMessageId: "root-HC",
+        content: "[Call: @黄仁勋 review PR full source message here]",
+      })
+      assert.equal(result.queued.length, 1, "one entry queued")
+      const entry = result.queued[0]!
+      assert.ok(entry.handoffContext, "QueueEntry must carry handoffContext from gateway hook (V16.5 §M1)")
+      // β path source_message = full input.content (agent 原文整段)，不是 50 字 taskSnippet
+      assert.equal(
+        entry.handoffContext!.taskSummary,
+        "[Call: @黄仁勋 review PR full source message here]",
+        "β path taskSummary 应来自 envelope.task.input.source_message 全文",
+      )
+      // 无 on_behalf_of 时 receiverAlias = convener_id（issuer = 范德彪自己）
+      assert.equal(
+        entry.handoffContext!.receiverAlias,
+        "范德彪",
+        "无 on-behalf 时 receiverAlias = envelope.protocol.convener_id (= 范德彪 self-issuer)",
+      )
+    })
+  } finally {
+    cleanup()
+  }
+})
+
+test("F027 P4-A3 fallback j2: 无 gateway hook fallback 时 entry.handoffContext = undefined（让 caller 退到 simplified）", () => {
+  const { store, cleanup } = mkStore()
+  try {
+    const dispatch = new DispatchOrchestrator(createSessionsStub() as never, aliases)
+    // 故意不 installA2AGateway
+    dispatch.registerUserRoot("root-NG", "group-1")
+
+    const result = dispatch.enqueuePublicMentions({
+      messageId: "msg-NG",
+      sessionGroupId: "group-1",
+      sourceProvider: "codex",
+      sourceAlias: "user",
+      rootMessageId: "root-NG",
+      content: "@黄仁勋 帮看下",
+    })
+    if (result.queued.length > 0) {
+      assert.equal(
+        result.queued[0]!.handoffContext,
+        undefined,
+        "no gateway hook → entry.handoffContext undefined; caller buildA2AHandoffContext fallback 接管",
+      )
+    }
+  } finally {
+    cleanup()
+  }
+})
+
 test("P1-1 gateway gray-zone surfaces as blockedByGateway (fail-closed preserved)", () => {
   const { store, cleanup } = mkStore()
   try {

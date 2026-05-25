@@ -564,6 +564,25 @@ export class MessageService {
   }
 
   /**
+   * F027 P4-A2 + fallback j2 P1 修 · "仅 first wake-up" 判定 (V16.5 §4 line 364-365 + §27.4 + line 3166)。
+   *
+   * V16.5 line 364-365 严契约：「`[Handbook — Agent Actions]` — 仅 first wake-up，
+   * capability_digest 已覆盖最小动作集时 skip」。
+   *
+   * 判定规则（零新状态）：`thread.nativeSessionId === null` = 此 thread 还没起过 CLI session，
+   * 跟 F018 SessionBootstrap 的 first-wake-up 判定保持一致 — 一旦 CLI 起过（onSession callback
+   * 写 nativeSessionId 非 null），后续 turn 都不再算 first wake-up。
+   *
+   * 修前：每个 direct turn 都注 handbook ~2-3KB → 长 session 反复污染 reference-only 区段 + token regression。
+   */
+  private maybeGetHandbookSlicesForFirstWakeUp(thread: {
+    nativeSessionId: string | null
+  }): { agentActions: string } | null {
+    if (thread.nativeSessionId !== null) return null
+    return this.getHandbookSlices()
+  }
+
+  /**
    * F027 P4-A3 · A2A handoffContext 构造 helper（V16.5 §4 line 422-431）。
    *
    * Assembler 拿到后渲染 [Collaboration Contract — Reference Only] 区段
@@ -1555,9 +1574,9 @@ export class MessageService {
           roomId: directTurnRoomId,
           // F027 P4-A1 · capability_digest 注入（V16.5 §13）— receiver = thread.alias 自己
           capabilityDigest: this.getSelfCapabilityDigest(thread.alias),
-          // F027 P4-A2 · handbook agentActions 切片注入（V16.5 §27.4 + §4 line 365）
-          // direct turn 默认 scenario='wake_up'，assembler 内自判注入；A2A 路径不传。
-          handbookSlices: this.getHandbookSlices(),
+          // F027 P4-A2 + fallback j2 P1 修 · handbook agentActions 仅 first wake-up 注入。
+          // 详见 maybeGetHandbookSlicesForFirstWakeUp helper jsdoc（V16.5 §4 line 364-365）。
+          handbookSlices: this.maybeGetHandbookSlicesForFirstWakeUp(thread),
         },
         this.memoryService,
       )
@@ -2720,13 +2739,21 @@ export class MessageService {
                   capabilityDigest: isGuardianMode
                     ? null
                     : this.getSelfCapabilityDigest(entry.to.agentId),
-                  // F027 P4-A3 · handoffContext 注入（V16.5 §4 line 422-431 + §13 中性改写）。
-                  // helper 内做 guardian / 空值兜底；assembler 内 sanitize + scenario 判断。
-                  handoffContext: this.buildA2AHandoffContext({
-                    receiverAlias: entry.to.agentId,
-                    taskSummary: entry.taskSnippet,
-                    isGuardianMode,
-                  }),
+                  // F027 P4-A3 + fallback j2 P1 修 · handoffContext 注入（V16.5 §M1 line 422-431）。
+                  // 实施位置矫正：gateway 路径下 entry.handoffContext 由 dispatch.ts 派发时 derive
+                  // （a2a-gateway-bootstrap.deriveHandoffContext 走 envelope.protocol.on_behalf_of
+                  // ?? convener_id + envelope.task.input.source_message / envelope.task.task）。
+                  // 这一支符合 V16.5 §M1 "实施位置 dispatch.ts，调用方不手填"。
+                  // gateway 关 / legacy fallback 时 entry.handoffContext=undefined → 退到 caller-side
+                  // helper 走 entry.to.agentId + entry.taskSnippet 简化形态（行为同 P4-A3 修前）。
+                  handoffContext: isGuardianMode
+                    ? null
+                    : (entry.handoffContext ??
+                      this.buildA2AHandoffContext({
+                        receiverAlias: entry.to.agentId,
+                        taskSummary: entry.taskSnippet,
+                        isGuardianMode,
+                      })),
                 },
                 this.memoryService,
               )
