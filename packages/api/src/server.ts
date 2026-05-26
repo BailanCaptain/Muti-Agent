@@ -756,10 +756,29 @@ export async function createApiServer(options: {
   //   - POST /api/wiki/ingest/preview (Week 1 Day 5)
   //   - POST /api/rooms/:id/decisions + GET /api/rooms/:id/decisions/coverage (Week 2 Day 6 AC-P3-8)
   //   - POST /api/wiki/ingest/commit (Week 2 Day 9-10 AC-P3-10) — 需 wikiServices 注入
+  // F027 final-vision P1-2 · 共享 ingest services（routes 和 docs-watcher 同一 PreviewStore）
+  const { PreviewStore: PreviewStoreCls, IngestPreviewService: IngestPreviewServiceCls, IngestCommitService: IngestCommitServiceCls } =
+    await import("./routes/phase3")
+  const sharedPreviewStore = new PreviewStoreCls()
+  const sharedIngestPreview = new IngestPreviewServiceCls({ store: sharedPreviewStore })
+  const sharedIngestCommit = wikiServices
+    ? new IngestCommitServiceCls({
+        store: sharedPreviewStore,
+        updateWiki: wikiServices.updateWiki,
+        leases: wikiServices.leases,
+        leaderTerm: () => wikiServices.leader.getCurrent()?.currentTerm ?? "0",
+      })
+    : undefined
+
   registerPhase3Routes(app, {
     db: drizzleDb,
     wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
     wikiServices,
+    sharedIngestServices: {
+      previewStore: sharedPreviewStore,
+      ingestPreview: sharedIngestPreview,
+      ingestCommit: sharedIngestCommit,
+    },
   })
 
   // F027 Phase 4 P4 Day 7 · AC-P4-1 PromoteModal endpoints
@@ -849,6 +868,19 @@ export async function createApiServer(options: {
     registerWikiEventsRoute(app, drizzleDb)
   }
 
+  // F027 final-vision P1-2 · DocsIngestRunner (docs/* 增量变化 → preview→commit → wiki/_auto/)
+  // commit 服务要求 wikiServices 注入；缺时跳过 runner，docs-watcher 仍 noop fallback。
+  const { DocsIngestRunner: DocsIngestRunnerCls } = await import(
+    "./services/scheduler/docs-ingest-runner"
+  )
+  const docsIngestRunner = sharedIngestCommit
+    ? new DocsIngestRunnerCls({
+        preview: sharedIngestPreview,
+        commit: sharedIngestCommit,
+        logger: app.log,
+      })
+    : undefined
+
   const schedulerRuntime = await bootSchedulerRuntime({
     db: drizzleDb,
     log: app.log,
@@ -861,6 +893,7 @@ export async function createApiServer(options: {
     rootDir: process.cwd(),
     skipBoot: process.env.MULTI_AGENT_SKIP_SCHEDULER === "1",
     roomCompileExecutor,
+    docsIngestRunner,
   })
   app.addHook("onClose", async () => {
     if (schedulerRuntime) {

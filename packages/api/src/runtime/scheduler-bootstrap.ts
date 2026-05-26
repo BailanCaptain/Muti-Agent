@@ -44,6 +44,7 @@ import {
   type ChainedAlert,
   ChainedAlertNotifier,
 } from "../services/scheduler/chained-alert-notifier"
+import type { DocsIngestRunner } from "../services/scheduler/docs-ingest-runner"
 import { DocsWatcher } from "../services/scheduler/docs-watcher"
 import { DriftDetector } from "../services/scheduler/drift-detector"
 import type { JobTrace } from "../services/scheduler/job-trace"
@@ -92,6 +93,17 @@ export interface SchedulerBootOptions {
    * 缺 → fallback noop (跟 Phase 3 行为一致).
    */
   roomCompileExecutor?: () => Promise<{ roomsProcessed: number }>
+  /**
+   * F027 final-vision P1-2 · DocsWatcher.onEvent 真业务接入 (替换 noop onEvent).
+   * 见 packages/api/src/services/scheduler/docs-ingest-runner.ts.
+   *
+   * 缺 → fallback noop (跟 Phase 3 Day 1 行为一致 — boot 不强依赖)。
+   * 传入 → docs/features|bugReport|lessons 增量变化 → 真走 preview → commit → 落 wiki/concepts/draft/_auto/
+   *
+   * docsWatcherEnabled 仍由 MULTI_AGENT_DOCS_WATCHER env 控制（final-vision P1-2 默认改 "1"，
+   * 测试/CI/preview 用 "0" 关）。
+   */
+  docsIngestRunner?: DocsIngestRunner
 }
 
 /**
@@ -146,7 +158,11 @@ export async function bootSchedulerRuntime(
     logger: opts.log,
   })
 
-  const docsWatcherEnabled = (process.env.MULTI_AGENT_DOCS_WATCHER ?? "0") === "1"
+  // F027 final-vision P1-2 修：默认 enable docs-watcher (env 默认 "1")，接 DocsIngestRunner 真业务。
+  // - opts.docsIngestRunner 缺时 onEvent fallback noop (保 Phase 3 Day 1 行为 — boot 不强依赖)
+  // - MULTI_AGENT_DOCS_WATCHER=0 显式关 (CI / 单测 / 不需要 ingest 的 preview server)
+  const docsWatcherEnabled = (process.env.MULTI_AGENT_DOCS_WATCHER ?? "1") === "1"
+  const docsIngestRunner = opts.docsIngestRunner
   const watcher = docsWatcherEnabled
     ? new DocsWatcher({
         watchPaths: [
@@ -154,7 +170,11 @@ export async function bootSchedulerRuntime(
           path.join(rootDir, "docs", "bugReport"),
           path.join(rootDir, "docs", "lessons"),
         ],
-        onEvent: async () => {},
+        onEvent: docsIngestRunner
+          ? async (event) => {
+              await docsIngestRunner.runIngest(event)
+            }
+          : async () => {},
         logger: opts.log,
       })
     : null
