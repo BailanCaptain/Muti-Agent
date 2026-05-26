@@ -13,6 +13,30 @@ Phase 4 把 F027 (统一记忆架构) 从 Phase 3 留下的 "approval 流闭环"
 
 ---
 
+## 0.5. final vision verdict 修正（2026-05-27 真 codex hetero review）
+
+> **真相源**: `.runtime/reviews/F027-codex-final-verdict-summary.md` + 三块 codex verdict log
+> **reviewer**: 范德彪 (codex CLI gpt-5.5)
+> **背景**: Day 24-26 的 Claude general-purpose subagent fallback "8.5/10 DONE" 已被推翻 — 真 codex hetero review 抓出 spec drift。
+
+**真 codex final vision verdict: NOT_DONE**
+
+corrigendum (commit `f14651f` message 「整体 F027 verdict: DONE 8.5/10，0 P1」over-claim)：
+- commit message 写的 8.5/10 / DONE 是基于 Claude fallback ensemble，不算真 hetero check
+- 真 codex 抓出 3 个 P1 升级小孙拍：
+  - **P1-1** Inspector Coverage click → `prompt-inspector-tab.tsx:641-647` 真 `window.alert` 占位，plan `F027-phase4-implementation-plan.md:63 :255 :410-411 :427` 要求真接 PromoteModal + supersede/reject ledger
+  - **P1-2** docs-watcher 自动 ingest `scheduler-bootstrap.ts:20 :157` 真 noop `onEvent: async () => {}`，V16.5 `:154-155 :1807 :2656-2661` + Phase 4 walkthrough 都要求自动 ingest（C1.1 把它说成"不影响 F027" 不成立，直接阻断 AC-P4-6 场景 2）
+  - **P1-3** evidence gate 未完成：AC-P4-6 INCONCLUSIVE + 6 项 AC CONDITIONAL_PASS + screenshots/logs 多空
+
+**当前实际 verdict**: 代码大部完成、验收未完成、且有两处 plan AC 漏实现 → **CONDITIONAL_NOT_DONE**。
+
+**升级小孙拍**:
+1. P1-1 / P1-2 各自选一：(a) 修代码真接 (b) plan 明示 amend 划走 RESIDUAL-DEBT
+2. P1-3 walkthrough 三场景小孙手动跑 + Phase 3 6 项升 PASS
+3. 跑完才能合 dev push（Iron Law 边界）
+
+---
+
 ## 1. 8 AC 完成状态 (post-codex j2 重评 + Red→Green)
 
 | AC | 标题 | 代码 | 单测 | walkthrough | judge1 | judge2 | 当前 verdict |
@@ -188,15 +212,17 @@ per plan line 188:
 
 ## 8. 已知遗留
 
-代码层 placeholder (设计内, 推 F028):
+代码层 placeholder（撤 F028 后，归 RESIDUAL-DEBT 类别 label，真相源 `evidence/phase4/F027-RESIDUAL-DEBT.md`）:
 
-- Inspector Coverage UnresolvedRow click → window.alert (Day 13 占位, 真 supersede/reject UI 推 F028-1)
-- RollbackPreviewModal **未实施** (写型 rollback 推 F028-2; codex j2 r1 提到, 我承认按 plan §1.1 line 80 允许推 F028)
-- composer slash menu 4 写命令 disabled (推 F028-3 evaluate)
-- WarningsTab 无"解决"按钮 (推 F028-8)
-- KB tab markdown entity parse 未做 (multi-select 已做 满足 plan §AC-P4-9 b; entity parse 推 F028-9)
-- **8 个 scheduler 业务回调 noop** (Week 5 Day 23 实测发现): DocsWatcher/NightlyHealthCheck/WeeklyDraftDigest/DriftDetector/MonthlySnapshot/ArchiveYearlySessions/WikiCompilerDebounce/ChainedAlertNotifier — 推 F028-11~18 (RoomCompiler 已修, 其他 8 项 cron job 不阻塞 walkthrough)
-- **IngestService 用 stub LLM** (`ingest-preview.ts:192`) — 推 F028-19, 影响 walkthrough 场景 1 step 1.3 preview 是 minimal markdown 不是真 LLM 编译
+- Inspector Coverage UnresolvedRow click → window.alert (Day 13 占位, 真 supersede/reject UI 归 **B8**)
+- RollbackPreviewModal **未实施** (写型 rollback 归 **B5**; codex j2 r1 提到, 按 plan §1.1 line 80 允许)
+- composer slash menu 4 写命令 disabled (归 **B6** evaluate)
+- WarningsTab 无"解决"按钮 (归 **C2.2**)
+- KB tab markdown entity parse 未做 (multi-select 已做 满足 plan §AC-P4-9 b; entity parse 归 **C2.3**)
+- **scheduler 业务回调 noop** (Week 5 Day 23 实测发现): DocsWatcher/NightlyHealthCheck/WeeklyDraftDigest/DriftDetector/MonthlySnapshot/ArchiveYearlySessions/WikiCompilerDebounce 归 **C1.1~C1.7**, ChainedAlertNotifier 归 **C6.1** (RoomCompiler 已修)
+- **IngestService 用 sanitized markdown 不接真 LLM compile** (`ingest-preview.ts:192`) — 归 **C5.1** by-design (Phase 3 user-driven simplification, preview 实时性 + commit 时小孙 review)，影响 walkthrough 场景 1 step 1.3 preview 不是真 LLM 编译
+- **`message-service.ts:990` end_session 事件空实现 TODO** — 归 **C7.1** (final vision codex review Day 26 新增)
+- **`prompt-inspector-tab.tsx:461 :470-471` agent-sessions ledger UI 写「Phase 4 接」文案 stale** — 实际归 **B2** (sessions ledger 划走未来 feature)
 
 测试层全绿, 无 skip/xfail. 无技术债.
 

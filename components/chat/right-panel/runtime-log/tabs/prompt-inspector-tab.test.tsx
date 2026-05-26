@@ -527,7 +527,7 @@ describe("PromptInspectorTab AC-P4-9 c Coverage section (Day 13)", () => {
     expect(screen.getByText(/RAG 召回 budget 上限/)).toBeTruthy()
   })
 
-  it("(P4-D13-3) click [Confirm] → window.alert 弹出 (Day 13 占位 / F028 接真 supersede UI)", async () => {
+  it("(P4-D13-3) click [Confirm] → DecisionSupersedeRejectModal 弹出 (final-vision P1-1)", async () => {
     mockFetchResponse(
       makeResponse(),
       makeCoverageResponse({
@@ -556,16 +556,23 @@ describe("PromptInspectorTab AC-P4-9 c Coverage section (Day 13)", () => {
         status: "warn",
       }),
     )
-    // jsdom 默认无 window.alert — 用 stub assign 替代 vi.spyOn
-    const alertStub = vi.fn()
-    window.alert = alertStub
     render(<PromptInspectorTab />)
     await waitFor(() => expect(screen.queryByTestId("coverage-confirm-button-u1")).toBeTruthy())
+    // modal 默认 closed (window.alert 占位已撤; final-vision P1-1)
+    expect(screen.queryByTestId("decision-supersede-reject-modal")).toBeNull()
     fireEvent.click(screen.getByTestId("coverage-confirm-button-u1"))
-    expect(alertStub).toHaveBeenCalledTimes(1)
-    const msg = String(alertStub.mock.calls[0]?.[0] ?? "")
-    expect(msg).toMatch(/decision=u1/)
-    expect(msg).toMatch(/F028/)
+    // click → modal 弹出，target id/type 显示
+    await waitFor(() =>
+      expect(screen.queryByTestId("decision-supersede-reject-modal")).toBeTruthy(),
+    )
+    const modal = screen.getByTestId("decision-supersede-reject-modal")
+    expect(modal.textContent).toContain("u1")
+    expect(modal.textContent).toContain("spec")
+    // 取消 → modal 关闭
+    fireEvent.click(screen.getByTestId("decision-supersede-reject-cancel"))
+    await waitFor(() =>
+      expect(screen.queryByTestId("decision-supersede-reject-modal")).toBeNull(),
+    )
   })
 
   it("(P4-D13-4) coverage fetch 失败 → coverage-error 显示", async () => {

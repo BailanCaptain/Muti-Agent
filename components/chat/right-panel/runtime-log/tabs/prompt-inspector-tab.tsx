@@ -5,6 +5,7 @@ import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { useWakeTriggerStore } from "@/components/stores/wake-trigger-store"
 import { useEffect, useState } from "react"
+import { DecisionSupersedeRejectModal } from "../decision-supersede-reject-modal/decision-supersede-reject-modal"
 import {
   type DecisionRef,
   type GetCoverageResponse,
@@ -42,10 +43,22 @@ import {
  * Day 13 Coverage section 范围:
  *   - 读 GET /api/rooms/:id/decisions/coverage (Phase 3 Day 6 done)
  *   - 显示 coverage 标量 + pass/warn/fail badge + unresolved 列表
- *   - 每个 unresolved item 加 click 按钮 → 触发 onUnresolvedClick callback (plan v5 AC-P4-9 c)
- *   - 真 supersede/reject UI 推 F028 (DecisionRef 无 srcDraftPath，无法直接复用 PromoteModal)
- *   - Day 13 占位：click 触发 alert (Week 5 / F028 完善真 confirm UI)
+ *   - 每个 unresolved item 加 click 按钮 → 弹 DecisionSupersedeRejectModal
+ *
+ * final-vision P1-1 (2026-05-27): UnresolvedRow click 从 window.alert 占位 → 接真
+ *   DecisionSupersedeRejectModal (POST /api/rooms/:id/decisions w/ supersedesDecisionId,
+ *   后端 P3 Day 6 已实施)。原 F028 推后顾虑 (DecisionRef 无 srcDraftPath) 解除 — 此处
+ *   是 decision ledger 状态机覆盖, 跟 PromoteModal (draft→wiki 升级 + V14 二次审计) 不同
+ *   工作流, 新独立 modal.
  */
+/**
+ * final-vision P1-1: callerAlias 来源
+ * （同 knowledge-base-tab.tsx / draft-approval-tab.tsx pattern — Phase 4 未拍 user session）
+ */
+function getCurrentUserAlias(): string {
+  return process.env.NEXT_PUBLIC_USER_ALIAS ?? "小孙"
+}
+
 export function PromptInspectorTab() {
   const activeGroup = useThreadStore((state) => state.activeGroup)
   const roomId = activeGroup?.roomId ?? null
@@ -56,6 +69,9 @@ export function PromptInspectorTab() {
   const { data, isLoading, error } = usePromptInspectorData(roomId, { enabled })
   const coverage = useDecisionsCoverageData(roomId, { enabled })
 
+  // final-vision P1-1: unresolved decision click → DecisionSupersedeRejectModal
+  const [supersedeTarget, setSupersedeTarget] = useState<DecisionRef | null>(null)
+
   return (
     <div className="flex flex-col gap-3 p-3 text-xs" data-testid="prompt-inspector-tab">
       <HeaderRow roomId={roomId} isLoading={isLoading} error={error} data={data} />
@@ -65,12 +81,29 @@ export function PromptInspectorTab() {
       <AdaptiveRecallPolicy state={data.recallState} />
       <AgentSessionSection roomId={roomId} />
       <WakeTriggerSection roomId={roomId} apiTrigger={data.wakeUpTrigger} />
-      <CoverageSection data={coverage.data} isLoading={coverage.isLoading} error={coverage.error} />
+      <CoverageSection
+        data={coverage.data}
+        isLoading={coverage.isLoading}
+        error={coverage.error}
+        onUnresolvedClick={(decision) => setSupersedeTarget(decision)}
+      />
       <BottomButtonsBar
         rawText={data.rawText}
         ironLawsCount={data.ironLawsCount}
         currentParts={data.injectedParts}
         previousAudits={data.previousAudits}
+      />
+      <DecisionSupersedeRejectModal
+        open={supersedeTarget !== null}
+        roomId={roomId}
+        target={supersedeTarget}
+        callerAlias={getCurrentUserAlias()}
+        onClose={() => setSupersedeTarget(null)}
+        onSubmitSuccess={() => {
+          // success → close modal + refetch coverage (data 已 stale)
+          setSupersedeTarget(null)
+          coverage.refetch()
+        }}
       />
     </div>
   )
@@ -458,7 +491,7 @@ function AdaptiveRecallPolicy({ state }: { state: GetPromptInspectorResponse["re
   )
 }
 
-// ─── 6. 🤝 当前 agent session (Day 14-15 占位 · Phase 4 接 agent-sessions ledger) ─
+// ─── 6. 🤝 当前 agent session (Day 14-15 占位 · sessions ledger 归 RESIDUAL-DEBT B2 未来 feature) ─
 
 function AgentSessionSection({ roomId }: { roomId: string | null }) {
   return (
@@ -467,8 +500,8 @@ function AgentSessionSection({ roomId }: { roomId: string | null }) {
         🤝 当前 agent session
       </div>
       <div className="rounded border border-dashed border-slate-300 p-2 text-[10px] text-slate-400">
-        ⏳ Phase 4 接：room={roomId ?? "—"} · Session #N · open_threads 列表 （从
-        agent-sessions/&lt;alias&gt;/current.md 读）
+        ⏳ sessions ledger 未来 feature：room={roomId ?? "—"} · Session #N · open_threads 列表
+        （从 agent-sessions/&lt;alias&gt;/current.md 读，归 RESIDUAL-DEBT B2）
       </div>
     </section>
   )
@@ -567,10 +600,12 @@ function CoverageSection({
   data,
   isLoading,
   error,
+  onUnresolvedClick,
 }: {
   data: GetCoverageResponse
   isLoading: boolean
   error: string | null
+  onUnresolvedClick: (decision: DecisionRef) => void
 }) {
   // Defensive fallbacks (防 server response shape 异常或空字段)
   const status = data.status ?? "fail"
@@ -626,7 +661,7 @@ function CoverageSection({
           ) : (
             <ul className="space-y-1" data-testid="coverage-unresolved-list">
               {unresolved.map((d) => (
-                <UnresolvedRow key={d.decisionId} decision={d} />
+                <UnresolvedRow key={d.decisionId} decision={d} onClick={onUnresolvedClick} />
               ))}
             </ul>
           )}
@@ -636,18 +671,14 @@ function CoverageSection({
   )
 }
 
-function UnresolvedRow({ decision }: { decision: DecisionRef }) {
-  // Day 13 范围: click 触发占位提示
-  // 真 supersede/reject UI 推 F028 (DecisionRef 无 srcDraftPath 不能直接接 PromoteModal)
-  const handleClick = () => {
-    if (typeof window !== "undefined") {
-      window.alert(
-        `Coverage Unresolved · decision=${decision.decisionId} (${decision.decisionType})\n\n` +
-          "Day 13 范围占位：真 supersede / reject UI 推 F028\n" +
-          "(DecisionRef 不含 srcDraftPath，无法直接接 PromoteModal)",
-      )
-    }
-  }
+function UnresolvedRow({
+  decision,
+  onClick,
+}: {
+  decision: DecisionRef
+  onClick: (decision: DecisionRef) => void
+}) {
+  // final-vision P1-1 (2026-05-27): click → DecisionSupersedeRejectModal (替换原 window.alert)
   return (
     <li
       className="rounded border border-amber-200 bg-amber-50 p-1.5 text-[10px]"
@@ -666,10 +697,10 @@ function UnresolvedRow({ decision }: { decision: DecisionRef }) {
         </span>
         <button
           type="button"
-          onClick={handleClick}
+          onClick={() => onClick(decision)}
           className="shrink-0 rounded bg-blue-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-blue-700"
           data-testid={`coverage-confirm-button-${decision.decisionId}`}
-          title="manual confirm (Day 13 占位 / F028 接真 supersede/reject)"
+          title="manual confirm (open supersede/reject modal)"
         >
           Confirm
         </button>

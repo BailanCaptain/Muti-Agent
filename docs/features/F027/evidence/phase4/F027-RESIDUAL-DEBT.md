@@ -120,6 +120,12 @@ C. Scheduler/UX 长尾 - 单独立 feature 做（不归 F027）
 |---|------|------|------|
 | C6.1 | `pushChainedAlert` broadcaster wire（chained_suspect 推真 room R-201） | 已实例化 ChainedAlertNotifier 但 `pushChainedAlert` 默认 undefined | 0.5 周 |
 
+### C7 · 生产路径 TODO（2026-05-27 final vision codex review 新增）
+
+| # | 项 | 现状 | 预算 |
+|---|------|------|------|
+| C7.1 | `packages/api/src/services/message-service.ts:990` `end_session` 事件空实现 TODO | live client event 分支，长期以 TODO 留生产路径 | 0.5 周 |
+
 ---
 
 ## 类别 D · 设计决策推后（不在 ABC 三分类内 — final vision r2 round 2 新增）
