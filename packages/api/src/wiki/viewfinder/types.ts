@@ -60,6 +60,35 @@ export interface RevokeDecisionInput {
   reason: string
   decidedBy: string
   fencingToken: string
+  /**
+   * F027 final-vision P1-1 P2 修：额外的 source message refs（人工 reject 时触发本次操作的对话消息）。
+   * 写入新 reject 行的 source_message_ids（前缀 `decision:<oldId>` 自动加在前）。
+   */
+  extraSourceMessageIds?: ReadonlyArray<string>
+}
+
+/**
+ * F027 final-vision P1-1 P1 修：supersede 与 revoke 语义分流。
+ *
+ * Plan §3.6 (F027-phase4-implementation-plan.md) "选 supersede → 写新 ledger 行
+ * supersede_id=旧 spec id" — 新行作为 commit 类型决策（接力旧 spec），不是 reject。
+ *
+ * 与 revoke 区别：
+ *   - revoke: 新行 decisionType="reject"，content="撤销 D-<id>: <reason>"，旧行 superseded_by
+ *   - supersede: 新行 decisionType="commit"，content=<reason 原文>，旧行 superseded_by
+ *
+ * 目的：让 viewfinder §5 / coverage 把 supersede 后产生的新 commit 行作为 active 新决策呈现，
+ * 而不是显示一条 reject 审计行（与 modal UI 文案"新 commit 覆盖旧 spec"一致）。
+ */
+export interface SupersedeDecisionInput {
+  /** 被覆盖的旧 decision_id（旧行 superseded_by = 新行 id）。 */
+  oldDecisionId: number
+  /** 新决策内容（写入新 commit 行 content）。 */
+  reason: string
+  decidedBy: string
+  fencingToken: string
+  /** 额外 source message refs（前缀 `decision:<oldId>` 自动加在前）。 */
+  extraSourceMessageIds?: ReadonlyArray<string>
 }
 
 // ─── Decision extractor ────────────────────────────────────────────────

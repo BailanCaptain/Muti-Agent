@@ -15,10 +15,11 @@ import { useCallback, useState } from "react"
  *   - Inspector Coverage section click unresolved item
  *   - Modal 弹出 → 用户选 [supersede] / [reject] + 填 reason
  *   - POST /api/rooms/:id/decisions:
- *       supersede → { kind:"commit", supersedesDecisionId, content:reason } → ledger.revoke
+ *       supersede → { kind:"supersede", supersedesDecisionId, content:reason } → ledger.supersede
+ *                   (写 decision_type='commit' 新行 + UPDATE 旧行 superseded_by; final-vision P1-1 修)
  *       reject    → { kind:"reject", supersedesDecisionId, content:reason } → ledger.revoke
- *     两路径都写新 ledger 行 + UPDATE 旧行 status='superseded' / superseded_by=新 id
- *   - response action 字段 "revoke" 表示真走了覆盖路径
+ *                   (写 decision_type='reject' 新行 + UPDATE 旧行 superseded_by)
+ *   - response action 字段：supersede → "supersede"; reject → "revoke"
  *
  * Evidence chain:
  *   - manual confirm 无 LLM 抽出的原文 — evidence 默认为 [{kind:"decision", ref:targetDecisionId}]
@@ -49,7 +50,7 @@ export interface SupersedeRejectSuccess {
   ledgerCursor: number
   appendedAt: string
   /** 后端实际执行的动作（contracts §5 PostDecisionResponse.action）。 */
-  serverAction: "append" | "revoke" | "tombstone"
+  serverAction: "append" | "revoke" | "tombstone" | "supersede"
 }
 
 export interface SupersedeRejectErrorResponse {
@@ -77,7 +78,8 @@ export function useDecisionSupersedeRejectApi(): UseDecisionSupersedeRejectApiRe
     setIsLoading(true)
     setError(null)
     try {
-      const kind = body.action === "supersede" ? "commit" : "reject"
+      // F027 final-vision P1-1 P1 修：supersede 用专用 kind=supersede，reject 用 kind=reject
+      const kind = body.action === "supersede" ? "supersede" : "reject"
       const evidence: Array<{ kind: "message" | "decision"; ref: string }> = [
         { kind: "decision", ref: body.targetDecisionId },
       ]
@@ -102,7 +104,7 @@ export function useDecisionSupersedeRejectApi(): UseDecisionSupersedeRejectApiRe
             decisionId: string
             ledgerCursor: number
             appendedAt: string
-            action: "append" | "revoke" | "tombstone"
+            action: "append" | "revoke" | "tombstone" | "supersede"
           }
         | { error: string; message?: string; detail?: Record<string, unknown> }
       if (!resp.ok || "error" in raw) {

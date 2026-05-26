@@ -115,7 +115,7 @@ describe("DecisionSupersedeRejectModal", () => {
     expect(btn.disabled).toBe(true)
   })
 
-  it("(5) supersede + reason 填好 → POST kind=commit + supersedesDecisionId + evidence", async () => {
+  it("(5) supersede + reason 填好 → POST kind=supersede + supersedesDecisionId + evidence (final-vision P1-1)", async () => {
     mockResponse({
       ok: true,
       status: 200,
@@ -123,7 +123,7 @@ describe("DecisionSupersedeRejectModal", () => {
         decisionId: "43",
         ledgerCursor: 43,
         appendedAt: "2026-05-27T10:00:00Z",
-        action: "revoke",
+        action: "supersede",
       },
     })
     render(
@@ -151,7 +151,7 @@ describe("DecisionSupersedeRejectModal", () => {
       supersedesDecisionId: string
       callerAlias: string
     }
-    expect(body.kind).toBe("commit")
+    expect(body.kind).toBe("supersede")
     expect(body.content).toBe("新决策接 docs-watcher")
     expect(body.supersedesDecisionId).toBe("42")
     expect(body.callerAlias).toBe("黄仁勋")

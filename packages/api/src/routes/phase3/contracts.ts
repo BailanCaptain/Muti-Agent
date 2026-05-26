@@ -546,16 +546,20 @@ export function validatePreviewIngest(body: unknown): ValidationResult<PreviewIn
 // ── 5. POST /api/rooms/:id/decisions （AC-P3-8 manual confirm） ──────
 
 /**
- * Decision kind 语义（Day 6 Phase 1 P12 ledger 对接）:
+ * Decision kind 语义（Day 6 Phase 1 P12 ledger 对接 + final-vision P1-1 P1 修）:
  *   - `commit`  → ledger.append({decisionType:'commit'})；可选 supersedesDecisionId → ledger.revoke
+ *                (Day 6 backward compat — commit + supersedesDecisionId 仍写 reject 行覆盖)
  *   - `reject`  → ledger.append({decisionType:'reject'})；可选 supersedesDecisionId → ledger.revoke
  *   - `tombstone` → ledger.markTombstone(supersedesDecisionId, fencingToken)；
  *                   **不写新行**，UPDATE 旧行 tombstone=1（永久投影）；supersedesDecisionId 必填
+ *   - `supersede` (F027 final-vision P1-1) → ledger.supersede；supersedesDecisionId 必填；
+ *                   写新 commit 行 + UPDATE 旧行 superseded_by；语义 = 新决策接力旧 spec/commit
  *
- * 注：P12 schema 里 decision_type 取值是 spec|pivot|commit|reject（无 tombstone）；
- * tombstone 是 row 上独立的 0/1 字段。本契约 kind=tombstone 映射到 markTombstone 动作。
+ * 注：P12 schema 里 decision_type 取值是 spec|pivot|commit|reject（无 tombstone/supersede）；
+ * tombstone 是 row 上独立的 0/1 字段。本契约 kind=tombstone 映射到 markTombstone 动作；
+ * kind=supersede 映射到 ledger.supersede 新方法（写 decision_type='commit' 新行）。
  */
-export type DecisionKind = "commit" | "reject" | "tombstone"
+export type DecisionKind = "commit" | "reject" | "tombstone" | "supersede"
 
 export interface PostDecisionPath {
   roomId: string
@@ -601,7 +605,7 @@ export interface PostDecisionResponse {
   /** 写盘时刻 ISO。 */
   appendedAt: string
   /** 本次执行的动作（前端 UI 区分 toast 文案）。 */
-  action: "append" | "revoke" | "tombstone"
+  action: "append" | "revoke" | "tombstone" | "supersede"
 }
 
 export function validatePostDecision(
@@ -617,11 +621,14 @@ export function validatePostDecision(
     return { ok: false, error: "DECISION_INVALID", message: "body required" }
   }
   const kindRaw = takeOptionalString(b.kind)
-  if (kindRaw === undefined || !["commit", "reject", "tombstone"].includes(kindRaw)) {
+  if (
+    kindRaw === undefined ||
+    !["commit", "reject", "tombstone", "supersede"].includes(kindRaw)
+  ) {
     return {
       ok: false,
       error: "DECISION_INVALID",
-      message: `kind must be commit|reject|tombstone, got ${kindRaw}`,
+      message: `kind must be commit|reject|tombstone|supersede, got ${kindRaw}`,
     }
   }
   const content = takeOptionalString(b.content)
@@ -683,6 +690,14 @@ export function validatePostDecision(
       error: "DECISION_INVALID",
       message: "kind=tombstone requires supersedesDecisionId (mark 哪条旧行)",
       detail: { reason: "tombstone_requires_target" },
+    }
+  }
+  if (kindRaw === "supersede" && supersedes === undefined) {
+    return {
+      ok: false,
+      error: "DECISION_INVALID",
+      message: "kind=supersede requires supersedesDecisionId (覆盖哪条旧行)",
+      detail: { reason: "supersede_requires_target" },
     }
   }
   // tombstone 的 ref 必须是数字 ROWID（与 P12 decision_id 一致）
