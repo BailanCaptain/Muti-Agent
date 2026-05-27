@@ -21,6 +21,7 @@
  */
 
 import * as fs from "node:fs/promises"
+import * as path from "node:path"
 import type { FastifyBaseLogger } from "fastify"
 import type { IngestCommitService } from "../../routes/phase3/ingest-commit"
 import type { IngestPreviewService } from "../../routes/phase3/ingest-preview"
@@ -31,10 +32,15 @@ const MAX_INGEST_BYTES = 1_048_576 // 1MB (同 contracts MAX_INGEST_CONTENT_BYTE
 
 export const DOCS_WATCHER_CALLER_ALIAS = "docs-watcher"
 
+/** F027 final-vision P1-2 r2 修：版本化 _auto 路径基础前缀。 */
+const AUTO_TARGET_DIR = "wiki/concepts/draft/_auto"
+
 export interface DocsIngestRunnerDeps {
   preview: IngestPreviewService
   commit: IngestCommitService
   logger?: FastifyBaseLogger
+  /** 注入 clock（测试 deterministic 用；默认 () => Date.now()）。 */
+  now?: () => number
 }
 
 export interface DocsIngestRunResult {
@@ -56,11 +62,28 @@ export class DocsIngestRunner {
   private readonly preview: IngestPreviewService
   private readonly commit: IngestCommitService
   private readonly log: FastifyBaseLogger
+  private readonly now: () => number
 
   constructor(deps: DocsIngestRunnerDeps) {
     this.preview = deps.preview
     this.commit = deps.commit
     this.log = deps.logger ?? createLogger("docs-ingest-runner")
+    this.now = deps.now ?? (() => Date.now())
+  }
+
+  /**
+   * F027 final-vision P1-2 r2 修：算版本化 finalPath，避免 change 事件第二次落
+   * 同 `_auto/<basename>.md` 撞 CAS conflict。
+   *
+   * 格式：`wiki/concepts/draft/_auto/<basename-without-ext>-<unixMs>.md`
+   * - 每次 ingest 都唯一（1ms 内两次 race 概率极低；真撞 → fail-soft commit_failed 兜底）
+   * - 同源历史 _auto/* 保留（V16.5 line 2662 期望写 supersedes frontmatter 留 future feature）
+   */
+  private versionedTargetPath(relativePath: string): string {
+    const basename = path.basename(relativePath)
+    const ext = path.extname(basename) || ".md"
+    const stem = basename.slice(0, basename.length - ext.length) || "doc"
+    return `${AUTO_TARGET_DIR}/${stem}-${this.now()}${ext}`
   }
 
   /**
@@ -120,11 +143,16 @@ export class DocsIngestRunner {
       return { skipped: true, skippedReason: "preview_blocked" }
     }
 
-    // 2. commit (落 wiki/concepts/draft/_auto/<filename>)
-    const commitResult = this.commit.commit({
-      previewId: previewResult.previewId,
-      callerAlias: DOCS_WATCHER_CALLER_ALIAS,
-    })
+    // 2. commit (落 wiki/concepts/draft/_auto/<stem>-<unixMs>.md)
+    //    final-vision P1-2 r2 修：用 targetPathOverride 走版本化 path，change 事件第二次也不撞名。
+    const targetPathOverride = this.versionedTargetPath(event.relativePath)
+    const commitResult = this.commit.commit(
+      {
+        previewId: previewResult.previewId,
+        callerAlias: DOCS_WATCHER_CALLER_ALIAS,
+      },
+      { targetPathOverride },
+    )
     if (!commitResult.ok) {
       this.log.warn(
         { event, error: commitResult.error },

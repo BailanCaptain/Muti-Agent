@@ -125,6 +125,7 @@ C. Scheduler/UX 长尾 - 单独立 feature 做（不归 F027）
 | # | 项 | 现状 | 预算 |
 |---|------|------|------|
 | C7.1 | `packages/api/src/services/message-service.ts:990` `end_session` 事件空实现 TODO | live client event 分支，长期以 TODO 留生产路径 | 0.5 周 |
+| C7.2 | docs-watcher `change` 触发的 supersedes/superseded_at frontmatter 写入 | final-vision P1-2 r2 only 解了 CAS conflict 撞名（versioned `_auto/<stem>-<unixMs>.md`）；V16.5 chap 17 line 2662 期望的「旧 draft 标 superseded_at + 新 draft 写 supersedes: [<old_path>]」未实现 — 现状只是落多份独立 draft，不带跨版本血缘 metadata | 1 周 |
 
 ---
 

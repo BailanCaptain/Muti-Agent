@@ -388,7 +388,7 @@ evidence pack（result.json + judges/* + arbitration + screenshots）落 `docs/f
 
 | Step | 操作 | 期望结果 | Evidence |
 |---|---|---|---|
-| 2.1 | 小孙在 worktree 新建 `docs/features/F999-test.md`（测试用） | DocsWatcher 5s 内检测 + 自动 ingest | log DocsWatcher trigger + ingest_event |
+| 2.1 | 小孙在 worktree 新建 `docs/features/F999-test.md`（测试用） | DocsWatcher 60s 内检测 + 自动 ingest（V16.5 chap 17 line 2661 锁定 60s debounce 真相源；final-vision P1-2 r2 拍板 amend：原 5s SLA 与 V16.5 矛盾，统一改 60s） | log DocsWatcher trigger + ingest_event |
 | 2.2 | 自动 sanitize + 编译 | 落 `wiki/concepts/draft/_auto/2026-05-23-F999-test.md` + `wiki_events action='ingest_auto'` | DB query + 文件存在 |
 | 2.3 | KB tab 刷新 | F999-test.md 出现在 _auto 子目录 list（区别于 _drafts 主流） | screenshot KB tab |
 | 2.4 | warnings tab 打开 | 显示 fixture seed 5-10 份 warnings（chained_suspect / acl_violation 等）+ 真 mtime | screenshot warnings tab |

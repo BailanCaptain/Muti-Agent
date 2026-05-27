@@ -56,15 +56,17 @@ function makePreviewStub(opts: { blocked?: boolean; previewId?: string } = {}): 
 }
 
 function makeCommitStub(result: CommitResult): IngestCommitService {
-  const calls: unknown[] = []
+  const calls: Array<{ body: unknown; opts?: unknown }> = []
   const stub = {
-    commit: (body: unknown): CommitResult => {
-      calls.push(body)
+    commit: (body: unknown, opts?: unknown): CommitResult => {
+      calls.push({ body, opts })
       return result
     },
     __calls: calls,
   }
-  return stub as unknown as IngestCommitService & { __calls: unknown[] }
+  return stub as unknown as IngestCommitService & {
+    __calls: Array<{ body: unknown; opts?: unknown }>
+  }
 }
 
 function makeEvent(opts: { kind?: DocsEvent["kind"]; absolutePath: string; relativePath?: string }): DocsEvent {
@@ -166,11 +168,85 @@ test("P1-2 · DocsIngestRunner · happy path → preview ok → commit ok → �
     assert.equal(result.skipped, false)
     assert.equal(result.finalPath, "wiki/concepts/draft/_auto/2026-05-27-F999-test.md")
     assert.equal(result.ingestEventId, "42")
-    const calls = (commit as unknown as { __calls: unknown[] }).__calls
+    const calls = (commit as unknown as { __calls: Array<{ body: unknown; opts?: unknown }> })
+      .__calls
     assert.equal(calls.length, 1)
-    const arg = calls[0] as { previewId: string; callerAlias: string }
-    assert.equal(arg.previewId, "uuid-1")
-    assert.equal(arg.callerAlias, DOCS_WATCHER_CALLER_ALIAS)
+    const body = calls[0].body as { previewId: string; callerAlias: string }
+    assert.equal(body.previewId, "uuid-1")
+    assert.equal(body.callerAlias, DOCS_WATCHER_CALLER_ALIAS)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test("P1-2 r2 · DocsIngestRunner · 传 versioned targetPathOverride 避免 change 撞名 (codex P1 修)", async () => {
+  const tmp = makeTmpDir()
+  try {
+    const f = path.join(tmp, "F999-test.md")
+    writeFileSync(f, "## F999")
+    const commit = makeCommitStub({
+      ok: true,
+      response: {
+        ingestEventId: "99",
+        finalPath: "wiki/concepts/draft/_auto/F999-test-1748320000000.md",
+        committedAt: "",
+        fencingToken: "",
+      },
+    })
+    const runner = new DocsIngestRunner({
+      preview: makePreviewStub(),
+      commit,
+      logger: silentLogger(),
+      now: () => 1748320000000,
+    })
+    await runner.runIngest(
+      makeEvent({ absolutePath: f, relativePath: "features/F999-test.md" }),
+    )
+    const calls = (commit as unknown as { __calls: Array<{ body: unknown; opts?: unknown }> })
+      .__calls
+    assert.equal(calls.length, 1)
+    const opts = calls[0].opts as { targetPathOverride?: string }
+    assert.equal(
+      opts.targetPathOverride,
+      "wiki/concepts/draft/_auto/F999-test-1748320000000.md",
+      "targetPathOverride 必须含 timestamp 后缀避免撞 _auto/<basename>.md",
+    )
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test("P1-2 r2 · DocsIngestRunner · 同源文件两次 ingest (add → change) → targetPath 不同 (codex P1 修)", async () => {
+  const tmp = makeTmpDir()
+  try {
+    const f = path.join(tmp, "F999-test.md")
+    writeFileSync(f, "## F999")
+    const commit = makeCommitStub({
+      ok: true,
+      response: { ingestEventId: "x", finalPath: "x", committedAt: "", fencingToken: "" },
+    })
+    let nowVal = 1748000000000
+    const runner = new DocsIngestRunner({
+      preview: makePreviewStub(),
+      commit,
+      logger: silentLogger(),
+      now: () => nowVal,
+    })
+    await runner.runIngest(
+      makeEvent({ kind: "add", absolutePath: f, relativePath: "features/F999-test.md" }),
+    )
+    nowVal += 5000
+    await runner.runIngest(
+      makeEvent({ kind: "change", absolutePath: f, relativePath: "features/F999-test.md" }),
+    )
+    const calls = (commit as unknown as { __calls: Array<{ body: unknown; opts?: unknown }> })
+      .__calls
+    assert.equal(calls.length, 2)
+    const p1 = (calls[0].opts as { targetPathOverride: string }).targetPathOverride
+    const p2 = (calls[1].opts as { targetPathOverride: string }).targetPathOverride
+    assert.notEqual(p1, p2, "add 和后续 change 必须落不同路径 (final-vision P1-2 r2 修核心)")
+    assert.match(p1, /^wiki\/concepts\/draft\/_auto\/F999-test-1748000000000\.md$/)
+    assert.match(p2, /^wiki\/concepts\/draft\/_auto\/F999-test-1748000005000\.md$/)
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }

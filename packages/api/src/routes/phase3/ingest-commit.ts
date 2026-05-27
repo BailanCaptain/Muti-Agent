@@ -63,6 +63,15 @@ export interface IngestCommitServiceDeps {
   commitLeaseTtlSeconds?: number
 }
 
+/**
+ * F027 final-vision P1-2 r2 修：commit() 第二参 (internal use 给 docs-watcher caller)。
+ * HTTP route 不传；DocsIngestRunner 直接 service-call 时传 versioned path 避免撞名。
+ */
+export interface CommitInternalOpts {
+  /** 覆盖 derivePath；用于 docs-watcher 让 change 事件落新版本化文件名。 */
+  targetPathOverride?: string
+}
+
 export class IngestCommitService {
   private readonly store: PreviewStore
   private readonly updateWiki: UpdateWikiService
@@ -80,7 +89,16 @@ export class IngestCommitService {
     this.commitLeaseTtlSeconds = deps.commitLeaseTtlSeconds ?? DEFAULT_COMMIT_LEASE_TTL_SECONDS
   }
 
-  commit(body: PostIngestCommitBody): CommitResult {
+  /**
+   * F027 final-vision P1-2 r2 修：opts.targetPathOverride 允许 docs-watcher caller 指定
+   * versioned final path（如 `_auto/<basename>-<unixMs>.md`），避免重复 ingest 同源文件
+   * 时撞 `_auto/<basename>.md` CAS conflict。
+   *
+   * HTTP route 调用方不传 opts → 用原 derivePath 行为（向后兼容；Day 9-10 单测不破）。
+   * docs-watcher（DocsIngestRunner）直接 service-call 时传 opts.targetPathOverride →
+   * 用之作为 finalPath（仍走 ACL/lease/CAS/wiki_events 全链）。
+   */
+  commit(body: PostIngestCommitBody, opts: CommitInternalOpts = {}): CommitResult {
     // 1. 读 preview entry **不消费**（Week 2 r2 范-r1 P3）。
     //    瞬时失败（CAS conflict / lease_held / internal）后用户可重试同 previewId
     //    而不必重 preview/sanitize；仅在 ok 路径 + 终态错误（denied_acl / path_invalid
@@ -103,7 +121,9 @@ export class IngestCommitService {
     const entry = peeked.entry
 
     // 2. 派生 finalPath（落 wiki/concepts/draft/_auto/<filename>）
-    const finalPath = derivePath(entry.sourcePath)
+    //    F027 final-vision P1-2 r2 修：opts.targetPathOverride 优先（docs-watcher 用 versioned path
+    //    避免 change 事件 CAS 撞名）。HTTP route 默认走 derivePath（向后兼容）。
+    const finalPath = opts.targetPathOverride ?? derivePath(entry.sourcePath)
 
     // 3. acquire lease（caller 没传 leaseToken 时由 server 兜底 acquire；
     //    传了的话 Day 9-10 范围下还是再 acquire 一次 — caller 传的 token 当前没
