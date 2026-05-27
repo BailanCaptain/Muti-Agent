@@ -214,6 +214,34 @@ test("G6 · getStory: recent7d 当日新增 entity+decision count", () => {
   }
 })
 
+test("G6 r2 · safeCount: schema mismatch (no such table) 抛错而非伪装 0 (codex P2 修)", () => {
+  // 直接 fake adapter prepare 抛 "no such table" → safeCount 应 rethrow
+  // 模拟 production 未跑迁移 / 表名错 → 上层 fastify route 应返 500 而非空 stats
+  const fakeDb = {
+    $client: {
+      prepare: (_sql: string) => ({
+        get: () => {
+          throw new Error("SQLITE_ERROR: no such table: wiki_memories")
+        },
+        all: () => {
+          throw new Error("SQLITE_ERROR: no such table: wiki_memories")
+        },
+        run: () => {
+          throw new Error("SQLITE_ERROR: no such table: wiki_memories")
+        },
+      }),
+    },
+  } as unknown as ReturnType<typeof createDrizzleDb>["db"]
+  const svc = new WikiStoryService({ db: fakeDb })
+  // getStory 内部第一个 queryBucket → safeCount 抛 → endpoint 应错
+  assert.throws(() => svc.getStory(), /no such table/i)
+})
+
+// Note: 不测 "其他 SQL syntax 错 fail-soft 0" — queryBucket / queryRecent7d 内的
+// prepare/get 不走 safeCount，直接 throw bubble up；只有 conversation count 和
+// recent7d 内单 query 走 safeCount。设计如此 (queryBucket 是核心 query 必抛)，
+// 此测试 lock 与 codex P2 修一致的"safeCount 路径 schema 错抛错"行为。
+
 test("G6 · conversation 桶 走 messages 表 (not wikiMemories)", () => {
   const tmp = safeTempDir("F027-G6-conv-")
   const dbPath = path.join(tmp, "test.sqlite")

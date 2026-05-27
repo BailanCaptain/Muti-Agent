@@ -201,8 +201,15 @@ export class WikiStoryService {
     try {
       const row = (this.client.prepare(sql).get(...params) ?? { n: 0 }) as { n: number | null }
       return row.n ?? 0
-    } catch {
-      // 表不存在 / schema mismatch → 0 (fail-soft, G6 是 read-only stats endpoint)
+    } catch (err) {
+      // G6 r2 (codex P2 修): fail-soft 只对真"空数据"返 0，不掩盖基础设施问题。
+      // "no such table" / "no such column" 是 schema mismatch / 未跑迁移，
+      // 应抛错让 UI 显 error 而不是伪装"0 数据"（削弱观测可信度）。
+      const msg = (err as Error).message ?? ""
+      if (/no such (table|column)/i.test(msg)) {
+        throw err
+      }
+      // 其他错（rare: SQL syntax / lock 等）仍 fail-soft 0，避免单一 query 挂整个 endpoint
       return 0
     }
   }
