@@ -178,13 +178,15 @@ ad59916 chore(F027-P4-A): fallback j2 P3 cleanup × 3 — Day 25 reclassify Phas
 memory_preflight / sessions ledger / Adaptive Recall Level 6 / Prompt Inspector 升级 / 写型 rollback
 ```
 
-### 类别 C · scheduler / UX 长尾（9 项，各自小孙拍单独立项）
+### 类别 C · scheduler / UX 长尾（final-vision r2 后 8 项，各自小孙拍单独立项）
 
 ```
-scheduler noop 7 项（DocsWatcher / NightlyHealthCheck / WeeklyDraftDigest / DriftDetector /
-                  MonthlySnapshot / ArchiveYearlySessions / WikiCompilerDebounce）
+scheduler noop 6 项（NightlyHealthCheck / WeeklyDraftDigest / DriftDetector /
+                   MonthlySnapshot / ArchiveYearlySessions / WikiCompilerDebounce）
+  — C1.1 DocsWatcher.onEvent 已修（final-vision P1-2，commit bfcbba2+227daf1）
 UX 4 项（slash menu 4 cmd / warnings 解决按钮 / KB markdown entity parse / EmbeddedWikiRecord 压测）
-supersede/reject 写型 UI / recall-pack 追溯 audit schema 扩 / IngestService 真 LLM compile /
+  — B8 Inspector supersede/reject UI 已修（final-vision P1-1，commit ebcc0ff+84f52d4）
+recall-pack 追溯 audit schema 扩 / IngestService 真 LLM compile /
 ChainedAlertNotifier broadcaster wire
 ```
 
@@ -223,12 +225,12 @@ per plan line 188:
 
 代码层 placeholder（撤 F028 后，归 RESIDUAL-DEBT 类别 label，真相源 `evidence/phase4/F027-RESIDUAL-DEBT.md`）:
 
-- Inspector Coverage UnresolvedRow click → window.alert (Day 13 占位, 真 supersede/reject UI 归 **B8**)
+- ~~Inspector Coverage UnresolvedRow click → window.alert~~ — **已完成**（final-vision P1-1，commit `ebcc0ff`+`84f52d4`）：click → `DecisionSupersedeRejectModal` + ledger.supersede/revoke 分流
 - RollbackPreviewModal **未实施** (写型 rollback 归 **B5**; codex j2 r1 提到, 按 plan §1.1 line 80 允许)
 - composer slash menu 4 写命令 disabled (归 **B6** evaluate)
 - WarningsTab 无"解决"按钮 (归 **C2.2**)
 - KB tab markdown entity parse 未做 (multi-select 已做 满足 plan §AC-P4-9 b; entity parse 归 **C2.3**)
-- **scheduler 业务回调 noop** (Week 5 Day 23 实测发现): DocsWatcher/NightlyHealthCheck/WeeklyDraftDigest/DriftDetector/MonthlySnapshot/ArchiveYearlySessions/WikiCompilerDebounce 归 **C1.1~C1.7**, ChainedAlertNotifier 归 **C6.1** (RoomCompiler 已修)
+- **scheduler 业务回调 noop** (Week 5 Day 23 实测发现): ~~DocsWatcher~~ (final-vision P1-2 已修，commit `bfcbba2`+`227daf1`) / NightlyHealthCheck / WeeklyDraftDigest / DriftDetector / MonthlySnapshot / ArchiveYearlySessions / WikiCompilerDebounce 归 **C1.2~C1.7**, ChainedAlertNotifier 归 **C6.1** (RoomCompiler 已修)
 - **IngestService 用 sanitized markdown 不接真 LLM compile** (`ingest-preview.ts:192`) — 归 **C5.1** by-design (Phase 3 user-driven simplification, preview 实时性 + commit 时小孙 review)，影响 walkthrough 场景 1 step 1.3 preview 不是真 LLM 编译
 - **`message-service.ts:990` end_session 事件空实现 TODO** — 归 **C7.1** (final vision codex review Day 26 新增)
 - **`prompt-inspector-tab.tsx:461 :470-471` agent-sessions ledger UI 写「Phase 4 接」文案 stale** — 实际归 **B2** (sessions ledger 划走未来 feature)
