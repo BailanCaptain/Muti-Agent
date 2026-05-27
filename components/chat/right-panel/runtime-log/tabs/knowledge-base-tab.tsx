@@ -12,6 +12,7 @@ import {
   type IndexViewSummary,
   useIndexData,
 } from "./wiki-meta/use-wiki-meta-data"
+import { WikiPhilosophyPanel } from "./wiki-philosophy/wiki-philosophy-panel"
 
 /**
  * F027 Phase 3 Week 4 Day 19b-1 (AC-P3-6 入口 B) · KnowledgeBaseTab
@@ -199,6 +200,8 @@ export function KnowledgeBaseTab() {
             ⚠ {pickerError}
           </div>
         )}
+        {/* F027 v3 G6 · Wiki 哲学 panel (顶部 narrative + 6 桶 stats + 7d growth + supersede 链) */}
+        <WikiPhilosophyPanel enabled={activeLvl2 === "knowledge-base"} />
         {/* §A · 派生视图 wiki/index/*.md (AC-P4-9 b) */}
         <IndexList
           data={indexData.data}

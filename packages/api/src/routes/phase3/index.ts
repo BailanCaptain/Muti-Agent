@@ -28,6 +28,7 @@ import { IngestPreviewService, registerIngestPreviewRoute } from "./ingest-previ
 import { PreviewStore } from "./preview-store"
 import { PromptInspectorService, registerPromptInspectorRoute } from "./prompt-inspector"
 import { ViewfinderService, registerViewfinderRoute } from "./viewfinder"
+import { WikiStoryService, registerWikiStoryRoute } from "./wiki-story"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
 
@@ -74,6 +75,8 @@ export function registerPhase3Routes(app: FastifyInstance, deps: Phase3RoutesDep
   registerPromptInspectorRoute(app, promptInspector)
   registerIngestPreviewRoute(app, ingestPreview)
   registerDecisionsRoute(app, decisionService)
+  // F027 v3 G6 · Wiki 哲学 UI 后端 (GET /api/wiki/story)
+  registerWikiStoryRoute(app, new WikiStoryService({ db: deps.db }))
 
   // F027 Phase 3 P20 Day 9-10 (AC-P3-10) · commit endpoint 仅在 wikiServices 注入时启用
   if (deps.wikiServices) {
