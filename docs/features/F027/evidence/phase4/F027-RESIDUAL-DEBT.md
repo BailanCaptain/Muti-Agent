@@ -70,7 +70,7 @@ C. Scheduler/UX 长尾 - 单独立 feature 做（不归 F027）
 |---|------|------|
 | **B6** | composer slash menu 4 写命令启用（`/promote` `/demote` `/series` `/rollback`） | 1 周（B5 写型 rollback 做完才能 enable `/rollback`） |
 | **B7** | EmbeddedWikiRecord boot load + 多房间并行 ingest 压测 | 2 周 |
-| **B8** | Inspector Coverage 真 supersede / reject UI（click → endpoint + Modal） | 1-2 周（Day 13 占位 click → window.alert） |
+| ~~**B8**~~ | ~~Inspector Coverage 真 supersede / reject UI（click → endpoint + Modal）~~ | **已完成** — 2026-05-27 final-vision P1-1 修（commit `ebcc0ff` + `84f52d4`）：`DecisionSupersedeRejectModal` + `ledger.supersede()` 分流 + click 接 modal |
 
 ---
 
@@ -83,7 +83,7 @@ C. Scheduler/UX 长尾 - 单独立 feature 做（不归 F027）
 
 | # | noop 位置 | 症状 | 预算 |
 |---|----------|------|------|
-| C1.1 | `DocsWatcher.onEvent` (line 148) | docs/ 改不触发 ingest pipeline | 0.5d |
+| ~~C1.1~~ | ~~`DocsWatcher.onEvent` (line 148)~~ | **已完成** — 2026-05-27 final-vision P1-2 修（commit `bfcbba2` + `227daf1`）：DocsIngestRunner 接 preview→commit pipeline + versioned `_auto/<stem>-<unixMs>.md` 避免 change CAS conflict + 默认 enable | n/a |
 | C1.2 | `NightlyHealthCheck.scanEntities` (line 154) | 每晚 4:00 cron 跑空 | 1d |
 | C1.3 | `WeeklyDraftDigest.scanDrafts` (line 161) | 每周一 9:00 cron 跑空 | 0.5d |
 | C1.4 | `DriftDetector.scanTriggers` (line 166) | V16.5 P19.11 trigger 不扫 | 1d |

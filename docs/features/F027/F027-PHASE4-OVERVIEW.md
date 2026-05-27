@@ -13,27 +13,36 @@ Phase 4 把 F027 (统一记忆架构) 从 Phase 3 留下的 "approval 流闭环"
 
 ---
 
-## 0.5. final vision verdict 修正（2026-05-27 真 codex hetero review）
+## 0.5. final vision verdict 修正（2026-05-27 真 codex hetero review · r1 → r2）
 
-> **真相源**: `.runtime/reviews/F027-codex-final-verdict-summary.md` + 三块 codex verdict log
+> **真相源**: `.runtime/reviews/F027-codex-final-verdict-summary.md` + r1 三块 codex verdict log + r2 fix commit + r2 愿景 verdict log
 > **reviewer**: 范德彪 (codex CLI gpt-5.5)
 > **背景**: Day 24-26 的 Claude general-purpose subagent fallback "8.5/10 DONE" 已被推翻 — 真 codex hetero review 抓出 spec drift。
 
-**真 codex final vision verdict: NOT_DONE**
+### r1 (2026-05-27 上午): NOT_DONE — 3 P1 升级小孙拍
 
-corrigendum (commit `f14651f` message 「整体 F027 verdict: DONE 8.5/10，0 P1」over-claim)：
-- commit message 写的 8.5/10 / DONE 是基于 Claude fallback ensemble，不算真 hetero check
-- 真 codex 抓出 3 个 P1 升级小孙拍：
-  - **P1-1** Inspector Coverage click → `prompt-inspector-tab.tsx:641-647` 真 `window.alert` 占位，plan `F027-phase4-implementation-plan.md:63 :255 :410-411 :427` 要求真接 PromoteModal + supersede/reject ledger
-  - **P1-2** docs-watcher 自动 ingest `scheduler-bootstrap.ts:20 :157` 真 noop `onEvent: async () => {}`，V16.5 `:154-155 :1807 :2656-2661` + Phase 4 walkthrough 都要求自动 ingest（C1.1 把它说成"不影响 F027" 不成立，直接阻断 AC-P4-6 场景 2）
-  - **P1-3** evidence gate 未完成：AC-P4-6 INCONCLUSIVE + 6 项 AC CONDITIONAL_PASS + screenshots/logs 多空
+- **P1-1** Inspector Coverage click → `prompt-inspector-tab.tsx:641-647` 真 `window.alert` 占位
+- **P1-2** docs-watcher 自动 ingest `scheduler-bootstrap.ts:20 :157` 真 noop `onEvent: async () => {}`
+- **P1-3** evidence gate 未完成：AC-P4-6 INCONCLUSIVE + 6 项 AC CONDITIONAL_PASS
 
-**当前实际 verdict**: 代码大部完成、验收未完成、且有两处 plan AC 漏实现 → **CONDITIONAL_NOT_DONE**。
+小孙 2026-05-27 拍：P1-1 + P1-2 = (a) 修代码真接；P1-3 留 P1-3 walkthrough 手动验证。
 
-**升级小孙拍**:
-1. P1-1 / P1-2 各自选一：(a) 修代码真接 (b) plan 明示 amend 划走 RESIDUAL-DEBT
-2. P1-3 walkthrough 三场景小孙手动跑 + Phase 3 6 项升 PASS
-3. 跑完才能合 dev push（Iron Law 边界）
+### r2 (2026-05-27 下午): CONDITIONAL_DONE — P1-1 + P1-2 真修
+
+r2 commit 链（4 个，已跑全套绿）：
+
+| commit | 内容 |
+|---|---|
+| `ebcc0ff` | P1-1 implement — UnresolvedDecisionModal + use-api hook + UnresolvedRow click 接 modal + 10 单测 |
+| `84f52d4` | P1-1 r2 fix — supersede vs reject 后端分流（contracts kind += "supersede" + ledger.supersede + decisions.ts 分流 + extraSourceMessageIds 落 ledger） |
+| `bfcbba2` | P1-2 implement — DocsIngestRunner + scheduler-bootstrap wire + server.ts 共享 ingest services + 7 单测 |
+| `227daf1` | P1-2 r2 fix — IngestCommitService.commit opts.targetPathOverride + DocsIngestRunner versioned `_auto/<stem>-<unixMs>.md` 避免 change CAS conflict + plan AC-P4-6 5s → 60s |
+
+**当前 verdict** (r2 愿景 review): **CONDITIONAL_DONE** — 代码核心 gap 全闭环。
+
+剩余阻断（不在代码范围）：
+1. **P1-3 walkthrough**：小孙手动跑三场景 → screenshots/logs → Phase 3 6 项升 PASS → 合 dev (Iron Law 边界小孙手动)
+2. **RESIDUAL-DEBT C7.2**：docs-watcher change 触发的 `supersedes/superseded_at` 跨版本血缘 frontmatter，V16.5 chap 17 line 2662 期望，留 future feature (~1 周)
 
 ---
 

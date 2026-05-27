@@ -14,7 +14,7 @@
 | **AC-P3-2** 5-tab 切换 scroll position 保持 ±10px | CONDITIONAL_PASS (browser scroll ±10px BLOCKED) | 间接 (无对应 P4 AC) | walkthrough 三场景全程 tab 切换 | `evidence/phase3/AC-P3-2/screenshots/` 加：tab 切换前后 scroll position 一致截图 (前后对比 + scrollTop 数值) | ⏳ 待 walkthrough |
 | **AC-P3-3** Prompt Inspector 7 块全非空 | CONDITIONAL_PASS (真数据依赖 P3-9 + DB schema) | AC-P4-9 d + AC-P4-8 | 场景 1 step 1.5 (/ingest 后) + 场景 3 step 3.3-3.4 (Coverage 触发) | `evidence/phase3/AC-P3-3/screenshots/` 加：inspector 7 块非空 (含 recall_path 真数据) + 第 8 块 Coverage section | ⏳ 待 walkthrough + AC-P4-9 d 落地 |
 | **AC-P3-6** IngestModal 3 入口 | CONDITIONAL_PASS (3 入口 browser modal BLOCKED) | AC-P4-9 d (DB seed 后真数据) | 场景 1 step 1.1-1.4 走入口 A (拖) + 入口 B ([+ Drop]) + 入口 C (`/ingest`) | `evidence/phase3/AC-P3-6/screenshots/` 加：3 入口分别触发 IngestModal 截图 (3 张) | ⏳ 待 walkthrough |
-| **AC-P3-8 b** Inspector unresolved UI | CONDITIONAL_PASS (推 Phase 4) | **AC-P4-9 c** | 场景 3 step 3.4-3.5 | `evidence/phase3/AC-P3-8/screenshots/` 加：Coverage section 非空 + click trigger alert (Day 13 占位; 真 supersede/reject UI 归 **RESIDUAL-DEBT B8**) | ⏳ 待 walkthrough；RESIDUAL-DEBT B8 已记 |
+| **AC-P3-8 b** Inspector unresolved UI | CONDITIONAL_PASS (推 Phase 4) | **AC-P4-9 c** | 场景 3 step 3.4-3.5 | `evidence/phase3/AC-P3-8/screenshots/` 加：Coverage section 非空 + click [Confirm] 打开 `DecisionSupersedeRejectModal` + 选 supersede → DB `room_decisions` 新行 `decision_type='commit'` + 旧行 `superseded_by=新id`/`status='superseded'` + coverage refetch（final-vision P1-1 修，commit `ebcc0ff`+`84f52d4`） | ⏳ 待 walkthrough |
 | **AC-P3-9** Adaptive Recall wiring (server.ts:239 noop ready-for-Phase-4) | CONDITIONAL_PASS (boot wire 验证 BLOCKED) | **AC-P4-8** | 场景 1 step 1.5 真房间 recall 触发 | `evidence/phase3/AC-P3-9/screenshots/` 加：inspector recall_path + DB `prompt_audit` 9 字段真写入 + boot log `enabled=true, levels=[2,3,4,5]` + AC-P4-8 evidence pack 双 judge artifact | ⏳ 待 walkthrough + AC-P4-8 evidence pack 收齐 |
 
 ---
@@ -51,8 +51,10 @@
 
 ### AC-P3-8 b
 - [ ] Coverage section unresolved 列表非空截图
-- [ ] click [Confirm] → window.alert 截图 (Day 13 占位)
-- [ ] supersede/reject 真 UI follow-up note 引用 `docs/features/F027/evidence/phase4/F027-RESIDUAL-DEBT.md` 类别 C C3.1 项（原 F028-1，2026-05-26 撤 F028 后重分类）
+- [ ] click [Confirm] → `DecisionSupersedeRejectModal` 弹出截图（含 target decision id/type/summary）
+- [ ] 选 supersede + 填 reason + 提交 → success panel 截图 (含 newDecisionId + action="supersede")
+- [ ] DB query: `SELECT decision_id, decision_type, status, superseded_by FROM room_decisions WHERE decision_id IN (<old>, <new>)` 显示新行 `decision_type='commit'` + 旧行 `superseded_by=<new>` + `status='superseded'` → `logs/db-room-decisions-after-supersede.json`
+- [ ] (可选) 选 reject 路径同样跑一遍 → 新行 `decision_type='reject'`
 - [ ] 修改 `evidence/phase3/AC-P3-8/result.json` 同上
 
 ### AC-P3-9
