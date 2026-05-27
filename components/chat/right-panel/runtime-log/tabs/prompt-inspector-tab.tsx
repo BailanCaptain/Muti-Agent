@@ -572,38 +572,70 @@ function gateColorClass(gate: RecallGate): string {
   return "text-red-500"
 }
 
-// ─── 5. 📊 Adaptive Recall Policy ─────────────────────────────────
+// ─── 5. 📊 Adaptive Recall Policy (F027 v3 G8 · 字段人话说明) ─────────
+
+const RECALL_PATH_LABEL: Record<number, string> = {
+  1: "Level 1 · 直接命中 (existing context 满足)",
+  2: "Level 2 · BM25 hybrid (lexical 召回)",
+  3: "Level 3 · Embedding cosine (语义召回)",
+  4: "Level 4 · Critique 严格路径 (LLM 评)",
+  5: "Level 5 · Haiku rerank 升级 (容错兜底)",
+}
 
 function AdaptiveRecallPolicy({ state }: { state: GetPromptInspectorResponse["recallState"] }) {
+  // F027 v3 G8 · Adaptive Recall 5 字段 inline 人话说明
+  // 真相源 V16.5 chap 10 + 12 — 5 级 fallback + Quality Gate
   return (
     <section data-testid="prompt-inspector-policy">
       <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
         📊 Adaptive Recall Policy
+        <span className="ml-1 normal-case text-slate-400">
+          (V16.5 chap 10 · 5 级召回 + Quality Gate)
+        </span>
       </div>
       <div className="space-y-0.5 rounded border border-slate-200 bg-slate-50 p-2 text-[10px]">
-        <div>
-          recallRequired:{" "}
+        <div title="本次提问是否触发记忆召回 (短句通常 false; 长句/含关键词 true)">
+          <span className="font-mono text-slate-600">recallRequired</span>
+          <span className="ml-1 text-slate-400">· 本轮是否启动召回</span>
+          <span className="ml-1">:</span>{" "}
           <span className={state.recallRequired ? "text-green-700" : "text-slate-400"}>
             {state.recallRequired ? "✅ true" : "false"}
           </span>
         </div>
-        <div>
-          recallPath:{" "}
+        <div title="走到第几级召回 (1 = 直接命中, 5 = Haiku rerank 升级兜底)">
+          <span className="font-mono text-slate-600">recallPath</span>
+          <span className="ml-1 text-slate-400">· 走到第几级</span>
+          <span className="ml-1">:</span>{" "}
           <span className="font-mono text-slate-700">
-            {state.recallPath !== null ? `Level ${state.recallPath}` : "—"}
+            {state.recallPath !== null
+              ? (RECALL_PATH_LABEL[state.recallPath] ?? `Level ${state.recallPath}`)
+              : "— (未触发召回)"}
           </span>
         </div>
-        <div>
-          recallSatisfied:{" "}
+        <div title="召回结果是否满足 Quality Gate (score ≥ 0.75 + 数量 ≥ 阈值)">
+          <span className="font-mono text-slate-600">recallSatisfied</span>
+          <span className="ml-1 text-slate-400">· 召回质量是否过关</span>
+          <span className="ml-1">:</span>{" "}
           <span className={state.recallSatisfied ? "text-green-700" : "text-slate-400"}>
             {state.recallSatisfied ? "✅ true" : "false"}
           </span>
         </div>
         {state.escalateReason && (
-          <div className="text-red-500">escalate: {state.escalateReason}</div>
+          <div
+            className="text-red-500"
+            title="升级原因 (score 不够 / 数量不够 / 超时 → 触发 Level 5 Haiku rerank)"
+          >
+            <span className="font-mono">escalateReason</span>
+            <span className="ml-1 text-red-400">· 升级原因</span>: {state.escalateReason}
+          </div>
         )}
-        <div className="text-slate-500">
-          budget: {state.budgetConsumed} / {state.budgetMax} tok
+        <div
+          className="text-slate-500"
+          title="本轮召回烧的 token 预算 / 上限 (V15.2 Adaptive Recall budget)"
+        >
+          <span className="font-mono">budget</span>
+          <span className="ml-1 text-slate-400">· token 预算</span>:{" "}
+          {state.budgetConsumed} / {state.budgetMax} tok
         </div>
       </div>
     </section>

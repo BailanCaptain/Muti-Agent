@@ -314,9 +314,10 @@ describe("PromptInspectorTab Adaptive Recall Policy", () => {
     render(<PromptInspectorTab />)
     await waitFor(() => expect(screen.queryByText(/Level 2/)).toBeTruthy())
     const policy = screen.getByTestId("prompt-inspector-policy")
-    expect(policy.textContent).toMatch(/recallRequired:.*✅/)
-    expect(policy.textContent).toMatch(/recallSatisfied:.*✅/)
-    expect(policy.textContent).toMatch(/budget: 180 \/ 4000/)
+    // G8 改 DOM 加 inline 字段说明 (recallRequired· 本轮... : ✅) — regex 适配
+    expect(policy.textContent).toMatch(/recallRequired.*✅/)
+    expect(policy.textContent).toMatch(/recallSatisfied.*✅/)
+    expect(policy.textContent).toMatch(/budget.*180 \/ 4000/)
   })
 
   it("escalate Level 5 → 显示 escalate reason 红色", async () => {

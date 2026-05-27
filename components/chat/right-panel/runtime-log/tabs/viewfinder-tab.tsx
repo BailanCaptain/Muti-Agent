@@ -46,8 +46,75 @@ export function ViewfinderTab() {
         ledger={data.ledger}
         onRefresh={refetch}
       />
+      {/* F027 v3 G9 · frontmatter 字段说明 panel (V16.5 chap 11 line 1255 viewfinder_id/generated_at/inputs/coverage 字段语义) */}
+      <ViewfinderFrontmatterPanel markdown={data.viewfinder} />
       <ViewfinderBody markdown={data.viewfinder} roomId={roomId} />
     </div>
+  )
+}
+
+// ─── F027 v3 G9 · ViewfinderFrontmatterPanel ──────────────────────────
+
+const FRONTMATTER_RE_INLINE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/
+
+/** 字段语义说明 (V16.5 chap 11 line 1255-1294) — 每字段 hover tooltip 来源 */
+const FRONTMATTER_FIELD_HELP: Record<string, string> = {
+  viewfinder_id:
+    "本 viewfinder 唯一标识 (vf_<roomId>_<时间戳>); MonthlySnapshot drift 比对用",
+  generated_at: "本 viewfinder 编译时刻 (ISO 时间)",
+  generated_by:
+    "编译方式: rule-based-template (6 段全 SQL 拼, V16.5 chap 11 设计层固定单路径, 不调 LLM)",
+  inputs:
+    "本次编译的输入: last_committed_cursor (消息 cursor) / decision_ledger_count / coverage 百分比",
+  coverage_status:
+    "覆盖度状态: pass=所有候选决策入 ledger / warn=部分 unresolved / fail=无 ledger 或全 unresolved",
+  coverage_reason: "coverage_status != pass 时给出原因 (extractor LLM 判定模糊或漏抓)",
+}
+
+function ViewfinderFrontmatterPanel({ markdown }: { markdown: string | null }) {
+  if (!markdown) return null
+  const m = markdown.match(FRONTMATTER_RE_INLINE)
+  if (!m) return null
+  const yamlBody = m[1]
+  // 简单 line 解析 (key: value, 不嵌套 inputs 子结构): 不重新发明 yaml parser
+  const lines = yamlBody.split(/\r?\n/)
+  const fields: Array<{ key: string; value: string; help?: string }> = []
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith("#")) continue
+    const colon = trimmed.indexOf(":")
+    if (colon < 1) continue
+    const key = trimmed.slice(0, colon).trim()
+    const value = trimmed.slice(colon + 1).trim()
+    if (key.startsWith("  ")) continue // 嵌套子字段 skip (inputs.last_committed_cursor 等)
+    fields.push({ key, value, help: FRONTMATTER_FIELD_HELP[key] })
+  }
+  if (fields.length === 0) return null
+  return (
+    <section
+      className="rounded border border-slate-200 bg-slate-50 p-2 text-xs"
+      data-testid="viewfinder-frontmatter-panel"
+    >
+      <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-500">
+        <span>📋 取景器 frontmatter 字段说明</span>
+        <span className="normal-case text-slate-400">
+          (V16.5 chap 11 · hover 字段名看说明)
+        </span>
+      </div>
+      <ul className="space-y-0.5 text-[10px]">
+        {fields.map((f) => (
+          <li key={f.key} className="flex gap-2" data-testid={`viewfinder-fm-${f.key}`}>
+            <span
+              className="min-w-[110px] cursor-help font-mono font-semibold text-slate-700 underline decoration-dotted"
+              title={f.help ?? "字段说明缺 (V16.5 chap 11 未列)"}
+            >
+              {f.key}
+            </span>
+            <span className="font-mono text-slate-600">{f.value || "—"}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 

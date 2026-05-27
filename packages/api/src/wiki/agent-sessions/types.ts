@@ -21,6 +21,47 @@
  */
 export type OpenThread = string | { text: string; a2a_call_id?: string }
 
+/**
+ * F027 v3 G10 · OpenThread 运行时 type guard (单值)。
+ *
+ * 之前 schema 是 TEXT 列存 JSON union，repository.parseJsonOrEmpty 只检 Array.isArray
+ * 不检每项 shape — 老 DB row 含格式错的 entry 会 silent 传到 UI/assembler 注入。
+ * 此 guard 给 boundary (repository hydrate / API request) 用，单项格式错时直接 reject。
+ */
+export function isOpenThread(value: unknown): value is OpenThread {
+  if (typeof value === "string") return true
+  if (typeof value !== "object" || value === null) return false
+  const obj = value as Record<string, unknown>
+  if (typeof obj.text !== "string" || obj.text.length === 0) return false
+  if (obj.a2a_call_id !== undefined && typeof obj.a2a_call_id !== "string") return false
+  return true
+}
+
+/** F027 v3 G10 · OpenThread[] 运行时 type guard (整数组每项 valid 才过)。 */
+export function isOpenThreadArray(value: unknown): value is OpenThread[] {
+  return Array.isArray(value) && value.every(isOpenThread)
+}
+
+/**
+ * F027 v3 G10 · 把 raw JSON parsed 数组过滤成合法 OpenThread[]，丢弃非法 entry + 记 count.
+ *
+ * 用于 repository hydrate path: 不抛错保持向后兼容 (老 DB 数据可能含 schema 漂)，
+ * 但格式错的 entry 不传到 UI/assembler — 比 silent passthrough 安全。
+ */
+export function sanitizeOpenThreads(rawArray: unknown): {
+  valid: OpenThread[]
+  droppedCount: number
+} {
+  if (!Array.isArray(rawArray)) return { valid: [], droppedCount: 0 }
+  const valid: OpenThread[] = []
+  let droppedCount = 0
+  for (const item of rawArray) {
+    if (isOpenThread(item)) valid.push(item)
+    else droppedCount += 1
+  }
+  return { valid, droppedCount }
+}
+
 /** DB 行 hydrate 后（JSON 字段已解析）。 */
 export interface RoomAgentSession {
   sessionId: number
