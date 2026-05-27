@@ -70,10 +70,23 @@ export function PromptInspectorTab() {
   // F027 v3 G4 · alias dropdown 选中状态 (多 agent room 切换 per-agent prompt)
   // null = 不限 alias (取最新 row, 与 v3 前行为兼容)
   const [selectedAlias, setSelectedAlias] = useState<string | null>(null)
+  // F027 v3 G4 r2 (codex P2 修): roomId 变化 → 清掉跨 room stale alias，避免拿旧 room
+  // 的 alias 去查新 room (新 room 没这个 alias → 永空 audit)
+  useEffect(() => {
+    setSelectedAlias(null)
+  }, [roomId])
   const { data, isLoading, error } = usePromptInspectorData(roomId, {
     enabled,
     alias: selectedAlias,
   })
+  // F027 v3 G4 r2 (codex P2 修): selectedAlias 不在 availableAliases 里 → 清掉
+  // (例: room 内 audit 行 alias 被 demote/删，dropdown 选项变；或 hook 返
+  //  selectedAlias=null 表示 stale alias 不匹配)。
+  useEffect(() => {
+    if (selectedAlias && !data.availableAliases.includes(selectedAlias)) {
+      setSelectedAlias(null)
+    }
+  }, [selectedAlias, data.availableAliases])
   const coverage = useDecisionsCoverageData(roomId, { enabled })
 
   // final-vision P1-1: unresolved decision click → DecisionSupersedeRejectModal

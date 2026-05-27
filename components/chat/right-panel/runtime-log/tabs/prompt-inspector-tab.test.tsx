@@ -163,6 +163,51 @@ describe("PromptInspectorTab 7 块渲染", () => {
   })
 })
 
+describe("PromptInspectorTab AliasFilterRow (F027 v3 G4)", () => {
+  beforeEach(() => {
+    resetStores()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("0 alias → 显示 '— (room 内无 audit row)' 灰条", async () => {
+    mockFetchResponse(makeResponse({ availableAliases: [], selectedAlias: null }))
+    render(<PromptInspectorTab />)
+    await waitFor(() => expect(screen.queryByTestId("prompt-inspector-loading")).toBeNull())
+    expect(screen.getByTestId("prompt-inspector-alias-filter-empty")).toBeTruthy()
+  })
+
+  it("1 alias → 只读标签，不显 dropdown", async () => {
+    mockFetchResponse(makeResponse({ availableAliases: ["黄仁勋"], selectedAlias: "黄仁勋" }))
+    render(<PromptInspectorTab />)
+    await waitFor(() => expect(screen.queryByTestId("prompt-inspector-loading")).toBeNull())
+    expect(screen.getByTestId("prompt-inspector-alias-filter-single")).toBeTruthy()
+    expect(screen.queryByTestId("prompt-inspector-alias-select")).toBeNull()
+    expect(screen.getByTestId("prompt-inspector-alias-filter-single").textContent).toMatch(/黄仁勋/)
+  })
+
+  it("≥2 alias → 真 dropdown + 默认 fallback 显 backend selectedAlias + 切换 onChange", async () => {
+    mockFetchResponse(
+      makeResponse({
+        availableAliases: ["桂芬", "范德彪", "黄仁勋"],
+        selectedAlias: "桂芬",
+      }),
+    )
+    render(<PromptInspectorTab />)
+    await waitFor(() => expect(screen.queryByTestId("prompt-inspector-alias-select")).toBeTruthy())
+    const select = screen.getByTestId("prompt-inspector-alias-select") as HTMLSelectElement
+    // 本地 selectedAlias=null → fallback 显 backend data.selectedAlias = "桂芬"
+    expect(select.value).toBe("桂芬")
+    // 选 范德彪 → onChange 改本地 state
+    fireEvent.change(select, { target: { value: "范德彪" } })
+    await waitFor(() => expect(select.value).toBe("范德彪"))
+    // 选 "" → 回到不限 alias (本地 null + backend fallback "桂芬")
+    fireEvent.change(select, { target: { value: "" } })
+    await waitFor(() => expect(select.value).toBe("桂芬"))
+  })
+})
+
 describe("PromptInspectorTab 注入 part 表渲染", () => {
   beforeEach(() => {
     resetStores()
