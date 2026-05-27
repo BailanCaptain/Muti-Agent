@@ -296,6 +296,51 @@ test("G2 · scanRoomViewfindersForSnapshot: 扫活跃 room + 读 viewfinder.md �
 
 // ── G2 r2 (codex review FAIL fix) · wikiRoot 约定锁 ──────────────────
 
+test("G2 r2 · server.ts bootSchedulerRuntime wikiRoot 必须用 roomCompileWikiRoot 不是 namespace 外层（codex P2 wiring lock）", () => {
+  // Codex G2 r2 review CONDITIONAL_PASS finding: "scanner lock test 不直接锁 server.ts wiring，
+  // 后续 server.ts 传错值不会被 wiki-scanners.test.ts 单独拦住"。
+  //
+  // 此 static source assertion 锁住 server.ts bootSchedulerRuntime 块的 wikiRoot 字段值必须是
+  // `roomCompileWikiRoot`（已计算好的 `<wikiServicesRoot>/wiki/` markdown 实际根）或显式 join wiki。
+  // 防止未来 caller 改回 `process.env.WIKI_ROOT || cwd/.runtime/wiki/` 这种 namespace 外层错误。
+  //
+  // 失败示例:
+  //   bootSchedulerRuntime({
+  //     ...
+  //     wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),  // ❌ 会扫不到真文件
+  //   })
+  // 正确示例:
+  //   bootSchedulerRuntime({
+  //     ...
+  //     wikiRoot: roomCompileWikiRoot,  // ✅ 已含 wiki/ 多一层
+  //   })
+  const serverPath = path.join(
+    process.cwd(),
+    "packages",
+    "api",
+    "src",
+    "server.ts",
+  )
+  const src = fs.readFileSync(serverPath, "utf-8")
+  // 匹配 bootSchedulerRuntime({...wikiRoot: X...}) 块（multi-line + 注释 + JSDoc）
+  const match = src.match(/bootSchedulerRuntime\(\{[\s\S]*?\n\s*wikiRoot:\s*([^,\n]+)/)
+  assert.ok(
+    match,
+    "server.ts 必须有 bootSchedulerRuntime({...wikiRoot: X...}) 调用 (G2 wire 接通)",
+  )
+  const value = match![1].trim()
+  // 必须是 roomCompileWikiRoot 或显式 join wiki/（即多加一层 wiki 对齐真实文件结构）
+  // 不可以是 process.env.WIKI_ROOT || path.join(..., ".runtime", "wiki") 这种 namespace 外层
+  const isRoomCompileRoot = value === "roomCompileWikiRoot"
+  const hasExplicitWikiJoin = /["']wiki["']/.test(value)
+  assert.ok(
+    isRoomCompileRoot || hasExplicitWikiJoin,
+    `server.ts bootSchedulerRuntime wikiRoot 必须用 roomCompileWikiRoot (或显式 join "wiki" 多一层)，` +
+      "不能传 namespace 外层（如 process.env.WIKI_ROOT || .runtime/wiki/）；" +
+      `否则 5 个 cron job 全扫不到真文件 (codex G2 review FAIL P1)。实际值: ${value}`,
+  )
+})
+
 test("G2 r2 · wikiRoot 约定 = markdown 实际根（server.ts:911 roomCompileWikiRoot 口径，不是 namespace 外层）", async () => {
   // 模拟真实 production fs 结构: `<base>/wiki/rooms/<id>/viewfinder.md`
   // server.ts 必须传 wikiRoot = `<base>/wiki`（不是 `<base>`），scanner 才能扫到文件。
