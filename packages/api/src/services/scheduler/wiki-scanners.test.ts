@@ -294,6 +294,71 @@ test("G2 · scanRoomViewfindersForSnapshot: 扫活跃 room + 读 viewfinder.md �
 
 // ── scanAgentSessionsFs ───────────────────────────────────────────────
 
+// ── G2 r2 (codex review FAIL fix) · wikiRoot 约定锁 ──────────────────
+
+test("G2 r2 · wikiRoot 约定 = markdown 实际根（server.ts:911 roomCompileWikiRoot 口径，不是 namespace 外层）", async () => {
+  // 模拟真实 production fs 结构: `<base>/wiki/rooms/<id>/viewfinder.md`
+  // server.ts 必须传 wikiRoot = `<base>/wiki`（不是 `<base>`），scanner 才能扫到文件。
+  // 之前 G2 v1 传错值 (`<base>`) → scanner 全扫不到真文件 (codex review FAIL P1)。
+  // 此测试 lock 修复：caller 给 wikiRoot=`<base>/wiki` 时 scanner 找到 viewfinder.md。
+  const base = makeTmpWiki()
+  // base 模拟 `.runtime/wiki`，真实文件在 `base/wiki/rooms/R-001/viewfinder.md`
+  // (注意双 wiki 嵌套 — 与 .runtime/wiki/wiki/ 真实约定一致)
+  writeMd(base, "wiki/rooms/R-001/viewfinder.md", "## Decisions\n- F027 G2 r2 路径修")
+  writeMd(base, "wiki/rooms/R-002/viewfinder.md", "R-002 viewfinder body")
+  writeMd(base, "wiki/concepts/draft/foo.md", "draft body")
+
+  // 错误传值: wikiRoot = base → scanner 扫不到 (因为它走 base/rooms/... 不存在)
+  const wrongWikiRoot = base
+  const wrongScanner = scanWikiEntitiesFs(wrongWikiRoot)
+  const wrongEntities = await wrongScanner()
+  // 走 wrong path 时，walkMdFiles 仍能递归到 base/wiki/... 子树，但 entity.path
+  // 前缀会变 "wiki/wiki/..." (双 wiki) — 破坏 NightlyHealthCheck 路径约定
+  for (const e of wrongEntities) {
+    assert.ok(
+      e.path.startsWith("wiki/wiki/"),
+      `wrong 传值时 path 应有 wiki/wiki/ 双前缀 (破坏路径约定，证明 server.ts 不能传 namespace 外层)；实际: ${e.path}`,
+    )
+  }
+
+  // 正确传值: wikiRoot = base/wiki → scanner path 单 wiki/ 前缀
+  const correctWikiRoot = path.join(base, "wiki")
+  const correctScanner = scanWikiEntitiesFs(correctWikiRoot)
+  const correctEntities = await correctScanner()
+  assert.equal(correctEntities.length, 3, "应扫到 R-001 + R-002 viewfinder + draft/foo")
+  for (const e of correctEntities) {
+    assert.ok(
+      e.path.startsWith("wiki/") && !e.path.startsWith("wiki/wiki/"),
+      `正确传值时 path 应单 wiki/ 前缀；实际: ${e.path}`,
+    )
+  }
+
+  // MonthlySnapshot 路径同口径 (DB scanned rooms 与文件路径 join)
+  const { db, raw } = makeTmpDb()
+  try {
+    const now = new Date().toISOString()
+    raw
+      .prepare(
+        "INSERT INTO session_groups (id, room_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run("sg-1", "R-001", "Room 1", now, now)
+    const snapshotScanner = scanRoomViewfindersForSnapshot(db, correctWikiRoot)
+    const snapshots = await snapshotScanner()
+    assert.equal(snapshots.length, 1, "正确 wikiRoot 应扫到 R-001 viewfinder")
+    assert.ok(snapshots[0].currentViewfinder.includes("F027 G2 r2 路径修"))
+
+    const wrongSnapshotScanner = scanRoomViewfindersForSnapshot(db, wrongWikiRoot)
+    const wrongSnapshots = await wrongSnapshotScanner()
+    assert.equal(
+      wrongSnapshots.length,
+      0,
+      "wrong wikiRoot 应扫不到任何 viewfinder (path mismatch)",
+    )
+  } finally {
+    raw.close()
+  }
+})
+
 test("G2 · scanAgentSessionsFs: rooms/<id>/agent-sessions/<alias>/S-NNNN.md 抓 year + digest", async () => {
   const root = makeTmpWiki()
   writeMd(

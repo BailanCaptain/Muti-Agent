@@ -6,6 +6,17 @@
  *   - F027 v3 audit summary G2 — 标 P0: "5 cron jobs scan callback 真业务接通"
  *   - V16.5 chap 17 line 1800-1854 (NightlyHealthCheck) + chap 11 (MonthlySnapshot drift)
  *
+ * ⚠️ wikiRoot 约定（G2 r2 codex review FAIL 后明确）:
+ *   wikiRoot 必须指向 **markdown 文件实际根目录**，即满足 `<wikiRoot>/rooms/<id>/viewfinder.md`
+ *   能直接读到真文件的那一层 — 不是 namespace 外层（如 `.runtime/wiki/`）。
+ *
+ *   真实文件结构: `.runtime/wiki/wiki/rooms/<id>/viewfinder.md`（注意双 `wiki/`）
+ *   ✅ 正确传值: `.runtime/wiki/wiki` (markdown 实际根 — 与 RoomCompileExecutor 同口径)
+ *   ❌ 错误传值: `.runtime/wiki`     (namespace 外层 — scanner 全扫不到真文件)
+ *
+ *   server.ts:849 + :911 用 `roomCompileWikiRoot = path.join(<wikiServicesRoot>, "wiki")` 统一约定。
+ *   未来 caller 见 server.ts:822-829 注释（不一致的 ViewfinderService vs RoomCompiler.run() 历史）。
+ *
  * 5 个 scanner:
  *   1. scanWikiEntitiesFs(wikiRoot)        → NightlyHealthCheck.scanEntities
  *   2. scanWikiDraftsFs(wikiRoot)          → WeeklyDraftDigest.scanDrafts

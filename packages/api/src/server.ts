@@ -896,9 +896,14 @@ export async function createApiServer(options: {
     docsIngestRunner,
     // F027 v3 G2 · cron scanner 接真业务（NightlyHealthCheck / WeeklyDraftDigest /
     // MonthlySnapshot / ArchiveYearlySessions 扫此根；DriftDetector 走 DB 不依赖）。
-    // wikiRoot 取值与其他 caller (wikiServices / executorDeps / viewfinderSvc / phase3Routes
-    // / roomCompileWikiServicesRoot) 一致：`process.env.WIKI_ROOT || cwd/.runtime/wiki/`。
-    wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    //
+    // G2 r2 修：复用 line 829 `roomCompileWikiRoot` = `<wikiServicesRoot>/wiki/`
+    // （多加一层 wiki 对齐真实文件结构 — 实际 viewfinder.md 在 .runtime/wiki/wiki/rooms/<id>/）。
+    // 之前误传 `<wikiServicesRoot>` 让 scanner 全扫不到真文件（codex G2 review FAIL P1）。
+    //
+    // 约定：wikiRoot 是 markdown 文件实际根（`<X>/rooms/<id>/viewfinder.md` 中的 `<X>`），
+    // 不是 namespace 外层。scanner ts docstring 强调；caller 见 server.ts:829 `roomCompileWikiRoot`。
+    wikiRoot: roomCompileWikiRoot,
   })
   app.addHook("onClose", async () => {
     if (schedulerRuntime) {
