@@ -102,16 +102,107 @@ export type PromptPart = {
   surface: "systemPrompt" | "content"
 }
 
+/**
+ * F027 v3 G1 · V16.5 chap 20 line 2273-2275 token 预算硬顶（runtime 单次 wake-up）。
+ *
+ * 6700 = wake-up runtime cap（CLI harness ~3500 是不可控的，runtime 这一段 = 6700）。
+ * 合并 cap ~10200 由 caller 自己加 harness 预算，本入口只管 runtime 段。
+ *
+ * 改值时记得同步：V16.5 chap 20 line 2273 表格 / docs/features/F027/F027-v3-PATCH.md G1 章节。
+ */
+export const WAKEUP_TOKEN_CAP = 6700
+
+/**
+ * F027 v3 G1 · Drop order（最先被砍的在前，硬顶溢出时按此序丢弃）。
+ *
+ * 设计原则（对齐 F018 session-bootstrap.ts:17 drop order 推到全 prompt 层）：
+ *   - base-identity / guardian-prompt / sop-bookmark / capability-digest / session-bootstrap
+ *     / task / handoff-context 永不丢（agent 身份 + 当前任务 + 协作合约不可缺）
+ *   - viewfinder 是 room 防漂移核心（V16.5 chap 11），最后才丢
+ *   - cold-target-burst 是冷启动救命包，倒数第二丢
+ *   - rolling-summary / handbook 是 reference 性辅助，可早丢
+ *   - recall-pack 是 memory_preflight 召回，最先丢（找不到信息时 agent 还能调 recall_similar_context 工具补救）
+ */
+const DROP_ORDER: ReadonlyArray<PromptPart["name"]> = [
+  "recall-pack",
+  "handbook-agent-actions",
+  "rolling-summary",
+  "cold-target-tombstone",
+  "cold-target-burst",
+  "collaboration-contract",
+  "viewfinder",
+]
+
+/**
+ * F027 v3 G1 · prompt_audit.not_injected_json 行项 schema。
+ *
+ * 写真值（cap 溢出后被 reducer 砍的 part）后，Inspector NotInjectedSection 渲染:
+ *   "❌ recall-pack (1200 tok) — over_cap_drop_order"
+ */
+export type NotInjectedPart = {
+  name: string
+  tokens: number
+  reason: "over_cap_drop_order"
+}
+
 export type AssemblePromptResult = {
   systemPrompt: string
   content: string
   /** F027 P4 hotfix · 每注入一段就 push 一条；caller 传给 promptAuditWriter.partsJson。 */
   parts: PromptPart[]
+  /**
+   * F027 v3 G1 · drop reducer 砍掉的 part 列表（V16.5 chap 20 cap 溢出时）。
+   * 空数组 = 全部注入成功；caller 传给 promptAuditWriter.notInjectedJson。
+   */
+  notInjected: NotInjectedPart[]
+  /** F027 v3 G1 · 本次拼装使用的总 cap（V16.5 chap 20 wake-up runtime = WAKEUP_TOKEN_CAP）。 */
+  cap: number
 }
 
 /** F027 P4 hotfix · char/4 token 估算（V16.5 §18 line 2515 同口径）。 */
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4)
+}
+
+/**
+ * F027 v3 G1 · 内部 AssemblyPart — 每段带 block (注入到 prompt 的实际文本)。
+ *
+ * 每个 block 自带前导分隔（"\n\n"），可单独删除而不影响相邻 block 排版。
+ * 第一个 block (base-identity/guardian-prompt) 无前导分隔，永不被删。
+ */
+type AssemblyPart = {
+  name: PromptPart["name"]
+  surface: "systemPrompt" | "content"
+  block: string
+  tokens: number
+}
+
+/**
+ * F027 v3 G1 · Token 预算 reducer — sum > cap 时按 DROP_ORDER 砍 part。
+ *
+ * tokens 字段只统计 body 内容（不含前导分隔），与原 push parts 时 estimateTokens 同口径，
+ * 避免分隔字符让 budget 算高。永不被 drop：不在 DROP_ORDER 里的 part（包括 task / base-identity 等）。
+ */
+function applyTokenBudget(
+  partsInOrder: ReadonlyArray<AssemblyPart>,
+  cap: number,
+): { kept: AssemblyPart[]; notInjected: NotInjectedPart[] } {
+  const notInjected: NotInjectedPart[] = []
+  if (cap <= 0) return { kept: [...partsInOrder], notInjected }
+  let total = partsInOrder.reduce((s, p) => s + p.tokens, 0)
+  if (total <= cap) return { kept: [...partsInOrder], notInjected }
+  const dropped = new Set<PromptPart["name"]>()
+  for (const name of DROP_ORDER) {
+    if (total <= cap) break
+    const idx = partsInOrder.findIndex((p) => p.name === name && !dropped.has(p.name))
+    if (idx < 0) continue
+    const part = partsInOrder[idx]
+    dropped.add(part.name)
+    notInjected.push({ name: part.name, tokens: part.tokens, reason: "over_cap_drop_order" })
+    total -= part.tokens
+  }
+  const kept = partsInOrder.filter((p) => !dropped.has(p.name))
+  return { kept, notInjected }
 }
 
 /**
@@ -126,31 +217,40 @@ export async function assemblePrompt(
   memoryService: MemoryService | null,
 ): Promise<AssemblePromptResult> {
   const { provider, policy, roomSnapshot, targetAlias } = input
-  const parts: PromptPart[] = []
+  void roomSnapshot
 
   // ── System Prompt ──────────────────────────────────────────────────
   // Guardian mode: zero-context custom prompt, no identity/team/rules injection.
   if (input.guardianMode) {
-    parts.push({
-      name: "guardian-prompt",
-      tokens: estimateTokens(ACCEPTANCE_GUARDIAN_PROMPT),
-      surface: "systemPrompt",
-    })
     return {
       systemPrompt: ACCEPTANCE_GUARDIAN_PROMPT,
       content: input.task,
-      parts,
+      parts: [
+        {
+          name: "guardian-prompt",
+          tokens: estimateTokens(ACCEPTANCE_GUARDIAN_PROMPT),
+          surface: "systemPrompt",
+        },
+      ],
+      notInjected: [],
+      cap: WAKEUP_TOKEN_CAP,
     }
   }
 
+  // F027 v3 G1 · 用 AssemblyPart[] 替代原 systemParts/contentSections 字符串数组，
+  // 让 cap reducer 能 drop 整段；每段 block 自带前导分隔（"\n\n"），删后排版仍干净。
+  const assembly: AssemblyPart[] = []
+
+  // ── 1. base-identity (systemPrompt, 永不 drop, 第一段无前导分隔) ──
   const baseIdentity = AGENT_SYSTEM_PROMPTS[provider]
-  const systemParts: string[] = [baseIdentity]
-  parts.push({
+  assembly.push({
     name: "base-identity",
-    tokens: estimateTokens(baseIdentity),
     surface: "systemPrompt",
+    block: baseIdentity,
+    tokens: estimateTokens(baseIdentity),
   })
 
+  // ── 2. rolling-summary (systemPrompt, droppable) ──
   if (policy.injectRollingSummary && memoryService) {
     const summary = await memoryService.getOrCreateSummary(input.sessionGroupId)
     if (summary) {
@@ -161,37 +261,36 @@ export async function assemblePrompt(
       // B-fix: rolling summary 注入 system prompt 前硬截断到 8K，防止 claude CLI
       // `--append-system-prompt` 撞 Windows CreateProcess 32767 字符上限（ENAMETOOLONG）。
       // 仅 claude-runtime 把 system prompt 走 argv，codex/gemini 走 stdin 不爆。
-      const capped = sanitized.length > 8000
-        ? sanitized.slice(0, 8000) + "\n…（摘要超长已截断，详细历史请用 recall_similar_context 按需查询）"
-        : sanitized
+      const capped =
+        sanitized.length > 8000
+          ? sanitized.slice(0, 8000) +
+            "\n…（摘要超长已截断，详细历史请用 recall_similar_context 按需查询）"
+          : sanitized
       if (capped) {
-        systemParts.push("")
-        systemParts.push("## 本房间摘要")
-        systemParts.push(capped)
-        systemParts.push("请参考上述背景信息继续协作。")
-        parts.push({
+        assembly.push({
           name: "rolling-summary",
-          tokens: estimateTokens(capped),
           surface: "systemPrompt",
+          block: `\n\n## 本房间摘要\n${capped}\n请参考上述背景信息继续协作。`,
+          tokens: estimateTokens(capped),
         })
       }
     }
   }
 
+  // ── 3. sop-bookmark (systemPrompt, 永不 drop) ──
   if (policy.injectRollingSummary && input.sopBookmark) {
     const bookmarkLine = formatBookmarkForInjection(input.sopBookmark)
     if (bookmarkLine) {
-      systemParts.push("")
-      systemParts.push("## 当前执行状态")
-      systemParts.push(bookmarkLine)
-      parts.push({
+      assembly.push({
         name: "sop-bookmark",
-        tokens: estimateTokens(bookmarkLine),
         surface: "systemPrompt",
+        block: `\n\n## 当前执行状态\n${bookmarkLine}`,
+        tokens: estimateTokens(bookmarkLine),
       })
     }
   }
 
+  // ── 4. capability-digest (systemPrompt, 永不 drop) ──
   // F027 P5 · V16.5 chap 4 行 405：capabilityDigest 进 systemPrompt（agent 身份层）。
   // 不进 content（V16.5 chap 4 行 417-419 严格区分：systemPrompt = agent 身份；
   // content = reference-only）。capability_digest_for_self 是 agent 自我介绍属性，
@@ -199,22 +298,18 @@ export async function assemblePrompt(
   if (input.capabilityDigest) {
     const sanitized = sanitizeHandoffBody(input.capabilityDigest)
     if (sanitized) {
-      systemParts.push("")
-      systemParts.push("## Capability Digest")
-      systemParts.push(sanitized)
-      parts.push({
+      assembly.push({
         name: "capability-digest",
-        tokens: estimateTokens(sanitized),
         surface: "systemPrompt",
+        block: `\n\n## Capability Digest\n${sanitized}`,
+        tokens: estimateTokens(sanitized),
       })
     }
   }
 
-  const systemPrompt = systemParts.join("\n")
-
   // ── Content (user message) ─────────────────────────────────────────
-  const contentSections: string[] = []
 
+  // ── 5. session-bootstrap (content, 永不 drop, 自带内部 drop order) ──
   // F018 AC3.5: New session gets SessionBootstrap reference-only prelude
   // (Thread Memory / Previous Session / Task Snapshot / Recall Tools / Do NOT guess).
   // Injected only when nativeSessionId is null AND caller supplied bootstrap metadata —
@@ -236,34 +331,33 @@ export async function assemblePrompt(
         : null,
       recallTools: input.recallTools ?? [],
     })
-    contentSections.push(bootstrap.text)
-    contentSections.push("")
-    parts.push({
+    assembly.push({
       name: "session-bootstrap",
-      tokens: estimateTokens(bootstrap.text),
       surface: "content",
+      block: `${bootstrap.text}\n`,
+      tokens: estimateTokens(bootstrap.text),
     })
   }
 
+  // ── 6. cold-target-burst (+ tombstone) (content, droppable) ──
   // F026-P3 Task6 · cold-target burst 注入（SessionBootstrap 之后 / header 之前）
   // 触发判定由 callsite 决定（nativeSessionId == null AND threadMemory == null AND
   // previousDigest == null）；本段在的 = caller 已判定要注入。Source 不限。
   if (input.coldTargetBurst) {
-    contentSections.push(input.coldTargetBurst.burstSection)
-    parts.push({
+    assembly.push({
       name: "cold-target-burst",
-      tokens: estimateTokens(input.coldTargetBurst.burstSection),
       surface: "content",
+      block: `\n${input.coldTargetBurst.burstSection}`,
+      tokens: estimateTokens(input.coldTargetBurst.burstSection),
     })
     if (input.coldTargetBurst.tombstoneSection) {
-      contentSections.push(input.coldTargetBurst.tombstoneSection)
-      parts.push({
+      assembly.push({
         name: "cold-target-tombstone",
-        tokens: estimateTokens(input.coldTargetBurst.tombstoneSection),
         surface: "content",
+        block: `\n${input.coldTargetBurst.tombstoneSection}`,
+        tokens: estimateTokens(input.coldTargetBurst.tombstoneSection),
       })
     }
-    contentSections.push("")
   }
 
   // ─── F027 P5 · 4 个新 reference-only 区段（V16.5 chap 4 行 362-367） ──────
@@ -271,23 +365,20 @@ export async function assemblePrompt(
   // 全部以 [Section — Reference Only] 包裹，body 入 wrapper 前过 sanitizeHandoffBody
   // 防 LLM 生成 / wiki 写入的内容含 directive-like 行 (SYSTEM:/IMPORTANT:) 或伪闭合标签。
 
-  // 1. Viewfinder — Reference Only（room 防漂移视图）
+  // ── 7. viewfinder (content, droppable last — room 防漂移核心) ──
   if (input.viewfinder?.body) {
     const sanitized = sanitizeHandoffBody(input.viewfinder.body)
     if (sanitized) {
-      contentSections.push("[Viewfinder — Reference Only]")
-      contentSections.push(sanitized)
-      contentSections.push("[/Viewfinder]")
-      contentSections.push("")
-      parts.push({
+      assembly.push({
         name: "viewfinder",
-        tokens: estimateTokens(sanitized),
         surface: "content",
+        block: `\n[Viewfinder — Reference Only]\n${sanitized}\n[/Viewfinder]\n`,
+        tokens: estimateTokens(sanitized),
       })
     }
   }
 
-  // 2. Recall Pack — Reference Only（memory_preflight 高置信召回 ≥ 0.75）
+  // ── 8. recall-pack (content, droppable first — memory_preflight 召回) ──
   // V16.5 chap 4 行 366："≥ 0.75 才注入；0.6-0.75 仅 Inspector 看"——caller 责任过滤
   if (input.memoryPreflight && input.memoryPreflight.hits.length > 0) {
     const lines: string[] = ["[Recall Pack — Reference Only]"]
@@ -299,35 +390,32 @@ export async function assemblePrompt(
     }
     if (lines.length > 1) {
       lines.push("[/Recall Pack]")
-      lines.push("")
-      contentSections.push(...lines)
-      parts.push({
+      const body = lines.join("\n")
+      assembly.push({
         name: "recall-pack",
-        tokens: estimateTokens(lines.join("\n")),
         surface: "content",
+        block: `\n${body}\n`,
+        tokens: estimateTokens(body),
       })
     }
   }
 
-  // 3. Handbook — Agent Actions — Reference Only（仅 first wake-up）
+  // ── 9. handbook-agent-actions (content, droppable — first wake-up only) ──
   // V16.5 chap 4 行 365：capability_digest 已覆盖最小动作集时 skip
   // Phase 1 简化：scenario === 'wake_up' 且 caller 提供 handbookSlices.agentActions 即注入
   if (input.scenario === "wake_up" && input.handbookSlices?.agentActions) {
     const sanitized = sanitizeHandoffBody(input.handbookSlices.agentActions)
     if (sanitized) {
-      contentSections.push("[Handbook — Agent Actions — Reference Only]")
-      contentSections.push(sanitized)
-      contentSections.push("[/Handbook]")
-      contentSections.push("")
-      parts.push({
+      assembly.push({
         name: "handbook-agent-actions",
-        tokens: estimateTokens(sanitized),
         surface: "content",
+        block: `\n[Handbook — Agent Actions — Reference Only]\n${sanitized}\n[/Handbook]\n`,
+        tokens: estimateTokens(sanitized),
       })
     }
   }
 
-  // 4. Collaboration Contract — Reference Only（仅 a2a_handoff）
+  // ── 10. collaboration-contract (content, droppable second-last — a2a_handoff only) ──
   // V16.5 chap 4 行 422-431：handoffContext 由 F026 EnvelopeBuilder 派发时填充。
   // sender risks 不泄漏的保护：caller (message-service.buildA2AHandoffContext) 限定
   // 只透 receiverAlias + entry.taskSnippet，不读任何 sender capabilities/risks 字段；
@@ -338,64 +426,78 @@ export async function assemblePrompt(
     const sanitizedReceiver = sanitizeHandoffBody(input.handoffContext.receiverAlias)
     const sanitizedTask = sanitizeHandoffBody(input.handoffContext.taskSummary)
     if (sanitizedReceiver || sanitizedTask) {
-      const block: string[] = [
+      const blockLines: string[] = [
         "[Collaboration Contract — Reference Only]",
         `receiver_alias: ${sanitizedReceiver}`,
       ]
-      if (sanitizedTask) block.push(`task_summary: ${sanitizedTask}`)
-      block.push("[/Collaboration Contract]")
-      contentSections.push(...block)
-      contentSections.push("")
-      parts.push({
+      if (sanitizedTask) blockLines.push(`task_summary: ${sanitizedTask}`)
+      blockLines.push("[/Collaboration Contract]")
+      const body = blockLines.join("\n")
+      assembly.push({
         name: "collaboration-contract",
-        tokens: estimateTokens(block.join("\n")),
         surface: "content",
+        block: `\n${body}\n`,
+        tokens: estimateTokens(body),
       })
     }
   }
 
-  // Header
-  const isUserInitiated = input.sourceAlias === "user"
-  contentSections.push(isUserInitiated ? "[用户请求]" : `[A2A 协作请求 from ${input.sourceAlias}]`)
-  contentSections.push("")
-  contentSections.push(`任务: ${input.task}`)
-  contentSections.push("")
-
+  // ── 11. task (content, 永不 drop — 包含 header / 任务 / preamble / MCP hint / 落款) ──
   // F019 P4: skillHint keyword-injection layer removed — SOP direction now
   // comes from sopStageHint in the system prompt (see agent-prompts.ts
   // buildSystemPromptWithHints). CLI-native skill discovery handles the rest.
-
-  // Preamble (document-only mode)
-  if (policy.injectPreamble && input.preamble) {
-    contentSections.push("--- 需求文档 ---")
-    contentSections.push(input.preamble)
-    contentSections.push("---")
-    contentSections.push("")
-  }
-
+  //
   // F018 AC5.3/5.4: 废弃 `--- 你之前的发言 ---` + `--- 近期对话 ---` 原对话重灌。
   // 新架构：新 session 的历史通过 SessionBootstrap (ThreadMemory + Previous Session
   // Summary) 注入；继承 session (nativeSessionId !== null) 依赖 CLI --resume；按需
   // 细节由 agent 主动调 recall_similar_context 工具（Bootstrap tools 段已注入工具清单）。
-  // F004 defensive injection 在此移除，`policy.injectSelfHistory` / `injectSharedHistory`
-  // / dynamic-budget 依然存在仅用于未来其他策略；原 slice + microcompact 分节已删。
-
-  // MCP hint
-  contentSections.push("如需更早的上下文，可调用 MCP get_room_context 工具获取。")
-  contentSections.push("")
-  contentSections.push(`你是 ${targetAlias}。请完成上述任务。`)
-
-  // F027 P4 hotfix · task 段单独算 part，让 inspector 看清"agent 收到的 user message" 占多少。
-  parts.push({
+  const isUserInitiated = input.sourceAlias === "user"
+  const taskLines: string[] = [
+    isUserInitiated ? "[用户请求]" : `[A2A 协作请求 from ${input.sourceAlias}]`,
+    "",
+    `任务: ${input.task}`,
+    "",
+  ]
+  if (policy.injectPreamble && input.preamble) {
+    taskLines.push("--- 需求文档 ---", input.preamble, "---", "")
+  }
+  taskLines.push(
+    "如需更早的上下文，可调用 MCP get_room_context 工具获取。",
+    "",
+    `你是 ${targetAlias}。请完成上述任务。`,
+  )
+  const taskBlock = taskLines.join("\n")
+  assembly.push({
     name: "task",
-    tokens: estimateTokens(input.task),
     surface: "content",
+    block: `\n${taskBlock}`,
+    tokens: estimateTokens(input.task),
   })
+
+  // ── F027 v3 G1 · Token 预算 reducer ──────────────────────────────
+  const { kept, notInjected } = applyTokenBudget(assembly, WAKEUP_TOKEN_CAP)
+
+  const systemPrompt = kept
+    .filter((p) => p.surface === "systemPrompt")
+    .map((p) => p.block)
+    .join("")
+  const content = kept
+    .filter((p) => p.surface === "content")
+    .map((p) => p.block)
+    .join("")
+
+  const parts: PromptPart[] = kept.map((p) => ({
+    name: p.name,
+    tokens: p.tokens,
+    surface: p.surface,
+  }))
 
   return {
     systemPrompt,
-    content: contentSections.join("\n"),
+    content,
     parts,
+    notInjected,
+    cap: WAKEUP_TOKEN_CAP,
   }
 }
 

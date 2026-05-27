@@ -641,15 +641,20 @@ export class MessageService {
         args.assembled.systemPrompt + "\n" + args.assembled.content,
       )
       const patch = args.recallPatch ?? buildRecallAuditPatch({ output: undefined })
+      // F027 v3 G1 · V16.5 chap 20 line 2273 token 预算 — cap + notInjectedJson 真值写入
+      // (Phase 3 / Phase 4 都是 cap=0 + notInjectedJson=null 占位; v3 接通 reducer 后真值)
       this.promptAuditWriter.write({
         createdAt: new Date().toISOString(),
         alias: args.alias,
         roomId: args.roomId,
         scenario: args.scenario,
         totalTokens,
-        cap: 0,
+        cap: args.assembled.cap,
         partsJson: JSON.stringify(args.assembled.parts),
-        notInjectedJson: null,
+        notInjectedJson:
+          args.assembled.notInjected.length > 0
+            ? JSON.stringify(args.assembled.notInjected)
+            : null,
         ironLawsCount,
         rawText: args.assembled.systemPrompt + "\n\n---\n\n" + args.assembled.content,
         sourceEventIds: JSON.stringify(args.sourceEventIds),

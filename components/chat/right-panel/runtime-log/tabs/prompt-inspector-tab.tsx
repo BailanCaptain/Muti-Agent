@@ -14,6 +14,7 @@ import {
 import {
   type GetPromptInspectorResponse,
   type InjectedPart,
+  type NotInjectedPart,
   type RecallGate,
   usePromptInspectorData,
 } from "./prompt-inspector/use-prompt-inspector-data"
@@ -76,7 +77,7 @@ export function PromptInspectorTab() {
     <div className="flex flex-col gap-3 p-3 text-xs" data-testid="prompt-inspector-tab">
       <HeaderRow roomId={roomId} isLoading={isLoading} error={error} data={data} />
       <InjectedPartsTable parts={data.injectedParts} roomId={roomId} />
-      <NotInjectedSection />
+      <NotInjectedSection notInjectedParts={data.notInjectedParts} />
       <RecallSection queries={data.recallQueries} />
       <AdaptiveRecallPolicy state={data.recallState} />
       <AgentSessionSection roomId={roomId} />
@@ -123,7 +124,9 @@ function HeaderRow({
   data: GetPromptInspectorResponse
 }) {
   const totalTokens = data.injectedParts.reduce((sum, p) => sum + p.tokensEstimated, 0)
-  const cap = 5500 // 默认 cap 占位 — Phase 4/5 接精确度量
+  // F027 v3 G1 · V16.5 chap 20 wake-up runtime cap (= WAKEUP_TOKEN_CAP 6700)。
+  // cap=0 兜底: 老 audit 行 (v3 前 cap 占位为 0) — 显 "—" 防误导，pct 不计算。
+  const cap = data.cap > 0 ? data.cap : 0
   const pct = cap > 0 ? Math.round((totalTokens / cap) * 100) : 0
   return (
     <div
@@ -135,8 +138,8 @@ function HeaderRow({
       </div>
       <div className="mt-1 flex gap-3 text-[10px] text-slate-500">
         <span>📊 总计 {totalTokens} tok</span>
-        <span>cap {cap}</span>
-        <span>({pct}%)</span>
+        <span>cap {cap > 0 ? cap : "—"}</span>
+        {cap > 0 && <span>({pct}%)</span>}
         <span>parts {data.injectedParts.length}</span>
       </div>
       {isLoading && (
@@ -387,18 +390,51 @@ function WikiEventsTraceModal({
   )
 }
 
-// ─── 3. ❌ 未注入预期 part (B022 防回归 Iron Laws 重复检测) ──────────
+// ─── 3. ❌ 未注入预期 part (F027 v3 G1 · V16.5 chap 20 token 预算溢出 drop) ──
 
-function NotInjectedSection() {
+/**
+ * V16.5 chap 20 token 预算溢出时被 context-assembler drop reducer 砍的 part 列表。
+ * 数据源：prompt_audit.not_injected_json (assembler 写入)。
+ * 空数组 = 全部注入成功（不显示提示，节省垂直空间）。
+ */
+function NotInjectedSection({ notInjectedParts }: { notInjectedParts: NotInjectedPart[] }) {
+  if (notInjectedParts.length === 0) {
+    return (
+      <section data-testid="prompt-inspector-not-injected">
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
+          ❌ 未注入预期 part
+        </div>
+        <div className="rounded border border-dashed border-slate-200 p-2 text-[10px] text-slate-400">
+          ✅ 全部注入成功（无 cap 溢出 drop）
+        </div>
+      </section>
+    )
+  }
+  const totalDropped = notInjectedParts.reduce((s, p) => s + p.tokens, 0)
   return (
     <section data-testid="prompt-inspector-not-injected">
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
-        ❌ 未注入预期 part
+      <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-500">
+        <span>❌ 未注入预期 part</span>
+        <span
+          className="font-mono text-red-500"
+          data-testid="prompt-inspector-not-injected-total"
+        >
+          {notInjectedParts.length} 个 / -{totalDropped} tok
+        </span>
       </div>
-      {/* Day 14-15 暂占位：prompt_audit row.not_injected_json 解析留 Week 5 */}
-      <div className="rounded border border-dashed border-slate-300 p-2 text-[10px] text-slate-400">
-        ⏳ Week 5 接：not_injected_json 解析 + Iron Laws 重复检测（B022 防回归）
-      </div>
+      <ul className="space-y-0.5 rounded border border-red-200 bg-red-50 p-2 text-[10px]">
+        {notInjectedParts.map((p) => (
+          <li
+            key={p.name}
+            className="font-mono text-red-700"
+            data-testid={`prompt-inspector-not-injected-${p.name}`}
+          >
+            <span className="font-semibold">{p.name}</span>
+            <span className="ml-1 text-red-500">({p.tokens} tok)</span>
+            <span className="ml-1 text-red-400">— {p.reason}</span>
+          </li>
+        ))}
+      </ul>
     </section>
   )
 }

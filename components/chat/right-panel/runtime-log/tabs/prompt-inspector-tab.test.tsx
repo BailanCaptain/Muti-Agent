@@ -41,6 +41,9 @@ function makeResponse(
     ironLawsCount: 0,
     scenario: null,
     previousAudits: [],
+    // F027 v3 G1 · V16.5 chap 20 token cap + drop reducer 新 2 字段默认值
+    cap: 0,
+    notInjectedParts: [],
     ...overrides,
   }
 }

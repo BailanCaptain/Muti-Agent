@@ -32,6 +32,7 @@ import {
   type GetPromptInspectorResponse,
   HTTP_STATUS_BY_ERROR,
   type InjectedPart,
+  type NotInjectedPart,
   type RecallGate,
   type RecallQueryItem,
   toErrorResponse,
@@ -68,6 +69,9 @@ interface PromptAuditRow {
   iron_laws_count: number
   // P4 hotfix · created_at 给 previousAudits 时间标识
   created_at: string
+  // F027 v3 G1 · V16.5 chap 20 token cap + 未注入 parts JSON (drop reducer 输出)
+  cap: number
+  not_injected_json: string | null
 }
 
 const DEFAULT_RECALL_BUDGET_MAX = 4000
@@ -103,7 +107,8 @@ export class PromptInspectorService {
                 recall_queries, recall_results, recall_total_tokens,
                 recall_required, recall_trigger, recall_path,
                 recall_satisfied, escalate_reason,
-                raw_text, iron_laws_count, created_at
+                raw_text, iron_laws_count, created_at,
+                cap, not_injected_json
            FROM prompt_audit
           WHERE room_id = ?
           ORDER BY id DESC
@@ -132,6 +137,9 @@ export class PromptInspectorService {
         scenario: r.scenario ?? "",
         createdAt: r.created_at,
       })),
+      // F027 v3 G1 · V16.5 chap 20 cap + drop reducer not_injected_json
+      cap: row.cap ?? 0,
+      notInjectedParts: parseNotInjectedParts(row.not_injected_json),
     }
   }
 }
@@ -153,7 +161,36 @@ function emptyInspectorResponse(budgetMax: number): GetPromptInspectorResponse {
     ironLawsCount: 0,
     scenario: null,
     previousAudits: [],
+    // F027 v3 G1 · 空 audit → cap=0 (前端 fallback 显 "—") + 无未注入 part
+    cap: 0,
+    notInjectedParts: [],
   }
+}
+
+/**
+ * F027 v3 G1 · 解析 prompt_audit.not_injected_json (drop reducer 输出)。
+ * 容错：null / 非数组 / 非对象项 / 缺字段 → 跳过，不抛。
+ */
+function parseNotInjectedParts(raw: string | null | undefined): NotInjectedPart[] {
+  if (!raw) return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(parsed)) return []
+  const out: NotInjectedPart[] = []
+  for (const item of parsed) {
+    if (typeof item !== "object" || item === null) continue
+    const obj = item as Record<string, unknown>
+    const name = takeString(obj.name)
+    if (!name) continue
+    const tokens = takeNumber(obj.tokens) ?? 0
+    const reason = takeString(obj.reason) ?? "over_cap_drop_order"
+    out.push({ name, tokens, reason })
+  }
+  return out
 }
 
 function parseInjectedParts(raw: string | null | undefined): InjectedPart[] {

@@ -340,6 +340,18 @@ export interface InjectedPart {
   source: string
 }
 
+/**
+ * F027 v3 G1 · 未注入 part（context-assembler.ts drop reducer 砍掉的）。
+ *
+ * V16.5 chap 20 token cap 溢出时按 DROP_ORDER 顺序丢弃；前端 NotInjectedSection
+ * 渲染 "❌ {name} ({tokens} tok) — {reason}"。
+ */
+export interface NotInjectedPart {
+  name: string
+  tokens: number
+  reason: "over_cap_drop_order" | string
+}
+
 export type RecallGate = "high" | "mid" | "low"
 
 export interface RecallQueryItem {
@@ -405,6 +417,16 @@ export interface GetPromptInspectorResponse {
     scenario: string
     createdAt: string
   }>
+  /**
+   * F027 v3 G1 · V16.5 chap 20 wake-up runtime token cap (= WAKEUP_TOKEN_CAP, 默认 6700)。
+   * 0 = 老 audit 行（v3 之前写的占位 cap=0）；前端 header 显示 "cap N tok"。
+   */
+  cap: number
+  /**
+   * F027 v3 G1 · drop reducer 砍掉的 part 列表（cap 溢出时按 DROP_ORDER 丢弃）。
+   * [] = 全部注入成功；非空时前端 NotInjectedSection 列每条 "{name} ({tokens} tok) — {reason}"。
+   */
+  notInjectedParts: NotInjectedPart[]
 }
 
 export function validateGetPromptInspector(

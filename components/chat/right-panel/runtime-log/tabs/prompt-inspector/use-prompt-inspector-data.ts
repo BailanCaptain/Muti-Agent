@@ -41,6 +41,17 @@ export interface AdaptiveRecallState {
   budgetMax: number
 }
 
+/**
+ * F027 v3 G1 · drop reducer 砍掉的 part（V16.5 chap 20 cap 溢出）。
+ *
+ * mirror packages/api/src/routes/phase3/contracts.ts NotInjectedPart。
+ */
+export interface NotInjectedPart {
+  name: string
+  tokens: number
+  reason: "over_cap_drop_order" | string
+}
+
 export interface GetPromptInspectorResponse {
   injectedParts: InjectedPart[]
   recallQueries: RecallQueryItem[]
@@ -63,6 +74,10 @@ export interface GetPromptInspectorResponse {
     scenario: string
     createdAt: string
   }>
+  /** F027 v3 G1 · V16.5 chap 20 token cap (= WAKEUP_TOKEN_CAP 6700)；0 = 老 audit 行。 */
+  cap: number
+  /** F027 v3 G1 · drop reducer 砍掉的 parts；[] = 全部注入成功。 */
+  notInjectedParts: NotInjectedPart[]
 }
 
 /**
@@ -99,6 +114,9 @@ function emptyResponse(): GetPromptInspectorResponse {
     ironLawsCount: 0,
     scenario: null,
     previousAudits: [],
+    // F027 v3 G1 · empty audit → cap=0 (前端 fallback) + 无未注入 part
+    cap: 0,
+    notInjectedParts: [],
   }
 }
 
