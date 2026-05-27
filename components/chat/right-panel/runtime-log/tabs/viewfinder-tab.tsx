@@ -80,13 +80,16 @@ function ViewfinderFrontmatterPanel({ markdown }: { markdown: string | null }) {
   const lines = yamlBody.split(/\r?\n/)
   const fields: Array<{ key: string; value: string; help?: string }> = []
   for (const line of lines) {
+    // G9 r2 (codex P2 修): nested 子字段 skip 必须判 raw line 缩进 (在 trim 之前),
+    // 否则 `inputs.last_committed_cursor` 等 `  key: value` 缩进行被当 top-level 字段
+    // 多列出"字段说明缺"。
+    if (/^\s+/.test(line)) continue
     const trimmed = line.trim()
     if (!trimmed || trimmed.startsWith("#")) continue
     const colon = trimmed.indexOf(":")
     if (colon < 1) continue
     const key = trimmed.slice(0, colon).trim()
     const value = trimmed.slice(colon + 1).trim()
-    if (key.startsWith("  ")) continue // 嵌套子字段 skip (inputs.last_committed_cursor 等)
     fields.push({ key, value, help: FRONTMATTER_FIELD_HELP[key] })
   }
   if (fields.length === 0) return null
