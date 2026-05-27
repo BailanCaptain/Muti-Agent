@@ -324,6 +324,16 @@ export interface GetPromptInspectorQuery {
    * 范围 [1, 10]；越界回 1。
    */
   limit?: number
+  /**
+   * F027 v3 G4 · 可选 alias 过滤（多 agent room 看每个 agent 自己的 system prompt）。
+   *
+   * 不传 = room 内最新 audit（不限 alias，与 v3 之前行为兼容）。
+   * 传 alias = 只取该 alias 的 audit row（黄仁勋/范德彪/桂芬 分开看）。
+   *
+   * 痛点 2 "反复教 agent" 闭环：之前 prompt-inspector.ts WHERE 只 room_id 不限 alias，
+   * 多 agent 触发时 Inspector 只显示"最后写入的那个 agent"，看不到其他 agent。
+   */
+  alias?: string
 }
 export interface GetPromptInspectorRequest
   extends GetPromptInspectorPath,
@@ -427,6 +437,20 @@ export interface GetPromptInspectorResponse {
    * [] = 全部注入成功；非空时前端 NotInjectedSection 列每条 "{name} ({tokens} tok) — {reason}"。
    */
   notInjectedParts: NotInjectedPart[]
+  /**
+   * F027 v3 G4 · 当前 audit row 的 alias（如 "黄仁勋"）；null = 空 audit。
+   *
+   * caller 显式传 alias 时即等于 query alias；不传时取最新 row 的实际 alias。
+   * 前端 dropdown 同步显示当前选中 alias。
+   */
+  selectedAlias: string | null
+  /**
+   * F027 v3 G4 · room 内所有 distinct alias 列表（前端 dropdown 选项）。
+   *
+   * 用 `SELECT DISTINCT alias FROM prompt_audit WHERE room_id = ?` 查；按 alias asc 排。
+   * 空数组 = room 内还没 audit row（前端 dropdown disabled）。
+   */
+  availableAliases: string[]
 }
 
 export function validateGetPromptInspector(
@@ -438,6 +462,8 @@ export function validateGetPromptInspector(
   if (!idCheck.ok) return idCheck
   const q = (query ?? {}) as Record<string, unknown>
   const threadId = takeOptionalString(q.threadId)
+  // F027 v3 G4 · alias 过滤可选参数（多 agent room 看 per-agent prompt）
+  const alias = takeOptionalString(q.alias)
   // limit query 解析：未传/空/越界 → 默认 1；clamp [1, 10]
   let limit = 1
   const rawLimit = q.limit
@@ -447,7 +473,7 @@ export function validateGetPromptInspector(
   } else if (typeof rawLimit === "number" && Number.isFinite(rawLimit)) {
     if (rawLimit >= 1 && rawLimit <= 10) limit = Math.floor(rawLimit)
   }
-  return { ok: true, value: { roomId: idCheck.value, threadId, limit } }
+  return { ok: true, value: { roomId: idCheck.value, threadId, alias, limit } }
 }
 
 // ── 4. POST /api/wiki/ingest/preview ────────────────────────────────

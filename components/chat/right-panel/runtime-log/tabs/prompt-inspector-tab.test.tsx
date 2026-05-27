@@ -44,6 +44,9 @@ function makeResponse(
     // F027 v3 G1 · V16.5 chap 20 token cap + drop reducer 新 2 字段默认值
     cap: 0,
     notInjectedParts: [],
+    // F027 v3 G4 · per-agent alias filter 新 2 字段默认值
+    selectedAlias: null,
+    availableAliases: [],
     ...overrides,
   }
 }

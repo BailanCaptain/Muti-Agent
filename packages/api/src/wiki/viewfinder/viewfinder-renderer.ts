@@ -33,10 +33,16 @@ export function renderViewfinder(input: RenderViewfinderInput): ViewfinderArtifa
   const lines: string[] = []
 
   // Frontmatter
+  // F027 v3 G3 修: generated_by 字段加自描述说明
+  // 真相源 V16.5 chap 11 line 1255-1294 — 6 段全 SQL 拼, 不调 LLM, 设计层只有一条路径
+  // 之前 "RoomCompiler (rule-based template)" 暗示多 generator 备选 → 误导
+  // 改为 "rule-based-template" 明示固定方式，注释说明设计原意
   lines.push("---")
   lines.push(`viewfinder_id: ${makeViewfinderId(input.roomId, input.generatedAt)}`)
   lines.push(`generated_at: ${input.generatedAt}`)
-  lines.push("generated_by: RoomCompiler (rule-based template)")
+  lines.push(
+    "generated_by: rule-based-template  # V16.5 chap 11 · 6 段全 SQL 拼, 不调 LLM (设计层固定单路径)",
+  )
   lines.push("inputs:")
   lines.push(`  last_committed_cursor: ${input.lastCommittedCursor ?? "null"}`)
   lines.push(`  decision_ledger_count: ${input.activeDecisions.length}`)

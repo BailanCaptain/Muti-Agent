@@ -72,6 +72,8 @@ interface PromptAuditRow {
   // F027 v3 G1 · V16.5 chap 20 token cap + 未注入 parts JSON (drop reducer 输出)
   cap: number
   not_injected_json: string | null
+  // F027 v3 G4 · 行 alias (前端 dropdown 当前选中状态显示用)
+  alias: string
 }
 
 const DEFAULT_RECALL_BUDGET_MAX = 4000
@@ -95,29 +97,58 @@ export class PromptInspectorService {
     roomId: string,
     _threadId: string | undefined,
     limit = 1,
+    alias?: string,
   ): GetPromptInspectorResponse {
     // _threadId 当前不参与 prompt_audit 过滤（assembler 写入只标 roomId + alias）；
     // Phase 4 P22 接 thread 维度 inspector 时再扩。
     // P4 hotfix · limit ≥ 1 用于「对比上次注入」按钮，最新一条进 head fields，
     // 余下进 previousAudits 数组。clamp 在 contracts.validateGetPromptInspector 已做。
+    //
+    // F027 v3 G4 · alias 可选过滤（多 agent room 看 per-agent prompt）。
+    // 之前 WHERE 只 room_id → 多 agent 触发时只显示"最后写入的 agent"；
+    // 加 alias 后 caller (Inspector tab dropdown) 选 alias 取该 agent 的 audit row。
     const client = getSqliteClient(this.db)
-    const rows = client
-      .prepare(
-        `SELECT scenario, parts_json,
+    const sql = alias
+      ? `SELECT scenario, parts_json,
                 recall_queries, recall_results, recall_total_tokens,
                 recall_required, recall_trigger, recall_path,
                 recall_satisfied, escalate_reason,
                 raw_text, iron_laws_count, created_at,
-                cap, not_injected_json
+                cap, not_injected_json, alias
+           FROM prompt_audit
+          WHERE room_id = ? AND alias = ?
+          ORDER BY id DESC
+          LIMIT ?`
+      : `SELECT scenario, parts_json,
+                recall_queries, recall_results, recall_total_tokens,
+                recall_required, recall_trigger, recall_path,
+                recall_satisfied, escalate_reason,
+                raw_text, iron_laws_count, created_at,
+                cap, not_injected_json, alias
            FROM prompt_audit
           WHERE room_id = ?
           ORDER BY id DESC
-          LIMIT ?`,
+          LIMIT ?`
+    const rows = (
+      alias
+        ? client.prepare(sql).all(roomId, alias, limit)
+        : client.prepare(sql).all(roomId, limit)
+    ) as PromptAuditRow[]
+
+    // F027 v3 G4 · 查 room 内所有 distinct alias (前端 dropdown 列出选项)
+    const aliasRows = client
+      .prepare(
+        `SELECT DISTINCT alias FROM prompt_audit
+          WHERE room_id = ?
+          ORDER BY alias ASC`,
       )
-      .all(roomId, limit) as PromptAuditRow[]
+      .all(roomId) as Array<{ alias: string }>
+    const availableAliases = aliasRows.map((r) => r.alias)
 
     if (rows.length === 0) {
-      return emptyInspectorResponse(this.recallBudgetMax)
+      // 空 audit → selectedAlias=null (即使 caller 传了 alias, alias filter 没匹配到任何 row，
+      // 也算"没数据"，UI 应反映这点而非显示 caller 一厢情愿的 alias)
+      return emptyInspectorResponse(this.recallBudgetMax, availableAliases, null)
     }
 
     const [row, ...prev] = rows
@@ -140,11 +171,19 @@ export class PromptInspectorService {
       // F027 v3 G1 · V16.5 chap 20 cap + drop reducer not_injected_json
       cap: row.cap ?? 0,
       notInjectedParts: parseNotInjectedParts(row.not_injected_json),
+      // F027 v3 G4 · 当前 row 的 alias (即使 caller 没传 alias，也透出本行真实 alias)
+      // + room 内 distinct alias 列表 (前端 dropdown 选项)
+      selectedAlias: row.alias ?? null,
+      availableAliases,
     }
   }
 }
 
-function emptyInspectorResponse(budgetMax: number): GetPromptInspectorResponse {
+function emptyInspectorResponse(
+  budgetMax: number,
+  availableAliases: string[] = [],
+  selectedAlias: string | null = null,
+): GetPromptInspectorResponse {
   return {
     injectedParts: [],
     recallQueries: [],
@@ -164,6 +203,9 @@ function emptyInspectorResponse(budgetMax: number): GetPromptInspectorResponse {
     // F027 v3 G1 · 空 audit → cap=0 (前端 fallback 显 "—") + 无未注入 part
     cap: 0,
     notInjectedParts: [],
+    // F027 v3 G4 · 空 audit → 无 alias info；前端 dropdown 显 "—"
+    selectedAlias,
+    availableAliases,
   }
 }
 
@@ -376,6 +418,8 @@ export function registerPromptInspectorRoute(
         validation.value.roomId,
         validation.value.threadId,
         validation.value.limit ?? 1,
+        // F027 v3 G4 · alias 可选过滤
+        validation.value.alias,
       )
       return body
     } catch (err) {

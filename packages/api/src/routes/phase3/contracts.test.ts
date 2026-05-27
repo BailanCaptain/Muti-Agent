@@ -192,8 +192,14 @@ test("Day 2 · GET drafts · query 字段串 (来自 URL) 也接受", () => {
 test("Day 2 · GET prompt-inspector · 合法 path + 空 query", () => {
   const r = validateGetPromptInspector({ id: "R-201" }, {})
   assert.equal(r.ok, true)
-  // P4 hotfix · limit 默认 1（未传 query 时）
-  if (r.ok) assert.deepEqual(r.value, { roomId: "R-201", threadId: undefined, limit: 1 })
+  // P4 hotfix · limit 默认 1（未传 query 时）+ v3 G4 alias 可选字段 (未传 = undefined)
+  if (r.ok)
+    assert.deepEqual(r.value, {
+      roomId: "R-201",
+      threadId: undefined,
+      alias: undefined,
+      limit: 1,
+    })
 })
 
 test("P4 hotfix · GET prompt-inspector · limit=2 query 解析", () => {

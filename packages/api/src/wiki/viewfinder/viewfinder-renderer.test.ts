@@ -84,7 +84,11 @@ describe("renderViewfinder · 6 段 happy path", () => {
     const r = renderViewfinder(defaultInput())
     assert.match(r.markdown, /^---\n/, "frontmatter 起始")
     assert.match(r.markdown, /viewfinder_id: vf_R-201_2026-05-13-14-30/)
-    assert.match(r.markdown, /generated_by: RoomCompiler \(rule-based template\)/)
+    // F027 v3 G3 修: 字段值从 "RoomCompiler (rule-based template)" 改为
+    // "rule-based-template" + 注释 (V16.5 chap 11 · 设计层固定单路径)
+    assert.match(r.markdown, /generated_by: rule-based-template/)
+    assert.match(r.markdown, /V16\.5 chap 11/)
+    assert.match(r.markdown, /不调 LLM/)
     assert.match(r.markdown, /# R-201 Viewfinder/)
     assert.match(r.markdown, /## 1\. 当前主题/)
     assert.match(r.markdown, /## 2\. 当前进度/)

@@ -78,6 +78,10 @@ export interface GetPromptInspectorResponse {
   cap: number
   /** F027 v3 G1 · drop reducer 砍掉的 parts；[] = 全部注入成功。 */
   notInjectedParts: NotInjectedPart[]
+  /** F027 v3 G4 · 当前 row alias (多 agent room dropdown 选中状态)；null = 空 audit。 */
+  selectedAlias: string | null
+  /** F027 v3 G4 · room 内 distinct alias 列表 (dropdown 选项)；[] = room 无 audit。 */
+  availableAliases: string[]
 }
 
 /**
@@ -117,6 +121,9 @@ function emptyResponse(): GetPromptInspectorResponse {
     // F027 v3 G1 · empty audit → cap=0 (前端 fallback) + 无未注入 part
     cap: 0,
     notInjectedParts: [],
+    // F027 v3 G4 · empty audit → 无 alias 选项
+    selectedAlias: null,
+    availableAliases: [],
   }
 }
 
@@ -129,11 +136,13 @@ export interface UsePromptInspectorDataReturn {
 
 export function usePromptInspectorData(
   roomId: string | null,
-  options: { enabled?: boolean; limit?: number } = {},
+  // F027 v3 G4 · alias option 控制 per-agent prompt 查询 (多 agent room dropdown 用)
+  options: { enabled?: boolean; limit?: number; alias?: string | null } = {},
 ): UsePromptInspectorDataReturn {
   const enabled = options.enabled !== false
   // P4 hotfix · 默认 limit=2 拿到上一次 audit，BottomButtonsBar「对比上次」按钮直接用
   const limit = options.limit ?? 2
+  const alias = options.alias ?? null
   const [data, setData] = useState<GetPromptInspectorResponse>(emptyResponse())
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -149,7 +158,12 @@ export function usePromptInspectorData(
     let cancelled = false
     setIsLoading(true)
     setError(null)
-    fetch(`${API_BASE_URL}/api/rooms/${encodeURIComponent(roomId)}/prompt-inspector?limit=${limit}`, {
+    // F027 v3 G4 · alias query param 拼接 (空时不传 → 后端 fallback 全 alias)
+    const queryParams = new URLSearchParams()
+    queryParams.set("limit", String(limit))
+    if (alias) queryParams.set("alias", alias)
+    const url = `${API_BASE_URL}/api/rooms/${encodeURIComponent(roomId)}/prompt-inspector?${queryParams.toString()}`
+    fetch(url, {
       method: "GET",
       headers: { Accept: "application/json" },
     })
@@ -175,7 +189,7 @@ export function usePromptInspectorData(
     return () => {
       cancelled = true
     }
-  }, [roomId, enabled, limit, refetchTrigger])
+  }, [roomId, enabled, limit, alias, refetchTrigger])
 
   return {
     data,

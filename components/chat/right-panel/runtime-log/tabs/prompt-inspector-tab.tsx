@@ -67,7 +67,13 @@ export function PromptInspectorTab() {
   // (Day 12-13 r2 always-render 5 tabs，无 enabled flag 会让 5 tab 启动同时 fetch)
   const activeLvl2 = useRuntimeLogStore((state) => state.activeLvl2)
   const enabled = activeLvl2 === "prompt-inspector"
-  const { data, isLoading, error } = usePromptInspectorData(roomId, { enabled })
+  // F027 v3 G4 · alias dropdown 选中状态 (多 agent room 切换 per-agent prompt)
+  // null = 不限 alias (取最新 row, 与 v3 前行为兼容)
+  const [selectedAlias, setSelectedAlias] = useState<string | null>(null)
+  const { data, isLoading, error } = usePromptInspectorData(roomId, {
+    enabled,
+    alias: selectedAlias,
+  })
   const coverage = useDecisionsCoverageData(roomId, { enabled })
 
   // final-vision P1-1: unresolved decision click → DecisionSupersedeRejectModal
@@ -76,6 +82,11 @@ export function PromptInspectorTab() {
   return (
     <div className="flex flex-col gap-3 p-3 text-xs" data-testid="prompt-inspector-tab">
       <HeaderRow roomId={roomId} isLoading={isLoading} error={error} data={data} />
+      <AliasFilterRow
+        availableAliases={data.availableAliases}
+        selectedAlias={selectedAlias ?? data.selectedAlias}
+        onChange={setSelectedAlias}
+      />
       <InjectedPartsTable parts={data.injectedParts} roomId={roomId} />
       <NotInjectedSection notInjectedParts={data.notInjectedParts} />
       <RecallSection queries={data.recallQueries} />
@@ -152,6 +163,65 @@ function HeaderRow({
           ⚠ 加载失败：{error}
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── 1.5 🤖 Agent alias 过滤 (F027 v3 G4 · 多 agent room 切 per-agent prompt) ─
+
+function AliasFilterRow({
+  availableAliases,
+  selectedAlias,
+  onChange,
+}: {
+  availableAliases: string[]
+  selectedAlias: string | null
+  onChange: (alias: string | null) => void
+}) {
+  // 单 agent room (1 alias) → 折叠成只读标签；多 agent (≥2) → dropdown 可选
+  if (availableAliases.length === 0) {
+    return (
+      <div
+        className="rounded border border-dashed border-slate-200 px-3 py-1.5 text-[10px] text-slate-400"
+        data-testid="prompt-inspector-alias-filter-empty"
+      >
+        🤖 Agent: — (room 内无 audit row)
+      </div>
+    )
+  }
+  if (availableAliases.length === 1) {
+    return (
+      <div
+        className="rounded border border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] text-slate-600"
+        data-testid="prompt-inspector-alias-filter-single"
+      >
+        🤖 Agent: <span className="font-mono font-semibold">{availableAliases[0]}</span>
+        <span className="ml-1 text-slate-400">(room 内仅 1 个 agent，无需切)</span>
+      </div>
+    )
+  }
+  return (
+    <div
+      className="flex items-center gap-2 rounded border border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] text-slate-600"
+      data-testid="prompt-inspector-alias-filter"
+    >
+      <span>🤖 Agent:</span>
+      <select
+        className="rounded border border-slate-300 bg-white px-1.5 py-0.5 font-mono text-[10px]"
+        data-testid="prompt-inspector-alias-select"
+        value={selectedAlias ?? ""}
+        onChange={(e) => onChange(e.target.value || null)}
+      >
+        <option value="">— 最新 (不限 alias)</option>
+        {availableAliases.map((a) => (
+          <option key={a} value={a}>
+            {a}
+          </option>
+        ))}
+      </select>
+      <span className="text-slate-400">
+        ({availableAliases.length} agent · 切换看每个 agent 自己的 system prompt)
+      </span>
     </div>
   )
 }
