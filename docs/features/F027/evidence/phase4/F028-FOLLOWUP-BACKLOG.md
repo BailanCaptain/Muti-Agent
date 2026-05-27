@@ -1,12 +1,17 @@
-# F027 → F028 Follow-up Backlog 【已弃用 · 2026-05-26】
+# F027 → F028 Follow-up Backlog 【已弃用 · 2026-05-26 + final-vision r2 update】
 
 > **DEPRECATED**: F028 概念未经合法立项 — 小孙 2026-05-26 拍板撤回；
-> 本文档保留作历史归档，**不再被引用**。
+> 本文档保留作历史归档，**不再被引用**（quickref/checklist 等已切到 RESIDUAL-DEBT）。
 >
 > **新真相源**: `F027-RESIDUAL-DEBT.md` — 19 项按三分类（A. 愿景未闭环 P4 内修 /
 > B. V16.5 划走等新 feature / C. scheduler/UX 长尾单独立项）重新分类。
 >
 > 类别 A 5 项已在 P4-A1~A5 commit chain `bbb378c` / `bffa065` / `736590c` 实施。
+>
+> **final-vision r2 update (2026-05-27)**:
+> - ~~F028-1 真 supersede / reject UI~~ → **已实施** (final-vision P1-1，commit `ebcc0ff`+`84f52d4`)：`DecisionSupersedeRejectModal` + `ledger.supersede/revoke` 后端分流。归 RESIDUAL-DEBT B8 已完成。
+> - ~~F028-11 DocsWatcher.onEvent~~ → **已实施** (final-vision P1-2，commit `bfcbba2`+`227daf1`)：DocsIngestRunner 接 preview→commit pipeline + versioned `_auto/<stem>-<unixMs>.md`。归 RESIDUAL-DEBT C1.1 已完成。
+> - 下文 backlog 仅作历史 reference，**不要按下文 F028-1/F028-11 当前待办处理**。
 
 ---
 
