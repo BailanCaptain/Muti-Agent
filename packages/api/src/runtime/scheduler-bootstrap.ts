@@ -67,6 +67,13 @@ import {
 import { StartupReconciler } from "../services/scheduler/startup-reconciler"
 import { WeeklyDraftDigest } from "../services/scheduler/weekly-draft-digest"
 import { WikiCompilerDebounce } from "../services/scheduler/wiki-compiler-debounce"
+import {
+  scanAgentSessionsFs,
+  scanDriftTriggersDb,
+  scanRoomViewfindersForSnapshot,
+  scanWikiDraftsFs,
+  scanWikiEntitiesFs,
+} from "../services/scheduler/wiki-scanners"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
 
@@ -104,6 +111,17 @@ export interface SchedulerBootOptions {
    * 测试/CI/preview 用 "0" 关）。
    */
   docsIngestRunner?: DocsIngestRunner
+  /**
+   * F027 v3 G2 · wiki 根目录（cron scanner 扫 fs 用）。
+   *
+   * 缺 → 走 noop fallback (跟 v3 之前 Phase 3 行为一致 — boot 不强依赖)。
+   * 传入 → 5 cron job (NightlyHealthCheck / WeeklyDraftDigest / DriftDetector /
+   *        MonthlySnapshot / ArchiveYearlySessions) 接真业务 scanner。
+   *
+   * 约定与 server.ts 其他 caller 一致: `process.env.WIKI_ROOT || path.join(rootDir, ".runtime", "wiki")`。
+   * 内部 fs 路径 `<wikiRoot>/rooms/<id>/viewfinder.md` 等 (跟 RoomCompiler 落盘对齐)。
+   */
+  wikiRoot?: string
 }
 
 /**
@@ -179,30 +197,50 @@ export async function bootSchedulerRuntime(
       })
     : null
 
+  // F027 v3 G2 · cron scanner 真业务接通（替换原 5 个 async () => [] noop）。
+  // wikiRoot 缺 → fallback noop（boot 不强依赖；test/CI 跑空 cron 不挂）。
+  // wikiRoot 有 → fs / SQL 真扫；scanner 内部 fail-soft（单文件错跳过 + warn）。
+  const noopScanEntities = async () => []
+  const noopScanDrafts = async () => []
+  const noopScanTriggers = async () => []
+  const noopRecompile = async () => []
+  const noopScanSessions = async () => []
+
   const healthCheck = new NightlyHealthCheck({
-    scanEntities: async () => [],
+    scanEntities: opts.wikiRoot
+      ? scanWikiEntitiesFs(opts.wikiRoot, opts.log)
+      : noopScanEntities,
     logger: opts.log,
   })
 
   const vacuum = new NightlyVacuum({ db: opts.db, rootDir, logger: opts.log })
 
   const draftDigest = new WeeklyDraftDigest({
-    scanDrafts: async () => [],
+    scanDrafts: opts.wikiRoot
+      ? scanWikiDraftsFs(opts.wikiRoot, opts.log)
+      : noopScanDrafts,
     logger: opts.log,
   })
 
   const drift = new DriftDetector({
-    scanTriggers: async () => [],
+    // DB 扫不依赖 wikiRoot — 直接接 wiki_events + a2a_calls
+    scanTriggers: scanDriftTriggersDb(opts.db, opts.log),
     logger: opts.log,
   })
 
+  // MonthlySnapshot MVP: scanner 读 current viewfinder.md，recompiled === current
+  // 等价于 drift=0 不触发 replace；真 LLM-from-scratch 重编留独立 F-id（noop fallback OK）。
   const snapshot = new MonthlySnapshot({
-    recompileAllRooms: async () => [],
+    recompileAllRooms: opts.wikiRoot
+      ? scanRoomViewfindersForSnapshot(opts.db, opts.wikiRoot, opts.log)
+      : noopRecompile,
     logger: opts.log,
   })
 
   const archive = new ArchiveYearlySessions({
-    scanSessions: async () => [],
+    scanSessions: opts.wikiRoot
+      ? scanAgentSessionsFs(opts.wikiRoot, opts.log)
+      : noopScanSessions,
     logger: opts.log,
   })
 

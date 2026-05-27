@@ -894,6 +894,11 @@ export async function createApiServer(options: {
     skipBoot: process.env.MULTI_AGENT_SKIP_SCHEDULER === "1",
     roomCompileExecutor,
     docsIngestRunner,
+    // F027 v3 G2 · cron scanner 接真业务（NightlyHealthCheck / WeeklyDraftDigest /
+    // MonthlySnapshot / ArchiveYearlySessions 扫此根；DriftDetector 走 DB 不依赖）。
+    // wikiRoot 取值与其他 caller (wikiServices / executorDeps / viewfinderSvc / phase3Routes
+    // / roomCompileWikiServicesRoot) 一致：`process.env.WIKI_ROOT || cwd/.runtime/wiki/`。
+    wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
   })
   app.addHook("onClose", async () => {
     if (schedulerRuntime) {
