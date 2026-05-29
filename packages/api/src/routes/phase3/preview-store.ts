@@ -38,6 +38,12 @@ export interface PreviewStoreEntry {
   createdAt: string
   /** preview 过期时刻 ISO（< now 时 take 返 null + 自动剔除） */
   expiresAt: string
+  /**
+   * F027 v3 G11 · LLM 编译后的完整 markdown（frontmatter + body）。
+   * preview 编译成功 → 存编译产物；commit 落盘写这个（含 cross_refs/dedup/canonical_owner）。
+   * 未注入 compile deps / 编译失败兜底 → 缺省，commit 退回写 sanitizedContent。
+   */
+  compiledMarkdown?: string
 }
 
 export interface PreviewStoreDeps {

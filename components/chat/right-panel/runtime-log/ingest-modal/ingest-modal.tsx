@@ -381,7 +381,7 @@ function SanitizeSection({
       <h3 className="font-semibold text-[10px] uppercase tracking-wider text-slate-500">
         ⚠️ 5 层 Sanitize 预扫结果
       </h3>
-      {isLoading && <div className="mt-1 text-[11px] text-slate-400">⏳ 预扫中…</div>}
+      {isLoading && <div className="mt-1 text-[11px] text-slate-400">⏳ 编译中… (Opus 4.7 提取 facts·cross_refs·去重，约 5–30 秒)</div>}
       {error && (
         <div className="mt-1 text-[11px] text-red-500" data-testid="ingest-sanitize-error">
           ⚠ 预扫失败：{error}

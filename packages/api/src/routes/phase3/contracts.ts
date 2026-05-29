@@ -92,7 +92,7 @@ export interface ErrorResponseBody {
  */
 export interface PreviewWarning {
   /** 大类（前端 UI 路由 4 色：sensitive_token 红 / size_truncated 黄 / encoding 灰 / binary_skipped 蓝）。 */
-  kind: "sensitive_token" | "size_truncated" | "encoding" | "binary_skipped"
+  kind: "sensitive_token" | "size_truncated" | "encoding" | "binary_skipped" | "compile_failed"
   /**
    * 子类（透传 sanitize 内部 reason），如：
    *   - jailbreak_template / dangerous_html_tag / dangerous_url_scheme / encoded_jailbreak / size_exceeded（redline）

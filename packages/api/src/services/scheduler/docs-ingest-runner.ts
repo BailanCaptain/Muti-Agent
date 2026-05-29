@@ -122,9 +122,9 @@ export class DocsIngestRunner {
     }
 
     // 1. preview (sanitize + minimal stub LLM 预览)
-    let previewResult: ReturnType<typeof this.preview.preview>
+    let previewResult: Awaited<ReturnType<typeof this.preview.preview>>
     try {
-      previewResult = this.preview.preview({
+      previewResult = await this.preview.preview({
         sourcePath: event.relativePath,
         content,
         mimeType: "text/markdown",

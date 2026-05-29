@@ -41,7 +41,7 @@ import { registerSessionRuntimeConfigRoutes } from "./routes/session-runtime-con
 import { registerThreadRoutes } from "./routes/threads"
 import { registerUploadRoutes } from "./routes/uploads"
 import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
-import { createHaikuRunner, createSonnetRunner } from "./runtime/haiku-runner"
+import { createHaikuRunner, createOpusRunner, createSonnetRunner } from "./runtime/haiku-runner"
 import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
 import { bootSchedulerRuntime } from "./runtime/scheduler-bootstrap"
@@ -760,7 +760,55 @@ export async function createApiServer(options: {
   const { PreviewStore: PreviewStoreCls, IngestPreviewService: IngestPreviewServiceCls, IngestCommitService: IngestCommitServiceCls } =
     await import("./routes/phase3")
   const sharedPreviewStore = new PreviewStoreCls()
-  const sharedIngestPreview = new IngestPreviewServiceCls({ store: sharedPreviewStore })
+
+  // F027 v3 G11 · 给 ingest preview 注入真 LLM compile pipeline 依赖（Opus 4.7 + Haiku fallback）。
+  // 注入后用户 drop 资料 → preview 真编译产 cross_refs/dedup/canonical_owner，commit 落盘编译产物。
+  //   - wikiRoot 用 `<services>/wiki`（双 wiki，与 G2 r2 / roomCompileWikiRoot 同口径 — 真 entity 在此根下）。
+  //   - compileRules 单独从 handbook 取（line 380 只取了 agentActions）；load 失败退空串（fail-soft）。
+  //   - llmClient = Opus 4.7 primary + Haiku 4.5 fallback（AC-P4-8 链；haiku-runner createOpusRunner 已有）。
+  const { createRunnerWithFallback: createCompileRunnerWithFallback } = await import(
+    "./runtime/runner-with-fallback"
+  )
+  const { createProductionCompileLLMClient } = await import(
+    "./wiki/llm-compile/production-compile-llm-client"
+  )
+  const { createProductionIndexLiteLoader } = await import(
+    "./wiki/llm-compile/index-lite-loader"
+  )
+  const { createProductionEntityExistenceChecker } = await import(
+    "./wiki/llm-compile/entity-existence-checker"
+  )
+  const ingestCompileWikiRoot = path.join(
+    process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    "wiki",
+  )
+  let ingestCompileRules = ""
+  try {
+    const { loadHandbookSlices } = await import("./wiki/handbook-slicer")
+    const handbookRoot = process.env.WIKI_HANDBOOK_ROOT || process.cwd()
+    ingestCompileRules = (await loadHandbookSlices(handbookRoot)).compileRules
+  } catch (err) {
+    app.log.warn(
+      { err },
+      "[F027-G11] handbook compileRules load failed; ingest compile uses empty rules",
+    )
+  }
+  const sharedIngestPreview = new IngestPreviewServiceCls({
+    store: sharedPreviewStore,
+    compile: {
+      embedding: embeddingService,
+      indexLoader: createProductionIndexLiteLoader({ wikiRoot: ingestCompileWikiRoot }),
+      entityChecker: createProductionEntityExistenceChecker({ wikiRoot: ingestCompileWikiRoot }),
+      llmClient: createProductionCompileLLMClient({
+        runner: createCompileRunnerWithFallback({
+          primary: createOpusRunner(),
+          fallback: createHaikuRunner(),
+        }),
+      }),
+      handbookCompileRules: ingestCompileRules,
+      logger: (msg) => app.log.info({ component: "ingest-compile" }, msg),
+    },
+  })
   const sharedIngestCommit = wikiServices
     ? new IngestCommitServiceCls({
         store: sharedPreviewStore,

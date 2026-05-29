@@ -157,9 +157,15 @@ export class IngestCommitService {
     //
     // F027 P4 Day 10 AC-P4-3 e: 落盘前 inject series_id 进 frontmatter（如 caller 在 preview
     // 时填写了 seriesId）。后续 multi-drop cross-correlation 查 frontmatter 判 chained 跳过。
-    const finalContent = entry.seriesId
-      ? injectSeriesIdIntoFrontmatter(entry.sanitizedContent, entry.seriesId)
-      : entry.sanitizedContent
+    // F027 v3 G11: 优先落盘 LLM 编译产物（compiledMarkdown，含 cross_refs/dedup/canonical_owner
+    // 完整 frontmatter）。preview 未编译 / 编译失败兜底时退回 raw sanitizedContent。
+    //   - compiledMarkdown 已含 series_id（compile pipeline 写进 frontmatter.ingest_metadata）→ 不再 inject。
+    //   - sanitizedContent 路径保持原 seriesId top-level inject 行为（向后兼容）。
+    const finalContent = entry.compiledMarkdown
+      ? entry.compiledMarkdown
+      : entry.seriesId
+        ? injectSeriesIdIntoFrontmatter(entry.sanitizedContent, entry.seriesId)
+        : entry.sanitizedContent
 
     let response: UpdateWikiResponse
     try {

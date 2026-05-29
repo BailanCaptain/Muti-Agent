@@ -28,6 +28,17 @@
 
 import { randomUUID } from "node:crypto"
 import type { FastifyInstance } from "fastify"
+import { stringify as stringifyYaml } from "yaml"
+import type { EmbeddingService } from "../../services/embedding-service"
+import { runCompilePipelineWithRetry } from "../../wiki/llm-compile/compile-pipeline"
+import { createPreviewWikiEventsWriter } from "../../wiki/llm-compile/preview-wiki-events-writer"
+import type {
+  CompileLLMClient,
+  DraftResult,
+  EntityExistenceChecker,
+  IndexLiteLoader,
+  WikiEventsWriter,
+} from "../../wiki/llm-compile/types"
 import { sanitizeRawDrop } from "../../wiki/sanitize/sanitize-raw-drop"
 import type { QuarantinedSegment, RedLineTrigger, SanitizeResult } from "../../wiki/sanitize/types"
 import {
@@ -58,6 +69,28 @@ export interface IngestPreviewServiceDeps {
    * 不传 store → 老行为（仅返回 previewId 不持久化；Day 5 单元测试 backward compatible）。
    */
   store?: import("./preview-store").PreviewStore
+  /**
+   * F027 v3 G11 · LLM compile pipeline 依赖（注入 → preview 接真编译；不注入 → 退回 stub 预览）。
+   */
+  compile?: IngestCompileDeps
+}
+
+/**
+ * F027 v3 G11 · preview 路径的 compile pipeline 依赖集。
+ * embedding/indexLoader/llmClient/entityChecker = runCompilePipeline deps（去掉 wikiEvents，
+ * preview 内部用 no-op writer，见 preview-wiki-events-writer.ts）。
+ */
+export interface IngestCompileDeps {
+  embedding: Pick<EmbeddingService, "generateEmbedding" | "searchByVector">
+  indexLoader: IndexLiteLoader
+  llmClient: CompileLLMClient
+  entityChecker: EntityExistenceChecker
+  /** handbook "## 编译规则" 切片（server.ts loadHandbookSlices().compileRules）。 */
+  handbookCompileRules: string
+  /** schema 失败重试次数（默认 3，透传 runCompilePipelineWithRetry）。 */
+  maxAttempts?: number
+  /** 可选 log（编译失败 / fallback 记一笔；默认 noop）。 */
+  logger?: (msg: string) => void
 }
 
 export class IngestPreviewService {
@@ -65,15 +98,24 @@ export class IngestPreviewService {
   private readonly clock: () => Date
   private readonly newId: () => string
   private readonly store?: import("./preview-store").PreviewStore
+  private readonly compile?: IngestCompileDeps
+  /** preview 路径 no-op WikiEventsWriter（read-only 预览不落审计行）。 */
+  private readonly previewWikiEvents: WikiEventsWriter
 
   constructor(deps: IngestPreviewServiceDeps = {}) {
     this.previewTtlMs = deps.previewTtlMs ?? DEFAULT_PREVIEW_TTL_MS
     this.clock = deps.clock ?? (() => new Date())
     this.newId = deps.newId ?? (() => randomUUID())
     this.store = deps.store
+    this.compile = deps.compile
+    this.previewWikiEvents = createPreviewWikiEventsWriter()
   }
 
-  preview(body: PreviewIngestBody): PreviewIngestResponse {
+  /**
+   * F027 v3 G11：preview() 改 async（接真 LLM 编译，5-30s 延迟）。
+   * compile deps 注入 → 真编译产 compiledMarkdown；未注入 / 编译失败 → 退回 stub 预览。
+   */
+  async preview(body: PreviewIngestBody): Promise<PreviewIngestResponse> {
     // 5 层 sanitize
     const sanitized = sanitizeRawDrop(body.content)
     const warnings = mapWarnings(sanitized)
@@ -91,19 +133,48 @@ export class IngestPreviewService {
       }
     }
 
-    // 通过：生成 minimal stub LLM 编译预览（Phase 4 接真 LLM）
-    const compiled = buildLlmStubPreview({
-      sourcePath: body.sourcePath,
-      sanitizedContent: sanitized.sanitizedText,
-      mimeType: body.mimeType,
-      targetType: body.targetType,
-      generatedAt: createdAt.toISOString(),
-    })
-
     const previewId = this.newId()
+
+    // 通过：真编译（compile deps 注入）或 stub（未注入 / 编译失败兜底）。
+    let llmCompiledPreview: string
+    let compiledMarkdown: string | undefined
+    if (this.compile) {
+      try {
+        const draft = await this.runCompile(body, sanitized, previewId, createdAt)
+        compiledMarkdown = renderCompiledDraft(draft)
+        llmCompiledPreview = compiledMarkdown
+      } catch (err) {
+        // 编译失败 fail-soft：退回 stub 预览 + schema_violation warning（不挂 UI，用户可仍 commit raw）。
+        this.compile.logger?.(
+          `ingest preview compile failed, falling back to stub: ${err instanceof Error ? err.message : String(err)}`,
+        )
+        llmCompiledPreview = buildLlmStubPreview({
+          sourcePath: body.sourcePath,
+          sanitizedContent: sanitized.sanitizedText,
+          mimeType: body.mimeType,
+          targetType: body.targetType,
+          generatedAt: createdAt.toISOString(),
+        })
+        warnings.push({
+          kind: "compile_failed",
+          subkind: "compile_failed",
+          message: `LLM 编译失败，已退回原始 sanitize 预览：${err instanceof Error ? err.message : String(err)}`,
+        })
+      }
+    } else {
+      // 无 compile deps（standalone 测试 / 未接 LLM）→ stub 预览（向后兼容）。
+      llmCompiledPreview = buildLlmStubPreview({
+        sourcePath: body.sourcePath,
+        sanitizedContent: sanitized.sanitizedText,
+        mimeType: body.mimeType,
+        targetType: body.targetType,
+        generatedAt: createdAt.toISOString(),
+      })
+    }
 
     // Day 9-10 (AC-P3-10)：store 注入时 put entry 供 commit endpoint 凭 previewId 取
     // F027 P4 Day 10 AC-P4-3 e: 透传 seriesId 给 store，commit 时 inject 到 frontmatter
+    // F027 v3 G11: compiledMarkdown（编译成功才有）存 store → commit 落盘写编译产物。
     if (this.store) {
       this.store.put({
         previewId,
@@ -114,16 +185,60 @@ export class IngestPreviewService {
         seriesId: body.seriesId,
         createdAt: createdAt.toISOString(),
         expiresAt,
+        compiledMarkdown,
       })
     }
 
     return {
       previewId,
       sanitizedContent: sanitized.sanitizedText,
-      llmCompiledPreview: compiled,
+      llmCompiledPreview,
       warnings,
       expiresAt,
     }
+  }
+
+  /** F027 v3 G11 · 跑 LLM compile pipeline（preview 路径，用 no-op WikiEventsWriter）。 */
+  private async runCompile(
+    body: PreviewIngestBody,
+    sanitized: SanitizeResult,
+    previewId: string,
+    createdAt: Date,
+  ): Promise<DraftResult> {
+    const compile = this.compile
+    if (!compile) throw new Error("runCompile called without compile deps")
+
+    const title = extractTitle(sanitized.sanitizedText) ?? deriveTitleFromPath(body.sourcePath)
+    const quotedSpans = sanitized.quarantinedSegments.map((s) => s.original)
+
+    return runCompilePipelineWithRetry(
+      {
+        rawContent: sanitized.sanitizedText,
+        rawMetadata: {
+          ingestMessageId: previewId,
+          fromUserDrop: true,
+          date: formatDate(createdAt),
+          seriesId: body.seriesId ?? null,
+        },
+        agentDraft: {
+          title,
+          ...(body.targetType
+            ? { type_candidate: mapTargetTypeToCandidate(body.targetType) }
+            : {}),
+          sources: [{ type: body.mimeType, path: body.sourcePath, contributed_by: "user-drop" }],
+        },
+        handbookCompileRules: compile.handbookCompileRules,
+        quotedSpans,
+        deps: {
+          embedding: compile.embedding,
+          indexLoader: compile.indexLoader,
+          llmClient: compile.llmClient,
+          entityChecker: compile.entityChecker,
+          wikiEvents: this.previewWikiEvents,
+        },
+      },
+      { maxAttempts: compile.maxAttempts ?? 3, logger: compile.logger },
+    )
   }
 }
 
@@ -238,6 +353,41 @@ function deriveTitleFromPath(sourcePath: string): string {
   return filename.replace(/\.(md|txt|json)$/i, "")
 }
 
+/** F027 v3 G11 · Date → YYYY-MM-DD（compile pipeline rawMetadata.date / draftPath 用）。 */
+function formatDate(d: Date): string {
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * F027 v3 G11 · DraftType（feature/bug/lesson/concept）→ compile type_candidate
+ * （concept/rule/method/lesson/external-ref）。仅候选，Phase 2 LLM 最终拍 type。
+ */
+function mapTargetTypeToCandidate(
+  t: DraftType,
+): "concept" | "rule" | "method" | "lesson" | "external-ref" {
+  switch (t) {
+    case "lesson":
+      return "lesson"
+    case "concept":
+      return "concept"
+    // feature / bug 无对应 compile type → 候选 concept（LLM 可改）
+    default:
+      return "concept"
+  }
+}
+
+/**
+ * F027 v3 G11 · DraftResult → 完整 markdown（frontmatter + body）。
+ * frontmatter 用 yaml.stringify 序列化完整 CompiledFrontmatter（含 cross_refs / dedup /
+ * facts 等嵌套结构）；body = 标题 + summary + facts 列表（人读 + 落盘内容）。
+ */
+function renderCompiledDraft(draft: DraftResult): string {
+  const fm = draft.frontmatter
+  const factsBody = fm.facts.map((f) => `- ${f.text}`).join("\n")
+  const body = `# ${fm.title}\n\n${fm.summary}\n\n## Facts\n\n${factsBody}\n`
+  return `---\n${stringifyYaml(fm)}---\n${body}`
+}
+
 export function registerIngestPreviewRoute(
   app: FastifyInstance,
   service: IngestPreviewService,
@@ -249,7 +399,7 @@ export function registerIngestPreviewRoute(
       return toErrorResponse(validation)
     }
     try {
-      return service.preview(validation.value)
+      return await service.preview(validation.value)
     } catch (err) {
       request.log.error({ err }, "ingest preview threw")
       reply.code(HTTP_STATUS_BY_ERROR[ErrorCode.INTERNAL_ERROR])
