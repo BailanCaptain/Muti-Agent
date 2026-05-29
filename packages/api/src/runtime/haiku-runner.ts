@@ -68,6 +68,14 @@ function createClaudeCliRunner(model: string, deps: HaikuRunnerDeps = {}): Haiku
         stdout += typeof chunk === "string" ? chunk : chunk.toString("utf8")
       })
 
+      // codex P2-1(G11)：收集 stderr —— claude CLI 把 quota/rate-limit/429 写 stderr，
+      // 不进 stderr 的话 exit-code-N 永远匹配不到 runner-with-fallback 的 /quota|rate|429/，
+      // Opus 配额耗尽就不会降级 Haiku 而直接 fail。失败时把 stderr 摘要拼进 error。
+      let stderr = ""
+      proc.stderr?.on("data", (chunk: Buffer | string) => {
+        stderr += typeof chunk === "string" ? chunk : chunk.toString("utf8")
+      })
+
       return new Promise<HaikuRunResult>((resolve) => {
         let settled = false
         const settle = (res: HaikuRunResult) => {
@@ -86,7 +94,10 @@ function createClaudeCliRunner(model: string, deps: HaikuRunnerDeps = {}): Haiku
           const durationMs = Date.now() - start
           const text = stdout.trim()
           if (code !== 0) {
-            return settle({ ok: false, text: "", durationMs, error: `exit-code-${code}` })
+            // 把 stderr 摘要拼进 error，让 runner-with-fallback 能识别 quota/rate/429 触发降级。
+            const errTail = stderr.trim().slice(0, 200)
+            const error = errTail ? `exit-code-${code}: ${errTail}` : `exit-code-${code}`
+            return settle({ ok: false, text: "", durationMs, error })
           }
           if (!text) {
             return settle({ ok: false, text: "", durationMs, error: "empty-output" })

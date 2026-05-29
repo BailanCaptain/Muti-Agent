@@ -58,11 +58,15 @@ function normalizeEntityName(raw: string): string {
   // 剥 [[wikilink]]
   const wl = n.match(/^\[\[(.+)\]\]$/)
   if (wl) n = wl[1].trim()
-  // 剥目录前缀（取最后一段）
+  // 防穿越（codex P2-1 修）：必须在 split 之前拒含 ".." 的 raw。
+  // 否则 split(/[/\\]/).pop() 会把 "../foo" 归一成 "foo"，若 concepts/foo.md 存在则
+  // 非法 cross_ref target "../foo" 被误判 live 并原样写进 frontmatter。
+  if (n.includes("..")) return ""
+  // 剥目录前缀（取最后一段，支持 concepts/foo 这类合法前缀）
   n = n.split(/[/\\]/).pop() ?? ""
   // 剥 .md 后缀
   if (n.endsWith(".md")) n = n.slice(0, -3)
-  // 防穿越 + 合法名校验
-  if (n.includes("..") || !VALID_NAME.test(n)) return ""
+  // 合法名校验
+  if (!VALID_NAME.test(n)) return ""
   return n
 }

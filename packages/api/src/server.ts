@@ -804,6 +804,8 @@ export async function createApiServer(options: {
           primary: createOpusRunner(),
           fallback: createHaikuRunner(),
         }),
+        // codex P3(G11)：接生产 logger，让 Opus→Haiku fallback 成功(质量降级)可观测。
+        logger: (msg: string) => app.log.info({ component: "ingest-compile-llm" }, msg),
       }),
       handbookCompileRules: ingestCompileRules,
       logger: (msg) => app.log.info({ component: "ingest-compile" }, msg),

@@ -93,6 +93,15 @@ export interface IngestCompileDeps {
   logger?: (msg: string) => void
 }
 
+/**
+ * F027 v3 G11 codex P2-3 · preview() 第二参（caller 侧 provenance，非用户输入）。
+ * HTTP route 不传 → 默认 user-drop（tainted_source=true）。
+ * DocsIngestRunner 直接 service-call 时传 docs-watcher（项目内文档，tainted_source=false）。
+ */
+export interface PreviewInternalOpts {
+  provenance?: "user-drop" | "docs-watcher"
+}
+
 export class IngestPreviewService {
   private readonly previewTtlMs: number
   private readonly clock: () => Date
@@ -115,7 +124,10 @@ export class IngestPreviewService {
    * F027 v3 G11：preview() 改 async（接真 LLM 编译，5-30s 延迟）。
    * compile deps 注入 → 真编译产 compiledMarkdown；未注入 / 编译失败 → 退回 stub 预览。
    */
-  async preview(body: PreviewIngestBody): Promise<PreviewIngestResponse> {
+  async preview(
+    body: PreviewIngestBody,
+    opts: PreviewInternalOpts = {},
+  ): Promise<PreviewIngestResponse> {
     // 5 层 sanitize
     const sanitized = sanitizeRawDrop(body.content)
     const warnings = mapWarnings(sanitized)
@@ -140,7 +152,7 @@ export class IngestPreviewService {
     let compiledMarkdown: string | undefined
     if (this.compile) {
       try {
-        const draft = await this.runCompile(body, sanitized, previewId, createdAt)
+        const draft = await this.runCompile(body, sanitized, previewId, createdAt, opts)
         compiledMarkdown = renderCompiledDraft(draft)
         llmCompiledPreview = compiledMarkdown
       } catch (err) {
@@ -204,6 +216,7 @@ export class IngestPreviewService {
     sanitized: SanitizeResult,
     previewId: string,
     createdAt: Date,
+    opts: PreviewInternalOpts,
   ): Promise<DraftResult> {
     const compile = this.compile
     if (!compile) throw new Error("runCompile called without compile deps")
@@ -211,12 +224,18 @@ export class IngestPreviewService {
     const title = extractTitle(sanitized.sanitizedText) ?? deriveTitleFromPath(body.sourcePath)
     const quotedSpans = sanitized.quarantinedSegments.map((s) => s.original)
 
+    // codex P2-3(G11)：provenance 决定 tainted_source / contributed_by。
+    // user-drop（默认，HTTP route）= 外部投喂，tainted=true；docs-watcher = 项目内文档，tainted=false。
+    const provenance = opts.provenance ?? "user-drop"
+    const fromUserDrop = provenance === "user-drop"
+    const contributedBy = provenance
+
     return runCompilePipelineWithRetry(
       {
         rawContent: sanitized.sanitizedText,
         rawMetadata: {
           ingestMessageId: previewId,
-          fromUserDrop: true,
+          fromUserDrop,
           date: formatDate(createdAt),
           seriesId: body.seriesId ?? null,
         },
@@ -225,7 +244,7 @@ export class IngestPreviewService {
           ...(body.targetType
             ? { type_candidate: mapTargetTypeToCandidate(body.targetType) }
             : {}),
-          sources: [{ type: body.mimeType, path: body.sourcePath, contributed_by: "user-drop" }],
+          sources: [{ type: body.mimeType, path: body.sourcePath, contributed_by: contributedBy }],
         },
         handbookCompileRules: compile.handbookCompileRules,
         quotedSpans,

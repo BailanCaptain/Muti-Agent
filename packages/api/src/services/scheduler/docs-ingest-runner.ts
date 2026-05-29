@@ -124,11 +124,16 @@ export class DocsIngestRunner {
     // 1. preview (sanitize + minimal stub LLM 预览)
     let previewResult: Awaited<ReturnType<typeof this.preview.preview>>
     try {
-      previewResult = await this.preview.preview({
-        sourcePath: event.relativePath,
-        content,
-        mimeType: "text/markdown",
-      })
+      previewResult = await this.preview.preview(
+        {
+          sourcePath: event.relativePath,
+          content,
+          mimeType: "text/markdown",
+        },
+        // codex P2-3(G11)：docs-watcher ingest 的是项目内文档，非外部投喂 →
+        // provenance=docs-watcher（tainted_source=false / contributed_by=docs-watcher）。
+        { provenance: "docs-watcher" },
+      )
     } catch (err) {
       this.log.warn({ event, err }, "docs-ingest-runner: preview threw")
       return { skipped: true, skippedReason: "preview_blocked" }

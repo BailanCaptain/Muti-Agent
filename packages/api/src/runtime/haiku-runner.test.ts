@@ -4,7 +4,13 @@ import { EventEmitter } from "node:events"
 import { describe, it, mock } from "node:test"
 import { createHaikuRunner, createOpusRunner, createSonnetRunner } from "./haiku-runner"
 
-type FakeSpawnOpts = { code: number | null; stdout?: string; delayMs?: number; spawnError?: Error }
+type FakeSpawnOpts = {
+  code: number | null
+  stdout?: string
+  stderr?: string
+  delayMs?: number
+  spawnError?: Error
+}
 
 function fakeSpawn(opts: FakeSpawnOpts) {
   const killSpy = mock.fn()
@@ -22,6 +28,9 @@ function fakeSpawn(opts: FakeSpawnOpts) {
     setTimeout(() => {
       if (opts.stdout !== undefined) {
         proc.stdout.emit("data", Buffer.from(opts.stdout))
+      }
+      if (opts.stderr !== undefined) {
+        proc.stderr.emit("data", Buffer.from(opts.stderr))
       }
       proc.emit("close", opts.code)
     }, opts.delayMs ?? 1)
@@ -48,6 +57,15 @@ describe("HaikuRunner", () => {
     assert.equal(res.ok, false)
     assert.equal(res.text, "")
     assert.equal(res.error, "exit-code-2")
+  })
+
+  it("codex P1(G11): exit≠0 时把 stderr quota 摘要拼进 error（供 runner-with-fallback 识别降级）", async () => {
+    const { spawn } = fakeSpawn({ code: 1, stderr: "Error: quota exceeded for this org" })
+    const r = createHaikuRunner({ spawn })
+    const res = await r.runPrompt("x")
+    assert.equal(res.ok, false)
+    assert.match(res.error ?? "", /^exit-code-1: /)
+    assert.match(res.error ?? "", /quota/)
   })
 
   it("AC-08 precondition: kills process and returns error=timeout after timeoutMs", async () => {

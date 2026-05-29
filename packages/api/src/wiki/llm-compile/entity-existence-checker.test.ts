@@ -65,4 +65,15 @@ describe("createProductionEntityExistenceChecker", () => {
     assert.equal(await c.exists(".."), false)
     assert.equal(await c.exists(""), false)
   })
+
+  it("codex P2-1 回归：concepts/foo.md 存在时 ../foo 仍判 false（split 前拒 ..）", async () => {
+    // bug: normalizeEntityName 若先 split().pop() 再查 ..，会把 ../foo 归一成 foo
+    // → concepts/foo.md 存在则误判 live。修后必须 false。
+    await writeMd("concepts/foo.md")
+    const c = createProductionEntityExistenceChecker({ wikiRoot: root })
+    assert.equal(await c.exists("foo"), true, "sanity: foo 应存在")
+    assert.equal(await c.exists("../foo"), false, "../foo 不得因 split 归一成 foo 而误判 live")
+    assert.equal(await c.exists("../concepts/foo"), false)
+    assert.equal(await c.exists("[[../foo]]"), false)
+  })
 })
