@@ -15,7 +15,7 @@
  *   - 5 层 sanitize：直接复用 Phase 1 P4 sanitizeRawDrop
  *   - LLM 编译预览：**Day 5 不真调 LLM**（成本 + 时延 + 预览仅为 UI 展示）
  *     生成 minimal stub markdown：frontmatter（type/title/source_path/generated_at/preview=true）+ body=sanitized
- *     Phase 4 接真 LLM compile-pipeline（已有 wiki/llm-compile/compile-pipeline.ts）
+ *     【F027 v3 G11 已接通真 LLM compile-pipeline（Opus 4.7）— stub 仅作 compile deps 未注入 / 编译失败的 fail-soft 回退；详见下方 G11 注释】
  *   - 不落盘：preview 内存返回；commit 落盘走 AC-P3-10 Week 2 Day 10 endpoint
  *   - 不持久化 previewId（in-memory map）：commit endpoint 通过 previewId 验证不在 Day 5 范围
  *

@@ -27,7 +27,7 @@
 | **G8** Adaptive Recall 5 字段人话 | P1 | V16.5 chap 12 | `prompt-inspector-tab.tsx:458-491` 直接展示原始字段名无说明 |
 | **G9** viewfinder frontmatter 字段说明 | P1 | V16.5 chap 11 line 1255 | yaml 渲染直接显示无说明 panel |
 | **G10** open_threads JSON union validator | P2 | V16.5 chap 9 line 1069 | schema 是 TEXT 列存 JSON, repo hydrate 不检每项 shape |
-| **G11** LLM compile pipeline 端到端 | P2 (架构) | V16.5 chap 26 | `runCompilePipeline` 实际**未** wire 到 production ingest-commit/preview |
+| **G11** LLM compile pipeline 端到端 | P2 (架构) | V16.5 chap 26 | 修前: `runCompilePipeline` 实际**未** wire 到 production ingest-commit/preview。**2026-05-30 已接通**（Opus 4.7，commit f550946→29ecd9b→c7fb809，德彪两轮 review PASS）→ 详见 §4 |
 | **G12** a2a_calls perf ≤50ms test | P2 | V16.5 chap 11 a2a_calls index perf AC | 6 个 index 全有但无专门 perf 断言 test |
 
 ### 痛点 6 类 + 北极星 5 条 修前状态
@@ -93,16 +93,20 @@
 
 ## 4. residual / follow-up
 
-### G11 推独立 F-id (架构 gap)
+### G11 已接通 (2026-05-30 完成，原"推独立 F-id"已落地，不再推 F029)
 
-`runCompilePipeline` (`packages/api/src/wiki/llm-compile/compile-pipeline.ts`) 实际**未** wire 到
-production `ingest-commit.ts:29` + `ingest-preview.ts:18` (注释明确写 "Phase 4 接真 LLM"
-但未实施)。当前 ingest path: preview sanitize → minimal stub → commit 落盘 (无 LLM 编译)。
+小孙拍板"不接不是 feature 没完成"→ G11 进 v3（编译模型 **Opus 4.7** = types.ts:6 立项原值）。
+`runCompilePipeline` 已 wire 到 production ingest preview/commit 全链路，替换原 stub。
 
-**建议**: 独立 F-id (F029-llm-compile-pipeline-wire) 接通:
-- ingest-preview 加 LLM compile 阶段 (pre-sanitize → compile cross_refs/dedup → post canonical_owner)
-- ingest-commit 调 runCompilePipelineWithRetry
-- 加端到端 fixture test 覆盖完整 3 阶段
+**实现（commit f550946 → 29ecd9b → c7fb809）**:
+- 4 适配器: production-compile-llm-client（Opus+Haiku fallback）/ index-lite-loader / entity-existence-checker（防穿越）/ preview-wiki-events-writer（preview no-op）
+- ingest-preview.ts: preview() 改 async + 真编译产 compiledMarkdown + 失败 fail-soft 退 stub + compile_failed warning + provenance（user-drop/docs-watcher）
+- ingest-commit.ts: 优先落盘 compiledMarkdown；preview-store: +compiledMarkdown 字段；server.ts: 注入真 deps
+- 前端 ingest-modal: preview loading 文案反映真编译延迟
+
+**德彪 codex review**: 第一轮 CONDITIONAL_PASS（P1 fallback stderr / P2 路径穿越 / P3 logger）→ receive 全修 + 回归测试 → **第二轮 PASS**。验证: api typecheck 0 + lint 0 + 65 单测全绿。
+
+**follow-up backlog（小孙拍不阻塞）**: index-lite totalContextTokens cap / commit sourceMessageIds 结构化 provenance / Opus rate-limit / WIKI_ROOT 真 entity 目录（concepts/rules 未建，cross_refs 当前降级运行，backfill 跑后恢复）。
 
 ### G6 follow-up (推后做)
 
@@ -115,7 +119,7 @@ G6 MVP 限定 4 块 (banner / 6 桶 / supersede 链 / 7d 增长); 推后续:
 按小孙 5-28 拍 "v3 patch 形式 (非 Round 2 重拍)"，本 patch 不修 `feature.md` AC 列表。
 - 12 gap 全部追溯到 V16.5-final.md 原章节 (chap 1-3/11/13/17/18/20/26)
 - AC 都在 Phase 1-4 plan 里, gap 是"已声称做完但实际硬编码/noop" — 不是新 AC
-- 后续 F029 接 G11 LLM compile pipeline 时再独立立项
+- ~~后续 F029 接 G11 LLM compile pipeline 时再独立立项~~ → **G11 已直接进 v3 接通（2026-05-30），不再推 F029**（小孙 5-29 拍"不接不是 feature 没完成"）
 
 ---
 

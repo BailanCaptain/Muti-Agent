@@ -26,7 +26,9 @@
  *
  * 不做（Day 9-10 范围外）：
  *   - 不扩 update-wiki-service 给 'ingest' action 真实现（plan 字面"复用 update_wiki"，复用即 'write'）
- *   - 不接 LLM compile-pipeline（preview 已 sanitize，commit 不再 LLM 编译；Phase 4 接真 LLM 时再加）
+ *   - commit 不重跑 LLM 编译：F027 v3 G11 已接通真编译，但编译在 preview 阶段做（产物存
+ *     PreviewStore.compiledMarkdown），commit 直接落盘该产物（见下方 finalContent 取 compiledMarkdown）；
+ *     preview 未编译 / 编译失败兜底时 commit 退回 raw sanitizedContent。
  *   - 不写 prompt_audit（Day 8 b 是 A2A prompt 拼装路径；ingest commit 是独立写盘动作）
  *   - 不做 retry/CAS reconcile（status='conflict' 直接返 409，让 client 改名 重新 preview/commit）
  */
