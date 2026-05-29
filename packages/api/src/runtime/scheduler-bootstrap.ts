@@ -13,18 +13,24 @@
  * Day 1 范围（plan §3 Week 1 Day 1）：
  *   - 11 job adapter 装配（plan §9 映射表）
  *   - StartupReconciler：直接用（业务全在 SQL UPDATE/DELETE，不需要业务回调）
- *   - 其他 jobs：业务侧回调注入 noop（Phase 4 接入真实现）
+ *   - 其他 jobs：业务侧回调按下方更新说明注入真业务（wikiRoot/runner 缺失才 noop fallback）
  *
- * 不做：
- *   - 不接 RoomCompilerTick.compileExecutor 真业务（Phase 4 P19/22 接 room compile）
- *   - 不接 DocsWatcher.onEvent 真 ingest pipeline（Phase 4 P21 接 sanitize + LLM 编译）
- *   - 不接 NightlyHealthCheck.scanEntities 真扫描（Phase 4 接 wiki 扫描）
- *   - 不接 WeeklyDraftDigest.scanDrafts / pushDigest（Phase 4 接 draft 表）
- *   - 不接 DriftDetector.scanTriggers / openUpdateDraft（Phase 4 接 wiki_events）
- *   - 不接 MonthlySnapshot.recompileAllRooms / backup / replaceViewfinder（Phase 4）
- *   - 不接 ArchiveYearlySessions.scanSessions / writeYearlyPack / archiveFile（Phase 4）
- *   - 不接 WikiCompilerDebounce.recompileDerivedViews（Phase 4 派生视图）
- *   - 不接 ChainedAlertNotifier.pushAlert 真 room MCP（Phase 4 接 R-201 推送）
+ * 【已接真业务（下方原 "不做" 列表已 stale，保留作演进记录）】：
+ *   - RoomCompilerTick.compileExecutor：Week 5 hotfix 接真 roomCompileExecutor（server.ts 注入）
+ *   - DocsWatcher.onEvent：final-vision P1-2 接 DocsIngestRunner（含 G11 真 LLM 编译）
+ *   - NightlyHealthCheck/WeeklyDraftDigest/DriftDetector/MonthlySnapshot/ArchiveYearlySessions：
+ *     F027 v3 G2 接真 scanner（见 ~line 200）
+ *   - ChainedAlertNotifier.pushAlert：server.ts 注入 ws broadcast
+ *   原 Phase-3-Day-1 scaffold "不做" 项（下列）现已由 v3 G2 / final-vision / Week5 hotfix 接通：
+ *   - ~~不接 RoomCompilerTick.compileExecutor 真业务~~ → 已接
+ *   - ~~不接 DocsWatcher.onEvent 真 ingest pipeline~~ → 已接
+ *   - ~~不接 NightlyHealthCheck.scanEntities 真扫描~~ → 已接
+ *   - ~~不接 WeeklyDraftDigest.scanDrafts / pushDigest~~ → 已接
+ *   - ~~不接 DriftDetector.scanTriggers / openUpdateDraft~~ → 已接
+ *   - ~~不接 MonthlySnapshot.recompileAllRooms~~ → 已接（MVP recompiled===current）
+ *   - ~~不接 ArchiveYearlySessions.scanSessions~~ → 已接
+ *   - WikiCompilerDebounce.recompileDerivedViews：仍 follow-up（派生视图重编，独立 F-id）
+ *   - ~~不接 ChainedAlertNotifier.pushAlert 真 room MCP~~ → 已接 ws broadcast
  *
  * 验收（AC-P3-7）：
  *   - API server 启动后 SchedulerRuntime 实例化 + 11 job 注册成功
