@@ -287,3 +287,66 @@ test("NightlyVacuum · atomic write — archive/snapshot 无 .tmp 残留", async
     cleanup()
   }
 })
+
+// ── F027 AC-P1-5 codex P2-3 (re-review NO-GO 修)：recent_drops retention 真接 ──────
+// 锁「注入 recentDrops → run() 真调 pruneOlderThan(cutoff=now-retentionDays) + 计 recentDropsPruned」。
+// server.ts→bootSchedulerRuntime 那一跳是单行 DI wire（本 commit 实改），此处锁 vacuum 半段确定性行为。
+
+test("NightlyVacuum · AC-P1-5 P2-3: 注入 recentDrops → run() 调 pruneOlderThan(now-7d) + 计 recentDropsPruned", async () => {
+  const { db, cleanup } = await build()
+  try {
+    let calls = 0
+    let calledWith = -1
+    const vacuum = new NightlyVacuum({
+      db,
+      recentDropsRetentionDays: 7,
+      clock: () => NOW,
+      recentDrops: {
+        pruneOlderThan: (cutoffMs: number): number => {
+          calls += 1
+          calledWith = cutoffMs
+          return 3
+        },
+      },
+    })
+    const result = vacuum.run()
+    assert.equal(calls, 1, "run() 应调 pruneOlderThan 恰一次（boot 漏传则为 0）")
+    assert.equal(calledWith, NOW.getTime() - 7 * 24 * 3600 * 1000, "cutoff = now - retentionDays(7d)")
+    assert.equal(result.recentDropsPruned, 3, "recentDropsPruned 反映 pruneOlderThan 返回值")
+  } finally {
+    cleanup()
+  }
+})
+
+test("NightlyVacuum · AC-P1-5 P2-3: recentDropsRetentionDays 自定义 → cutoff 用自定义天数", async () => {
+  const { db, cleanup } = await build()
+  try {
+    let calledWith = -1
+    const vacuum = new NightlyVacuum({
+      db,
+      recentDropsRetentionDays: 14,
+      clock: () => NOW,
+      recentDrops: {
+        pruneOlderThan: (cutoffMs: number): number => {
+          calledWith = cutoffMs
+          return 0
+        },
+      },
+    })
+    vacuum.run()
+    assert.equal(calledWith, NOW.getTime() - 14 * 24 * 3600 * 1000, "cutoff = now - 14d")
+  } finally {
+    cleanup()
+  }
+})
+
+test("NightlyVacuum · AC-P1-5 P2-3: 未注入 recentDrops → run() 不挂 + recentDropsPruned=0（向后兼容）", async () => {
+  const { db, cleanup } = await build()
+  try {
+    const vacuum = new NightlyVacuum({ db, clock: () => NOW })
+    const result = vacuum.run()
+    assert.equal(result.recentDropsPruned, 0, "无 recentDrops dep → prune 收 0，不报错")
+  } finally {
+    cleanup()
+  }
+})

@@ -966,6 +966,9 @@ export async function createApiServer(options: {
     // 约定：wikiRoot 是 markdown 文件实际根（`<X>/rooms/<id>/viewfinder.md` 中的 `<X>`），
     // 不是 namespace 外层。scanner ts docstring 强调；caller 见 server.ts:829 `roomCompileWikiRoot`。
     wikiRoot: roomCompileWikiRoot,
+    // F027 AC-P1-5 codex P2-3：把 recent_drops repo 注进 scheduler boot，
+    // 让 NightlyVacuum 每夜真 prune 超窗关联语料（不接 → prune 收 undefined 返回 0，retention 形同虚设）。
+    recentDrops: recentDropsRepo,
   })
   app.addHook("onClose", async () => {
     if (schedulerRuntime) {
