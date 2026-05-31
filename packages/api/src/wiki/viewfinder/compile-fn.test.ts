@@ -641,16 +641,17 @@ describe("featureProgress 站会式 §2/§3（小孙 2026-05-31 拍 A）", () =>
     assert.equal(p?.firstUndoneAC?.id, "AC-P1-3")
   })
 
-  // codex P2-2 修：锁定真实 F027 feature.md 当前生产展示（worktree 内未勾 → 0%/AC-P1-1）
-  it("readFeatureProgress: 真实 worktree F027 feature.md smoke（锁定生产行为）", () => {
+  // codex P2-2 re-review 修：硬锁真实 worktree F027 feature.md 生产行为。
+  // worktree 内 39 AC 全未勾 → done=0 / pct=0 / 第一条未勾=AC-P1-1。
+  // 这是"清单没勾即 0%"设计的真相源断言：若有人勾了 / 改了第一条 AC / 改了分隔符致漏计，本测即红。
+  it("readFeatureProgress: 真实 worktree F027 feature.md 硬锁 0%/AC-P1-1（生产行为）", () => {
     const p = readFeatureProgress("F027", process.cwd())
     assert.ok(p, "能读到 F027 feature.md")
     assert.equal(p?.featureId, "F027")
-    assert.ok(p?.total && p.total >= 39, `AC 总数 ≥39（实际 ${p?.total}）`)
-    assert.ok(
-      p?.firstUndoneAC === null || /^AC-P\d+-\d+$/.test(p?.firstUndoneAC?.id ?? ""),
-      "firstUndoneAC 为 null（全勾）或合法 AC id",
-    )
+    assert.equal(p?.total, 39, "worktree F027 共 39 条 AC（分隔符漏计会变小）")
+    assert.equal(p?.done, 0, "worktree 内全未勾 → done=0（设计：清单没勾即 0%）")
+    assert.equal(p?.pct, 0, "done=0 → pct=0")
+    assert.equal(p?.firstUndoneAC?.id, "AC-P1-1", "第一条未勾 = AC-P1-1")
   })
 })
 

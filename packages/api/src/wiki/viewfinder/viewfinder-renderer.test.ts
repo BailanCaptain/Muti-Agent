@@ -332,6 +332,31 @@ describe("renderViewfinder · 6 段 happy path", () => {
     assert.match(section2, /AC-P3-2/)
   })
 
+  // codex P3-3 re-review 修：多 AC commit 回归 — 第一条未勾在 acs 集合内 → 不报漂移 + 展示全部 AC
+  it("§2 多 AC commit：firstUndoneAC 在 acs 集合内 → 不报漂移 + 展示全部 AC", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        featureProgress: {
+          featureId: "F027",
+          total: 39,
+          done: 22,
+          pct: 56,
+          firstUndoneAC: { id: "AC-P3-9", title: "Adaptive Recall wiring" },
+        },
+        phaseInfo: {
+          featureId: "F027",
+          phase: 3,
+          acs: ["AC-P3-8", "AC-P3-9", "AC-P3-10"],
+          commitShortSha: "abc1234",
+          commitSubject: "feat(F027): AC-P3-8 + AC-P3-9 + AC-P3-10",
+        },
+      }),
+    )
+    const section2 = r.markdown.split("## 2. 当前进度")[1]?.split("##")[0] ?? ""
+    assert.match(section2, /正在做: AC-P3-8 \+ AC-P3-9 \+ AC-P3-10/, "展示全部 in-flight AC")
+    assert.doesNotMatch(section2, /漂移/, "第一条未勾 AC-P3-9 在 acs 内 → 不误报漂移")
+  })
+
   it("§4 blockerCalls 渲染含 callId 短码 + status + deadline", () => {
     const r = renderViewfinder(
       defaultInput({
