@@ -40,6 +40,15 @@ export interface NightlyVacuumOptions {
   /** 注入时钟（测试用）；默认 () => new Date()。 */
   clock?: () => Date
   logger?: FastifyBaseLogger
+  /**
+   * F027 AC-P1-5 codex P2-3 修：recent_drops 历史语料库 retention。
+   * 注入 → 每夜 prune ingestedAt < now - recentDropsRetentionDays（默认 7）。
+   * 不注入 → 跳过（向后兼容）。crossCorrelateDrops 只看 7 天窗口，超窗即可删（Iron Law 1：
+   * recent_drops 是关联检测临时语料非神圣原始数据，超窗删合规；区别 wiki_events archive 不删）。
+   */
+  recentDrops?: { pruneOlderThan(cutoffMs: number): number }
+  /** recent_drops 保留天数；默认 7（对齐 crossCorrelateDrops 窗口）。 */
+  recentDropsRetentionDays?: number
 }
 
 export interface VacuumResult {
@@ -53,6 +62,8 @@ export interface VacuumResult {
   archiveFiles: string[]
   /** 写入的 snapshot jsonl 文件相对路径列表。 */
   snapshotFiles: string[]
+  /** F027 AC-P1-5 · prune 掉的超窗 recent_drops 条数（未接 recentDrops 时 0）。 */
+  recentDropsPruned: number
 }
 
 interface WikiEventRow {
@@ -82,6 +93,8 @@ export class NightlyVacuum {
   private readonly archiveThresholdDays: number
   private readonly clock: () => Date
   private readonly log: FastifyBaseLogger
+  private readonly recentDrops?: { pruneOlderThan(cutoffMs: number): number }
+  private readonly recentDropsRetentionDays: number
 
   constructor(opts: NightlyVacuumOptions) {
     this.db = opts.db
@@ -89,6 +102,25 @@ export class NightlyVacuum {
     this.archiveThresholdDays = opts.archiveThresholdDays ?? 30
     this.clock = opts.clock ?? (() => new Date())
     this.log = opts.logger ?? createLogger("nightly-vacuum")
+    this.recentDrops = opts.recentDrops
+    this.recentDropsRetentionDays = opts.recentDropsRetentionDays ?? 7
+  }
+
+  /**
+   * F027 AC-P1-5 codex P2-3 修：prune 超窗 recent_drops（注入 recentDrops 才跑）。
+   * cutoff = now - retentionDays；pruneOlderThan 用 `<` 严格小于（不删窗口边界行）。
+   */
+  private pruneRecentDrops(): number {
+    if (!this.recentDrops) return 0
+    const cutoff = this.clock().getTime() - this.recentDropsRetentionDays * 24 * 3600 * 1000
+    const pruned = this.recentDrops.pruneOlderThan(cutoff)
+    if (pruned > 0) {
+      this.log.info(
+        { pruned, retentionDays: this.recentDropsRetentionDays },
+        "vacuum: pruned stale recent_drops (超窗关联语料)",
+      )
+    }
+    return pruned
   }
 
   run(): VacuumResult {
@@ -106,12 +138,15 @@ export class NightlyVacuum {
 
     if (oldEvents.length === 0) {
       this.log.info({ cutoffIso }, "vacuum: no events older than threshold")
+      // recent_drops prune 独立于 wiki_events archive（即使无老 events 也要 prune 超窗语料）
+      const recentDropsPruned = this.pruneRecentDrops()
       return {
         scannedEvents: 0,
         archivedEvents: 0,
         snapshotEntries: 0,
         archiveFiles: [],
         snapshotFiles: [],
+        recentDropsPruned,
       }
     }
 
@@ -167,14 +202,16 @@ export class NightlyVacuum {
       }
     }
 
+    const recentDropsPruned = this.pruneRecentDrops()
     const result: VacuumResult = {
       scannedEvents: oldEvents.length,
       archivedEvents: oldEvents.length,
       snapshotEntries,
       archiveFiles: archiveFiles.sort(),
       snapshotFiles: snapshotFiles.sort(),
+      recentDropsPruned,
     }
-    this.log.info(result, "vacuum done (DB rows untouched — archive is copy)")
+    this.log.info(result, "vacuum done (wiki_events archive is copy; recent_drops 超窗 pruned)")
     return result
   }
 }

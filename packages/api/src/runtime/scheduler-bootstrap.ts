@@ -118,6 +118,11 @@ export interface SchedulerBootOptions {
    */
   docsIngestRunner?: DocsIngestRunner
   /**
+   * F027 AC-P1-5 codex P2-3 · recent_drops 历史语料库 retention（NightlyVacuum 每夜 prune 超窗）。
+   * 缺 → 不 prune（向后兼容）。server.ts 注入 RecentDropsRepository。
+   */
+  recentDrops?: { pruneOlderThan(cutoffMs: number): number }
+  /**
    * F027 v3 G2 · wiki 根目录（cron scanner 扫 fs 用）。
    *
    * 缺 → 走 noop fallback (跟 v3 之前 Phase 3 行为一致 — boot 不强依赖)。
@@ -219,7 +224,13 @@ export async function bootSchedulerRuntime(
     logger: opts.log,
   })
 
-  const vacuum = new NightlyVacuum({ db: opts.db, rootDir, logger: opts.log })
+  // F027 AC-P1-5 codex P2-3：NightlyVacuum 接 recent_drops retention（注入才 prune）
+  const vacuum = new NightlyVacuum({
+    db: opts.db,
+    rootDir,
+    logger: opts.log,
+    recentDrops: opts.recentDrops,
+  })
 
   const draftDigest = new WeeklyDraftDigest({
     scanDrafts: opts.wikiRoot

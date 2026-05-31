@@ -53,6 +53,9 @@ const DEFAULT_COMMIT_LEASE_TTL_SECONDS = 30
 /** 落盘目录约定：wiki/concepts/draft/_auto/<filename>（V16.5 chap 7 raw drop + ACL default）。 */
 const TARGET_DRAFT_DIR = "wiki/concepts/draft/_auto"
 
+/** F027 AC-P1-5 · chained_suspect 隔离区（cross-correlation.ts:13 契约 + 小孙 2026-05-31 拍）。 */
+const QUARANTINE_DRAFT_DIR = "wiki/concepts/draft/_quarantined"
+
 export interface IngestCommitServiceDeps {
   store: PreviewStore
   updateWiki: UpdateWikiService
@@ -141,7 +144,11 @@ export class IngestCommitService {
     // 2. 派生 finalPath（落 wiki/concepts/draft/_auto/<filename>）
     //    F027 final-vision P1-2 r2 修：opts.targetPathOverride 优先（docs-watcher 用 versioned path
     //    避免 change 事件 CAS 撞名）。HTTP route 默认走 derivePath（向后兼容）。
-    const finalPath = opts.targetPathOverride ?? derivePath(entry.sourcePath)
+    //    F027 AC-P1-5 codex P1-2 修：preview 判 chained_suspect → 后端强制隔离到 _quarantined/，
+    //    不能只靠 preview warning（直接调 commit API 会绕过）。targetPathOverride（docs-watcher）
+    //    不受影响（docs-watcher 不走 correlate，entry.chainedSuspect 必 undefined）。
+    const finalPath =
+      opts.targetPathOverride ?? derivePath(entry.sourcePath, entry.chainedSuspect === true)
 
     // 3. acquire lease（caller 没传 leaseToken 时由 server 兜底 acquire；
     //    传了的话 Day 9-10 范围下还是再 acquire 一次 — caller 传的 token 当前没
@@ -387,14 +394,17 @@ export function injectSeriesIdIntoFrontmatter(content: string, seriesId: string)
  *   - 最终路径：wiki/concepts/draft/_auto/<filename>
  *
  * 不做 timestamp 前缀（让 client 自己保证 basename 唯一；撞名走 CAS conflict 错误）。
+ *
+ * F027 AC-P1-5 codex P1-2 修：chained=true → 落 _quarantined/（隔离待审），而非 _auto/。
  */
-function derivePath(sourcePath: string): string {
+function derivePath(sourcePath: string, chained = false): string {
   const basenameRaw = path.basename(sourcePath) || sourcePath.replace(/[\\/]/g, "_")
   let filename = basenameRaw
   if (!/\.(md|txt)$/i.test(filename)) {
     filename = `${filename}.md`
   }
-  return `${TARGET_DRAFT_DIR}/${filename}`
+  const dir = chained ? QUARANTINE_DRAFT_DIR : TARGET_DRAFT_DIR
+  return `${dir}/${filename}`
 }
 
 // ─── Route registration ────────────────────────────────────────────

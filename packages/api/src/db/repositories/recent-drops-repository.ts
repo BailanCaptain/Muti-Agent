@@ -13,7 +13,7 @@
  *   - 持久表：重启不丢历史 → 跨重启的拆分攻击也能被关联检测抓到（内存 buffer 做不到）。
  */
 
-import { and, gte, lte } from "drizzle-orm"
+import { and, gte, lt, lte } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type * as schema from "../schema"
 import { recentDrops } from "../schema"
@@ -70,9 +70,13 @@ export class RecentDropsRepository {
     return rows.map(hydrate)
   }
 
-  /** 清理 ingestedAt < cutoffMs 的历史 drop，返删除条数。 */
+  /**
+   * 清理 ingestedAt < cutoffMs 的历史 drop，返删除条数。
+   * codex P3-4 修：用 `<` 不是 `<=` —— queryWindow 含 windowStart（>=），prune 必须严格小于
+   * 边界，否则 prune(now-7d) 会删掉 detector 仍视为窗内的边界行。
+   */
   pruneOlderThan(cutoffMs: number): number {
-    const result = this.db.delete(recentDrops).where(lte(recentDrops.ingestedAt, cutoffMs)).run()
+    const result = this.db.delete(recentDrops).where(lt(recentDrops.ingestedAt, cutoffMs)).run()
     return result.changes
   }
 }

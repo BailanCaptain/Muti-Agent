@@ -51,6 +51,12 @@ export interface PreviewStoreEntry {
   embedding?: number[]
   contributedBy?: string
   ingestedAt?: number
+  /**
+   * F027 AC-P1-5 codex P1-2 修：preview 关联检测判 chained_suspect（疑似跨 drop 指令链）。
+   * commit 据此落 wiki/concepts/draft/_quarantined/ 隔离待审（而非 _auto/）—— 后端强制，
+   * 不能只靠 preview 的 warning（直接调 commit API 会绕过）。
+   */
+  chainedSuspect?: boolean
 }
 
 export interface PreviewStoreDeps {

@@ -236,6 +236,8 @@ export class IngestPreviewService {
         embedding: correlation.embedding,
         contributedBy: provenance,
         ingestedAt: createdAt.getTime(),
+        // codex P1-2 修：chained_suspect verdict 持久化，commit 据此落 _quarantined/ 隔离待审
+        chainedSuspect: correlation.chainedSuspect,
       })
     }
 
@@ -299,12 +301,16 @@ export class IngestPreviewService {
   }
 
   /**
-   * F027 AC-P1-5 · multi-drop 关联检测（fail-soft）。
-   * 流程：embed current → 查 7 天窗口历史 → crossCorrelateDrops →
-   *   chained_suspect → 推 warning（前端高亮 + detail 含 triggers）
+   * F027 AC-P1-5 · multi-drop 关联检测（codex review FAIL receive 修）。
+   * 流程：embed current（失败不阻断）→ 查 7 天窗口历史 → crossCorrelateDrops →
+   *   chained_suspect → 推 warning + 返 chainedSuspect=true（commit 落 _quarantined/ 隔离待审）
    *   series_member → 推 info warning（归同系列，正常长 paper 续传）
    *   isolated → 不推。
-   * 返回 { embedding }（存 store 供 commit 写 recent_drops）。任何错误吞掉，只记 log。
+   * 返回 { embedding, chainedSuspect }（存 store 供 commit 隔离落盘 + 写 recent_drops）。
+   *
+   * codex P1-1 修：embedding 单独 try/catch。embedding 失败 → embedding=undefined 继续跑，
+   * crossCorrelateDrops 本就支持缺向量（sim=0）但 keyword-chain / reference-link 确定性检测仍有效
+   * —— 不能因 embedding 挂就跳过整个检测（否则 attacker 触发 embedding 错误即绕过）。
    */
   private async runCorrelate(
     sanitizedText: string,
@@ -313,11 +319,20 @@ export class IngestPreviewService {
     contributedBy: string,
     seriesId: string | undefined,
     warnings: PreviewWarning[],
-  ): Promise<{ embedding?: number[] }> {
+  ): Promise<{ embedding?: number[]; chainedSuspect?: boolean }> {
     const correlate = this.correlate
     if (!correlate) return {}
+    // codex P1-1 修：embedding 单独 catch，失败仅丢向量，不跳过确定性检测。
+    let embedding: number[] | undefined
     try {
-      const embedding = (await correlate.embedding.generateEmbedding(sanitizedText)) ?? undefined
+      embedding = (await correlate.embedding.generateEmbedding(sanitizedText)) ?? undefined
+    } catch (err) {
+      correlate.logger?.(
+        `multi-drop embedding failed (continue without vector, deterministic checks still run): ${err instanceof Error ? err.message : String(err)}`,
+      )
+      embedding = undefined
+    }
+    try {
       const windowDays = correlate.windowDays ?? 7
       const ingestedAt = createdAt.getTime()
       const current: DropRecord = {
@@ -334,9 +349,11 @@ export class IngestPreviewService {
         warnings.push({
           kind: "multi_drop",
           subkind: `chained_suspect:${result.verdict.triggers[0]?.reason ?? "unknown"}`,
-          message: `检测到与近期 ${result.verdict.triggers.length} 个 drop 构成疑似指令链，已标记待审：${result.verdict.triggers.map((t) => `${t.reason}: ${t.detail}`).join(" / ")}`,
+          message: `检测到与近期 ${result.verdict.triggers.length} 个 drop 构成疑似指令链，commit 将隔离到 _quarantined/ 待审：${result.verdict.triggers.map((t) => `${t.reason}: ${t.detail}`).join(" / ")}`,
         })
-      } else if (result.verdict.kind === "series_member") {
+        return { embedding, chainedSuspect: true }
+      }
+      if (result.verdict.kind === "series_member") {
         warnings.push({
           kind: "multi_drop",
           subkind: "series_member",
@@ -348,7 +365,7 @@ export class IngestPreviewService {
       correlate.logger?.(
         `multi-drop correlate failed (fail-soft): ${err instanceof Error ? err.message : String(err)}`,
       )
-      return {}
+      return { embedding }
     }
   }
 }

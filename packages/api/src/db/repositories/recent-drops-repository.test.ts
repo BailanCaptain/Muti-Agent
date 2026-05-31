@@ -79,4 +79,31 @@ describe("RecentDropsRepository", () => {
     const ids = repo.queryWindow(now, 30).map((d) => d.id)
     assert.deepEqual(ids, ["new"])
   })
+
+  // codex P3-4 修：pruneOlderThan 用 `<` 严格小于，不删窗口边界行（queryWindow 含 >= windowStart）
+  it("pruneOlderThan 边界：恰在 cutoff 的行不删（< 不是 <=）", () => {
+    const cutoff = now - 7 * DAY
+    repo.record({ id: "edge", rawContent: "x", ingestedAt: cutoff, contributedBy: "a" })
+    const removed = repo.pruneOlderThan(cutoff)
+    assert.equal(removed, 0, "恰在 cutoff 的行保留（与 queryWindow >= 边界一致）")
+    assert.deepEqual(
+      repo.queryWindow(now, 7).map((d) => d.id),
+      ["edge"],
+      "边界行仍在 7 天窗内",
+    )
+  })
+
+
+  // codex P3-4 修：pruneOlderThan 用 `<` 严格小于，不删窗口边界行（queryWindow 含 >= windowStart）
+  it("pruneOlderThan 边界：恰在 cutoff 的行不删（< 不是 <=）", () => {
+    const cutoff = now - 7 * DAY
+    repo.record({ id: "edge", rawContent: "x", ingestedAt: cutoff, contributedBy: "a" })
+    const removed = repo.pruneOlderThan(cutoff)
+    assert.equal(removed, 0, "恰在 cutoff 的行保留（与 queryWindow >= 边界一致）")
+    assert.deepEqual(
+      repo.queryWindow(now, 7).map((d) => d.id),
+      ["edge"],
+      "边界行仍在 7 天窗内",
+    )
+  })
 })
