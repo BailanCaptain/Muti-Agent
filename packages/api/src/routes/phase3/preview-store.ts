@@ -44,6 +44,13 @@ export interface PreviewStoreEntry {
    * 未注入 compile deps / 编译失败兜底 → 缺省，commit 退回写 sanitizedContent。
    */
   compiledMarkdown?: string
+  /**
+   * F027 AC-P1-5 · multi-drop 关联用：preview 时算好的 embedding + 投稿人 + ingest 时刻，
+   * commit 成功后写 recent_drops（避免 commit 再 embed 一次）。缺省 = 未接 correlate deps。
+   */
+  embedding?: number[]
+  contributedBy?: string
+  ingestedAt?: number
 }
 
 export interface PreviewStoreDeps {

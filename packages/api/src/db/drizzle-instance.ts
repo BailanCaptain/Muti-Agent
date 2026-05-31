@@ -382,6 +382,21 @@ const INIT_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_prompt_audit ON prompt_audit(alias, room_id, created_at);
 
+  -- F027 AC-P1-5 · recent_drops — multi-drop cross-correlation 的"最近 drop 语料库"。
+  -- commit 落盘写一条；preview 检测查 7 天窗口做相似度对比。embedding 存 JSON 文本（缺失视为 sim 0）。
+  CREATE TABLE IF NOT EXISTS recent_drops (
+    id TEXT PRIMARY KEY,
+    raw_content TEXT NOT NULL,
+    ingested_at INTEGER NOT NULL,
+    contributed_by TEXT NOT NULL,
+    series_id TEXT,
+    embedding TEXT,
+    created_at TEXT NOT NULL,
+    reserved_1 TEXT,
+    reserved_2 TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_recent_drops_ingested_at ON recent_drops(ingested_at);
+
   -- F027 P3 chap 6 · update_wiki lease 表（path 维度互斥锁）+ 单调 fencing 序列。
   CREATE TABLE IF NOT EXISTS wiki_leases (
     path TEXT PRIMARY KEY,

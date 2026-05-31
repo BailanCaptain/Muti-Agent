@@ -399,6 +399,25 @@ export const promptAudit = sqliteTable(
   (table) => [index("idx_prompt_audit").on(table.alias, table.roomId, table.createdAt)],
 )
 
+// F027 AC-P1-5 · recent_drops — multi-drop cross-correlation 的"最近 drop 语料库"。
+// crossCorrelateDrops 需 7 天窗口的历史 drop + embedding 做相似度对比；commit 落盘写一条，
+// preview 检测查 7 天窗口。embedding 存 JSON 文本（number[] 序列化），缺失=生成失败视为 sim 0。
+export const recentDrops = sqliteTable(
+  "recent_drops",
+  {
+    id: text("id").primaryKey(),
+    rawContent: text("raw_content").notNull(),
+    ingestedAt: integer("ingested_at").notNull(),
+    contributedBy: text("contributed_by").notNull(),
+    seriesId: text("series_id"),
+    embedding: text("embedding"),
+    createdAt: text("created_at").notNull(),
+    reserved1: text("reserved_1"),
+    reserved2: text("reserved_2"),
+  },
+  (table) => [index("idx_recent_drops_ingested_at").on(table.ingestedAt)],
+)
+
 // F027 chap 6 · update_wiki MCP 写入流程的 lease 表（path 维度互斥锁）。
 // path 单 PK：同一时刻一个 path 只允许一个未过期 lease。
 // fencing_token 是 wiki_fencing_seq 单调 bigint，写入时 final-CAS 二次校验用。

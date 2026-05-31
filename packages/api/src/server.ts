@@ -761,6 +761,10 @@ export async function createApiServer(options: {
     await import("./routes/phase3")
   const sharedPreviewStore = new PreviewStoreCls()
 
+  // F027 AC-P1-5 · multi-drop 历史语料库 repository（commit 写 / preview 查 7 天窗口）
+  const { RecentDropsRepository } = await import("./db/repositories/recent-drops-repository")
+  const recentDropsRepo = new RecentDropsRepository(drizzleDb)
+
   // F027 v3 G11 · 给 ingest preview 注入真 LLM compile pipeline 依赖（Opus 4.7 + Haiku fallback）。
   // 注入后用户 drop 资料 → preview 真编译产 cross_refs/dedup/canonical_owner，commit 落盘编译产物。
   //   - wikiRoot 用 `<services>/wiki`（双 wiki，与 G2 r2 / roomCompileWikiRoot 同口径 — 真 entity 在此根下）。
@@ -810,6 +814,12 @@ export async function createApiServer(options: {
       handbookCompileRules: ingestCompileRules,
       logger: (msg) => app.log.info({ component: "ingest-compile" }, msg),
     },
+    // F027 AC-P1-5 · multi-drop 关联检测（preview 时 embed current + 查 7 天窗口 → crossCorrelate）
+    correlate: {
+      embedding: embeddingService,
+      recentDrops: recentDropsRepo,
+      logger: (msg: string) => app.log.info({ component: "ingest-correlate" }, msg),
+    },
   })
   const sharedIngestCommit = wikiServices
     ? new IngestCommitServiceCls({
@@ -817,6 +827,8 @@ export async function createApiServer(options: {
         updateWiki: wikiServices.updateWiki,
         leases: wikiServices.leases,
         leaderTerm: () => wikiServices.leader.getCurrent()?.currentTerm ?? "0",
+        // F027 AC-P1-5 · commit 成功后写 recent_drops（用 preview 算好的 embedding）
+        recentDrops: recentDropsRepo,
       })
     : undefined
 

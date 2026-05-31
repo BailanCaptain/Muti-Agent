@@ -39,6 +39,8 @@ import type {
   IndexLiteLoader,
   WikiEventsWriter,
 } from "../../wiki/llm-compile/types"
+import { crossCorrelateDrops } from "../../wiki/multi-drop/cross-correlation"
+import type { DropRecord } from "../../wiki/multi-drop/types"
 import { sanitizeRawDrop } from "../../wiki/sanitize/sanitize-raw-drop"
 import type { QuarantinedSegment, RedLineTrigger, SanitizeResult } from "../../wiki/sanitize/types"
 import {
@@ -73,6 +75,23 @@ export interface IngestPreviewServiceDeps {
    * F027 v3 G11 · LLM compile pipeline 依赖（注入 → preview 接真编译；不注入 → 退回 stub 预览）。
    */
   compile?: IngestCompileDeps
+  /**
+   * F027 AC-P1-5 · multi-drop 关联依赖（注入 → preview 接 live 关联检测；不注入 → 跳过）。
+   */
+  correlate?: IngestCorrelateDeps
+}
+
+/**
+ * F027 AC-P1-5 · multi-drop 关联依赖集。
+ * embedding 给 current drop 算向量；recentDrops 查 7 天窗口历史。fail-soft：任何错都不阻塞 preview。
+ */
+export interface IngestCorrelateDeps {
+  embedding: Pick<EmbeddingService, "generateEmbedding">
+  recentDrops: { queryWindow(windowEndMs: number, windowDays: number): DropRecord[] }
+  /** 滑动窗口天数（默认 7，AC-P1-5）。 */
+  windowDays?: number
+  /** 可选 log（关联失败记一笔；默认 noop）。 */
+  logger?: (msg: string) => void
 }
 
 /**
@@ -108,6 +127,7 @@ export class IngestPreviewService {
   private readonly newId: () => string
   private readonly store?: import("./preview-store").PreviewStore
   private readonly compile?: IngestCompileDeps
+  private readonly correlate?: IngestCorrelateDeps
   /** preview 路径 no-op WikiEventsWriter（read-only 预览不落审计行）。 */
   private readonly previewWikiEvents: WikiEventsWriter
 
@@ -117,6 +137,7 @@ export class IngestPreviewService {
     this.newId = deps.newId ?? (() => randomUUID())
     this.store = deps.store
     this.compile = deps.compile
+    this.correlate = deps.correlate
     this.previewWikiEvents = createPreviewWikiEventsWriter()
   }
 
@@ -184,6 +205,19 @@ export class IngestPreviewService {
       })
     }
 
+    // F027 AC-P1-5 · multi-drop 关联检测（注入 correlate deps 才跑；fail-soft 不阻塞 preview）。
+    // 命中 chained_suspect → 推 warning（前端高亮，等小孙审）；series_member → 推 info warning。
+    // 算好的 embedding 存 store，commit 成功后写 recent_drops（不再 embed 一次）。
+    const provenance = opts.provenance ?? "user-drop"
+    const correlation = await this.runCorrelate(
+      sanitized.sanitizedText,
+      previewId,
+      createdAt,
+      provenance,
+      body.seriesId,
+      warnings,
+    )
+
     // Day 9-10 (AC-P3-10)：store 注入时 put entry 供 commit endpoint 凭 previewId 取
     // F027 P4 Day 10 AC-P4-3 e: 透传 seriesId 给 store，commit 时 inject 到 frontmatter
     // F027 v3 G11: compiledMarkdown（编译成功才有）存 store → commit 落盘写编译产物。
@@ -198,6 +232,10 @@ export class IngestPreviewService {
         createdAt: createdAt.toISOString(),
         expiresAt,
         compiledMarkdown,
+        // AC-P1-5: 关联用元数据，commit 落盘 recent_drops
+        embedding: correlation.embedding,
+        contributedBy: provenance,
+        ingestedAt: createdAt.getTime(),
       })
     }
 
@@ -258,6 +296,60 @@ export class IngestPreviewService {
       },
       { maxAttempts: compile.maxAttempts ?? 3, logger: compile.logger },
     )
+  }
+
+  /**
+   * F027 AC-P1-5 · multi-drop 关联检测（fail-soft）。
+   * 流程：embed current → 查 7 天窗口历史 → crossCorrelateDrops →
+   *   chained_suspect → 推 warning（前端高亮 + detail 含 triggers）
+   *   series_member → 推 info warning（归同系列，正常长 paper 续传）
+   *   isolated → 不推。
+   * 返回 { embedding }（存 store 供 commit 写 recent_drops）。任何错误吞掉，只记 log。
+   */
+  private async runCorrelate(
+    sanitizedText: string,
+    previewId: string,
+    createdAt: Date,
+    contributedBy: string,
+    seriesId: string | undefined,
+    warnings: PreviewWarning[],
+  ): Promise<{ embedding?: number[] }> {
+    const correlate = this.correlate
+    if (!correlate) return {}
+    try {
+      const embedding = (await correlate.embedding.generateEmbedding(sanitizedText)) ?? undefined
+      const windowDays = correlate.windowDays ?? 7
+      const ingestedAt = createdAt.getTime()
+      const current: DropRecord = {
+        id: previewId,
+        rawContent: sanitizedText,
+        ingestedAt,
+        contributedBy,
+        seriesId,
+        embedding,
+      }
+      const historical = correlate.recentDrops.queryWindow(ingestedAt, windowDays)
+      const result = await crossCorrelateDrops(current, historical, { windowDays })
+      if (result.verdict.kind === "chained_suspect") {
+        warnings.push({
+          kind: "multi_drop",
+          subkind: `chained_suspect:${result.verdict.triggers[0]?.reason ?? "unknown"}`,
+          message: `检测到与近期 ${result.verdict.triggers.length} 个 drop 构成疑似指令链，已标记待审：${result.verdict.triggers.map((t) => `${t.reason}: ${t.detail}`).join(" / ")}`,
+        })
+      } else if (result.verdict.kind === "series_member") {
+        warnings.push({
+          kind: "multi_drop",
+          subkind: "series_member",
+          message: `归入系列 ${result.verdict.seriesId}（与 ${result.verdict.siblings.length} 个同系列 drop 关联）`,
+        })
+      }
+      return { embedding }
+    } catch (err) {
+      correlate.logger?.(
+        `multi-drop correlate failed (fail-soft): ${err instanceof Error ? err.message : String(err)}`,
+      )
+      return {}
+    }
   }
 }
 

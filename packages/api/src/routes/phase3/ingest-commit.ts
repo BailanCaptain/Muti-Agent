@@ -63,6 +63,20 @@ export interface IngestCommitServiceDeps {
   clock?: () => Date
   /** 注入 commit lease TTL（测试用；默认 30s）。 */
   commitLeaseTtlSeconds?: number
+  /**
+   * F027 AC-P1-5 · multi-drop 历史语料库（注入 → commit 成功后写一条 recent_drops）。
+   * 用 preview 时算好的 embedding，不在 commit 再 embed。不注入 → 跳过（向后兼容）。
+   */
+  recentDrops?: {
+    record(input: {
+      id: string
+      rawContent: string
+      ingestedAt: number
+      contributedBy: string
+      seriesId?: string
+      embedding?: number[]
+    }): void
+  }
 }
 
 /**
@@ -81,6 +95,7 @@ export class IngestCommitService {
   private readonly leaderTerm: () => string
   private readonly clock: () => Date
   private readonly commitLeaseTtlSeconds: number
+  private readonly recentDrops?: IngestCommitServiceDeps["recentDrops"]
 
   constructor(deps: IngestCommitServiceDeps) {
     this.store = deps.store
@@ -89,6 +104,7 @@ export class IngestCommitService {
     this.leaderTerm = deps.leaderTerm
     this.clock = deps.clock ?? (() => new Date())
     this.commitLeaseTtlSeconds = deps.commitLeaseTtlSeconds ?? DEFAULT_COMMIT_LEASE_TTL_SECONDS
+    this.recentDrops = deps.recentDrops
   }
 
   /**
@@ -201,6 +217,23 @@ export class IngestCommitService {
       response.status === "not_implemented"
     if (shouldConsume) {
       this.store.consume(body.previewId)
+    }
+
+    // F027 AC-P1-5 · commit 成功后写 recent_drops（fail-soft：写失败不影响已落盘 commit）。
+    // 用 preview 时算好的 embedding/contributedBy/ingestedAt（缺省给保守默认）。
+    if (response.status === "ok" && this.recentDrops) {
+      try {
+        this.recentDrops.record({
+          id: body.previewId,
+          rawContent: entry.sanitizedContent,
+          ingestedAt: entry.ingestedAt ?? this.clock().getTime(),
+          contributedBy: entry.contributedBy ?? "user-drop",
+          seriesId: entry.seriesId,
+          embedding: entry.embedding,
+        })
+      } catch {
+        // recent_drops 写失败不回滚 commit（drop 已落盘，关联历史缺一条可接受）
+      }
     }
 
     return this.mapUpdateWikiResponse(response, finalPath, lease.fencingToken)
