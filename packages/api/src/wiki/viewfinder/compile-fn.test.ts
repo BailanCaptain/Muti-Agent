@@ -21,6 +21,7 @@ import {
   extractFeatureIds,
   parseFeatureProgress,
   parseSubjectToPhaseInfo,
+  readFeatureProgress,
   safeGitLogSubjects,
 } from "./compile-fn"
 import { DecisionLedger } from "./decision-ledger"
@@ -591,6 +592,65 @@ describe("featureProgress 站会式 §2/§3（小孙 2026-05-31 拍 A）", () =>
       },
     ])
     assert.deepEqual([...ids].sort(), ["B023", "F027"])
+  })
+
+  // codex P2-1 修：recency 降序（最新房间主题排首），防房间从 F026 转 F027 错读旧 F026
+  it("extractFeatureIds: recency 降序 — 房间从 F026 转 F027 取最新 F027", () => {
+    const msg = (id: string, content: string, ts: string) => ({
+      messageId: id,
+      threadId: "t1",
+      authorAlias: "小孙",
+      role: "user" as const,
+      content,
+      createdAt: ts,
+    })
+    // recentMessages 时间正序（caller 已 chronological）：早 F026，晚 F027
+    const ids = extractFeatureIds([
+      msg("m1", "立项 F026 A2A", "2026-05-20T00:00:00Z"),
+      msg("m2", "F026 做完了", "2026-05-21T00:00:00Z"),
+      msg("m3", "现在转 F027 统一记忆", "2026-05-31T00:00:00Z"),
+    ])
+    assert.equal(ids[0], "F027", "最新提及的 F027 排首（querier 取首个 = 当前主题）")
+    assert.deepEqual(ids, ["F027", "F026"])
+  })
+
+  it("extractFeatureIds: 3 位起过滤 — F5/B12/F1 闲聊不误抓", () => {
+    const ids = extractFeatureIds([
+      {
+        messageId: "m1",
+        threadId: "t1",
+        authorAlias: "小孙",
+        role: "user" as const,
+        content: "按 F5 刷新，吃 B12 维生素，挂 F1 档，做 F027",
+        createdAt: "2026-05-31T00:00:00Z",
+      },
+    ])
+    assert.deepEqual(ids, ["F027"], "只抓 3 位起的真 feature id")
+  })
+
+  it("parse: 分隔符放宽 — `·`/`:`/`：`/`-` 都识别（codex P3-4）", () => {
+    const content = [
+      "- [x] **AC-P1-1 · 中点分隔**",
+      "- [x] **AC-P1-2: 半角冒号**",
+      "- [ ] **AC-P1-3：全角冒号**",
+      "- [ ] **AC-P1-4 - 连字符**",
+    ].join("\n")
+    const p = parseFeatureProgress("F027", content)
+    assert.equal(p?.total, 4, "4 种分隔符全计入 total（不漏计 → % 不虚高）")
+    assert.equal(p?.done, 2)
+    assert.equal(p?.firstUndoneAC?.id, "AC-P1-3")
+  })
+
+  // codex P2-2 修：锁定真实 F027 feature.md 当前生产展示（worktree 内未勾 → 0%/AC-P1-1）
+  it("readFeatureProgress: 真实 worktree F027 feature.md smoke（锁定生产行为）", () => {
+    const p = readFeatureProgress("F027", process.cwd())
+    assert.ok(p, "能读到 F027 feature.md")
+    assert.equal(p?.featureId, "F027")
+    assert.ok(p?.total && p.total >= 39, `AC 总数 ≥39（实际 ${p?.total}）`)
+    assert.ok(
+      p?.firstUndoneAC === null || /^AC-P\d+-\d+$/.test(p?.firstUndoneAC?.id ?? ""),
+      "firstUndoneAC 为 null（全勾）或合法 AC id",
+    )
   })
 })
 

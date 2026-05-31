@@ -158,21 +158,22 @@ function renderProgress(input: RenderViewfinderInput): string {
 
   // (S) 站会式进度行（小孙 2026-05-31 拍 A）
   //   - % 只数 feature.md checkbox（featureProgress），commit 一律不算 AC 完成
-  //   - in-flight: 最新 commit 的 AC tag（phaseInfo.acs[0]）= "正在做"，不进 %
-  //   - 漂移交叉验证: 最新 commit 的 AC ≠ 清单第一条未勾 → 暴露"做完忘勾/跳做"
+  //   - in-flight: 最新 commit 的 AC tag（phaseInfo.acs，可多个）= "正在做"，不进 %
+  //   - 漂移交叉验证: 清单第一条未勾不在最新 commit 的 AC 集合内 → 暴露"做完忘勾/跳做"
   const prog = input.featureProgress
   if (prog) {
     const headLines: string[] = []
     let head = `进度: ${prog.done}/${prog.total} AC (${prog.pct}%)`
     if (input.phaseInfo) head += ` · ${formatPhaseCoordLine(input.phaseInfo)}`
     headLines.push(head)
-    const inFlight = input.phaseInfo?.acs?.[0]
-    if (inFlight) {
+    // codex P3-3 修：展示全部 in-flight AC（commit 可带多个 tag），漂移判断用 includes 不只比 acs[0]
+    const inFlightAcs = input.phaseInfo?.acs ?? []
+    if (inFlightAcs.length > 0) {
       const sha = input.phaseInfo?.commitShortSha
-      headLines.push(`正在做: ${inFlight}${sha ? `（最近 commit ${sha}）` : ""}`)
-      if (prog.firstUndoneAC && prog.firstUndoneAC.id !== inFlight) {
+      headLines.push(`正在做: ${inFlightAcs.join(" + ")}${sha ? `（最近 commit ${sha}）` : ""}`)
+      if (prog.firstUndoneAC && !inFlightAcs.includes(prog.firstUndoneAC.id)) {
         headLines.push(
-          `⚠ 漂移: 最近 commit 在 ${inFlight}，但清单第一条未勾是 ${prog.firstUndoneAC.id}（做完忘勾？跳做？）`,
+          `⚠ 漂移: 最近 commit 在 ${inFlightAcs.join(" + ")}，但清单第一条未勾是 ${prog.firstUndoneAC.id}（做完忘勾？跳做？）`,
         )
       }
     }
