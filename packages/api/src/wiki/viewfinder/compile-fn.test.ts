@@ -18,6 +18,8 @@ import { createDrizzleDb } from "../../db/drizzle-instance"
 import {
   createViewfinderCompileFn,
   defaultPhaseInfoQuerier,
+  extractFeatureIds,
+  parseFeatureProgress,
   parseSubjectToPhaseInfo,
   safeGitLogSubjects,
 } from "./compile-fn"
@@ -206,6 +208,9 @@ describe("createViewfinderCompileFn · E2E happy path (R-201 真实场景)", () 
         fencingToken: "leader-1",
         leaderTerm: "term-1",
         nowFn: () => "2026-05-13T14:30:00Z",
+        // 站会式 §3（2026-05-31 拍 A）：注入 null 隔离磁盘 feature.md，测 fallback 路径
+        featureProgressQuerier: () => null,
+        topicQuerier: () => null,
       })
 
       const result = await compileFn({
@@ -223,13 +228,11 @@ describe("createViewfinderCompileFn · E2E happy path (R-201 真实场景)", () 
       assert.match(result.viewfinderMd, /viewfinder_id: vf_R-201_2026-05-13-14-30/)
       assert.match(result.viewfinderMd, /# R-201 Viewfinder/)
 
-      // §3 应该含 commit 类决策（F026 进 merger-gate / 批准上一步）
+      // §3 站会式（2026-05-31 拍 A）：无 featureProgress → 退最新 spec/pivot 方向（pivot 改 ADR），
+      // 绝不取 commit（merger-gate 是已完成，归 §2）
       const section3 = result.viewfinderMd.split("## 3. 下一步")[1]?.split("##")[0] ?? ""
-      assert.match(
-        section3,
-        /merger-gate|批准上一步动作/,
-        `§3 应含 commit 决策，actual:\n${section3}`,
-      )
+      assert.match(section3, /改 ADR/, `§3 应退 pivot 方向决策，actual:\n${section3}`)
+      assert.doesNotMatch(section3, /merger-gate/, "§3 不取 commit（已完成归 §2）")
 
       // §4 含 fresh call，不含 stale call (B024 兜底)
       const section4 = result.viewfinderMd.split("## 4. 等谁")[1]?.split("##")[0] ?? ""
@@ -276,6 +279,9 @@ describe("createViewfinderCompileFn · E2E happy path (R-201 真实场景)", () 
         fencingToken: "leader-1",
         leaderTerm: "term-1",
         nowFn: () => "2026-05-13T14:30:00Z",
+        // 站会式 §3（2026-05-31 拍 A）：注入 null 隔离磁盘 feature.md，测 fallback 路径
+        featureProgressQuerier: () => null,
+        topicQuerier: () => null,
       })
 
       const result = await compileFn({
@@ -389,6 +395,8 @@ describe("createViewfinderCompileFn · E2E happy path (R-201 真实场景)", () 
         fencingToken: "leader-1",
         leaderTerm: "term-1",
         nowFn: () => "2026-05-13T09:00:00Z",
+        featureProgressQuerier: () => null,
+        topicQuerier: () => null,
       })
       const r1 = await compile1({
         roomId,
@@ -398,9 +406,13 @@ describe("createViewfinderCompileFn · E2E happy path (R-201 真实场景)", () 
         ],
         newSeals: [],
       })
-      // 验证 step 1: §3 "下一步"显示"进 merger-gate"
+      // 验证 step 1: 站会式 §3 不取 commit（merger-gate 归 §2 已完成）；无 spec/pivot → 待定。
+      // 本测核心是 ledger sweep（step 2 末尾），§3 内容非本测重点
       const r1Section3 = r1.viewfinderMd.split("## 3. 下一步")[1]?.split("##")[0] ?? ""
-      assert.match(r1Section3, /进 merger-gate/, "Step 1: §3 显示新 commit")
+      assert.doesNotMatch(r1Section3, /进 merger-gate/, "Step 1: §3 不取 commit（已完成归 §2）")
+      // §2 已完成列表仍含该 commit（in-flight/已完成的承诺在 §2 呈现）
+      const r1Section2 = r1.viewfinderMd.split("## 2. 当前进度")[1]?.split("## 3")[0] ?? ""
+      assert.match(r1Section2, /进 merger-gate/, "Step 1: commit 归 §2 已完成列表")
 
       // Step 2: 新 message "F026 已合 dev" → stub judge 判 supersedes [D-1]
       insertMessage(db, {
@@ -432,6 +444,8 @@ describe("createViewfinderCompileFn · E2E happy path (R-201 真实场景)", () 
         fencingToken: "leader-1",
         leaderTerm: "term-1",
         nowFn: () => "2026-05-13T09:30:00Z",
+        featureProgressQuerier: () => null,
+        topicQuerier: () => null,
       })
       const r2 = await compile2({
         roomId,
@@ -442,13 +456,16 @@ describe("createViewfinderCompileFn · E2E happy path (R-201 真实场景)", () 
         newSeals: [],
       })
 
-      // 验证 step 2: §3 显示新 commit "F026 + stash 收尾完成"
+      // 验证 step 2: 站会式 §3 不取任何 commit；新 commit "收尾完成" 归 §2 已完成列表，
+      // 旧 commit "进 merger-gate" 被 sweep 后从 §2 active 列表消失（P4 sweep 真效果）
       const r2Section3 = r2.viewfinderMd.split("## 3. 下一步")[1]?.split("##")[0] ?? ""
-      assert.match(r2Section3, /F026.*收尾完成/, "Step 2: §3 显示新 commit")
+      assert.doesNotMatch(r2Section3, /收尾完成|进 merger-gate/, "Step 2: §3 不取 commit")
+      const r2Section2 = r2.viewfinderMd.split("## 2. 当前进度")[1]?.split("## 3")[0] ?? ""
+      assert.match(r2Section2, /F026.*收尾完成/, "Step 2: 新 commit 归 §2 已完成")
       assert.doesNotMatch(
-        r2Section3,
+        r2Section2,
         /进 merger-gate/,
-        "Step 2: §3 不再显示已 sweep 的旧 commit（P4 修好）",
+        "Step 2: §2 已完成列表不含已 sweep 的旧 commit（P4 修好）",
       )
 
       // 验证 ledger: 旧 commit status='completed'
@@ -482,6 +499,9 @@ describe("createViewfinderCompileFn · E2E happy path (R-201 真实场景)", () 
         fencingToken: "leader-1",
         leaderTerm: "term-1",
         nowFn: () => "2026-05-13T14:30:00Z",
+        // 站会式 §3（2026-05-31 拍 A）：注入 null 隔离磁盘 feature.md，测 fallback 路径
+        featureProgressQuerier: () => null,
+        topicQuerier: () => null,
       })
       const result = await compileFn({
         roomId,
@@ -514,6 +534,65 @@ describe("createViewfinderCompileFn · E2E happy path (R-201 真实场景)", () 
 })
 
 // ─── P12.b r2 范-r1 P2-1 + P2-2 修：parser + multi-commits 单元测试 ─────
+
+describe("featureProgress 站会式 §2/§3（小孙 2026-05-31 拍 A）", () => {
+  const SAMPLE = [
+    "# F027",
+    "## Acceptance Criteria",
+    "- [x] **AC-P1-1 · 4 张新表 schema**：建表 + 索引",
+    "- [x] **AC-P1-2 · update_wiki ACL**：fuzz 100 并发",
+    "- [ ] **AC-P3-1 · StatusPanel 拖宽**（性能阈值锁定）：360-1200px",
+    "- [ ] **AC-P3-2 · 5 个 tab 全部渲染**：状态保持",
+    "其他不是 AC 的行 - [ ] 普通 todo",
+  ].join("\n")
+
+  it("parse: 数 checkbox → total/done/pct + 第一条未勾", () => {
+    const p = parseFeatureProgress("F027", SAMPLE)
+    assert.ok(p)
+    assert.equal(p?.total, 4)
+    assert.equal(p?.done, 2)
+    assert.equal(p?.pct, 50)
+    assert.equal(p?.firstUndoneAC?.id, "AC-P3-1")
+    assert.match(p?.firstUndoneAC?.title ?? "", /StatusPanel 拖宽/)
+  })
+
+  it("parse: 普通 - [ ] todo 行不算 AC（只认 **AC-P 模式）", () => {
+    const p = parseFeatureProgress("F027", "- [ ] 普通 todo\n- [ ] 另一个")
+    assert.equal(p, null)
+  })
+
+  it("parse: 全勾完 → firstUndoneAC=null pct=100", () => {
+    const p = parseFeatureProgress("F027", "- [x] **AC-P1-1 · a**\n- [x] **AC-P1-2 · b**")
+    assert.equal(p?.pct, 100)
+    assert.equal(p?.firstUndoneAC, null)
+  })
+
+  it("parse: 无 AC 行 → null", () => {
+    assert.equal(parseFeatureProgress("F027", "# 没有 AC 的文档"), null)
+  })
+
+  it("extractFeatureIds: 扫消息 F/B id 去重", () => {
+    const ids = extractFeatureIds([
+      {
+        messageId: "m1",
+        threadId: "t1",
+        authorAlias: "小孙",
+        role: "user",
+        content: "搞 F027 和 B023",
+        createdAt: "2026-05-31T00:00:00Z",
+      },
+      {
+        messageId: "m2",
+        threadId: "t1",
+        authorAlias: "黄",
+        role: "user",
+        content: "继续 F027",
+        createdAt: "2026-05-31T00:00:01Z",
+      },
+    ])
+    assert.deepEqual([...ids].sort(), ["B023", "F027"])
+  })
+})
 
 describe("P12.b parseSubjectToPhaseInfo (r2 范-r1 P2-2 Day range 后端)", () => {
   it("Day 9-10 → 取后端 10", () => {

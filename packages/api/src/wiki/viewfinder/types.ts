@@ -204,6 +204,21 @@ export interface PhaseInfo {
   commitSubject: string // 完整 subject（debug 用）
 }
 
+/**
+ * §2/§3 站会式进度（小孙 2026-05-31 拍 A）—— 真相源 = feature.md 的 AC checklist。
+ * 数据流：compile-fn 已知 featureId → 读 docs/features/<F-id>-*.md → 数 `- [x]/[ ] **AC-P*`。
+ * 铁律：% 永远只数 checkbox，commit 一律不算 AC 完成（commit 只做 §2 in-flight 指针 + 漂移交叉验证）。
+ * null = 非 feature 房 / 抓不到清单 → renderer fallback。
+ */
+export interface FeatureProgress {
+  featureId: string // "F027"
+  total: number // 清单总 AC 数
+  done: number // 已勾 [x] 数
+  pct: number // Math.round(done/total*100)
+  /** 第一条未勾 AC = §3 下一步；全勾完为 null */
+  firstUndoneAC: { id: string; title: string } | null
+}
+
 export interface RenderViewfinderInput {
   roomId: string
   /** 当前 active 决策（status != superseded, ORDER BY decided_at DESC） */
@@ -233,6 +248,16 @@ export interface RenderViewfinderInput {
    * null = 抓不到 / 验证失败 / git 不可用 → renderer fallback (A) commit decisions 列表
    */
   phaseInfo?: PhaseInfo | null
+  /**
+   * §2 进度% + §3 下一步数据源（站会式，小孙 2026-05-31 拍 A）
+   * null = 非 feature 房 / 抓不到清单 → §2 不显进度行、§3 退 spec/pivot 方向
+   */
+  featureProgress?: FeatureProgress | null
+  /**
+   * §1 主题：feature/bug 文档 H1 标题（站会式，小孙 2026-05-31 拍 A）
+   * null = 非 feature/bug 房 / 抓不到 → §1 退 tombstone spec > active spec > 房间标题
+   */
+  featureTopic?: string | null
 }
 
 export interface ViewfinderArtifact {
