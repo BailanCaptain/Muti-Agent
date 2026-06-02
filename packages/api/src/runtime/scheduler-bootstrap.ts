@@ -147,6 +147,18 @@ export interface SchedulerBootOptions {
    * boot 内建 debounce、caller 早于 boot 建 wikiServices，故用此 late-bind forwarder 串联。
    */
   registerOnWikiCommit?: (fire: () => void) => void
+  /**
+   * F027 wiring · WikiCompilerDebounce debounce 窗口 ms（默认 5000）。仅测试需要短窗以真等
+   * debounce 落地、断言 reindex 被触发；生产用默认。
+   */
+  debounceMs?: number
+  /**
+   * F027 wiring · 周期性增量 reindex 间隔 ms（默认 5min）。安全网（codex review A Finding 1）：
+   * debounce 只接住 `update_wiki` 的 onCommit；RoomCompiler / promote / demote 等直接写盘 + 写
+   * wiki_events 的 producer 不走该 hook，它们的新内容靠这条周期 reindex 最终进搜索索引。
+   * reindex 是 mtime 增量（廉价）。仅当 opts.reindexWiki 提供时启动。
+   */
+  reindexIntervalMs?: number
 }
 
 /**
@@ -279,6 +291,7 @@ export async function bootSchedulerRuntime(
     // F027 wiring · recompileDerivedViews 接真 reindex（wiki_entity_index 增量重建）。
     // 缺 reindexWiki → noop（markdown 派生视图 index/sources/log 重编仍 follow-up 独立 F-id）。
     recompileDerivedViews: opts.reindexWiki ?? (async () => {}),
+    debounceMs: opts.debounceMs,
     logger: opts.log,
   })
   // F027 wiring · 把 onWikiEvent 交还 caller，让 wiki 写 commit（createWikiServices.onCommit）触发本 debounce。
@@ -411,10 +424,30 @@ export async function bootSchedulerRuntime(
       stop: () => watcher.stop(),
     })
   }
+  // F027 wiring · 周期性增量 reindex 安全网（codex review A Finding 1）。
+  // debounce 只接住 update_wiki 的 onCommit；RoomCompiler / promote / demote 直接写盘 + 写
+  // wiki_events 的 producer 不走该 hook → 它们的新内容靠这条周期 reindex 进搜索索引
+  // （reindex mtime 增量，廉价）。塞进既有 debounce event-driven job（不新增 job）。
+  let reindexInterval: NodeJS.Timeout | null = null
+  const reindexIntervalMs = opts.reindexIntervalMs ?? 5 * 60_000
   eventDrivenJobs.push({
     name: "wiki-compiler-debounce",
-    start: () => {},
-    stop: () => debounce.stop(),
+    start: () => {
+      if (!opts.reindexWiki) return
+      reindexInterval = setInterval(() => {
+        void opts.reindexWiki?.().catch((err) => {
+          opts.log.warn({ err }, "periodic wiki reindex failed (caught)")
+        })
+      }, reindexIntervalMs)
+      reindexInterval.unref?.()
+    },
+    stop: () => {
+      if (reindexInterval) {
+        clearInterval(reindexInterval)
+        reindexInterval = null
+      }
+      debounce.stop()
+    },
   })
   eventDrivenJobs.push({
     name: "chained-alert-notifier",

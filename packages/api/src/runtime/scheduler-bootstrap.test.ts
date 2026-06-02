@@ -286,3 +286,73 @@ test("F027 wiring f · registerOnWikiCommit 把 debounce.onWikiEvent 交还 call
     safeCleanup(tempDir)
   }
 })
+
+test("F027 wiring g · fire onWikiCommit hook → 真等 debounce 落地 → reindexWiki 被调用（producer 端到端）", async () => {
+  // codex review A Finding 2：补一条真等 debounce 后断言 reindexWiki 被触发的测试。
+  // 短 debounceMs=40 真走 boot 的 debounce 路径；reindexIntervalMs 设大避免周期 reindex 干扰计数。
+  const tempDir = safeTempDir("F027-wiring-g-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  let reindexCalls = 0
+  let hook: (() => void) | undefined
+  try {
+    const runtime = await bootSchedulerRuntime({
+      db,
+      log: silentLogger(),
+      rootDir: tempDir,
+      debounceMs: 40,
+      reindexIntervalMs: 9_999_999, // 周期 reindex 本测不参与（隔离 debounce 路径计数）
+      reindexWiki: async () => {
+        reindexCalls += 1
+      },
+      registerOnWikiCommit: (fire) => {
+        hook = fire
+      },
+    })
+    assert.ok(runtime)
+    assert.equal(reindexCalls, 0, "boot 不应触发 reindex")
+
+    // 模拟 wiki 写 commit → onCommit → hook → debounce.onWikiEvent → (40ms) → reindexWiki
+    hook?.()
+    await sleep(150)
+    assert.ok(reindexCalls >= 1, `debounce 落地后 reindexWiki 应被调用，实际 ${reindexCalls}`)
+
+    await runtime.stop()
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F027 wiring h · 周期 reindex 安全网 → 无 onCommit 也定期触发 reindexWiki（覆盖 RoomCompiler/promote/demote）", async () => {
+  // codex review A Finding 1：debounce 只接 update_wiki；其它直接写盘 producer 靠周期 reindex 兜底。
+  // 短 reindexIntervalMs=60 验证周期触发；全程不 fire onCommit hook，证明触发来自周期而非 debounce。
+  const tempDir = safeTempDir("F027-wiring-h-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  let reindexCalls = 0
+  try {
+    const runtime = await bootSchedulerRuntime({
+      db,
+      log: silentLogger(),
+      rootDir: tempDir,
+      reindexIntervalMs: 60,
+      reindexWiki: async () => {
+        reindexCalls += 1
+      },
+      // 不传 registerOnWikiCommit、不 fire 任何 hook
+    })
+    assert.ok(runtime)
+    await sleep(200)
+    assert.ok(reindexCalls >= 1, `周期 reindex 应至少触发 1 次，实际 ${reindexCalls}`)
+
+    await runtime.stop()
+    // stop 后清 interval：记下当前值，再等一个周期，确认不再增长。
+    const afterStop = reindexCalls
+    await sleep(150)
+    assert.equal(reindexCalls, afterStop, "stop() 后周期 reindex 不应再触发（interval 已清）")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
