@@ -356,3 +356,41 @@ test("F027 wiring h · 周期 reindex 安全网 → 无 onCommit 也定期触发
     safeCleanup(tempDir)
   }
 })
+
+test("F027 wiring i · 周期 reindex in-flight guard — 慢扫描下不并发重叠（codex delta P2）", async () => {
+  // reindexIntervalMs(30) 远快于单次 reindex 耗时(120ms)；无 guard 会在 250ms 内堆叠多个重叠 run
+  // （maxConcurrent 飙到 ~4，stale 快照碰撞）。in-flight guard 应保证任一时刻最多 1 个 run。
+  const tempDir = safeTempDir("F027-wiring-i-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  let concurrent = 0
+  let maxConcurrent = 0
+  let calls = 0
+  try {
+    const runtime = await bootSchedulerRuntime({
+      db,
+      log: silentLogger(),
+      rootDir: tempDir,
+      reindexIntervalMs: 30,
+      reindexWiki: async () => {
+        calls += 1
+        concurrent += 1
+        maxConcurrent = Math.max(maxConcurrent, concurrent)
+        await sleep(120) // 慢扫描：单次远超 interval
+        concurrent -= 1
+      },
+    })
+    assert.ok(runtime)
+    await sleep(250)
+    assert.ok(calls >= 1, `周期 reindex 应至少触发 1 次，实际 ${calls}`)
+    assert.equal(
+      maxConcurrent,
+      1,
+      `in-flight guard 应防止重叠并发，实际 maxConcurrent=${maxConcurrent}`,
+    )
+    await runtime.stop()
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})

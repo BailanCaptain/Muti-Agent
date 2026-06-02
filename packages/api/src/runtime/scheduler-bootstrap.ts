@@ -430,14 +430,27 @@ export async function bootSchedulerRuntime(
   // （reindex mtime 增量，廉价）。塞进既有 debounce event-driven job（不新增 job）。
   let reindexInterval: NodeJS.Timeout | null = null
   const reindexIntervalMs = opts.reindexIntervalMs ?? 5 * 60_000
+  // codex review A delta P2：in-flight guard——reindexWikiEntities 先快照 DB metadata 再异步扫盘
+  // 再单事务写；若扫描慢于 interval，两次重叠 run 会从 stale 快照各自 plan → insert 撞 UNIQUE /
+  // SQLite 争用，且 fail-soft catch 会把反复失败藏掉。本 flag 让上一次没跑完就跳过本 tick（粗粒度
+  // coalesce）。debounce 路径自带 reentrancy guard，这里只补周期路径。
+  let reindexInFlight = false
   eventDrivenJobs.push({
     name: "wiki-compiler-debounce",
     start: () => {
       if (!opts.reindexWiki) return
       reindexInterval = setInterval(() => {
-        void opts.reindexWiki?.().catch((err) => {
-          opts.log.warn({ err }, "periodic wiki reindex failed (caught)")
-        })
+        if (reindexInFlight) return // 上一次 reindex 还没跑完 → 跳过本 tick（防堆叠 / stale 快照碰撞）
+        reindexInFlight = true
+        void (async () => {
+          try {
+            await opts.reindexWiki?.()
+          } catch (err) {
+            opts.log.warn({ err }, "periodic wiki reindex failed (caught)")
+          } finally {
+            reindexInFlight = false
+          }
+        })()
       }, reindexIntervalMs)
       reindexInterval.unref?.()
     },
