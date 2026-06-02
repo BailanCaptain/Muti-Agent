@@ -29,7 +29,9 @@
  *   - ~~不接 DriftDetector.scanTriggers / openUpdateDraft~~ → 已接
  *   - ~~不接 MonthlySnapshot.recompileAllRooms~~ → 已接（MVP recompiled===current）
  *   - ~~不接 ArchiveYearlySessions.scanSessions~~ → 已接
- *   - WikiCompilerDebounce.recompileDerivedViews：仍 follow-up（派生视图重编，独立 F-id）
+ *   - WikiCompilerDebounce.recompileDerivedViews：F027 wiring 接真 reindex（opts.reindexWiki →
+ *     wiki_entity_index 增量重建，search_wiki / adaptive-recall Level 2 的索引 producer）；
+ *     markdown 派生视图（index/sources/log 程序编）重生成仍 follow-up（独立 F-id）。
  *   - ~~不接 ChainedAlertNotifier.pushAlert 真 room MCP~~ → 已接 ws broadcast
  *
  * 验收（AC-P3-7）：
@@ -133,6 +135,18 @@ export interface SchedulerBootOptions {
    * 内部 fs 路径 `<wikiRoot>/rooms/<id>/viewfinder.md` 等 (跟 RoomCompiler 落盘对齐)。
    */
   wikiRoot?: string
+  /**
+   * F027 wiring · wiki 搜索索引 reindex 回调（接 WikiCompilerDebounce.recompileDerivedViews）。
+   * 缺 → noop（跟之前 Phase 3 行为一致）。传入 → wiki 写 commit debounce 收敛后增量 reindex
+   * `wiki_entity_index`（search_wiki / adaptive-recall Level 2 的索引 producer）。
+   */
+  reindexWiki?: () => Promise<void>
+  /**
+   * F027 wiring · 把 `WikiCompilerDebounce.onWikiEvent` 交还 caller。
+   * caller（server.ts）在 `createWikiServices.onCommit` 里调它 → wiki 写 commit 触发 debounce。
+   * boot 内建 debounce、caller 早于 boot 建 wikiServices，故用此 late-bind forwarder 串联。
+   */
+  registerOnWikiCommit?: (fire: () => void) => void
 }
 
 /**
@@ -262,9 +276,13 @@ export async function bootSchedulerRuntime(
   })
 
   const debounce = new WikiCompilerDebounce({
-    recompileDerivedViews: async () => {},
+    // F027 wiring · recompileDerivedViews 接真 reindex（wiki_entity_index 增量重建）。
+    // 缺 reindexWiki → noop（markdown 派生视图 index/sources/log 重编仍 follow-up 独立 F-id）。
+    recompileDerivedViews: opts.reindexWiki ?? (async () => {}),
     logger: opts.log,
   })
+  // F027 wiring · 把 onWikiEvent 交还 caller，让 wiki 写 commit（createWikiServices.onCommit）触发本 debounce。
+  opts.registerOnWikiCommit?.(() => debounce.onWikiEvent())
 
   const alertNotifier = new ChainedAlertNotifier({
     pushAlert: async (alert) => {

@@ -145,6 +145,15 @@ export function registerCallbackRoutes(
         score: number
       }>
     }
+    // F027 wiring · search_wiki MCP — BM25 over wiki_entity_index（全 wiki scope，可选单桶 scope）。
+    // 与 queryMessages 互补：那个搜 raw messages 字面，这个搜已编译 wiki 知识实体。
+    searchWiki?: (params: {
+      query: string
+      topK: number
+      scope?: string
+    }) => Promise<{
+      hits: Array<{ path: string; score: number; excerpt: string }>
+    }>
     requestDecision?: (
       sessionGroupId: string,
       params: {
@@ -513,6 +522,38 @@ export function registerCallbackRoutes(
     }
 
     // queryMessages not wired → graceful empty
+    return { hits: [] }
+  })
+
+  // F027 wiring · search_wiki MCP backend — BM25 over wiki_entity_index（全 wiki scope）。
+  app.get("/api/callbacks/search-wiki", async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = request.query as {
+      invocationId?: string
+      callbackToken?: string
+      query?: string
+      topK?: string
+      scope?: string
+    }
+    const invocation = assertInvocation(options.invocations, query.invocationId, query.callbackToken)
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    const q = query.query?.trim()
+    if (!q) {
+      reply.code(400)
+      return { error: "query is required." }
+    }
+
+    const topKParsed = query.topK ? Number.parseInt(query.topK, 10) : 5
+    const topK = Number.isFinite(topKParsed) && topKParsed > 0 ? Math.min(topKParsed, 50) : 5
+
+    if (options.searchWiki) {
+      return options.searchWiki({ query: q, topK, scope: query.scope?.trim() || undefined })
+    }
+
+    // searchWiki not wired → graceful empty
     return { hits: [] }
   })
 

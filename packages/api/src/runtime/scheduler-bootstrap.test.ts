@@ -243,3 +243,46 @@ test("AC-P3-7 e · pushAlert hook 被 caller 显式装时 SchedulerRuntime.pushA
     safeCleanup(tempDir)
   }
 })
+
+test("F027 wiring f · registerOnWikiCommit 把 debounce.onWikiEvent 交还 caller + boot 不误触发 reindexWiki", async () => {
+  // 接线点：server.ts createWikiServices.onCommit → fireWikiCommit → 此处交还的 hook →
+  //   debounce.onWikiEvent() →(debounce)→ recompileDerivedViews === opts.reindexWiki。
+  //   本测只验 boot 这一段（hook 被交还 + 非启动期误触发）；
+  //   hook→reindex 的 debounce 时序由 wiki-compiler-debounce.test.ts 覆盖，
+  //   reindexWiki→recompileDerivedViews 绑定由 typecheck 覆盖。
+  const tempDir = safeTempDir("F027-wiring-f-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  let reindexCalls = 0
+  let handedBackHook: (() => void) | undefined
+  try {
+    const runtime = await bootSchedulerRuntime({
+      db,
+      log: silentLogger(),
+      rootDir: tempDir,
+      reindexWiki: async () => {
+        reindexCalls += 1
+      },
+      registerOnWikiCommit: (fire) => {
+        handedBackHook = fire
+      },
+    })
+    assert.ok(runtime)
+
+    // registerOnWikiCommit 被调，且交还的是可调用 hook（onWikiEvent 通道）。
+    assert.equal(
+      typeof handedBackHook,
+      "function",
+      "registerOnWikiCommit should hand back a callable",
+    )
+    // boot 本身不跑 reindex（存量索引由 server.ts 启动期显式 reindexWiki() 负责，不在 boot 内）。
+    assert.equal(reindexCalls, 0, "boot should NOT fire reindexWiki spuriously")
+    // 触发 hook 不抛（debounce 起 5s 计时；本测不等它落，只验调用安全）。
+    assert.doesNotThrow(() => handedBackHook?.())
+
+    await runtime.stop()
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})

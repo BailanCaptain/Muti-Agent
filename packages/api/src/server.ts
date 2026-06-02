@@ -55,7 +55,12 @@ import { backfillHistoricalTitles } from "./services/session-titler/title-backfi
 import { WorkflowSopService } from "./services/workflow-sop-service"
 import { SkillRegistry } from "./skills/registry"
 import { SopTracker } from "./skills/sop-tracker"
-import { MessagesFtsRepository } from "./wiki/wiki-search"
+import {
+  MessagesFtsRepository,
+  SearchWikiProvider,
+  WikiEntityFtsProvider,
+  reindexWikiEntities,
+} from "./wiki/wiki-search"
 import { createWikiServices } from "./wiki/wiki-services"
 
 /**
@@ -105,6 +110,9 @@ export async function createApiServer(options: {
   const repository = new SessionRepository(drizzleDb)
   // F027 P14.b: messages_fts BM25 召回 repository — query_messages MCP 后端共享一份实例
   const messagesFtsRepo = new MessagesFtsRepository(drizzleDb)
+  // F027 wiring · search_wiki MCP backend：BM25 加权读 wiki_entity_index（name 5x body）。
+  // Phase 4 hybrid 退化为 BM25-only（无 embedded records），与 adaptive-recall Level 2 同源。
+  const searchWikiProvider = new SearchWikiProvider(new WikiEntityFtsProvider(drizzleDb))
   // F022 P2: Haiku auto-titler. Fire-and-forget debounced title generation
   // for session groups with a default "新会话 YYYY-MM-DD …" title. See
   // `services/session-titler/*`.
@@ -260,9 +268,13 @@ export async function createApiServer(options: {
   const workflowSopService = new WorkflowSopService(workflowSopRepo)
   // F027 P3 chap 6: update_wiki MCP services（lease + ACL + service）。
   // wikiRoot 定位：env > 默认 .runtime/wiki/。leaderTerm 留 P3.5 接 compiler_leader。
+  // F027 wiring · wiki 写 commit → 触发 search index 增量 reindex。debounce 在 scheduler
+  // boot 内建（晚于此处），故用 forwarder late-bind：boot 后 registerOnWikiCommit 回填 fireWikiCommit。
+  let fireWikiCommit: (() => void) | undefined
   const wikiServices = createWikiServices({
     db: drizzleDb,
     wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    onCommit: () => fireWikiCommit?.(),
   })
   const decisions = new DecisionManager((event) => broadcaster.broadcast(event), repository)
   messages.setMemoryService(memoryService)
@@ -739,6 +751,11 @@ export async function createApiServer(options: {
       const hits = messagesFtsRepo.query(query, { roomId, topK, threadId, role })
       return { hits }
     },
+    // F027 wiring · search_wiki MCP backend — BM25 over wiki_entity_index（全 wiki scope，可选单桶）。
+    searchWiki: async ({ query, topK, scope }) => {
+      const hits = await searchWikiProvider.search(query, { topK, scope })
+      return { hits }
+    },
   })
   registerWsRoute(app, {
     messages,
@@ -943,6 +960,28 @@ export async function createApiServer(options: {
       })
     : undefined
 
+  // F027 wiring · wiki 搜索索引 producer——reindex wiki_entity_index（search_wiki /
+  // adaptive-recall Level 2 的唯一 producer）。
+  //   wikiRoot 传 `<WIKI_ROOT||.runtime/wiki>`（= roomCompileWikiServicesRoot）——reindex 内部
+  //   自己 join("wiki")，磁盘实测文件在 `.runtime/wiki/wiki/<bucket>`，故不能传多套一层的
+  //   roomCompileWikiRoot（会变三层 wiki 扫不到文件）。
+  const reindexWiki = async () => {
+    const report = await reindexWikiEntities({
+      wikiRoot: roomCompileWikiServicesRoot,
+      db: drizzleDb,
+    })
+    app.log.info({ component: "wiki-reindex", ...report }, "F027 wiki entity reindex")
+  }
+  // 启动一次性全量 reindex：debounce 只在新写时增量；存量 wiki 文件需 boot 入索引，否则
+  // search_wiki / Level 2 搜空表。scheduler 跳过时（CI/单测 MULTI_AGENT_SKIP_SCHEDULER=1）一并跳过。
+  if (process.env.MULTI_AGENT_SKIP_SCHEDULER !== "1") {
+    try {
+      await reindexWiki()
+    } catch (err) {
+      app.log.warn({ err }, "F027 initial wiki reindex failed (non-fatal)")
+    }
+  }
+
   const schedulerRuntime = await bootSchedulerRuntime({
     db: drizzleDb,
     log: app.log,
@@ -969,6 +1008,12 @@ export async function createApiServer(options: {
     // F027 AC-P1-5 codex P2-3：把 recent_drops repo 注进 scheduler boot，
     // 让 NightlyVacuum 每夜真 prune 超窗关联语料（不接 → prune 收 undefined 返回 0，retention 形同虚设）。
     recentDrops: recentDropsRepo,
+    // F027 wiring · search index producer —— debounce.recompileDerivedViews 接 reindex +
+    // 把 onWikiEvent 交还给 createWikiServices.onCommit forwarder（fireWikiCommit）。
+    reindexWiki,
+    registerOnWikiCommit: (fire) => {
+      fireWikiCommit = fire
+    },
   })
   app.addHook("onClose", async () => {
     if (schedulerRuntime) {

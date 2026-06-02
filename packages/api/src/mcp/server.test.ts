@@ -6,9 +6,9 @@ import { encodeMessage, getTools, handleToolCall, parseFrame } from "./server.js
 // getTools tests
 // ---------------------------------------------------------------------------
 
-test("getTools returns 17 tools (F027 P14.b +query_messages)", () => {
+test("getTools returns 18 tools (F027 wiring +search_wiki)", () => {
   const tools = getTools()
-  assert.equal(tools.length, 17, `Expected 17 tools, got ${tools.length}`)
+  assert.equal(tools.length, 18, `Expected 18 tools, got ${tools.length}`)
   const names = tools.map((t) => t.name).sort()
   assert.deepEqual(names, [
     "acquire_wiki_lease",
@@ -24,6 +24,7 @@ test("getTools returns 17 tools (F027 P14.b +query_messages)", () => {
     "request_decision",
     "request_permission",
     "search_room_memories",
+    "search_wiki",
     "take_screenshot",
     "trigger_mention",
     "update_wiki",

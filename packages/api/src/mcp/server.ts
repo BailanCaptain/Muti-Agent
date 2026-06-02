@@ -226,6 +226,39 @@ async function callQueryMessages(params: {
   }
 }
 
+// F027 chap 12 Level 2: search_wiki MCP tool — BM25 over wiki entity index（已编译 wiki 知识实体），
+// 走 HTTP backend。与 query_messages 互补：query_messages 搜 raw messages 字面，search_wiki 搜
+// 沉淀后的结构化知识实体（concepts / rooms / people / feedback 桶）。
+async function callSearchWiki(params: {
+  query: string
+  topK?: number
+  scope?: string
+}): Promise<ToolResult> {
+  const identity = getCallbackIdentity()
+  const url = new URL(`${identity.apiUrl}/api/callbacks/search-wiki`)
+  url.searchParams.set("invocationId", identity.invocationId)
+  url.searchParams.set("callbackToken", identity.callbackToken)
+  url.searchParams.set("query", params.query)
+  if (typeof params.topK === "number") {
+    url.searchParams.set("topK", String(params.topK))
+  }
+  if (params.scope) {
+    url.searchParams.set("scope", params.scope)
+  }
+
+  const response = await requestJson(url.toString(), { method: "GET" })
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `search_wiki failed: ${JSON.stringify(response.json)}` }],
+    }
+  }
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(response.json) }],
+  }
+}
+
 // F018 P5 AC6.3: recall_similar_context MCP tool — 语义召回，走 HTTP backend
 async function callRecallSimilarContext(query: string, topK?: number): Promise<ToolResult> {
   const identity = getCallbackIdentity()
@@ -386,6 +419,32 @@ export function getTools() {
           role: {
             type: "string",
             description: "可选：限定消息角色（user / assistant / connector）。",
+          },
+        },
+        required: ["query"],
+      },
+    },
+    {
+      name: "search_wiki",
+      description:
+        "F027 chap 12 Level 2: 在已编译的 wiki 知识实体（concepts / rooms / people / feedback 桶）里做 BM25 加权全文召回（name 5x body）。与 query_messages 互补：query_messages 搜 raw 对话消息的字面 token，search_wiki 搜沉淀后的结构化知识实体（如 F011 概念页、某 room 的 viewfinder、某人 capability digest）。返回 path + score + excerpt。topK 默认 5，最大 50。scope 可选限定单桶（concepts / rooms / people / feedback），默认 all 全桶。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "搜索字符串（自然语言 / 关键词 / 实体 ID 如 F011 / R-205）。",
+          },
+          topK: {
+            type: "integer",
+            minimum: 1,
+            maximum: 50,
+            description: "返回 top-K 命中（默认 5，最大 50）。",
+          },
+          scope: {
+            type: "string",
+            description:
+              "可选：限定 wiki 桶（concepts / rooms / people / feedback）；默认 all 全桶。",
           },
         },
         required: ["query"],
@@ -980,6 +1039,15 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
       const threadId = typeof args?.threadId === "string" ? args.threadId : undefined
       const role = typeof args?.role === "string" ? args.role : undefined
       return callQueryMessages({ query: query.trim(), topK, threadId, role })
+    }
+    case "search_wiki": {
+      const query = typeof args?.query === "string" ? args.query : ""
+      if (!query.trim()) {
+        return { isError: true, content: [{ type: "text", text: "query is required" }] }
+      }
+      const topK = typeof args?.topK === "number" ? args.topK : undefined
+      const scope = typeof args?.scope === "string" ? args.scope : undefined
+      return callSearchWiki({ query: query.trim(), topK, scope })
     }
     case "get_task_status":
       return callGetTaskStatus(args?.agentId as string | undefined)
