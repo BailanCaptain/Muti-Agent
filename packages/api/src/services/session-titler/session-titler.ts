@@ -117,10 +117,16 @@ export class SessionTitler {
 
   /** Test-only hook: wait for all scheduled runs to finish. */
   async flushPending(): Promise<void> {
-    // Wait for any timers to fire (max debounce interval + small slack).
-    const maxWait = (this.deps.debounceMs ?? DEFAULT_DEBOUNCE_MS) + 20
+    // B020 根治：等到所有已排程的 debounce timer 真正 fire（把 run promise 推入 pending），
+    // 再 drain。原实现用 `debounceMs + 20ms` 当上限——全套 pnpm test 并发下事件循环饱和，
+    // `setTimeout(debounceMs)` 回调会被拖过这个紧帽，循环提前超时退出 → pending 仍为空 →
+    // 没 await 任何 run 就返回 → 断言读到空 mock.calls（B020 family flaky）。
+    // 改为等 timers 真 drain（timer 必会 fire，循环里 setTimeout(5) 让出事件循环让它跑），
+    // 仅保留一个宽松安全帽防病态挂死（现实负载下不会触发）。本函数是 test-only hook，
+    // 生产行为零影响。
+    const SAFETY_CAP_MS = 5_000
     const start = Date.now()
-    while (this.timers.size > 0 && Date.now() - start < maxWait) {
+    while (this.timers.size > 0 && Date.now() - start < SAFETY_CAP_MS) {
       await new Promise((r) => setTimeout(r, 5))
     }
     while (this.pending.length > 0) {

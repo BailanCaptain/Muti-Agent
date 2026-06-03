@@ -147,7 +147,7 @@ describe("SessionTitler", () => {
   // B020 同根因：debounceMs:10 + flushPending() timer race，与下方 AC-14e/前段已 skip
   // 的 AC-14d 同源 flaky。单文件单跑全绿，全套 pnpm test 并发下偶现 updateSpy.mock.calls[0]
   // === undefined。延续既有 B020 处置范式 skip 解 pre-commit hook 阻塞。
-  it.skip("AC-14d: preserves D/Q bare prefix returned by Haiku", async () => {
+  it("AC-14d: preserves D/Q bare prefix returned by Haiku", async () => {
     for (const prefix of ["D", "Q"]) {
       const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20", roomId: ROOM })
       const { haiku } = makeHaiku({ ok: true, text: `${prefix}-测试` })
@@ -174,7 +174,7 @@ describe("SessionTitler", () => {
   // pair already skipped above. Single-file runs are 20/20 green; full pnpm test
   // (api+components in parallel) intermittently fails with updateSpy.mock.calls[0]
   // === undefined. Tracked under B020 — no behavioural regression in titler logic.
-  it.skip("AC-14d: normalizes lowercase D-/Q- to uppercase", async () => {
+  it("AC-14d: normalizes lowercase D-/Q- to uppercase", async () => {
     const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20", roomId: ROOM })
     const { haiku } = makeHaiku({ ok: true, text: "d-讨论架构" })
     const { logger } = makeLogger()
@@ -193,7 +193,7 @@ describe("SessionTitler", () => {
 
   // TODO B020: flaky under concurrent vitest runs — debounceMs:10 + flushPending() timer race
   // 单跑 20/20 绿；hook 并发 (api+components) 偶挂 updateSpy.mock.calls[0] undefined
-  it.skip("AC-14e: preserves filed F\\d+- / B\\d+- ids from Haiku output", async () => {
+  it("AC-14e: preserves filed F\\d+- / B\\d+- ids from Haiku output", async () => {
     const cases: Array<[string, string]> = [
       ["F022-侧栏重塑", "F022-侧栏重塑"],
       ["B026-修登录", "B026-修登录"],
@@ -220,7 +220,7 @@ describe("SessionTitler", () => {
 
   // TODO B020: flaky under concurrent vitest runs — debounceMs:10 + flushPending() timer race
   // (updateSpy.mock.calls[0] 偶发 undefined). 单跑全绿，全套并发挂。延续 00f16343 临时 skip 解 hook 阻塞。
-  it.skip("AC-14e: normalizes lowercase filed prefix (f022-/b026-) to uppercase letter", async () => {
+  it("AC-14e: normalizes lowercase filed prefix (f022-/b026-) to uppercase letter", async () => {
     const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20", roomId: ROOM })
     const { haiku } = makeHaiku({ ok: true, text: "f022-侧栏重塑" })
     const { logger } = makeLogger()
@@ -239,7 +239,7 @@ describe("SessionTitler", () => {
 
   // TODO B020: flaky under concurrent vitest runs — debounceMs:10 + flushPending() timer race
   // (updateSpy.mock.calls[0] 偶发 undefined). 单跑全绿，全套并发挂。临时 skip 解 hook 阻塞。
-  it.skip("AC-14e: demotes bare F-/B- (no id) to D- — unfiled does not earn F/B prefix", async () => {
+  it("AC-14e: demotes bare F-/B- (no id) to D- — unfiled does not earn F/B prefix", async () => {
     const cases: Array<[string, string]> = [
       ["F-登录页", "D-登录页"],
       ["B-bug修复", "D-bug修复"],
@@ -266,7 +266,7 @@ describe("SessionTitler", () => {
 
   // B020 同根因：debounceMs:10 + flushPending() timer race，与上方 AC-14d 同源 flaky。
   // 单跑全绿，hook 并发偶挂。延续既有 B020 处置范式 skip。
-  it.skip("AC-14e: truncates long filed title description to 8 chars, keeping id intact", async () => {
+  it("AC-14e: truncates long filed title description to 8 chars, keeping id intact", async () => {
     const { repo, updateSpy } = makeRepo({ id: SID, title: "新会话 2026-04-20", roomId: ROOM })
     const { haiku } = makeHaiku({ ok: true, text: "F022-这是一个超长的描述文本" })
     const { logger } = makeLogger()
@@ -320,7 +320,7 @@ describe("SessionTitler", () => {
   // B020 同根因：debounceMs:10 + flushPending() timer race，与 AC-14d/14e/haiku.call
   // 同源 flaky。单文件单跑 20/20 绿，全套 pnpm test 并发下偶现 runSpy.mock.calls.length=0。
   // 临时 skip 解 pre-commit hook 阻塞，归 B020 一并修。
-  it.skip("AC-08: falls back to 'D-新会话 YYYY-MM-DD' on Haiku failure and logs event=fallback", async () => {
+  it("AC-08: falls back to 'D-新会话 YYYY-MM-DD' on Haiku failure and logs event=fallback", async () => {
     const { repo, updateSpy } = makeRepo({
       id: SID,
       title: "新会话 2026-04-20 14:30:00",
@@ -423,7 +423,7 @@ describe("SessionTitler", () => {
 
   // TODO B020: flaky under concurrent vitest runs — debounceMs:10 timer race
   // (byEvent("haiku.call") 偶发 length=0). 单跑全绿，全套并发挂。临时 skip 解 hook 阻塞。
-  it.skip("logs event=haiku.call right before invoking runner", async () => {
+  it("logs event=haiku.call right before invoking runner", async () => {
     const { repo } = makeRepo({ id: SID, title: "新会话 2026-04-20", roomId: ROOM })
     const { haiku } = makeHaiku({ ok: true, text: "x" })
     const { logger, byEvent } = makeLogger()
