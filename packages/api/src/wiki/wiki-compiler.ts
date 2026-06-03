@@ -29,15 +29,16 @@ import { createHash } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 
-import type {
-  WikiMemory,
-  WikiMemoryType,
-} from "../db/repositories/wiki-memories-types"
 import type { WikiEvent } from "../db/repositories/wiki-events-types"
 import { writeFileAtomic } from "./atomic-write"
 import type { IndexManifest, IndexManifestFile } from "./index-manifest"
 import { writeManifestAtomic } from "./index-manifest"
-import type { CompileInput, CompileResult } from "./wiki-compiler-types"
+import type {
+  CompileInput,
+  CompileResult,
+  WikiMemory,
+  WikiMemoryType,
+} from "./wiki-compiler-types"
 
 const TOP_INDEX_FILENAME = "index.md"
 

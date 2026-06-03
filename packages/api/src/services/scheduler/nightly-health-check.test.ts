@@ -427,6 +427,92 @@ test("NightlyHealthCheck · draftExpired mover throw → 落 movedTo=null + 不�
   assert.equal(report.draftExpired[0].movedTo, null)
 })
 
+// ── duplicateCanonical (F027 chunk B · lint R1 搬来) ───────────────────
+
+test("NightlyHealthCheck · duplicateCanonical RED — 两个非 draft entity 声称同一 canonical path", async () => {
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/a.md", "[[wiki/concepts/a]]\n", {
+        canonical_owner_path: "wiki/concepts/shared.md",
+      }),
+      entity("wiki/concepts/b.md", "[[wiki/concepts/b]]\n", {
+        canonical_owner_path: "wiki/concepts/shared.md",
+      }),
+    ],
+  })
+  const report = await check.run()
+  assert.equal(report.duplicateCanonical.length, 1)
+  assert.equal(report.duplicateCanonical[0].canonicalOwnerPath, "wiki/concepts/shared.md")
+  assert.deepEqual(report.duplicateCanonical[0].claimants.sort(), [
+    "wiki/concepts/a.md",
+    "wiki/concepts/b.md",
+  ])
+})
+
+test("NightlyHealthCheck · duplicateCanonical GREEN — 每个 entity 声称自己 → 无重复", async () => {
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/a.md", "[[wiki/concepts/a]]\n"),
+      entity("wiki/concepts/b.md", "[[wiki/concepts/b]]\n"),
+    ],
+  })
+  const report = await check.run()
+  assert.equal(report.duplicateCanonical.length, 0)
+})
+
+test("NightlyHealthCheck · duplicateCanonical 豁免 /draft/ — draft 重复声称不报", async () => {
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/draft/d1.md", "# d1\n", {
+        canonical_owner_path: "wiki/concepts/shared.md",
+      }),
+      entity("wiki/concepts/draft/d2.md", "# d2\n", {
+        canonical_owner_path: "wiki/concepts/shared.md",
+      }),
+    ],
+  })
+  const report = await check.run()
+  assert.equal(report.duplicateCanonical.length, 0, "draft 未 promote，重复声称豁免")
+})
+
+// ── deadSupersedes (F027 chunk B · lint R3 搬来) ────────────────────────
+
+test("NightlyHealthCheck · deadSupersedes RED — supersedes 指向不存在的 path", async () => {
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/new.md", "[[wiki/concepts/new]]\n", {
+        supersedes: ["wiki/concepts/gone.md", "wiki/concepts/alive.md"],
+      }),
+      entity("wiki/concepts/alive.md", "[[wiki/concepts/alive]]\n"),
+    ],
+  })
+  const report = await check.run()
+  assert.equal(report.deadSupersedes.length, 1)
+  assert.equal(report.deadSupersedes[0].path, "wiki/concepts/new.md")
+  assert.deepEqual(report.deadSupersedes[0].missing, ["wiki/concepts/gone.md"])
+})
+
+test("NightlyHealthCheck · deadSupersedes GREEN — supersedes 全部存在", async () => {
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/new.md", "[[wiki/concepts/new]]\n", {
+        supersedes: ["wiki/concepts/old.md"],
+      }),
+      entity("wiki/concepts/old.md", "[[wiki/concepts/old]]\n"),
+    ],
+  })
+  const report = await check.run()
+  assert.equal(report.deadSupersedes.length, 0)
+})
+
+test("NightlyHealthCheck · deadSupersedes 无 supersedes 字段 → 跳过", async () => {
+  const check = newCheck({
+    entities: [entity("wiki/concepts/plain.md", "[[wiki/concepts/plain]]\n")],
+  })
+  const report = await check.run()
+  assert.equal(report.deadSupersedes.length, 0)
+})
+
 // ── 复合 fixture: 所有 5 类同时出现 ──────────────────────────────────
 
 test("NightlyHealthCheck · 复合 fixture: 5 类问题同时出现 + report 全字段正确", async () => {

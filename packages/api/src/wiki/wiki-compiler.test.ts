@@ -29,7 +29,7 @@ import test from "node:test"
 
 import { ATOMIC_TMP_REGEX } from "./atomic-write"
 import type { WikiEvent } from "../db/repositories/wiki-events-types"
-import type { WikiMemory } from "../db/repositories/wiki-memories-types"
+import type { WikiMemory } from "./wiki-compiler-types"
 import { readManifest } from "./index-manifest"
 import { compileWiki } from "./wiki-compiler"
 

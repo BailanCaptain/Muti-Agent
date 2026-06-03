@@ -297,30 +297,10 @@ const INIT_SQL = `
   CREATE INDEX IF NOT EXISTS idx_wiki_events_state ON wiki_events(state, ts);
   CREATE INDEX IF NOT EXISTS idx_wiki_events_term ON wiki_events(leader_term);
 
-  -- chap 14 · 6 类记忆桶物理表（type CHECK 5 enum 防漂桶 lint 兜底）
-  CREATE TABLE IF NOT EXISTS wiki_memories (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    type TEXT NOT NULL CHECK (type IN ('room', 'project', 'user', 'feedback', 'work')),
-    name TEXT NOT NULL,
-    canonical_owner_path TEXT NOT NULL,
-    promotion_target TEXT,
-    ttl_days INTEGER,
-    supersedes TEXT,
-    replaces_in_buckets TEXT,
-    source_message_ids TEXT,
-    contributed_by TEXT NOT NULL,
-    cross_refs TEXT,
-    dedup_decision TEXT,
-    body TEXT NOT NULL,
-    state TEXT NOT NULL DEFAULT 'draft' CHECK (state IN ('draft', 'canonical', 'deprecated')),
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    reserved_1 TEXT,
-    reserved_2 TEXT
-  );
-  CREATE INDEX IF NOT EXISTS idx_wiki_memories_type ON wiki_memories(type);
-  CREATE INDEX IF NOT EXISTS idx_wiki_memories_canonical ON wiki_memories(canonical_owner_path);
-  CREATE INDEX IF NOT EXISTS idx_wiki_memories_state ON wiki_memories(state, type);
+  -- chap 14 · wiki_memories 表已砍（F027 chunk B：冗余第二存储；记忆=文件单一真相源，
+  -- 治理=NightlyHealthCheck 文件夜扫，召回=search_wiki→wiki_entity_index）。
+  -- 新库不再建此表；既有库的物理空表由小孙手动 DROP（Iron Law：runtime 不擅自 drop）。
+  -- 详见 docs/plans/V16.5-final.md chap 14 patch。
 
   -- chap 11 · viewfinder anti-drift decision ledger（append-only + tombstone）
   -- P4 C-auto-2 (小孙 2026-05-13 拍): status 字段让 extractor 自动 sweep 旧 commit，

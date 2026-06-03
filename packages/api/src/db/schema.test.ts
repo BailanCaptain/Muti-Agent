@@ -18,7 +18,7 @@ test("schema exports all tables (F018 + F019 + F026 a2aCalls + F027 P0 4 表)", 
     "workflowSop", // F019 P2 — 告示牌状态机
     "a2aCalls", // F026 ADR-002 Call Tree
     "wikiEvents", // F027 P0 chap 5
-    "wikiMemories", // F027 P0 chap 14
+    // wikiMemories 表 F027 chunk B 已砍（冗余第二存储；记忆=文件）
     "roomDecisions", // F027 P0 chap 11
     "promptAudit", // F027 P0 chap 18
   ]
@@ -154,33 +154,7 @@ test("F027 P0 chap 5: wiki_events 列契约（CAS + fencing + reserved）", asyn
   }
 })
 
-test("F027 P0 chap 14: wiki_memories 列契约（type/canonical_owner_path + reserved）", async () => {
-  const schema = await import("./schema")
-  const { getTableColumns } = await import("drizzle-orm")
-  const cols = getTableColumns(schema.wikiMemories)
-  for (const c of [
-    "id",
-    "type",
-    "name",
-    "canonicalOwnerPath",
-    "promotionTarget",
-    "ttlDays",
-    "supersedes",
-    "replacesInBuckets",
-    "sourceMessageIds",
-    "contributedBy",
-    "crossRefs",
-    "dedupDecision",
-    "body",
-    "state",
-    "createdAt",
-    "updatedAt",
-    "reserved1",
-    "reserved2",
-  ]) {
-    assert.ok(cols[c as keyof typeof cols], `wikiMemories should have ${c}`)
-  }
-})
+// F027 chunk B：wiki_memories 表已砍 → 原 "chap 14 列契约" 测试随之移除。
 
 test("F027 P0 chap 11: room_decisions 列契约（append-only + tombstone + reserved）", async () => {
   const schema = await import("./schema")

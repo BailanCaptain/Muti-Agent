@@ -29,8 +29,39 @@
  */
 
 import type { WikiEvent } from "../db/repositories/wiki-events-types"
-import type { WikiMemory, WikiMemoryType } from "../db/repositories/wiki-memories-types"
 import type { IndexManifest } from "./index-manifest"
+
+/**
+ * F027 chunk B：wiki_memories 表已砍（冗余第二存储；记忆 = 文件单一真相源，
+ * 见 V16.5 chap 14 patch）。WikiCompiler（chap 19 派生视图编译器）原依赖表行类型，
+ * 为脱离已删的 wiki-memories-types，类型内联于此。
+ *
+ * ⚠️ compileWiki 当前**零生产调用**（造好未接线）——保留待 LLM compile pipeline (G11)
+ * 接入文件源，或由小孙拍独立 deprecate。本类型不再有 DB 表对应。
+ */
+export type WikiMemoryType = "room" | "project" | "user" | "feedback" | "work"
+
+export type WikiMemoryState = "draft" | "canonical" | "deprecated"
+
+/** 结构化记忆记录（曾为 wiki_memories 行；表砍后由 compile pipeline 从文件产出）。 */
+export interface WikiMemory {
+  id: number
+  type: WikiMemoryType
+  name: string
+  canonicalOwnerPath: string
+  promotionTarget: string | null
+  ttlDays: number | null
+  supersedes: string[] | null
+  replacesInBuckets: string[] | null
+  sourceMessageIds: string[] | null
+  contributedBy: string[]
+  crossRefs: unknown[] | null
+  dedupDecision: Record<string, unknown> | null
+  body: string
+  state: WikiMemoryState
+  createdAt: string
+  updatedAt: string
+}
 
 export interface CompileInput {
   /**

@@ -4,7 +4,7 @@
  * 真相源:
  *   - F027 v3 audit summary G6 (P0 愿景层) — 小孙 5-28 拍"本 feature 内补"
  *   - V16.5 chap 1-3 设计哲学 + chap 11-14 6 类记忆桶 + canonical_owner + supersede
- *   - schema wikiMemories (type/canonical_owner_path/supersedes/state) + roomDecisions
+ *   - roomDecisions (decision ledger) + messages (conversation) — wiki_memories 表已砍
  *
  * 职责: 给前端 KB tab "Wiki 哲学" panel 提供 6 类桶 stats + 7 天增长曲线 + supersede 链。
  *
@@ -14,11 +14,14 @@
  *   - 不接 drift timeline (room_decisions tombstone + supersede 时序可视化)
  *     → 留独立 F-id 接专门的 drift_history 视图 API
  *
- * 6 类桶定义 (wiki_memories.type 枚举 + conversation 桶用 messages 表占位):
- *   - concept / rule / method / lesson / room / episode
- *   实际 schema (V16.5 chap 14 line 1571): room|project|user|feedback|work +
- *   conversation 用 messages (不冗余进 wiki_memories)。
- *   本 endpoint 暴露 wikiMemories.type 的真实 5 类 + 单算 conversation count(messages).
+ * 6 类桶定义 (V16.5 chap 14): room|project|user|feedback|work + conversation(messages).
+ *
+ * ⚠️ F027 chunk B：wiki_memories 表已砍（冗余第二存储；记忆 = 文件单一真相源）。
+ *   - 5 个结构化记忆类型桶（room/project/user/feedback/work）目前**无数据源** ——
+ *     结构化记忆文件由 LLM compile pipeline (G11) 写，该 pipeline 尚未接线，所以
+ *     真实计数 = 0。本 endpoint 返 0（诚实反映"结构化记忆层未填"），不再查已删的表。
+ *     G11 接入后改这里 → 扫文件 frontmatter 按 type 聚合（不重建表）。
+ *   - conversation 桶（messages）+ 增长曲线 decisionNew（room_decisions）仍是真数据。
  */
 
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
@@ -56,7 +59,7 @@ export interface WikiEntitySummary {
 export interface WikiGrowthPoint {
   /** ISO date (YYYY-MM-DD) */
   day: string
-  /** 当日新增 entity 数 (wikiMemories.created_at = day) */
+  /** 当日新增 entity 数（wiki_memories 表已砍 → 恒 0，待 G11 compile pipeline 接文件源） */
   entityNew: number
   /** 当日新增 decision 数 (room_decisions.decided_at = day) */
   decisionNew: number
@@ -76,7 +79,6 @@ export interface GetWikiStoryResponse {
 // ── Service ────────────────────────────────────────────────────────────
 
 const BUCKET_TYPES = ["room", "project", "user", "feedback", "work"] as const
-const TOP_ENTITY_LIMIT = 5
 
 export interface WikiStoryServiceDeps {
   db: DrizzleDb
@@ -96,7 +98,8 @@ export class WikiStoryService {
     let totalEntities = 0
 
     for (const type of BUCKET_TYPES) {
-      const stat = this.queryBucket(type)
+      // F027 chunk B：表已砍，结构化记忆桶返 0（见 emptyBucket / 类 doc）。
+      const stat = this.emptyBucket(type)
       buckets.push(stat)
       totalEntities += stat.totalCount
     }
@@ -125,52 +128,17 @@ export class WikiStoryService {
     }
   }
 
-  private queryBucket(type: string): WikiBucketStat {
-    const counts = (this.client
-      .prepare(
-        `SELECT
-           COUNT(*) AS total,
-           SUM(CASE WHEN state = 'canonical' THEN 1 ELSE 0 END) AS canonical,
-           SUM(CASE WHEN state = 'draft' THEN 1 ELSE 0 END) AS draft
-         FROM wiki_memories
-         WHERE type = ?
-           AND state != 'deprecated'`,
-      )
-      .get(type) ?? { total: 0, canonical: 0, draft: 0 }) as {
-      total: number | null
-      canonical: number | null
-      draft: number | null
-    }
-    const topRows = (this.client
-      .prepare(
-        `SELECT id, name, canonical_owner_path, state, supersedes, updated_at
-         FROM wiki_memories
-         WHERE type = ?
-           AND state != 'deprecated'
-         ORDER BY datetime(updated_at) DESC
-         LIMIT ?`,
-      )
-      .all(type, TOP_ENTITY_LIMIT) ?? []) as Array<{
-      id: number
-      name: string
-      canonical_owner_path: string
-      state: string
-      supersedes: string | null
-      updated_at: string
-    }>
+  /**
+   * F027 chunk B：wiki_memories 表已砍 → 结构化记忆类型桶无数据源，返空（0）。
+   * 不再查表（避免 no-such-table 抛错）。G11 compile pipeline 接入后改为扫文件聚合。
+   */
+  private emptyBucket(type: string): WikiBucketStat {
     return {
       type,
-      totalCount: counts.total ?? 0,
-      canonicalCount: counts.canonical ?? 0,
-      draftCount: counts.draft ?? 0,
-      topEntities: topRows.map((r) => ({
-        id: r.id,
-        name: r.name,
-        canonicalOwnerPath: r.canonical_owner_path,
-        state: r.state,
-        supersedes: parseSupersedes(r.supersedes),
-        updatedAt: r.updated_at,
-      })),
+      totalCount: 0,
+      canonicalCount: 0,
+      draftCount: 0,
+      topEntities: [],
     }
   }
 
@@ -184,10 +152,8 @@ export class WikiStoryService {
       const day = d.toISOString().slice(0, 10)
       const dayStart = `${day}T00:00:00.000Z`
       const dayEnd = `${day}T23:59:59.999Z`
-      const entityNew = this.safeCount(
-        "SELECT COUNT(*) AS n FROM wiki_memories WHERE datetime(created_at) BETWEEN datetime(?) AND datetime(?)",
-        [dayStart, dayEnd],
-      )
+      // F027 chunk B：wiki_memories 表已砍 → entityNew 无数据源，恒 0（不查已删表）。
+      const entityNew = 0
       const decisionNew = this.safeCount(
         "SELECT COUNT(*) AS n FROM room_decisions WHERE datetime(decided_at) BETWEEN datetime(?) AND datetime(?)",
         [dayStart, dayEnd],
@@ -212,17 +178,6 @@ export class WikiStoryService {
       // 其他错（rare: SQL syntax / lock 等）仍 fail-soft 0，避免单一 query 挂整个 endpoint
       return 0
     }
-  }
-}
-
-function parseSupersedes(raw: string | null): string[] {
-  if (!raw) return []
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((s): s is string => typeof s === "string")
-  } catch {
-    return []
   }
 }
 

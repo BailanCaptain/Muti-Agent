@@ -306,10 +306,24 @@ viewfinder LLM 漂移 / lease 死锁 / 多 agent 并发 LLM API / token 超限 /
 ### Gate 4 · Worktree
 - [ ] worktree port：等 F024 worktree-port-registry 分配（不抢主库 :8787）
 
+## 收尾补丁 · chunk B（wiki_memories 砍表，2026-06-03 小孙拍）
+
+wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md 文件 frontmatter 已含表绝大部分列 + body=文件本身；**无 MCP 读它**，唯一读者 wiki-story 仪表盘读空表显 0；两个真实 DB 实测均 **0 行**。决策砍表（详见 V16.5 chap 14 PATCH）：
+
+- **记忆 = 文件单一真相源**：删 `wiki_memories` 表（schema.ts + INIT_SQL）+ 死代码 `wiki-memories-repository` / `wiki-memories-lint` / `wiki-memories-types`。
+- **召回 = 文件**：`search_wiki` → `wiki_entity_index`（BM25 全文搜，chunk A 已接线）。
+- **治理 = 文件夜扫**：`wiki-memories-lint` 的 **R1（重复 canonical）/ R3（死 supersedes）搬入 `NightlyHealthCheck`**（扫 md frontmatter）；R4（TTL）由现有 `draftExpired` 覆盖；R-T（type 前缀）随表的烂 taxonomy 废止。
+- **wiki-story 仪表盘**：解除空表依赖——5 个结构化桶恒返 0（诚实反映结构化记忆层未填，待 G11 compile pipeline），conversation（messages）+ decision（room_decisions）保真。
+- **wiki-compiler**（chap19 派生视图编译器）：`compileWiki` 零生产调用=造好未接线，已**解耦保留**（脱离死表类型）待小孙拍 删 / 接。
+- **物理空表**：既有库由小孙手动 `DROP TABLE wiki_memories`（Iron Law：runtime 不擅自 drop）。
+
+> 影响的历史 AC：**AC-P1-9**（"6 类记忆桶物理表 + 防漂桶 lint 红绿测试"）的"表 + lint"实现被本 patch 取代为"文件 + NHC 治理"；AC 文字保留作历史，实际验收以本 patch 为准。
+
 ## 后续 follow-up（不在 F027 范围）
 
 - **M8**：F026 cleanup 补 ADR-002/003 CI guard（V16.5 chap 0 V16.5 follow-up）
 - **F5**：F026 加独立 cascade recovery job（V16.5 chap 0 V16.5.1 follow-up）
+- **chunk B 余项**：物理表 `DROP TABLE wiki_memories`（小孙手动）；`wiki-compiler` 删/接（小孙拍）；wiki-story 5 桶真实数据源（等 G11 compile pipeline 接文件）。
 
 ---
 

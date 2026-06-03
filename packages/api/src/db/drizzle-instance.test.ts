@@ -475,7 +475,7 @@ function listIndexes(
   return rows.map((r) => r.name)
 }
 
-test("F027 P0: 4 张新表 fresh DB 全部建出来 + reserved_1/reserved_2 列存在", async () => {
+test("F027 P0: 3 张新表 fresh DB 全部建出来 + reserved_1/reserved_2 列存在", async () => {
   const { createDrizzleDb } = await import("./drizzle-instance")
   const tempDir = safeTempDir("f027-p0-tables-")
   const dbPath = path.join(tempDir, "test.sqlite")
@@ -483,12 +483,14 @@ test("F027 P0: 4 张新表 fresh DB 全部建出来 + reserved_1/reserved_2 列�
   const { raw, close } = createDrizzleDb(dbPath)
   try {
     const tables = listTables(raw)
-    for (const t of ["wiki_events", "wiki_memories", "room_decisions", "prompt_audit"]) {
+    for (const t of ["wiki_events", "room_decisions", "prompt_audit"]) {
       assert.ok(tables.has(t), `INIT_SQL should create ${t}`)
     }
+    // F027 chunk B：wiki_memories 表已砍 → fresh DB 不应再建出来
+    assert.ok(!tables.has("wiki_memories"), "wiki_memories 表已砍，不应在 INIT_SQL 建出")
 
-    // reserved_1/reserved_2 列存在性 — 4 张表都有
-    for (const t of ["wiki_events", "wiki_memories", "room_decisions", "prompt_audit"]) {
+    // reserved_1/reserved_2 列存在性 — 3 张表都有
+    for (const t of ["wiki_events", "room_decisions", "prompt_audit"]) {
       const cols = raw.prepare(`PRAGMA table_info(${t})`).all() as Array<{ name: string }>
       const colNames = new Set(cols.map((c) => c.name))
       assert.ok(colNames.has("reserved_1"), `${t} should have reserved_1`)
@@ -514,11 +516,7 @@ test("F027 P0: 4 张新表的索引按 chap 5/11/14/18 全部建立", async () =
         "idx_wiki_events_state",
         "idx_wiki_events_term",
       ],
-      wiki_memories: [
-        "idx_wiki_memories_type",
-        "idx_wiki_memories_canonical",
-        "idx_wiki_memories_state",
-      ],
+      // wiki_memories 表 F027 chunk B 已砍 → 索引随表移除
       room_decisions: ["idx_room_decisions"],
       prompt_audit: ["idx_prompt_audit"],
     }
@@ -534,57 +532,7 @@ test("F027 P0: 4 张新表的索引按 chap 5/11/14/18 全部建立", async () =
   }
 })
 
-test("F027 P0 chap 14: wiki_memories.type CHECK 拒绝非 5 enum（防漂桶 lint 兜底）", async () => {
-  const { createDrizzleDb } = await import("./drizzle-instance")
-  const tempDir = safeTempDir("f027-p0-check-type-")
-  const dbPath = path.join(tempDir, "test.sqlite")
-
-  const { raw, close } = createDrizzleDb(dbPath)
-  try {
-    const insert = raw.prepare(
-      "INSERT INTO wiki_memories (type, name, canonical_owner_path, contributed_by, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    // 5 个合法 enum 全可入
-    for (const t of ["room", "project", "user", "feedback", "work"]) {
-      insert.run(
-        t,
-        `name-${t}`,
-        `wiki/${t}/x.md`,
-        '["alias"]',
-        "body",
-        "2026-01-01T00:00:00Z",
-        "2026-01-01T00:00:00Z",
-      )
-    }
-    // 'conversation'（V16.5 chap 14 明示由 messages 表承载，不在 wiki_memories）
-    assert.throws(() => {
-      insert.run(
-        "conversation",
-        "x",
-        "wiki/c/x.md",
-        '["alias"]',
-        "body",
-        "2026-01-01T00:00:00Z",
-        "2026-01-01T00:00:00Z",
-      )
-    }, /CHECK constraint/i)
-    // 任意非法值
-    assert.throws(() => {
-      insert.run(
-        "garbage",
-        "x",
-        "wiki/c/x.md",
-        '["alias"]',
-        "body",
-        "2026-01-01T00:00:00Z",
-        "2026-01-01T00:00:00Z",
-      )
-    }, /CHECK constraint/i)
-  } finally {
-    close()
-    safeCleanup(tempDir)
-  }
-})
+// F027 chunk B：wiki_memories 表已砍 → 原 "type CHECK 防漂桶兜底" 测试随表移除。
 
 test("F027 P0 chap 5: wiki_events.state CHECK + insert/select roundtrip + reserved 默认 NULL", async () => {
   const { createDrizzleDb } = await import("./drizzle-instance")
