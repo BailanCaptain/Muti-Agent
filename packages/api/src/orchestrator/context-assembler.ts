@@ -264,7 +264,7 @@ export async function assemblePrompt(
       const capped =
         sanitized.length > 8000
           ? sanitized.slice(0, 8000) +
-            "\n…（摘要超长已截断，详细历史请用 recall_similar_context 按需查询）"
+            "\n…（摘要超长已截断，详细历史优先 query_messages / search_wiki 检索；需 messages 语义召回可 recall_similar_context）"
           : sanitized
       if (capped) {
         assembly.push({
@@ -462,7 +462,7 @@ export async function assemblePrompt(
     taskLines.push("--- 需求文档 ---", input.preamble, "---", "")
   }
   taskLines.push(
-    "如需更早的上下文，可调用 MCP get_room_context 工具获取。",
+    "如需更多上下文，优先 query_messages / search_wiki 检索；需严格时序的近期对话可用 get_room_context。",
     "",
     `你是 ${targetAlias}。请完成上述任务。`,
   )

@@ -113,7 +113,8 @@ test("F026-P3 tombstone · includes participants by alias and id range hint", ()
   // participants 用 alias（user 不算 participant — 只统计 assistant agentId）
   assert.deepEqual(t!.participants.sort(), ["桂芬", "范德彪", "黄仁勋"])
   const formatted = formatTombstone(t!, { headMsgId: "msg-1", tailMsgId: "msg-10" })
-  assert.match(formatted, /MCP get_room_context/)
+  // chunk-C-r1: tombstone hint 收敛——优先 query_messages（get_room_context 作时序补充）
+  assert.match(formatted, /query_messages/)
   assert.match(formatted, /msg_id=msg-1.*msg-10/)
   assert.match(formatted, /\[Tombstone\]/)
   assert.match(formatted, /\[\/Tombstone\]/)

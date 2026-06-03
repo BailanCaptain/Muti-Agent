@@ -131,11 +131,10 @@ Bug 先写失败测试再修（先红后绿）。
 - `query_messages` — FTS5 全文搜当前 ROOM messages（字面 token / 短语 / 实体 ID 如 F011 / R-205）
 - `update_wiki` — 写 / 更新 wiki（沉淀结论、决策、记忆）
 
-新 agent wake-up 时 **memory_preflight 已自动召回**高置信项目历史注入 prompt，多数情况无需手动召回。
+**A2A handoff（@ / Call 派发）路径**会自动 adaptive recall 注入高置信项目历史；**直接对话 / 普通 wake-up 仍按需手动用 4 件套**（memory_preflight 当前只接 A2A 派发路径，非全路径）。
 
-**旧散记忆工具 = legacy，仅兼容保留、勿作首选**：
+**旧散记忆工具 = legacy，仅兼容保留、勿作首选**（不硬删：各自访问 4 件套不覆盖的数据）：
 
-- `search_room_memories` → 改用 `query_messages`（同 BM25，更强：trigram / threadId / role 过滤）
-- `get_room_summary` → room 上下文已由 viewfinder（`read_wiki`）+ memory_preflight 提供
-- `get_memory` → 改用 `read_wiki` / `search_wiki`
-- `get_room_context`（严格时序近期对话）、`recall_similar_context`（语义召回）— 仅在 4 件套 + memory_preflight 不够时作补充
+- `search_room_memories` / `get_memory` → 读旧 `session_memories` 滚动摘要 store（4 件套碰不到此 store）；找 ROOM 对话 / 沉淀优先 `query_messages` / `search_wiki`，仅需旧 session 摘要时才用
+- `get_room_summary` → 读旧 session 滚动摘要；ROOM 上下文优先 `read_wiki`（viewfinder）
+- `get_room_context`（严格时序近期对话）、`recall_similar_context`（messages 语义召回，4 件套不做 messages 语义）— 仅在 4 件套不够时作补充

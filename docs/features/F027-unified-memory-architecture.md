@@ -324,8 +324,10 @@ wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md �
 原始 goal 的另一半 = 记忆 MCP 收敛成 4 件套（`read_wiki` / `search_wiki` / `query_messages` / `update_wiki`）+ 引导 agent 用它们 + 退役旧散记忆工具。实测：旧 5 工具全暴露、零 deprecation 标记；agent-prompts/shared-rules 零引导。处置（旧工具 dev 真有人用 → **deprecate 引导，不硬删**）：
 
 - **shared-rules.md** 加「记忆工具（4 件套优先）」段（`loadSharedRules` 注入每个 agent prompt）：4 件套为首选 + memory_preflight 自动召回提示 + 旧工具列为 legacy。
-- **mcp/server.ts** 5 个旧工具描述加 `⚠️[Legacy · F027 记忆收敛]` 标记 + 指向替代：`search_room_memories`→`query_messages`；`get_room_summary`→viewfinder/`read_wiki`；`get_memory`→`read_wiki`/`search_wiki`；`get_room_context`（时序）/`recall_similar_context`（语义）降级为次要（memory_preflight 已自动覆盖）。
-- 不硬删（665/89/87/83 次真实调用），工具仍可调，仅引导 agent 不作首选。store 层迁移（session_memories 等）单独立项。
+- **mcp/server.ts** 5 个旧工具描述加 `⚠️[Legacy · F027 记忆收敛]` 标记 + **准确**指向（德彪 chunk-C-r1 P1 纠错：旧工具≠被 4 件套取代，各自访问 4 件套碰不到的数据）：`search_room_memories`/`get_memory`→读旧 `session_memories` store（4 件套不覆盖，仅需旧 session 摘要时用，优先 `query_messages`/`search_wiki`）；`get_room_summary`→旧滚动摘要（ROOM 上下文优先 viewfinder/`read_wiki`）；`get_room_context`（时序）/`recall_similar_context`（messages 语义，4 件套不做）降为次要。
+- **memory_preflight 自动召回只接 A2A 派发路径**（非全 wake-up，message-service:2700）——文案据此修正。
+- **prompt 内容同步收敛**（德彪 P2）：context-assembler / burst-context 里主动叫 agent 用旧工具的 3 处 hint 改为「4 件套优先，旧工具作 niche 补充」。
+- 不硬删（665/89/87/83 次真实调用 + 读独立 live store），工具仍可调，仅引导不作首选。store 层迁移（session_memories → wiki）+ memory_preflight 全路径接线 = 单独立项。
 
 ## 后续 follow-up（不在 F027 范围）
 
