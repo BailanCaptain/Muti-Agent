@@ -361,7 +361,8 @@ export function getTools() {
     },
     {
       name: "get_room_context",
-      description: "获取当前协作房间的近期对话上下文（跨所有 agent 线程聚合）。",
+      description:
+        "⚠️[Legacy · F027 记忆收敛] 近期上下文已由 memory_preflight 自动注入；需主动召回优先 search_wiki / query_messages。仅在需要严格时序的近期对话时用本工具。获取当前协作房间的近期对话上下文（跨所有 agent 线程聚合）。",
       inputSchema: {
         type: "object",
         properties: {
@@ -374,7 +375,8 @@ export function getTools() {
     },
     {
       name: "get_room_summary",
-      description: "获取当前协作房间的滚动摘要（压缩版上下文，适用于上下文窗口紧张时）。",
+      description:
+        "⚠️[Legacy · F027 记忆收敛] room 上下文已由 viewfinder（read_wiki）+ memory_preflight 自动提供——优先用 read_wiki。获取当前协作房间的滚动摘要（压缩版上下文，适用于上下文窗口紧张时）。",
       inputSchema: {
         type: "object",
         properties: {},
@@ -382,7 +384,8 @@ export function getTools() {
     },
     {
       name: "search_room_memories",
-      description: "按关键词搜索当前房间的历史记忆条目。",
+      description:
+        "⚠️[Legacy · F027 记忆收敛] 已被 query_messages 取代（同 BM25 且更强：trigram tokenizer + threadId/role 过滤）——优先用 query_messages。按关键词搜索当前房间的历史记忆条目。",
       inputSchema: {
         type: "object",
         properties: {
@@ -453,7 +456,7 @@ export function getTools() {
     {
       name: "recall_similar_context",
       description:
-        "按语义相似度在当前 ROOM（含本 ROOM 内所有协作 agent thread 的历史，不只是你自己）召回相关消息片段。适用于需要 ROOM 内历史细节但不确定在哪的情况 —— 宁可调一次也不要瞎编。返回 reference-only 闭合段格式，只作参考。与 get_room_context 区别：get_room_context 按时序拿近期对话，recall_similar_context 按语义相似度精准匹配（适合查旧话题、跨 thread 找细节）。",
+        "⚠️[Legacy · F027 记忆收敛] 语义召回已由 memory_preflight 在 wake-up 自动执行；需主动召回优先 search_wiki（wiki）/ query_messages（messages 字面）。按语义相似度在当前 ROOM（含本 ROOM 内所有协作 agent thread 的历史，不只是你自己）召回相关消息片段。适用于需要 ROOM 内历史细节但不确定在哪的情况 —— 宁可调一次也不要瞎编。返回 reference-only 闭合段格式，只作参考。与 get_room_context 区别：get_room_context 按时序拿近期对话，recall_similar_context 按语义相似度精准匹配（适合查旧话题、跨 thread 找细节）。",
       inputSchema: {
         type: "object",
         properties: {
@@ -508,7 +511,8 @@ export function getTools() {
     },
     {
       name: "get_memory",
-      description: "读取当前会话的记忆条目。",
+      description:
+        "⚠️[Legacy · F027 记忆收敛] 会话记忆已并入统一 wiki——优先用 read_wiki / search_wiki。读取当前会话的记忆条目。",
       inputSchema: {
         type: "object",
         properties: {

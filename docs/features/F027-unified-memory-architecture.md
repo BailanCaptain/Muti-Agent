@@ -319,6 +319,14 @@ wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md �
 
 > 影响的历史 AC：**AC-P1-9**（"6 类记忆桶物理表 + 防漂桶 lint 红绿测试"）的"表 + lint"实现被本 patch 取代为"文件 + NHC 治理"；AC 文字保留作历史，实际验收以本 patch 为准。
 
+## 收尾补丁 · chunk C（记忆 MCP 收敛引导，2026-06-03）
+
+原始 goal 的另一半 = 记忆 MCP 收敛成 4 件套（`read_wiki` / `search_wiki` / `query_messages` / `update_wiki`）+ 引导 agent 用它们 + 退役旧散记忆工具。实测：旧 5 工具全暴露、零 deprecation 标记；agent-prompts/shared-rules 零引导。处置（旧工具 dev 真有人用 → **deprecate 引导，不硬删**）：
+
+- **shared-rules.md** 加「记忆工具（4 件套优先）」段（`loadSharedRules` 注入每个 agent prompt）：4 件套为首选 + memory_preflight 自动召回提示 + 旧工具列为 legacy。
+- **mcp/server.ts** 5 个旧工具描述加 `⚠️[Legacy · F027 记忆收敛]` 标记 + 指向替代：`search_room_memories`→`query_messages`；`get_room_summary`→viewfinder/`read_wiki`；`get_memory`→`read_wiki`/`search_wiki`；`get_room_context`（时序）/`recall_similar_context`（语义）降级为次要（memory_preflight 已自动覆盖）。
+- 不硬删（665/89/87/83 次真实调用），工具仍可调，仅引导 agent 不作首选。store 层迁移（session_memories 等）单独立项。
+
 ## 后续 follow-up（不在 F027 范围）
 
 - **M8**：F026 cleanup 补 ADR-002/003 CI guard（V16.5 chap 0 V16.5 follow-up）

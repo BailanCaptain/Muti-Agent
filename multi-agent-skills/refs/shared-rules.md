@@ -121,3 +121,21 @@ Bug 先写失败测试再修（先红后绿）。
 - **控制工具调用轮次** — 连续 >10 次 shell 就停下来总结进展
 - **每完成子步骤就写文字交代** — 避免"只干活不说话"导致用户看到空白
 - **预算告警即收尾** — 任务接近工具调用预算上限时，立刻写下"已完成 + 剩余 TODO"然后结束本轮
+
+## 记忆工具（F027 · 4 件套优先）
+
+统一记忆架构（F027）落地后，**记忆读写优先用这 4 件套**：
+
+- `read_wiki` — 按 path 精确读 wiki 文件（项目 / 概念 / 规则 / 人物 / 房间 viewfinder）
+- `search_wiki` — BM25 全文搜 wiki（找概念 / 规则 / 历史沉淀，不确定在哪时）
+- `query_messages` — FTS5 全文搜当前 ROOM messages（字面 token / 短语 / 实体 ID 如 F011 / R-205）
+- `update_wiki` — 写 / 更新 wiki（沉淀结论、决策、记忆）
+
+新 agent wake-up 时 **memory_preflight 已自动召回**高置信项目历史注入 prompt，多数情况无需手动召回。
+
+**旧散记忆工具 = legacy，仅兼容保留、勿作首选**：
+
+- `search_room_memories` → 改用 `query_messages`（同 BM25，更强：trigram / threadId / role 过滤）
+- `get_room_summary` → room 上下文已由 viewfinder（`read_wiki`）+ memory_preflight 提供
+- `get_memory` → 改用 `read_wiki` / `search_wiki`
+- `get_room_context`（严格时序近期对话）、`recall_similar_context`（语义召回）— 仅在 4 件套 + memory_preflight 不够时作补充
