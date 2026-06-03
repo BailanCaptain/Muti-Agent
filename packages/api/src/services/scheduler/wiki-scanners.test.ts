@@ -21,6 +21,7 @@ import test from "node:test"
 import Database from "better-sqlite3"
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type * as schema from "../../db/schema"
+import { NightlyHealthCheck } from "./nightly-health-check"
 import {
   parseFrontmatter,
   scanAgentSessionsFs,
@@ -68,6 +69,83 @@ test("G2 · parseFrontmatter: 无 frontmatter → body=raw, frontmatter={}", () 
   const { frontmatter, body } = parseFrontmatter(raw)
   assert.deepEqual(frontmatter, {})
   assert.equal(body, raw)
+})
+
+// 德彪 chunk-B-r1 P1: yaml.stringify 写出的 YAML block array（生产 ingest-preview
+// stringifyYaml 落盘形式）必须解析成数组——原 parser 只认 inline `[a, b]`，block 风格
+// 被读成空字符串 → deadSupersedes 静默失效。
+test("德彪 P1 · parseFrontmatter: YAML block array → 数组（生产 stringifyYaml 形式）", () => {
+  const raw = `---
+canonical_owner_path: wiki/concepts/new.md
+supersedes:
+  - wiki/concepts/gone.md
+  - wiki/concepts/alive.md
+---
+body`
+  const { frontmatter } = parseFrontmatter(raw)
+  assert.deepEqual(frontmatter.supersedes, [
+    "wiki/concepts/gone.md",
+    "wiki/concepts/alive.md",
+  ])
+})
+
+test("德彪 P1 · parseFrontmatter: block array 带引号 item + 后续 scalar key 不被吞", () => {
+  const raw = `---
+supersedes:
+  - "wiki/a.md"
+  - 'wiki/b.md'
+title: After Block
+---
+body`
+  const { frontmatter } = parseFrontmatter(raw)
+  assert.deepEqual(frontmatter.supersedes, ["wiki/a.md", "wiki/b.md"])
+  assert.equal(frontmatter.title, "After Block", "block array 后的 scalar key 仍解析")
+})
+
+test("德彪 P1 · parseFrontmatter: 空值 key 无后续 '- ' 项 → 保持空字符串（不误判数组）", () => {
+  const raw = `---
+title:
+sources: [a.md]
+---
+body`
+  const { frontmatter } = parseFrontmatter(raw)
+  assert.equal(frontmatter.title, "")
+  assert.deepEqual(frontmatter.sources, ["a.md"])
+})
+
+// 德彪 chunk-B-r1 P1: scanner → NHC 生产链路集成——真实文件 block-array supersedes
+// 死链必须被 deadSupersedes 抓（原来只有手写 inline-array stub 覆盖，漏生产扫描链路）。
+test("德彪 P1 · scanWikiEntitiesFs → NHC deadSupersedes 抓 block-array supersedes 死链", async () => {
+  const root = makeTmpWiki()
+  writeMd(
+    root,
+    "concepts/new.md",
+    `---
+canonical_owner_path: wiki/concepts/new.md
+sources: [seed.md]
+supersedes:
+  - wiki/concepts/gone.md
+  - wiki/concepts/alive.md
+---
+[[wiki/concepts/new]]
+`,
+  )
+  writeMd(
+    root,
+    "concepts/alive.md",
+    `---
+canonical_owner_path: wiki/concepts/alive.md
+sources: [seed.md]
+---
+[[wiki/concepts/alive]]
+`,
+  )
+  const entities = await scanWikiEntitiesFs(root)()
+  const check = new NightlyHealthCheck({ scanEntities: async () => entities })
+  const report = await check.run()
+  const ds = report.deadSupersedes.find((d) => d.path === "wiki/concepts/new.md")
+  assert.ok(ds, "new.md 的 supersedes 死链必须被 deadSupersedes 抓到")
+  assert.deepEqual(ds?.missing, ["wiki/concepts/gone.md"], "只 gone.md 死，alive.md 存在")
 })
 
 // ── scanWikiEntitiesFs ─────────────────────────────────────────────────

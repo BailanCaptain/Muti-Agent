@@ -55,8 +55,14 @@ const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/
 
 /**
  * 极简 yaml frontmatter 解析: `---\nyaml\n---\nbody` → {frontmatter, body}
- * 只解析 scalar (string/bool/number) + 简单 array (`field: [a, b]`)。
- * 不支持嵌套 object / multi-line scalar — 本项目 frontmatter 不用。
+ * 解析 scalar (string/bool/number) + inline array (`field: [a, b]`)
+ *   + YAML block array（`field:` 空值 + 后续 `  - item` 行）。
+ * 不支持嵌套 object / multi-line scalar。
+ *
+ * 德彪 chunk-B-r1 P1：原版只认 inline `[a, b]`，但生产 ingest-preview 用
+ * `stringifyYaml(fm)` 落盘，数组字段（supersedes/sources/...）写成 YAML block 形式
+ * `supersedes:\n  - x\n  - y`。原版把它读成空字符串 → NightlyHealthCheck.deadSupersedes
+ * 的 `Array.isArray` 判定永远 false → 死链治理静默失效。补 block array 解析修复。
  */
 export function parseFrontmatter(raw: string): {
   frontmatter: WikiFrontmatter
@@ -67,20 +73,44 @@ export function parseFrontmatter(raw: string): {
   const yamlBody = m[1]
   const body = m[2]
   const fm: Record<string, unknown> = {}
-  for (const line of yamlBody.split(/\r?\n/)) {
-    const trimmed = line.trim()
+  const lines = yamlBody.split(/\r?\n/)
+  for (let i = 0; i < lines.length; i += 1) {
+    const trimmed = lines[i].trim()
     if (!trimmed || trimmed.startsWith("#")) continue
     const colon = trimmed.indexOf(":")
     if (colon < 1) continue
     const key = trimmed.slice(0, colon).trim()
     const value = trimmed.slice(colon + 1).trim()
     if (!key) continue
+    // inline array: `field: [a, b]`
     if (value.startsWith("[") && value.endsWith("]")) {
       fm[key] = value
         .slice(1, -1)
         .split(",")
         .map((s) => s.trim().replace(/^["']|["']$/g, ""))
         .filter((s) => s.length > 0)
+      continue
+    }
+    // YAML block array: `field:` 空值 + 后续 `  - item` 行（stringifyYaml 落盘形式）
+    if (value === "") {
+      const items: string[] = []
+      let j = i + 1
+      while (j < lines.length) {
+        const itemTrim = lines[j].trim()
+        if (itemTrim.startsWith("- ")) {
+          items.push(itemTrim.slice(2).trim().replace(/^["']|["']$/g, ""))
+          j += 1
+        } else {
+          break // 空行 / 下一个 key / 嵌套行 → 块结束
+        }
+      }
+      const cleaned = items.filter((s) => s.length > 0)
+      if (cleaned.length > 0) {
+        fm[key] = cleaned
+        i = j - 1 // 跳过已消费的 item 行（外层 i += 1 后从 j 继续）
+        continue
+      }
+      fm[key] = "" // 无 item → 真空值，保持原行为
       continue
     }
     if (value === "true") fm[key] = true
