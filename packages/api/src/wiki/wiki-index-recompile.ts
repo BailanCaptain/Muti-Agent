@@ -16,6 +16,8 @@
  * fail-soft：scan / compile 抛错被 catch + log，不让 debounce.fire() 崩（已有 reentrancy guard）。
  */
 
+import fs from "node:fs"
+import path from "node:path"
 import type { WikiEvent } from "../db/repositories/wiki-events-types"
 import { compileWiki } from "./wiki-compiler"
 import type { ScannedWikiEntity } from "./wiki-memory-from-files"
@@ -50,7 +52,18 @@ export function createWikiIndexRecompiler(deps: WikiIndexRecompileDeps): () => P
       const memories = buildWikiMemoriesFromEntities(entities)
       const events = deps.fetchEvents ? await deps.fetchEvents() : []
       const version = (deps.version ?? defaultVersion)()
-      compileWiki({ wikiRoot: deps.wikiRoot, version, events, memories })
+      const result = compileWiki({ wikiRoot: deps.wikiRoot, version, events, memories })
+      // F027 B2/B1-c · reader 对齐：compileWiki 写 index/v-<version>/*.md（chap-19 版本化子目录），
+      // 但 GET /api/wiki/index（wiki-meta listIndex）扫 **flat** `index/*.md`（非递归，不入子目录）。
+      // 把当前版本 bucket 文件平铺复制到 index/，让 reader 读到当前索引（否则 KB tab 恒空——自查抓到的
+      // P2 输出布局 ≠ P4 reader 扫描 跨 phase 没对齐）。版本化快照仍留 v-<version>/ 作历史。
+      const versionPrefix = `index/v-${version}/`
+      const indexDir = path.join(deps.wikiRoot, "index")
+      for (const rel of result.filesWritten) {
+        if (rel.startsWith(versionPrefix) && rel.endsWith(".md")) {
+          fs.copyFileSync(path.join(deps.wikiRoot, rel), path.join(indexDir, path.basename(rel)))
+        }
+      }
     } catch (err) {
       deps.logger?.error({ err }, "[wiki-index-recompile] compileWiki failed (caught — debounce 不崩)")
     }

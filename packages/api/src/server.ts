@@ -1008,6 +1008,11 @@ export async function createApiServer(options: {
     // 约定：wikiRoot 是 markdown 文件实际根（`<X>/rooms/<id>/viewfinder.md` 中的 `<X>`），
     // 不是 namespace 外层。scanner ts docstring 强调；caller 见 server.ts:829 `roomCompileWikiRoot`。
     wikiRoot: roomCompileWikiRoot,
+    // F027 B2/B1-c · 全局索引（compileWiki）根 = GET /api/wiki/index reader 根 = wikiServices.wikiRoot
+    // = roomCompileWikiServicesRoot（单层 `.runtime/wiki`），**不是** roomCompileWikiRoot（双层）。
+    // 写到 reader 读不到的根 = KB tab 恒空（compileWiki 同类 wiring 陷阱，自查抓到）。
+    // worktree-preview 模式 reader 读 destWikiRoot fixtures；compileWiki 写单根不碰 fixtures（demo 不破）。
+    wikiIndexRoot: roomCompileWikiServicesRoot,
     // F027 AC-P1-5 codex P2-3：把 recent_drops repo 注进 scheduler boot，
     // 让 NightlyVacuum 每夜真 prune 超窗关联语料（不接 → prune 收 undefined 返回 0，retention 形同虚设）。
     recentDrops: recentDropsRepo,

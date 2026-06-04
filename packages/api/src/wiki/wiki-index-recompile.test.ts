@@ -48,6 +48,12 @@ test("B2 · 带 marker 实体 → compileWiki 真写 index.md + v-XXX/concepts.m
     assert.match(fs.readFileSync(conceptsMd, "utf-8"), /F027统一记忆架构/)
 
     assert.ok(fs.existsSync(path.join(dir, "index", "manifest.json")), "manifest.json 应产出")
+
+    // reader 对齐（命门）：GET /api/wiki/index 扫 flat index/*.md（非递归）——必须有平铺副本，
+    // 否则 KB tab 读不到 v-XXX/ 子目录里的文件。
+    const flatConcepts = path.join(dir, "index", "concepts.md")
+    assert.ok(fs.existsSync(flatConcepts), "flat index/concepts.md 必须有（reader 非递归扫 index/）")
+    assert.match(fs.readFileSync(flatConcepts, "utf-8"), /F027统一记忆架构/, "平铺副本含实体 → KB tab 可见")
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

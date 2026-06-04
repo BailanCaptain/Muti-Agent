@@ -137,6 +137,14 @@ export interface SchedulerBootOptions {
    */
   wikiRoot?: string
   /**
+   * F027 B2/B1-c · 全局索引（compileWiki）的根 —— **必须等于 GET /api/wiki/index reader 读的根**
+   * （= wikiServices.wikiRoot，单层 `.runtime/wiki`），**不是** wikiRoot（roomCompileWikiRoot，双层
+   * `.runtime/wiki/wiki`，那是 RoomCompiler/room scanner 的根）。两者不同！用错 → compileWiki 写的
+   * index 与 reader 读的根不匹配 → KB tab 恒空（自查抓到的 wiring 陷阱）。
+   * 缺 → 不接 compileWiki（只 reindexWiki）。同时作 scanEntities 的根。
+   */
+  wikiIndexRoot?: string
+  /**
    * F027 wiring · wiki 搜索索引 reindex 回调（接 WikiCompilerDebounce.recompileDerivedViews）。
    * 缺 → noop（跟之前 Phase 3 行为一致）。传入 → wiki 写 commit debounce 收敛后增量 reindex
    * `wiki_entity_index`（search_wiki / adaptive-recall Level 2 的索引 producer）。
@@ -288,12 +296,14 @@ export async function bootSchedulerRuntime(
     logger: opts.log,
   })
 
-  // F027 B2/B1-c · 全局 markdown 索引重编器（compileWiki 文件源）。缺 wikiRoot → null（只 reindex）。
+  // F027 B2/B1-c · 全局 markdown 索引重编器（compileWiki 文件源）。
+  // 用 wikiIndexRoot（= GET /api/wiki/index reader 根 = wikiServices.wikiRoot 单层），**不是** wikiRoot
+  // （roomCompileWikiRoot 双层）—— 否则 compileWiki 写的 index 与 reader 读的根不匹配，KB tab 恒空。
   // scanWikiEntitiesFs 返回 WikiEntity[] 结构兼容 ScannedWikiEntity（frontmatter 经 index sig）。
-  const wikiIndexRecompile = opts.wikiRoot
+  const wikiIndexRecompile = opts.wikiIndexRoot
     ? createWikiIndexRecompiler({
-        wikiRoot: opts.wikiRoot,
-        scanEntities: scanWikiEntitiesFs(opts.wikiRoot, opts.log),
+        wikiRoot: opts.wikiIndexRoot,
+        scanEntities: scanWikiEntitiesFs(opts.wikiIndexRoot, opts.log),
         logger: opts.log,
       })
     : null
