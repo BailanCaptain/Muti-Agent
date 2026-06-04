@@ -9,9 +9,10 @@
  *   - manifest.files 只列 v-XXX/ 内文件（与 chap 19 reader 走 v-<version>/ 一致性约定对齐）
  *   - chap 19 categorization 用 path-prefix heuristic（rules/concepts/episodes）+ type 路由（room → rooms-active）
  *
- * 调用者（5s debounce 触发器 / NightlyJobScheduler / smoke script）负责：
+ * 调用者（5s debounce 触发器 createWikiIndexRecompiler / NightlyJobScheduler / smoke script）负责：
  *   - 决定 version 号（YYYYMMDDNN，chap 19 格式）
- *   - 拉 wiki_events / wiki_memories（compiler 不查 DB）
+ *   - 拉 wiki_events（compiler 不查 DB）+ 扫文件源建 WikiMemory[]（wiki-memory-from-files，
+ *     B2/B1-c 接文件源；wiki_memories 表已砍）
  *   - 持有 leader_term（compiler 不知道 lease，P3.5 在调用方拦）
  *
  * chap 19 categorization mapping（path-prefix heuristic，best-effort）：

@@ -36,8 +36,12 @@ import type { IndexManifest } from "./index-manifest"
  * 见 V16.5 chap 14 patch）。WikiCompiler（chap 19 派生视图编译器）原依赖表行类型，
  * 为脱离已删的 wiki-memories-types，类型内联于此。
  *
- * ⚠️ compileWiki 当前**零生产调用**（造好未接线）——保留待 LLM compile pipeline (G11)
- * 接入文件源，或由小孙拍独立 deprecate。本类型不再有 DB 表对应。
+ * F027 B2/B1-c（2026-06-05 wiring-gap 审计修复）：compileWiki **已接进 5s debounce**
+ * （scheduler-bootstrap recompileDerivedViews → createWikiIndexRecompiler），输入改吃**文件源**
+ * （wiki-memory-from-files 把 scanWikiEntitiesFs 扫到的文件按 canonical_owner_path marker 过滤 +
+ * 映射成 WikiMemory）。本类型不再有 DB 表对应。
+ * ⚠️ 现状：真 wiki 文件 0 个带 canonical_owner_path（审计）→ 编出来是空壳；B3 backfill 跑 LLM
+ *    编译填 frontmatter 后索引非空。
  */
 export type WikiMemoryType = "room" | "project" | "user" | "feedback" | "work"
 

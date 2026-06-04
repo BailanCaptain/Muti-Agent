@@ -82,6 +82,7 @@ import {
   scanWikiDraftsFs,
   scanWikiEntitiesFs,
 } from "../services/scheduler/wiki-scanners"
+import { createWikiIndexRecompiler } from "../wiki/wiki-index-recompile"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
 
@@ -287,10 +288,24 @@ export async function bootSchedulerRuntime(
     logger: opts.log,
   })
 
+  // F027 B2/B1-c · 全局 markdown 索引重编器（compileWiki 文件源）。缺 wikiRoot → null（只 reindex）。
+  // scanWikiEntitiesFs 返回 WikiEntity[] 结构兼容 ScannedWikiEntity（frontmatter 经 index sig）。
+  const wikiIndexRecompile = opts.wikiRoot
+    ? createWikiIndexRecompiler({
+        wikiRoot: opts.wikiRoot,
+        scanEntities: scanWikiEntitiesFs(opts.wikiRoot, opts.log),
+        logger: opts.log,
+      })
+    : null
   const debounce = new WikiCompilerDebounce({
-    // F027 wiring · recompileDerivedViews 接真 reindex（wiki_entity_index 增量重建）。
-    // 缺 reindexWiki → noop（markdown 派生视图 index/sources/log 重编仍 follow-up 独立 F-id）。
-    recompileDerivedViews: opts.reindexWiki ?? (async () => {}),
+    // F027 wiring · recompileDerivedViews 现接两件（B2/B1-c 补全 — 此前只 reindex，compileWiki 裸奔）：
+    //   ① reindexWiki（wiki_entity_index FTS 增量重建，chunk A）→ 给 search_wiki MCP
+    //   ② wikiIndexRecompile（compileWiki 扫文件重编全局 markdown 索引）→ 给 KB tab / GET /api/wiki/index
+    // 缺 reindexWiki / wikiRoot 各自 noop（互不依赖）。两者都 fail-soft（compileWiki 内部 catch）。
+    recompileDerivedViews: async () => {
+      if (opts.reindexWiki) await opts.reindexWiki()
+      if (wikiIndexRecompile) await wikiIndexRecompile()
+    },
     debounceMs: opts.debounceMs,
     logger: opts.log,
   })
