@@ -14,6 +14,8 @@ import { A2AChainRegistry } from "../orchestrator/a2a-chain"
 import { DEFAULT_A2A_CALL_DEADLINE_MS } from "../orchestrator/a2a-gateway"
 import {
   type AdaptiveRecallCoordinator,
+  type RecallCoordinatorResult,
+  type RecallScenario,
   createNoopAdaptiveRecallCoordinator,
   deriveTriggerFromScenario,
 } from "../orchestrator/adaptive-recall-coordinator"
@@ -125,6 +127,52 @@ export function deriveWakeTriggerScenario(options: {
   if (!options.systemPrompt && options.dispatchedCallId) return "direct_turn"
   if (options.parentInvocationId) return "wake_up"
   return "wake_up"
+}
+
+/**
+ * F027 B1-b · direct/wake-up 装配支的 Adaptive Recall 接线。
+ *
+ * wiring gap（2026-06-05 审计）：自动召回 `executeIfNeeded` 此前仅 A2A 派发支有调用点，
+ * direct/wake-up 支（assembleDirectTurnPrompt）从不跑 coordinator → wake_up 场景 Recall Pack
+ * 永不注入。本 helper 给 direct 支补对称接线。
+ *
+ * 设计（spec V16.5 line 1094「每次 wake-up / handoff / session_bootstrap 自动召回」+
+ * coordinator.ts:96「direct_turn 默认不触发」）：无条件调 coordinator，scenario 网关交给
+ * coordinator.triggerScenarios —— wake_up → 真召回；direct_turn（普通用户问答）→ scenario_skip
+ * 不召回。**caller 必须传准 scenario**：普通用户消息传 "direct_turn"（不能用
+ * deriveWakeTriggerScenario 的 wake_up fallback，否则每条消息都召回炸成本），仅
+ * auto-resume 等显式 wake 传 "wake_up"。guardian 模式短路（零上下文契约不注 recall）。
+ *
+ * 返回 { recallResult, memoryPreflight }：
+ *   - memoryPreflight 喂 assembleDirectTurnPrompt（命中 → [Recall Pack] 注入）
+ *   - recallResult 给 writePromptAuditSafe 写 recall 字段（Prompt Inspector 可见）；guardian 短路 → null
+ */
+export async function resolveDirectTurnRecall(
+  coordinator: AdaptiveRecallCoordinator,
+  input: {
+    roomId: string
+    alias: string
+    scenario: RecallScenario
+    query: string
+    guardianMode?: boolean
+  },
+): Promise<{
+  recallResult: RecallCoordinatorResult | null
+  memoryPreflight: { hits: Array<{ score: number; summary: string; path?: string }> } | null
+}> {
+  if (input.guardianMode) {
+    return { recallResult: null, memoryPreflight: null }
+  }
+  const recallResult = await coordinator.executeIfNeeded({
+    roomId: input.roomId,
+    alias: input.alias,
+    scenario: input.scenario,
+    trigger: deriveTriggerFromScenario(input.scenario),
+    query: input.query,
+  })
+  const memoryPreflight =
+    recallResult.hits.length > 0 ? { hits: recallResult.hits.map(toAssemblePromptHits) } : null
+  return { recallResult, memoryPreflight }
 }
 
 /**
@@ -1562,6 +1610,19 @@ export class MessageService {
       // 失败 fail-soft：viewfinder 读不到不阻塞 direct turn。
       const directTurnRoomId = this.sessions.getRoomId(thread.sessionGroupId)
       const directTurnViewfinder = await this.loadViewfinderSafe(directTurnRoomId)
+      // F027 B1-b · direct/wake-up 支自动召回接线（wiring gap 2026-06-05：此前仅 A2A 支调
+      // executeIfNeeded，wake_up 场景 Recall Pack 永不注入）。仅显式 wake_up（auto-resume）触发召回；
+      // 普通 direct_turn 由 coordinator scenario_skip（spec V16.5 line 1094 / coordinator.ts:96）。
+      // query=本轮 user content；roomId 缺 canonical R-### 时用 sessionGroupId 兜底（与 A2A 支同口径）。
+      const directRecallScenario: "wake_up" | "direct_turn" =
+        options.scenario === "wake_up" ? "wake_up" : "direct_turn"
+      const { recallResult: directRecall, memoryPreflight: directMemoryPreflight } =
+        await resolveDirectTurnRecall(this.adaptiveRecallCoordinator, {
+          roomId: directTurnRoomId ?? thread.sessionGroupId,
+          alias: thread.alias,
+          scenario: directRecallScenario,
+          query: options.content,
+        })
       assembledDirectTurn = await assembleDirectTurnPrompt(
         {
           provider: thread.provider,
@@ -1587,6 +1648,8 @@ export class MessageService {
           // F027 P4-A2 + fallback j2 P1 修 · handbook agentActions 仅 first wake-up 注入。
           // 详见 maybeGetHandbookSlicesForFirstWakeUp helper jsdoc（V16.5 §4 line 364-365）。
           handbookSlices: this.maybeGetHandbookSlicesForFirstWakeUp(thread),
+          // F027 B1-b · 自动召回命中 → [Recall Pack — Reference Only] 注入（wake_up 才非空）。
+          memoryPreflight: directMemoryPreflight,
         },
         this.memoryService,
       )
@@ -1595,12 +1658,18 @@ export class MessageService {
       // "assembler 每次拼装完成时同步写一条 prompt_audit"）。Phase 1-3 只 A2A 写 →
       // prompt-inspector UI 看 direct turn 房间永远 0 row 是 bug。
       this.writePromptAuditSafe({
-        scenario: "direct_turn",
+        scenario: directRecallScenario,
         alias: thread.alias,
         roomId: directTurnRoomId,
         assembled: assembledDirectTurn,
         sourceEventIds: options.rootMessageId ? [options.rootMessageId] : [],
         agentSessionRef: thread.nativeSessionId,
+        // F027 B1-b · recall patch（Prompt Inspector 显示召回 trigger/required + output 派生字段）。
+        recallPatch: buildRecallAuditPatch({
+          output: directRecall?.output,
+          trigger: directRecall ? deriveTriggerFromScenario(directRecallScenario) : null,
+          recallRequired: directRecall?.executed === true,
+        }),
       })
     }
     const systemPrompt = options.systemPrompt ?? assembledDirectTurn!.systemPrompt
