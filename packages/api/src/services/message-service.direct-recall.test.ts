@@ -18,8 +18,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { AdaptiveRecallCoordinator } from "../orchestrator/adaptive-recall-coordinator"
 import type { ExecuteOutput, ExecutorDeps } from "../wiki/adaptive-recall/types"
-import type { RecallHit } from "../wiki/memory-preflight/types"
-import { resolveDirectTurnRecall } from "./message-service"
+import type { RecallHit, WikiSearchProvider } from "../wiki/memory-preflight/types"
+import { resolveColdStartRecall, resolveDirectTurnRecall } from "./message-service"
 
 function makeHit(path: string, score: number): RecallHit {
   return { path, score, excerpt: `excerpt for ${path}` }
@@ -117,4 +117,54 @@ test("B1-b · guardian 模式 → 短路 null，executor 不调（零上下文�
   assert.equal(called, false, "guardian 模式 executor 不该被调")
   assert.equal(r.memoryPreflight, null)
   assert.equal(r.recallResult, null)
+})
+
+// ─── B1-b-2 · resolveColdStartRecall（冷启 loadTaskMemoryPack）──────────
+//
+// 背景：冷启（新 agent 进新 room，nativeSession===null）是北极星「不白板」本体。
+// spec V16.5 line 1094/95：session_bootstrap 由 loadTaskMemoryPack（轻量 Pack）覆盖，
+// 非 coordinator。但 loadTaskMemoryPack 此前 0 生产 caller → 冷启 Recall Pack 从没注入。
+// 本 helper 给冷启补接线：跑 loadTaskMemoryPack → memoryPreflight → [Recall Pack]。
+
+/** WikiSearchProvider stub —— 每 query 返同一组 hits（gate 去重后剩 1）。 */
+function makeSearchStub(hits: RecallHit[]): WikiSearchProvider {
+  return { search: async () => hits }
+}
+
+test("B1-b-2 · 冷启 + 高置信命中 → memoryPreflight 注入（Recall Pack）", async () => {
+  const search = makeSearchStub([makeHit("wiki/concepts/F027.md", 0.95)])
+  const r = await resolveColdStartRecall(search, {
+    roomId: "R-201",
+    alias: "桂芬",
+    taskSummary: "F027 统一记忆架构 自动召回 wiring",
+  })
+  assert.ok(r, "高置信命中应产出 memoryPreflight")
+  assert.ok(r!.hits.length >= 1, "至少 1 个高置信 hit 进 prompt.hits")
+  assert.equal(r!.hits[0].path, "wiki/concepts/F027.md")
+  assert.equal(typeof r!.hits[0].summary, "string")
+})
+
+test("B1-b-2 · search provider 未注入（null）→ null（无 DI 不召回）", async () => {
+  const r = await resolveColdStartRecall(null, {
+    roomId: "R-201",
+    alias: "桂芬",
+    taskSummary: "任意",
+  })
+  assert.equal(r, null)
+})
+
+test("B1-b-2 · search backend 整体抛错 → fail-soft 返 null（不阻塞冷启 turn）", async () => {
+  const search: WikiSearchProvider = {
+    search: async () => {
+      throw new Error("simulated search backend crash")
+    },
+  }
+  let warned = false
+  const r = await resolveColdStartRecall(
+    search,
+    { roomId: "R-201", alias: "桂芬", taskSummary: "x" },
+    { warn: () => { warned = true } },
+  )
+  assert.equal(r, null, "backend 挂掉 → fail-soft null")
+  assert.equal(warned, true, "fail-soft 应 warn 一次（不静默退化）")
 })

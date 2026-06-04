@@ -57,7 +57,9 @@ import type {
 import { detectFBloat } from "../orchestrator/fbloat-detector"
 import { planForcedDispatch } from "../orchestrator/forced-dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
+import { loadTaskMemoryPack } from "../wiki/memory-preflight/memory-preflight"
 import { toAssemblePromptHits } from "../wiki/memory-preflight/render-pack"
+import type { WikiSearchProvider } from "../wiki/memory-preflight/types"
 import {
   NoopPromptAuditWriter,
   type PromptAuditWriterLike,
@@ -173,6 +175,44 @@ export async function resolveDirectTurnRecall(
   const memoryPreflight =
     recallResult.hits.length > 0 ? { hits: recallResult.hits.map(toAssemblePromptHits) } : null
   return { recallResult, memoryPreflight }
+}
+
+/**
+ * F027 B1-b-2 · 冷启（session_bootstrap）自动召回接线。
+ *
+ * wiring gap（2026-06-05 审计）：北极星「新 agent 进新 room 不白板」靠 P11 loadTaskMemoryPack
+ * 覆盖冷启（spec V16.5 line 1094/95），但 loadTaskMemoryPack **0 生产 caller** → 冷启 Recall Pack
+ * 从没注入。本 helper 给冷启（direct 支 nativeSession===null）补接线。
+ *
+ * 设计：冷启用**轻量 Pack**（loadTaskMemoryPack 单层召回 + Quality Gate），**不**走 coordinator
+ * （coordinator triggerScenarios 故意排除 session_bootstrap，spec line 95 "已由 Pack 覆盖"）。
+ * 命中（高置信 ≥ floor）→ output.prompt.hits → memoryPreflight → assembleDirectTurnPrompt 注入
+ * [Recall Pack]。search provider 未注入（null）→ 不召回；backend 抛错 → fail-soft 返 null 不阻塞 turn。
+ */
+export async function resolveColdStartRecall(
+  search: WikiSearchProvider | null,
+  ctx: { roomId: string; alias: string; taskSummary: string },
+  logger?: { warn(obj: unknown, msg?: string): void },
+): Promise<{ hits: Array<{ score: number; summary: string; path?: string }> } | null> {
+  if (!search) return null
+  try {
+    const out = await loadTaskMemoryPack(
+      {
+        roomId: ctx.roomId,
+        alias: ctx.alias,
+        scenario: "session_bootstrap",
+        taskSummary: ctx.taskSummary,
+      },
+      { search, logger },
+    )
+    return out.prompt.hits.length > 0 ? { hits: out.prompt.hits } : null
+  } catch (err) {
+    logger?.warn(
+      { stage: "cold_start_recall", err: err instanceof Error ? err.message : String(err) },
+      "cold-start memory_preflight failed (fail-soft, no Recall Pack)",
+    )
+    return null
+  }
 }
 
 /**
@@ -397,6 +437,10 @@ export class MessageService {
   // 后 setAdaptiveRecallCoordinator() 注入真 Coordinator 启用。
   private adaptiveRecallCoordinator: AdaptiveRecallCoordinator =
     createNoopAdaptiveRecallCoordinator()
+  // F027 B1-b-2 · 冷启 loadTaskMemoryPack 搜索 backend（北极星「新 agent 进新 room 不白板」）。
+  // 默认 null —— 未注入时冷启不召回（单测 / 老路径无副作用）；server.ts boot 注入生产
+  // SearchWikiProvider（search_wiki MCP 同款 BM25 backend，已对齐 WikiSearchProvider 接口）。
+  private memoryPreflightSearch: WikiSearchProvider | null = null
   // F027 Phase 3 P20 Day 8 b · prompt_audit writer wiring (AC-P3-9 b).
   // 默认 noop —— wire 没接通时不写 audit row（单测 / 老路径无副作用）。
   // server.ts boot 注入真 PromptAuditWriter（即使 Coordinator 是 noop，每次
@@ -529,6 +573,11 @@ export class MessageService {
    */
   setAdaptiveRecallCoordinator(coordinator: AdaptiveRecallCoordinator) {
     this.adaptiveRecallCoordinator = coordinator
+  }
+
+  /** F027 B1-b-2 · 注入冷启召回的 wiki 搜索 backend（server.ts boot 调）。 */
+  setMemoryPreflightSearch(search: WikiSearchProvider) {
+    this.memoryPreflightSearch = search
   }
 
   /**
@@ -1616,13 +1665,34 @@ export class MessageService {
       // query=本轮 user content；roomId 缺 canonical R-### 时用 sessionGroupId 兜底（与 A2A 支同口径）。
       const directRecallScenario: "wake_up" | "direct_turn" =
         options.scenario === "wake_up" ? "wake_up" : "direct_turn"
-      const { recallResult: directRecall, memoryPreflight: directMemoryPreflight } =
-        await resolveDirectTurnRecall(this.adaptiveRecallCoordinator, {
+      // F027 B1-b-2 · 冷启（nativeSession===null = 新 session 首轮 = 北极星「不白板」本体）走
+      // 轻量 loadTaskMemoryPack Pack（spec V16.5 line 95：session_bootstrap 由 Pack 覆盖，非
+      // coordinator）；非冷启走 b-1 coordinator（wake_up 召回 / direct_turn scenario_skip）。
+      // 两者互斥（wake_up auto-resume 必有 nativeSession）。命中 → memoryPreflight → [Recall Pack]。
+      let directRecall: RecallCoordinatorResult | null = null
+      let directMemoryPreflight:
+        | { hits: Array<{ score: number; summary: string; path?: string }> }
+        | null = null
+      if (thread.nativeSessionId === null) {
+        directMemoryPreflight = await resolveColdStartRecall(
+          this.memoryPreflightSearch,
+          {
+            roomId: directTurnRoomId ?? thread.sessionGroupId,
+            alias: thread.alias,
+            taskSummary: options.content,
+          },
+          this.log,
+        )
+      } else {
+        const res = await resolveDirectTurnRecall(this.adaptiveRecallCoordinator, {
           roomId: directTurnRoomId ?? thread.sessionGroupId,
           alias: thread.alias,
           scenario: directRecallScenario,
           query: options.content,
         })
+        directRecall = res.recallResult
+        directMemoryPreflight = res.memoryPreflight
+      }
       assembledDirectTurn = await assembleDirectTurnPrompt(
         {
           provider: thread.provider,

@@ -331,6 +331,9 @@ export async function createApiServer(options: {
         defaultBudget: { maxLevels: 5 },
       }),
     )
+    // F027 B1-b-2 · 冷启 loadTaskMemoryPack 搜索 backend（北极星「新 agent 进新 room 不白板」）。
+    // 复用 search_wiki MCP 同款 SearchWikiProvider（已对齐 memory-preflight WikiSearchProvider 接口）。
+    messages.setMemoryPreflightSearch(searchWikiProvider)
     // eslint-disable-next-line no-console
     console.log(
       "[F027-P4 AC-P4-8] AdaptiveRecallCoordinator wired: enabled=true, levels=[2,3,4,5], maxLevels=5, broadcaster=on",
