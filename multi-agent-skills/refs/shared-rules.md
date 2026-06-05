@@ -131,10 +131,9 @@ Bug 先写失败测试再修（先红后绿）。
 - `query_messages` — FTS5 全文搜当前 ROOM messages（字面 token / 短语 / 实体 ID 如 F011 / R-205）
 - `update_wiki` — 写 / 更新 wiki（沉淀结论、决策、记忆）
 
-**A2A handoff（@ / Call 派发）路径**会自动 adaptive recall 注入高置信项目历史；**直接对话 / 普通 wake-up 仍按需手动用 4 件套**（memory_preflight 当前只接 A2A 派发路径，非全路径）。
+**A2A handoff（@ / Call 派发）/ wake-up 唤醒 / 冷启动（新 agent 进新房）路径**会自动 adaptive recall / memory_preflight 注入历史（F027 B1-b 已接通三场景）；**进行中的直接对话（direct_turn）按设计不自动召回**——按需手动用 4 件套。
 
-**旧散记忆工具 = legacy，仅兼容保留、勿作首选**（不硬删：各自访问 4 件套不覆盖的数据）：
+**记忆工具收敛（F027 B1-a · 2026-06-06 小孙拍）**：
 
-- `search_room_memories` / `get_memory` → 读旧 `session_memories` 滚动摘要 store（4 件套碰不到此 store）；找 ROOM 对话 / 沉淀优先 `query_messages` / `search_wiki`，仅需旧 session 摘要时才用
-- `get_room_summary` → 读旧 session 滚动摘要；ROOM 上下文优先 `read_wiki`（viewfinder）
-- `get_room_context`（严格时序近期对话）、`recall_similar_context`（messages 语义召回，4 件套不做 messages 语义）— 仅在 4 件套不够时作补充
+- `search_room_memories` / `get_memory` / `get_room_summary` → **已退役**（不再向你广播）。三者原读旧 `session_memories` 滚动会话摘要——该摘要现由系统**自动注入**进你的 prompt（正常协作 POLICY_FULL），你无需手动取。查 ROOM 对话 / 沉淀用 `query_messages`（messages FTS）、查知识用 `search_wiki` / `read_wiki`。
+- `get_room_context`（严格时序近期对话）、`recall_similar_context`（messages 语义召回，4 件套不做 messages 语义）— 仍保留，仅在 4 件套不够时作补充

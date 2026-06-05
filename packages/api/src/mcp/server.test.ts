@@ -6,16 +6,17 @@ import { encodeMessage, getTools, handleToolCall, parseFrame } from "./server.js
 // getTools tests
 // ---------------------------------------------------------------------------
 
-test("getTools returns 18 tools (F027 wiring +search_wiki)", () => {
+test("getTools returns 15 tools (F027 B1-a 退役旧 3 session_memories 工具)", () => {
+  // F027 B1-a（小孙 2026-06-06 拍方案一）：get_memory / get_room_summary / search_room_memories
+  // 三个旧 session_memories 工具从广播列表移除（agent 不再发现/使用，收敛到 4 件套）。
+  // session_memories 表 + 自动注入（POLICY_FULL）+ dispatch/HTTP 后端不动（legacy 直呼仍优雅可达）。
   const tools = getTools()
-  assert.equal(tools.length, 18, `Expected 18 tools, got ${tools.length}`)
+  assert.equal(tools.length, 15, `Expected 15 tools, got ${tools.length}`)
   const names = tools.map((t) => t.name).sort()
   assert.deepEqual(names, [
     "acquire_wiki_lease",
     "create_task",
-    "get_memory",
     "get_room_context",
-    "get_room_summary",
     "get_task_status",
     "post_message",
     "query_messages",
@@ -23,20 +24,23 @@ test("getTools returns 18 tools (F027 wiring +search_wiki)", () => {
     "recall_similar_context",
     "request_decision",
     "request_permission",
-    "search_room_memories",
     "search_wiki",
     "take_screenshot",
     "trigger_mention",
     "update_wiki",
     "update_workflow_sop",
   ])
+  // 退役的 3 个不在广播列表
+  assert.ok(!names.includes("get_memory"), "get_memory 已退役（不广播）")
+  assert.ok(!names.includes("get_room_summary"), "get_room_summary 已退役（不广播）")
+  assert.ok(!names.includes("search_room_memories"), "search_room_memories 已退役（不广播）")
 })
 
 test("query_messages tool has expected schema (F027 P14.b)", () => {
   const tools = getTools()
   const tool = tools.find((t) => t.name === "query_messages")
   assert.ok(tool)
-  const schema = tool!.inputSchema as {
+  const schema = tool!.inputSchema as unknown as {
     type: string
     properties: Record<string, { type: string }>
     required?: string[]
@@ -59,7 +63,7 @@ test("recall_similar_context tool has expected schema (F018 P5 AC6.3)", () => {
   const tools = getTools()
   const tool = tools.find((t) => t.name === "recall_similar_context")
   assert.ok(tool)
-  const schema = tool!.inputSchema as {
+  const schema = tool!.inputSchema as unknown as {
     type: string
     properties: Record<string, { type: string }>
     required?: string[]

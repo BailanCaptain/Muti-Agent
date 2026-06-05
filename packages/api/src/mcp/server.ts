@@ -374,30 +374,6 @@ export function getTools() {
       },
     },
     {
-      name: "get_room_summary",
-      description:
-        "⚠️[Legacy · F027 记忆收敛] 读旧 session_memories 滚动摘要；ROOM 上下文优先 read_wiki（viewfinder）。获取当前协作房间的滚动摘要（压缩版上下文，适用于上下文窗口紧张时）。",
-      inputSchema: {
-        type: "object",
-        properties: {},
-      },
-    },
-    {
-      name: "search_room_memories",
-      description:
-        "⚠️[Legacy · F027 记忆收敛] 本工具搜的是旧 session_memories 滚动摘要 store（4 件套不覆盖此 store）。找 ROOM 对话/沉淀优先 query_messages（messages FTS）/ search_wiki（wiki）；仅需旧 session 摘要/关键词时才用本工具。按关键词搜索当前房间的历史记忆条目。",
-      inputSchema: {
-        type: "object",
-        properties: {
-          keyword: {
-            type: "string",
-            description: "搜索关键词",
-          },
-        },
-        required: ["keyword"],
-      },
-    },
-    {
       name: "query_messages",
       description:
         "F027 chap 21 P14: 按字面/关键词在当前 ROOM 的 messages 表做 BM25 全文召回（trigram tokenizer）。**重要：query 必须 ≥3 字符**（trigram 物理限制：<3 字会切不出完整 3-gram，通常返回 0 hit）。与 recall_similar_context 互补：那个走 embedding 语义相似，本工具走字面 token / 短语 / 实体 ID（如 F011 / B022 / R-205）的精确召回。query 含特殊字符会被 sanitize 包成 phrase 安全字面量；保留字 AND/OR/NEAR 自动转义。可选过滤：threadId 限单 thread / role 限消息角色（user/assistant/connector）。topK 默认 10，最大 100。",
@@ -507,17 +483,6 @@ export function getTools() {
           taskSnippet: { type: "string", description: "要求目标 agent 完成的任务" },
         },
         required: ["targetAgentId", "taskSnippet"],
-      },
-    },
-    {
-      name: "get_memory",
-      description:
-        "⚠️[Legacy · F027 记忆收敛] 读旧 session_memories 滚动摘要（仍是独立 store，未并入 wiki）；项目/概念记忆优先 read_wiki / search_wiki。读取当前会话的记忆条目。",
-      inputSchema: {
-        type: "object",
-        properties: {
-          keyword: { type: "string", description: "可选：用于筛选记忆的关键词" },
-        },
       },
     },
     {

@@ -36,6 +36,7 @@ const DEFAULT_TIMEOUT_MS = 15000
 const HAIKU_MODEL = "claude-haiku-4-5"
 const SONNET_MODEL = "claude-sonnet-4-6"
 const OPUS_MODEL = "claude-opus-4-7"
+const OPUS_46_MODEL = "claude-opus-4-6"
 
 /**
  * 单轮 Claude CLI 调用封装。内部 spawn `claude --print --model <model> "<prompt>"`，
@@ -150,4 +151,13 @@ export function createSonnetRunner(deps: HaikuRunnerDeps = {}): HaikuRunner {
 /** Opus 4.7 — F027 P18 evidence pack judge runner. */
 export function createOpusRunner(deps: HaikuRunnerDeps = {}): HaikuRunner {
   return createClaudeCliRunner(OPUS_MODEL, deps)
+}
+
+/**
+ * Opus 4.6 — F027 B1-a session 滚动会话摘要生成器。
+ * 小孙 2026-06-06 拍：摘要弃 Gemini CLI，改用 Claude Opus 4.6。走 stdin（本 runner 已修
+ * ENAMETOOLONG）—— 摘要 prompt 含最多 100 条消息可达数十 KB，原 `-p <argv>` 会 spawn 超限。
+ */
+export function createOpus46Runner(deps: HaikuRunnerDeps = {}): HaikuRunner {
+  return createClaudeCliRunner(OPUS_46_MODEL, deps)
 }

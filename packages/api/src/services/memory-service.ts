@@ -1,11 +1,21 @@
-import { spawn } from "node:child_process"
 import type { SessionRepository } from "../db/repositories"
 import type { SessionMemoryRecord } from "../db/sqlite"
+import { type HaikuRunner, createOpus46Runner } from "../runtime/haiku-runner"
+
+/** 会话摘要压缩超时（重任务·长上下文，远大于 runner 默认 15s）。 */
+const SUMMARY_COMPRESS_TIMEOUT_MS = 60_000
 
 export class MemoryService {
   private readonly invalidatedGroups = new Set<string>()
 
-  constructor(private readonly repository: SessionRepository) {}
+  constructor(
+    private readonly repository: SessionRepository,
+    /**
+     * F027 B1-a（小孙 2026-06-06 拍）：会话摘要压缩 runner，默认 Claude Opus 4.6（弃 Gemini）。
+     * 走 stdin（haiku-runner 已修 ENAMETOOLONG）；测试可注入 fake。
+     */
+    private readonly summaryRunner: HaikuRunner = createOpus46Runner(),
+  ) {}
 
   invalidateSummary(sessionGroupId: string) {
     this.invalidatedGroups.add(sessionGroupId)
@@ -34,12 +44,11 @@ export class MemoryService {
   async generateRollingSummary(sessionGroupId: string): Promise<string> {
     const allMessages = this.repository.listAllMessagesForGroup(sessionGroupId)
 
-    // 2. Build extractive summary first (key decisions, [拍板] items, topic keywords)
+    // 抽取式摘要打底（关键决策 / [拍板] / 话题关键词）
     const extractive = buildExtractiveSummary(allMessages)
-
-    // 3. Attempt Gemini API call for abstractive compression, fallback to Claude CLI, then extractive
     const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
-    const summary = await this.callGeminiSummarizer(extractive, allMessages)
+    // F027 B1-a：Claude Opus 4.6 抽象压缩（弃 Gemini）；任何失败 fail-soft 退回 extractive
+    const summary = await this.compressSummary(extractive, allMessages)
     this.repository.createMemory(sessionGroupId, summary, keywords)
     return summary
   }
@@ -78,10 +87,14 @@ export class MemoryService {
   }
 
   /**
-   * Abstractive summarization via Gemini CLI subprocess (OAuth subscription).
-   * Falls back to extractive summary on any error or timeout.
+   * F027 B1-a（小孙 2026-06-06 拍）：会话抽象摘要压缩用 Claude Opus 4.6（弃 Gemini CLI）。
+   *
+   * runner 走 **stdin**（haiku-runner 已修 ENAMETOOLONG）—— 摘要 prompt 拼最多 100 条消息
+   * （每条截断 800 字）可达数十 KB，原 gemini/claude `-p <prompt>` 当 argv 传会 spawn 超限
+   * （与 B3 实测的 haiku-runner ENAMETOOLONG 同根）。
+   * runner 任何失败（timeout / empty-output / exit / spawn-error）→ fail-soft 退回 extractive 摘要。
    */
-  private async callGeminiSummarizer(
+  private async compressSummary(
     extractive: string,
     allMessages: Array<{ role: string; content: string; alias: string; createdAt: string }>,
   ): Promise<string> {
@@ -114,73 +127,10 @@ ${extractive}
 以下是完整对话记录（按时间排序）：
 ${conversationText}`
 
-    return new Promise((resolve) => {
-      let settled = false
-      const done = (result: string) => {
-        if (!settled) {
-          settled = true
-          resolve(result)
-        }
-      }
-
-      const child = spawn("gemini", ["-p", prompt], {
-        stdio: ["ignore", "pipe", "pipe"],
-        cwd: process.cwd(),
-      })
-
-      let stdout = ""
-      child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString()
-      })
-
-      child.on("close", (code) => {
-        const text = stdout.trim()
-        if (code === 0 && text) {
-          done(text)
-        } else {
-          this.callClaudeFallbackSummarizer(extractive).then(done, () => done(extractive))
-        }
-      })
-
-      child.on("error", () => {
-        this.callClaudeFallbackSummarizer(extractive).then(done, () => done(extractive))
-      })
-
-      // 60s hard timeout — Gemini CLI 重试可能较慢
-      const timer = setTimeout(() => {
-        child.kill()
-        done(extractive)
-      }, 60_000)
-
-      child.on("close", () => clearTimeout(timer))
+    const result = await this.summaryRunner.runPrompt(prompt, {
+      timeoutMs: SUMMARY_COMPRESS_TIMEOUT_MS,
     })
-  }
-
-  private callClaudeFallbackSummarizer(extractive: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const prompt = `请将以下对话摘要精炼为 300-500 字的结构化摘要，保留关键决策和未完成任务：\n\n${extractive.slice(0, 3000)}`
-      const child = spawn("claude", ["-p", prompt, "--no-input"], {
-        stdio: ["ignore", "pipe", "pipe"],
-        cwd: process.cwd(),
-      })
-
-      let stdout = ""
-      child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString()
-      })
-      child.on("close", (code) => {
-        const text = stdout.trim()
-        if (code === 0 && text) resolve(text)
-        else resolve(extractive)
-      })
-      child.on("error", () => resolve(extractive))
-
-      const timer = setTimeout(() => {
-        child.kill()
-        resolve(extractive)
-      }, 30_000)
-      child.on("close", () => clearTimeout(timer))
-    })
+    return result.ok && result.text ? result.text : extractive
   }
 
   getLastSummary(sessionGroupId: string): string | null {

@@ -167,3 +167,47 @@ test("searchMemories delegates to repository", () => {
   const results = service.searchMemories("memory")
   assert.deepEqual(results, expectedResults)
 })
+
+test("F027 B1-a: generateRollingSummary 用注入的 Opus 4.6 runner 输出并写 createMemory", async () => {
+  let capturedSummary = ""
+  let promptSeen = ""
+  const repo = createMockRepository({
+    createMemory: (g: string, summary: string, k: string) => {
+      capturedSummary = summary
+      return { id: "m", sessionGroupId: g, summary, keywords: k, createdAt: "x" }
+    },
+  })
+  const fakeRunner = {
+    runPrompt: async (prompt: string) => {
+      promptSeen = prompt
+      return { ok: true, text: "## 话题\nOpus 4.6 压缩摘要", durationMs: 1 }
+    },
+  }
+  const service = new MemoryService(repo as never, fakeRunner as never)
+  const summary = await service.generateRollingSummary("group-1")
+  assert.equal(summary, "## 话题\nOpus 4.6 压缩摘要", "应用 runner 的抽象压缩输出")
+  assert.equal(capturedSummary, summary, "写入 createMemory 的是 runner 输出")
+  assert.ok(promptSeen.includes("会话摘要生成器"), "prompt 走 runner（含摘要指令模板）")
+  assert.ok(promptSeen.includes("memory feature"), "prompt 拼入真实对话内容")
+})
+
+test("F027 B1-a: runner 失败 → fail-soft 退回 extractive 摘要（不阻断）", async () => {
+  let capturedSummary = ""
+  const repo = createMockRepository({
+    createMemory: (g: string, summary: string, k: string) => {
+      capturedSummary = summary
+      return { id: "m", sessionGroupId: g, summary, keywords: k, createdAt: "x" }
+    },
+  })
+  const fakeRunner = {
+    runPrompt: async () => ({ ok: false, text: "", durationMs: 1, error: "timeout" }),
+  }
+  const service = new MemoryService(repo as never, fakeRunner as never)
+  const summary = await service.generateRollingSummary("group-1")
+  assert.ok(summary.length > 0, "fail-soft 不返回空")
+  assert.ok(
+    summary.includes("[Timeline]") || summary.includes("话题关键词"),
+    "退回 buildExtractiveSummary 抽取式摘要",
+  )
+  assert.equal(capturedSummary, summary, "extractive 摘要照常写入 createMemory")
+})
