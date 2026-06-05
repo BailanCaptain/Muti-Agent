@@ -130,7 +130,11 @@ ${conversationText}`
     const result = await this.summaryRunner.runPrompt(prompt, {
       timeoutMs: SUMMARY_COMPRESS_TIMEOUT_MS,
     })
-    return result.ok && result.text ? result.text : extractive
+    // 德彪 codex P2：trim 后再判——runner ok 但只吐空白（`"\n"` 等）时不能存空摘要，
+    // 否则空摘要会经 POLICY_FULL.injectRollingSummary 自动注入污染 agent 上下文。
+    // 不耦合 runner 内部 trim 契约，compressSummary 自己兜底。
+    const compressed = result.ok ? result.text.trim() : ""
+    return compressed || extractive
   }
 
   getLastSummary(sessionGroupId: string): string | null {

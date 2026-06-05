@@ -211,3 +211,25 @@ test("F027 B1-a: runner 失败 → fail-soft 退回 extractive 摘要（不阻�
   )
   assert.equal(capturedSummary, summary, "extractive 摘要照常写入 createMemory")
 })
+
+test("F027 B1-a 德彪 codex P2: runner ok 但只吐空白 → 退回 extractive（不存空摘要污染自动注入）", async () => {
+  let capturedSummary = ""
+  const repo = createMockRepository({
+    createMemory: (g: string, summary: string, k: string) => {
+      capturedSummary = summary
+      return { id: "m", sessionGroupId: g, summary, keywords: k, createdAt: "x" }
+    },
+  })
+  // ok=true 但 text 全空白：不能直接当有效摘要存（会经 POLICY_FULL 自动注入污染上下文）
+  const fakeRunner = {
+    runPrompt: async () => ({ ok: true, text: "\n   \n", durationMs: 1 }),
+  }
+  const service = new MemoryService(repo as never, fakeRunner as never)
+  const summary = await service.generateRollingSummary("group-1")
+  assert.ok(summary.trim().length > 0, "不能存空白摘要")
+  assert.ok(
+    summary.includes("[Timeline]") || summary.includes("话题关键词"),
+    "空白 runner 输出 → 退回 extractive",
+  )
+  assert.equal(capturedSummary, summary)
+})

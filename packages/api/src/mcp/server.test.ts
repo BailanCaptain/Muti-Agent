@@ -42,7 +42,7 @@ test("query_messages tool has expected schema (F027 P14.b)", () => {
   assert.ok(tool)
   const schema = tool!.inputSchema as unknown as {
     type: string
-    properties: Record<string, { type: string }>
+    properties: Record<string, { type: string | string[] }>
     required?: string[]
   }
   assert.equal(schema.type, "object")
@@ -65,7 +65,7 @@ test("recall_similar_context tool has expected schema (F018 P5 AC6.3)", () => {
   assert.ok(tool)
   const schema = tool!.inputSchema as unknown as {
     type: string
-    properties: Record<string, { type: string }>
+    properties: Record<string, { type: string | string[] }>
     required?: string[]
   }
   assert.equal(schema.type, "object")
