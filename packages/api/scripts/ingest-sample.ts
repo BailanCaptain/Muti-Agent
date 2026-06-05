@@ -101,6 +101,10 @@ async function main() {
           primary: createOpusRunner(),
           fallback: createHaikuRunner(),
         }),
+        // F027 B3：batch backfill 不赶 interactive latency，编译超时放宽到 180s
+        // （生产 IngestPreview 默认 60s 是为 IngestModal 交互体验；大文档如 45KB
+        // lessons-learned.md 实测 60s 不够 → 退 stub。batch 场景可放长）。
+        timeoutMs: 180_000,
         logger: log,
       }),
       handbookCompileRules,
