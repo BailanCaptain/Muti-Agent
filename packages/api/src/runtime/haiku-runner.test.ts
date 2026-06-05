@@ -174,6 +174,56 @@ describe("HaikuRunner", () => {
     assert.ok(argvLen < 1024, `argv 必须与 prompt 大小无关，恒小；got ${argvLen} chars`)
     assert.equal(stdinWriteSpy.mock.calls[0].arguments[0], bigPrompt, "整个大 prompt 走 stdin")
   })
+
+  it("德彪 codex P2: stdin write error surfaces in failure result (不静默吞)", async () => {
+    // stdin EPIPE（prompt 没喂完子进程就退）→ 进程空输出退出 → error 必须含 stdin-error 供诊断，
+    // 不能伪装成普通 empty-output（无声失败正是本 bug 的教训）。
+    const spawn = (() => {
+      const proc: any = new EventEmitter()
+      proc.stdout = new EventEmitter()
+      proc.stderr = new EventEmitter()
+      const stdin: any = new EventEmitter()
+      stdin.write = mock.fn(() => {
+        setImmediate(() => stdin.emit("error", new Error("EPIPE broken pipe")))
+      })
+      stdin.end = mock.fn()
+      proc.stdin = stdin
+      proc.kill = mock.fn()
+      // exit 0 + 空 stdout → empty-output 分支，应带上 stdin-error tail
+      setTimeout(() => proc.emit("close", 0), 5)
+      return proc as ChildProcess
+    }) as any
+    const r = createHaikuRunner({ spawn })
+    const res = await r.runPrompt("x")
+    assert.equal(res.ok, false)
+    assert.match(res.error ?? "", /empty-output/)
+    assert.match(res.error ?? "", /stdin-error/)
+    assert.match(res.error ?? "", /EPIPE/)
+  })
+
+  it("德彪 codex P2: 成功路径迟到的 benign stdin error 不误判失败（有输出=prompt 已读够）", async () => {
+    const spawn = (() => {
+      const proc: any = new EventEmitter()
+      proc.stdout = new EventEmitter()
+      proc.stderr = new EventEmitter()
+      const stdin: any = new EventEmitter()
+      stdin.write = mock.fn(() => {
+        setImmediate(() => stdin.emit("error", new Error("EPIPE late")))
+      })
+      stdin.end = mock.fn()
+      proc.stdin = stdin
+      proc.kill = mock.fn()
+      setTimeout(() => {
+        proc.stdout.emit("data", Buffer.from("real output"))
+        proc.emit("close", 0)
+      }, 5)
+      return proc as ChildProcess
+    }) as any
+    const r = createHaikuRunner({ spawn })
+    const res = await r.runPrompt("x")
+    assert.equal(res.ok, true, "有有效输出时迟到的 stdin EPIPE 不应翻成失败")
+    assert.equal(res.text, "real output")
+  })
 })
 
 describe("OpusRunner (F027 P18 evidence judge)", () => {

@@ -62,9 +62,15 @@ function createClaudeCliRunner(model: string, deps: HaikuRunnerDeps = {}): Haiku
       // 原先 prompt 当 argv 末位传 → Windows CreateProcess 命令行 ~32KB 上限，大文档
       // （实测 45KB docs/lessons/lessons-learned.md）触发 `spawn ENAMETOOLONG`，compile 全退回 stub。
       // stdin 无长度限制。写完即 end()：既喂入 prompt，又让 `claude --print` 见 EOF 干净退出
-      // （保留原 Windows stdin-EOF hang 防护）。stdin EPIPE（claude 读完前先退出）静默吞，
-      // 不让未监听的 error 事件崩进程 —— 真实结果由 close/error 分支裁决。
-      proc.stdin?.on?.("error", () => {})
+      // （保留原 Windows stdin-EOF hang 防护）。
+      // 德彪 codex P2：stdin error（EPIPE，claude 读完前先退出）不能崩进程，但也**不能静默吞** ——
+      // 否则 prompt 没写完导致 LLM 收截断输入却被当普通失败，无从诊断（正是本 bug 的"无声失败"教训）。
+      // 记 stdinError，仅在失败路径（exit≠0 / empty-output）拼进 error 暴露；成功路径（有输出=prompt
+      // 已被读够）不因迟到的 benign EPIPE 误判失败。
+      let stdinError: string | undefined
+      proc.stdin?.on?.("error", (err: Error) => {
+        stdinError = err?.message ?? String(err)
+      })
       proc.stdin?.write(prompt)
       proc.stdin?.end()
 
@@ -98,14 +104,18 @@ function createClaudeCliRunner(model: string, deps: HaikuRunnerDeps = {}): Haiku
         proc.on("close", (code) => {
           const durationMs = Date.now() - start
           const text = stdout.trim()
+          // 德彪 codex P2：失败路径附 stdin-error（若有），让"prompt 没喂进去"可诊断（非静默吞）。
+          const stdinTail = stdinError ? ` stdin-error: ${stdinError}` : ""
           if (code !== 0) {
             // 把 stderr 摘要拼进 error，让 runner-with-fallback 能识别 quota/rate/429 触发降级。
             const errTail = stderr.trim().slice(0, 200)
-            const error = errTail ? `exit-code-${code}: ${errTail}` : `exit-code-${code}`
+            const error = errTail
+              ? `exit-code-${code}: ${errTail}${stdinTail}`
+              : `exit-code-${code}${stdinTail}`
             return settle({ ok: false, text: "", durationMs, error })
           }
           if (!text) {
-            return settle({ ok: false, text: "", durationMs, error: "empty-output" })
+            return settle({ ok: false, text: "", durationMs, error: `empty-output${stdinTail}` })
           }
           settle({ ok: true, text, durationMs })
         })
