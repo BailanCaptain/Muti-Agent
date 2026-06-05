@@ -54,6 +54,14 @@ test("B2 · 带 marker 实体 → compileWiki 真写 index.md + v-XXX/concepts.m
     const flatConcepts = path.join(dir, "index", "concepts.md")
     assert.ok(fs.existsSync(flatConcepts), "flat index/concepts.md 必须有（reader 非递归扫 index/）")
     assert.match(fs.readFileSync(flatConcepts, "utf-8"), /F027统一记忆架构/, "平铺副本含实体 → KB tab 可见")
+
+    // 德彪 codex P3-1：sources.md / log.md 是运营视图，不平铺进 KB 列表（但 v-XXX/ 里仍有作历史）
+    assert.ok(!fs.existsSync(path.join(dir, "index", "sources.md")), "sources.md 不该平铺（运营视图非知识桶）")
+    assert.ok(!fs.existsSync(path.join(dir, "index", "log.md")), "log.md 不该平铺（事件审计非知识桶）")
+    assert.ok(
+      fs.existsSync(path.join(dir, "index", "v-2026060501", "sources.md")),
+      "但 v-XXX/sources.md 仍在（历史快照保留）",
+    )
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

@@ -57,11 +57,15 @@ export function createWikiIndexRecompiler(deps: WikiIndexRecompileDeps): () => P
       // 但 GET /api/wiki/index（wiki-meta listIndex）扫 **flat** `index/*.md`（非递归，不入子目录）。
       // 把当前版本 bucket 文件平铺复制到 index/，让 reader 读到当前索引（否则 KB tab 恒空——自查抓到的
       // P2 输出布局 ≠ P4 reader 扫描 跨 phase 没对齐）。版本化快照仍留 v-<version>/ 作历史。
+      // 德彪 codex P3-1：只平铺**内容 bucket**（index/rules/concepts/rooms-*/episodes）进 KB tab；
+      // sources.md(provenance) / log.md(wiki_events 审计) 是运营视图非知识桶，排除（否则当 bucket 进列表噪声）。
+      const FLAT_EXCLUDE = new Set(["sources.md", "log.md"])
       const versionPrefix = `index/v-${version}/`
       const indexDir = path.join(deps.wikiRoot, "index")
       for (const rel of result.filesWritten) {
-        if (rel.startsWith(versionPrefix) && rel.endsWith(".md")) {
-          fs.copyFileSync(path.join(deps.wikiRoot, rel), path.join(indexDir, path.basename(rel)))
+        const base = path.basename(rel)
+        if (rel.startsWith(versionPrefix) && rel.endsWith(".md") && !FLAT_EXCLUDE.has(base)) {
+          fs.copyFileSync(path.join(deps.wikiRoot, rel), path.join(indexDir, base))
         }
       }
     } catch (err) {
