@@ -90,11 +90,20 @@ export function createIngestModule(opts: IngestModuleOpts): { ingest: IngestFn; 
       { sourcePath: source, content, mimeType: "text/markdown" },
       { provenance: "docs-watcher" },
     )
+    // 德彪 codex P3-1：crossRefs 从**编译产物**统计（LLM 可能规范化/新增 wikilink），比原始 doc 准。
+    const compiled = previewRes.llmCompiledPreview || content
+    const crossRefs = (compiled.match(/\[\[[^\]]+\]\]/g) ?? []).length
     const result = commit.commit({ previewId: previewRes.previewId, callerAlias })
     if (!result.ok) {
+      // 德彪 codex P2：CAS conflict（`_auto/<basename>.md` 同名已存在）= **幂等成功**（已导入），
+      // 不当 failed —— 重跑无 --resume 时不把"已成功导入"误报成 failed。异源同名 collision 罕见，
+      // 主防线是 --resume + state.jsonl/frontmatter 双源 marker；本分支是兜底幂等。其他错（denied_acl /
+      // path_invalid / internal 等）仍 throw 让 backfill 记 failed。
+      if (result.error.detail?.reason === "conflict") {
+        return { ingestEventId: "already-exists", type: "concept", crossRefs }
+      }
       throw new Error(`ingest commit failed (${result.error.code}): ${result.error.message}`)
     }
-    const crossRefs = (content.match(/\[\[[^\]]+\]\]/g) ?? []).length
     return { ingestEventId: result.response.ingestEventId, type: "concept", crossRefs }
   }
   return { ingest, close }
@@ -105,10 +114,33 @@ let singleton: { ingest: IngestFn; close: () => void } | null = null
 
 export const ingest: IngestFn = async (filePath, source) => {
   if (!singleton) {
-    const sqlitePath =
-      process.env.SQLITE_PATH || path.join(process.cwd(), ".runtime", "wiki-ingest.sqlite")
-    const wikiRoot = process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki")
-    singleton = createIngestModule({ sqlitePath, wikiRoot, logger: (m) => console.error(`[ingest-module] ${m}`) })
+    // 德彪 codex P2：env 缺失 **fail-fast**，不静默落到 cwd 默认 root —— 少配 env 会把 wiki 文件 +
+    // wiki_events 写到 reader 读不到的错误根（= B2 double-root 同类风险）。生产 backfill 必须显式配。
+    // 测试/试跑请直接 createIngestModule({sqlitePath, wikiRoot, ...})，不走本 env 入口。
+    const sqlitePath = process.env.SQLITE_PATH
+    const wikiRoot = process.env.WIKI_ROOT
+    if (!sqlitePath || !wikiRoot) {
+      throw new Error(
+        "ingest-module 默认入口需显式 env：SQLITE_PATH（目标库 sqlite）+ WIKI_ROOT（目标 wiki 根·单层）；缺一即抛，避免静默写错 root。",
+      )
+    }
+    // 德彪 codex P2：注入生产同款 handbook 编译规则（与 server.ts ingest 路径一致），不留空 → 编译质量对齐。
+    let handbookCompileRules = ""
+    try {
+      const { loadHandbookSlices } = await import("../src/wiki/handbook-slicer")
+      const handbookRoot = process.env.WIKI_HANDBOOK_ROOT || process.cwd()
+      handbookCompileRules = (await loadHandbookSlices(handbookRoot)).compileRules
+    } catch (err) {
+      console.error(
+        `[ingest-module] handbook compileRules 加载失败（用空规则继续）：${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+    singleton = createIngestModule({
+      sqlitePath,
+      wikiRoot,
+      handbookCompileRules,
+      logger: (m) => console.error(`[ingest-module] ${m}`),
+    })
   }
   return singleton.ingest(filePath, source)
 }
