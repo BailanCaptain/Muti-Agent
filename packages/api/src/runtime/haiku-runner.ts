@@ -55,12 +55,17 @@ function createClaudeCliRunner(model: string, deps: HaikuRunnerDeps = {}): Haiku
     runPrompt(prompt, opts = {}) {
       const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
       const runtime = resolveClaudeCommand()
-      const args = [...runtime.prefixArgs, "--print", "--model", model, prompt]
+      const args = [...runtime.prefixArgs, "--print", "--model", model]
       const start = Date.now()
       const proc = spawn(runtime.command, args, { shell: runtime.shell })
-      // Close stdin immediately so `claude --print` sees EOF and can exit cleanly.
-      // Without this, claude CLI on Windows hangs until external kill even after
-      // writing stdout, which meant every call hit the timeout branch in prod.
+      // F027 B3: prompt 经 stdin 喂入，**不进 argv**。
+      // 原先 prompt 当 argv 末位传 → Windows CreateProcess 命令行 ~32KB 上限，大文档
+      // （实测 45KB docs/lessons/lessons-learned.md）触发 `spawn ENAMETOOLONG`，compile 全退回 stub。
+      // stdin 无长度限制。写完即 end()：既喂入 prompt，又让 `claude --print` 见 EOF 干净退出
+      // （保留原 Windows stdin-EOF hang 防护）。stdin EPIPE（claude 读完前先退出）静默吞，
+      // 不让未监听的 error 事件崩进程 —— 真实结果由 close/error 分支裁决。
+      proc.stdin?.on?.("error", () => {})
+      proc.stdin?.write(prompt)
       proc.stdin?.end()
 
       let stdout = ""

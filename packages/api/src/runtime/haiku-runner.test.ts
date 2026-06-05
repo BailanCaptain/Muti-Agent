@@ -15,11 +15,12 @@ type FakeSpawnOpts = {
 function fakeSpawn(opts: FakeSpawnOpts) {
   const killSpy = mock.fn()
   const stdinEndSpy = mock.fn()
+  const stdinWriteSpy = mock.fn()
   const spawn = () => {
     const proc: any = new EventEmitter()
     proc.stdout = new EventEmitter()
     proc.stderr = new EventEmitter()
-    proc.stdin = { end: stdinEndSpy }
+    proc.stdin = { write: stdinWriteSpy, end: stdinEndSpy }
     proc.kill = killSpy
     if (opts.spawnError) {
       setImmediate(() => proc.emit("error", opts.spawnError))
@@ -36,7 +37,7 @@ function fakeSpawn(opts: FakeSpawnOpts) {
     }, opts.delayMs ?? 1)
     return proc as ChildProcess
   }
-  return { spawn: spawn as any, killSpy, stdinEndSpy }
+  return { spawn: spawn as any, killSpy, stdinEndSpy, stdinWriteSpy }
 }
 
 describe("HaikuRunner", () => {
@@ -114,13 +115,15 @@ describe("HaikuRunner", () => {
     assert.equal(killSpy.mock.calls.length, 0, "should not kill when response arrives at 6s")
   })
 
-  it("passes --print --model claude-haiku-4-5 {prompt} to spawn", async () => {
+  it("passes --print --model to argv and writes prompt via stdin (NOT argv — Windows cmdline limit)", async () => {
     let capturedArgs: readonly string[] = []
+    const stdinWriteSpy = mock.fn()
     const spawn = ((_cmd: string, args: readonly string[]) => {
       capturedArgs = args
       const proc: any = new EventEmitter()
       proc.stdout = new EventEmitter()
       proc.stderr = new EventEmitter()
+      proc.stdin = { write: stdinWriteSpy, end: mock.fn() }
       proc.kill = mock.fn()
       setTimeout(() => {
         proc.stdout.emit("data", Buffer.from("ok"))
@@ -137,7 +140,39 @@ describe("HaikuRunner", () => {
     assert.ok(capturedArgs.includes("--model"))
     const modelIdx = capturedArgs.indexOf("--model")
     assert.equal(capturedArgs[modelIdx + 1], "claude-haiku-4-5")
-    assert.ok(capturedArgs.includes("my prompt text"), "prompt should be passed as an argument")
+    // F027 B3 修：prompt 必须走 stdin，不能进 argv（否则大文档触发 spawn ENAMETOOLONG）。
+    assert.ok(
+      !capturedArgs.includes("my prompt text"),
+      "prompt must NOT be in argv (Windows ~32KB cmdline limit → ENAMETOOLONG on large docs)",
+    )
+    assert.equal(stdinWriteSpy.mock.calls.length, 1, "prompt must be written to stdin exactly once")
+    assert.equal(stdinWriteSpy.mock.calls[0].arguments[0], "my prompt text")
+  })
+
+  it("F027 B3 regression: large prompt (>32KB) goes to stdin, argv stays tiny (no spawn ENAMETOOLONG)", async () => {
+    // 真因：45KB lessons-learned.md → prompt 当 argv 传 → Windows CreateProcess ~32KB 上限 → spawn ENAMETOOLONG。
+    const bigPrompt = "x".repeat(64 * 1024) // 64KB，远超 Windows argv 上限
+    let capturedArgs: readonly string[] = []
+    const stdinWriteSpy = mock.fn()
+    const spawn = ((_cmd: string, args: readonly string[]) => {
+      capturedArgs = args
+      const proc: any = new EventEmitter()
+      proc.stdout = new EventEmitter()
+      proc.stderr = new EventEmitter()
+      proc.stdin = { write: stdinWriteSpy, end: mock.fn() }
+      proc.kill = mock.fn()
+      setTimeout(() => {
+        proc.stdout.emit("data", Buffer.from("ok"))
+        proc.emit("close", 0)
+      }, 1)
+      return proc as ChildProcess
+    }) as any
+    const r = createHaikuRunner({ spawn })
+    const res = await r.runPrompt(bigPrompt)
+    assert.equal(res.ok, true)
+    const argvLen = capturedArgs.join(" ").length
+    assert.ok(argvLen < 1024, `argv 必须与 prompt 大小无关，恒小；got ${argvLen} chars`)
+    assert.equal(stdinWriteSpy.mock.calls[0].arguments[0], bigPrompt, "整个大 prompt 走 stdin")
   })
 })
 
@@ -149,7 +184,7 @@ describe("OpusRunner (F027 P18 evidence judge)", () => {
       const proc: any = new EventEmitter()
       proc.stdout = new EventEmitter()
       proc.stderr = new EventEmitter()
-      proc.stdin = { end: mock.fn() }
+      proc.stdin = { write: mock.fn(), end: mock.fn() }
       proc.kill = mock.fn()
       setTimeout(() => {
         proc.stdout.emit("data", Buffer.from("ok"))
@@ -172,7 +207,7 @@ describe("SonnetRunner (F027 P12 decision extractor — 小孙拍 sonnet-4-6)", 
       const proc: any = new EventEmitter()
       proc.stdout = new EventEmitter()
       proc.stderr = new EventEmitter()
-      proc.stdin = { end: mock.fn() }
+      proc.stdin = { write: mock.fn(), end: mock.fn() }
       proc.kill = mock.fn()
       setTimeout(() => {
         proc.stdout.emit("data", Buffer.from("ok"))
