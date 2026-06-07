@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 /**
  * F027 · KB tab「展开看全文」共享组件 —— 审批 / 警告列表只给截断摘要（100 / 120 字），
@@ -32,6 +32,15 @@ export function ExpandableContent({
   const [content, setContent] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 卸载守卫（对齐本仓库 use-drafts-data / use-wiki-meta-data 的 cancelled 模式）：
+  // fetch 在点击回调里发起、无 effect cleanup，组件卸载后 promise resolve 仍 setState 会告警/泄漏。
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   const toggle = () => {
     const next = !open
@@ -47,10 +56,12 @@ export function ExpandableContent({
         return (await res.json()) as { content?: string }
       })
       .then((json) => {
+        if (!mountedRef.current) return
         setContent(json.content ?? "")
         setIsLoading(false)
       })
       .catch((err: unknown) => {
+        if (!mountedRef.current) return
         setError(err instanceof Error ? err.message : String(err))
         setIsLoading(false)
       })
