@@ -6,6 +6,7 @@ import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { BatchPromoteModal } from "../batch-promote-modal/batch-promote-modal"
 import { DemoteModal } from "../demote-modal/demote-modal"
 import { PromoteModal } from "../promote-modal/promote-modal"
+import { ExpandableContent } from "./expandable-content"
 import {
   type DraftOrigin,
   type DraftSummary,
@@ -324,6 +325,7 @@ function DraftRow({
           {truncate(draft.summary, 100)}
         </div>
       )}
+      <ExpandableContent contentPath={draft.path} kind="draft" />
     </div>
   )
 }

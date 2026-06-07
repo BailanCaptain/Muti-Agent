@@ -31,6 +31,7 @@ import path from "node:path"
 import type { FastifyInstance } from "fastify"
 
 import type { WikiEventsRepository } from "../../db/repositories/wiki-events-repository"
+import { WikiPathInvalidError } from "../../wiki/path-containment"
 import { parseFrontmatter } from "../phase3/frontmatter"
 
 // ─── contracts (inline; mirror Phase 4 endpoint shapes) ──────────────────────
@@ -195,6 +196,49 @@ export class WikiMetaScanner {
     }
   }
 
+  /**
+   * F027 · 读单条 warning 全文（KB tab「展开看全文」；摘要列表只给 200 字 summary）。
+   * warnings 目录平铺（listMdFiles 非递归，只扫 `<wikiRoot>/warnings/*.md`），故路径围栏 =
+   * basename 白名单：path 必须 'wiki/warnings/<纯文件名>.md'（无子目录 / .. / NUL / 路径分隔符）。
+   * 注意：path 里的 'wiki/' 是逻辑前缀——this.wikiRoot 已是 wiki 内容根（warnings 直接在其下，无 wiki/
+   * 子层），故剥前缀后只拼 warnings/<name>。event-only warning（无文件）→ ENOENT → null（route 404）。
+   */
+  async readWarningContent(
+    warningPath: string,
+  ): Promise<{ content: string; mtime: string } | null> {
+    const PREFIX = "wiki/warnings/"
+    if (typeof warningPath !== "string" || !warningPath.startsWith(PREFIX)) {
+      throw new WikiPathInvalidError(`warning path must start with '${PREFIX}': ${warningPath}`)
+    }
+    const name = warningPath.slice(PREFIX.length)
+    if (
+      name.length === 0 ||
+      name.includes("/") ||
+      name.includes("\\") ||
+      name.includes("..") ||
+      name.includes("\0") ||
+      !name.endsWith(".md")
+    ) {
+      throw new WikiPathInvalidError(`invalid warning filename: ${warningPath}`)
+    }
+    const absPath = path.join(this.wikiRoot, "warnings", name)
+    let content: string
+    try {
+      content = await this.fsAdapter.readFile(absPath)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null
+      throw err
+    }
+    let stat: { mtime: Date }
+    try {
+      stat = await this.fsAdapter.stat(absPath)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null
+      throw err
+    }
+    return { content, mtime: stat.mtime.toISOString() }
+  }
+
   async listIndex(): Promise<ListIndexResponse> {
     const dir = path.join(this.wikiRoot, "index")
     const files = await this.listMdFiles(dir)
@@ -341,6 +385,32 @@ export function registerWikiMetaRoutes(
       return await deps.scanner.listIndex()
     } catch (err) {
       request.log.error({ err }, "GET /api/wiki/index threw")
+      reply.code(500)
+      return { ok: false, error: "INTERNAL_ERROR", message: (err as Error).message }
+    }
+  })
+
+  // F027 · GET /api/wiki/warnings/content?path=<warningPath> —— KB tab「展开看全文」按需读单条全文。
+  // 静态路径，与 /api/wiki/warnings 不冲突（fastify 精确匹配）。
+  app.get("/api/wiki/warnings/content", async (request, reply) => {
+    const { path: warningPath } = request.query as { path?: string }
+    if (typeof warningPath !== "string" || warningPath.length === 0) {
+      reply.code(400)
+      return { ok: false, error: "VALIDATION_FAILED", message: "query param 'path' is required" }
+    }
+    try {
+      const result = await deps.scanner.readWarningContent(warningPath)
+      if (!result) {
+        reply.code(404)
+        return { ok: false, error: "NOT_FOUND", message: "warning not found" }
+      }
+      return result
+    } catch (err) {
+      if (err instanceof WikiPathInvalidError) {
+        reply.code(400)
+        return { ok: false, error: "PATH_INVALID", message: err.message }
+      }
+      request.log.error({ err }, "GET /api/wiki/warnings/content threw")
       reply.code(500)
       return { ok: false, error: "INTERNAL_ERROR", message: (err as Error).message }
     }

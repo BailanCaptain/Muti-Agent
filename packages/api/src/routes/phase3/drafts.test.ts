@@ -16,7 +16,8 @@ import fs from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
 import test from "node:test"
-import { DraftScanner } from "./drafts"
+import Fastify from "fastify"
+import { DraftScanner, registerDraftsRoute } from "./drafts"
 
 function safeTempDir(prefix: string): string {
   const base = path.join(process.cwd(), ".runtime")
@@ -268,6 +269,111 @@ test("Day 3 · DraftScanner · 非 .md 文件忽略", async () => {
     const r = await scanner.list({})
     assert.equal(r.total, 1)
     assert.equal(r.drafts[0]?.title, "OK")
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+// ── F027 readContent（KB tab「展开看全文」）─────────────────────────────────
+test("F027 readContent · 返回 draft 全文（含 frontmatter + body）+ ISO mtime", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-ok-")
+  try {
+    await writeDraft(
+      tmp,
+      "_auto/full.md",
+      { title: "Full Doc", type: "lesson" },
+      "BODY LINE 1\nBODY LINE 2",
+    )
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    const r = await scanner.readContent("wiki/concepts/draft/_auto/full.md")
+    assert.ok(r, "readContent 应返回非 null")
+    assert.ok(r.content.includes("title: Full Doc"), "全文应含 frontmatter")
+    assert.ok(r.content.includes("BODY LINE 1"), "全文应含 body")
+    assert.ok(r.content.includes("BODY LINE 2"))
+    assert.match(r.mtime, /^\d{4}-\d{2}-\d{2}T/, "mtime 应为 ISO 串")
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · 文件不存在 → null（route 转 404）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-404-")
+  try {
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    assert.equal(await scanner.readContent("wiki/concepts/draft/_auto/nope.md"), null)
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · ../ 逃逸 wiki/ namespace → 抛 WikiPathInvalidError", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-escape-")
+  try {
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    await assert.rejects(
+      () => scanner.readContent("wiki/concepts/draft/../../../../etc/passwd"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · wiki/ 内但不在 draft 子树 → 抛 WikiPathInvalidError（只读 draft）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-nondraft-")
+  try {
+    const rulesPath = path.join(tmp, "wiki", "concepts", "rules", "secret.md")
+    await fsp.mkdir(path.dirname(rulesPath), { recursive: true })
+    await fsp.writeFile(rulesPath, "secret", "utf-8")
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    await assert.rejects(
+      () => scanner.readContent("wiki/concepts/rules/secret.md"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · 无 wiki/ 前缀 → 抛 WikiPathInvalidError", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-noprefix-")
+  try {
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    await assert.rejects(
+      () => scanner.readContent("etc/passwd"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent route · 200 全文 / 404 缺失 / 400 非 draft / 400 缺 path", async () => {
+  const tmp = safeTempDir("F027-drafts-content-route-")
+  try {
+    await writeDraft(tmp, "_auto/rt.md", { title: "RT" }, "ROUTE BODY")
+    const app = Fastify()
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    registerDraftsRoute(app, scanner)
+    const ok = await app.inject({
+      method: "GET",
+      url: `/api/wiki/drafts/content?path=${encodeURIComponent("wiki/concepts/draft/_auto/rt.md")}`,
+    })
+    assert.equal(ok.statusCode, 200)
+    assert.ok(ok.json().content.includes("ROUTE BODY"))
+    const miss = await app.inject({
+      method: "GET",
+      url: `/api/wiki/drafts/content?path=${encodeURIComponent("wiki/concepts/draft/_auto/none.md")}`,
+    })
+    assert.equal(miss.statusCode, 404)
+    const bad = await app.inject({
+      method: "GET",
+      url: `/api/wiki/drafts/content?path=${encodeURIComponent("wiki/concepts/rules/x.md")}`,
+    })
+    assert.equal(bad.statusCode, 400)
+    const noparam = await app.inject({ method: "GET", url: "/api/wiki/drafts/content" })
+    assert.equal(noparam.statusCode, 400)
+    await app.close()
   } finally {
     safeCleanup(tmp)
   }

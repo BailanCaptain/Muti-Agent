@@ -1,6 +1,7 @@
 "use client"
 
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
+import { ExpandableContent } from "./expandable-content"
 import {
   type WarningSeverity,
   type WarningSummary,
@@ -116,6 +117,11 @@ function WarningRow({ warning }: { warning: WarningSummary }) {
         <div className="mt-1 text-[10px] text-slate-600" title={warning.summary}>
           {truncate(warning.summary, 120)}
         </div>
+      )}
+      {/* 仅 file-backed warning（wiki/warnings/*.md）可看全文；event-only（source=wiki_events，
+          path 非 warnings 文件）无文件可读，不显示展开避免 404 困惑。 */}
+      {warning.path.startsWith("wiki/warnings/") && (
+        <ExpandableContent contentPath={warning.path} kind="warning" />
       )}
     </div>
   )

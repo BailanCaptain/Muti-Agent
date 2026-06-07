@@ -317,3 +317,86 @@ describe("WikiMetaScanner · listIndex", () => {
     }
   })
 })
+
+describe("WikiMetaScanner · readWarningContent (F027 展开看全文)", () => {
+  it("返回 warning 全文（含 frontmatter + body）+ ISO mtime", async () => {
+    const t = setup()
+    try {
+      t.writeWarning(
+        "drift-x.md",
+        "type: warning\nsubtype: drift-detected\nseverity: high",
+        "FULL WARNING BODY about drift",
+      )
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      const r = await scanner.readWarningContent("wiki/warnings/drift-x.md")
+      assert.ok(r)
+      assert.ok(r.content.includes("subtype: drift-detected"))
+      assert.ok(r.content.includes("FULL WARNING BODY about drift"))
+      assert.match(r.mtime, /^\d{4}-\d{2}-\d{2}T/)
+    } finally {
+      t.cleanup()
+    }
+  })
+
+  it("文件不存在 → null（route 转 404）", async () => {
+    const t = setup()
+    try {
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      assert.equal(await scanner.readWarningContent("wiki/warnings/missing.md"), null)
+    } finally {
+      t.cleanup()
+    }
+  })
+
+  it("子目录 / .. / 错前缀 → 抛 WikiPathInvalidError（平铺 basename 白名单）", async () => {
+    const t = setup()
+    try {
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      for (const bad of [
+        "wiki/warnings/../index/concepts.md",
+        "wiki/warnings/sub/dir.md",
+        "wiki/index/concepts.md",
+        "warnings/x.md",
+      ]) {
+        await assert.rejects(
+          () => scanner.readWarningContent(bad),
+          (e: Error) => e.name === "WikiPathInvalidError",
+          `应拒绝: ${bad}`,
+        )
+      }
+    } finally {
+      t.cleanup()
+    }
+  })
+
+  it("endpoint Fastify.inject → 200 全文 / 404 缺失 / 400 非法 / 400 缺 path", async () => {
+    const t = setup()
+    try {
+      t.writeWarning("acl.md", "type: warning\nsubtype: acl-violation", "ACL BODY")
+      const app = Fastify()
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      registerWikiMetaRoutes(app, { scanner })
+      const ok = await app.inject({
+        method: "GET",
+        url: `/api/wiki/warnings/content?path=${encodeURIComponent("wiki/warnings/acl.md")}`,
+      })
+      assert.equal(ok.statusCode, 200)
+      assert.ok(ok.json().content.includes("ACL BODY"))
+      const miss = await app.inject({
+        method: "GET",
+        url: `/api/wiki/warnings/content?path=${encodeURIComponent("wiki/warnings/none.md")}`,
+      })
+      assert.equal(miss.statusCode, 404)
+      const bad = await app.inject({
+        method: "GET",
+        url: `/api/wiki/warnings/content?path=${encodeURIComponent("wiki/index/x.md")}`,
+      })
+      assert.equal(bad.statusCode, 400)
+      const noparam = await app.inject({ method: "GET", url: "/api/wiki/warnings/content" })
+      assert.equal(noparam.statusCode, 400)
+      await app.close()
+    } finally {
+      t.cleanup()
+    }
+  })
+})
