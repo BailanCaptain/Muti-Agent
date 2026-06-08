@@ -140,6 +140,11 @@ export class DraftScanner {
    */
   async readContent(draftPath: string): Promise<{ content: string; mtime: string } | null> {
     const abs = safeWikiPath(this.wikiRoot, draftPath)
+    // 德彪 codex r2 P2：拒 ':' —— NTFS 把 `x.txt:stream.md` 解析成 alternate data stream，
+    // 会绕过 .md 后缀检查读到别的文件的数据流。drive 冒号在 abs 里，故查相对输入 draftPath。
+    if (draftPath.includes(":")) {
+      throw new WikiPathInvalidError(`path must not contain ':' (NTFS ADS): ${draftPath}`)
+    }
     // 德彪 codex P2：只读 .md —— 不当 draft 树内临时/备份/内部文件的任意读取通道（warning 端点同款约束）。
     if (!abs.toLowerCase().endsWith(".md")) {
       throw new WikiPathInvalidError(`only .md is readable: ${draftPath}`)

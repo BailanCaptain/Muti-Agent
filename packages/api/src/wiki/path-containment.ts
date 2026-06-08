@@ -36,8 +36,17 @@ export class WikiPathInvalidError extends Error {
  * 之内（根也 realpath，兼容根自身位于链接下的部署），且目标必须是**普通文件**（德彪 codex P2：不读
  * 目录/特殊文件，配合各 caller 的 `.md` 限制）。
  *
+ * 防御层次（德彪 codex review r1+r2）：
+ *   1. realpath(abs) 解析所有 symlink/Windows junction，必须仍在 realpath(lexicalRoot) 内（越界抛）。
+ *   2. **单个 FileHandle 做 stat+read**（r2 P1）：关掉 realpath→stat→read 之间 stat→read 的 TOCTOU
+ *      窗口（同一 fd 上 fstat 与 read 不会被中途换路径重定向）。
+ *   3. **nlink>1 拒绝**（r2 P1）：realpath 不解析 hardlink —— 树内硬链可指向树外文件；多链接文件一律拒。
+ *   4. 普通文件校验（非目录/特殊文件）。
+ *   ⚠️ 残留：realpath→open 之间仍有极窄 TOCTOU 窗口（纯 userland 路径校验关不死，需 OS 级解析）。
+ *      本端点是 localhost 单用户只读 dev 视图、draft/warnings 目录仅由可信 ingest 写入 → 接受此残留。
+ *
  * 返回 `{content, mtime}` | `null`（文件或根不存在、或目标非普通文件 → caller 转 404）；
- * 越界（realpath 逃逸）抛 `WikiPathInvalidError`（caller 转 400）。
+ * 越界 / 多链接（realpath 逃逸 / hardlink）抛 `WikiPathInvalidError`（caller 转 400）。
  */
 export async function readContainedFile(
   abs: string,
@@ -61,16 +70,29 @@ export async function readContainedFile(
   if (realAbs !== realRoot && !realAbs.startsWith(realRootSep)) {
     throw new WikiPathInvalidError(`path escapes root via symlink/junction: ${abs}`)
   }
-  let stat: Stats
+  // r2 P1：open 一次，stat + read 都走同一个 FileHandle（关 stat→read TOCTOU）。
+  let handle: Awaited<ReturnType<typeof fsp.open>>
   try {
-    stat = await fsp.stat(realAbs)
+    handle = await fsp.open(realAbs, "r")
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === "ENOENT" || code === "EISDIR") return null // 不存在 / 目录 → 当作不存在
     throw err
   }
-  if (!stat.isFile()) return null // 目录 / 特殊文件 → 当作不存在
-  const content = await fsp.readFile(realAbs, "utf-8")
-  return { content, mtime: stat.mtime.toISOString() }
+  try {
+    const stat: Stats = await handle.stat()
+    if (!stat.isFile()) return null // 目录 / 特殊文件 → 当作不存在
+    if (stat.nlink > 1) {
+      // r2 P1：realpath 不解析 hardlink —— 多链接文件可能是越界硬链，一律拒。
+      throw new WikiPathInvalidError(
+        `refusing multi-hardlink file (possible containment escape): ${abs}`,
+      )
+    }
+    const content = await handle.readFile("utf-8")
+    return { content, mtime: stat.mtime.toISOString() }
+  } finally {
+    await handle.close()
+  }
 }
 
 /**

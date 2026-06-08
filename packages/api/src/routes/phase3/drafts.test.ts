@@ -417,16 +417,78 @@ test("F027 readContent · symlink 指向 draft 树外 → 抛 WikiPathInvalidErr
     const autoDir = path.join(tmp, "wiki", "concepts", "draft", "_auto")
     await fsp.mkdir(autoDir, { recursive: true })
     const link = path.join(autoDir, "evil.md")
-    try {
-      fs.symlinkSync(secret, link, "file")
-    } catch {
-      console.log("symlink not supported on this FS, skipping symlink-escape test")
-      return
-    }
+    if (trySkipLink(() => fs.symlinkSync(secret, link, "file"), "symlink")) return
     const scanner = new DraftScanner({ wikiRoot: tmp })
     // 词法检查放行（.md + 在 draft 子树），但 realpath 解析到树外 → 抛
     await assert.rejects(
       () => scanner.readContent("wiki/concepts/draft/_auto/evil.md"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+// 德彪 codex r2 P2：只在明确"不支持建链"时跳过，别拿 catch{} 吞掉真失败。返回 true=跳过。
+function trySkipLink(make: () => void, kind: string): boolean {
+  try {
+    make()
+    return false
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === "EPERM" || code === "ENOSYS" || code === "EEXIST" || code === "EXDEV" || code === "EACCES") {
+      console.log(`${kind} unsupported (${code}), skipping`)
+      return true
+    }
+    throw err
+  }
+}
+
+test("F027 readContent · NTFS ADS（路径含 ':'）→ 抛 WikiPathInvalidError（德彪 r2 P2）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-ads-")
+  try {
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    await assert.rejects(
+      () => scanner.readContent("wiki/concepts/draft/_auto/x.txt:stream.md"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · hardlink 指向 draft 树外 → 抛 WikiPathInvalidError（德彪 r2 P1 nlink）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-hardlink-")
+  try {
+    const secret = path.join(tmp, "secret.txt")
+    await fsp.writeFile(secret, "TOP SECRET via hardlink", "utf-8")
+    const autoDir = path.join(tmp, "wiki", "concepts", "draft", "_auto")
+    await fsp.mkdir(autoDir, { recursive: true })
+    const hard = path.join(autoDir, "hard.md")
+    if (trySkipLink(() => fs.linkSync(secret, hard), "hardlink")) return
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    await assert.rejects(
+      () => scanner.readContent("wiki/concepts/draft/_auto/hard.md"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · junction 指向 draft 树外目录 → 抛 WikiPathInvalidError（德彪 r2 P1）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-junction-")
+  try {
+    const outsideDir = path.join(tmp, "outside")
+    await fsp.mkdir(outsideDir, { recursive: true })
+    await fsp.writeFile(path.join(outsideDir, "secret.md"), "SECRET via junction", "utf-8")
+    const autoDir = path.join(tmp, "wiki", "concepts", "draft", "_auto")
+    await fsp.mkdir(autoDir, { recursive: true })
+    const jdir = path.join(autoDir, "jdir")
+    if (trySkipLink(() => fs.symlinkSync(outsideDir, jdir, "junction"), "junction")) return
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    await assert.rejects(
+      () => scanner.readContent("wiki/concepts/draft/_auto/jdir/secret.md"),
       (e: Error) => e.name === "WikiPathInvalidError",
     )
   } finally {

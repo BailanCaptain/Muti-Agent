@@ -433,12 +433,7 @@ describe("WikiMetaScanner · readWarningContent (F027 展开看全文)", () => {
       const warningsDir = path.join(t.wikiRoot, "warnings")
       fs.mkdirSync(warningsDir, { recursive: true })
       const link = path.join(warningsDir, "evil.md")
-      try {
-        fs.symlinkSync(secret, link, "file")
-      } catch {
-        console.log("symlink not supported on this FS, skipping symlink-escape test")
-        return
-      }
+      if (trySkipLink(() => fs.symlinkSync(secret, link, "file"), "symlink")) return
       const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
       await assert.rejects(
         () => scanner.readWarningContent("wiki/warnings/evil.md"),
@@ -448,4 +443,77 @@ describe("WikiMetaScanner · readWarningContent (F027 展开看全文)", () => {
       t.cleanup()
     }
   })
+
+  it("NTFS ADS（文件名含 ':'）→ 抛 WikiPathInvalidError（德彪 r2 P2）", async () => {
+    const t = setup()
+    try {
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      await assert.rejects(
+        () => scanner.readWarningContent("wiki/warnings/x.txt:stream.md"),
+        (e: Error) => e.name === "WikiPathInvalidError",
+      )
+    } finally {
+      t.cleanup()
+    }
+  })
+
+  it("hardlink 指向 warnings 外 → 抛 WikiPathInvalidError（德彪 r2 P1 nlink）", async () => {
+    const t = setup()
+    try {
+      const secret = path.join(t.wikiRoot, "secret.txt")
+      fs.writeFileSync(secret, "SECRET via hardlink")
+      const warningsDir = path.join(t.wikiRoot, "warnings")
+      fs.mkdirSync(warningsDir, { recursive: true })
+      const hard = path.join(warningsDir, "hard.md")
+      if (trySkipLink(() => fs.linkSync(secret, hard), "hardlink")) return
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      await assert.rejects(
+        () => scanner.readWarningContent("wiki/warnings/hard.md"),
+        (e: Error) => e.name === "WikiPathInvalidError",
+      )
+    } finally {
+      t.cleanup()
+    }
+  })
+
+  it("junction 指向 warnings 外目录 → 抛 WikiPathInvalidError（德彪 r2 P1）", async () => {
+    const t = setup()
+    try {
+      const outsideDir = path.join(t.wikiRoot, "outside")
+      fs.mkdirSync(outsideDir, { recursive: true })
+      const warningsDir = path.join(t.wikiRoot, "warnings")
+      fs.mkdirSync(warningsDir, { recursive: true })
+      const jlink = path.join(warningsDir, "evil.md")
+      if (trySkipLink(() => fs.symlinkSync(outsideDir, jlink, "junction"), "junction")) return
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      // junction(目录) realpath 解析到 warnings 外 → 越界抛（即便不越界，目录也非 regular file）
+      await assert.rejects(
+        () => scanner.readWarningContent("wiki/warnings/evil.md"),
+        (e: Error) => e.name === "WikiPathInvalidError",
+      )
+    } finally {
+      t.cleanup()
+    }
+  })
 })
+
+// 德彪 codex r2 P2：只在明确"不支持建链"时跳过，别拿 catch{} 吞真失败。返回 true=跳过。
+function trySkipLink(make: () => void, kind: string): boolean {
+  try {
+    make()
+    return false
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (
+      code === "EPERM" ||
+      code === "ENOSYS" ||
+      code === "EEXIST" ||
+      code === "EXDEV" ||
+      code === "EACCES"
+    ) {
+      console.log(`${kind} unsupported (${code}), skipping`)
+      return true
+    }
+    throw err
+  }
+}

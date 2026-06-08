@@ -215,6 +215,7 @@ export class WikiMetaScanner {
       name.length === 0 ||
       name.includes("/") ||
       name.includes("\\") ||
+      name.includes(":") || // 德彪 codex r2 P2：NTFS ADS（`x.txt:stream.md` 绕过 .md 检查）
       name.includes("..") ||
       name.includes("\0") ||
       !name.endsWith(".md")
