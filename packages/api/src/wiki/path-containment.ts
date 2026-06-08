@@ -13,7 +13,7 @@
  *   3. 不允许 NUL byte / 控制字符（fs API 边界硬约束）
  */
 
-import type { Stats } from "node:fs"
+import { constants as fsConstants, type Stats } from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
 
@@ -71,9 +71,13 @@ export async function readContainedFile(
     throw new WikiPathInvalidError(`path escapes root via symlink/junction: ${abs}`)
   }
   // r2 P1：open 一次，stat + read 都走同一个 FileHandle（关 stat→read TOCTOU）。
+  // r3：加 O_NONBLOCK —— 防 FIFO/特殊文件 open 阻塞等 writer（DoS 回归；我换 open-first 引入的）。
+  //     POSIX 上 FIFO 以 O_NONBLOCK 打开立即返回，随后 isFile() 判否 → null。Windows 无 O_NONBLOCK
+  //     （→ 0）且不会把 FIFO 当目录项，无影响。
+  const nonBlock = (fsConstants.O_NONBLOCK as number | undefined) ?? 0
   let handle: Awaited<ReturnType<typeof fsp.open>>
   try {
-    handle = await fsp.open(realAbs, "r")
+    handle = await fsp.open(realAbs, fsConstants.O_RDONLY | nonBlock)
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code
     if (code === "ENOENT" || code === "EISDIR") return null // 不存在 / 目录 → 当作不存在

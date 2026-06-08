@@ -485,6 +485,10 @@ export function defaultFeatureProgressQuerier(
 
 export function defaultPhaseInfoQuerier(
   deps: CompileViewfinderDeps,
+  // 测试可注入确定性 git stub（默认真 spawnSync git log）。让 defaultPhaseInfoQuerier 的回溯单测
+  // 不耦合 live git 历史 —— 否则后续累积的 F027 commit（grep=F027 命中但无 Phase 字样）会把含 Phase
+  // 的旧 commit 挤出 -30 窗口致测试随历史漂移而 flaky。真 git 集成由 safeGitLogSubjects smoke test 覆盖。
+  gitLogSubjects: typeof safeGitLogSubjects = safeGitLogSubjects,
 ): (recentMessages: ReadonlyArray<MessageInput>, nowIso: string) => PhaseInfo | null {
   return (recentMessages, _nowIso) => {
     // 1. 提房间消息内出现的 feature IDs（recency 降序，与 §1/§3 同源 — codex P2-1 修）
@@ -493,7 +497,7 @@ export function defaultPhaseInfoQuerier(
 
     // 2-3. r2 范-r1 P2-1 修：每个 featureId 拿 N 个最近 commits，遍历找首个可 parse 的
     for (const featureId of featureIds) {
-      const subjects = safeGitLogSubjects(featureId, {
+      const subjects = gitLogSubjects(featureId, {
         cwd: deps.rootDir,
         timeoutMs: deps.gitTimeoutMs ?? 5000,
       })

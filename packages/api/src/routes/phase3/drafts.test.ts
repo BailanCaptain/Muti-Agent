@@ -436,7 +436,8 @@ function trySkipLink(make: () => void, kind: string): boolean {
     return false
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code
-    if (code === "EPERM" || code === "ENOSYS" || code === "EEXIST" || code === "EXDEV" || code === "EACCES") {
+    // 德彪 r3：EEXIST=目标已存在（测试 bug），不是"建链不支持"，不该跳过 → 移除，让它 throw 暴露。
+    if (code === "EPERM" || code === "ENOSYS" || code === "EXDEV" || code === "EACCES") {
       console.log(`${kind} unsupported (${code}), skipping`)
       return true
     }

@@ -752,19 +752,28 @@ describe("P12.b safeGitLogSubjects (r2 范-r1 P2-1 multi-commits)", () => {
 })
 
 describe("P12.b defaultPhaseInfoQuerier (r2 范-r1 P2-1 回溯找首个可 parse)", () => {
-  it("recentMessages 含 F027 → 找首个 Phase/Day commit (跳过 P12.b 自身 commit)", () => {
-    const querier = defaultPhaseInfoQuerier({
-      // biome-ignore lint/suspicious/noExplicitAny: test deps stub
-      db: null as any,
-      // biome-ignore lint/suspicious/noExplicitAny: test deps stub
-      ledger: null as any,
-      // biome-ignore lint/suspicious/noExplicitAny: test deps stub
-      judge: null as any,
-      fencingToken: "x",
-      leaderTerm: "x",
-      rootDir: process.cwd(),
-      gitTimeoutMs: 5000,
-    })
+  it("recentMessages 含 F027 → 回溯跳过非 Phase HEAD，找首个含 Phase 的 commit", () => {
+    const querier = defaultPhaseInfoQuerier(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: test deps stub
+        db: null as any,
+        // biome-ignore lint/suspicious/noExplicitAny: test deps stub
+        ledger: null as any,
+        // biome-ignore lint/suspicious/noExplicitAny: test deps stub
+        judge: null as any,
+        fencingToken: "x",
+        leaderTerm: "x",
+        rootDir: process.cwd(),
+        gitTimeoutMs: 5000,
+      },
+      // 注入确定性 git stub：HEAD（非 Phase）应被跳过 → 回溯到含 Phase 的更早 commit。
+      // 不依赖 live git 历史（否则后续 F027 commit 累积会把含 Phase 的 commit 挤出 -30 窗口致漂移性
+      // flaky —— 本次会话 4 个 feat/fix(F027) commit 就触发过）；真 git 集成由上方 smoke test 覆盖。
+      () => [
+        { shortSha: "aaaaaaa", message: "fix(F027): 近期非 Phase commit（应跳过）" },
+        { shortSha: "694fcc1", message: "feat(F027): Phase 3 Week 2 Day 10 viewfinder compile" },
+      ],
+    )
     const info = querier(
       [
         {
@@ -778,8 +787,7 @@ describe("P12.b defaultPhaseInfoQuerier (r2 范-r1 P2-1 回溯找首个可 parse
       ],
       "2026-05-22T00:00:00Z",
     )
-    // 期望：HEAD 57a88ab (P12.b commit) 不含 Phase 字符串 → 跳过 → 找更早含 Phase 的 commit
-    // F027 worktree 内 694fcc1 等含 Phase 3 Week 2 — 应该被 hit
+    // HEAD 非 Phase commit 跳过 → 回溯命中 694fcc1（含 Phase 3 Week 2 Day 10）
     assert.ok(info, "回溯应找到至少一个可 parse 的 F027 commit")
     assert.equal(info?.featureId, "F027")
     assert.ok(info?.phase !== undefined || info?.day !== undefined || (info?.acs?.length ?? 0) > 0)
