@@ -13,6 +13,8 @@
  *   3. 不允许 NUL byte / 控制字符（fs API 边界硬约束）
  */
 
+import type { Stats } from "node:fs"
+import fsp from "node:fs/promises"
 import path from "node:path"
 
 export class WikiPathInvalidError extends Error {
@@ -20,6 +22,55 @@ export class WikiPathInvalidError extends Error {
     super(message)
     this.name = "WikiPathInvalidError"
   }
+}
+
+/**
+ * F027 · realpath containment + regular-file 读取 —— KB tab 全文端点（drafts/content、warnings/content）共用安全原语。
+ *
+ * 背景（德彪 codex review NO-GO P1）：safeWikiPath / 子树前缀检查都是**词法**路径检查，
+ * 随后的 readFile/stat **会跟随 symlink / Windows junction**。攻击者只要能在受控目录里放一个
+ * 指向目录外的链接（项目 taint model 明确把 user-drop 的 symlink 当威胁，DraftScanner.list 已拒），
+ * 词法检查就会放行而 readFile 跟随链接读到进程权限内的任意文件。
+ *
+ * 防御：对**真实路径**再做 containment —— realpath(abs) 解析所有链接后必须仍在 realpath(lexicalRoot)
+ * 之内（根也 realpath，兼容根自身位于链接下的部署），且目标必须是**普通文件**（德彪 codex P2：不读
+ * 目录/特殊文件，配合各 caller 的 `.md` 限制）。
+ *
+ * 返回 `{content, mtime}` | `null`（文件或根不存在、或目标非普通文件 → caller 转 404）；
+ * 越界（realpath 逃逸）抛 `WikiPathInvalidError`（caller 转 400）。
+ */
+export async function readContainedFile(
+  abs: string,
+  lexicalRoot: string,
+): Promise<{ content: string; mtime: string } | null> {
+  let realRoot: string
+  try {
+    realRoot = await fsp.realpath(lexicalRoot)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null // 根目录不存在 = 无内容
+    throw err
+  }
+  let realAbs: string
+  try {
+    realAbs = await fsp.realpath(abs)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null // 文件 / 某路径段不存在
+    throw err
+  }
+  const realRootSep = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep
+  if (realAbs !== realRoot && !realAbs.startsWith(realRootSep)) {
+    throw new WikiPathInvalidError(`path escapes root via symlink/junction: ${abs}`)
+  }
+  let stat: Stats
+  try {
+    stat = await fsp.stat(realAbs)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null
+    throw err
+  }
+  if (!stat.isFile()) return null // 目录 / 特殊文件 → 当作不存在
+  const content = await fsp.readFile(realAbs, "utf-8")
+  return { content, mtime: stat.mtime.toISOString() }
 }
 
 /**

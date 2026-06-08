@@ -399,4 +399,53 @@ describe("WikiMetaScanner · readWarningContent (F027 展开看全文)", () => {
       t.cleanup()
     }
   })
+
+  // ── 德彪 codex review fixes（P1 realpath 围栏 + P2 regular-file）──
+  it("非 .md 文件名 → 抛 WikiPathInvalidError（basename 白名单）", async () => {
+    const t = setup()
+    try {
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      await assert.rejects(
+        () => scanner.readWarningContent("wiki/warnings/x.txt"),
+        (e: Error) => e.name === "WikiPathInvalidError",
+      )
+    } finally {
+      t.cleanup()
+    }
+  })
+
+  it("目标是目录（非普通文件）→ null（德彪 P2）", async () => {
+    const t = setup()
+    try {
+      fs.mkdirSync(path.join(t.wikiRoot, "warnings", "dir.md"), { recursive: true })
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      assert.equal(await scanner.readWarningContent("wiki/warnings/dir.md"), null)
+    } finally {
+      t.cleanup()
+    }
+  })
+
+  it("symlink 指向 warnings 外 → 抛 WikiPathInvalidError（德彪 P1 realpath 围栏）", async () => {
+    const t = setup()
+    try {
+      const secret = path.join(t.wikiRoot, "secret.txt")
+      fs.writeFileSync(secret, "TOP SECRET outside warnings")
+      const warningsDir = path.join(t.wikiRoot, "warnings")
+      fs.mkdirSync(warningsDir, { recursive: true })
+      const link = path.join(warningsDir, "evil.md")
+      try {
+        fs.symlinkSync(secret, link, "file")
+      } catch {
+        console.log("symlink not supported on this FS, skipping symlink-escape test")
+        return
+      }
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      await assert.rejects(
+        () => scanner.readWarningContent("wiki/warnings/evil.md"),
+        (e: Error) => e.name === "WikiPathInvalidError",
+      )
+    } finally {
+      t.cleanup()
+    }
+  })
 })

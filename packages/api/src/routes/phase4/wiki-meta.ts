@@ -31,7 +31,7 @@ import path from "node:path"
 import type { FastifyInstance } from "fastify"
 
 import type { WikiEventsRepository } from "../../db/repositories/wiki-events-repository"
-import { WikiPathInvalidError } from "../../wiki/path-containment"
+import { readContainedFile, WikiPathInvalidError } from "../../wiki/path-containment"
 import { parseFrontmatter } from "../phase3/frontmatter"
 
 // ─── contracts (inline; mirror Phase 4 endpoint shapes) ──────────────────────
@@ -221,22 +221,11 @@ export class WikiMetaScanner {
     ) {
       throw new WikiPathInvalidError(`invalid warning filename: ${warningPath}`)
     }
-    const absPath = path.join(this.wikiRoot, "warnings", name)
-    let content: string
-    try {
-      content = await this.fsAdapter.readFile(absPath)
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null
-      throw err
-    }
-    let stat: { mtime: Date }
-    try {
-      stat = await this.fsAdapter.stat(absPath)
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null
-      throw err
-    }
-    return { content, mtime: stat.mtime.toISOString() }
+    const warningsRoot = path.join(this.wikiRoot, "warnings")
+    const absPath = path.join(warningsRoot, name)
+    // 德彪 codex P1：realpath containment（防 symlink/junction 跟随逃逸）+ 普通文件校验
+    //（name 白名单已强制纯 .md 文件名，此处再防真实路径越界）。
+    return readContainedFile(absPath, warningsRoot)
   }
 
   async listIndex(): Promise<ListIndexResponse> {

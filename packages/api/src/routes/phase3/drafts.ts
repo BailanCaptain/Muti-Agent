@@ -39,7 +39,7 @@ import {
   toErrorResponse,
   validateListDrafts,
 } from "./contracts"
-import { safeWikiPath, WikiPathInvalidError } from "../../wiki/path-containment"
+import { readContainedFile, safeWikiPath, WikiPathInvalidError } from "../../wiki/path-containment"
 import { parseFrontmatter } from "./frontmatter"
 
 const DRAFT_TYPES_ALLOWED: ReadonlySet<DraftType> = new Set<DraftType>([
@@ -140,26 +140,18 @@ export class DraftScanner {
    */
   async readContent(draftPath: string): Promise<{ content: string; mtime: string } | null> {
     const abs = safeWikiPath(this.wikiRoot, draftPath)
+    // 德彪 codex P2：只读 .md —— 不当 draft 树内临时/备份/内部文件的任意读取通道（warning 端点同款约束）。
+    if (!abs.toLowerCase().endsWith(".md")) {
+      throw new WikiPathInvalidError(`only .md is readable: ${draftPath}`)
+    }
+    // 词法子树检查（快速失败）
     const draftRoot = path.resolve(this.wikiRoot, "wiki", "concepts", "draft")
     const draftRootSep = draftRoot.endsWith(path.sep) ? draftRoot : draftRoot + path.sep
     if (abs !== draftRoot && !abs.startsWith(draftRootSep)) {
       throw new WikiPathInvalidError(`path not under draft root: ${draftPath}`)
     }
-    let content: string
-    try {
-      content = await this.fsAdapter.readFile(abs)
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null
-      throw err
-    }
-    let stat: { mtime: Date }
-    try {
-      stat = await this.fsAdapter.stat(abs)
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null
-      throw err
-    }
-    return { content, mtime: stat.mtime.toISOString() }
+    // 德彪 codex P1：再对真实路径做 containment（防 symlink/junction 跟随逃逸）+ 普通文件校验。
+    return readContainedFile(abs, draftRoot)
   }
 
   private async walkAllDrafts(root: string): Promise<DraftSummary[]> {

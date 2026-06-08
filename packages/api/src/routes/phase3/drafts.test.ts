@@ -378,3 +378,58 @@ test("F027 readContent route · 200 全文 / 404 缺失 / 400 非 draft / 400 �
     safeCleanup(tmp)
   }
 })
+
+// ── 德彪 codex review fixes（P1 symlink/junction realpath 围栏 + P2 .md/regular-file）──
+test("F027 readContent · 非 .md → 抛 WikiPathInvalidError（德彪 P2：只读 .md）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-notmd-")
+  try {
+    const txt = path.join(tmp, "wiki", "concepts", "draft", "_auto", "x.txt")
+    await fsp.mkdir(path.dirname(txt), { recursive: true })
+    await fsp.writeFile(txt, "not markdown", "utf-8")
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    await assert.rejects(
+      () => scanner.readContent("wiki/concepts/draft/_auto/x.txt"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · 目标是目录（非普通文件）→ null（德彪 P2）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-dir-")
+  try {
+    // 建一个名为 dir.md 的**目录**（.md 后缀但非普通文件）
+    const dir = path.join(tmp, "wiki", "concepts", "draft", "_auto", "dir.md")
+    await fsp.mkdir(dir, { recursive: true })
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    assert.equal(await scanner.readContent("wiki/concepts/draft/_auto/dir.md"), null)
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · symlink 指向 draft 树外 → 抛 WikiPathInvalidError（德彪 P1 realpath 围栏）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-symlink-")
+  try {
+    const secret = path.join(tmp, "secret.txt")
+    await fsp.writeFile(secret, "TOP SECRET outside draft", "utf-8")
+    const autoDir = path.join(tmp, "wiki", "concepts", "draft", "_auto")
+    await fsp.mkdir(autoDir, { recursive: true })
+    const link = path.join(autoDir, "evil.md")
+    try {
+      fs.symlinkSync(secret, link, "file")
+    } catch {
+      console.log("symlink not supported on this FS, skipping symlink-escape test")
+      return
+    }
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    // 词法检查放行（.md + 在 draft 子树），但 realpath 解析到树外 → 抛
+    await assert.rejects(
+      () => scanner.readContent("wiki/concepts/draft/_auto/evil.md"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})

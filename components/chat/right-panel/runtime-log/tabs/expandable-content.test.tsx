@@ -21,12 +21,15 @@ function mockContentFetch(content: string) {
       json: () => Promise.resolve({ content, mtime: "2026-06-07T00:00:00Z" }),
     } as Response),
   )
-  globalThis.fetch = spy
+  // 德彪 codex P3：用 stubGlobal（unstubAllGlobals 可恢复），别直接赋值 globalThis.fetch
+  // —— restoreAllMocks 恢复不了直接赋值，会污染共享 worker 里后续测试。
+  vi.stubGlobal("fetch", spy)
   return spy
 }
 
 describe("ExpandableContent", () => {
   afterEach(() => {
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
@@ -81,8 +84,11 @@ describe("ExpandableContent", () => {
   })
 
   it("fetch 非 200 → 错误态，不渲染 <pre>", async () => {
-    globalThis.fetch = vi.fn(() =>
-      Promise.resolve({ ok: false, status: 404, statusText: "Not Found" } as Response),
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({ ok: false, status: 404, statusText: "Not Found" } as Response),
+      ),
     )
     render(<ExpandableContent contentPath="wiki/warnings/missing.md" kind="warning" />)
     fireEvent.click(screen.getByTestId("expand-toggle-wiki/warnings/missing.md"))
