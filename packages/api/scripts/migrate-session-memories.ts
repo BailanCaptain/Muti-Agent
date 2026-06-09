@@ -16,7 +16,7 @@
  *   （wikiRoot 实际写入用 `<WIKI_ROOT>/wiki`，与 server.ts roomCompileWikiRoot 同口径。）
  */
 
-import { existsSync as fsExistsSync } from "node:fs"
+import { existsSync as fsExistsSync, statSync as fsStatSync } from "node:fs"
 import path from "node:path"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type * as schema from "../src/db/schema"
@@ -99,6 +99,14 @@ export function validateMigratePaths(sqlitePath: string, wikiRootEnv: string): v
   if (!fsExistsSync(wikiRootEnv)) {
     throw new Error(`WIKI_ROOT 不存在：${wikiRootEnv}（会创建平行目录写错根）`)
   }
+  // r2 德彪 P1：existsSync 会放行任意已有目录（typo 根照样建 <错根>/wiki/... exit 0 假成功）。
+  // sentinel = <WIKI_ROOT>/wiki 必须已是目录（真主库根必有：roomCompile/indexer 双层结构）。
+  const wikiSentinel = path.join(wikiRootEnv, "wiki")
+  if (!fsExistsSync(wikiSentinel) || !fsStatSync(wikiSentinel).isDirectory()) {
+    throw new Error(
+      `WIKI_ROOT 下缺 wiki/ 子目录：${wikiSentinel} —— 不是真 wiki 根（真主库根必有双层结构），拒绝写入避免平行树`,
+    )
+  }
 }
 
 async function main() {
@@ -122,10 +130,11 @@ async function main() {
       warn: (msg) => console.error(`[migrate-session-memories] ${msg}`),
     })
     console.log(JSON.stringify(result, null, 2))
-    // receive 德彪 r1 P1-2：有失败 → 非零退出（运维一眼可见，不再假成功）
+    // receive 德彪 r1 P1-2 + r2 P2：有失败 → exitCode=1（不用 process.exit —— 让 finally
+    // close() 正常走完、stdout/stderr flush 不被截断）
     if (result.failed > 0) {
       console.error(`[migrate-session-memories] ${result.failed}/${result.groups} 条导出失败`)
-      process.exit(1)
+      process.exitCode = 1
     }
   } finally {
     close()

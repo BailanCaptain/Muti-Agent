@@ -150,3 +150,21 @@ test("P1-2 · validateMigratePaths：sqlite 不存在 → 抛（不静默建空�
     fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
   }
 })
+
+test("r2-P1 · WIKI_ROOT 是已存在目录但缺 wiki/ 子目录（错根）→ 抛,不静默建平行树", async () => {
+  const { validateMigratePaths } = await import("./migrate-session-memories")
+  const tmp = fs.mkdtempSync(path.join(process.cwd(), ".runtime", "f285-migrate-root2-"))
+  try {
+    const sqlite = path.join(tmp, "real.sqlite")
+    fs.writeFileSync(sqlite, "")
+    const wrongRoot = path.join(tmp, "existing-but-wrong")
+    fs.mkdirSync(wrongRoot) // 存在,但没有 wiki/ sentinel → 应拒
+    assert.throws(() => validateMigratePaths(sqlite, wrongRoot), /WIKI_ROOT.*wiki/)
+
+    const goodRoot = path.join(tmp, "good-root")
+    fs.mkdirSync(path.join(goodRoot, "wiki"), { recursive: true })
+    assert.doesNotThrow(() => validateMigratePaths(sqlite, goodRoot), "带 wiki/ 的真根放行")
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+  }
+})
