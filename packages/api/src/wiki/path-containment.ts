@@ -25,34 +25,37 @@ export class WikiPathInvalidError extends Error {
 }
 
 /**
- * F027 · realpath containment 内核 —— 打开一个"受 contained 的普通文件" FileHandle。
- * `readContainedFile`（content 端点读全文）与 `canReadContainedFile`（list 侧 hasContent 探测）
- * 共用此内核，保证两者对"能不能读"的判定**逐字节一致**（德彪 codex review：list/content 契约必须同源，
- * 否则会出现"有内容却藏按钮 / 显按钮却必 400"两类稳定误判）。
+ * F027 · realpath containment + regular-file 读取 —— KB tab 全文端点（drafts/content、warnings/content）
+ * **及 warnings list 扫描**共用安全原语（德彪 codex r2 P1：list 扫描也必须经此读，杜绝裸 readFile 跟随
+ * hardlink/symlink 把树外文件前 200 字泄露进 summary）。
  *
  * 背景（德彪 codex review NO-GO P1）：safeWikiPath / 子树前缀检查都是**词法**路径检查，
  * 随后的 readFile/stat **会跟随 symlink / Windows junction**。攻击者只要能在受控目录里放一个
  * 指向目录外的链接（项目 taint model 明确把 user-drop 的 symlink 当威胁，DraftScanner.list 已拒），
  * 词法检查就会放行而 readFile 跟随链接读到进程权限内的任意文件。
  *
+ * 防御：对**真实路径**再做 containment —— realpath(abs) 解析所有链接后必须仍在 realpath(lexicalRoot)
+ * 之内（根也 realpath，兼容根自身位于链接下的部署），且目标必须是**普通文件**（德彪 codex P2：不读
+ * 目录/特殊文件，配合各 caller 的 `.md` 限制）。
+ *
  * 防御层次（德彪 codex review r1+r2）：
  *   1. realpath(abs) 解析所有 symlink/Windows junction，必须仍在 realpath(lexicalRoot) 内（越界抛）。
  *   2. **单个 FileHandle 做 stat+read**（r2 P1）：关掉 realpath→stat→read 之间 stat→read 的 TOCTOU
  *      窗口（同一 fd 上 fstat 与 read 不会被中途换路径重定向）。
  *   3. **nlink>1 拒绝**（r2 P1）：realpath 不解析 hardlink —— 树内硬链可指向树外文件；多链接文件一律拒。
- *   4. 普通文件校验（非目录/特殊文件）。
+ *   4. 普通文件校验（非目录/特殊文件）；FIFO 经 O_NONBLOCK open 后 isFile() 判否 → null（不阻塞等 writer）。
  *   ⚠️ 残留：realpath→open 之间仍有极窄 TOCTOU 窗口（纯 userland 路径校验关不死，需 OS 级解析）。
  *      本端点是 localhost 单用户只读 dev 视图、draft/warnings 目录仅由可信 ingest 写入 → 接受此残留。
  *
- * 返回 `{handle, stat}`（成功打开的普通文件，**caller 负责 close handle**）
- *   | `null`（文件或根不存在、或目标非普通文件 → caller 转 404 / hasContent=false）；
- * 越界 / 多链接（realpath 逃逸 / hardlink）抛 `WikiPathInvalidError`（caller 转 400 / hasContent=false）。
- * 每条失败路径在返回/抛出前都已 close handle（恰好一次），成功路径把 open handle 交给 caller close。
+ * 返回 `{content, mtime}` | `null`（文件或根不存在、或目标非普通文件 → caller 转 404）；
+ * 越界 / 多链接（realpath 逃逸 / hardlink）抛 `WikiPathInvalidError`（caller 转 400）。
+ * 注意：**只有完整 read 成功才返回内容** —— list 侧据此算 hasContent 即可保证 `hasContent ⟺ content 端点 200`
+ * （含超大文件 ERR_FS_FILE_TOO_LARGE / EIO：read 抛错 → caller 兜底 → 不算可读）。
  */
-async function openContainedFile(
+export async function readContainedFile(
   abs: string,
   lexicalRoot: string,
-): Promise<{ handle: Awaited<ReturnType<typeof fsp.open>>; stat: Stats } | null> {
+): Promise<{ content: string; mtime: string } | null> {
   let realRoot: string
   try {
     realRoot = await fsp.realpath(lexicalRoot)
@@ -84,69 +87,20 @@ async function openContainedFile(
     if (code === "ENOENT" || code === "EISDIR") return null // 不存在 / 目录 → 当作不存在
     throw err
   }
-  let stat: Stats
   try {
-    stat = await handle.stat()
-  } catch (err) {
-    await handle.close() // stat 失败也要释放 fd
-    throw err
-  }
-  if (!stat.isFile()) {
-    await handle.close()
-    return null // 目录 / 特殊文件 → 当作不存在
-  }
-  if (stat.nlink > 1) {
-    // r2 P1：realpath 不解析 hardlink —— 多链接文件可能是越界硬链，一律拒。
-    await handle.close()
-    throw new WikiPathInvalidError(
-      `refusing multi-hardlink file (possible containment escape): ${abs}`,
-    )
-  }
-  return { handle, stat } // 成功 —— caller 负责 close
-}
-
-/**
- * F027 · realpath containment + regular-file 读取 —— KB tab 全文端点（drafts/content、warnings/content）共用安全原语。
- * 防御层次见 {@link openContainedFile}。
- *
- * 返回 `{content, mtime}` | `null`（文件或根不存在、或目标非普通文件 → caller 转 404）；
- * 越界 / 多链接（realpath 逃逸 / hardlink）抛 `WikiPathInvalidError`（caller 转 400）。
- */
-export async function readContainedFile(
-  abs: string,
-  lexicalRoot: string,
-): Promise<{ content: string; mtime: string } | null> {
-  const opened = await openContainedFile(abs, lexicalRoot)
-  if (!opened) return null
-  try {
-    const content = await opened.handle.readFile("utf-8")
-    return { content, mtime: opened.stat.mtime.toISOString() }
+    const stat: Stats = await handle.stat()
+    if (!stat.isFile()) return null // 目录 / 特殊文件 → 当作不存在
+    if (stat.nlink > 1) {
+      // r2 P1：realpath 不解析 hardlink —— 多链接文件可能是越界硬链，一律拒。
+      throw new WikiPathInvalidError(
+        `refusing multi-hardlink file (possible containment escape): ${abs}`,
+      )
+    }
+    const content = await handle.readFile("utf-8")
+    return { content, mtime: stat.mtime.toISOString() }
   } finally {
-    await opened.handle.close()
+    await handle.close()
   }
-}
-
-/**
- * F027 [德彪 codex r-warn P2] · list 侧"该文件点开能否成功读全文"探测 —— 与 {@link readContainedFile}
- * （content 端点）共用 {@link openContainedFile} 内核，故严格满足：
- *   `canReadContainedFile(abs,root) === true` ⟺ `readContainedFile(abs,root)` 返回内容 ⟺ content 端点 200。
- * 用于 warnings list 的 `hasContent` 计算，杜绝"按 producer 猜可读性"导致的 list/content 发散。
- *
- * - `true`：openContainedFile 成功（普通文件、未越界、nlink<=1，即将 200）。
- * - `false`：`null`（不存在/目录/特殊文件 → 404）或 `WikiPathInvalidError`（越界/hardlink → 400）。
- * - 其它 fs 错误（EACCES 等）原样抛出，由 caller logWarn 兜底（不静默当作可读）。
- */
-export async function canReadContainedFile(abs: string, lexicalRoot: string): Promise<boolean> {
-  let opened: Awaited<ReturnType<typeof openContainedFile>>
-  try {
-    opened = await openContainedFile(abs, lexicalRoot)
-  } catch (err) {
-    if (err instanceof WikiPathInvalidError) return false // 越界/hardlink → content 端点 400，非可读
-    throw err
-  }
-  if (!opened) return false
-  await opened.handle.close()
-  return true
 }
 
 /**

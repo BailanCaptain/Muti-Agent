@@ -31,11 +31,7 @@ import path from "node:path"
 import type { FastifyInstance } from "fastify"
 
 import type { WikiEventsRepository } from "../../db/repositories/wiki-events-repository"
-import {
-  canReadContainedFile,
-  readContainedFile,
-  WikiPathInvalidError,
-} from "../../wiki/path-containment"
+import { readContainedFile, WikiPathInvalidError } from "../../wiki/path-containment"
 import { parseFrontmatter } from "../phase3/frontmatter"
 
 // ─── contracts (inline; mirror Phase 4 endpoint shapes) ──────────────────────
@@ -56,11 +52,12 @@ export interface WarningSummary {
   mtime: string
   /**
    * F027 修（小孙自验「展开看全文」404）：点「展开看全文」**是否会成功返回内容**（content 端点 200）。
-   * 由 listWarnings 末尾用 `canReadContainedFile`（与 content 端点 readWarningContent 同一可读判定）
-   * 统一计算 → **`hasContent=true` ⟺ GET /api/wiki/warnings/content 200**。前端只对 true 渲染按钮。
-   *
-   * 不按 producer 猜（德彪 codex r-warn P2）：合成 path 也以 `wiki/warnings/` 开头（不能靠前缀，原 bug）；
-   * 解析失败但裸读可读的文件不该藏按钮；hardlink 文件会被 content 端点拒（400）不该显按钮。
+   * 与 content 端点 readWarningContent **共用同一 readContainedFile 全量 read** 判定：
+   *   - file-scanned warning：summarizeWarning 经 readContainedFile 读成功才进 list → 必 true；
+   *     hardlink/越界/特殊文件/读失败者根本不进 list（既不显按钮也不泄露 summary，德彪 r2 P1）。
+   *   - event 兜底 warning：computeHasContent 全量 read 探测 → 真实可读才 true。
+   * → **`hasContent=true` ⟺ GET /api/wiki/warnings/content 200**。前端只对 true 渲染按钮。
+   * 不按 producer 猜（德彪 r1 P2）：合成 path 也以 `wiki/warnings/` 开头，不能靠前缀（原 bug）。
    */
   hasContent: boolean
 }
@@ -172,7 +169,11 @@ export class WikiMetaScanner {
         const events = this.events.getByAction("warning_raised", 200)
         for (const ev of events) {
           if (byPath.has(ev.path)) continue // fs file 优先, events 仅补缺
-          byPath.set(ev.path, this.eventToWarning(ev))
+          const w = this.eventToWarning(ev)
+          // 德彪 codex r2 P1/P2：event 自身无文件信息 → 用 content 端点同一套全量 read 探测真实可读性。
+          // 覆盖 mismatch#1（同 path 有"解析失败但裸读可读"的文件 → hasContent=true，按钮该显）。
+          w.hasContent = await this.computeHasContent(ev.path)
+          byPath.set(ev.path, w)
         }
       } catch (err) {
         this.logWarn({ err }, "wiki-meta: events.getByAction failed (skip merge)")
@@ -186,12 +187,9 @@ export class WikiMetaScanner {
       if (b.detectedAt === null) return -1
       return Date.parse(b.detectedAt) - Date.parse(a.detectedAt)
     })
-    // 德彪 codex r-warn P2：hasContent 用 content 端点同一套可读判定**统一重算**（producer 占位被覆盖）。
-    // 不按"哪个 producer 造的"猜 —— 否则会发散：解析失败但裸读可读的文件（藏按钮）、hardlink 文件（显按钮却 400）。
-    // 此处与 readWarningContent 共用 resolveWarningAbsPath + canReadContainedFile → hasContent=true ⟺ content 200。
-    for (const w of out) {
-      w.hasContent = await this.computeHasContent(w.path)
-    }
+    // 注意：file-scanned warning 的 hasContent 已在 summarizeWarning 里"读成功即 true"确定（经 readContainedFile，
+    // 故 hardlink/越界/特殊文件/读失败的文件根本进不了 list —— 既不显按钮也不泄露 summary，德彪 r2 P1）。
+    // 此处无需再统一重算；只有上面 event 兜底分支按需探测。
     return { warnings: out, total: out.length }
   }
 
@@ -221,10 +219,10 @@ export class WikiMetaScanner {
   }
 
   /**
-   * 德彪 codex r-warn P2：list 侧 hasContent 必须 = "content 端点点开会不会 200"，不能按 producer 猜。
-   * 与 readWarningContent 共用 resolveWarningAbsPath + 同一 canReadContainedFile 判定 →
-   * hasContent=true ⟺ readWarningContent 返回内容 ⟺ GET /api/wiki/warnings/content 200。
-   * 非法 path / 不存在 / 目录 / hardlink / 越界 → false（content 端点会 400/404）。
+   * 德彪 codex r2 P2：event 兜底分支的 hasContent —— = "content 端点点开会不会 200"。与 readWarningContent
+   * 共用 resolveWarningAbsPath + **同一 readContainedFile 全量 read** 判定（不是只 open+stat 的旁路探测：
+   * 超大文件/EIO 在真 read 才暴露，全量读才能保证 hasContent=true ⟺ readWarningContent 返回内容 ⟺ /content 200）。
+   * 非法 path / 不存在 / 目录 / 特殊文件 / hardlink / 越界 / 读失败 → false（content 端点会 400/404/500，按钮不显）。
    */
   private async computeHasContent(warningPath: string): Promise<boolean> {
     let absPath: string
@@ -235,8 +233,10 @@ export class WikiMetaScanner {
     }
     const warningsRoot = path.join(this.wikiRoot, "warnings")
     try {
-      return await canReadContainedFile(absPath, warningsRoot)
+      const read = await readContainedFile(absPath, warningsRoot)
+      return read !== null // 完整 read 成功才算可读（与 content 端点逐字节同路径）
     } catch (err) {
+      // WikiPathInvalidError（越界/hardlink）或读错误 → 不可读
       this.logWarn({ err, warningPath }, "wiki-meta: hasContent probe failed")
       return false
     }
@@ -259,7 +259,7 @@ export class WikiMetaScanner {
       raisedBy: ev.alias,
       summary: (ev.reason ?? ev.diffSummary ?? "").slice(0, SUMMARY_LEN),
       mtime: ev.ts,
-      hasContent: false, // 占位：listWarnings() 末尾用 canReadContainedFile 统一重算（德彪 r-warn P2）
+      hasContent: false, // 占位：merge 时 listWarnings 用 computeHasContent 全量 read 探测真实可读性
     }
   }
 
@@ -313,25 +313,24 @@ export class WikiMetaScanner {
     fileName: string,
   ): Promise<WarningSummary | null> {
     const absPath = path.join(dir, fileName)
-    let raw: string
+    // 德彪 codex r2 P1：用 containment 原语 readContainedFile 读（不用裸 fsAdapter.readFile）——
+    // hardlink/symlink/越界/FIFO/超大/EIO 在**解析与生成 summary 之前**就被拒（返 null / 抛），
+    // 杜绝把树外文件前 200 字泄露进 summary；且 raw+mtime+可读性同一次 read 取得 → hasContent 与
+    // content 端点（readWarningContent 同走 readContainedFile）同源：读成功 ⟺ content 端点 200。
+    let read: { content: string; mtime: string } | null
     try {
-      raw = await this.fsAdapter.readFile(absPath)
+      read = await readContainedFile(absPath, dir) // dir 即 <wikiRoot>/warnings 根
     } catch (err) {
-      this.logWarn({ err, absPath }, "wiki-meta: warning readFile failed")
+      // WikiPathInvalidError（越界/hardlink）或其它 read 错误（EIO/too-large）→ 不进 list（不泄露、不显按钮）
+      this.logWarn({ err, absPath }, "wiki-meta: warning rejected/unreadable by containment")
       return null
     }
-    let stat: { mtime: Date }
-    try {
-      stat = await this.fsAdapter.stat(absPath)
-    } catch (err) {
-      this.logWarn({ err, absPath }, "wiki-meta: warning stat failed")
-      return null
-    }
+    if (!read) return null // 文件/根不存在 / 目录 / 特殊文件 → 跳过
 
     let fm: WarningFrontmatter | null
     let body: string
     try {
-      const parsed = parseFrontmatter<WarningFrontmatter>(raw)
+      const parsed = parseFrontmatter<WarningFrontmatter>(read.content)
       fm = parsed.frontmatter
       body = parsed.body
     } catch (err) {
@@ -354,8 +353,8 @@ export class WikiMetaScanner {
       detectedAt: fm?.detected_at ?? null,
       raisedBy: fm?.raised_by ?? null,
       summary,
-      mtime: stat.mtime.toISOString(),
-      hasContent: false, // 占位：listWarnings() 末尾用 canReadContainedFile 统一重算（德彪 r-warn P2）
+      mtime: read.mtime,
+      hasContent: true, // 经 readContainedFile 完整读成功 ⟺ content 端点点开能 200
     }
   }
 

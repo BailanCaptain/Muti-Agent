@@ -600,13 +600,14 @@ describe("WikiMetaScanner · hasContent ⟺ content 端点 契约一致 (德彪 
     }
   })
 
-  it("hardlink 文件 → hasContent=false 且 content 端点抛（修 mismatch#2：显按钮却必 400）", async () => {
+  it("hardlink 文件 → 不进 list（summary 不泄露树外内容）+ content 端点抛（修 mismatch#2 + 德彪 r2 P1 泄露）", async () => {
     const t = setup()
     try {
       const secret = path.join(t.wikiRoot, "secret.txt")
+      const secretBody = "TOP-SECRET-EXFIL-MARKER body outside warnings"
       fs.writeFileSync(
         secret,
-        "---\ntype: warning\nsubtype: x\ndetected_at: 2026-04-01T00:00:00Z\n---\n\nbody",
+        `---\ntype: warning\nsubtype: x\ndetected_at: 2026-04-01T00:00:00Z\n---\n\n${secretBody}`,
       )
       const dir = path.join(t.wikiRoot, "warnings")
       fs.mkdirSync(dir, { recursive: true })
@@ -614,14 +615,54 @@ describe("WikiMetaScanner · hasContent ⟺ content 端点 契约一致 (德彪 
       if (trySkipLink(() => fs.linkSync(secret, hard), "hardlink")) return
       const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
       const list = await scanner.listWarnings()
+      // 德彪 r2 P1：hardlink 在 summarizeWarning 的 readContainedFile 处即被 nlink>1 拒 → 不进 list。
       const w = list.warnings.find((x) => x.path === "wiki/warnings/hard.md")
-      assert.ok(w, "hardlink 文件 frontmatter 有效 → 仍在 list（带 summary）")
-      assert.equal(w?.hasContent, false) // content 端点拒 nlink>1 → 不显按钮
+      assert.equal(w, undefined, "hardlink 文件应被 containment 拒于扫描阶段 → 不进 list")
+      // 关键回归：树外内容不得通过任何 warning 的 summary 泄露
+      for (const x of list.warnings) {
+        assert.ok(!x.summary.includes("TOP-SECRET-EXFIL-MARKER"), "summary 不得泄露树外文件内容")
+      }
+      // content 端点同样拒（400）
       await assert.rejects(
         () => scanner.readWarningContent("wiki/warnings/hard.md"),
         (e: Error) => e.name === "WikiPathInvalidError",
       )
     } finally {
+      t.cleanup()
+    }
+  })
+
+  it("event 兜底 path 指向目录 → hasContent=false（event 探测全量 read 拒非普通文件）", async () => {
+    const t = setup()
+    const dbPath = path.join(t.wikiRoot, "test.sqlite")
+    const { db, close } = createDrizzleDb(dbPath)
+    try {
+      // warnings/ 下建名为 adir.md 的**目录**（listMdFiles 过滤目录 → 不进 fs 扫描）；event 同 path 兜底进 list
+      const dir = path.join(t.wikiRoot, "warnings")
+      fs.mkdirSync(path.join(dir, "adir.md"), { recursive: true })
+      const events = new WikiEventsRepository(db)
+      const ev = events.appendPending({
+        ts: "2026-04-17T00:00:00Z",
+        alias: "system",
+        action: "warning_raised",
+        path: "wiki/warnings/adir.md",
+        baseHash: null,
+        attemptedHash: "h",
+        diffSummary: "d",
+        reason: "r",
+        fencingToken: "ft",
+        leaderTerm: "999",
+        result: "ok",
+      })
+      events.commit(ev.id, { contentHash: "h" })
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot, events })
+      const list = await scanner.listWarnings()
+      const w = list.warnings.find((x) => x.path === "wiki/warnings/adir.md")
+      assert.ok(w, "event 兜底应让 adir.md 进 list")
+      assert.equal(w?.hasContent, false) // 目录非普通文件 → content 端点 404 → 不显按钮
+      assert.equal(await scanner.readWarningContent("wiki/warnings/adir.md"), null)
+    } finally {
+      close()
       t.cleanup()
     }
   })
