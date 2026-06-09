@@ -154,12 +154,16 @@ export class WikiMetaScanner {
   }
 
   async listWarnings(): Promise<ListWarningsResponse> {
-    const dir = path.join(this.wikiRoot, "warnings")
-    const files = await this.listMdFiles(dir)
+    // 德彪 codex r3 P1：先校验 warnings 根未逃逸 wikiRoot（防整个 warnings/ 被换成指向树外的 junction）。
+    // null = 目录不存在 OR 根逃逸 → 不扫文件（events 仍兜底，它们来自 DB 与文件无关）。
+    const warningsRoot = await this.containedWarningsRoot()
     const byPath = new Map<string, WarningSummary>()
-    for (const fileName of files) {
-      const summary = await this.summarizeWarning(dir, fileName)
-      if (summary) byPath.set(summary.path, summary)
+    if (warningsRoot) {
+      const files = await this.listMdFiles(warningsRoot)
+      for (const fileName of files) {
+        const summary = await this.summarizeWarning(warningsRoot, fileName)
+        if (summary) byPath.set(summary.path, summary)
+      }
     }
 
     // codex mid-r1 P2: merge wiki_events action='warning_raised' rows
@@ -172,7 +176,10 @@ export class WikiMetaScanner {
           const w = this.eventToWarning(ev)
           // 德彪 codex r2 P1/P2：event 自身无文件信息 → 用 content 端点同一套全量 read 探测真实可读性。
           // 覆盖 mismatch#1（同 path 有"解析失败但裸读可读"的文件 → hasContent=true，按钮该显）。
-          w.hasContent = await this.computeHasContent(ev.path)
+          // 根逃逸时 warningsRoot=null → 一律 false（不经 junction 读）。
+          // 德彪 r3 P3（接受）：mismatch#1 下该文件被读两次（summarizeWarning 解析失败 + 此处探测）；
+          // warnings<20 份的 dev 端点，重复 IO 可忽略，不为此加缓存复杂度。
+          w.hasContent = warningsRoot ? await this.computeHasContent(ev.path, warningsRoot) : false
           byPath.set(ev.path, w)
         }
       } catch (err) {
@@ -224,16 +231,15 @@ export class WikiMetaScanner {
    * 超大文件/EIO 在真 read 才暴露，全量读才能保证 hasContent=true ⟺ readWarningContent 返回内容 ⟺ /content 200）。
    * 非法 path / 不存在 / 目录 / 特殊文件 / hardlink / 越界 / 读失败 → false（content 端点会 400/404/500，按钮不显）。
    */
-  private async computeHasContent(warningPath: string): Promise<boolean> {
+  private async computeHasContent(warningPath: string, warningsRoot: string): Promise<boolean> {
     let absPath: string
     try {
       absPath = this.resolveWarningAbsPath(warningPath)
     } catch {
       return false // 非法 path → content 端点 400 → 不显展开按钮
     }
-    const warningsRoot = path.join(this.wikiRoot, "warnings")
     try {
-      const read = await readContainedFile(absPath, warningsRoot)
+      const read = await readContainedFile(absPath, warningsRoot) // warningsRoot 已经 containedWarningsRoot 校验
       return read !== null // 完整 read 成功才算可读（与 content 端点逐字节同路径）
     } catch (err) {
       // WikiPathInvalidError（越界/hardlink）或读错误 → 不可读
@@ -273,13 +279,48 @@ export class WikiMetaScanner {
   async readWarningContent(
     warningPath: string,
   ): Promise<{ content: string; mtime: string } | null> {
-    // resolveWarningAbsPath：平铺 basename 白名单（非法 path 抛 WikiPathInvalidError）。
-    // 与 computeHasContent 共用同一派生 → list hasContent 与本端点路径判定一致。
+    // resolveWarningAbsPath：平铺 basename 白名单（非法 path 抛 WikiPathInvalidError）。先校验 path → 非法即 400，
+    // 与 list 扫描共用同一派生 → list hasContent 与本端点路径判定一致（德彪 r3 P2）。
     const absPath = this.resolveWarningAbsPath(warningPath)
-    const warningsRoot = path.join(this.wikiRoot, "warnings")
+    // 德彪 codex r3 P1：根逃逸/不存在 → 404（不经 junction 读）。与 listWarnings 同一校验。
+    const warningsRoot = await this.containedWarningsRoot()
+    if (!warningsRoot) return null
     // 德彪 codex P1：realpath containment（防 symlink/junction 跟随逃逸）+ 普通文件校验
     //（name 白名单已强制纯 .md 文件名，此处再防真实路径越界）。
     return readContainedFile(absPath, warningsRoot)
+  }
+
+  /**
+   * 德彪 codex r3 P1：返回经校验"未逃逸 wikiRoot"的 warnings 根（lexical path）；目录不存在或根逃逸 → null。
+   * 防御：整个 `<wikiRoot>/warnings` 被换成指向树外目录的 symlink/junction 时，readContainedFile 会以
+   * realpath(树外) 为边界放行其下所有文件 → arbitrary-read 泄露。此处先确认 realpath(warnings) 仍在
+   * realpath(wikiRoot) 之内，逃逸即拒（空 list / 404）。兼容 wikiRoot 自身位于链接下的部署（两端都 realpath）。
+   */
+  private async containedWarningsRoot(): Promise<string | null> {
+    const warningsRoot = path.join(this.wikiRoot, "warnings")
+    let realWarnings: string
+    try {
+      realWarnings = await fs.realpath(warningsRoot)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null // 无 warnings 目录
+      throw err
+    }
+    let realWiki: string
+    try {
+      realWiki = await fs.realpath(this.wikiRoot)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null
+      throw err
+    }
+    const sep = realWiki.endsWith(path.sep) ? realWiki : realWiki + path.sep
+    if (realWarnings !== realWiki && !realWarnings.startsWith(sep)) {
+      this.logWarn(
+        { warningsRoot, realWarnings, realWiki },
+        "wiki-meta: warnings root escapes wikiRoot (junction?) — refusing scan/read",
+      )
+      return null
+    }
+    return warningsRoot // lexical：caller 传给 readContainedFile，后者再 realpath 校验子项
   }
 
   async listIndex(): Promise<ListIndexResponse> {
@@ -309,17 +350,26 @@ export class WikiMetaScanner {
   }
 
   private async summarizeWarning(
-    dir: string,
+    warningsRoot: string,
     fileName: string,
   ): Promise<WarningSummary | null> {
-    const absPath = path.join(dir, fileName)
+    // 德彪 codex r3 P2：扫描文件名走与 content 端点同一白名单（resolveWarningAbsPath）——
+    // foo..bar.md / 含 ':' '\' 等会被 content 端点 400 的名字，扫描也必须拒（否则进 list 标 hasContent=true
+    // 但 /content 400，list/content 发散）。同时取得与 content 端点逐字节一致的 absPath。
+    let absPath: string
+    try {
+      absPath = this.resolveWarningAbsPath(`wiki/warnings/${fileName}`)
+    } catch (err) {
+      this.logWarn({ err, fileName }, "wiki-meta: warning filename rejected by whitelist (skip)")
+      return null
+    }
     // 德彪 codex r2 P1：用 containment 原语 readContainedFile 读（不用裸 fsAdapter.readFile）——
     // hardlink/symlink/越界/FIFO/超大/EIO 在**解析与生成 summary 之前**就被拒（返 null / 抛），
     // 杜绝把树外文件前 200 字泄露进 summary；且 raw+mtime+可读性同一次 read 取得 → hasContent 与
     // content 端点（readWarningContent 同走 readContainedFile）同源：读成功 ⟺ content 端点 200。
     let read: { content: string; mtime: string } | null
     try {
-      read = await readContainedFile(absPath, dir) // dir 即 <wikiRoot>/warnings 根
+      read = await readContainedFile(absPath, warningsRoot) // warningsRoot 已经 containedWarningsRoot 校验
     } catch (err) {
       // WikiPathInvalidError（越界/hardlink）或其它 read 错误（EIO/too-large）→ 不进 list（不泄露、不显按钮）
       this.logWarn({ err, absPath }, "wiki-meta: warning rejected/unreadable by containment")

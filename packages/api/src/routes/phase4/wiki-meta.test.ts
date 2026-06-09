@@ -666,6 +666,53 @@ describe("WikiMetaScanner · hasContent ⟺ content 端点 契约一致 (德彪 
       t.cleanup()
     }
   })
+
+  it("文件名含 '..'（foo..bar.md）→ 扫描拒（不进 list）+ content 端点抛，与白名单一致（德彪 r3 P2）", async () => {
+    const t = setup()
+    try {
+      t.writeWarning(
+        "foo..bar.md",
+        "type: warning\nsubtype: x\ndetected_at: 2026-04-01T00:00:00Z",
+        "body",
+      )
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      const list = await scanner.listWarnings()
+      assert.equal(
+        list.warnings.find((x) => x.path === "wiki/warnings/foo..bar.md"),
+        undefined,
+        "含 '..' 的文件名应被白名单拒于扫描阶段（content 端点同样拒 → 400）",
+      )
+      await assert.rejects(
+        () => scanner.readWarningContent("wiki/warnings/foo..bar.md"),
+        (e: Error) => e.name === "WikiPathInvalidError",
+      )
+    } finally {
+      t.cleanup()
+    }
+  })
+
+  it("整个 warnings/ 是指向树外的 junction → list 空（不泄露）+ content 返 null，根逃逸被拒（德彪 r3 P1）", async () => {
+    const t = setup()
+    const outside = path.join(os.tmpdir(), `wiki-meta-outside-${path.basename(t.wikiRoot)}`)
+    try {
+      fs.mkdirSync(outside, { recursive: true })
+      fs.writeFileSync(
+        path.join(outside, "leak.md"),
+        "---\ntype: warning\nsubtype: x\ndetected_at: 2026-04-01T00:00:00Z\n---\n\nROOT-JUNCTION-EXFIL secret body",
+      )
+      // 把 <wikiRoot>/warnings 整个做成指向树外 outside 的 junction（setup 未建 warnings/ → 可建链）
+      const warningsDir = path.join(t.wikiRoot, "warnings")
+      if (trySkipLink(() => fs.symlinkSync(outside, warningsDir, "junction"), "junction")) return
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      const list = await scanner.listWarnings()
+      // 根 realpath 落在 wikiRoot 外 → containedWarningsRoot 拒 → 不扫树外文件、summary 不泄露
+      assert.equal(list.warnings.length, 0, "warnings 根逃逸 wikiRoot 应被拒 → 空 list")
+      assert.equal(await scanner.readWarningContent("wiki/warnings/leak.md"), null)
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true })
+      t.cleanup()
+    }
+  })
 })
 
 // 德彪 codex r2 P2：只在明确"不支持建链"时跳过，别拿 catch{} 吞真失败。返回 true=跳过。
