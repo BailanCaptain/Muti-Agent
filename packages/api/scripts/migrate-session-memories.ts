@@ -16,6 +16,7 @@
  *   （wikiRoot 实际写入用 `<WIKI_ROOT>/wiki`，与 server.ts roomCompileWikiRoot 同口径。）
  */
 
+import { existsSync as fsExistsSync } from "node:fs"
 import path from "node:path"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type * as schema from "../src/db/schema"
@@ -27,8 +28,10 @@ type DrizzleDb = BetterSQLite3Database<typeof schema>
 export interface MigrateSessionMemoriesResult {
   /** 有摘要的 group 数（= 应导出条数）。 */
   groups: number
-  /** 实际写盘条数（writer fail-soft 失败的不计）。 */
+  /** 实际写盘成功条数。 */
   written: number
+  /** receive 德彪 r1 P1-2：写失败条数（CLI 据此非零退出，不再静默假成功）。 */
+  failed: number
 }
 
 interface LatestMemoryRow {
@@ -46,34 +49,34 @@ export function migrateSessionMemories(opts: {
   warn?: (msg: string) => void
 }): MigrateSessionMemoriesResult {
   const client = getSqliteClient(opts.db)
-  // 每 group 最新一条（rowid 兜底打平同 created_at 并列）+ LEFT JOIN 拿 canonical roomId
+  // 每 group 最新一条 —— receive 德彪 r1 P2-4：相关子查询按 created_at DESC, rowid DESC
+  // 显式定序（同 created_at 并列取后插入那条），不靠 GROUP BY 任取的非确定行为。
   const rows = client
     .prepare(
       `SELECT m.session_group_id, m.summary, m.keywords, m.created_at, sg.room_id
        FROM session_memories m
-       JOIN (
-         SELECT session_group_id, MAX(created_at) AS max_created
-         FROM session_memories GROUP BY session_group_id
-       ) latest
-         ON m.session_group_id = latest.session_group_id
-        AND m.created_at = latest.max_created
        LEFT JOIN session_groups sg ON sg.id = m.session_group_id
-       GROUP BY m.session_group_id`,
+       WHERE m.rowid = (
+         SELECT m2.rowid FROM session_memories m2
+         WHERE m2.session_group_id = m.session_group_id
+         ORDER BY m2.created_at DESC, m2.rowid DESC
+         LIMIT 1
+       )`,
     )
     .all() as LatestMemoryRow[]
 
   const roomIdByGroup = new Map(rows.map((r) => [r.session_group_id, r.room_id]))
-  let written = 0
+  // receive 德彪 r1 P1-2：失败显式计数（writer fail-soft 不抛，每次失败恰好 warn 一次）。
+  let failed = 0
   const writer = createSessionSummaryWikiWriter({
     wikiRoot: opts.wikiRoot,
     resolveRoomId: (g) => roomIdByGroup.get(g) ?? null,
     warn: (msg) => {
-      written-- // writer fail-soft 不抛 → 用 warn 回调把失败条从计数里扣掉
+      failed++
       opts.warn?.(msg)
     },
   })
   for (const row of rows) {
-    written++
     writer.write({
       sessionGroupId: row.session_group_id,
       summary: row.summary,
@@ -81,7 +84,21 @@ export function migrateSessionMemories(opts: {
       createdAt: row.created_at,
     })
   }
-  return { groups: rows.length, written }
+  return { groups: rows.length, written: rows.length - failed, failed }
+}
+
+/**
+ * receive 德彪 r1 P1-2：路径前置校验 —— createDrizzleDb 对不存在的路径会**新建空库**，
+ * 错误 SQLITE_PATH 会静默导出 0 条且 exit 0 假成功；错误 WIKI_ROOT 会建平行目录。
+ * 两者都必须真实存在才放行。
+ */
+export function validateMigratePaths(sqlitePath: string, wikiRootEnv: string): void {
+  if (!fsExistsSync(sqlitePath)) {
+    throw new Error(`SQLITE_PATH 不存在：${sqlitePath}（createDrizzleDb 会静默新建空库 → 假成功）`)
+  }
+  if (!fsExistsSync(wikiRootEnv)) {
+    throw new Error(`WIKI_ROOT 不存在：${wikiRootEnv}（会创建平行目录写错根）`)
+  }
 }
 
 async function main() {
@@ -93,6 +110,8 @@ async function main() {
       "migrate-session-memories 需显式 env：SQLITE_PATH（主库 sqlite）+ WIKI_ROOT（主库 wiki 根·单层）；缺一即抛。",
     )
   }
+  // receive 德彪 r1 P1-2：路径必须真实存在（createDrizzleDb 会静默建空库假成功）
+  validateMigratePaths(sqlitePath, wikiRootEnv)
   const { createDrizzleDb } = await import("../src/db/drizzle-instance")
   const { db, close } = createDrizzleDb(sqlitePath)
   try {
@@ -103,6 +122,11 @@ async function main() {
       warn: (msg) => console.error(`[migrate-session-memories] ${msg}`),
     })
     console.log(JSON.stringify(result, null, 2))
+    // receive 德彪 r1 P1-2：有失败 → 非零退出（运维一眼可见，不再假成功）
+    if (result.failed > 0) {
+      console.error(`[migrate-session-memories] ${result.failed}/${result.groups} 条导出失败`)
+      process.exit(1)
+    }
   } finally {
     close()
   }

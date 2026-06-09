@@ -947,6 +947,11 @@ export async function createApiServer(options: {
         wikiRoot: roomCompileWikiRoot,
         resolveRoomId: (sessionGroupId) => sessions.getRoomId(sessionGroupId),
         warn: (msg) => app.log.warn({}, msg),
+        // receive 德彪 r1 P1-1 · 直写不产 wiki_events → 手动踢 debounce → reindexWiki，
+        // 否则 wiki_entity_index 滞后到下次 boot/别的 commit，search_wiki 读不到新摘要。
+        // fireWikiCommit 是 late-bind forwarder（scheduler boot 后回填），写早于 boot 时为
+        // undefined → no-op，boot 时全量 reindex 兜底。
+        onWritten: () => fireWikiCommit?.(),
       }),
     )
   }

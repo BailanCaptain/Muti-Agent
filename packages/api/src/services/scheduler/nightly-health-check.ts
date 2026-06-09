@@ -175,22 +175,32 @@ export class NightlyHealthCheck {
     // 初始化 inboundCounts 为 0
     for (const e of entities) inboundCounts.set(normalizePath(e.path), 0)
 
+    // F027 #285 receive 德彪 r1 P2-3 · 派生视图豁免判定：generated_by marker
+    // （viewfinder=room-compiler G3 / session-summary=memory-service #285）。派生视图
+    // 不进 canonical KB（无 canonical_owner_path 是设计而非缺陷），缺字段/orphan 报警
+    // = 每夜噪声。不能加 canonical marker 豁免（会进全局索引污染）→ 按 generated_by 过滤。
+    // 注意：仅豁免「被报告」，其 body 的 outbound refs 仍参与 inbound 计数/deadLinks。
+    const isDerivedView = (e: WikiEntity): boolean =>
+      typeof e.frontmatter.generated_by === "string" && e.frontmatter.generated_by.length > 0
+
     for (const entity of entities) {
       const myPath = normalizePath(entity.path)
 
-      // (1) missingFrontmatter
-      const missing: ("sources" | "canonical_owner_path")[] = []
-      if (
-        !Array.isArray(entity.frontmatter.sources) ||
-        entity.frontmatter.sources.length === 0
-      ) {
-        missing.push("sources")
-      }
-      if (typeof entity.frontmatter.canonical_owner_path !== "string") {
-        missing.push("canonical_owner_path")
-      }
-      if (missing.length > 0) {
-        missingFrontmatter.push({ path: entity.path, missing })
+      // (1) missingFrontmatter（派生视图豁免 — P2-3；refs 扫描仍照常走）
+      if (!isDerivedView(entity)) {
+        const missing: ("sources" | "canonical_owner_path")[] = []
+        if (
+          !Array.isArray(entity.frontmatter.sources) ||
+          entity.frontmatter.sources.length === 0
+        ) {
+          missing.push("sources")
+        }
+        if (typeof entity.frontmatter.canonical_owner_path !== "string") {
+          missing.push("canonical_owner_path")
+        }
+        if (missing.length > 0) {
+          missingFrontmatter.push({ path: entity.path, missing })
+        }
       }
 
       // (2) canonicalOwnerDrift
@@ -228,11 +238,12 @@ export class NightlyHealthCheck {
       }
     }
 
-    // (4) orphans = inboundCounts == 0 的（任何 /draft/ 路径豁免——未发布 + 已归档不应被引用）
+    // (4) orphans = inboundCounts == 0 的（任何 /draft/ 路径豁免——未发布 + 已归档不应被引用；
+    //     派生视图豁免 — P2-3：viewfinder/session-summary 本就没人 [[link]] 它们）
     const orphans: string[] = []
     for (const e of entities) {
       const myPath = normalizePath(e.path)
-      if ((inboundCounts.get(myPath) ?? 0) === 0 && !isAnyDraftPath(myPath)) {
+      if ((inboundCounts.get(myPath) ?? 0) === 0 && !isAnyDraftPath(myPath) && !isDerivedView(e)) {
         orphans.push(e.path)
       }
     }

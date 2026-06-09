@@ -149,3 +149,71 @@ test("S1 · resolveRoomId 抛错 → fail-soft 走 sessionGroupId 兜底（不�
     fs.rmSync(root, { recursive: true, force: true })
   }
 })
+
+// ─── #285 receive 德彪 r1 P1-1 · 写成功后通知 reindex（FTS 不滞后）───
+//
+// 德彪实证：writeFileAtomic 直写不产 wiki_events → WikiCompilerDebounce 不触发 →
+// wiki_entity_index 只在 boot/别的 commit 时更新 → search_wiki 读不到新摘要,
+// "接管 search_room_memories" 不成立。修：onWritten 回调,server 接 fireWikiCommit
+// （走与 updateWiki commit 同一条 5s debounce → reindexWiki 链）。
+
+const onWrittenTestInput = {
+  sessionGroupId: "group-1",
+  summary: "s",
+  keywords: "",
+  createdAt: "2026-06-10T08:00:00.000Z",
+}
+
+test("P1-1 · 写成功 → onWritten 调一次（server 接 fireWikiCommit 触发 reindex debounce）", () => {
+  const root = makeTmpRoot()
+  try {
+    let notified = 0
+    const writer = createSessionSummaryWikiWriter({
+      wikiRoot: root,
+      resolveRoomId: () => "R-201",
+      onWritten: () => notified++,
+    })
+    writer.write(onWrittenTestInput)
+    assert.equal(notified, 1, "落盘成功必须通知（否则 FTS 永远滞后到下次 boot）")
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("P1-1 · 写失败 → onWritten 不调（不空触发 reindex）", () => {
+  const root = makeTmpRoot()
+  try {
+    const blocked = path.join(root, "not-a-dir")
+    fs.writeFileSync(blocked, "x")
+    let notified = 0
+    const writer = createSessionSummaryWikiWriter({
+      wikiRoot: blocked,
+      resolveRoomId: () => "R-201",
+      warn: () => {},
+      onWritten: () => notified++,
+    })
+    writer.write(onWrittenTestInput)
+    assert.equal(notified, 0)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("P1-1 · onWritten 自身抛错 → fail-soft warn 不上抛（通知失败不毁摘要链路）", () => {
+  const root = makeTmpRoot()
+  try {
+    const warns: string[] = []
+    const writer = createSessionSummaryWikiWriter({
+      wikiRoot: root,
+      resolveRoomId: () => "R-201",
+      warn: (msg) => warns.push(msg),
+      onWritten: () => {
+        throw new Error("debounce crashed")
+      },
+    })
+    assert.doesNotThrow(() => writer.write(onWrittenTestInput))
+    assert.equal(warns.length, 1)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})

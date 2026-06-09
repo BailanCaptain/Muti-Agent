@@ -569,3 +569,41 @@ test("NightlyHealthCheck · onReport 回调被调用 + throw 不打断", async (
   assert.ok(report)
   assert.equal(reportsReceived.length, 1)
 })
+
+// ─── F027 #285 receive 德彪 r1 P2-3 · 派生视图（generated_by marker）健康检查豁免 ───
+//
+// 德彪实证：rooms/<id>/session-summary.md（#285 双写）会被全量 scanner 报
+// missingFrontmatter（缺 sources/canonical_owner_path）+ orphan —— 但它是派生视图
+// 不进 canonical KB，报警 = 每夜噪声。G3 起 viewfinder 也带 generated_by，同类同豁免。
+// 不能加 canonical marker（会进全局索引污染）→ 按 generated_by 过滤。
+
+test("P2-3 · generated_by 派生视图 → missingFrontmatter + orphans 双豁免", async () => {
+  // 注意：不用 entity() helper（它默认补 sources/canonical_owner_path）。
+  // 派生视图真实形态 = 只有 generated_by，没有 canonical 字段（writer/RoomCompiler 实写）。
+  const entities: WikiEntity[] = [
+    {
+      path: "wiki/rooms/R-201/session-summary.md",
+      body: "## 话题",
+      frontmatter: { generated_by: "memory-service" },
+    },
+    {
+      path: "wiki/rooms/R-201/viewfinder.md",
+      body: "view",
+      frontmatter: { generated_by: "room-compiler" },
+    },
+    // 对照组：真缺字段的非派生实体仍要报
+    { path: "wiki/concepts/real-gap.md", body: "body", frontmatter: {} },
+  ]
+  const check = new NightlyHealthCheck({ scanEntities: async () => entities })
+  const report = await check.run()
+  const flaggedPaths = report.missingFrontmatter.map((m) => m.path)
+  assert.ok(
+    !flaggedPaths.includes("wiki/rooms/R-201/session-summary.md"),
+    "session-summary 是派生视图，不报缺字段",
+  )
+  assert.ok(!flaggedPaths.includes("wiki/rooms/R-201/viewfinder.md"))
+  assert.ok(flaggedPaths.includes("wiki/concepts/real-gap.md"), "非派生实体照报（不误豁免）")
+  assert.ok(!report.orphans.includes("wiki/rooms/R-201/session-summary.md"))
+  assert.ok(!report.orphans.includes("wiki/rooms/R-201/viewfinder.md"))
+  assert.ok(report.orphans.includes("wiki/concepts/real-gap.md"))
+})

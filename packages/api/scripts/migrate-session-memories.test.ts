@@ -80,3 +80,73 @@ test("S2 · 空表 → 0 written 不抛", () => {
     fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
   }
 })
+
+// ─── #285 receive 德彪 r1 P1-2 + P2-4 ───
+
+test("P1-2 · 写失败 → failed 计数（CLI 据此非零退出，不再假成功）", () => {
+  const tmp = fs.mkdtempSync(path.join(process.cwd(), ".runtime", "f285-migrate-fail-"))
+  const { db, close } = makeFixtureDb(tmp)
+  try {
+    const blocked = path.join(tmp, "blocked")
+    fs.writeFileSync(blocked, "x") // wikiRoot 是文件 → 全部写失败
+    const result = migrateSessionMemories({ db, wikiRoot: blocked, warn: () => {} })
+    assert.equal(result.groups, 2)
+    assert.equal(result.written, 0)
+    assert.equal(result.failed, 2, "失败必须显式计数")
+  } finally {
+    close()
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+  }
+})
+
+test("P2-4 · 同 created_at 并列 → 取 rowid 更大（后插入）那条，确定性", () => {
+  const tmp = fs.mkdtempSync(path.join(process.cwd(), ".runtime", "f285-migrate-tie-"))
+  const wikiRoot = path.join(tmp, "wiki")
+  const { db, close } = createDrizzleDb(path.join(tmp, "test.sqlite"))
+  const client = getSqliteClient(db)
+  try {
+    const now = "2026-06-10T08:00:00.000Z"
+    client
+      .prepare(
+        "INSERT INTO session_groups (id, room_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run("group-tie", "R-300", "g", now, now)
+    const ins = client.prepare(
+      "INSERT INTO session_memories (id, session_group_id, summary, keywords, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    ins.run("t1", "group-tie", "先插入", "", "2026-06-09T00:00:00.000Z")
+    ins.run("t2", "group-tie", "后插入", "", "2026-06-09T00:00:00.000Z") // 同 created_at
+    const result = migrateSessionMemories({ db, wikiRoot })
+    assert.equal(result.written, 1)
+    const content = fs.readFileSync(
+      path.join(wikiRoot, "rooms", "R-300", "session-summary.md"),
+      "utf8",
+    )
+    assert.ok(content.includes("后插入"), "并列取 rowid 更大（后插入）那条")
+    assert.ok(!content.includes("先插入"))
+  } finally {
+    close()
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+  }
+})
+
+test("P1-2 · validateMigratePaths：sqlite 不存在 → 抛（不静默建空库假成功）", async () => {
+  const { validateMigratePaths } = await import("./migrate-session-memories")
+  const tmp = fs.mkdtempSync(path.join(process.cwd(), ".runtime", "f285-migrate-env-"))
+  try {
+    assert.throws(
+      () => validateMigratePaths(path.join(tmp, "no-such.sqlite"), tmp),
+      /SQLITE_PATH 不存在/,
+    )
+    assert.throws(
+      () => validateMigratePaths((() => {
+        const p = path.join(tmp, "real.sqlite")
+        fs.writeFileSync(p, "")
+        return p
+      })(), path.join(tmp, "no-such-root")),
+      /WIKI_ROOT 不存在/,
+    )
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+  }
+})

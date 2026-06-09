@@ -39,6 +39,13 @@ export interface CreateSessionSummaryWriterOptions {
   resolveRoomId: (sessionGroupId: string) => string | null
   /** fail-soft 观测（缺省静默）。 */
   warn?: (msg: string) => void
+  /**
+   * receive 德彪 r1 P1-1：落盘成功后通知（server.ts 接 fireWikiCommit → 5s debounce →
+   * reindexWiki，与 updateWiki commit 同链）。直写不产 wiki_events → 不通知则
+   * wiki_entity_index 滞后到下次 boot/别的 commit，search_wiki 读不到新摘要。
+   * 仅写成功才调；回调自身抛错 fail-soft warn（通知失败不毁摘要主链路）。
+   */
+  onWritten?: () => void
 }
 
 /** 目录名白名单清洗：只留 [A-Za-z0-9_-]，防 path 注入；清洗后空 → null。 */
@@ -74,6 +81,14 @@ export function createSessionSummaryWikiWriter(
           "",
         ].join("\n")
         writeFileAtomic(target, content)
+        // P1-1 · 写成功 → 通知 reindex debounce（回调抛错单独 fail-soft，不混入写失败语义）
+        try {
+          opts.onWritten?.()
+        } catch (err) {
+          opts.warn?.(
+            `session-summary-writer: onWritten 通知失败（reindex 可能滞后到下次 boot/commit）: ${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
       } catch (err) {
         opts.warn?.(
           `session-summary-writer: 写 wiki 摘要失败（fail-soft，表写入不受影响）group=${input.sessionGroupId}: ${err instanceof Error ? err.message : String(err)}`,
