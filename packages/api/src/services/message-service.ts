@@ -57,10 +57,11 @@ import type {
 import { detectFBloat } from "../orchestrator/fbloat-detector"
 import { planForcedDispatch } from "../orchestrator/forced-dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
-import { loadTaskMemoryPack } from "../wiki/memory-preflight/memory-preflight"
+import { deriveAuditPatch, loadTaskMemoryPack } from "../wiki/memory-preflight/memory-preflight"
 import { toAssemblePromptHits } from "../wiki/memory-preflight/render-pack"
 import type { WikiSearchProvider } from "../wiki/memory-preflight/types"
 import {
+  type ColdStartPreflightAudit,
   NoopPromptAuditWriter,
   type PromptAuditWriterLike,
   buildColdStartRecallAuditPatch,
@@ -195,7 +196,16 @@ export async function resolveColdStartRecall(
   search: WikiSearchProvider | null,
   ctx: { roomId: string; alias: string; taskSummary: string },
   logger?: { warn(obj: unknown, msg?: string): void },
-): Promise<{ hits: Array<{ score: number; summary: string; path?: string }> } | null> {
+): Promise<{
+  /** ≥floor 注入桶命中（喂 assembleDirectTurnPrompt → [Recall Pack]）；无命中 = null。 */
+  memoryPreflight: { hits: Array<{ score: number; summary: string; path?: string }> } | null
+  /**
+   * receive 德彪 r1 P2-2：完整 preflight audit（deriveAuditPatch 产物）——
+   * inspector-only topScore + 真 budgetExceeded + V15.1 字段，丢了 = 审计失真。
+   * fail-soft crash 时 null（attempted 但无数据）。
+   */
+  audit: ColdStartPreflightAudit | null
+} | null> {
   if (!search) return null
   try {
     const out = await loadTaskMemoryPack(
@@ -207,13 +217,16 @@ export async function resolveColdStartRecall(
       },
       { search, logger },
     )
-    return out.prompt.hits.length > 0 ? { hits: out.prompt.hits } : null
+    return {
+      memoryPreflight: out.prompt.hits.length > 0 ? { hits: out.prompt.hits } : null,
+      audit: deriveAuditPatch(out),
+    }
   } catch (err) {
     logger?.warn(
       { stage: "cold_start_recall", err: err instanceof Error ? err.message : String(err) },
       "cold-start memory_preflight failed (fail-soft, no Recall Pack)",
     )
-    return null
+    return { memoryPreflight: null, audit: null }
   }
 }
 
@@ -1691,7 +1704,7 @@ export class MessageService {
       // （trigger=session_bootstrap + topScore/satisfied），Prompt Inspector 可程序化追溯。
       let coldStartRecallPatch: ReturnType<typeof buildColdStartRecallAuditPatch> | null = null
       if (thread.nativeSessionId === null) {
-        directMemoryPreflight = await resolveColdStartRecall(
+        const coldStart = await resolveColdStartRecall(
           this.memoryPreflightSearch,
           {
             roomId: directTurnRoomId ?? thread.sessionGroupId,
@@ -1700,9 +1713,13 @@ export class MessageService {
           },
           this.log,
         )
+        directMemoryPreflight = coldStart?.memoryPreflight ?? null
+        // receive 德彪 r1 P2-2：完整 preflight audit 透传 —— inspector-only topScore /
+        // 真 budgetExceeded / V15.1 字段不丢（与 deriveAuditPatch 语义一致）。
         coldStartRecallPatch = buildColdStartRecallAuditPatch({
           attempted: this.memoryPreflightSearch !== null,
           hits: directMemoryPreflight?.hits ?? null,
+          audit: coldStart?.audit ?? null,
         })
       } else {
         const res = await resolveDirectTurnRecall(this.adaptiveRecallCoordinator, {

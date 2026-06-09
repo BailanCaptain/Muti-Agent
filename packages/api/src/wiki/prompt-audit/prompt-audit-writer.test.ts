@@ -423,3 +423,41 @@ test("FU-3 · buildColdStartRecallAuditPatch · 未 attempted（search 未注入
   assert.equal(patch.topScore, null)
   assert.equal(patch.recallSatisfied, false)
 })
+
+// ─── F027 #286 receive 德彪 r1 P2-2 · 冷启 audit 吃完整 preflight 数据 ───
+//
+// 德彪实证：resolveColdStartRecall 只透 prompt.hits（≥0.75 注入桶），0.6-0.75
+// inspector-only 命中与真 budgetExceeded 全丢 → topScore=null / budgetExceeded
+// 恒 false，与 deriveAuditPatch（memory-preflight.ts:107 injected[0] ?? inspectorOnly[0]）
+// 语义不一致 = 审计失真。修：builder 接受 deriveAuditPatch 产物优先。
+
+test("FU-3 receive P2-2 · audit patch 注入 → topScore 取 inspector-only + budgetExceeded 真值 + V15.1 字段透传", () => {
+  const patch = buildColdStartRecallAuditPatch({
+    attempted: true,
+    hits: null, // 没有 ≥0.75 注入命中
+    audit: {
+      recallQueries: '[{"query":"q1"}]',
+      recallResults: '[{"query":"q1","hits":[{"path":"wiki/a.md","score":0.65}]}]',
+      recallTotalTokens: 120,
+      recallRejectedReasons: "[]",
+      topScore: 0.65, // inspector-only 命中（0.6-0.75）
+      recallBudgetExceeded: 1,
+    },
+  })
+  assert.equal(patch.topScore, 0.65, "inspector-only 命中不得丢（deriveAuditPatch 同语义）")
+  assert.equal(patch.recallSatisfied, false, "无注入命中 → satisfied=false")
+  assert.equal(patch.recallBudgetExceeded, true, "budgetExceeded 用真值不硬编码 false")
+  assert.equal(patch.recallQueries, '[{"query":"q1"}]', "V15.1 recallQueries 透传")
+  assert.equal(patch.recallTotalTokens, 120)
+  assert.equal(patch.recallTrigger, "session_bootstrap")
+})
+
+test("FU-3 receive P2-2 · audit 缺省（fail-soft crash）→ 退回 hits 派生（向后兼容）", () => {
+  const patch = buildColdStartRecallAuditPatch({
+    attempted: true,
+    hits: [{ score: 0.9 }],
+  })
+  assert.equal(patch.topScore, 0.9)
+  assert.equal(patch.recallSatisfied, true)
+  assert.equal(patch.recallBudgetExceeded, false)
+})

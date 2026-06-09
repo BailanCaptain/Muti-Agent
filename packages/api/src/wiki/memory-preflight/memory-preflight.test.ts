@@ -905,3 +905,53 @@ describe("AC-P1-11 ★ 北极星 baseline (P11.a)：桂芬进 R-205 自动召回
     "(Phase 2 后补) F011 gate confidence ≥ 0.85 + F021 ≥ 0.6 + Inspector ≥ 3 — 需真 LLM rerank confidence + 校准 fixture",
   )
 })
+
+// ─── F027 #286 receive 德彪 r1 P2-1 · 空 embedded records → 跳过 query embedding ───
+//
+// 德彪实证（production-recall-executor-deps.ts:65 + hybrid-search-provider.ts:95）：
+// Phase 4 生产构造传 [] embedded records，但 search() 仍无条件先算 query embedding
+// —— 22MB ONNX 模型加载 + 每 query 推理白跑（候选全走 !rec fallback，结果弃用），
+// 冷启首轮 / coordinator Level 2 平添延迟。修：records 空 → 纯 BM25 快路径不碰 embedding。
+
+describe("FU-2 receive P2-1 · HybridSearchProvider 空 records 快路径", () => {
+  it("embedded records 为空 → generateQueryEmbedding 不被调（纯 BM25 直通）", async () => {
+    let embedCalls = 0
+    const mockBM25: import("./hybrid-search-provider").BM25CandidateProvider = {
+      async search() {
+        return [
+          { path: "wiki/concepts/A.md", score: 0.9, excerpt: "A" },
+          { path: "wiki/concepts/B.md", score: 0.5, excerpt: "B" },
+        ]
+      },
+    }
+    const hybrid = new HybridSearchProvider(mockBM25, [], async () => {
+      embedCalls++
+      return [1, 0, 0]
+    })
+    const hits = await hybrid.search("查询", { topK: 2 })
+    assert.equal(embedCalls, 0, "空 records 时不得加载/调用 embedding（德彪 r1 P2-1）")
+    assert.equal(hits.length, 2)
+    assert.equal(hits[0]!.path, "wiki/concepts/A.md", "BM25 顺序保留")
+  })
+
+  it("有 embedded records → embedding 照常参与（max 融合行为不回归）", async () => {
+    let embedCalls = 0
+    const fixedVec = [1, 0, 0]
+    const mockBM25: import("./hybrid-search-provider").BM25CandidateProvider = {
+      async search() {
+        return [{ path: "wiki/concepts/A.md", score: 0.1, excerpt: "A" }]
+      },
+    }
+    const hybrid = new HybridSearchProvider(
+      mockBM25,
+      [{ path: "wiki/concepts/A.md", body: "A", embedding: fixedVec }],
+      async () => {
+        embedCalls++
+        return fixedVec
+      },
+    )
+    const hits = await hybrid.search("查询", { topK: 1 })
+    assert.equal(embedCalls, 1, "有 records → query embedding 必须算")
+    assert.ok(hits[0]!.score >= 0.99, "max(0.1, cosine 1.0) 融合仍生效")
+  })
+})

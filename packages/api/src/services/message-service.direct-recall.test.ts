@@ -131,17 +131,35 @@ function makeSearchStub(hits: RecallHit[]): WikiSearchProvider {
   return { search: async () => hits }
 }
 
-test("B1-b-2 · 冷启 + 高置信命中 → memoryPreflight 注入（Recall Pack）", async () => {
+test("B1-b-2 · 冷启 + 高置信命中 → memoryPreflight 注入（Recall Pack）+ audit 带 topScore", async () => {
   const search = makeSearchStub([makeHit("wiki/concepts/F027.md", 0.95)])
   const r = await resolveColdStartRecall(search, {
     roomId: "R-201",
     alias: "桂芬",
     taskSummary: "F027 统一记忆架构 自动召回 wiring",
   })
-  assert.ok(r, "高置信命中应产出 memoryPreflight")
-  assert.ok(r!.hits.length >= 1, "至少 1 个高置信 hit 进 prompt.hits")
-  assert.equal(r!.hits[0].path, "wiki/concepts/F027.md")
-  assert.equal(typeof r!.hits[0].summary, "string")
+  assert.ok(r?.memoryPreflight, "高置信命中应产出 memoryPreflight")
+  assert.ok(r!.memoryPreflight!.hits.length >= 1, "至少 1 个高置信 hit 进 prompt.hits")
+  assert.equal(r!.memoryPreflight!.hits[0].path, "wiki/concepts/F027.md")
+  assert.equal(typeof r!.memoryPreflight!.hits[0].summary, "string")
+  // receive 德彪 r1 P2-2：完整 audit 透传（deriveAuditPatch 产物）
+  assert.ok(r!.audit, "成功召回必须带完整 preflight audit")
+  assert.equal(r!.audit!.topScore, 0.95)
+  assert.equal(typeof r!.audit!.recallQueries, "string")
+  assert.equal(typeof r!.audit!.recallTotalTokens, "number")
+})
+
+test("B1-b-2 receive P2-2 · inspector-only 命中（0.6-0.75）→ 不注入但 audit.topScore 不丢", async () => {
+  const search = makeSearchStub([makeHit("wiki/concepts/mid.md", 0.65)])
+  const r = await resolveColdStartRecall(search, {
+    roomId: "R-201",
+    alias: "桂芬",
+    taskSummary: "中置信查询",
+  })
+  assert.ok(r, "search 跑了应返回非 null")
+  assert.equal(r!.memoryPreflight, null, "0.65 < 注入 floor → 不注入 [Recall Pack]")
+  assert.ok(r!.audit, "audit 仍应携带")
+  assert.equal(r!.audit!.topScore, 0.65, "inspector-only 命中的 topScore 不得丢（审计失真）")
 })
 
 test("B1-b-2 · search provider 未注入（null）→ null（无 DI 不召回）", async () => {
@@ -153,7 +171,10 @@ test("B1-b-2 · search provider 未注入（null）→ null（无 DI 不召回�
   assert.equal(r, null)
 })
 
-test("B1-b-2 · search backend 整体抛错 → fail-soft 返 null（不阻塞冷启 turn）", async () => {
+test("B1-b-2 · search backend 整体抛错 → fail-soft（不阻塞冷启 turn，audit 记空召回）", async () => {
+  // 注：backend 抛错被 loadTaskMemoryPack **内部** per-query fail-soft 吃掉（返空 hits 不上抛），
+  // 所以这里 audit 是「跑了但全空」的诚实记录（topScore=null + results 空），非 null。
+  // resolveColdStartRecall 外层 catch 只兜 loadTaskMemoryPack 自身的意外崩溃。
   const search: WikiSearchProvider = {
     search: async () => {
       throw new Error("simulated search backend crash")
@@ -165,6 +186,9 @@ test("B1-b-2 · search backend 整体抛错 → fail-soft 返 null（不阻塞�
     { roomId: "R-201", alias: "桂芬", taskSummary: "x" },
     { warn: () => { warned = true } },
   )
-  assert.equal(r, null, "backend 挂掉 → fail-soft null")
-  assert.equal(warned, true, "fail-soft 应 warn 一次（不静默退化）")
+  assert.ok(r, "fail-soft 返回结构体（attempted）")
+  assert.equal(r!.memoryPreflight, null, "backend 挂掉 → 无注入")
+  assert.ok(r!.audit, "per-query fail-soft → audit 记空召回（非 null）")
+  assert.equal(r!.audit!.topScore, null, "无任何命中 → topScore=null")
+  assert.equal(warned, true, "fail-soft 应 warn（不静默退化）")
 })

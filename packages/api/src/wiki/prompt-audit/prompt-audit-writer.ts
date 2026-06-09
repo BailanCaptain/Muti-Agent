@@ -209,15 +209,37 @@ function maxScore(hits: ReadonlyArray<RecallHit>): number | null {
  *   - recallPath 恒 null：轻量 Pack 不是 coordinator 5-level executor，不冒充 path
  *   - 未 attempted → 与 buildRecallAuditPatch({}) 全默认一致（不破坏现状语义）
  */
+/** deriveAuditPatch（memory-preflight.ts）产物形状 —— 冷启完整 preflight 审计数据。 */
+export interface ColdStartPreflightAudit {
+  recallQueries: string
+  recallResults: string
+  recallTotalTokens: number
+  recallRejectedReasons: string
+  topScore: number | null
+  recallBudgetExceeded: number
+}
+
 export function buildColdStartRecallAuditPatch(args: {
   attempted: boolean
   hits: ReadonlyArray<{ score: number }> | null
-}): ReturnType<typeof buildRecallAuditPatch> {
+  /**
+   * receive 德彪 r1 P2-2：完整 preflight audit（loadTaskMemoryPack 输出过 deriveAuditPatch）。
+   * 不传（fail-soft crash / 旧 caller）退回 hits 派生。传入时：
+   *   - topScore 用 deriveAuditPatch 语义（injected[0] ?? inspectorOnly[0]）——
+   *     0.6-0.75 inspector-only 命中不丢；
+   *   - recallBudgetExceeded 用真值（不硬编码 false）；
+   *   - V15.1 4 字段（queries/results/totalTokens/rejectedReasons）一并透传落 audit 行。
+   */
+  audit?: ColdStartPreflightAudit | null
+}): ReturnType<typeof buildRecallAuditPatch> &
+  // topScore 已在 base（number|null 同型）；recallBudgetExceeded 排除 —— audit 侧是 0/1
+  // number（deriveAuditPatch SQLite 习惯），patch 侧统一 boolean（writer 落库再转）。
+  Partial<Omit<ColdStartPreflightAudit, "topScore" | "recallBudgetExceeded">> {
   if (!args.attempted) {
     return buildRecallAuditPatch({ output: undefined })
   }
   const hits = args.hits ?? []
-  return {
+  const base = {
     recallRequired: true,
     recallTrigger: "session_bootstrap",
     recallPath: null,
@@ -227,6 +249,16 @@ export function buildColdStartRecallAuditPatch(args: {
     recallTotalMs: null,
     recallCritiqueCalls: null,
     recallBudgetExceeded: false,
+  } satisfies ReturnType<typeof buildRecallAuditPatch>
+  if (!args.audit) return base
+  return {
+    ...base,
+    topScore: args.audit.topScore,
+    recallBudgetExceeded: args.audit.recallBudgetExceeded === 1,
+    recallQueries: args.audit.recallQueries,
+    recallResults: args.audit.recallResults,
+    recallTotalTokens: args.audit.recallTotalTokens,
+    recallRejectedReasons: args.audit.recallRejectedReasons,
   }
 }
 
