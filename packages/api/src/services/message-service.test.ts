@@ -1033,3 +1033,167 @@ test("G1 r2 P3: thread 不存在 → 入口 broadcast 不触发（return null �
   const wakeTrigger = broadcastEvents.find((e) => e.type === "wake.trigger")
   assert.equal(wakeTrigger, undefined, "thread 不存在早 return → 不该 broadcast wake.trigger")
 })
+
+// ─── F027 P4-A1 · CapabilityRegistry DI + getSelfCapabilityDigest ─────────────
+// 真相源: V16.5-final.md §13 line 1449-1476 + assemblePrompt.capabilityDigest
+// 集成: server.ts boot 加载 wiki/agents/agent-capabilities.yaml → setCapabilityRegistry
+//       direct turn / A2A caller 拿 receiver alias 自己的 capability_digest_for_self
+test("F027 P4-A1: registry 未注入 → getSelfCapabilityDigest 返 null（degrade Phase 1-3 行为）", () => {
+  const { messageService } = createMessageService()
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const digest = (messageService as any).getSelfCapabilityDigest("黄仁勋")
+  assert.equal(digest, null, "registry 未注入时不传 capabilityDigest")
+})
+
+test("F027 P4-A1: registry 已注入 + alias 在 registry → 返 capability_digest_for_self", () => {
+  const { messageService } = createMessageService()
+  messageService.setCapabilityRegistry({
+    agents: new Map([
+      ["黄仁勋", { capability_digest_for_self: "黄仁勋·主架构师·digest" }],
+      ["范德彪", { capability_digest_for_self: "范德彪·reviewer·digest" }],
+    ]),
+  })
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const huang = (messageService as any).getSelfCapabilityDigest("黄仁勋")
+  assert.equal(huang, "黄仁勋·主架构师·digest")
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const fan = (messageService as any).getSelfCapabilityDigest("范德彪")
+  assert.equal(fan, "范德彪·reviewer·digest")
+})
+
+test("F027 P4-A1: registry 已注入但 alias 不在 registry → 返 null（caller 不传 capabilityDigest）", () => {
+  const { messageService } = createMessageService()
+  messageService.setCapabilityRegistry({
+    agents: new Map([["黄仁勋", { capability_digest_for_self: "x" }]]),
+  })
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const digest = (messageService as any).getSelfCapabilityDigest("陌生 alias")
+  assert.equal(digest, null)
+})
+
+test("F027 P4-A1: alias 为 null / 空串 → 返 null（防御 thread.alias 异常）", () => {
+  const { messageService } = createMessageService()
+  messageService.setCapabilityRegistry({
+    agents: new Map([["黄仁勋", { capability_digest_for_self: "x" }]]),
+  })
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  assert.equal((messageService as any).getSelfCapabilityDigest(null), null)
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  assert.equal((messageService as any).getSelfCapabilityDigest(""), null)
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  assert.equal((messageService as any).getSelfCapabilityDigest(undefined), null)
+})
+
+test("F027 P4-A1: setCapabilityRegistry(null) → getSelfCapabilityDigest 立刻返 null（unregister）", () => {
+  const { messageService } = createMessageService()
+  messageService.setCapabilityRegistry({
+    agents: new Map([["黄仁勋", { capability_digest_for_self: "x" }]]),
+  })
+  messageService.setCapabilityRegistry(null)
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  assert.equal((messageService as any).getSelfCapabilityDigest("黄仁勋"), null)
+})
+
+// ─── F027 P4-A2 · Handbook H2 切片 DI + getHandbookSlices ───────────────────
+// 真相源: V16.5-final.md §27.4 + §4 line 365 + handbook-slicer.ts
+// 集成: server.ts boot 调 loadHandbookSlices(wikiRoot) → setHandbookSlices；
+//       direct turn caller 透传给 assemblePrompt.handbookSlices；
+//       assembler 内 scenario==='wake_up' 且 agentActions 非空才注入
+test("F027 P4-A2: handbookSlices 未注入 → getHandbookSlices 返 null", () => {
+  const { messageService } = createMessageService()
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  assert.equal((messageService as any).getHandbookSlices(), null)
+})
+
+test("F027 P4-A2: setHandbookSlices 注入后 → getHandbookSlices 返同对象", () => {
+  const { messageService } = createMessageService()
+  const slices = { agentActions: "# Agent 动作手册\n- 看 SOP\n- 找证据\n" }
+  messageService.setHandbookSlices(slices)
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const got = (messageService as any).getHandbookSlices()
+  assert.equal(got, slices, "返回的应该是 setter 注入的同对象")
+  assert.equal(got.agentActions, "# Agent 动作手册\n- 看 SOP\n- 找证据\n")
+})
+
+test("F027 P4-A2: setHandbookSlices(null) → unregister（caller 不再传 handbook）", () => {
+  const { messageService } = createMessageService()
+  messageService.setHandbookSlices({ agentActions: "x" })
+  messageService.setHandbookSlices(null)
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  assert.equal((messageService as any).getHandbookSlices(), null)
+})
+
+// ─── F027 P4-A2 fallback j2 P1 修：仅 first wake-up 注入 handbook ──────────
+// V16.5 §4 line 364-365 严契约：handbook 仅 first wake-up 注入
+// 判定 (零新状态)：thread.nativeSessionId === null = first wake-up
+test("F027 P4-A2 fallback j2 P1: thread.nativeSessionId === null (first wake-up) → 返 handbook slices", () => {
+  const { messageService } = createMessageService()
+  messageService.setHandbookSlices({ agentActions: "# Agent 动作\n- 看 SOP" })
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const result = (messageService as any).maybeGetHandbookSlicesForFirstWakeUp({
+    nativeSessionId: null,
+  })
+  assert.ok(result, "first wake-up 应返非空 handbook slices")
+  assert.equal(result.agentActions, "# Agent 动作\n- 看 SOP")
+})
+
+test("F027 P4-A2 fallback j2 P1: thread.nativeSessionId !== null (后续 turn) → 返 null（V16.5 §4 line 364）", () => {
+  const { messageService } = createMessageService()
+  messageService.setHandbookSlices({ agentActions: "# Agent 动作\n- 看 SOP" })
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const result = (messageService as any).maybeGetHandbookSlicesForFirstWakeUp({
+    nativeSessionId: "sess-abc123",
+  })
+  assert.equal(
+    result,
+    null,
+    "non-first wake-up 必返 null — 防 token regression + reference-only 区段污染",
+  )
+})
+
+test("F027 P4-A2 fallback j2 P1: handbook 未 setHandbookSlices 注入 + nativeSessionId=null → 返 null（无可注的 slices）", () => {
+  const { messageService } = createMessageService()
+  // 不调 setHandbookSlices
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const result = (messageService as any).maybeGetHandbookSlicesForFirstWakeUp({
+    nativeSessionId: null,
+  })
+  assert.equal(result, null, "first wake-up 但 cache 空 → 仍返 null（getHandbookSlices() 返 null）")
+})
+
+// ─── F027 P4-A3 · buildA2AHandoffContext helper ─────────────────────────────
+// 真相源: V16.5-final.md §4 line 422-431 + §13 中性改写
+// 集成: A2A caller 用 helper 拼 handoffContext，guardian / 空值统一兜底；
+//       assembler 内 sanitize + scenario 判断后渲染
+//       [Collaboration Contract — Reference Only] 区段
+test("F027 P4-A3: buildA2AHandoffContext 正常路径 → 返 {receiverAlias, taskSummary}", () => {
+  const { messageService } = createMessageService()
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const ctx = (messageService as any).buildA2AHandoffContext({
+    receiverAlias: "桂芬",
+    taskSummary: "改 F018 schema",
+    isGuardianMode: false,
+  })
+  assert.deepEqual(ctx, { receiverAlias: "桂芬", taskSummary: "改 F018 schema" })
+})
+
+test("F027 P4-A3: guardian 模式 → 返 null（零上下文契约不许注 collaboration contract）", () => {
+  const { messageService } = createMessageService()
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const ctx = (messageService as any).buildA2AHandoffContext({
+    receiverAlias: "桂芬",
+    taskSummary: "改 F018 schema",
+    isGuardianMode: true,
+  })
+  assert.equal(ctx, null)
+})
+
+test("F027 P4-A3: receiverAlias 空 / taskSummary 空 → 返 null（caller 不传 handoffContext）", () => {
+  const { messageService } = createMessageService()
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const svc = messageService as any
+  assert.equal(svc.buildA2AHandoffContext({ receiverAlias: "", taskSummary: "x", isGuardianMode: false }), null)
+  assert.equal(svc.buildA2AHandoffContext({ receiverAlias: "桂芬", taskSummary: "", isGuardianMode: false }), null)
+  assert.equal(svc.buildA2AHandoffContext({ receiverAlias: null, taskSummary: "x", isGuardianMode: false }), null)
+  assert.equal(svc.buildA2AHandoffContext({ receiverAlias: "桂芬", taskSummary: undefined, isGuardianMode: false }), null)
+})

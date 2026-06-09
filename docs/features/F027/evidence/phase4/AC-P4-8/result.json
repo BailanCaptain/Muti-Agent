@@ -1,0 +1,27 @@
+{
+  "ac_id": "AC-P4-8",
+  "title": "AdaptiveRecallCoordinator production boot (v2 拆 5 子项 + Haiku fallback + Broadcaster)",
+  "phase": "phase4",
+  "verdict": "CONDITIONAL_PASS",
+  "double_pass": {
+    "judge1_verdict": "CONDITIONAL_PASS",
+    "judge2_verdict": "CONDITIONAL_PASS",
+    "arbitration_verdict": null,
+    "consensus": true
+  },
+  "evidence_paths": {
+    "screenshots": [],
+    "logs": [],
+    "code_anchors": [
+      "packages/api/src/wiki/adaptive-recall/executor.ts",
+      "packages/api/src/wiki/adaptive-recall/level5-escalate-sink.ts:170 (broadcaster 引用)",
+      "packages/api/src/wiki/adaptive-recall/realtime-audit-broadcaster.ts (createRealtimeAuditBroadcaster 新)",
+      "packages/api/src/runtime/runner-with-fallback.ts:62 (Sonnet + Haiku fallback 新)",
+      "packages/api/src/orchestrator/production-recall-executor-deps.ts:80 (critique runner wrap fallback)",
+      "packages/shared/src/realtime.ts:523 (recall.escalated event 新)",
+      "packages/api/src/server.ts:298 (ProductionLevel5Sink 注入 auditBroadcaster + boot log)",
+      "commits: codex j2 r1 FAIL → 7603f35 Red→Green; codex j2 r2 CONDITIONAL_PASS consensus"
+    ]
+  },
+  "inconclusive_reason": "consensus CONDITIONAL_PASS — Haiku fallback + NotificationBroadcaster 接入 + 全单测绿. 待 walkthrough 场景 1 step 1.5 真房间 recall 触发 + boot log 真采 (\"broadcaster=on\") + DB prompt_audit 9 字段 query 收齐升 PASS"
+}

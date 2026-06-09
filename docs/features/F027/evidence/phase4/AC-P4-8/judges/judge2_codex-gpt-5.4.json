@@ -1,0 +1,40 @@
+{
+  "judge_id": "codex-gpt-5.4",
+  "ac_id": "AC-P4-8",
+  "verdict": "CONDITIONAL_PASS",
+  "reasoning": "Judge2 recheck after commit 7603f35. First-round verdict was FAIL only on subitems (a) Haiku fallback and (e2) NotificationBroadcast; production boot, Level2/3/4, wiki_events persistence, and prompt_audit projection were already accepted. Spec requires Sonnet 4.6 critique plus Haiku 4.5 fallback that does not silently count as PASS at docs/plans/F027-phase4-implementation-plan.md:50-51 and :238-242, and NotificationBroadcast to R-001 at :57 and :248; O1 also locks Sonnet + Haiku fallback at :276, and risk text requires fallback paths be marked BLOCKED at :303. The 7603f35 hunk closes both missing subitems. createRunnerWithFallback defines quota/rate/timeout fallback patterns at packages/api/src/runtime/runner-with-fallback.ts:41-47, runs fallback and marks success as error='fallback-haiku-success' at :62-90, and exposes didFallback at :96-98; production deps import createHaikuRunner/createRunnerWithFallback and wrap critiqueRunner by default at packages/api/src/orchestrator/production-recall-executor-deps.ts:9-10 and :74-85. NotificationBroadcast is wired by adding RealtimeServerEvent type 'recall.escalated' at packages/shared/src/realtime.ts:523-525, adapting AuditBroadcaster to the realtime broadcaster at packages/api/src/wiki/adaptive-recall/realtime-audit-broadcaster.ts:31-38, and injecting it into ProductionLevel5Sink in server boot at packages/api/src/server.ts:291-302 with boot log broadcaster=on at :324. Tests actually rerun in this recheck: targeted node suites 37/37 pass, including runner fallback tests at packages/api/src/runtime/runner-with-fallback.test.ts:35-189, production deps fallback wiring at packages/api/src/orchestrator/production-recall-executor-deps.test.ts:73-107, and realtime broadcaster tests at packages/api/src/wiki/adaptive-recall/realtime-audit-broadcaster.test.ts:29-108. Gap status: the original Haiku fallback and NotificationBroadcast gaps are closed; remaining condition is production boot/walkthrough evidence for the real R-001 recall trigger and boot log, which this recheck did not run by task boundary.",
+  "cited_evidence": [
+    "docs/plans/F027-phase4-implementation-plan.md:50",
+    "docs/plans/F027-phase4-implementation-plan.md:51",
+    "docs/plans/F027-phase4-implementation-plan.md:57",
+    "docs/plans/F027-phase4-implementation-plan.md:238",
+    "docs/plans/F027-phase4-implementation-plan.md:242",
+    "docs/plans/F027-phase4-implementation-plan.md:248",
+    "packages/api/src/runtime/runner-with-fallback.ts:41",
+    "packages/api/src/runtime/runner-with-fallback.ts:62",
+    "packages/api/src/runtime/runner-with-fallback.ts:80",
+    "packages/api/src/runtime/runner-with-fallback.ts:96",
+    "packages/api/src/orchestrator/production-recall-executor-deps.ts:74",
+    "packages/api/src/orchestrator/production-recall-executor-deps.ts:80",
+    "packages/shared/src/realtime.ts:523",
+    "packages/api/src/wiki/adaptive-recall/realtime-audit-broadcaster.ts:31",
+    "packages/api/src/server.ts:291",
+    "packages/api/src/server.ts:298",
+    "packages/api/src/server.ts:324",
+    "packages/api/src/runtime/runner-with-fallback.test.ts:35",
+    "packages/api/src/orchestrator/production-recall-executor-deps.test.ts:73",
+    "packages/api/src/wiki/adaptive-recall/realtime-audit-broadcaster.test.ts:29"
+  ],
+  "spec_gate": "PASS",
+  "mechanism_gate": "PASS",
+  "feature_gate": "PASS",
+  "p1_findings": [],
+  "p2_findings": [],
+  "p3_findings": [
+    {
+      "file": "docs/plans/F027-phase4-implementation-plan.md:428",
+      "issue": "Boot log and real recall-trigger walkthrough evidence were not collected in this recheck.",
+      "suggestion": "During final scenario 1.5, capture the enabled=true levels=[2,3,4,5] broadcaster=on boot log plus prompt_audit/Inspector recall_path evidence."
+    }
+  ]
+}

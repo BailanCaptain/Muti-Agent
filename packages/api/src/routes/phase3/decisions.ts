@@ -116,14 +116,43 @@ export class DecisionService {
       }
     }
 
+    // F027 final-vision P1-1 P2 修：extraSourceMessageIds = body.evidence 里的 message refs
+    // (revoke/supersede 内部会自动加 `decision:<oldId>` 在前；这里只挑 message 类型)
+    const extraSourceMessageIds = body.evidence
+      .filter((e) => e.kind === "message")
+      .map((e) => `msg:${e.ref}`)
+
+    if (body.kind === "supersede") {
+      // F027 final-vision P1-1 P1 修：supersede 走 ledger.supersede (新 commit 行 + 旧行 superseded_by)
+      // contracts 已保证 supersedesDecisionId 非空
+      if (supersedesId === null) {
+        throw new Error("supersede branch: supersedesDecisionId required (contracts bug)")
+      }
+      this.assertDecisionInRoom(supersedesId, roomId)
+      const newId = this.ledger.supersede({
+        oldDecisionId: supersedesId,
+        reason: body.content,
+        decidedBy: body.callerAlias,
+        fencingToken,
+        extraSourceMessageIds,
+      })
+      return {
+        decisionId: String(newId),
+        ledgerCursor: this.queryLedgerCursor(roomId),
+        appendedAt: this.clock().toISOString(),
+        action: "supersede",
+      }
+    }
+
     if (supersedesId !== null) {
-      // commit/reject + supersedesDecisionId → revoke 旧行 + 写新行
+      // commit/reject + supersedesDecisionId → revoke 旧行 + 写新行 (Day 6 backward compat)
       this.assertDecisionInRoom(supersedesId, roomId)
       const newId = this.ledger.revoke({
         oldDecisionId: supersedesId,
         reason: body.content,
         decidedBy: body.callerAlias,
         fencingToken,
+        extraSourceMessageIds,
       })
       return {
         decisionId: String(newId),

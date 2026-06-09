@@ -6,16 +6,17 @@ import { encodeMessage, getTools, handleToolCall, parseFrame } from "./server.js
 // getTools tests
 // ---------------------------------------------------------------------------
 
-test("getTools returns 17 tools (F027 P14.b +query_messages)", () => {
+test("getTools returns 15 tools (F027 B1-a 退役旧 3 session_memories 工具)", () => {
+  // F027 B1-a（小孙 2026-06-06 拍方案一）：get_memory / get_room_summary / search_room_memories
+  // 三个旧 session_memories 工具从广播列表移除（agent 不再发现/使用，收敛到 4 件套）。
+  // session_memories 表 + 自动注入（POLICY_FULL）+ dispatch/HTTP 后端不动（legacy 直呼仍优雅可达）。
   const tools = getTools()
-  assert.equal(tools.length, 17, `Expected 17 tools, got ${tools.length}`)
+  assert.equal(tools.length, 15, `Expected 15 tools, got ${tools.length}`)
   const names = tools.map((t) => t.name).sort()
   assert.deepEqual(names, [
     "acquire_wiki_lease",
     "create_task",
-    "get_memory",
     "get_room_context",
-    "get_room_summary",
     "get_task_status",
     "post_message",
     "query_messages",
@@ -23,21 +24,25 @@ test("getTools returns 17 tools (F027 P14.b +query_messages)", () => {
     "recall_similar_context",
     "request_decision",
     "request_permission",
-    "search_room_memories",
+    "search_wiki",
     "take_screenshot",
     "trigger_mention",
     "update_wiki",
     "update_workflow_sop",
   ])
+  // 退役的 3 个不在广播列表
+  assert.ok(!names.includes("get_memory"), "get_memory 已退役（不广播）")
+  assert.ok(!names.includes("get_room_summary"), "get_room_summary 已退役（不广播）")
+  assert.ok(!names.includes("search_room_memories"), "search_room_memories 已退役（不广播）")
 })
 
 test("query_messages tool has expected schema (F027 P14.b)", () => {
   const tools = getTools()
   const tool = tools.find((t) => t.name === "query_messages")
   assert.ok(tool)
-  const schema = tool!.inputSchema as {
+  const schema = tool!.inputSchema as unknown as {
     type: string
-    properties: Record<string, { type: string }>
+    properties: Record<string, { type: string | string[] }>
     required?: string[]
   }
   assert.equal(schema.type, "object")
@@ -58,9 +63,9 @@ test("recall_similar_context tool has expected schema (F018 P5 AC6.3)", () => {
   const tools = getTools()
   const tool = tools.find((t) => t.name === "recall_similar_context")
   assert.ok(tool)
-  const schema = tool!.inputSchema as {
+  const schema = tool!.inputSchema as unknown as {
     type: string
-    properties: Record<string, { type: string }>
+    properties: Record<string, { type: string | string[] }>
     required?: string[]
   }
   assert.equal(schema.type, "object")
@@ -216,14 +221,25 @@ test("handleToolCall dispatches trigger_mention with correct args", async () => 
   )
 })
 
-test("handleToolCall dispatches get_memory", async () => {
-  await assert.rejects(
-    () => handleToolCall("get_memory", { keyword: "test" }),
-    (err: Error) => {
-      assert.ok(err.message.includes("ECONNREFUSED"), `Expected ECONNREFUSED, got: ${err.message}`)
-      return true
-    },
-  )
+// F027 #285 S3 · 旧 3 记忆工具后端真退役：dispatch 支已删，落 default「unknown tool」。
+// 职能接管：rooms/<roomId>/session-summary.md（S1 双写 + S2 存量导出）经 read_wiki /
+// search_wiki 覆盖。session_memories 表数据不动（Iron Law，DROP 留小孙手动）。
+test("F027 #285 S3 · get_memory 已退役 → unknown tool（不再打后端）", async () => {
+  const result = await handleToolCall("get_memory", { keyword: "test" })
+  assert.equal(result.isError, true)
+  assert.ok(result.content[0]?.text.includes("unknown tool"))
+})
+
+test("F027 #285 S3 · get_room_summary 已退役 → unknown tool", async () => {
+  const result = await handleToolCall("get_room_summary", {})
+  assert.equal(result.isError, true)
+  assert.ok(result.content[0]?.text.includes("unknown tool"))
+})
+
+test("F027 #285 S3 · search_room_memories 已退役 → unknown tool", async () => {
+  const result = await handleToolCall("search_room_memories", { keyword: "architecture" })
+  assert.equal(result.isError, true)
+  assert.ok(result.content[0]?.text.includes("unknown tool"))
 })
 
 test("handleToolCall dispatches get_room_context", async () => {
@@ -236,39 +252,6 @@ test("handleToolCall dispatches get_room_context", async () => {
   )
 })
 
-test("handleToolCall dispatches get_room_summary", async () => {
-  await assert.rejects(
-    () => handleToolCall("get_room_summary", {}),
-    (err: Error) => {
-      assert.ok(err.message.includes("ECONNREFUSED"), `Expected ECONNREFUSED, got: ${err.message}`)
-      return true
-    },
-  )
-})
-
-test("handleToolCall dispatches search_room_memories", async () => {
-  await assert.rejects(
-    () => handleToolCall("search_room_memories", { keyword: "architecture" }),
-    (err: Error) => {
-      assert.ok(err.message.includes("ECONNREFUSED"), `Expected ECONNREFUSED, got: ${err.message}`)
-      return true
-    },
-  )
-})
-
-test("handleToolCall search_room_memories rejects empty keyword", async () => {
-  const result = await handleToolCall("search_room_memories", { keyword: "" })
-  assert.ok(result, "Should return a result")
-  assert.equal(result.isError, true)
-  assert.ok(result.content[0]?.text.includes("keyword is required"))
-})
-
-test("handleToolCall search_room_memories rejects missing keyword", async () => {
-  const result = await handleToolCall("search_room_memories", {})
-  assert.ok(result, "Should return a result")
-  assert.equal(result.isError, true)
-  assert.ok(result.content[0]?.text.includes("keyword is required"))
-})
 
 test("handleToolCall dispatches take_screenshot", async () => {
   await assert.rejects(

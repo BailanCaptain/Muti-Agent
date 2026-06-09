@@ -9,7 +9,7 @@
  *   - §3 取最新 commit 决策
  *   - §4 含 B024 24h 防御 SQL 过滤
  *   - §5 [decision_id, msg_id] 证据链
- *   - §6 reject + tombstone 类
+ *   - §6 严格只 tombstone=1（AC-P2-7 拍 A）；active reject 归 §5 不进 §6
  *   - decisionsSummaryHash + decisionsSummaryTokens 给 drift 用
  *   - coverage warning footer
  */
@@ -84,7 +84,11 @@ describe("renderViewfinder · 6 段 happy path", () => {
     const r = renderViewfinder(defaultInput())
     assert.match(r.markdown, /^---\n/, "frontmatter 起始")
     assert.match(r.markdown, /viewfinder_id: vf_R-201_2026-05-13-14-30/)
-    assert.match(r.markdown, /generated_by: RoomCompiler \(rule-based template\)/)
+    // F027 v3 G3 修: 字段值从 "RoomCompiler (rule-based template)" 改为
+    // "rule-based-template" + 注释 (V16.5 chap 11 · 设计层固定单路径)
+    assert.match(r.markdown, /generated_by: rule-based-template/)
+    assert.match(r.markdown, /V16\.5 chap 11/)
+    assert.match(r.markdown, /不调 LLM/)
     assert.match(r.markdown, /# R-201 Viewfinder/)
     assert.match(r.markdown, /## 1\. 当前主题/)
     assert.match(r.markdown, /## 2\. 当前进度/)
@@ -92,6 +96,41 @@ describe("renderViewfinder · 6 段 happy path", () => {
     assert.match(r.markdown, /## 4\. 等谁 \/ blocker/)
     assert.match(r.markdown, /## 5\. 关键决策/)
     assert.match(r.markdown, /## 6\. 不要再做/)
+  })
+
+  // AC-P2-9（小孙 2026-05-31 拍 A）：§1 优先 feature/bug 文档 H1 标题（带前缀），零 LLM
+  it("§1 featureTopic 优先于 spec 决策（feature/bug H1 标题）", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        featureTopic: "F027 — 统一记忆架构（V16.5 整套）",
+        tombstoneDecisions: [
+          makeDecision({ id: 1, type: "spec", content: "某 tombstone spec", tombstone: true }),
+        ],
+        activeDecisions: [makeDecision({ id: 2, type: "spec", content: "某 active spec" })],
+      }),
+    )
+    const section1 = r.markdown.split("## 1. 当前主题")[1]?.split("##")[0] ?? ""
+    assert.match(section1, /F027 — 统一记忆架构/, "§1 取 feature H1 标题")
+    assert.doesNotMatch(section1, /tombstone spec|active spec/, "featureTopic 命中 → 不退决策")
+  })
+
+  it("§1 bug 房：featureTopic = bug H1（带 B-id 前缀）", () => {
+    const r = renderViewfinder(
+      defaultInput({ featureTopic: "B024 · a2a sweep 漏扫僵尸 call（取景器 §4 卡死源）" }),
+    )
+    const section1 = r.markdown.split("## 1. 当前主题")[1]?.split("##")[0] ?? ""
+    assert.match(section1, /B024 · a2a sweep 漏扫僵尸 call/, "§1 取 bug H1 标题")
+  })
+
+  it("§1 无 featureTopic（纯闲聊房）→ 退 spec 决策 / 房间标题 fallback", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        featureTopic: null,
+        activeDecisions: [makeDecision({ id: 9, type: "spec", content: "闲聊里定的 spec" })],
+      }),
+    )
+    const section1 = r.markdown.split("## 1. 当前主题")[1]?.split("##")[0] ?? ""
+    assert.match(section1, /闲聊里定的 spec/, "无 featureTopic → 退 active spec")
   })
 
   it("§1 优先级：tombstone spec > active spec > session_groups.title", () => {
@@ -169,28 +208,153 @@ describe("renderViewfinder · 6 段 happy path", () => {
     assert.doesNotMatch(section2, /commit 5/, "第 6 条之后不显示")
   })
 
-  it("§3 取最新 commit 决策（type=commit 优先）", () => {
+  // §3 站会式（小孙 2026-05-31 拍 A）：第一条未勾 AC；commit 不进 §3
+  it("§3 取 featureProgress 第一条未勾 AC（commit 不进 §3）", () => {
     const r = renderViewfinder(
       defaultInput({
         activeDecisions: [
-          makeDecision({ id: 10, type: "spec", content: "立项 X", decidedAt: "t10" }),
+          makeDecision({ id: 11, type: "commit", content: "进 merger-gate", decidedAt: "t11" }),
+        ],
+        featureProgress: {
+          featureId: "F027",
+          total: 39,
+          done: 22,
+          pct: 56,
+          firstUndoneAC: { id: "AC-P3-1", title: "StatusPanel 拖宽" },
+        },
+      }),
+    )
+    const section3 = r.markdown.split("## 3. 下一步")[1]?.split("##")[0] ?? ""
+    assert.match(section3, /AC-P3-1/)
+    assert.match(section3, /StatusPanel 拖宽/)
+    assert.doesNotMatch(section3, /进 merger-gate/, "commit 不进 §3")
+  })
+
+  it("§3 featureProgress 全勾完 → ✅ 全部 N 条已勾", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        featureProgress: { featureId: "F027", total: 39, done: 39, pct: 100, firstUndoneAC: null },
+      }),
+    )
+    const section3 = r.markdown.split("## 3. 下一步")[1]?.split("##")[0] ?? ""
+    assert.match(section3, /全部 39 条 AC 已勾完/)
+  })
+
+  it("§3 无 featureProgress → 退最新 spec/pivot 方向（不取 commit）", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        activeDecisions: [
+          makeDecision({ id: 11, type: "commit", content: "进 merger-gate", decidedAt: "t11" }),
+          makeDecision({ id: 9, type: "spec", content: "立项 Y", decidedAt: "t9" }),
+        ],
+      }),
+    )
+    const section3 = r.markdown.split("## 3. 下一步")[1]?.split("##")[0] ?? ""
+    assert.match(section3, /立项 Y/, "退最新 spec 方向")
+    assert.doesNotMatch(section3, /进 merger-gate/, "仍不取 commit")
+  })
+
+  it("§3 无 featureProgress 无方向决策 → 待定", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        activeDecisions: [
           makeDecision({ id: 11, type: "commit", content: "进 merger-gate", decidedAt: "t11" }),
         ],
       }),
     )
-    assert.match(r.markdown, /进 merger-gate/)
-    assert.match(r.markdown, /D-11/)
+    const section3 = r.markdown.split("## 3. 下一步")[1]?.split("##")[0] ?? ""
+    assert.match(section3, /下一步待定/)
   })
 
-  it("§3 无 commit 类 → fallback 最新任意 active 决策", () => {
+  // §2 站会式进度行（小孙 2026-05-31 拍 A）：% 只数 checkbox，commit 当 in-flight + 漂移
+  it("§2 站会进度行：done/total (pct%)", () => {
     const r = renderViewfinder(
       defaultInput({
-        activeDecisions: [makeDecision({ id: 9, type: "spec", content: "立项 Y" })],
+        featureProgress: {
+          featureId: "F027",
+          total: 39,
+          done: 22,
+          pct: 56,
+          firstUndoneAC: { id: "AC-P3-1", title: "StatusPanel 拖宽" },
+        },
       }),
     )
-    // §3 应包含立项 Y（fallback）
-    const section3 = r.markdown.split("## 3. 下一步")[1]?.split("##")[0] ?? ""
-    assert.match(section3, /立项 Y/)
+    const section2 = r.markdown.split("## 2. 当前进度")[1]?.split("##")[0] ?? ""
+    assert.match(section2, /22\/39 AC \(56%\)/)
+  })
+
+  it("§2 in-flight：最新 commit AC tag → 正在做（不计入 %）", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        featureProgress: {
+          featureId: "F027",
+          total: 39,
+          done: 22,
+          pct: 56,
+          firstUndoneAC: { id: "AC-P3-1", title: "StatusPanel 拖宽" },
+        },
+        phaseInfo: {
+          featureId: "F027",
+          phase: 3,
+          acs: ["AC-P3-1"],
+          commitShortSha: "c9ce5a1",
+          commitSubject: "feat(F027): AC-P3-1 resize handle",
+        },
+      }),
+    )
+    const section2 = r.markdown.split("## 2. 当前进度")[1]?.split("##")[0] ?? ""
+    assert.match(section2, /正在做: AC-P3-1/)
+    assert.match(section2, /c9ce5a1/)
+  })
+
+  it("§2 漂移交叉验证：最新 commit AC ≠ 清单第一条未勾", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        featureProgress: {
+          featureId: "F027",
+          total: 39,
+          done: 22,
+          pct: 56,
+          firstUndoneAC: { id: "AC-P3-2", title: "5-tab 容器" },
+        },
+        phaseInfo: {
+          featureId: "F027",
+          phase: 3,
+          acs: ["AC-P3-5"],
+          commitShortSha: "abc1234",
+          commitSubject: "feat(F027): AC-P3-5",
+        },
+      }),
+    )
+    const section2 = r.markdown.split("## 2. 当前进度")[1]?.split("##")[0] ?? ""
+    assert.match(section2, /漂移/)
+    assert.match(section2, /AC-P3-5/)
+    assert.match(section2, /AC-P3-2/)
+  })
+
+  // codex P3-3 re-review 修：多 AC commit 回归 — 第一条未勾在 acs 集合内 → 不报漂移 + 展示全部 AC
+  it("§2 多 AC commit：firstUndoneAC 在 acs 集合内 → 不报漂移 + 展示全部 AC", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        featureProgress: {
+          featureId: "F027",
+          total: 39,
+          done: 22,
+          pct: 56,
+          firstUndoneAC: { id: "AC-P3-9", title: "Adaptive Recall wiring" },
+        },
+        phaseInfo: {
+          featureId: "F027",
+          phase: 3,
+          acs: ["AC-P3-8", "AC-P3-9", "AC-P3-10"],
+          commitShortSha: "abc1234",
+          commitSubject: "feat(F027): AC-P3-8 + AC-P3-9 + AC-P3-10",
+        },
+      }),
+    )
+    const section2 = r.markdown.split("## 2. 当前进度")[1]?.split("##")[0] ?? ""
+    assert.match(section2, /正在做: AC-P3-8 \+ AC-P3-9 \+ AC-P3-10/, "展示全部 in-flight AC")
+    assert.doesNotMatch(section2, /漂移/, "第一条未勾 AC-P3-9 在 acs 内 → 不误报漂移")
   })
 
   it("§4 blockerCalls 渲染含 callId 短码 + status + deadline", () => {
@@ -238,7 +402,38 @@ describe("renderViewfinder · 6 段 happy path", () => {
     assert.match(section5, /D-2 \[msg_msg-200, 小孙\]: 进 merger-gate/)
   })
 
-  it("§6 reject + tombstone 列表（去重）", () => {
+  // AC-P2-8（小孙 2026-05-31 拍）：§5 加权排序 pivot>spec>reject>commit
+  it("§5 加权排序 — pivot>spec>reject>commit（AC-P2-8 fixture）", () => {
+    const r = renderViewfinder(
+      defaultInput({
+        // fixture: pivot×1 + spec×2 + reject×1 + commit×5（乱序输入，验排序 + 截断）
+        activeDecisions: [
+          makeDecision({ id: 50, type: "commit", content: "C1" }),
+          makeDecision({ id: 49, type: "commit", content: "C2" }),
+          makeDecision({ id: 48, type: "reject", content: "R1" }),
+          makeDecision({ id: 47, type: "spec", content: "S1" }),
+          makeDecision({ id: 46, type: "commit", content: "C3" }),
+          makeDecision({ id: 45, type: "pivot", content: "P1" }),
+          makeDecision({ id: 44, type: "spec", content: "S2" }),
+          makeDecision({ id: 43, type: "commit", content: "C4" }),
+          makeDecision({ id: 42, type: "commit", content: "C5" }),
+        ],
+      }),
+    )
+    const section5 = r.markdown.split("## 5. 关键决策")[1]?.split("## 6")[0] ?? ""
+    const lines = section5.split("\n").filter((l) => l.trim().startsWith("- "))
+    assert.equal(lines.length, 5, "§5 上限 5 条")
+    // 期望 top5：P1(pivot) > S1,S2(spec, 原序) > R1(reject) > C1(commit, 原序首个)
+    const contents = lines.map((l) => /: (\S+)$/.exec(l)?.[1] ?? "")
+    assert.deepEqual(
+      contents,
+      ["P1", "S1", "S2", "R1", "C1"],
+      `§5 应按 pivot>spec>reject>commit 排序，actual: ${contents.join(",")}`,
+    )
+  })
+
+  // AC-P2-7（小孙 2026-05-31 拍 A）：§6 严格只 tombstone=1；active reject 不进 §6（仍在 §5）
+  it("§6 只渲染 tombstone=1；active reject 不进 §6（仍在 §5）", () => {
     const r = renderViewfinder(
       defaultInput({
         tombstoneDecisions: [
@@ -248,13 +443,16 @@ describe("renderViewfinder · 6 段 happy path", () => {
       }),
     )
     const section6 = r.markdown.split("## 6. 不要再做")[1] ?? ""
-    assert.match(section6, /不要回 V12.*tombstone/)
-    assert.match(section6, /跳过 review/)
+    assert.match(section6, /不要回 V12.*tombstone/, "§6 含 tombstone 红线")
+    assert.doesNotMatch(section6, /跳过 review/, "§6 不含 active reject（非永久红线）")
+    // active reject 不丢：仍在 §5 关键决策
+    const section5 = r.markdown.split("## 5. 关键决策")[1]?.split("## 6")[0] ?? ""
+    assert.match(section5, /跳过 review/, "active reject 移至 §5 不丢信息")
   })
 
-  it("§6 无 reject/tombstone → fallback 文案", () => {
+  it("§6 无 tombstone → fallback 文案", () => {
     const r = renderViewfinder(defaultInput())
-    assert.match(r.markdown, /暂无 reject\/tombstone 决策/)
+    assert.match(r.markdown, /暂无 tombstone 永久红线决策/)
   })
 })
 
@@ -660,7 +858,8 @@ describe("renderViewfinder · tombstone/active 双集合契约（范-r3 P2-2）"
     assert.match(section6, /tombstone/, "标 tombstone 标识")
   })
 
-  it("active 含 reject 但不 tombstone + tombstone 集合空 → §6 仅渲染 active", () => {
+  // AC-P2-7（小孙 2026-05-31 拍 A）：active reject 非永久红线 → 不进 §6，移至 §5
+  it("active 含 reject 但不 tombstone + tombstone 集合空 → §6 fallback（active reject 归 §5）", () => {
     const r = renderViewfinder(
       defaultInput({
         tombstoneDecisions: [],
@@ -668,8 +867,10 @@ describe("renderViewfinder · tombstone/active 双集合契约（范-r3 P2-2）"
       }),
     )
     const section6 = r.markdown.split("## 6. 不要再做")[1] ?? ""
-    assert.match(section6, /跳过 review/)
-    assert.doesNotMatch(section6, /tombstone/, "非 tombstone 决策不标 tombstone")
+    assert.match(section6, /暂无 tombstone 永久红线决策/, "§6 无 tombstone → fallback")
+    assert.doesNotMatch(section6, /跳过 review/, "active reject 不进 §6")
+    const section5 = r.markdown.split("## 5. 关键决策")[1]?.split("## 6")[0] ?? ""
+    assert.match(section5, /跳过 review/, "active reject 在 §5 呈现")
   })
 })
 
@@ -846,7 +1047,8 @@ describe("P12.b §6 tombstone 三合一格式", () => {
     )
   })
 
-  it("active reject 非 tombstone → 无 tombstone 标记", () => {
+  // AC-P2-7（小孙 2026-05-31 拍 A）：active reject 不进 §6（移至 §5），故 §6 不含它
+  it("active reject 非 tombstone → 不进 §6（归 §5，不带 tombstone 标记）", () => {
     const r = renderViewfinder(
       defaultInput({
         activeDecisions: [
@@ -855,8 +1057,10 @@ describe("P12.b §6 tombstone 三合一格式", () => {
       }),
     )
     const section6 = r.markdown.split("## 6. 不要再做")[1] ?? ""
-    assert.match(section6, /D-7 \[msg_msg-300, 小孙\]/, "active 无 tombstone")
-    assert.doesNotMatch(section6, /tombstone/, "无 tombstone 字面")
+    assert.doesNotMatch(section6, /D-7/, "active reject 不进 §6")
+    const section5 = r.markdown.split("## 5. 关键决策")[1]?.split("## 6")[0] ?? ""
+    assert.match(section5, /D-7 \[msg_msg-300, 小孙\]/, "active reject 在 §5，无 tombstone 标记")
+    assert.doesNotMatch(section5, /tombstone/, "active 无 tombstone 字面")
   })
 })
 

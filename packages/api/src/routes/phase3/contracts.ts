@@ -92,7 +92,13 @@ export interface ErrorResponseBody {
  */
 export interface PreviewWarning {
   /** 大类（前端 UI 路由 4 色：sensitive_token 红 / size_truncated 黄 / encoding 灰 / binary_skipped 蓝）。 */
-  kind: "sensitive_token" | "size_truncated" | "encoding" | "binary_skipped"
+  kind:
+    | "sensitive_token"
+    | "size_truncated"
+    | "encoding"
+    | "binary_skipped"
+    | "compile_failed"
+    | "multi_drop"
   /**
    * 子类（透传 sanitize 内部 reason），如：
    *   - jailbreak_template / dangerous_html_tag / dangerous_url_scheme / encoded_jailbreak / size_exceeded（redline）
@@ -318,6 +324,22 @@ export interface GetPromptInspectorPath {
 export interface GetPromptInspectorQuery {
   /** 可选 threadId 过滤；不传 = room 内 active thread 默认。 */
   threadId?: string
+  /**
+   * F027 P4 hotfix · 可选 limit 控制返几条 audit row（默认 1，最新一条）。
+   * limit=2 用于「对比上次注入」按钮：拿 [当前, 上一次] 做 part-by-part diff。
+   * 范围 [1, 10]；越界回 1。
+   */
+  limit?: number
+  /**
+   * F027 v3 G4 · 可选 alias 过滤（多 agent room 看每个 agent 自己的 system prompt）。
+   *
+   * 不传 = room 内最新 audit（不限 alias，与 v3 之前行为兼容）。
+   * 传 alias = 只取该 alias 的 audit row（黄仁勋/范德彪/桂芬 分开看）。
+   *
+   * 痛点 2 "反复教 agent" 闭环：之前 prompt-inspector.ts WHERE 只 room_id 不限 alias，
+   * 多 agent 触发时 Inspector 只显示"最后写入的那个 agent"，看不到其他 agent。
+   */
+  alias?: string
 }
 export interface GetPromptInspectorRequest
   extends GetPromptInspectorPath,
@@ -332,6 +354,18 @@ export interface InjectedPart {
   tokensEstimated: number
   /** 区段渲染源（拼装 commit / 注入时刻 ISO）。 */
   source: string
+}
+
+/**
+ * F027 v3 G1 · 未注入 part（context-assembler.ts drop reducer 砍掉的）。
+ *
+ * V16.5 chap 20 token cap 溢出时按 DROP_ORDER 顺序丢弃；前端 NotInjectedSection
+ * 渲染 "❌ {name} ({tokens} tok) — {reason}"。
+ */
+export interface NotInjectedPart {
+  name: string
+  tokens: number
+  reason: "over_cap_drop_order" | string
 }
 
 export type RecallGate = "high" | "mid" | "low"
@@ -374,6 +408,55 @@ export interface GetPromptInspectorResponse {
     kind: "a2a_call" | "user_message" | "scheduler_tick" | null
     ref: string | null
   }
+  /**
+   * F027 P4 hotfix · 完整 raw prompt 文本 (systemPrompt + content)。
+   * V16.5 §18 line 2078 "[查看 raw text]" + "[复制全文]" 按钮源数据。
+   * null = 当前 room 还没 audit row（没拼装过）。
+   */
+  rawText: string | null
+  /**
+   * F027 P4 hotfix · Iron Laws 出现次数 (B022 防回归 — V16.5 §2 line 246)。
+   * runtime 端期望 = 1; ≥ 3 警告"4 源冗余回归"; 0 警告"base prompt 漏注"。
+   */
+  ironLawsCount: number
+  /** F027 P4 hotfix · 最新 audit row 的 scenario，inspector header 显示用。 */
+  scenario: string | null
+  /**
+   * F027 P4 hotfix · 历史 audit 行（按 id DESC 第 2 条起）。
+   * limit=1 时为 []，limit=2 时长度 ≤ 1（如有上一次拼装）。
+   * 用于「对比上次注入」按钮做 part-by-part diff。
+   */
+  previousAudits: Array<{
+    injectedParts: InjectedPart[]
+    rawText: string
+    ironLawsCount: number
+    scenario: string
+    createdAt: string
+  }>
+  /**
+   * F027 v3 G1 · V16.5 chap 20 wake-up runtime token cap (= WAKEUP_TOKEN_CAP, 默认 6700)。
+   * 0 = 老 audit 行（v3 之前写的占位 cap=0）；前端 header 显示 "cap N tok"。
+   */
+  cap: number
+  /**
+   * F027 v3 G1 · drop reducer 砍掉的 part 列表（cap 溢出时按 DROP_ORDER 丢弃）。
+   * [] = 全部注入成功；非空时前端 NotInjectedSection 列每条 "{name} ({tokens} tok) — {reason}"。
+   */
+  notInjectedParts: NotInjectedPart[]
+  /**
+   * F027 v3 G4 · 当前 audit row 的 alias（如 "黄仁勋"）；null = 空 audit。
+   *
+   * caller 显式传 alias 时即等于 query alias；不传时取最新 row 的实际 alias。
+   * 前端 dropdown 同步显示当前选中 alias。
+   */
+  selectedAlias: string | null
+  /**
+   * F027 v3 G4 · room 内所有 distinct alias 列表（前端 dropdown 选项）。
+   *
+   * 用 `SELECT DISTINCT alias FROM prompt_audit WHERE room_id = ?` 查；按 alias asc 排。
+   * 空数组 = room 内还没 audit row（前端 dropdown disabled）。
+   */
+  availableAliases: string[]
 }
 
 export function validateGetPromptInspector(
@@ -385,7 +468,18 @@ export function validateGetPromptInspector(
   if (!idCheck.ok) return idCheck
   const q = (query ?? {}) as Record<string, unknown>
   const threadId = takeOptionalString(q.threadId)
-  return { ok: true, value: { roomId: idCheck.value, threadId } }
+  // F027 v3 G4 · alias 过滤可选参数（多 agent room 看 per-agent prompt）
+  const alias = takeOptionalString(q.alias)
+  // limit query 解析：未传/空/越界 → 默认 1；clamp [1, 10]
+  let limit = 1
+  const rawLimit = q.limit
+  if (typeof rawLimit === "string" && rawLimit.length > 0) {
+    const parsed = Number(rawLimit)
+    if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 10) limit = Math.floor(parsed)
+  } else if (typeof rawLimit === "number" && Number.isFinite(rawLimit)) {
+    if (rawLimit >= 1 && rawLimit <= 10) limit = Math.floor(rawLimit)
+  }
+  return { ok: true, value: { roomId: idCheck.value, threadId, alias, limit } }
 }
 
 // ── 4. POST /api/wiki/ingest/preview ────────────────────────────────
@@ -403,6 +497,21 @@ export interface PreviewIngestBody {
   mimeType: IngestMime
   /** 可选目标 type override；不传时由 service 推断。 */
   targetType?: DraftType
+  /**
+   * F027 P4 Day 10 (AC-P4-3 e) · Series 标记（防 chained 误检）。
+   *
+   * 真相源: V16.5 chap 25 line 2563-2564 "🔗 系列 (防 chained 误检)"
+   *   + plan v5 line 42 "Series 标记走 IngestModal '加入系列'字段"
+   *
+   * 用户在 IngestModal "🔗 系列" 字段填写，表示这个 drop 是某系列的一部分
+   * （e.g., 分多次 drop 长 paper 各章节）。落盘时写入 frontmatter `series_id: <id>`。
+   * 后续 multi-drop cross-correlation chained_suspect 检测会跳过同 series_id 的命中
+   * （避免连续 drop 同 series 触发误报）。
+   *
+   * 长度限制: 1-64 chars; allowed pattern [a-zA-Z0-9_-]+。
+   * 不传 / 空 → 不写 series_id metadata。
+   */
+  seriesId?: string
 }
 
 export interface PreviewIngestResponse {
@@ -456,6 +565,26 @@ export function validatePreviewIngest(body: unknown): ValidationResult<PreviewIn
     }
   }
   const targetType = takeOptionalString(b.targetType)
+  // F027 P4 Day 10 AC-P4-3 e · seriesId 校验 (1-64 chars + [a-zA-Z0-9_-]+ pattern)
+  const seriesIdRaw = takeOptionalString(b.seriesId)
+  let seriesId: string | undefined
+  if (seriesIdRaw !== undefined && seriesIdRaw.length > 0) {
+    if (seriesIdRaw.length > 64) {
+      return {
+        ok: false,
+        error: "VALIDATION_FAILED",
+        message: `seriesId max 64 chars, got ${seriesIdRaw.length}`,
+      }
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(seriesIdRaw)) {
+      return {
+        ok: false,
+        error: "VALIDATION_FAILED",
+        message: `seriesId must match [a-zA-Z0-9_-]+ (no spaces / special chars), got: ${seriesIdRaw}`,
+      }
+    }
+    seriesId = seriesIdRaw
+  }
   return {
     ok: true,
     value: {
@@ -463,6 +592,7 @@ export function validatePreviewIngest(body: unknown): ValidationResult<PreviewIn
       content,
       mimeType: mimeType as IngestMime,
       targetType: targetType as DraftType | undefined,
+      seriesId,
     },
   }
 }
@@ -470,16 +600,20 @@ export function validatePreviewIngest(body: unknown): ValidationResult<PreviewIn
 // ── 5. POST /api/rooms/:id/decisions （AC-P3-8 manual confirm） ──────
 
 /**
- * Decision kind 语义（Day 6 Phase 1 P12 ledger 对接）:
+ * Decision kind 语义（Day 6 Phase 1 P12 ledger 对接 + final-vision P1-1 P1 修）:
  *   - `commit`  → ledger.append({decisionType:'commit'})；可选 supersedesDecisionId → ledger.revoke
+ *                (Day 6 backward compat — commit + supersedesDecisionId 仍写 reject 行覆盖)
  *   - `reject`  → ledger.append({decisionType:'reject'})；可选 supersedesDecisionId → ledger.revoke
  *   - `tombstone` → ledger.markTombstone(supersedesDecisionId, fencingToken)；
  *                   **不写新行**，UPDATE 旧行 tombstone=1（永久投影）；supersedesDecisionId 必填
+ *   - `supersede` (F027 final-vision P1-1) → ledger.supersede；supersedesDecisionId 必填；
+ *                   写新 commit 行 + UPDATE 旧行 superseded_by；语义 = 新决策接力旧 spec/commit
  *
- * 注：P12 schema 里 decision_type 取值是 spec|pivot|commit|reject（无 tombstone）；
- * tombstone 是 row 上独立的 0/1 字段。本契约 kind=tombstone 映射到 markTombstone 动作。
+ * 注：P12 schema 里 decision_type 取值是 spec|pivot|commit|reject（无 tombstone/supersede）；
+ * tombstone 是 row 上独立的 0/1 字段。本契约 kind=tombstone 映射到 markTombstone 动作；
+ * kind=supersede 映射到 ledger.supersede 新方法（写 decision_type='commit' 新行）。
  */
-export type DecisionKind = "commit" | "reject" | "tombstone"
+export type DecisionKind = "commit" | "reject" | "tombstone" | "supersede"
 
 export interface PostDecisionPath {
   roomId: string
@@ -525,7 +659,7 @@ export interface PostDecisionResponse {
   /** 写盘时刻 ISO。 */
   appendedAt: string
   /** 本次执行的动作（前端 UI 区分 toast 文案）。 */
-  action: "append" | "revoke" | "tombstone"
+  action: "append" | "revoke" | "tombstone" | "supersede"
 }
 
 export function validatePostDecision(
@@ -541,11 +675,14 @@ export function validatePostDecision(
     return { ok: false, error: "DECISION_INVALID", message: "body required" }
   }
   const kindRaw = takeOptionalString(b.kind)
-  if (kindRaw === undefined || !["commit", "reject", "tombstone"].includes(kindRaw)) {
+  if (
+    kindRaw === undefined ||
+    !["commit", "reject", "tombstone", "supersede"].includes(kindRaw)
+  ) {
     return {
       ok: false,
       error: "DECISION_INVALID",
-      message: `kind must be commit|reject|tombstone, got ${kindRaw}`,
+      message: `kind must be commit|reject|tombstone|supersede, got ${kindRaw}`,
     }
   }
   const content = takeOptionalString(b.content)
@@ -607,6 +744,14 @@ export function validatePostDecision(
       error: "DECISION_INVALID",
       message: "kind=tombstone requires supersedesDecisionId (mark 哪条旧行)",
       detail: { reason: "tombstone_requires_target" },
+    }
+  }
+  if (kindRaw === "supersede" && supersedes === undefined) {
+    return {
+      ok: false,
+      error: "DECISION_INVALID",
+      message: "kind=supersede requires supersedesDecisionId (覆盖哪条旧行)",
+      detail: { reason: "supersede_requires_target" },
     }
   }
   // tombstone 的 ref 必须是数字 ROWID（与 P12 decision_id 一致）

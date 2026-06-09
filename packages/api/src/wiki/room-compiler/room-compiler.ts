@@ -59,6 +59,28 @@ export interface CheckpointStore {
   deletePrepare(roomId: string, compiledAt: string): boolean
 }
 
+/**
+ * F027 P4 hotfix · wiki_events sink 抽象 — 兼容 WikiEventsRepository 又允许测试注 noop。
+ * 真相源：V16.5 §5 line 452 "所有 wiki 写操作走 append-only event log"。
+ * RoomCompiler 派生 viewfinder.md 也是"wiki 写操作"，必须在 wiki_events 留痕。
+ */
+export interface WikiEventsSinkLike {
+  appendPending(input: {
+    ts: string
+    alias: string
+    action: "write"
+    path: string
+    baseHash?: string | null
+    attemptedHash: string
+    sourceMessageIds?: string[] | null
+    reason?: string | null
+    fencingToken: string
+    leaderTerm: string
+  }): { id: number }
+  commit(eventId: number, input: { contentHash: string }): boolean
+  abort(eventId: number, input: { error?: string | null; reason?: string | null }): boolean
+}
+
 export interface RoomCompilerOptions {
   store: CheckpointStore
   /** wiki 根目录；compiler 写到 <wikiRoot>/rooms/<roomId>/(viewfinder|decisions|log).md */
@@ -68,6 +90,14 @@ export interface RoomCompilerOptions {
   /** 注入 leader_term + fencing_token（来自 chap 5 Compiler Leader Lease）。 */
   leaderTerm: string
   fencingToken: string
+  /**
+   * F027 P4 hotfix · 可选 wiki_events sink。注入时每次 viewfinder.md 写入都 留 wiki_events row
+   * (PREPARE → write file → COMMIT 三阶段)；未注入时回退到旧行为（只写 room_checkpoints）。
+   * 真相源：V16.5 §5 + Prompt Inspector "追溯 wiki_events" 按钮需要这条 audit。
+   */
+  wikiEventsSink?: WikiEventsSinkLike | null
+  /** wiki_events alias 字段（V16.5 §11 line 1196 "system-auto-room-compiler 写"）。 */
+  wikiEventsAlias?: string
 }
 
 export class RoomCompiler {
@@ -165,7 +195,7 @@ export class RoomCompiler {
       leaderTerm: this.opts.leaderTerm,
     }
 
-    // Phase 1: PREPARE
+    // Phase 1: PREPARE (room_checkpoints + 可选 wiki_events)
     try {
       this.opts.store.prepare(prepareRow)
     } catch (err) {
@@ -175,6 +205,73 @@ export class RoomCompiler {
         err,
       )
     }
+    // F027 P4 hotfix · wiki_events append-only 留痕（V16.5 §5 line 452）。
+    // V16.5 §8 line 533：RoomCompiler 派生 viewfinder.md + decisions.md + log.md，
+    // 每个文件都是独立 wiki path 都要走三阶段。F027 P4-A4 修：补 decisions + log 两文件
+    // （此前只 audit 了 viewfinder，违反 V16.5 §5 "所有 wiki 写" 强契约）。
+    // 范-r1 P1 修：fail-closed — appendPending 故障必须抛错；rollback prepare 保双表一致。
+    type PendingAudit = { eventId: number; contentHash: string }
+    const pendingAudits: PendingAudit[] = []
+    if (this.opts.wikiEventsSink) {
+      const sourceMessageIds = input.newMessages.map((m) => m.messageId)
+      const reason = `RoomCompiler tick · newMessages=${input.newMessages.length} newSeals=${input.newSeals.length}`
+      const targets: Array<{ relPath: string; attemptedHash: string; baseHash: string | null }> = [
+        {
+          relPath: `wiki/rooms/${input.roomId}/viewfinder.md`,
+          attemptedHash: viewfinderHash,
+          baseHash: prev?.viewfinderHash ?? null,
+        },
+        {
+          relPath: `wiki/rooms/${input.roomId}/decisions.md`,
+          attemptedHash: decisionsHash,
+          baseHash: prev?.decisionsHash ?? null,
+        },
+        {
+          relPath: `wiki/rooms/${input.roomId}/log.md`,
+          attemptedHash: logHash,
+          baseHash: prev?.logHash ?? null,
+        },
+      ]
+      try {
+        for (const t of targets) {
+          const event = this.opts.wikiEventsSink.appendPending({
+            ts: compiledAt,
+            alias: this.opts.wikiEventsAlias ?? "system-room-compiler",
+            action: "write",
+            path: t.relPath,
+            baseHash: t.baseHash,
+            attemptedHash: t.attemptedHash,
+            sourceMessageIds,
+            reason,
+            fencingToken: this.opts.fencingToken,
+            leaderTerm: this.opts.leaderTerm,
+          })
+          pendingAudits.push({ eventId: event.id, contentHash: t.attemptedHash })
+        }
+      } catch (err) {
+        // fail-closed: abort 已 append 的 audit 行 + rollback room_checkpoints prepare 后抛错
+        for (const audit of pendingAudits) {
+          try {
+            this.opts.wikiEventsSink.abort(audit.eventId, {
+              error: err instanceof Error ? err.message : String(err),
+              reason: "partial_prepare_rollback",
+            })
+          } catch {
+            // abort 失败也吞 — 主 throw 优先；reconciler 会清残留 pending 行
+          }
+        }
+        try {
+          this.opts.store.deletePrepare(input.roomId, compiledAt)
+        } catch {
+          // deletePrepare 失败也吞 — 主 throw 优先；reconciler 会清残留 prepare 行
+        }
+        throw new RoomCompilerError(
+          "prepare",
+          `wiki_events.appendPending failed (V16.5 §5 audit log mandatory): ${err instanceof Error ? err.message : String(err)}`,
+          err,
+        )
+      }
+    }
 
     // Phase 2: WRITE (atomic rename)
     const dir = path.join(this.opts.wikiRoot, "rooms", input.roomId)
@@ -183,6 +280,19 @@ export class RoomCompiler {
       writeFileAtomic(path.join(dir, "decisions.md"), artifact.decisionsMd)
       writeFileAtomic(path.join(dir, "log.md"), artifact.logMd)
     } catch (err) {
+      // WRITE 失败 → abort 所有 wiki_events row
+      if (this.opts.wikiEventsSink) {
+        for (const audit of pendingAudits) {
+          try {
+            this.opts.wikiEventsSink.abort(audit.eventId, {
+              error: err instanceof Error ? err.message : String(err),
+              reason: "atomic_write_failed",
+            })
+          } catch {
+            // abort 失败也不抛 — 主 throw 优先
+          }
+        }
+      }
       throw new RoomCompilerError(
         "write",
         `atomic write failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -190,7 +300,7 @@ export class RoomCompiler {
       )
     }
 
-    // Phase 3: COMMIT
+    // Phase 3: COMMIT (room_checkpoints + 可选 wiki_events)
     const committedAt = new Date(Date.now()).toISOString()
     let committed: boolean
     try {
@@ -207,6 +317,16 @@ export class RoomCompiler {
         "commit",
         `commit affected 0 rows: race? room=${input.roomId} compiledAt=${compiledAt}`,
       )
+    }
+    // wiki_events COMMIT (fail-soft — checkpoint 已 commit 后即便 audit commit 失败也不回滚)
+    if (this.opts.wikiEventsSink) {
+      for (const audit of pendingAudits) {
+        try {
+          this.opts.wikiEventsSink.commit(audit.eventId, { contentHash: audit.contentHash })
+        } catch {
+          // 留 pending 行让 startup reconciler 通过文件 hash 比对 patch
+        }
+      }
     }
 
     return {

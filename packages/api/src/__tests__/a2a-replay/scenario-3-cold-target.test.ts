@@ -62,7 +62,8 @@ test("F026-P3 scenario-3 · cold (三连 AND 命中) → burst+tombstone 都生�
   assert.ok(!r!.burstSection.includes("老话题"), "burst 不该包含 head 88 条 (老话题)")
   assert.ok(r!.tombstoneSection, "tombstone 不该 null（88 条 omitted）")
   assert.match(r!.tombstoneSection!, /\[Tombstone\] 此前省略 \d+ 条/)
-  assert.match(r!.tombstoneSection!, /MCP get_room_context, msg_id=msg-1~msg-/)
+  // chunk-C-r1: tombstone hint 收敛——优先 query_messages（get_room_context 作时序补充）
+  assert.match(r!.tombstoneSection!, /query_messages.*msg_id=msg-1~msg-/)
 })
 
 test("F026-P3 scenario-3 · hot (nativeSession 非 null) → undefined", () => {

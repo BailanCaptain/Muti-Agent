@@ -53,11 +53,11 @@ acl:
 
   - path_pattern: 'wiki/concepts/**'
     allowed_aliases: ['<any-agent>']
-    allowed_actions: [write, patch]
+    allowed_actions: [write, patch, promote]
 
   - path_pattern: 'wiki/work/**'
     allowed_aliases: ['<any-agent>']
-    allowed_actions: [write, append, patch]
+    allowed_actions: [write, append, patch, promote]
 
   - path_pattern: 'wiki/feedback/draft/**'
     allowed_aliases: ['<any-agent>']

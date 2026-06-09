@@ -1,5 +1,6 @@
 "use client"
 
+import { useLayoutStore } from "@/components/stores/layout-store"
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { A2ACallDrawer } from "./a2a-call-drawer"
 import { Lvl1Tabs } from "./lvl1-tabs"
@@ -24,16 +25,20 @@ import { RuntimeLogHeader } from "./runtime-log-header"
  */
 export function RuntimeLog() {
   const collapsed = useRuntimeLogStore((state) => state.collapsed)
+  // F027 P3-1 扩展（小孙 2026-06-02）：展开时高度由 layout-store runtimeLogHeight 控制（可竖直拖高）。
+  const runtimeLogHeight = useLayoutStore((state) => state.runtimeLogHeight)
 
   return (
     <div
       className="flex flex-col overflow-hidden rounded-lg border border-slate-200/80 bg-white"
       data-testid="runtime-log-container"
-      style={{
-        // 折叠时只显示 header (~28px)，展开时占满剩余空间
-        flex: collapsed ? "0 0 auto" : "1 1 0",
-        minHeight: collapsed ? "auto" : "200px",
-      }}
+      style={
+        collapsed
+          ? // 折叠时只显示 header (~28px)
+            { flex: "0 0 auto", minHeight: "auto" }
+          : // 展开时高度由分隔线拖动控制（flex:none 让 height 生效，不被 flex grow/shrink 覆盖）
+            { flex: "0 0 auto", height: `${runtimeLogHeight}px` }
+      }
     >
       <RuntimeLogHeader />
       {!collapsed && (

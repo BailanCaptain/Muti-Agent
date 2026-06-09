@@ -14,6 +14,8 @@ import { A2AChainRegistry } from "../orchestrator/a2a-chain"
 import { DEFAULT_A2A_CALL_DEADLINE_MS } from "../orchestrator/a2a-gateway"
 import {
   type AdaptiveRecallCoordinator,
+  type RecallCoordinatorResult,
+  type RecallScenario,
   createNoopAdaptiveRecallCoordinator,
   deriveTriggerFromScenario,
 } from "../orchestrator/adaptive-recall-coordinator"
@@ -38,6 +40,7 @@ import {
 import type { ChainStarterResolver } from "../orchestrator/chain-starter-resolver"
 import {
   type AssemblePromptResult,
+  type PromptPart,
   assembleDirectTurnPrompt,
   assemblePrompt,
 } from "../orchestrator/context-assembler"
@@ -54,10 +57,14 @@ import type {
 import { detectFBloat } from "../orchestrator/fbloat-detector"
 import { planForcedDispatch } from "../orchestrator/forced-dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
+import { deriveAuditPatch, loadTaskMemoryPack } from "../wiki/memory-preflight/memory-preflight"
 import { toAssemblePromptHits } from "../wiki/memory-preflight/render-pack"
+import type { WikiSearchProvider } from "../wiki/memory-preflight/types"
 import {
+  type ColdStartPreflightAudit,
   NoopPromptAuditWriter,
   type PromptAuditWriterLike,
+  buildColdStartRecallAuditPatch,
   buildRecallAuditPatch,
 } from "../wiki/prompt-audit/prompt-audit-writer"
 
@@ -69,6 +76,7 @@ import type { SettlementDetector } from "../orchestrator/settlement-detector"
 import { extractSOPBookmark } from "../orchestrator/sop-bookmark"
 import type { SOPBookmark } from "../orchestrator/sop-bookmark"
 import { buildWorklistContinuationPrompt } from "../orchestrator/worklist-continuation"
+import type { BaseCliRuntime } from "../runtime/base-runtime"
 import { runTurn } from "../runtime/cli-orchestrator"
 import { resolveContextWindow } from "../runtime/context-window-resolver"
 import { runContinuationLoop } from "../runtime/continuation-loop"
@@ -124,6 +132,102 @@ export function deriveWakeTriggerScenario(options: {
   if (!options.systemPrompt && options.dispatchedCallId) return "direct_turn"
   if (options.parentInvocationId) return "wake_up"
   return "wake_up"
+}
+
+/**
+ * F027 B1-b · direct/wake-up 装配支的 Adaptive Recall 接线。
+ *
+ * wiring gap（2026-06-05 审计）：自动召回 `executeIfNeeded` 此前仅 A2A 派发支有调用点，
+ * direct/wake-up 支（assembleDirectTurnPrompt）从不跑 coordinator → wake_up 场景 Recall Pack
+ * 永不注入。本 helper 给 direct 支补对称接线。
+ *
+ * 设计（spec V16.5 line 1094「每次 wake-up / handoff / session_bootstrap 自动召回」+
+ * coordinator.ts:96「direct_turn 默认不触发」）：无条件调 coordinator，scenario 网关交给
+ * coordinator.triggerScenarios —— wake_up → 真召回；direct_turn（普通用户问答）→ scenario_skip
+ * 不召回。**caller 必须传准 scenario**：普通用户消息传 "direct_turn"（不能用
+ * deriveWakeTriggerScenario 的 wake_up fallback，否则每条消息都召回炸成本），仅
+ * auto-resume 等显式 wake 传 "wake_up"。guardian 模式短路（零上下文契约不注 recall）。
+ *
+ * 返回 { recallResult, memoryPreflight }：
+ *   - memoryPreflight 喂 assembleDirectTurnPrompt（命中 → [Recall Pack] 注入）
+ *   - recallResult 给 writePromptAuditSafe 写 recall 字段（Prompt Inspector 可见）；guardian 短路 → null
+ */
+export async function resolveDirectTurnRecall(
+  coordinator: AdaptiveRecallCoordinator,
+  input: {
+    roomId: string
+    alias: string
+    scenario: RecallScenario
+    query: string
+    guardianMode?: boolean
+  },
+): Promise<{
+  recallResult: RecallCoordinatorResult | null
+  memoryPreflight: { hits: Array<{ score: number; summary: string; path?: string }> } | null
+}> {
+  if (input.guardianMode) {
+    return { recallResult: null, memoryPreflight: null }
+  }
+  const recallResult = await coordinator.executeIfNeeded({
+    roomId: input.roomId,
+    alias: input.alias,
+    scenario: input.scenario,
+    trigger: deriveTriggerFromScenario(input.scenario),
+    query: input.query,
+  })
+  const memoryPreflight =
+    recallResult.hits.length > 0 ? { hits: recallResult.hits.map(toAssemblePromptHits) } : null
+  return { recallResult, memoryPreflight }
+}
+
+/**
+ * F027 B1-b-2 · 冷启（session_bootstrap）自动召回接线。
+ *
+ * wiring gap（2026-06-05 审计）：北极星「新 agent 进新 room 不白板」靠 P11 loadTaskMemoryPack
+ * 覆盖冷启（spec V16.5 line 1094/95），但 loadTaskMemoryPack **0 生产 caller** → 冷启 Recall Pack
+ * 从没注入。本 helper 给冷启（direct 支 nativeSession===null）补接线。
+ *
+ * 设计：冷启用**轻量 Pack**（loadTaskMemoryPack 单层召回 + Quality Gate），**不**走 coordinator
+ * （coordinator triggerScenarios 故意排除 session_bootstrap，spec line 95 "已由 Pack 覆盖"）。
+ * 命中（高置信 ≥ floor）→ output.prompt.hits → memoryPreflight → assembleDirectTurnPrompt 注入
+ * [Recall Pack]。search provider 未注入（null）→ 不召回；backend 抛错 → fail-soft 返 null 不阻塞 turn。
+ */
+export async function resolveColdStartRecall(
+  search: WikiSearchProvider | null,
+  ctx: { roomId: string; alias: string; taskSummary: string },
+  logger?: { warn(obj: unknown, msg?: string): void },
+): Promise<{
+  /** ≥floor 注入桶命中（喂 assembleDirectTurnPrompt → [Recall Pack]）；无命中 = null。 */
+  memoryPreflight: { hits: Array<{ score: number; summary: string; path?: string }> } | null
+  /**
+   * receive 德彪 r1 P2-2：完整 preflight audit（deriveAuditPatch 产物）——
+   * inspector-only topScore + 真 budgetExceeded + V15.1 字段，丢了 = 审计失真。
+   * fail-soft crash 时 null（attempted 但无数据）。
+   */
+  audit: ColdStartPreflightAudit | null
+} | null> {
+  if (!search) return null
+  try {
+    const out = await loadTaskMemoryPack(
+      {
+        roomId: ctx.roomId,
+        alias: ctx.alias,
+        scenario: "session_bootstrap",
+        taskSummary: ctx.taskSummary,
+      },
+      { search, logger },
+    )
+    return {
+      memoryPreflight: out.prompt.hits.length > 0 ? { hits: out.prompt.hits } : null,
+      audit: deriveAuditPatch(out),
+    }
+  } catch (err) {
+    logger?.warn(
+      { stage: "cold_start_recall", err: err instanceof Error ? err.message : String(err) },
+      "cold-start memory_preflight failed (fail-soft, no Recall Pack)",
+    )
+    return { memoryPreflight: null, audit: null }
+  }
 }
 
 /**
@@ -348,12 +452,37 @@ export class MessageService {
   // 后 setAdaptiveRecallCoordinator() 注入真 Coordinator 启用。
   private adaptiveRecallCoordinator: AdaptiveRecallCoordinator =
     createNoopAdaptiveRecallCoordinator()
+  // F027 B1-b-2 · 冷启 loadTaskMemoryPack 搜索 backend（北极星「新 agent 进新 room 不白板」）。
+  // 默认 null —— 未注入时冷启不召回（单测 / 老路径无副作用）；server.ts boot 注入生产
+  // SearchWikiProvider（search_wiki MCP 同款 BM25 backend，已对齐 WikiSearchProvider 接口）。
+  private memoryPreflightSearch: WikiSearchProvider | null = null
+  // F027 #286 FU-1 · runTurn runtime adapter 测试缝（默认 null = 生产按 provider 选单例）。
+  private cliRuntimeOverride: BaseCliRuntime | null = null
   // F027 Phase 3 P20 Day 8 b · prompt_audit writer wiring (AC-P3-9 b).
   // 默认 noop —— wire 没接通时不写 audit row（单测 / 老路径无副作用）。
   // server.ts boot 注入真 PromptAuditWriter（即使 Coordinator 是 noop，每次
   // A2A 拼装也写一行 audit：9 recall fields 用 disabled 默认值，方便 prompt-inspector
   // UI Day 4 起就能读到有 scenario / parts_json 的 row）。
   private promptAuditWriter: PromptAuditWriterLike = new NoopPromptAuditWriter()
+  // F027 P4 hotfix · viewfinder loader DI（V16.5 §11 + §4 line 396）。
+  // direct turn / A2A caller 用它读 wiki/rooms/<roomId>/viewfinder.md body 传给
+  // assemblePrompt.viewfinder。未注入时不传 viewfinder（行为同 Phase 1-3 现状）。
+  // server.ts 把 ViewfinderService.getViewfinder 包一层注进来 — 避免 service 层引 routes 层。
+  private viewfinderLoader:
+    | ((roomId: string) => Promise<{ body: string } | null>)
+    | null = null
+  // F027 P4-A1 · capability registry DI（V16.5 §13 line 1447-1525）。
+  // assemblePrompt.capabilityDigest 真相源；server.ts boot 加载 wiki/agents/agent-capabilities.yaml
+  // 注入。未注入时 caller 不传 capabilityDigest（degrade 到 Phase 1-3 行为）。
+  private capabilityRegistry:
+    | { agents: Map<string, { capability_digest_for_self: string }> }
+    | null = null
+  // F027 P4-A2 · handbook H2 切片 DI（V16.5 §27.4 + §4 line 365）。
+  // assemblePrompt.handbookSlices 真相源（agentActions 切片），server.ts boot 加载
+  // wiki/rules/agent-wiki-handbook.md 切片注入。assembler 内仅 scenario === 'wake_up'
+  // 时才把 agentActions 注入 content（A2A 不注；direct turn 默认 wake_up 会注）。
+  // 未注入时 caller 不传 handbookSlices（degrade 同 Phase 1-3 行为）。
+  private handbookSlicesCache: { agentActions: string } | null = null
   private readonly chainRegistry = new A2AChainRegistry()
   private readonly pendingBoardFlushes = new Map<string, DecisionBoardEntry[]>()
   private readonly streamingFlushers = new Map<
@@ -463,6 +592,20 @@ export class MessageService {
     this.adaptiveRecallCoordinator = coordinator
   }
 
+  /** F027 B1-b-2 · 注入冷启召回的 wiki 搜索 backend（server.ts boot 调）。 */
+  setMemoryPreflightSearch(search: WikiSearchProvider) {
+    this.memoryPreflightSearch = search
+  }
+
+  /**
+   * F027 #286 FU-1 · 测试缝：覆盖 runTurn 的 runtime adapter（cli-orchestrator.ts:72
+   * 既有 test hook 的上游转发）。接线级测试用 fake runtime 捕获 AgentRunInput.prompt
+   * 断言 [Recall Pack] 注入，不 spawn 真 CLI。生产不调 → runTurn 按 provider 选单例。
+   */
+  setCliRuntimeOverride(runtime: BaseCliRuntime) {
+    this.cliRuntimeOverride = runtime
+  }
+
   /**
    * F027 Phase 3 P20 Day 8 b · 注入 PromptAuditWriter（替换 noop 默认）。
    *
@@ -472,6 +615,193 @@ export class MessageService {
    */
   setPromptAuditWriter(writer: PromptAuditWriterLike) {
     this.promptAuditWriter = writer
+  }
+
+  /**
+   * F027 P4 hotfix · viewfinder loader DI。server.ts boot 注入：
+   *   messages.setViewfinderLoader(async (roomId) => {
+   *     const r = await vfSvc.getViewfinder(roomId).catch(() => null)
+   *     return r?.viewfinder ? { body: r.viewfinder } : null
+   *   })
+   * 未注入时 direct turn / A2A caller 不传 viewfinder（行为同 Phase 1-3 现状）。
+   */
+  setViewfinderLoader(loader: (roomId: string) => Promise<{ body: string } | null>) {
+    this.viewfinderLoader = loader
+  }
+
+  /**
+   * F027 P4 hotfix · 安全加载 viewfinder。room 没绑定 / loader 没注入 / 文件读不到都返 null
+   * 不抛错，让 caller fail-soft 继续 assemble（degrade 到 viewfinder=null 的旧行为）。
+   */
+  private async loadViewfinderSafe(roomId: string | null): Promise<{ body: string } | null> {
+    if (!roomId || !this.viewfinderLoader) return null
+    try {
+      return await this.viewfinderLoader(roomId)
+    } catch (err) {
+      this.log.warn(
+        { roomId, err: (err as Error).message },
+        "viewfinder loader threw (non-blocking)",
+      )
+      return null
+    }
+  }
+
+  /**
+   * F027 P4-A1 · capability registry DI（V16.5 §13 line 1449-1476）。
+   * server.ts boot 时 loadCapabilityRegistryFromRoot(repoRoot) → setCapabilityRegistry。
+   * 未注入时 caller 不传 capabilityDigest（degrade 到 Phase 1-3 行为）。
+   */
+  setCapabilityRegistry(
+    registry: { agents: Map<string, { capability_digest_for_self: string }> } | null,
+  ) {
+    this.capabilityRegistry = registry
+  }
+
+  /**
+   * F027 P4-A1 · 取 receiver alias 的 capability_digest_for_self。
+   * Registry 未注入 / alias 不在 registry → 返 null（caller 不注入 capabilityDigest 段）。
+   * V16.5 §13 line 1490 — guardian 模式由 caller 决策跳过（零上下文契约）。
+   */
+  private getSelfCapabilityDigest(alias: string | null | undefined): string | null {
+    if (!alias || !this.capabilityRegistry) return null
+    const cap = this.capabilityRegistry.agents.get(alias)
+    return cap?.capability_digest_for_self ?? null
+  }
+
+  /**
+   * F027 P4-A2 · handbook H2 切片 DI setter（V16.5 §27.4 + §4 line 365）。
+   * server.ts boot 调 loadHandbookSlices(wikiRoot) 后注入；进程级常量缓存。
+   * 设 null 即 unregister（caller 不再传 handbookSlices）。
+   */
+  setHandbookSlices(slices: { agentActions: string } | null) {
+    this.handbookSlicesCache = slices
+  }
+
+  /**
+   * F027 P4-A2 · 取 handbook agentActions 切片供 direct turn caller 注入。
+   * Caller 透传给 assemblePrompt.handbookSlices；assembler 内仅 scenario==='wake_up'
+   * 且 agentActions 非空才注 [Handbook — Agent Actions] 区段（V16.5 §4 line 365）。
+   */
+  private getHandbookSlices(): { agentActions: string } | null {
+    return this.handbookSlicesCache
+  }
+
+  /**
+   * F027 P4-A2 + fallback j2 P1 修 · "仅 first wake-up" 判定 (V16.5 §4 line 364-365 + §27.4 + line 3166)。
+   *
+   * V16.5 line 364-365 严契约：「`[Handbook — Agent Actions]` — 仅 first wake-up，
+   * capability_digest 已覆盖最小动作集时 skip」。
+   *
+   * 判定规则（零新状态）：`thread.nativeSessionId === null` = 此 thread 还没起过 CLI session，
+   * 跟 F018 SessionBootstrap 的 first-wake-up 判定保持一致 — 一旦 CLI 起过（onSession callback
+   * 写 nativeSessionId 非 null），后续 turn 都不再算 first wake-up。
+   *
+   * 修前：每个 direct turn 都注 handbook ~2-3KB → 长 session 反复污染 reference-only 区段 + token regression。
+   */
+  private maybeGetHandbookSlicesForFirstWakeUp(thread: {
+    nativeSessionId: string | null
+  }): { agentActions: string } | null {
+    if (thread.nativeSessionId !== null) return null
+    return this.getHandbookSlices()
+  }
+
+  /**
+   * F027 P4-A3 · A2A handoffContext 构造 helper（V16.5 §4 line 422-431）。
+   *
+   * Assembler 拿到后渲染 [Collaboration Contract — Reference Only] 区段
+   * （receiver_alias + task_summary 简化 2 字段，V16.5 §4 line 429-431）。
+   *
+   * guardian 模式跳过（零上下文契约不许注 collaboration contract）。
+   * receiverAlias / taskSummary 任一空 → 返 null（caller 不传 handoffContext 段；
+   * assembler 内 sanitize 空字符串也会 skip）。
+   *
+   * 完整 4 字段 envelope（rewriteHandoffForReceiver 输出）保护在 P9 fixture 跑
+   * （capability-registry.test.ts leak-detector 端到端），这里仅取 2 简化字段
+   * 喂 assembler — 跟 V16.5 §4 line 429-431 shape 一致。
+   *
+   * V16.5 §M1 line 422-431 明示 production 可简化 2 字段。完整 4 字段 envelope（含
+   * receiver_must_do / expected_evidence / do_not_section）是 ADR-003 反向路由复杂场景才需要
+   * — capability-registry.test.ts 8 处 caller spec-locked 测试覆盖，不是 dead code。
+   * 待 ADR-003 反向路由 enable 时 dispatch.ts 接通 rewriter 即可（见 F027-RESIDUAL-DEBT.md D2）。
+   */
+  private buildA2AHandoffContext(args: {
+    receiverAlias: string | null | undefined
+    taskSummary: string | null | undefined
+    isGuardianMode: boolean
+  }): { receiverAlias: string; taskSummary: string } | null {
+    if (args.isGuardianMode) return null
+    if (!args.receiverAlias || !args.taskSummary) return null
+    return {
+      receiverAlias: args.receiverAlias,
+      taskSummary: args.taskSummary,
+    }
+  }
+
+  /**
+   * F027 P4 hotfix · prompt_audit 写入 helper（V16.5 §18 line 2117 "每次拼装同步写一行"）。
+   *
+   * direct turn 和 A2A 都用这条路径；caller 传 scenario + assembled (含 .parts) + 元信息。
+   *
+   * `parts_json` 来自 assembled.parts（含 name + tokens + surface 三字段，前端按 surface 分组）；
+   * `iron_laws_count` grep "Iron Laws" 在 systemPrompt+content 出现次数（B022 防回归断言）；
+   * `total_tokens` 用 assembled.parts 总和（比 content.length/4 单独估算更准）。
+   *
+   * 全程 try/catch fail-soft：audit 失败不阻塞 agent 运行（Phase 3 A2A 路径同口径）。
+   */
+  private writePromptAuditSafe(args: {
+    scenario: "direct_turn" | "a2a_handoff" | "a2a_handoff_guardian" | "wake_up"
+    alias: string
+    roomId: string | null
+    assembled: AssemblePromptResult
+    sourceEventIds: string[]
+    agentSessionRef: string | null
+    /** A2A 路径的 recall patch（direct turn 不跑 Coordinator，传 undefined 即可）。 */
+    recallPatch?: ReturnType<typeof buildRecallAuditPatch>
+  }): void {
+    try {
+      const totalTokens = args.assembled.parts.reduce((sum, p) => sum + p.tokens, 0)
+      const ironLawsCount = this.countIronLaws(
+        args.assembled.systemPrompt + "\n" + args.assembled.content,
+      )
+      const patch = args.recallPatch ?? buildRecallAuditPatch({ output: undefined })
+      // F027 v3 G1 · V16.5 chap 20 line 2273 token 预算 — cap + notInjectedJson 真值写入
+      // (Phase 3 / Phase 4 都是 cap=0 + notInjectedJson=null 占位; v3 接通 reducer 后真值)
+      this.promptAuditWriter.write({
+        createdAt: new Date().toISOString(),
+        alias: args.alias,
+        roomId: args.roomId,
+        scenario: args.scenario,
+        totalTokens,
+        cap: args.assembled.cap,
+        partsJson: JSON.stringify(args.assembled.parts),
+        notInjectedJson:
+          args.assembled.notInjected.length > 0
+            ? JSON.stringify(args.assembled.notInjected)
+            : null,
+        ironLawsCount,
+        rawText: args.assembled.systemPrompt + "\n\n---\n\n" + args.assembled.content,
+        sourceEventIds: JSON.stringify(args.sourceEventIds),
+        agentSessionRef: args.agentSessionRef,
+        ...patch,
+      })
+    } catch (err) {
+      this.log.warn(
+        { stage: "prompt_audit.write", err: (err as Error).message, scenario: args.scenario },
+        "prompt_audit write failed (non-blocking)",
+      )
+    }
+  }
+
+  /**
+   * F027 P4 hotfix · 数 "Iron Laws" 在 prompt 全文出现次数。
+   *
+   * V16.5 §2 line 246 + §18 line 2053："runtime 端 grep Iron Laws = 1"（B022 防回归）。
+   * runtime+harness 合并 ≤ 2 是 V16.5 接受边界（CLI harness CLAUDE.md 一份 + runtime 一份）。
+   * Inspector 看到 1 = PASS / 0 = base prompt 漏注 / ≥3 = 4 源冗余回归。
+   */
+  private countIronLaws(text: string): number {
+    const matches = text.match(/Iron Laws/g)
+    return matches ? matches.length : 0
   }
 
   /**
@@ -1350,6 +1680,57 @@ export class MessageService {
         previousDigestEmpty: previousDigest == null,
         roomSnapshot,
       })
+      // F027 P4 hotfix · 加载 viewfinder（room 绑定 + loader 已注入时）。
+      // V16.5 §4 line 407："加 [Viewfinder — Reference Only] 区段（room 防漂移视图）"
+      // 失败 fail-soft：viewfinder 读不到不阻塞 direct turn。
+      const directTurnRoomId = this.sessions.getRoomId(thread.sessionGroupId)
+      const directTurnViewfinder = await this.loadViewfinderSafe(directTurnRoomId)
+      // F027 B1-b · direct/wake-up 支自动召回接线（wiring gap 2026-06-05：此前仅 A2A 支调
+      // executeIfNeeded，wake_up 场景 Recall Pack 永不注入）。仅显式 wake_up（auto-resume）触发召回；
+      // 普通 direct_turn 由 coordinator scenario_skip（spec V16.5 line 1094 / coordinator.ts:96）。
+      // query=本轮 user content；roomId 缺 canonical R-### 时用 sessionGroupId 兜底（与 A2A 支同口径）。
+      const directRecallScenario: "wake_up" | "direct_turn" =
+        options.scenario === "wake_up" ? "wake_up" : "direct_turn"
+      // F027 B1-b-2 · 冷启（nativeSession===null = 新 session 首轮 = 北极星「不白板」本体）走
+      // 轻量 loadTaskMemoryPack Pack（spec V16.5 line 95：session_bootstrap 由 Pack 覆盖，非
+      // coordinator）；非冷启走 b-1 coordinator（wake_up 召回 / direct_turn scenario_skip）。
+      // 两者互斥（wake_up auto-resume 必有 nativeSession）。命中 → memoryPreflight → [Recall Pack]。
+      let directRecall: RecallCoordinatorResult | null = null
+      let directMemoryPreflight:
+        | { hits: Array<{ score: number; summary: string; path?: string }> }
+        | null = null
+      // F027 #286 FU-3 · 冷启召回 audit 观测（B1-b-2 P3-6）：loadTaskMemoryPack 不走
+      // Coordinator → directRecall 恒 null → recallPatch 全空。这里单独构冷启 patch
+      // （trigger=session_bootstrap + topScore/satisfied），Prompt Inspector 可程序化追溯。
+      let coldStartRecallPatch: ReturnType<typeof buildColdStartRecallAuditPatch> | null = null
+      if (thread.nativeSessionId === null) {
+        const coldStart = await resolveColdStartRecall(
+          this.memoryPreflightSearch,
+          {
+            roomId: directTurnRoomId ?? thread.sessionGroupId,
+            alias: thread.alias,
+            taskSummary: options.content,
+          },
+          this.log,
+        )
+        directMemoryPreflight = coldStart?.memoryPreflight ?? null
+        // receive 德彪 r1 P2-2：完整 preflight audit 透传 —— inspector-only topScore /
+        // 真 budgetExceeded / V15.1 字段不丢（与 deriveAuditPatch 语义一致）。
+        coldStartRecallPatch = buildColdStartRecallAuditPatch({
+          attempted: this.memoryPreflightSearch !== null,
+          hits: directMemoryPreflight?.hits ?? null,
+          audit: coldStart?.audit ?? null,
+        })
+      } else {
+        const res = await resolveDirectTurnRecall(this.adaptiveRecallCoordinator, {
+          roomId: directTurnRoomId ?? thread.sessionGroupId,
+          alias: thread.alias,
+          scenario: directRecallScenario,
+          query: options.content,
+        })
+        directRecall = res.recallResult
+        directMemoryPreflight = res.memoryPreflight
+      }
       assembledDirectTurn = await assembleDirectTurnPrompt(
         {
           provider: thread.provider,
@@ -1367,9 +1748,40 @@ export class MessageService {
           previousDigest,
           recallTools: [],
           coldTargetBurst: directTurnColdBurst,
+          // F027 P4 hotfix · 注 viewfinder + roomId（scenario 默认 wake_up）
+          viewfinder: directTurnViewfinder,
+          roomId: directTurnRoomId,
+          // F027 P4-A1 · capability_digest 注入（V16.5 §13）— receiver = thread.alias 自己
+          capabilityDigest: this.getSelfCapabilityDigest(thread.alias),
+          // F027 P4-A2 + fallback j2 P1 修 · handbook agentActions 仅 first wake-up 注入。
+          // 详见 maybeGetHandbookSlicesForFirstWakeUp helper jsdoc（V16.5 §4 line 364-365）。
+          handbookSlices: this.maybeGetHandbookSlicesForFirstWakeUp(thread),
+          // F027 B1-b · 自动召回命中 → [Recall Pack — Reference Only] 注入（wake_up 才非空）。
+          memoryPreflight: directMemoryPreflight,
         },
         this.memoryService,
       )
+
+      // F027 P4 hotfix · direct turn 也写一行 prompt_audit（V16.5 §18 line 2117
+      // "assembler 每次拼装完成时同步写一条 prompt_audit"）。Phase 1-3 只 A2A 写 →
+      // prompt-inspector UI 看 direct turn 房间永远 0 row 是 bug。
+      this.writePromptAuditSafe({
+        scenario: directRecallScenario,
+        alias: thread.alias,
+        roomId: directTurnRoomId,
+        assembled: assembledDirectTurn,
+        sourceEventIds: options.rootMessageId ? [options.rootMessageId] : [],
+        agentSessionRef: thread.nativeSessionId,
+        // F027 B1-b · recall patch（Prompt Inspector 显示召回 trigger/required + output 派生字段）。
+        // FU-3：冷启支用 session_bootstrap patch（coordinator patch 在冷启恒空）。
+        recallPatch:
+          coldStartRecallPatch ??
+          buildRecallAuditPatch({
+            output: directRecall?.output,
+            trigger: directRecall ? deriveTriggerFromScenario(directRecallScenario) : null,
+            recallRequired: directRecall?.executed === true,
+          }),
+      })
     }
     const systemPrompt = options.systemPrompt ?? assembledDirectTurn!.systemPrompt
     // When direct turn assembled its own envelope, send that envelope as the
@@ -1403,6 +1815,8 @@ export class MessageService {
 
     const createRun = (userMessage: string, sessionIdOverride?: string | null) =>
       runTurn({
+        // F027 #286 FU-1 · 测试缝：fake runtime 注入（生产 null → provider 单例）。
+        runtime: this.cliRuntimeOverride ?? undefined,
         systemPrompt,
         sopStageHint,
         invocationId: identity.invocationId,
@@ -2480,6 +2894,11 @@ export class MessageService {
                   ? { hits: recallResult.hits.map(toAssemblePromptHits) }
                   : null
 
+              // F027 P4 hotfix · A2A 路径也加载 viewfinder（V16.5 §4 line 407）。
+              // guardian 模式跳过（零上下文契约不许注 viewfinder）。
+              const a2aViewfinder = isGuardianMode
+                ? null
+                : await this.loadViewfinderSafe(a2aCanonicalRoomId)
               const assembled = await assemblePrompt(
                 {
                   provider: entry.to.provider as import("@multi-agent/shared").Provider,
@@ -2504,47 +2923,50 @@ export class MessageService {
                   // F027 Phase 3 P20 Day 7-8 a · scenario + memoryPreflight 注入
                   scenario: isGuardianMode ? undefined : a2aScenario,
                   memoryPreflight: memoryPreflightForAssemble,
+                  // F027 P4 hotfix · viewfinder 接通（Phase 3 缺接）
+                  viewfinder: a2aViewfinder,
+                  roomId: a2aCanonicalRoomId,
+                  // F027 P4-A1 · capability_digest 注入（V16.5 §13）— receiver = entry.to.agentId
+                  // guardian 模式跳过（V16.5 §13 line 1490 零上下文契约不许注 capability digest）
+                  capabilityDigest: isGuardianMode
+                    ? null
+                    : this.getSelfCapabilityDigest(entry.to.agentId),
+                  // F027 P4-A3 + fallback j2 P1 修 · handoffContext 注入（V16.5 §M1 line 422-431）。
+                  // 实施位置矫正：gateway 路径下 entry.handoffContext 由 dispatch.ts 派发时 derive
+                  // （a2a-gateway-bootstrap.deriveHandoffContext 走 envelope.protocol.on_behalf_of
+                  // ?? convener_id + envelope.task.input.source_message / envelope.task.task）。
+                  // 这一支符合 V16.5 §M1 "实施位置 dispatch.ts，调用方不手填"。
+                  // gateway 关 / legacy fallback 时 entry.handoffContext=undefined → 退到 caller-side
+                  // helper 走 entry.to.agentId + entry.taskSnippet 简化形态（行为同 P4-A3 修前）。
+                  handoffContext: isGuardianMode
+                    ? null
+                    : (entry.handoffContext ??
+                      this.buildA2AHandoffContext({
+                        receiverAlias: entry.to.agentId,
+                        taskSummary: entry.taskSnippet,
+                        isGuardianMode,
+                      })),
                 },
                 this.memoryService,
               )
 
-              // F027 Phase 3 P20 Day 8 b · prompt_audit 一行 INSERT (AC-P3-9 b)。
-              //   - 9 V15.2 Adaptive Recall 字段从 recallResult.output 派生（disabled
-              //     / scenario_skip / executor_error 时全填 default null/false/0）
-              //   - base fields best-effort：totalTokens 用 content.length 估算，
-              //     cap=0（V15.1 token 度量管线 Phase 4/5 接精确度量），parts_json='[]' 占位
-              //   - guardian / 失败路径也写 audit（recall_required=false），让 prompt-inspector
-              //     UI 拿到 scenario / parts_json 不丢
-              try {
-                this.promptAuditWriter.write({
-                  createdAt: new Date().toISOString(),
-                  alias: entry.to.agentId,
-                  // Week 2 r2 (范-r1 P1): canonical R-### roomId（不绑定时 null —
-                  // prompt-inspector 按 R-### 查时该行不会被命中是正确行为）
-                  roomId: a2aCanonicalRoomId,
-                  scenario: isGuardianMode ? "a2a_handoff_guardian" : a2aScenario,
-                  totalTokens: Math.ceil(assembled.content.length / 4),
-                  cap: 0,
-                  partsJson: "[]",
-                  notInjectedJson: null,
-                  ironLawsCount: 0,
-                  rawText: assembled.content,
-                  sourceEventIds: JSON.stringify([entry.rootMessageId]),
-                  agentSessionRef: targetThread?.nativeSessionId ?? null,
-                  ...buildRecallAuditPatch({
-                    output: recallResult?.output,
-                    trigger: recallResult ? deriveTriggerFromScenario(a2aScenario) : null,
-                    // recall_required 标语义：guardian 跳过 / coordinator 跑过 → required=true；
-                    // 其他 disabled/skip 路径 → required=false
-                    recallRequired: !isGuardianMode && recallResult?.executed === true,
-                  }),
-                })
-              } catch (err) {
-                this.log.warn(
-                  { stage: "prompt_audit.write", err: (err as Error).message, threadId },
-                  "prompt_audit write failed (non-blocking)",
-                )
-              }
+              // F027 P4 hotfix · A2A audit 改走 writePromptAuditSafe helper。
+              // direct turn / A2A 现统一一条路径写 prompt_audit（parts_json/iron_laws/raw_text/
+              // total_tokens 全真）；V16.5 §18 line 2117 "每次拼装同步写一条" 接通。
+              const a2aRecallPatch = buildRecallAuditPatch({
+                output: recallResult?.output,
+                trigger: recallResult ? deriveTriggerFromScenario(a2aScenario) : null,
+                recallRequired: !isGuardianMode && recallResult?.executed === true,
+              })
+              this.writePromptAuditSafe({
+                scenario: isGuardianMode ? "a2a_handoff_guardian" : a2aScenario,
+                alias: entry.to.agentId,
+                roomId: a2aCanonicalRoomId,
+                assembled,
+                sourceEventIds: [entry.rootMessageId],
+                agentSessionRef: targetThread?.nativeSessionId ?? null,
+                recallPatch: a2aRecallPatch,
+              })
 
               // F026 P2 clean-cut · 多 @ 不再 fan-out 进 ParallelGroup；每个
               // entry 是独立 A2A 派发，groupId 用 entry.id 作为单元集合标识。

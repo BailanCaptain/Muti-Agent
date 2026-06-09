@@ -181,3 +181,79 @@ test("F026 I4: idx_a2a_calls_parent covers pendingOf(parent) query", () => {
     h.close()
   }
 })
+
+// ─── F027 v3 G12 · a2a_calls 查询 perf ≤ 50ms 断言 ────────────────────
+
+test("F027 v3 G12: a2a_calls 高频查询 (parent / root / status+deadline) 1k 行 ≤ 50ms (V16.5 chap 11 a2a_calls index perf AC)", () => {
+  const h = tmpDb()
+  try {
+    // seed 1000 rows 覆盖三类查询 hot path:
+    // - parent (Tree pendingOf)
+    // - root (callTree)
+    // - status+deadline (sweep timeout)
+    const now = new Date()
+    const insertStmt = h.store.db.prepare(
+      `INSERT INTO a2a_calls (
+        call_id, parent_call_id, root_call_id, issuer_id, convener_id,
+        on_behalf_of, reply_to, deadline_at, join_set_id, status,
+        envelope_version, session_group_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    // 直接 loop insert (h.store.db 不是 raw better-sqlite3, 无 transaction() API)
+    for (let i = 0; i < 1000; i += 1) {
+      const id = `call-${i.toString().padStart(4, "0")}`
+      const parent =
+        i > 0 && i % 5 === 0 ? `call-${(i - 5).toString().padStart(4, "0")}` : null
+      const root = i < 100 ? id : `call-${(i % 100).toString().padStart(4, "0")}`
+      const status =
+        i % 4 === 0 ? "pending" : i % 4 === 1 ? "working" : i % 4 === 2 ? "done" : "failed"
+      const deadline = new Date(now.getTime() + i * 60_000).toISOString()
+      insertStmt.run(
+        id,
+        parent,
+        root,
+        "issuer-1",
+        "convener-1",
+        null,
+        "reply-1",
+        deadline,
+        null,
+        status,
+        "v1",
+        "sg-1",
+        now.toISOString(),
+        now.toISOString(),
+      )
+    }
+    // 三个 hot path 查询，每个 ≤ 50ms
+    const queries: Array<{ name: string; sql: string; params: ReadonlyArray<string | number> }> = [
+      {
+        name: "pendingOf(parent)",
+        sql: "SELECT call_id FROM a2a_calls WHERE parent_call_id = ? AND status IN ('pending','working')",
+        params: ["call-0050"],
+      },
+      {
+        name: "callTree(root)",
+        sql: "SELECT call_id, parent_call_id FROM a2a_calls WHERE root_call_id = ?",
+        params: ["call-0010"],
+      },
+      {
+        name: "sweep timeout (status+deadline)",
+        sql: "SELECT call_id FROM a2a_calls WHERE status IN ('pending','working') AND datetime(deadline_at) < datetime(?)",
+        params: [new Date(now.getTime() + 30 * 60_000).toISOString()],
+      },
+    ]
+    for (const q of queries) {
+      const stmt = h.store.db.prepare(q.sql)
+      const t0 = performance.now()
+      stmt.all(...q.params)
+      const elapsedMs = performance.now() - t0
+      assert.ok(
+        elapsedMs <= 50,
+        `${q.name} should be ≤ 50ms over 1k rows; got ${elapsedMs.toFixed(2)}ms`,
+      )
+    }
+  } finally {
+    h.close()
+  }
+})

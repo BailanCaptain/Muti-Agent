@@ -28,6 +28,7 @@ import { IngestPreviewService, registerIngestPreviewRoute } from "./ingest-previ
 import { PreviewStore } from "./preview-store"
 import { PromptInspectorService, registerPromptInspectorRoute } from "./prompt-inspector"
 import { ViewfinderService, registerViewfinderRoute } from "./viewfinder"
+import { WikiStoryService, registerWikiStoryRoute } from "./wiki-story"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
 
@@ -42,6 +43,19 @@ export interface Phase3RoutesDeps {
    * server.ts boot 已 createWikiServices 后传入。
    */
   wikiServices?: WikiServices
+  /**
+   * F027 final-vision P1-2 · 共享 ingest services 注入（docs-watcher 也复用同一 PreviewStore）。
+   *
+   * 不传 → registerPhase3Routes 内部创建（向后兼容 standalone 测试 / 旧 caller）。
+   * 传入 → server.ts boot 先创建（一份给 routes，一份给 DocsIngestRunner），同一 PreviewStore
+   *        保证 docs-watcher 的 preview/commit 链能跨 service 命中（虽然 runner 内部 preview→commit
+   *        在同一 instance，不依赖 cross-instance；但共享更易追踪状态）。
+   */
+  sharedIngestServices?: {
+    previewStore: PreviewStore
+    ingestPreview: IngestPreviewService
+    ingestCommit?: IngestCommitService
+  }
 }
 
 export function registerPhase3Routes(app: FastifyInstance, deps: Phase3RoutesDeps): void {
@@ -51,8 +65,9 @@ export function registerPhase3Routes(app: FastifyInstance, deps: Phase3RoutesDep
     logWarn: (obj, msg) => app.log.warn(obj, msg),
   })
   const promptInspector = new PromptInspectorService({ db: deps.db })
-  const previewStore = new PreviewStore()
-  const ingestPreview = new IngestPreviewService({ store: previewStore })
+  const previewStore = deps.sharedIngestServices?.previewStore ?? new PreviewStore()
+  const ingestPreview =
+    deps.sharedIngestServices?.ingestPreview ?? new IngestPreviewService({ store: previewStore })
   const decisionService = new DecisionService({ db: deps.db })
 
   registerViewfinderRoute(app, viewfinderService)
@@ -60,16 +75,20 @@ export function registerPhase3Routes(app: FastifyInstance, deps: Phase3RoutesDep
   registerPromptInspectorRoute(app, promptInspector)
   registerIngestPreviewRoute(app, ingestPreview)
   registerDecisionsRoute(app, decisionService)
+  // F027 v3 G6 · Wiki 哲学 UI 后端 (GET /api/wiki/story)
+  registerWikiStoryRoute(app, new WikiStoryService({ db: deps.db }))
 
   // F027 Phase 3 P20 Day 9-10 (AC-P3-10) · commit endpoint 仅在 wikiServices 注入时启用
   if (deps.wikiServices) {
     const wikiServices = deps.wikiServices
-    const commitService = new IngestCommitService({
-      store: previewStore,
-      updateWiki: wikiServices.updateWiki,
-      leases: wikiServices.leases,
-      leaderTerm: () => wikiServices.leader.getCurrent()?.currentTerm ?? "0",
-    })
+    const commitService =
+      deps.sharedIngestServices?.ingestCommit ??
+      new IngestCommitService({
+        store: previewStore,
+        updateWiki: wikiServices.updateWiki,
+        leases: wikiServices.leases,
+        leaderTerm: () => wikiServices.leader.getCurrent()?.currentTerm ?? "0",
+      })
     registerIngestCommitRoute(app, commitService)
   }
 }

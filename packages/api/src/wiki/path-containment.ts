@@ -13,12 +13,102 @@
  *   3. 不允许 NUL byte / 控制字符（fs API 边界硬约束）
  */
 
+import { constants as fsConstants, type Stats } from "node:fs"
+import fsp from "node:fs/promises"
 import path from "node:path"
 
 export class WikiPathInvalidError extends Error {
   constructor(message: string) {
     super(message)
     this.name = "WikiPathInvalidError"
+  }
+}
+
+/**
+ * F027 · realpath containment + regular-file 读取 —— KB tab 全文端点（drafts/content、warnings/content）
+ * **及 warnings list 扫描**共用安全原语（德彪 codex r2 P1：list 扫描也必须经此读，杜绝裸 readFile 跟随
+ * hardlink/symlink 把树外文件前 200 字泄露进 summary）。
+ *
+ * 背景（德彪 codex review NO-GO P1）：safeWikiPath / 子树前缀检查都是**词法**路径检查，
+ * 随后的 readFile/stat **会跟随 symlink / Windows junction**。攻击者只要能在受控目录里放一个
+ * 指向目录外的链接（项目 taint model 明确把 user-drop 的 symlink 当威胁，DraftScanner.list 已拒），
+ * 词法检查就会放行而 readFile 跟随链接读到进程权限内的任意文件。
+ *
+ * 防御：对**真实路径**再做 containment —— realpath(abs) 解析所有链接后必须仍在 realpath(lexicalRoot)
+ * 之内（根也 realpath，兼容根自身位于链接下的部署），且目标必须是**普通文件**（德彪 codex P2：不读
+ * 目录/特殊文件，配合各 caller 的 `.md` 限制）。
+ *
+ * 防御层次（德彪 codex review r1+r2）：
+ *   1. realpath(abs) 解析所有 symlink/Windows junction，必须仍在 realpath(lexicalRoot) 内（越界抛）。
+ *   2. **单个 FileHandle 做 stat+read**（r2 P1）：关掉 realpath→stat→read 之间 stat→read 的 TOCTOU
+ *      窗口（同一 fd 上 fstat 与 read 不会被中途换路径重定向）。
+ *   3. **nlink>1 拒绝**（r2 P1）：realpath 不解析 hardlink —— 树内硬链可指向树外文件；多链接文件一律拒。
+ *   4. 普通文件校验（非目录/特殊文件）；FIFO 经 O_NONBLOCK open 后 isFile() 判否 → null（不阻塞等 writer）。
+ *   ⚠️ 残留：realpath→open 之间仍有极窄 TOCTOU 窗口（纯 userland 路径校验关不死，需 OS 级解析）。
+ *      本端点是 localhost 单用户只读 dev 视图、draft/warnings 目录仅由可信 ingest 写入 → 接受此残留。
+ *
+ * 返回 `{content, mtime}` | `null`（文件或根不存在、或目标非普通文件 → caller 转 404）；
+ * 越界 / 多链接（realpath 逃逸 / hardlink）抛 `WikiPathInvalidError`（caller 转 400）。
+ * 注意：**只有完整 read 成功才返回内容** —— list 侧据此算 hasContent 即可保证 `hasContent ⟺ content 端点 200`
+ * （含超大文件 ERR_FS_FILE_TOO_LARGE / EIO：read 抛错 → caller 兜底 → 不算可读）。
+ */
+export async function readContainedFile(
+  abs: string,
+  lexicalRoot: string,
+  expectedRealRoot?: string,
+): Promise<{ content: string; mtime: string } | null> {
+  let realRoot: string
+  try {
+    realRoot = await fsp.realpath(lexicalRoot)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null // 根目录不存在 = 无内容
+    throw err
+  }
+  // 德彪 codex r5 P1：root 身份二次校验 —— caller 先前已 realpath 出 expectedRealRoot；若此处重新 realpath 的
+  // 结果与之不符，说明 root 在校验后被替换（rename + 原路径建 junction）→ 拒，关掉**目录级** swap 窗口。
+  // 剩余仅单文件 realpath(file)→open 极窄 TOCTOU（userland 不可关，既定接受）。
+  if (expectedRealRoot !== undefined && realRoot !== expectedRealRoot) {
+    throw new WikiPathInvalidError(
+      `root identity changed since validation (dir swap?): ${lexicalRoot} → ${realRoot} ≠ ${expectedRealRoot}`,
+    )
+  }
+  let realAbs: string
+  try {
+    realAbs = await fsp.realpath(abs)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null // 文件 / 某路径段不存在
+    throw err
+  }
+  const realRootSep = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep
+  if (realAbs !== realRoot && !realAbs.startsWith(realRootSep)) {
+    throw new WikiPathInvalidError(`path escapes root via symlink/junction: ${abs}`)
+  }
+  // r2 P1：open 一次，stat + read 都走同一个 FileHandle（关 stat→read TOCTOU）。
+  // r3：加 O_NONBLOCK —— 防 FIFO/特殊文件 open 阻塞等 writer（DoS 回归；我换 open-first 引入的）。
+  //     POSIX 上 FIFO 以 O_NONBLOCK 打开立即返回，随后 isFile() 判否 → null。Windows 无 O_NONBLOCK
+  //     （→ 0）且不会把 FIFO 当目录项，无影响。
+  const nonBlock = (fsConstants.O_NONBLOCK as number | undefined) ?? 0
+  let handle: Awaited<ReturnType<typeof fsp.open>>
+  try {
+    handle = await fsp.open(realAbs, fsConstants.O_RDONLY | nonBlock)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === "ENOENT" || code === "EISDIR") return null // 不存在 / 目录 → 当作不存在
+    throw err
+  }
+  try {
+    const stat: Stats = await handle.stat()
+    if (!stat.isFile()) return null // 目录 / 特殊文件 → 当作不存在
+    if (stat.nlink > 1) {
+      // r2 P1：realpath 不解析 hardlink —— 多链接文件可能是越界硬链，一律拒。
+      throw new WikiPathInvalidError(
+        `refusing multi-hardlink file (possible containment escape): ${abs}`,
+      )
+    }
+    const content = await handle.readFile("utf-8")
+    return { content, mtime: stat.mtime.toISOString() }
+  } finally {
+    await handle.close()
   }
 }
 

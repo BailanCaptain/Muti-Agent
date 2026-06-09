@@ -1,0 +1,33 @@
+{
+  "judge_id": "codex-gpt-5.4",
+  "ac_id": "AC-P4-4",
+  "verdict": "CONDITIONAL_PASS",
+  "reasoning": "Judge2 recheck after commit 7603f35. First-round verdict was FAIL because batch mechanics existed, but the required KB-tab batch UI was only in DraftApprovalTab. Spec requires the knowledge-base tab to expose [批量审批], type/mtime sorted list view, multi-select, common reason, continue-on-error, and final report at docs/plans/F027-phase4-implementation-plan.md:43 and the formal AC at :215-218; implementation schedule repeats KB tab multi-select + common reason/report modal at :168 and walkthrough step 2.5 expects KB tab multi-select + [批量审批] at :395. The repair hunk adds the missing KB surface: KnowledgeBaseTab imports BatchPromoteModal at components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:6, tracks selectedDraftPaths at :64, derives selectedBatchItems at :117-122, renders KbDraftsSection at :209-217, opens BatchPromoteModal at :242-250, renders the top [批量审批 N 份] button at :281-293, and row selection + Promote/Demote actions at :327-388. Existing backend batch semantics remain covered by the first-round evidence and are still aligned with AC-P4-4. Tests actually rerun in this recheck: targeted node suites 37/37 pass and targeted Vitest suites 52/52 pass; the relevant frontend batch suites include DraftApprovalTab multi-select tests at components/chat/right-panel/runtime-log/tabs/draft-approval-tab.test.tsx:349-479 and BatchPromoteModal report tests at components/chat/right-panel/runtime-log/batch-promote-modal/batch-promote-modal.test.tsx:66-159. Static inspection confirms the previously missing KB-tab button and selection state are now present in the 7603f35 hunk. Gap status: the original KB-tab batch UI gap is closed; remaining condition is browser walkthrough evidence that the KB tab can select drafts and open the shared BatchPromoteModal.",
+  "cited_evidence": [
+    "docs/plans/F027-phase4-implementation-plan.md:43",
+    "docs/plans/F027-phase4-implementation-plan.md:168",
+    "docs/plans/F027-phase4-implementation-plan.md:215",
+    "docs/plans/F027-phase4-implementation-plan.md:395",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:6",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:64",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:117",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:209",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:242",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:281",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:327",
+    "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.test.tsx:349",
+    "components/chat/right-panel/runtime-log/batch-promote-modal/batch-promote-modal.test.tsx:66"
+  ],
+  "spec_gate": "PASS",
+  "mechanism_gate": "PASS",
+  "feature_gate": "PASS",
+  "p1_findings": [],
+  "p2_findings": [],
+  "p3_findings": [
+    {
+      "file": "docs/plans/F027-phase4-implementation-plan.md:395",
+      "issue": "KB-tab batch approval still needs walkthrough screenshot/log evidence.",
+      "suggestion": "During scenario 2.5, capture KB tab multi-select, [批量审批], report modal, and DB query evidence."
+    }
+  ]
+}

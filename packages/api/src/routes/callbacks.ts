@@ -93,7 +93,7 @@ export function registerCallbackRoutes(
       invocationId: string
       emit: (event: RealtimeServerEvent) => void
     }) => Promise<void> | void
-    getRoomSummary?: (sessionGroupId: string) => { summary: string | null }
+    // F027 #285 S3 · getRoomSummary / getMemories 选项已退役删除（旧 3 记忆工具后端）。
     getTaskStatus?: (
       sessionGroupId: string,
       agentId?: string,
@@ -111,10 +111,6 @@ export function registerCallbackRoutes(
         invocationId: string
       },
     ) => Promise<void> | void
-    getMemories?: (
-      sessionGroupId: string,
-      keyword?: string,
-    ) => { memories: Array<{ id: string; summary: string; keywords: string; createdAt: string }> }
     // F018 P5 AC6.3: semantic recall tool backend
     // B019 review-2 (LL-023 scope 对齐): scope 从单 thread 扩到 sessionGroup
     // 内所有 threads (clowder-ai thread = 我们 sessionGroup, 抄实现没抄语义层级)
@@ -145,6 +141,15 @@ export function registerCallbackRoutes(
         score: number
       }>
     }
+    // F027 wiring · search_wiki MCP — BM25 over wiki_entity_index（全 wiki scope，可选单桶 scope）。
+    // 与 queryMessages 互补：那个搜 raw messages 字面，这个搜已编译 wiki 知识实体。
+    searchWiki?: (params: {
+      query: string
+      topK: number
+      scope?: string
+    }) => Promise<{
+      hits: Array<{ path: string; score: number; excerpt: string }>
+    }>
     requestDecision?: (
       sessionGroupId: string,
       params: {
@@ -327,69 +332,8 @@ export function registerCallbackRoutes(
     }
   })
 
-  app.get("/api/callbacks/room-summary", async (request: FastifyRequest, reply: FastifyReply) => {
-    const query = request.query as { invocationId?: string; callbackToken?: string }
-    const invocation = assertInvocation(
-      options.invocations,
-      query.invocationId,
-      query.callbackToken,
-    )
-
-    if (!invocation) {
-      reply.code(401)
-      return { error: "Invalid invocation identity." }
-    }
-
-    const thread = options.repository.getThreadById(invocation.threadId)
-    if (!thread) {
-      reply.code(404)
-      return { error: "Thread not found." }
-    }
-
-    if (options.getRoomSummary) {
-      return options.getRoomSummary(thread.sessionGroupId)
-    }
-
-    return { summary: null }
-  })
-
-  app.get(
-    "/api/callbacks/search-memories",
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      const query = request.query as {
-        invocationId?: string
-        callbackToken?: string
-        keyword?: string
-      }
-      const invocation = assertInvocation(
-        options.invocations,
-        query.invocationId,
-        query.callbackToken,
-      )
-
-      if (!invocation) {
-        reply.code(401)
-        return { error: "Invalid invocation identity." }
-      }
-
-      if (!query.keyword?.trim()) {
-        reply.code(400)
-        return { error: "keyword is required." }
-      }
-
-      const thread = options.repository.getThreadById(invocation.threadId)
-      if (!thread) {
-        reply.code(404)
-        return { error: "Thread not found." }
-      }
-
-      if (options.getMemories) {
-        return options.getMemories(thread.sessionGroupId, query.keyword.trim())
-      }
-
-      return { memories: [] }
-    },
-  )
+  // F027 #285 S3 · /api/callbacks/room-summary + /search-memories + /memory 三路由已退役删除
+  // （旧 3 记忆工具唯一后端；职能由 rooms/<roomId>/session-summary.md + read_wiki/search_wiki 接管）。
 
   // F018 P5 AC6.3: recall_similar_context backend — semantic search across
   // the current thread's embedding store (time-decayed cosine), returns
@@ -516,6 +460,38 @@ export function registerCallbackRoutes(
     return { hits: [] }
   })
 
+  // F027 wiring · search_wiki MCP backend — BM25 over wiki_entity_index（全 wiki scope）。
+  app.get("/api/callbacks/search-wiki", async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = request.query as {
+      invocationId?: string
+      callbackToken?: string
+      query?: string
+      topK?: string
+      scope?: string
+    }
+    const invocation = assertInvocation(options.invocations, query.invocationId, query.callbackToken)
+    if (!invocation) {
+      reply.code(401)
+      return { error: "Invalid invocation identity." }
+    }
+
+    const q = query.query?.trim()
+    if (!q) {
+      reply.code(400)
+      return { error: "query is required." }
+    }
+
+    const topKParsed = query.topK ? Number.parseInt(query.topK, 10) : 5
+    const topK = Number.isFinite(topKParsed) && topKParsed > 0 ? Math.min(topKParsed, 50) : 5
+
+    if (options.searchWiki) {
+      return options.searchWiki({ query: q, topK, scope: query.scope?.trim() || undefined })
+    }
+
+    // searchWiki not wired → graceful empty
+    return { hits: [] }
+  })
+
   // --- New A2A callback routes ---
 
   app.get("/api/callbacks/task-status", async (request: FastifyRequest, reply: FastifyReply) => {
@@ -636,36 +612,6 @@ export function registerCallbackRoutes(
       return { ok: true as const }
     },
   )
-
-  app.get("/api/callbacks/memory", async (request: FastifyRequest, reply: FastifyReply) => {
-    const query = request.query as {
-      invocationId?: string
-      callbackToken?: string
-      keyword?: string
-    }
-    const invocation = assertInvocation(
-      options.invocations,
-      query.invocationId,
-      query.callbackToken,
-    )
-
-    if (!invocation) {
-      reply.code(401)
-      return { error: "Invalid invocation identity." }
-    }
-
-    const thread = options.repository.getThreadById(invocation.threadId)
-    if (!thread) {
-      reply.code(404)
-      return { error: "Thread not found." }
-    }
-
-    if (options.getMemories) {
-      return options.getMemories(thread.sessionGroupId, query.keyword)
-    }
-
-    return { memories: [] }
-  })
 
   app.post(
     "/api/callbacks/request-decision",

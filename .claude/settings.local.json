@@ -219,7 +219,11 @@
       "Bash(command -v codex)",
       "Bash(cd *)",
       "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:3100\" -UseBasicParsing -TimeoutSec 5; \"web:3100 -> $\\($r.StatusCode\\)\" } catch { \"web:3100 -> FAIL: $\\($_.Exception.Message\\)\" }; try { $r2 = Invoke-WebRequest -Uri \"http://localhost:8800/api/health\" -UseBasicParsing -TimeoutSec 5; \"api:8800/health -> $\\($r2.StatusCode\\)\" } catch { try { $r3 = Invoke-WebRequest -Uri \"http://localhost:8800/health\" -UseBasicParsing -TimeoutSec 5; \"api:8800 /health -> $\\($r3.StatusCode\\)\" } catch { \"api:8800 -> FAIL: $\\($_.Exception.Message\\)\" } })",
-      "PowerShell($w = Invoke-RestMethod -Uri \"http://localhost:8800/api/wiki/warnings\" -TimeoutSec 5; \"count: $\\($w.warnings.Count\\)\"; $w.warnings | Select-Object -First 3 | ForEach-Object { \"$\\($_.path\\) | hasContent=$\\($_.hasContent\\)\" })"
+      "PowerShell($w = Invoke-RestMethod -Uri \"http://localhost:8800/api/wiki/warnings\" -TimeoutSec 5; \"count: $\\($w.warnings.Count\\)\"; $w.warnings | Select-Object -First 3 | ForEach-Object { \"$\\($_.path\\) | hasContent=$\\($_.hasContent\\)\" })",
+      "Bash(codex status *)",
+      "Bash(codex --help)",
+      "Bash(codex cloud *)",
+      "Bash(codex review *)"
     ]
   },
   "enableAllProjectMcpServers": true,

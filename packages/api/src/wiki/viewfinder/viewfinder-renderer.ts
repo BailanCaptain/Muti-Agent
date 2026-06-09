@@ -6,11 +6,11 @@
  *   - 6 段全部 SQL 查 + 字符串拼，不调 LLM 编（高频确定性活）
  *   - §1 当前主题：取最新 spec 决策；无则 fallback session_groups.title
  *     → 关键修复：tombstone 决策永久投影到 §1（plan chap 11 行 1198-1200 设计意图）
- *   - §2 当前进度：messages tail 关键词扫（"完成/已合/通过"等）
- *   - §3 下一步 + 谁做：取最新 commit 决策（active，未被 supersede）
+ *   - §2 当前进度：站会式 = feature.md checkbox 进度% + phase 坐标 + 正在做(in-flight commit AC) + 漂移交叉验证；下接已完成 commit 列表
+ *   - §3 下一步 + 谁做：feature.md 清单第一条未勾 AC（commit 不进 §3）；非 feature 房退 spec/pivot 方向（小孙 2026-05-31 拍 A）
  *   - §4 等谁 / blocker：F026 a2a_calls 实时查 + 24h deadline_at 防御（B024 兜底）
  *   - §5 关键决策：active 5 条 + 含 [decision_id=X, msg_id] 证据链
- *   - §6 不要再做：reject 类 active + tombstone 类
+ *   - §6 不要再做：严格只 tombstone=1（AC-P2-7 小孙 2026-05-31 拍 A）；active reject 归 §5
  *
  * 漂移防御产物：
  *   - decisionsSummaryHash: §5 列表的 sha256（MonthlySnapshot drift 比对）
@@ -33,10 +33,16 @@ export function renderViewfinder(input: RenderViewfinderInput): ViewfinderArtifa
   const lines: string[] = []
 
   // Frontmatter
+  // F027 v3 G3 修: generated_by 字段加自描述说明
+  // 真相源 V16.5 chap 11 line 1255-1294 — 6 段全 SQL 拼, 不调 LLM, 设计层只有一条路径
+  // 之前 "RoomCompiler (rule-based template)" 暗示多 generator 备选 → 误导
+  // 改为 "rule-based-template" 明示固定方式，注释说明设计原意
   lines.push("---")
   lines.push(`viewfinder_id: ${makeViewfinderId(input.roomId, input.generatedAt)}`)
   lines.push(`generated_at: ${input.generatedAt}`)
-  lines.push("generated_by: RoomCompiler (rule-based template)")
+  lines.push(
+    "generated_by: rule-based-template  # V16.5 chap 11 · 6 段全 SQL 拼, 不调 LLM (设计层固定单路径)",
+  )
   lines.push("inputs:")
   lines.push(`  last_committed_cursor: ${input.lastCommittedCursor ?? "null"}`)
   lines.push(`  decision_ledger_count: ${input.activeDecisions.length}`)
@@ -112,18 +118,23 @@ export function renderViewfinder(input: RenderViewfinderInput): ViewfinderArtifa
 // ─── §1 当前主题 ─────────────────────────────────────────────────────
 
 function renderTopic(input: RenderViewfinderInput): string {
-  // 优先级 1: tombstone 类 spec 决策（永久投影 — plan chap 11 行 1198-1200 设计意图）
+  // AC-P2-9（小孙 2026-05-31 拍 A）：§1 优先 feature/bug 文档 H1 标题（带 F-id/B-id 前缀），
+  // 让 agent 一眼知道"这房间在做哪个 feature + 主题"。全确定性零 LLM（LLM 提炼路径 descope）。
+  if (input.featureTopic) {
+    return input.featureTopic
+  }
+  // fallback 1: tombstone 类 spec 决策（永久投影 — plan chap 11 行 1198-1200 设计意图）
   const tombstoneSpec = input.tombstoneDecisions.find((d) => d.decisionType === "spec")
   if (tombstoneSpec) {
     return `${tombstoneSpec.content}（${formatDecisionRef(tombstoneSpec)}, tombstone）`
   }
-  // 优先级 2: 最新 active spec 决策
+  // fallback 2: 最新 active spec 决策
   const latestSpec = input.activeDecisions.find((d) => d.decisionType === "spec")
   if (latestSpec) {
     return `${latestSpec.content}（${formatDecisionRef(latestSpec)}）`
   }
-  // 优先级 3: fallback session_groups.title
-  return `${input.sessionGroupTitle}（fallback: 无 spec 决策入 ledger）`
+  // fallback 3: session_groups.title（纯闲聊房，无 feature/bug、无 spec 决策）
+  return `${input.sessionGroupTitle}（fallback: 无 feature/bug 文档、无 spec 决策入 ledger）`
 }
 
 // ─── §2 当前进度 ─────────────────────────────────────────────────────
@@ -144,10 +155,34 @@ const PROGRESS_COMMIT_LIMIT = 5
 
 function renderProgress(input: RenderViewfinderInput): string {
   const sections: string[] = []
-  // (B) phase 坐标行（如 caller 抓到 phaseInfo）
-  if (input.phaseInfo) {
+
+  // (S) 站会式进度行（小孙 2026-05-31 拍 A）
+  //   - % 只数 feature.md checkbox（featureProgress），commit 一律不算 AC 完成
+  //   - in-flight: 最新 commit 的 AC tag（phaseInfo.acs，可多个）= "正在做"，不进 %
+  //   - 漂移交叉验证: 清单第一条未勾不在最新 commit 的 AC 集合内 → 暴露"做完忘勾/跳做"
+  const prog = input.featureProgress
+  if (prog) {
+    const headLines: string[] = []
+    let head = `进度: ${prog.done}/${prog.total} AC (${prog.pct}%)`
+    if (input.phaseInfo) head += ` · ${formatPhaseCoordLine(input.phaseInfo)}`
+    headLines.push(head)
+    // codex P3-3 修：展示全部 in-flight AC（commit 可带多个 tag），漂移判断用 includes 不只比 acs[0]
+    const inFlightAcs = input.phaseInfo?.acs ?? []
+    if (inFlightAcs.length > 0) {
+      const sha = input.phaseInfo?.commitShortSha
+      headLines.push(`正在做: ${inFlightAcs.join(" + ")}${sha ? `（最近 commit ${sha}）` : ""}`)
+      if (prog.firstUndoneAC && !inFlightAcs.includes(prog.firstUndoneAC.id)) {
+        headLines.push(
+          `⚠ 漂移: 最近 commit 在 ${inFlightAcs.join(" + ")}，但清单第一条未勾是 ${prog.firstUndoneAC.id}（做完忘勾？跳做？）`,
+        )
+      }
+    }
+    sections.push(headLines.join("\n"))
+  } else if (input.phaseInfo) {
+    // (B) 非 feature 房但抓到 phase 坐标 → 保留坐标行
     sections.push(formatPhaseCoordLine(input.phaseInfo))
   }
+
   // (A) 已完成 commit decisions 列表
   const commits = input.activeDecisions
     .filter((d) => d.decisionType === "commit")
@@ -177,17 +212,23 @@ function formatPhaseCoordLine(info: PhaseInfo): string {
 // ─── §3 下一步 + 谁做 ────────────────────────────────────────────────
 
 function renderNextStep(input: RenderViewfinderInput): string {
-  // 取最新 active commit 决策（type=commit 通常是承诺/批准下一步动作）
-  const latestCommit = input.activeDecisions.find((d) => d.decisionType === "commit")
-  if (latestCommit) {
-    return `${latestCommit.content}（${formatDecisionRef(latestCommit)}）`
+  // §3 站会式下一步（小孙 2026-05-31 拍 A）：feature.md 清单第一条未勾 AC。
+  // 铁律：commit 一律不进 §3（commit = 已完成，归 §2 in-flight 指针）；只取 checkbox `- [ ]` 第一条。
+  // 非 feature 房 / 抓不到清单 → 退最新 spec/pivot 方向决策（仍不取 commit），再退待定。
+  const prog = input.featureProgress
+  if (prog?.firstUndoneAC) {
+    return `${prog.firstUndoneAC.id} ${prog.firstUndoneAC.title}（${prog.featureId} 清单第一条未勾 AC）`
   }
-  // 退而求其次：最新任意 active 决策
-  const latest = input.activeDecisions[0]
-  if (latest) {
-    return `${latest.content}（${formatDecisionRef(latest)}）`
+  if (prog && prog.total > 0) {
+    return `✅ ${prog.featureId} 全部 ${prog.total} 条 AC 已勾完`
   }
-  return "（暂无承诺类决策）"
+  const direction = input.activeDecisions.find(
+    (d) => d.decisionType === "spec" || d.decisionType === "pivot",
+  )
+  if (direction) {
+    return `${direction.content}（${formatDecisionRef(direction)}）`
+  }
+  return "（无追踪 feature 清单、无 spec/pivot 方向决策，下一步待定 — 进展见 §2）"
 }
 
 // ─── §4 等谁 / blocker（含 B024 24h 防御过滤） ───────────────────────
@@ -241,27 +282,36 @@ function formatTime(iso: string): string {
 
 const DECISIONS_LIMIT = 5
 
+// AC-P2-8（小孙 2026-05-31 拍）：§5 按重要性加权排序 pivot>spec>reject>commit。
+// 方向类(pivot/spec)比执行类(reject/commit)更该先看到。纯展示重要性，与 §6 红线语义无关。
+const DECISION_TYPE_WEIGHT: Record<string, number> = { pivot: 0, spec: 1, reject: 2, commit: 3 }
+
 function renderDecisionsSummary(decisions: ReadonlyArray<DecisionRow>): string {
   if (decisions.length === 0) return ""
-  const slice = decisions.slice(0, DECISIONS_LIMIT)
+  // 稳定排序：先按类型权重，权重相同保留原始顺序（decided_at DESC，caller 已排）
+  const sorted = decisions
+    .map((d, i) => ({ d, i }))
+    .sort((a, b) => {
+      const wa = DECISION_TYPE_WEIGHT[a.d.decisionType] ?? 99
+      const wb = DECISION_TYPE_WEIGHT[b.d.decisionType] ?? 99
+      return wa !== wb ? wa - wb : a.i - b.i
+    })
+    .map((x) => x.d)
+  const slice = sorted.slice(0, DECISIONS_LIMIT)
   return slice.map((d) => `- ${formatDecisionRef(d)}: ${d.content}`).join("\n")
 }
 
 // ─── §6 不要再做 ─────────────────────────────────────────────────────
 
 function renderDoNotList(input: RenderViewfinderInput): string {
+  // AC-P2-7（小孙 2026-05-31 拍 A）：§6 = 永久红线，严格只收 tombstone=1。
+  // active reject（可被 supersede，非永久红线）不进 §6 —— 它仍在 §5「关键决策」呈现，不丢信息。
+  // 此前含 active reject 是范-r3 P2-2 锁定的旧契约，本次按 AC 原意收紧。
   const items: DecisionRow[] = []
-  // tombstone 类（永久不要再做 — chap 11 行 1198）
   for (const d of input.tombstoneDecisions) {
     if (d.decisionType === "reject" || d.decisionType === "pivot") items.push(d)
   }
-  // active reject 类
-  for (const d of input.activeDecisions) {
-    if (d.decisionType === "reject" && !items.some((x) => x.decisionId === d.decisionId)) {
-      items.push(d)
-    }
-  }
-  if (items.length === 0) return "（暂无 reject/tombstone 决策）"
+  if (items.length === 0) return "（暂无 tombstone 永久红线决策）"
   // P12.b 小孙 2026-05-22 拍：tombstone 三合一拼到 ref 方括号内（不再外挂 [tombstone]）
   return items
     .slice(0, DECISIONS_LIMIT)

@@ -44,7 +44,7 @@ argument-hint: "[阶段: kickoff|discussion|completion] [Fxxx 或主题]"
    ```bash
    grep -i "{关键词}" docs/ROADMAP.md docs/features/*.md
    ```
-   同时搜对话记忆：通过 `search-memories("{关键词}")` 查找历史讨论。
+   同时搜对话记忆：用 `query_messages("{关键词}")`（messages FTS）查历史讨论，知识沉淀用 `search_wiki`。（search-memories 已退役 — F027 #285）
 
 2. **判定**：
 

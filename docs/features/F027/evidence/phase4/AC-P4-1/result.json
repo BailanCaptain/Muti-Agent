@@ -1,0 +1,24 @@
+{
+  "ac_id": "AC-P4-1",
+  "title": "PromoteModal 流程 (V14 新实现)",
+  "phase": "phase4",
+  "verdict": "CONDITIONAL_PASS",
+  "double_pass": {
+    "judge1_verdict": "CONDITIONAL_PASS",
+    "judge2_verdict": "CONDITIONAL_PASS",
+    "arbitration_verdict": null,
+    "consensus": true
+  },
+  "evidence_paths": {
+    "screenshots": [],
+    "logs": [],
+    "code_anchors": [
+      "packages/api/src/wiki/promote-audit/v14-promote-audit-service.ts:98",
+      "packages/api/src/wiki/promote-audit/promote-wiki-service.ts:144",
+      "packages/api/src/routes/phase4/promote.ts:182",
+      "components/chat/right-panel/runtime-log/promote-modal/promote-modal.tsx:107",
+      "components/chat/right-panel/runtime-log/promote-modal/use-promote-api.ts"
+    ]
+  },
+  "inconclusive_reason": "consensus CONDITIONAL_PASS — 待 walkthrough 场景 2 step (PromoteModal V14 PASS UI 截图 + 后端 wiki_events committed log) 收齐后升 PASS"
+}

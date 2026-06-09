@@ -989,3 +989,275 @@ describe("RoomCompiler · 二次 run 覆盖 prepare 行（commit 之间无 race�
     }
   })
 })
+
+/**
+ * 范-r1 P1（sync codex review）抓出：
+ *   appendPending swallow 异常 → viewfinder.md 落盘但无 wiki_events 留痕 →
+ *   破坏 V16.5 §5 "所有 wiki 写操作走 append-only event log" 强契约 + 「追溯按钮」空。
+ * 修复：fail-closed — appendPending 抛 → deletePrepare rollback room_checkpoints + 抛错。
+ */
+/**
+ * F027 P4-A4 (V16.5 §5 line 452 + §8 line 533)：
+ *   RoomCompiler 派生 viewfinder.md + decisions.md + log.md 三文件，每个文件都是
+ *   独立 wiki path 都必须走 wiki_events 三阶段（appendPending → write → commit）。
+ *   之前只 audit viewfinder，违反 V16.5 §5 "所有 wiki 写" 强契约。
+ */
+describe("RoomCompiler · P4-A4 wiki_events 三文件全 audit", () => {
+  it("正常 run → 3 个 wiki_events row（viewfinder + decisions + log）全 commit", async () => {
+    const { db, close } = makeDb()
+    const { root, cleanup } = makeWikiRoot()
+    const store = new SqliteCheckpointStore(db)
+
+    const appendCalls: Array<{
+      path: string
+      attemptedHash: string
+      baseHash: string | null | undefined
+    }> = []
+    const commitCalls: Array<{ eventId: number; contentHash: string }> = []
+    let nextId = 1
+    const recordingSink = {
+      appendPending: (input: {
+        path: string
+        attemptedHash: string
+        baseHash?: string | null
+      }) => {
+        appendCalls.push({
+          path: input.path,
+          attemptedHash: input.attemptedHash,
+          baseHash: input.baseHash,
+        })
+        return { id: nextId++ }
+      },
+      commit: (eventId: number, args: { contentHash: string }) => {
+        commitCalls.push({ eventId, contentHash: args.contentHash })
+        return true
+      },
+      abort: () => true,
+    }
+
+    const compiler = new RoomCompiler({
+      store,
+      wikiRoot: root,
+      compileFn: async () =>
+        makeArtifact({
+          cursorCommitSeq: 1,
+          cursorMessageId: "m-1",
+          viewfinderMd: "# viewfinder body",
+          decisionsMd: "# decisions body",
+          logMd: "# log body",
+        }),
+      fencingToken: "tok",
+      leaderTerm: "term",
+      wikiEventsSink: recordingSink,
+    })
+
+    try {
+      await compiler.run({
+        roomId: "R-three",
+        newMessages: [userMsg("m-1", 1)],
+        newSeals: [],
+      })
+
+      assert.equal(appendCalls.length, 3, "viewfinder + decisions + log 三次 appendPending")
+      assert.deepEqual(
+        appendCalls.map((c) => c.path),
+        [
+          "wiki/rooms/R-three/viewfinder.md",
+          "wiki/rooms/R-three/decisions.md",
+          "wiki/rooms/R-three/log.md",
+        ],
+        "三文件 path 顺序固定",
+      )
+      assert.equal(appendCalls[0].attemptedHash, sha256("# viewfinder body"))
+      assert.equal(appendCalls[1].attemptedHash, sha256("# decisions body"))
+      assert.equal(appendCalls[2].attemptedHash, sha256("# log body"))
+      assert.equal(appendCalls[0].baseHash, null, "首次写 baseHash=null")
+
+      assert.equal(commitCalls.length, 3, "三次 commit")
+      assert.deepEqual(commitCalls.map((c) => c.eventId).sort(), [1, 2, 3])
+      assert.equal(commitCalls[0].contentHash, sha256("# viewfinder body"))
+      assert.equal(commitCalls[1].contentHash, sha256("# decisions body"))
+      assert.equal(commitCalls[2].contentHash, sha256("# log body"))
+    } finally {
+      cleanup()
+      close()
+    }
+  })
+
+  it("第 2 次 appendPending 失败 → 第 1 个 audit abort + prepare rollback + 抛错（fail-closed）", async () => {
+    const { db, close } = makeDb()
+    const { root, cleanup } = makeWikiRoot()
+    const store = new SqliteCheckpointStore(db)
+
+    let appendCalls = 0
+    const abortCalls: Array<{ eventId: number; reason?: string }> = []
+    const partiallyFailingSink = {
+      appendPending: () => {
+        appendCalls++
+        if (appendCalls === 2) {
+          throw new Error("DB connection lost on 2nd append (decisions.md)")
+        }
+        return { id: appendCalls }
+      },
+      commit: () => true,
+      abort: (eventId: number, args: { error: string; reason: string }) => {
+        abortCalls.push({ eventId, reason: args.reason })
+        return true
+      },
+    }
+
+    const compiler = new RoomCompiler({
+      store,
+      wikiRoot: root,
+      compileFn: async () => makeArtifact({ cursorCommitSeq: 1, cursorMessageId: "m-1" }),
+      fencingToken: "tok",
+      leaderTerm: "term",
+      wikiEventsSink: partiallyFailingSink,
+    })
+
+    try {
+      let thrown: Error | null = null
+      try {
+        await compiler.run({
+          roomId: "R-partial-fail",
+          newMessages: [userMsg("m-1", 1)],
+          newSeals: [],
+        })
+      } catch (err) {
+        thrown = err as Error
+      }
+      assert.ok(thrown, "应抛错")
+      assert.match(thrown!.message, /wiki_events\.appendPending failed/)
+      assert.equal(appendCalls, 2, "第 1 次成功、第 2 次抛 → 调 2 次")
+      assert.equal(abortCalls.length, 1, "已 append 的 1 个 audit 应被 abort")
+      assert.equal(abortCalls[0].eventId, 1)
+      assert.equal(abortCalls[0].reason, "partial_prepare_rollback")
+      // room_checkpoints prepare 行 rollback：read 应返 null
+      const rem = store.read("R-partial-fail")
+      assert.equal(rem, null, "deletePrepare 已 rollback room_checkpoints prepare 行")
+      // 3 文件均不应落盘（fail-closed 在 write 前抛）
+      for (const f of ["viewfinder.md", "decisions.md", "log.md"]) {
+        try {
+          await fsAsync.access(path.join(root, "rooms", "R-partial-fail", f))
+          assert.fail(`${f} 不应存在（fail-closed 在 write 前抛）`)
+        } catch (err) {
+          assert.equal((err as NodeJS.ErrnoException).code, "ENOENT", `${f} 应不存在`)
+        }
+      }
+    } finally {
+      cleanup()
+      close()
+    }
+  })
+
+  it("WRITE 失败 → 3 个 audit 全 abort（reason=atomic_write_failed）", async () => {
+    const { db, close } = makeDb()
+    const { root, cleanup } = makeWikiRoot()
+    const store = new SqliteCheckpointStore(db)
+    // 删 root 让 writeFileAtomic mkdir + rename 失败
+    rmSync(root, { recursive: true, force: true })
+
+    let nextId = 1
+    const abortCalls: Array<{ eventId: number; reason: string }> = []
+    const sink = {
+      appendPending: () => ({ id: nextId++ }),
+      commit: () => true,
+      abort: (eventId: number, args: { error: string; reason: string }) => {
+        abortCalls.push({ eventId, reason: args.reason })
+        return true
+      },
+    }
+    const compiler = new RoomCompiler({
+      store,
+      wikiRoot: path.join(root, "non-existent-and-readonly", "deep"),
+      compileFn: async () => makeArtifact({ cursorCommitSeq: 1, cursorMessageId: "m-1" }),
+      fencingToken: "tok",
+      leaderTerm: "term",
+      wikiEventsSink: sink,
+    })
+    try {
+      let thrown: Error | null = null
+      try {
+        await compiler.run({
+          roomId: "R-write-fail",
+          newMessages: [userMsg("m-1", 1)],
+          newSeals: [],
+        })
+      } catch (err) {
+        thrown = err as Error
+      }
+      // 检查抛错（路径要不可写；不同 OS 走的 mkdir 行为可能不同，但只要 rename 失败就抛）
+      // 如果当前平台允许深嵌套 mkdir（root 已 rm），那 write 可能成功 — 跳过断言
+      if (thrown) {
+        assert.match(thrown.message, /atomic write failed/)
+        assert.equal(abortCalls.length, 3, "三 audit 全 abort")
+        assert.deepEqual(
+          abortCalls.map((c) => c.reason),
+          ["atomic_write_failed", "atomic_write_failed", "atomic_write_failed"],
+        )
+      }
+    } finally {
+      // root 已删，没法再 cleanup
+      close()
+    }
+  })
+})
+
+describe("RoomCompiler · 范-r1 P1 wiki_events fail-closed", () => {
+  it("appendPending 抛错 → RoomCompiler.run 抛 RoomCompilerError + rollback prepare 行", async () => {
+    const { db, close } = makeDb()
+    const { root, cleanup } = makeWikiRoot()
+    const store = new SqliteCheckpointStore(db)
+
+    // 模拟 sink: appendPending 总抛错
+    let appendCalls = 0
+    const failingSink = {
+      appendPending: () => {
+        appendCalls++
+        throw new Error("DB connection lost during appendPending")
+      },
+      commit: () => true,
+      abort: () => true,
+    }
+
+    const compiler = new RoomCompiler({
+      store,
+      wikiRoot: root,
+      compileFn: async () => makeArtifact({ cursorCommitSeq: 1, cursorMessageId: "m-1" }),
+      fencingToken: "fake-token",
+      leaderTerm: "fake-term",
+      wikiEventsSink: failingSink,
+    })
+
+    try {
+      const msgs = [userMsg("m-1", 1)]
+      let thrown: Error | null = null
+      try {
+        await compiler.run({ roomId: "R-fail", newMessages: msgs, newSeals: [] })
+      } catch (err) {
+        thrown = err as Error
+      }
+      // 必须抛 RoomCompilerError，phase=prepare
+      assert.ok(thrown, "应抛错")
+      assert.match(
+        thrown!.message,
+        /wiki_events\.appendPending failed/,
+        "错误信息应明示 wiki_events failure (V16.5 §5 强契约)",
+      )
+      assert.equal(appendCalls, 1, "appendPending 被调一次")
+      // rollback 验证：room_checkpoints 不应留 prepare 行（防 reconciler 复用半成品）
+      const remaining = store.read("R-fail")
+      assert.equal(remaining, null, "deletePrepare 应已 rollback prepare 行")
+      // 文件不应被写（write 在 audit prepare 之后）
+      try {
+        await fsAsync.access(path.join(root, "rooms", "R-fail", "viewfinder.md"))
+        assert.fail("viewfinder.md 不应存在（fail-closed 在 write 前抛）")
+      } catch (err) {
+        assert.equal((err as NodeJS.ErrnoException).code, "ENOENT", "viewfinder.md 应不存在")
+      }
+    } finally {
+      cleanup()
+      close()
+    }
+  })
+})

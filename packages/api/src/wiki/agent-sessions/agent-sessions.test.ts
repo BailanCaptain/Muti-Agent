@@ -209,6 +209,89 @@ describe("RoomAgentSessionsRepository · CRUD", () => {
   })
 })
 
+// ─── F027 v3 G10 · OpenThread runtime type guard / sanitize ────────
+
+describe("F027 v3 G10 · OpenThread type guard + sanitize", () => {
+  it("isOpenThread: string → true", () => {
+    const { isOpenThread } = require("./types") as typeof import("./types")
+    assert.equal(isOpenThread("等小孙拍"), true)
+  })
+
+  it("isOpenThread: {text, a2a_call_id} → true", () => {
+    const { isOpenThread } = require("./types") as typeof import("./types")
+    assert.equal(isOpenThread({ text: "等范德彪", a2a_call_id: "call-001" }), true)
+    assert.equal(isOpenThread({ text: "等桂芬" }), true)
+  })
+
+  it("isOpenThread: 非法格式 → false", () => {
+    const { isOpenThread } = require("./types") as typeof import("./types")
+    assert.equal(isOpenThread(null), false)
+    assert.equal(isOpenThread({}), false)
+    assert.equal(isOpenThread({ text: "" }), false, "空 text 应 reject")
+    assert.equal(isOpenThread({ text: 123 }), false)
+    assert.equal(isOpenThread({ text: "ok", a2a_call_id: 123 }), false, "a2a_call_id 非 string")
+    assert.equal(isOpenThread(42), false)
+    assert.equal(isOpenThread([]), false)
+  })
+
+  it("sanitizeOpenThreads: 混合 valid + invalid → 只保留 valid + count droppedCount", () => {
+    const { sanitizeOpenThreads } = require("./types") as typeof import("./types")
+    const raw = [
+      "valid string",
+      { text: "valid obj" },
+      { text: "valid w/ call", a2a_call_id: "call-1" },
+      null, // 非法
+      {}, // 非法
+      { text: "" }, // 非法
+      42, // 非法
+    ]
+    const { valid, droppedCount } = sanitizeOpenThreads(raw)
+    assert.equal(valid.length, 3)
+    assert.equal(droppedCount, 4)
+  })
+
+  it("sanitizeOpenThreads: 非数组 → 空 + droppedCount=0", () => {
+    const { sanitizeOpenThreads } = require("./types") as typeof import("./types")
+    assert.deepEqual(sanitizeOpenThreads("not array"), { valid: [], droppedCount: 0 })
+    assert.deepEqual(sanitizeOpenThreads(null), { valid: [], droppedCount: 0 })
+  })
+
+  it("repository hydrate: 老 DB row 含格式错 entry → sanitize 丢弃 + 不传 UI", () => {
+    const { drizzle, cleanup } = makeDb()
+    try {
+      const repo = new RoomAgentSessionsRepository(drizzle)
+      // 模拟老 DB row 含格式错 entry (string + invalid object 混)
+      const session = repo.createSession({
+        roomId: "R-G10",
+        alias: "范德彪",
+        startedAt: "2026-05-28T10:00:00Z",
+        entryReason: "测试",
+      })
+      // 直接拿 raw better-sqlite3 handle 写 openThreads JSON (含非法 entry)
+      const rawSqlite = (drizzle as unknown as { $client: {
+        prepare: (sql: string) => { run: (...a: unknown[]) => unknown }
+      } }).$client
+      rawSqlite
+        .prepare("UPDATE room_agent_sessions SET open_threads = ? WHERE session_id = ?")
+        .run(
+          JSON.stringify([
+            "valid",
+            { text: "valid w/ call", a2a_call_id: "call-x" },
+            { broken: true }, // 非法
+            null, // 非法
+          ]),
+          session.sessionId,
+        )
+      const fetched = repo.get(session.sessionId)
+      assert.ok(fetched)
+      // sanitize 后只剩 2 个 valid
+      assert.equal(fetched.openThreads.length, 2, "非法 entry 应被 sanitize 丢")
+    } finally {
+      cleanup()
+    }
+  })
+})
+
 // ─── 范-r1 P1-1 修：path segment containment ─────────────────────
 
 describe("RoomAgentSessionsRepository · 范-r1 P1-1 path segment 校验", () => {

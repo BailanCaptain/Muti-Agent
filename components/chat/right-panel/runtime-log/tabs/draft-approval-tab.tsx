@@ -1,6 +1,12 @@
 "use client"
 
+import { useCallback, useMemo, useState } from "react"
+
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
+import { BatchPromoteModal } from "../batch-promote-modal/batch-promote-modal"
+import { DemoteModal } from "../demote-modal/demote-modal"
+import { PromoteModal } from "../promote-modal/promote-modal"
+import { ExpandableContent } from "./expandable-content"
 import {
   type DraftOrigin,
   type DraftSummary,
@@ -9,44 +15,163 @@ import {
 } from "./draft-approval/use-drafts-data"
 
 /**
- * F027 Phase 3 Week 4 Day 18-19 (AC-P3-2 子需求) · DraftApprovalTab 真实数据
+ * F027 Phase 3-4 (AC-P3-2 + AC-P4-1 + AC-P4-3 + AC-P4-4) · DraftApprovalTab
  *
  * 真相源：
  *   - V16.5 chap 18 line 1952 (DraftApprovalTab → GET /api/wiki/drafts)
  *   - feature.md plan §3 line 48 (Phase 3 只读列表 + Phase 4 加 promote)
  *   - GET /api/wiki/drafts (Phase 3 Week 1 Day 3 done)
+ *   - PromoteModal (Phase 4 Day 8 done) + POST /api/wiki/drafts/promote (Day 7 done)
+ *   - BatchPromoteModal (Phase 4 Week 3 Day 12 done) + POST /api/wiki/drafts/batch-promote (Day 11)
  *
- * 实施:
- *   - 读取 drafts 列表（sorted by mtime DESC）
- *   - 每行渲染：title / type badge / origin badge / mtime relative / summary 100 字截断
- *   - empty / loading / error 三态
- *   - enabled wire = activeLvl2 === "draft-approval" (防 always-render 启动并发 fetch)
+ * Phase 4 Day 12 (AC-P4-4 批量审批):
+ *   - 每 row 加 multi-select checkbox + tab 级 selected: Set<path>
+ *   - Header 显示 selected.size + [批量审批 N 份] 按钮 (enabled when ≥1 selected)
+ *   - 点 [批量审批] → BatchPromoteModal (传 selected rows)
  *
- * 不做（Phase 4 范围）：
- *   - promote / demote / 批量审批按钮（feature.md AC-P4-1/3/4）
+ * Phase 4 Week 5 (codex j2 FAIL Red→Green, AC-P4-3 a/d):
+ *   - 每 row 加 [Demote] 按钮 → DemoteModal (mv 到 wiki/_rejected/ + wiki_events action='demote')
+ *
+ * 不做 (推 F028-2):
+ *   - [Rollback] 按钮 (写型 rollback)
  */
+
+/**
+ * callerAlias 来源 (同 knowledge-base-tab.tsx / composer.tsx pattern — Phase 4 未拍 user session)
+ */
+function getCurrentUserAlias(): string {
+  return process.env.NEXT_PUBLIC_USER_ALIAS ?? "小孙"
+}
+
 export function DraftApprovalTab() {
   const activeLvl2 = useRuntimeLogStore((state) => state.activeLvl2)
-  const { data, isLoading, error } = useDraftsData({
+  const { data, isLoading, error, refetch } = useDraftsData({
     enabled: activeLvl2 === "draft-approval",
   })
 
+  const [promotingDraft, setPromotingDraft] = useState<DraftSummary | null>(null)
+  const [demotingDraft, setDemotingDraft] = useState<DraftSummary | null>(null)
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set())
+  const [batchOpen, setBatchOpen] = useState(false)
+
+  const handlePromote = useCallback((draft: DraftSummary) => {
+    setPromotingDraft(draft)
+  }, [])
+
+  const handleDemote = useCallback((draft: DraftSummary) => {
+    setDemotingDraft(draft)
+  }, [])
+
+  const handlePromoteModalClose = useCallback(() => {
+    setPromotingDraft(null)
+  }, [])
+
+  const handleDemoteModalClose = useCallback(() => {
+    setDemotingDraft(null)
+  }, [])
+
+  const handlePromoteSuccess = useCallback(() => {
+    // Promote 成功 → src draft 已 unlink, dest wiki 已写 → refetch drafts list 刷新
+    refetch()
+    setPromotingDraft(null)
+  }, [refetch])
+
+  const handleDemoteSuccess = useCallback(() => {
+    // Demote 成功 → src 已 mv 到 wiki/_rejected/, draft list 应刷新 (虽然 draft list 通常只列 draft/_drafts/)
+    refetch()
+    setDemotingDraft(null)
+  }, [refetch])
+
+  const handleToggleSelect = useCallback((path: string) => {
+    setSelectedPaths((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }, [])
+
+  const handleOpenBatch = useCallback(() => {
+    setBatchOpen(true)
+  }, [])
+
+  const handleBatchClose = useCallback(() => {
+    // codex mid-r1 P1 修: clear selection + refetch 推迟到 modal close
+    // (handleBatchComplete 仍 open 时清 selectedPaths 会让 batchRows 变 []
+    //  → modal effect 重置回 compose phase → 报告 view 被清，用户看不到结果)
+    setBatchOpen(false)
+    setSelectedPaths(new Set())
+    refetch()
+  }, [refetch])
+
+  const handleBatchComplete = useCallback(() => {
+    // modal 提交完成 — 不动 selectedPaths / refetch，留给 handleBatchClose
+    // (保持 modal 在 report phase 显示，直到用户主动关闭)
+  }, [])
+
+  // 多选 rows 给 BatchPromoteModal 用
+  const batchRows = useMemo(() => {
+    if (selectedPaths.size === 0) return []
+    return data.drafts
+      .filter((d) => selectedPaths.has(d.path))
+      .map((d) => ({ srcDraftPath: d.path, displayTitle: d.title }))
+  }, [data.drafts, selectedPaths])
+
   return (
-    <div className="flex flex-col gap-2 p-3 text-xs" data-testid="draft-approval-tab">
-      <Header total={data.total} isLoading={isLoading} error={error} />
-      <DraftList drafts={data.drafts} />
-    </div>
+    <>
+      <div className="flex flex-col gap-2 p-3 text-xs" data-testid="draft-approval-tab">
+        <Header
+          total={data.total}
+          selectedCount={selectedPaths.size}
+          isLoading={isLoading}
+          error={error}
+          onOpenBatch={handleOpenBatch}
+        />
+        <DraftList
+          drafts={data.drafts}
+          selectedPaths={selectedPaths}
+          onPromote={handlePromote}
+          onDemote={handleDemote}
+          onToggleSelect={handleToggleSelect}
+        />
+      </div>
+      <PromoteModal
+        open={promotingDraft !== null}
+        srcDraftPath={promotingDraft?.path ?? null}
+        callerAlias={getCurrentUserAlias()}
+        onClose={handlePromoteModalClose}
+        onPromoteSuccess={handlePromoteSuccess}
+      />
+      <DemoteModal
+        open={demotingDraft !== null}
+        srcWikiPath={demotingDraft?.path ?? null}
+        callerAlias={getCurrentUserAlias()}
+        onClose={handleDemoteModalClose}
+        onDemoteSuccess={handleDemoteSuccess}
+      />
+      <BatchPromoteModal
+        open={batchOpen}
+        rows={batchRows}
+        callerAlias={getCurrentUserAlias()}
+        onClose={handleBatchClose}
+        onBatchComplete={handleBatchComplete}
+      />
+    </>
   )
 }
 
 function Header({
   total,
+  selectedCount,
   isLoading,
   error,
+  onOpenBatch,
 }: {
   total: number
+  selectedCount: number
   isLoading: boolean
   error: string | null
+  onOpenBatch: () => void
 }) {
   return (
     <div
@@ -54,23 +179,53 @@ function Header({
       data-testid="draft-approval-header"
     >
       <div className="text-[10px] uppercase tracking-wider text-slate-500">
-        审批待办 · {total} draft（Phase 3 只读 · Phase 4 加 promote）
+        审批待办 · {total} draft
+        {selectedCount > 0 ? `（已选 ${selectedCount}）` : "（勾选多份后可批量审批）"}
       </div>
-      {isLoading && (
-        <span className="text-[10px] text-slate-400" data-testid="draft-approval-loading">
-          ⏳
-        </span>
-      )}
-      {error && (
-        <span className="text-[10px] text-red-500" data-testid="draft-approval-error" title={error}>
-          ⚠ 加载失败
-        </span>
-      )}
+      <div className="flex items-center gap-2">
+        {selectedCount > 0 && (
+          <button
+            type="button"
+            onClick={onOpenBatch}
+            className="rounded bg-purple-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-purple-700"
+            data-testid="draft-approval-batch-button"
+            title="对已选中的 draft 批量 promote (共用 reason，部分失败留原位)"
+          >
+            批量审批 {selectedCount} 份
+          </button>
+        )}
+        {isLoading && (
+          <span className="text-[10px] text-slate-400" data-testid="draft-approval-loading">
+            ⏳
+          </span>
+        )}
+        {error && (
+          <span
+            className="text-[10px] text-red-500"
+            data-testid="draft-approval-error"
+            title={error}
+          >
+            ⚠ 加载失败
+          </span>
+        )}
+      </div>
     </div>
   )
 }
 
-function DraftList({ drafts }: { drafts: DraftSummary[] }) {
+function DraftList({
+  drafts,
+  selectedPaths,
+  onPromote,
+  onDemote,
+  onToggleSelect,
+}: {
+  drafts: DraftSummary[]
+  selectedPaths: Set<string>
+  onPromote: (draft: DraftSummary) => void
+  onDemote: (draft: DraftSummary) => void
+  onToggleSelect: (path: string) => void
+}) {
   if (drafts.length === 0) {
     return (
       <div
@@ -85,14 +240,32 @@ function DraftList({ drafts }: { drafts: DraftSummary[] }) {
     <ul className="flex flex-col gap-1.5" data-testid="draft-approval-list">
       {drafts.map((d) => (
         <li key={d.path}>
-          <DraftRow draft={d} />
+          <DraftRow
+            draft={d}
+            selected={selectedPaths.has(d.path)}
+            onPromote={onPromote}
+            onDemote={onDemote}
+            onToggleSelect={onToggleSelect}
+          />
         </li>
       ))}
     </ul>
   )
 }
 
-function DraftRow({ draft }: { draft: DraftSummary }) {
+function DraftRow({
+  draft,
+  selected,
+  onPromote,
+  onDemote,
+  onToggleSelect,
+}: {
+  draft: DraftSummary
+  selected: boolean
+  onPromote: (draft: DraftSummary) => void
+  onDemote: (draft: DraftSummary) => void
+  onToggleSelect: (path: string) => void
+}) {
   return (
     <div
       className="rounded border border-slate-200 bg-white px-2 py-1.5 hover:border-slate-300"
@@ -100,24 +273,59 @@ function DraftRow({ draft }: { draft: DraftSummary }) {
       data-path={draft.path}
       data-type={draft.type}
       data-origin={draft.origin}
+      data-selected={selected ? "true" : "false"}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate font-medium text-[11px] text-slate-700" title={draft.path}>
-          {draft.title}
-        </span>
+        <label className="flex items-center gap-1.5 truncate flex-1 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect(draft.path)}
+            className="shrink-0"
+            aria-label={`select ${draft.path}`}
+            data-testid={`draft-approval-checkbox-${draft.path}`}
+          />
+          <span
+            className="truncate font-medium text-[11px] text-slate-700"
+            title={draft.path}
+          >
+            {draft.title}
+          </span>
+        </label>
         <span className="shrink-0 text-[9px] text-slate-400" title={draft.mtime}>
           {formatRelative(draft.mtime)}
         </span>
       </div>
-      <div className="mt-0.5 flex flex-wrap gap-1">
+      <div className="mt-0.5 flex flex-wrap items-center gap-1">
         <Badge label={draft.type} kind="type" value={draft.type} />
         <Badge label={originLabel(draft.origin)} kind="origin" value={draft.origin} />
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => onPromote(draft)}
+            className="rounded bg-blue-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-blue-700"
+            data-testid={`draft-approval-promote-${draft.path}`}
+            title="提升此 draft 到正式 wiki path (走 V14 二次审计)"
+          >
+            Promote
+          </button>
+          <button
+            type="button"
+            onClick={() => onDemote(draft)}
+            className="rounded bg-orange-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-orange-700"
+            data-testid={`draft-approval-demote-${draft.path}`}
+            title="拒绝此 draft (mv 到 wiki/_rejected/ + 写 wiki_events action='demote')"
+          >
+            Demote
+          </button>
+        </div>
       </div>
       {draft.summary && (
         <div className="mt-1 text-[10px] text-slate-500" title={draft.summary}>
           {truncate(draft.summary, 100)}
         </div>
       )}
+      <ExpandableContent contentPath={draft.path} kind="draft" />
     </div>
   )
 }

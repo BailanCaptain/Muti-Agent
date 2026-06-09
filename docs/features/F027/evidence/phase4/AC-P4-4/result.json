@@ -1,0 +1,26 @@
+{
+  "ac_id": "AC-P4-4",
+  "title": "批量审批 (continue-on-error + 双挂 draft-approval + KB tab)",
+  "phase": "phase4",
+  "verdict": "CONDITIONAL_PASS",
+  "double_pass": {
+    "judge1_verdict": "CONDITIONAL_PASS",
+    "judge2_verdict": "CONDITIONAL_PASS",
+    "arbitration_verdict": null,
+    "consensus": true
+  },
+  "evidence_paths": {
+    "screenshots": [],
+    "logs": [],
+    "code_anchors": [
+      "packages/api/src/wiki/promote-audit/batch-promote-service.ts:76",
+      "packages/api/src/wiki/promote-audit/batch-promote-service.ts:131",
+      "packages/api/src/routes/phase4/batch-promote.ts:99",
+      "components/chat/right-panel/runtime-log/batch-promote-modal/batch-promote-modal.tsx",
+      "components/chat/right-panel/runtime-log/tabs/draft-approval-tab.tsx (batch UI 挂)",
+      "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:64 (KbDraftsSection batch UI codex j2 修)",
+      "commits: codex j2 r1 FAIL → 7603f35 Red→Green; codex j2 r2 CONDITIONAL_PASS consensus"
+    ]
+  },
+  "inconclusive_reason": "consensus CONDITIONAL_PASS — 待 walkthrough 场景 2 step 验 KB tab + draft-approval 两处批量审批 (报告 modal success/failed 双列表 screenshot + 后端 batch log) 收齐升 PASS"
+}

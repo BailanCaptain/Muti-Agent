@@ -1,0 +1,36 @@
+{
+  "judge_id": "codex-gpt-5.4",
+  "ac_id": "AC-P4-9",
+  "verdict": "CONDITIONAL_PASS",
+  "reasoning": "Judge2 recheck after commit 7603f35. First-round verdict was FAIL on AC-P4-9(b) because KB entity-level markdown parse and the multi-select hook were both missing; warnings, seed loader, prompt_audit non-seed policy, true DB trigger, and Inspector placeholder exception were already accepted. Spec requires the knowledge-base tab derived view from wiki/index/*.md to show type/path/owner/mtime plus a multi-select hook connected to AC-P4-4 at docs/plans/F027-phase4-implementation-plan.md:252-254, and the overall AC-P4-9 scope and prompt_audit non-fixture policy are at :60-68 and :261. The repair closes the multi-select side by reusing the AC-P4-4 KB Drafts section: KnowledgeBaseTab now tracks selectedDraftPaths at components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:64, derives selectedBatchItems at :117-122, renders KbDraftsSection at :209-217, and provides the batch button and row checkboxes/actions at :281-327 and :353-388. The entity-level markdown parse remains intentionally deferred to F028-9, not hidden: F028-FOLLOWUP-BACKLOG documents it at docs/features/F027/evidence/phase4/F028-FOLLOWUP-BACKLOG.md:21 and the Phase 4 overview repeats the boundary at docs/features/F027/F027-PHASE4-OVERVIEW.md:147. Existing AC-P4-9 accepted mechanisms remain in place: wiki-meta derived index rows expose path/bucket/generatedAt/compilerVersion/summary/mtime at packages/api/src/routes/phase4/wiki-meta.ts:61-69 and listIndex reads wiki/index/*.md at :196-207; worktree seed and boot gates cited in first-round evidence were not changed by this repair. Tests actually rerun in this recheck: targeted Vitest suites 52/52 pass including KnowledgeBaseTab index-list tests at components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.test.tsx:56-110, and targeted node suites 37/37 pass for the related P4-8/P4-3 repair dependencies. Gap status: the original multi-select hook gap is closed; entity-level parse is an explicit F028-9 follow-up accepted by the recheck prompt, so it is not a current F027 blocking P2. Remaining condition is walkthrough evidence for non-empty KB rows plus KB batch selection.",
+  "cited_evidence": [
+    "docs/plans/F027-phase4-implementation-plan.md:60",
+    "docs/plans/F027-phase4-implementation-plan.md:68",
+    "docs/plans/F027-phase4-implementation-plan.md:252",
+    "docs/plans/F027-phase4-implementation-plan.md:254",
+    "docs/plans/F027-phase4-implementation-plan.md:261",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:64",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:117",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:209",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:281",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:327",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx:353",
+    "packages/api/src/routes/phase4/wiki-meta.ts:61",
+    "packages/api/src/routes/phase4/wiki-meta.ts:196",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.test.tsx:56",
+    "docs/features/F027/evidence/phase4/F028-FOLLOWUP-BACKLOG.md:21",
+    "docs/features/F027/F027-PHASE4-OVERVIEW.md:147"
+  ],
+  "spec_gate": "PASS",
+  "mechanism_gate": "PASS",
+  "feature_gate": "PASS",
+  "p1_findings": [],
+  "p2_findings": [],
+  "p3_findings": [
+    {
+      "file": "docs/plans/F027-phase4-implementation-plan.md:393",
+      "issue": "KB tab real-data walkthrough evidence was not collected in this recheck.",
+      "suggestion": "During final walkthrough, capture non-empty KB index rows and the KB draft multi-select/batch action."
+    }
+  ]
+}

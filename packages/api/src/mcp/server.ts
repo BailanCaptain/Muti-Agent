@@ -146,48 +146,11 @@ async function callGetRoomContext(limit?: number): Promise<ToolResult> {
   }
 }
 
-async function callGetRoomSummary(): Promise<ToolResult> {
-  const identity = getCallbackIdentity()
-  const url = new URL(`${identity.apiUrl}/api/callbacks/room-summary`)
-  url.searchParams.set("invocationId", identity.invocationId)
-  url.searchParams.set("callbackToken", identity.callbackToken)
-
-  const response = await requestJson(url.toString(), { method: "GET" })
-  if (response.statusCode >= 400) {
-    return {
-      isError: true,
-      content: [
-        { type: "text", text: `get_room_summary failed: ${JSON.stringify(response.json)}` },
-      ],
-    }
-  }
-
-  return {
-    content: [{ type: "text", text: JSON.stringify(response.json) }],
-  }
-}
-
-async function callSearchRoomMemories(keyword: string): Promise<ToolResult> {
-  const identity = getCallbackIdentity()
-  const url = new URL(`${identity.apiUrl}/api/callbacks/search-memories`)
-  url.searchParams.set("invocationId", identity.invocationId)
-  url.searchParams.set("callbackToken", identity.callbackToken)
-  url.searchParams.set("keyword", keyword)
-
-  const response = await requestJson(url.toString(), { method: "GET" })
-  if (response.statusCode >= 400) {
-    return {
-      isError: true,
-      content: [
-        { type: "text", text: `search_room_memories failed: ${JSON.stringify(response.json)}` },
-      ],
-    }
-  }
-
-  return {
-    content: [{ type: "text", text: JSON.stringify(response.json) }],
-  }
-}
+// F027 #285 S3 · callGetRoomSummary / callSearchRoomMemories / callGetMemory 已退役删除：
+// 旧 3 记忆工具（get_room_summary / search_room_memories / get_memory）B1-a 已从 getTools
+// 摘牌，本轮后端真退役。职能 = rooms/<roomId>/session-summary.md（MemoryService 双写 +
+// migrate-session-memories 存量导出），read_wiki / search_wiki 4 件套覆盖。
+// session_memories 表数据原封不动（Iron Law；物理 DROP 留小孙手动）。
 
 // F027 P14.b: query_messages MCP tool — BM25 全文召回（messages_fts trigram tokenizer），
 // 走 HTTP backend。与 recall_similar_context 互补：semantic 召回靠 embedding cosine，
@@ -218,6 +181,39 @@ async function callQueryMessages(params: {
     return {
       isError: true,
       content: [{ type: "text", text: `query_messages failed: ${JSON.stringify(response.json)}` }],
+    }
+  }
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(response.json) }],
+  }
+}
+
+// F027 chap 12 Level 2: search_wiki MCP tool — BM25 over wiki entity index（已编译 wiki 知识实体），
+// 走 HTTP backend。与 query_messages 互补：query_messages 搜 raw messages 字面，search_wiki 搜
+// 沉淀后的结构化知识实体（concepts / rooms / people / feedback 桶）。
+async function callSearchWiki(params: {
+  query: string
+  topK?: number
+  scope?: string
+}): Promise<ToolResult> {
+  const identity = getCallbackIdentity()
+  const url = new URL(`${identity.apiUrl}/api/callbacks/search-wiki`)
+  url.searchParams.set("invocationId", identity.invocationId)
+  url.searchParams.set("callbackToken", identity.callbackToken)
+  url.searchParams.set("query", params.query)
+  if (typeof params.topK === "number") {
+    url.searchParams.set("topK", String(params.topK))
+  }
+  if (params.scope) {
+    url.searchParams.set("scope", params.scope)
+  }
+
+  const response = await requestJson(url.toString(), { method: "GET" })
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `search_wiki failed: ${JSON.stringify(response.json)}` }],
     }
   }
 
@@ -328,7 +324,8 @@ export function getTools() {
     },
     {
       name: "get_room_context",
-      description: "获取当前协作房间的近期对话上下文（跨所有 agent 线程聚合）。",
+      description:
+        "⚠️[Legacy · F027 记忆收敛] A2A 派发（@/Call）路径已自动 adaptive recall 注入历史；直接对话需主动召回时优先 query_messages / search_wiki。需严格时序近期对话时才用本工具。获取当前协作房间的近期对话上下文（跨所有 agent 线程聚合）。",
       inputSchema: {
         type: "object",
         properties: {
@@ -337,28 +334,6 @@ export function getTools() {
             description: "返回的最大消息数量，默认 20，最大 200。",
           },
         },
-      },
-    },
-    {
-      name: "get_room_summary",
-      description: "获取当前协作房间的滚动摘要（压缩版上下文，适用于上下文窗口紧张时）。",
-      inputSchema: {
-        type: "object",
-        properties: {},
-      },
-    },
-    {
-      name: "search_room_memories",
-      description: "按关键词搜索当前房间的历史记忆条目。",
-      inputSchema: {
-        type: "object",
-        properties: {
-          keyword: {
-            type: "string",
-            description: "搜索关键词",
-          },
-        },
-        required: ["keyword"],
       },
     },
     {
@@ -392,9 +367,35 @@ export function getTools() {
       },
     },
     {
+      name: "search_wiki",
+      description:
+        "F027 chap 12 Level 2: 在已编译的 wiki 知识实体（concepts / rooms / people / feedback 桶）里做 BM25 加权全文召回（name 5x body）。与 query_messages 互补：query_messages 搜 raw 对话消息的字面 token，search_wiki 搜沉淀后的结构化知识实体（如 F011 概念页、某 room 的 viewfinder、某人 capability digest）。返回 path + score + excerpt。topK 默认 5，最大 50。scope 可选限定单桶（concepts / rooms / people / feedback），默认 all 全桶。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "搜索字符串（自然语言 / 关键词 / 实体 ID 如 F011 / R-205）。",
+          },
+          topK: {
+            type: "integer",
+            minimum: 1,
+            maximum: 50,
+            description: "返回 top-K 命中（默认 5，最大 50）。",
+          },
+          scope: {
+            type: "string",
+            description:
+              "可选：限定 wiki 桶（concepts / rooms / people / feedback）；默认 all 全桶。",
+          },
+        },
+        required: ["query"],
+      },
+    },
+    {
       name: "recall_similar_context",
       description:
-        "按语义相似度在当前 ROOM（含本 ROOM 内所有协作 agent thread 的历史，不只是你自己）召回相关消息片段。适用于需要 ROOM 内历史细节但不确定在哪的情况 —— 宁可调一次也不要瞎编。返回 reference-only 闭合段格式，只作参考。与 get_room_context 区别：get_room_context 按时序拿近期对话，recall_similar_context 按语义相似度精准匹配（适合查旧话题、跨 thread 找细节）。",
+        "⚠️[Legacy · F027 记忆收敛] A2A 派发路径已自动语义召回；直接对话需主动召回时优先 search_wiki（wiki）/ query_messages（messages 字面）——本工具是 messages 语义召回的补充（4 件套不做 messages 语义）。按语义相似度在当前 ROOM（含本 ROOM 内所有协作 agent thread 的历史，不只是你自己）召回相关消息片段。适用于需要 ROOM 内历史细节但不确定在哪的情况 —— 宁可调一次也不要瞎编。返回 reference-only 闭合段格式，只作参考。与 get_room_context 区别：get_room_context 按时序拿近期对话，recall_similar_context 按语义相似度精准匹配（适合查旧话题、跨 thread 找细节）。",
       inputSchema: {
         type: "object",
         properties: {
@@ -445,16 +446,6 @@ export function getTools() {
           taskSnippet: { type: "string", description: "要求目标 agent 完成的任务" },
         },
         required: ["targetAgentId", "taskSnippet"],
-      },
-    },
-    {
-      name: "get_memory",
-      description: "读取当前会话的记忆条目。",
-      inputSchema: {
-        type: "object",
-        properties: {
-          keyword: { type: "string", description: "可选：用于筛选记忆的关键词" },
-        },
       },
     },
     {
@@ -587,7 +578,7 @@ export function getTools() {
     {
       name: "update_wiki",
       description:
-        "F027 chap 6: 写 wiki 文件，全套 ACL + CAS + lease + fencing 校验。流程：1) acquire_wiki_lease 拿 token；2) read_wiki 拿 base_hash；3) update_wiki 提交。status 枚举：ok / denied_acl / conflict（base_hash 不符）/ lease_expired（token 不持有）/ stale_token（写入临界区被抢占）/ schema_invalid / path_invalid（路径含 ../ 逃逸 / 非 wiki/ 前缀）/ internal（atomic-write IO 失败 / revert 失败，由服务端 5xx 兜）/ not_implemented。actions: write|append|delete 已支持；patch/promote/demote/ingest 暂未实现。",
+        "F027 chap 6: 写 wiki 文件，全套 ACL + CAS + lease + fencing 校验。流程：1) acquire_wiki_lease 拿 token；2) read_wiki 拿 base_hash；3) update_wiki 提交。status 枚举：ok / denied_acl / conflict（base_hash 不符）/ lease_expired（token 不持有）/ stale_token（写入临界区被抢占）/ schema_invalid / path_invalid（路径含 ../ 逃逸 / 非 wiki/ 前缀）/ internal（atomic-write IO 失败 / revert 失败，由服务端 5xx 兜）/ not_implemented。actions: write|append|delete 已支持；patch/promote/demote/ingest by design 不接 MCP 路径（防 agent 越权写 canonical wiki，V16.5 §6 ACL + §17）— promote/demote 走 HTTP POST /api/wiki/drafts/promote|demote + IngestModal UI（user-driven + 小孙审计 + ledger），见 F027-RESIDUAL-DEBT.md 类别 D1。",
       inputSchema: {
         type: "object",
         properties: {
@@ -916,28 +907,6 @@ async function callUpdateWiki(params: {
   }
 }
 
-async function callGetMemory(keyword?: string): Promise<ToolResult> {
-  const identity = getCallbackIdentity()
-  const url = new URL(`${identity.apiUrl}/api/callbacks/memory`)
-  url.searchParams.set("invocationId", identity.invocationId)
-  url.searchParams.set("callbackToken", identity.callbackToken)
-  if (keyword) {
-    url.searchParams.set("keyword", keyword)
-  }
-
-  const response = await requestJson(url.toString(), { method: "GET" })
-  if (response.statusCode >= 400) {
-    return {
-      isError: true,
-      content: [{ type: "text", text: `get_memory failed: ${JSON.stringify(response.json)}` }],
-    }
-  }
-
-  return {
-    content: [{ type: "text", text: JSON.stringify(response.json) }],
-  }
-}
-
 export async function handleToolCall(name: string, args: Record<string, unknown> | undefined) {
   switch (name) {
     case "post_message": {
@@ -954,15 +923,8 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
       const limit = typeof args?.limit === "number" ? args.limit : undefined
       return callGetRoomContext(limit)
     }
-    case "get_room_summary":
-      return callGetRoomSummary()
-    case "search_room_memories": {
-      const keyword = typeof args?.keyword === "string" ? args.keyword : ""
-      if (!keyword.trim()) {
-        return { isError: true, content: [{ type: "text", text: "keyword is required" }] }
-      }
-      return callSearchRoomMemories(keyword.trim())
-    }
+    // F027 #285 S3 · get_room_summary / search_room_memories / get_memory dispatch 支已删
+    // → 落 default unknown tool（工具早已不广播，残余调用按未知处理）。
     case "recall_similar_context": {
       const query = typeof args?.query === "string" ? args.query : ""
       if (!query.trim()) {
@@ -981,14 +943,21 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
       const role = typeof args?.role === "string" ? args.role : undefined
       return callQueryMessages({ query: query.trim(), topK, threadId, role })
     }
+    case "search_wiki": {
+      const query = typeof args?.query === "string" ? args.query : ""
+      if (!query.trim()) {
+        return { isError: true, content: [{ type: "text", text: "query is required" }] }
+      }
+      const topK = typeof args?.topK === "number" ? args.topK : undefined
+      const scope = typeof args?.scope === "string" ? args.scope : undefined
+      return callSearchWiki({ query: query.trim(), topK, scope })
+    }
     case "get_task_status":
       return callGetTaskStatus(args?.agentId as string | undefined)
     case "create_task":
       return callCreateTask(args as { assignee: string; description: string; priority?: string })
     case "trigger_mention":
       return callTriggerMention(args as { targetAgentId: string; taskSnippet: string })
-    case "get_memory":
-      return callGetMemory(args?.keyword as string | undefined)
     case "request_decision":
       return callRequestDecision(
         args as {

@@ -26,6 +26,7 @@ import type { RecallHit } from "../memory-preflight/types"
 import {
   NoopPromptAuditWriter,
   PromptAuditWriter,
+  buildColdStartRecallAuditPatch,
   buildRecallAuditPatch,
 } from "./prompt-audit-writer"
 
@@ -382,4 +383,81 @@ test("Day 8b · PromptAuditWriter · prompt-inspector 已读字段（scenario / 
     close()
     safeCleanup(tmp)
   }
+})
+
+// ─── F027 #286 FU-3 · buildColdStartRecallAuditPatch（冷启 loadTaskMemoryPack 观测）───
+//
+// 背景（B1-b-2 receive P3-6 follow-up）：冷启支 directRecall 恒 null → recallPatch
+// 全空，Prompt Inspector 看不到冷启召回的结构化字段（[Recall Pack] 只在 partsJson）。
+// 本 builder 从 loadTaskMemoryPack 结果派生 9 字段 patch：trigger=session_bootstrap。
+
+test("FU-3 · buildColdStartRecallAuditPatch · attempted+命中 → required/trigger/topScore/satisfied 全填", () => {
+  const patch = buildColdStartRecallAuditPatch({
+    attempted: true,
+    hits: [
+      { score: 0.95 },
+      { score: 0.8 },
+    ],
+  })
+  assert.equal(patch.recallRequired, true)
+  assert.equal(patch.recallTrigger, "session_bootstrap")
+  assert.equal(patch.topScore, 0.95)
+  assert.equal(patch.recallSatisfied, true)
+  // loadTaskMemoryPack 是轻量 Pack，非 coordinator 5-level executor → path 不冒充
+  assert.equal(patch.recallPath, null)
+  assert.equal(patch.recallBudgetExceeded, false)
+})
+
+test("FU-3 · buildColdStartRecallAuditPatch · attempted 但无命中（null/fail-soft）→ required=true satisfied=false", () => {
+  const patch = buildColdStartRecallAuditPatch({ attempted: true, hits: null })
+  assert.equal(patch.recallRequired, true)
+  assert.equal(patch.recallTrigger, "session_bootstrap")
+  assert.equal(patch.topScore, null)
+  assert.equal(patch.recallSatisfied, false)
+})
+
+test("FU-3 · buildColdStartRecallAuditPatch · 未 attempted（search 未注入）→ 全默认（与现状一致）", () => {
+  const patch = buildColdStartRecallAuditPatch({ attempted: false, hits: null })
+  assert.equal(patch.recallRequired, false)
+  assert.equal(patch.recallTrigger, null)
+  assert.equal(patch.topScore, null)
+  assert.equal(patch.recallSatisfied, false)
+})
+
+// ─── F027 #286 receive 德彪 r1 P2-2 · 冷启 audit 吃完整 preflight 数据 ───
+//
+// 德彪实证：resolveColdStartRecall 只透 prompt.hits（≥0.75 注入桶），0.6-0.75
+// inspector-only 命中与真 budgetExceeded 全丢 → topScore=null / budgetExceeded
+// 恒 false，与 deriveAuditPatch（memory-preflight.ts:107 injected[0] ?? inspectorOnly[0]）
+// 语义不一致 = 审计失真。修：builder 接受 deriveAuditPatch 产物优先。
+
+test("FU-3 receive P2-2 · audit patch 注入 → topScore 取 inspector-only + budgetExceeded 真值 + V15.1 字段透传", () => {
+  const patch = buildColdStartRecallAuditPatch({
+    attempted: true,
+    hits: null, // 没有 ≥0.75 注入命中
+    audit: {
+      recallQueries: '[{"query":"q1"}]',
+      recallResults: '[{"query":"q1","hits":[{"path":"wiki/a.md","score":0.65}]}]',
+      recallTotalTokens: 120,
+      recallRejectedReasons: "[]",
+      topScore: 0.65, // inspector-only 命中（0.6-0.75）
+      recallBudgetExceeded: 1,
+    },
+  })
+  assert.equal(patch.topScore, 0.65, "inspector-only 命中不得丢（deriveAuditPatch 同语义）")
+  assert.equal(patch.recallSatisfied, false, "无注入命中 → satisfied=false")
+  assert.equal(patch.recallBudgetExceeded, true, "budgetExceeded 用真值不硬编码 false")
+  assert.equal(patch.recallQueries, '[{"query":"q1"}]', "V15.1 recallQueries 透传")
+  assert.equal(patch.recallTotalTokens, 120)
+  assert.equal(patch.recallTrigger, "session_bootstrap")
+})
+
+test("FU-3 receive P2-2 · audit 缺省（fail-soft crash）→ 退回 hits 派生（向后兼容）", () => {
+  const patch = buildColdStartRecallAuditPatch({
+    attempted: true,
+    hits: [{ score: 0.9 }],
+  })
+  assert.equal(patch.topScore, 0.9)
+  assert.equal(patch.recallSatisfied, true)
+  assert.equal(patch.recallBudgetExceeded, false)
 })

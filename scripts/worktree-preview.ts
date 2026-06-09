@@ -16,6 +16,7 @@ export type PreviewEnv = {
   SQLITE_PATH: string
   UPLOADS_DIR: string
   RUNTIME_EVENTS_DIR: string
+  WORKTREE_PREVIEW: string
 }
 
 export function buildPreviewEnv(input: {
@@ -37,6 +38,10 @@ export function buildPreviewEnv(input: {
     SQLITE_PATH: `${input.repoRoot}/.runtime/worktree-preview/data/multi-agent.sqlite`,
     UPLOADS_DIR: `${input.repoRoot}/.agents/acceptance/uploads`,
     RUNTIME_EVENTS_DIR: `${input.repoRoot}/.agents/acceptance/runtime-events`,
+    // F027 P4 AC-P4-9 d5: primary gate for worktree-preview-only seed loader (double guard
+    // with SQLITE_PATH path containing .runtime/worktree-preview/). Production boot never
+    // sets this var → seed loader stays off in prod. Spawned API child inherits via childEnv.
+    WORKTREE_PREVIEW: "1",
   }
 }
 

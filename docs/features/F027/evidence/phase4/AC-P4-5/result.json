@@ -1,0 +1,24 @@
+{
+  "ac_id": "AC-P4-5",
+  "title": "三层验证套件 runner (P18 + artifact schema §12)",
+  "phase": "phase4",
+  "verdict": "PASS",
+  "double_pass": {
+    "judge1_verdict": "PASS",
+    "judge2_verdict": "PASS",
+    "arbitration_verdict": null,
+    "consensus": true
+  },
+  "evidence_paths": {
+    "screenshots": [],
+    "logs": [],
+    "code_anchors": [
+      "scripts/f027-phase4-evidence-runner.ts:73 (Verdict type)",
+      "scripts/f027-phase4-evidence-runner.ts:209 (BLOCKED 优先)",
+      "scripts/f027-phase4-evidence-runner.ts:237 (INCONCLUSIVE 规则)",
+      "scripts/f027-phase4-evidence-runner.ts:319 (Windows main 检测 isInvokedAsMain)",
+      "scripts/f027-phase4-evidence-runner.test.ts (17 node:test)",
+      "commits: 3a2d683 + 047c948 (codex end-r2 fix CLI guard + schema)"
+    ]
+  }
+}

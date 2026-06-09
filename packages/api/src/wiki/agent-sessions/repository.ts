@@ -16,7 +16,13 @@ import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import { roomAgentSessions } from "../../db/schema"
 import type * as schema from "../../db/schema"
 import { assertSafePathSegment } from "./path-segment"
-import type { CreateSessionInput, EndSessionInput, OpenThread, RoomAgentSession } from "./types"
+import {
+  type CreateSessionInput,
+  type EndSessionInput,
+  type OpenThread,
+  type RoomAgentSession,
+  sanitizeOpenThreads,
+} from "./types"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
 
@@ -245,7 +251,8 @@ function hydrate(row: typeof roomAgentSessions.$inferSelect): RoomAgentSession {
     entryReason: row.entryReason,
     exitReason: row.exitReason,
     lastSeenCommitSeq: row.lastSeenCommitSeq,
-    openThreads: parseJsonOrEmpty<OpenThread>(row.openThreads),
+    // F027 v3 G10 · sanitize 过滤格式错的 entry (老 DB row schema 漂时不 silent 传 UI)
+    openThreads: sanitizeOpenThreadsField(row.openThreads),
     closedThreads: parseJsonOrEmpty<string>(row.closedThreads),
     privateNotesHash: row.privateNotesHash,
     sessionDigest: row.sessionDigest,
@@ -263,4 +270,20 @@ function parseJsonOrEmpty<T>(value: string | null): T[] {
   } catch {
     return []
   }
+}
+
+/**
+ * F027 v3 G10 · open_threads field 专用 hydrate (复用 parseJsonOrEmpty + 加 type guard 过滤)
+ * sanitizeOpenThreads 只保留 valid entry (string or {text, a2a_call_id?}), 丢非法格式.
+ */
+function sanitizeOpenThreadsField(value: string | null): OpenThread[] {
+  if (!value) return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return []
+  }
+  const { valid } = sanitizeOpenThreads(parsed)
+  return valid
 }

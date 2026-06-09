@@ -121,3 +121,19 @@ Bug 先写失败测试再修（先红后绿）。
 - **控制工具调用轮次** — 连续 >10 次 shell 就停下来总结进展
 - **每完成子步骤就写文字交代** — 避免"只干活不说话"导致用户看到空白
 - **预算告警即收尾** — 任务接近工具调用预算上限时，立刻写下"已完成 + 剩余 TODO"然后结束本轮
+
+## 记忆工具（F027 · 4 件套优先）
+
+统一记忆架构（F027）落地后，**记忆读写优先用这 4 件套**：
+
+- `read_wiki` — 按 path 精确读 wiki 文件（项目 / 概念 / 规则 / 人物 / 房间 viewfinder）
+- `search_wiki` — BM25 全文搜 wiki（找概念 / 规则 / 历史沉淀，不确定在哪时）
+- `query_messages` — FTS5 全文搜当前 ROOM messages（字面 token / 短语 / 实体 ID 如 F011 / R-205）
+- `update_wiki` — 写 / 更新 wiki（沉淀结论、决策、记忆）
+
+**A2A handoff（@ / Call 派发）/ wake-up 唤醒 / 冷启动（新 agent 进新房）路径**会自动 adaptive recall / memory_preflight 注入历史（F027 B1-b 已接通三场景）；**进行中的直接对话（direct_turn）按设计不自动召回**——按需手动用 4 件套。
+
+**记忆工具收敛（F027 B1-a · 2026-06-06 小孙拍）**：
+
+- `search_room_memories` / `get_memory` / `get_room_summary` → **已退役**（不广播；F027 #285 起后端 dispatch / 路由也已删除，残余调用按 unknown tool 处理）。三者原读旧 `session_memories` 滚动会话摘要——该摘要现由系统**自动注入**进你的 prompt（正常协作 POLICY_FULL），且同步落 `wiki/rooms/<roomId>/session-summary.md`（要主动查别的 room 摘要用 `read_wiki` / `search_wiki`）。查 ROOM 对话 / 沉淀用 `query_messages`（messages FTS）。
+- `get_room_context`（严格时序近期对话）、`recall_similar_context`（messages 语义召回，4 件套不做 messages 语义）— 仍保留，仅在 4 件套不够时作补充

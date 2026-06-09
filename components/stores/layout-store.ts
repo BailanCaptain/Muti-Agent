@@ -22,10 +22,29 @@ export function clampStatusPanelWidth(width: number): number {
   return Math.min(STATUS_PANEL_MAX_WIDTH, Math.max(STATUS_PANEL_MIN_WIDTH, Math.round(width)))
 }
 
+/**
+ * F027 P3-1 扩展（小孙 2026-06-02 浏览器实测拍）：RuntimeLog（运行日志）竖直拖高。
+ * 原 RuntimeLog 用 flex:1 吃剩余空间，被上方 5 段挤到很矮、字小看不清且无调节手段。
+ * 加 top-edge 拖动 handle（往上拖加高）+ persist，与横向 statusPanelWidth 同套路。
+ *
+ * MAX 用静态上限（885）兜底；实际渲染时 status-panel 上方区 flex-1 min-h-0 可滚动，
+ * 不会把 runtime-log 顶出屏幕（aside h-screen overflow-hidden）。
+ */
+const RUNTIME_LOG_MIN_HEIGHT = 140
+const RUNTIME_LOG_MAX_HEIGHT = 885
+const RUNTIME_LOG_DEFAULT_HEIGHT = 320
+
+export function clampRuntimeLogHeight(height: number): number {
+  if (!Number.isFinite(height)) return RUNTIME_LOG_DEFAULT_HEIGHT
+  return Math.min(RUNTIME_LOG_MAX_HEIGHT, Math.max(RUNTIME_LOG_MIN_HEIGHT, Math.round(height)))
+}
+
 type LayoutStore = {
   sidebarCollapsed: boolean
   statusPanelCollapsed: boolean
   statusPanelWidth: number
+  /** F027 P3-1 扩展：RuntimeLog 竖直拖高的当前高度（px），persist + reload 还原。 */
+  runtimeLogHeight: number
   toggleSidebar: () => void
   toggleStatusPanel: () => void
   /**
@@ -39,6 +58,12 @@ type LayoutStore = {
    * Keyboard 拖动 (ArrowLeft/Right/Home/End) 离散事件低频，直接调此 setter 安全。
    */
   setStatusPanelWidth: (width: number) => void
+  /**
+   * 持久化 RuntimeLog 高度 setter。与 width 同策略：拖动期间 ResizeHandleVertical
+   * 直操 DOM style.height（避开高频 rerender + persist 写），mouseup 才调此 setter
+   * 一次性 commit + persist。Keyboard 离散步进直接调此 setter 安全。
+   */
+  setRuntimeLogHeight: (height: number) => void
 }
 
 export const useLayoutStore = create<LayoutStore>()(
@@ -47,10 +72,12 @@ export const useLayoutStore = create<LayoutStore>()(
       sidebarCollapsed: false,
       statusPanelCollapsed: false,
       statusPanelWidth: STATUS_PANEL_DEFAULT_WIDTH,
+      runtimeLogHeight: RUNTIME_LOG_DEFAULT_HEIGHT,
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
       toggleStatusPanel: () =>
         set((state) => ({ statusPanelCollapsed: !state.statusPanelCollapsed })),
       setStatusPanelWidth: (width) => set({ statusPanelWidth: clampStatusPanelWidth(width) }),
+      setRuntimeLogHeight: (height) => set({ runtimeLogHeight: clampRuntimeLogHeight(height) }),
     }),
     {
       name: "multi-agent-layout-store",
@@ -59,6 +86,7 @@ export const useLayoutStore = create<LayoutStore>()(
         sidebarCollapsed: state.sidebarCollapsed,
         statusPanelCollapsed: state.statusPanelCollapsed,
         statusPanelWidth: state.statusPanelWidth,
+        runtimeLogHeight: state.runtimeLogHeight,
       }),
       // rehydrate 时 clamp 防 corrupt localStorage 值（如手动篡改成 99999）
       merge: (persistedState, currentState) => {
@@ -66,6 +94,7 @@ export const useLayoutStore = create<LayoutStore>()(
         return {
           ...merged,
           statusPanelWidth: clampStatusPanelWidth(merged.statusPanelWidth),
+          runtimeLogHeight: clampRuntimeLogHeight(merged.runtimeLogHeight),
         }
       },
     },
@@ -73,3 +102,4 @@ export const useLayoutStore = create<LayoutStore>()(
 )
 
 export { STATUS_PANEL_MIN_WIDTH, STATUS_PANEL_MAX_WIDTH, STATUS_PANEL_DEFAULT_WIDTH }
+export { RUNTIME_LOG_MIN_HEIGHT, RUNTIME_LOG_MAX_HEIGHT, RUNTIME_LOG_DEFAULT_HEIGHT }

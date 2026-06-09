@@ -41,6 +41,17 @@ export interface AdaptiveRecallState {
   budgetMax: number
 }
 
+/**
+ * F027 v3 G1 · drop reducer 砍掉的 part（V16.5 chap 20 cap 溢出）。
+ *
+ * mirror packages/api/src/routes/phase3/contracts.ts NotInjectedPart。
+ */
+export interface NotInjectedPart {
+  name: string
+  tokens: number
+  reason: "over_cap_drop_order" | string
+}
+
 export interface GetPromptInspectorResponse {
   injectedParts: InjectedPart[]
   recallQueries: RecallQueryItem[]
@@ -49,6 +60,28 @@ export interface GetPromptInspectorResponse {
     kind: "a2a_call" | "user_message" | "scheduler_tick" | null
     ref: string | null
   }
+  /** F027 P4 hotfix · 完整 prompt 原文（systemPrompt + content），供"查看原文/复制全文"按钮。 */
+  rawText: string | null
+  /** F027 P4 hotfix · Iron Laws 出现次数（B022 防回归 · 期望=1）。 */
+  ironLawsCount: number
+  /** F027 P4 hotfix · 最新 audit row 的 scenario。 */
+  scenario: string | null
+  /** F027 P4 hotfix · 历史 audit 行（limit≥2 时返），用于「对比上次注入」按钮。 */
+  previousAudits: Array<{
+    injectedParts: InjectedPart[]
+    rawText: string
+    ironLawsCount: number
+    scenario: string
+    createdAt: string
+  }>
+  /** F027 v3 G1 · V16.5 chap 20 token cap (= WAKEUP_TOKEN_CAP 6700)；0 = 老 audit 行。 */
+  cap: number
+  /** F027 v3 G1 · drop reducer 砍掉的 parts；[] = 全部注入成功。 */
+  notInjectedParts: NotInjectedPart[]
+  /** F027 v3 G4 · 当前 row alias (多 agent room dropdown 选中状态)；null = 空 audit。 */
+  selectedAlias: string | null
+  /** F027 v3 G4 · room 内 distinct alias 列表 (dropdown 选项)；[] = room 无 audit。 */
+  availableAliases: string[]
 }
 
 /**
@@ -81,6 +114,16 @@ function emptyResponse(): GetPromptInspectorResponse {
       budgetMax: DEFAULT_RECALL_BUDGET_MAX,
     },
     wakeUpTrigger: { kind: null, ref: null },
+    rawText: null,
+    ironLawsCount: 0,
+    scenario: null,
+    previousAudits: [],
+    // F027 v3 G1 · empty audit → cap=0 (前端 fallback) + 无未注入 part
+    cap: 0,
+    notInjectedParts: [],
+    // F027 v3 G4 · empty audit → 无 alias 选项
+    selectedAlias: null,
+    availableAliases: [],
   }
 }
 
@@ -93,9 +136,13 @@ export interface UsePromptInspectorDataReturn {
 
 export function usePromptInspectorData(
   roomId: string | null,
-  options: { enabled?: boolean } = {},
+  // F027 v3 G4 · alias option 控制 per-agent prompt 查询 (多 agent room dropdown 用)
+  options: { enabled?: boolean; limit?: number; alias?: string | null } = {},
 ): UsePromptInspectorDataReturn {
   const enabled = options.enabled !== false
+  // P4 hotfix · 默认 limit=2 拿到上一次 audit，BottomButtonsBar「对比上次」按钮直接用
+  const limit = options.limit ?? 2
+  const alias = options.alias ?? null
   const [data, setData] = useState<GetPromptInspectorResponse>(emptyResponse())
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -111,7 +158,12 @@ export function usePromptInspectorData(
     let cancelled = false
     setIsLoading(true)
     setError(null)
-    fetch(`${API_BASE_URL}/api/rooms/${encodeURIComponent(roomId)}/prompt-inspector`, {
+    // F027 v3 G4 · alias query param 拼接 (空时不传 → 后端 fallback 全 alias)
+    const queryParams = new URLSearchParams()
+    queryParams.set("limit", String(limit))
+    if (alias) queryParams.set("alias", alias)
+    const url = `${API_BASE_URL}/api/rooms/${encodeURIComponent(roomId)}/prompt-inspector?${queryParams.toString()}`
+    fetch(url, {
       method: "GET",
       headers: { Accept: "application/json" },
     })
@@ -137,7 +189,7 @@ export function usePromptInspectorData(
     return () => {
       cancelled = true
     }
-  }, [roomId, enabled, refetchTrigger])
+  }, [roomId, enabled, limit, alias, refetchTrigger])
 
   return {
     data,

@@ -1,11 +1,31 @@
-import { spawn } from "node:child_process"
 import type { SessionRepository } from "../db/repositories"
 import type { SessionMemoryRecord } from "../db/sqlite"
+import { type HaikuRunner, createOpus46Runner } from "../runtime/haiku-runner"
+import type { SessionSummaryWikiWriter } from "../wiki/session-summary-writer"
+
+/** 会话摘要压缩超时（重任务·长上下文，远大于 runner 默认 15s）。 */
+const SUMMARY_COMPRESS_TIMEOUT_MS = 60_000
 
 export class MemoryService {
   private readonly invalidatedGroups = new Set<string>()
+  // F027 #285 S1 · 滚动摘要双写 wiki（rooms/<roomId>/session-summary.md）。
+  // 默认 null = 不双写（向后兼容）；server.ts boot 注入。表仍是 source of truth，
+  // writer 内部 fail-soft —— wiki 写失败不影响摘要主链路（写表 + 自动注入）。
+  private sessionSummaryWriter: SessionSummaryWikiWriter | null = null
 
-  constructor(private readonly repository: SessionRepository) {}
+  constructor(
+    private readonly repository: SessionRepository,
+    /**
+     * F027 B1-a（小孙 2026-06-06 拍）：会话摘要压缩 runner，默认 Claude Opus 4.6（弃 Gemini）。
+     * 走 stdin（haiku-runner 已修 ENAMETOOLONG）；测试可注入 fake。
+     */
+    private readonly summaryRunner: HaikuRunner = createOpus46Runner(),
+  ) {}
+
+  /** F027 #285 S1 · 注入 wiki 双写 writer（server.ts boot 调；测试注 fake）。 */
+  setSessionSummaryWriter(writer: SessionSummaryWikiWriter) {
+    this.sessionSummaryWriter = writer
+  }
 
   invalidateSummary(sessionGroupId: string) {
     this.invalidatedGroups.add(sessionGroupId)
@@ -24,7 +44,15 @@ export class MemoryService {
 
     const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
 
-    return this.repository.createMemory(sessionGroupId, summary, keywords)
+    const record = this.repository.createMemory(sessionGroupId, summary, keywords)
+    // #285 S1 · 双写 wiki（writer 内部 fail-soft，不影响主链路）
+    this.sessionSummaryWriter?.write({
+      sessionGroupId,
+      summary: record.summary,
+      keywords: record.keywords,
+      createdAt: record.createdAt,
+    })
+    return record
   }
 
   /**
@@ -34,13 +62,19 @@ export class MemoryService {
   async generateRollingSummary(sessionGroupId: string): Promise<string> {
     const allMessages = this.repository.listAllMessagesForGroup(sessionGroupId)
 
-    // 2. Build extractive summary first (key decisions, [拍板] items, topic keywords)
+    // 抽取式摘要打底（关键决策 / [拍板] / 话题关键词）
     const extractive = buildExtractiveSummary(allMessages)
-
-    // 3. Attempt Gemini API call for abstractive compression, fallback to Claude CLI, then extractive
     const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
-    const summary = await this.callGeminiSummarizer(extractive, allMessages)
-    this.repository.createMemory(sessionGroupId, summary, keywords)
+    // F027 B1-a：Claude Opus 4.6 抽象压缩（弃 Gemini）；任何失败 fail-soft 退回 extractive
+    const summary = await this.compressSummary(extractive, allMessages)
+    const record = this.repository.createMemory(sessionGroupId, summary, keywords)
+    // #285 S1 · 双写 wiki（writer 内部 fail-soft，不影响主链路）
+    this.sessionSummaryWriter?.write({
+      sessionGroupId,
+      summary: record.summary,
+      keywords: record.keywords,
+      createdAt: record.createdAt,
+    })
     return summary
   }
 
@@ -78,10 +112,14 @@ export class MemoryService {
   }
 
   /**
-   * Abstractive summarization via Gemini CLI subprocess (OAuth subscription).
-   * Falls back to extractive summary on any error or timeout.
+   * F027 B1-a（小孙 2026-06-06 拍）：会话抽象摘要压缩用 Claude Opus 4.6（弃 Gemini CLI）。
+   *
+   * runner 走 **stdin**（haiku-runner 已修 ENAMETOOLONG）—— 摘要 prompt 拼最多 100 条消息
+   * （每条截断 800 字）可达数十 KB，原 gemini/claude `-p <prompt>` 当 argv 传会 spawn 超限
+   * （与 B3 实测的 haiku-runner ENAMETOOLONG 同根）。
+   * runner 任何失败（timeout / empty-output / exit / spawn-error）→ fail-soft 退回 extractive 摘要。
    */
-  private async callGeminiSummarizer(
+  private async compressSummary(
     extractive: string,
     allMessages: Array<{ role: string; content: string; alias: string; createdAt: string }>,
   ): Promise<string> {
@@ -114,87 +152,20 @@ ${extractive}
 以下是完整对话记录（按时间排序）：
 ${conversationText}`
 
-    return new Promise((resolve) => {
-      let settled = false
-      const done = (result: string) => {
-        if (!settled) {
-          settled = true
-          resolve(result)
-        }
-      }
-
-      const child = spawn("gemini", ["-p", prompt], {
-        stdio: ["ignore", "pipe", "pipe"],
-        cwd: process.cwd(),
-      })
-
-      let stdout = ""
-      child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString()
-      })
-
-      child.on("close", (code) => {
-        const text = stdout.trim()
-        if (code === 0 && text) {
-          done(text)
-        } else {
-          this.callClaudeFallbackSummarizer(extractive).then(done, () => done(extractive))
-        }
-      })
-
-      child.on("error", () => {
-        this.callClaudeFallbackSummarizer(extractive).then(done, () => done(extractive))
-      })
-
-      // 60s hard timeout — Gemini CLI 重试可能较慢
-      const timer = setTimeout(() => {
-        child.kill()
-        done(extractive)
-      }, 60_000)
-
-      child.on("close", () => clearTimeout(timer))
+    const result = await this.summaryRunner.runPrompt(prompt, {
+      timeoutMs: SUMMARY_COMPRESS_TIMEOUT_MS,
     })
+    // 德彪 codex P2：trim 后再判——runner ok 但只吐空白（`"\n"` 等）时不能存空摘要，
+    // 否则空摘要会经 POLICY_FULL.injectRollingSummary 自动注入污染 agent 上下文。
+    // 不耦合 runner 内部 trim 契约，compressSummary 自己兜底。
+    const compressed = result.ok ? result.text.trim() : ""
+    return compressed || extractive
   }
 
-  private callClaudeFallbackSummarizer(extractive: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const prompt = `请将以下对话摘要精炼为 300-500 字的结构化摘要，保留关键决策和未完成任务：\n\n${extractive.slice(0, 3000)}`
-      const child = spawn("claude", ["-p", prompt, "--no-input"], {
-        stdio: ["ignore", "pipe", "pipe"],
-        cwd: process.cwd(),
-      })
-
-      let stdout = ""
-      child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString()
-      })
-      child.on("close", (code) => {
-        const text = stdout.trim()
-        if (code === 0 && text) resolve(text)
-        else resolve(extractive)
-      })
-      child.on("error", () => resolve(extractive))
-
-      const timer = setTimeout(() => {
-        child.kill()
-        resolve(extractive)
-      }, 30_000)
-      child.on("close", () => clearTimeout(timer))
-    })
-  }
-
-  getLastSummary(sessionGroupId: string): string | null {
-    const record = this.repository.getLatestMemory(sessionGroupId)
-    return record?.summary ?? null
-  }
-
-  searchMemories(keyword: string): SessionMemoryRecord[] {
-    return this.repository.searchMemories(keyword)
-  }
-
-  getMemoriesForGroup(sessionGroupId: string): SessionMemoryRecord[] {
-    return this.repository.listMemories(sessionGroupId)
-  }
+  // F027 #285 S3 · getLastSummary / searchMemories / getMemoriesForGroup 已退役删除：
+  // 唯一消费者是旧 3 记忆工具的 callback 后端（已删）。读路径由
+  // rooms/<roomId>/session-summary.md + read_wiki/search_wiki 接管；
+  // getOrCreateSummary（自动注入）与写路径不动。
 }
 
 /**

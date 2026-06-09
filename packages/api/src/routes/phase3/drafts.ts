@@ -39,6 +39,7 @@ import {
   toErrorResponse,
   validateListDrafts,
 } from "./contracts"
+import { readContainedFile, safeWikiPath, WikiPathInvalidError } from "../../wiki/path-containment"
 import { parseFrontmatter } from "./frontmatter"
 
 const DRAFT_TYPES_ALLOWED: ReadonlySet<DraftType> = new Set<DraftType>([
@@ -128,6 +129,34 @@ export class DraftScanner {
       limit,
       offset,
     }
+  }
+
+  /**
+   * F027 · 读单篇 draft 全文（KB tab「展开看全文」按需 lazy fetch；摘要列表只给 200 字 summary）。
+   * 路径围栏两道：
+   *   ① safeWikiPath —— 'wiki/' 前缀 + 解析在 `<wikiRoot>/wiki/` 内（防 ../ 逃逸 / NUL / 绝对路径覆盖）
+   *   ② 额外收窄到 `<wikiRoot>/wiki/concepts/draft/` 子树 —— 本端点只读 draft，不当任意 wiki 文件读取通道。
+   * 文件不存在 → null（route 转 404）；路径非法 → 抛 WikiPathInvalidError（route 转 400）。
+   */
+  async readContent(draftPath: string): Promise<{ content: string; mtime: string } | null> {
+    const abs = safeWikiPath(this.wikiRoot, draftPath)
+    // 德彪 codex r2 P2：拒 ':' —— NTFS 把 `x.txt:stream.md` 解析成 alternate data stream，
+    // 会绕过 .md 后缀检查读到别的文件的数据流。drive 冒号在 abs 里，故查相对输入 draftPath。
+    if (draftPath.includes(":")) {
+      throw new WikiPathInvalidError(`path must not contain ':' (NTFS ADS): ${draftPath}`)
+    }
+    // 德彪 codex P2：只读 .md —— 不当 draft 树内临时/备份/内部文件的任意读取通道（warning 端点同款约束）。
+    if (!abs.toLowerCase().endsWith(".md")) {
+      throw new WikiPathInvalidError(`only .md is readable: ${draftPath}`)
+    }
+    // 词法子树检查（快速失败）
+    const draftRoot = path.resolve(this.wikiRoot, "wiki", "concepts", "draft")
+    const draftRootSep = draftRoot.endsWith(path.sep) ? draftRoot : draftRoot + path.sep
+    if (abs !== draftRoot && !abs.startsWith(draftRootSep)) {
+      throw new WikiPathInvalidError(`path not under draft root: ${draftPath}`)
+    }
+    // 德彪 codex P1：再对真实路径做 containment（防 symlink/junction 跟随逃逸）+ 普通文件校验。
+    return readContainedFile(abs, draftRoot)
   }
 
   private async walkAllDrafts(root: string): Promise<DraftSummary[]> {
@@ -272,6 +301,32 @@ export function registerDraftsRoute(app: FastifyInstance, scanner: DraftScanner)
         error: ErrorCode.INTERNAL_ERROR,
         message: (err as Error).message,
       })
+    }
+  })
+
+  // F027 · GET /api/wiki/drafts/content?path=<draftPath> —— KB tab「展开看全文」按需读单篇全文。
+  // 静态路径，与 /api/wiki/drafts 及 /promote /demote /batch-promote 不冲突（fastify 精确匹配）。
+  app.get("/api/wiki/drafts/content", async (request, reply) => {
+    const { path: draftPath } = request.query as { path?: string }
+    if (typeof draftPath !== "string" || draftPath.length === 0) {
+      reply.code(400)
+      return { ok: false, error: "VALIDATION_FAILED", message: "query param 'path' is required" }
+    }
+    try {
+      const result = await scanner.readContent(draftPath)
+      if (!result) {
+        reply.code(404)
+        return { ok: false, error: "NOT_FOUND", message: "draft not found" }
+      }
+      return result
+    } catch (err) {
+      if (err instanceof WikiPathInvalidError) {
+        reply.code(400)
+        return { ok: false, error: "PATH_INVALID", message: err.message }
+      }
+      request.log.error({ err }, "drafts readContent threw")
+      reply.code(500)
+      return { ok: false, error: "INTERNAL_ERROR", message: (err as Error).message }
     }
   })
 }

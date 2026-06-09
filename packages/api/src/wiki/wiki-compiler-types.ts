@@ -29,8 +29,43 @@
  */
 
 import type { WikiEvent } from "../db/repositories/wiki-events-types"
-import type { WikiMemory, WikiMemoryType } from "../db/repositories/wiki-memories-types"
 import type { IndexManifest } from "./index-manifest"
+
+/**
+ * F027 chunk B：wiki_memories 表已砍（冗余第二存储；记忆 = 文件单一真相源，
+ * 见 V16.5 chap 14 patch）。WikiCompiler（chap 19 派生视图编译器）原依赖表行类型，
+ * 为脱离已删的 wiki-memories-types，类型内联于此。
+ *
+ * F027 B2/B1-c（2026-06-05 wiring-gap 审计修复）：compileWiki **已接进 5s debounce**
+ * （scheduler-bootstrap recompileDerivedViews → createWikiIndexRecompiler），输入改吃**文件源**
+ * （wiki-memory-from-files 把 scanWikiEntitiesFs 扫到的文件按 canonical_owner_path marker 过滤 +
+ * 映射成 WikiMemory）。本类型不再有 DB 表对应。
+ * ⚠️ 现状：真 wiki 文件 0 个带 canonical_owner_path（审计）→ 编出来是空壳；B3 backfill 跑 LLM
+ *    编译填 frontmatter 后索引非空。
+ */
+export type WikiMemoryType = "room" | "project" | "user" | "feedback" | "work"
+
+export type WikiMemoryState = "draft" | "canonical" | "deprecated"
+
+/** 结构化记忆记录（曾为 wiki_memories 行；表砍后由 compile pipeline 从文件产出）。 */
+export interface WikiMemory {
+  id: number
+  type: WikiMemoryType
+  name: string
+  canonicalOwnerPath: string
+  promotionTarget: string | null
+  ttlDays: number | null
+  supersedes: string[] | null
+  replacesInBuckets: string[] | null
+  sourceMessageIds: string[] | null
+  contributedBy: string[]
+  crossRefs: unknown[] | null
+  dedupDecision: Record<string, unknown> | null
+  body: string
+  state: WikiMemoryState
+  createdAt: string
+  updatedAt: string
+}
 
 export interface CompileInput {
   /**

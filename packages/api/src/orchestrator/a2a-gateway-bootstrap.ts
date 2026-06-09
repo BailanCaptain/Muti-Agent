@@ -7,7 +7,7 @@
  */
 
 import type { DatabaseSync } from "node:sqlite"
-import type { Provider } from "@multi-agent/shared"
+import type { EnvelopeV1, Provider } from "@multi-agent/shared"
 
 import { type A2AGatewayBroadcaster, planBetaDispatch } from "./a2a-gateway"
 import { CallRegistry } from "./call-registry"
@@ -19,6 +19,40 @@ import type {
 } from "./dispatch"
 import { MentionRateLimiter, type ProviderAliases } from "./mention-router"
 import type { WorklistRegistry } from "./worklist-registry"
+
+/**
+ * F027 P4-A3 fallback j2 P1 修 (V16.5 §M1 line 422-431)：
+ * derive handoffContext from F026 EnvelopeV1，给 A2AGatewayPlanResult.mentions[] 用。
+ *
+ * 规则（V16.5 §M1 line 428-429）:
+ * - receiverAlias = on_behalf_of ?? convener_id ?? mention.alias（fallback）
+ *   理由：on-behalf-of 反推按 ADR-003，displays who task is "for"；convener_id 是 group lead。
+ * - taskSummary = β path: envelope.task.input.source_message（agent 原文整段，task='conversation'）
+ *                 γ path: envelope.task.task（cross-role-handoff skill 模板字符串，task!='conversation'）
+ *
+ * envelope 失败时返 undefined → caller-side helper fallback 到现有 simplified shape。
+ */
+function deriveHandoffContext(
+  envelope: EnvelopeV1 | undefined,
+  fallbackReceiverAlias: string,
+): { receiverAlias: string; taskSummary: string } | undefined {
+  if (!envelope) return undefined
+  const receiverAlias =
+    envelope.protocol.on_behalf_of ?? envelope.protocol.convener_id ?? fallbackReceiverAlias
+  let taskSummary: string | undefined
+  if (envelope.task.task === "conversation") {
+    // β path
+    const input = envelope.task.input as { source_message?: unknown }
+    if (typeof input?.source_message === "string") {
+      taskSummary = input.source_message
+    }
+  } else {
+    // γ path
+    taskSummary = envelope.task.task
+  }
+  if (!receiverAlias || !taskSummary) return undefined
+  return { receiverAlias, taskSummary }
+}
 
 export interface InstallA2AGatewayDeps {
   db: DatabaseSync
@@ -86,6 +120,14 @@ export function installA2AGateway(
           provider: d.mention.provider,
           alias: d.mention.alias,
           callId: d.callId,
+          // F027 P4-A3 fallback j2 P1 修 (V16.5 §M1 line 422-431)：
+          // derive handoffContext from F026 envelope；message-service caller 直接透传。
+          //   receiverAlias = on_behalf_of ?? convener_id ?? mention.alias
+          //     （on-behalf-of 反推按 ADR-003；convenerTransfer 时 convener_id 已是 on_behalf_of，
+          //      此处仍优先取显式 on_behalf_of 字段以兜底）
+          //   taskSummary = β path: envelope.task.input.source_message（agent 原文整段）
+          //                 γ path: envelope.task.task（cross-role-handoff skill 模板）
+          handoffContext: deriveHandoffContext(d.envelope, d.mention.alias),
         })),
         blockedByGateway: [
           ...plan.blocked.map((b) => ({

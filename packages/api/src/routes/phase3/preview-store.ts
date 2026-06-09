@@ -29,10 +29,34 @@ export interface PreviewStoreEntry {
   mimeType: string
   /** caller 可选的 targetType (feature/bug/lesson/concept) */
   targetType?: string
+  /**
+   * F027 P4 Day 10 AC-P4-3 e · seriesId (防 chained 误检)。
+   * preview 时 caller 传入 → store 保留 → commit 时落盘 frontmatter `series_id: <id>`。
+   */
+  seriesId?: string
   /** preview 创建时刻 ISO */
   createdAt: string
   /** preview 过期时刻 ISO（< now 时 take 返 null + 自动剔除） */
   expiresAt: string
+  /**
+   * F027 v3 G11 · LLM 编译后的完整 markdown（frontmatter + body）。
+   * preview 编译成功 → 存编译产物；commit 落盘写这个（含 cross_refs/dedup/canonical_owner）。
+   * 未注入 compile deps / 编译失败兜底 → 缺省，commit 退回写 sanitizedContent。
+   */
+  compiledMarkdown?: string
+  /**
+   * F027 AC-P1-5 · multi-drop 关联用：preview 时算好的 embedding + 投稿人 + ingest 时刻，
+   * commit 成功后写 recent_drops（避免 commit 再 embed 一次）。缺省 = 未接 correlate deps。
+   */
+  embedding?: number[]
+  contributedBy?: string
+  ingestedAt?: number
+  /**
+   * F027 AC-P1-5 codex P1-2 修：preview 关联检测判 chained_suspect（疑似跨 drop 指令链）。
+   * commit 据此落 wiki/concepts/draft/_quarantined/ 隔离待审（而非 _auto/）—— 后端强制，
+   * 不能只靠 preview 的 warning（直接调 commit API 会绕过）。
+   */
+  chainedSuspect?: boolean
 }
 
 export interface PreviewStoreDeps {

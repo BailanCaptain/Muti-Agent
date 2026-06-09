@@ -449,3 +449,81 @@ test("Day 4 · PromptInspector · 自定义 budgetMax", async () => {
     safeCleanup(tmp)
   }
 })
+
+// ─── G4 · alias 过滤 (F027 v3) ─────────────────────────────────────────
+
+test("v3 G4 · alias=undefined → 取最新一行 (与 v3 前行为兼容)", async () => {
+  const tmp = safeTempDir("F027-v3G4-noalias-")
+  const dbPath = path.join(tmp, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  try {
+    insertAudit(db, { roomId: "R-001", alias: "黄仁勋" })
+    insertAudit(db, { roomId: "R-001", alias: "范德彪" })
+    insertAudit(db, { roomId: "R-001", alias: "桂芬" })
+    const svc = new PromptInspectorService({ db })
+    const r = svc.getInspector("R-001", undefined)
+    // 最新一行 = 桂芬 (按 INSERT 顺序 id desc)
+    assert.equal(r.selectedAlias, "桂芬")
+    // availableAliases = 3 个 (distinct, asc)
+    assert.deepEqual(r.availableAliases, ["桂芬", "范德彪", "黄仁勋"])
+  } finally {
+    close()
+    safeCleanup(tmp)
+  }
+})
+
+test("v3 G4 · alias='范德彪' → 只取范德彪的 row", async () => {
+  const tmp = safeTempDir("F027-v3G4-byAlias-")
+  const dbPath = path.join(tmp, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  try {
+    insertAudit(db, { roomId: "R-001", alias: "黄仁勋", scenario: "wake-up.huang" })
+    insertAudit(db, { roomId: "R-001", alias: "范德彪", scenario: "wake-up.fan" })
+    insertAudit(db, { roomId: "R-001", alias: "桂芬", scenario: "wake-up.gui" })
+    const svc = new PromptInspectorService({ db })
+    const r = svc.getInspector("R-001", undefined, 1, "范德彪")
+    assert.equal(r.selectedAlias, "范德彪")
+    assert.equal(r.scenario, "wake-up.fan")
+    // availableAliases 仍是 room 全部 (不受 alias filter 影响)
+    assert.equal(r.availableAliases.length, 3)
+    assert.ok(r.availableAliases.includes("范德彪"))
+  } finally {
+    close()
+    safeCleanup(tmp)
+  }
+})
+
+test("v3 G4 · alias 不存在 → 空 audit response + availableAliases 仍列 room 全部", async () => {
+  const tmp = safeTempDir("F027-v3G4-noMatch-")
+  const dbPath = path.join(tmp, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  try {
+    insertAudit(db, { roomId: "R-001", alias: "黄仁勋" })
+    const svc = new PromptInspectorService({ db })
+    const r = svc.getInspector("R-001", undefined, 1, "桂芬不存在")
+    // 桂芬不存在 → empty audit
+    assert.equal(r.scenario, null)
+    assert.equal(r.rawText, null)
+    // selectedAlias = null (空 audit), availableAliases 仍列 room 全部 = ["黄仁勋"]
+    assert.equal(r.selectedAlias, null)
+    assert.deepEqual(r.availableAliases, ["黄仁勋"])
+  } finally {
+    close()
+    safeCleanup(tmp)
+  }
+})
+
+test("v3 G4 · room 空 → availableAliases=[] + selectedAlias=null", async () => {
+  const tmp = safeTempDir("F027-v3G4-empty-")
+  const dbPath = path.join(tmp, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  try {
+    const svc = new PromptInspectorService({ db })
+    const r = svc.getInspector("R-999", undefined)
+    assert.deepEqual(r.availableAliases, [])
+    assert.equal(r.selectedAlias, null)
+  } finally {
+    close()
+    safeCleanup(tmp)
+  }
+})

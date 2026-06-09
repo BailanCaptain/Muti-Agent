@@ -1,0 +1,58 @@
+[
+  {
+    "ts": "2026-05-20T05:00:00.000Z",
+    "alias": "小孙",
+    "action": "ingest_commit",
+    "path": "wiki/concepts/draft/_auto/2026-05-20-rag-paper.md",
+    "fencing_token": "seed-wiki-fence-001",
+    "leader_term": "999",
+    "result": "ok",
+    "state": "committed",
+    "diff_summary": "新增 RAG 论文 ingest，外部 drop"
+  },
+  {
+    "ts": "2026-05-21T08:30:00.000Z",
+    "alias": "黄仁勋",
+    "action": "promote",
+    "path": "wiki/concepts/rag-overview.md",
+    "fencing_token": "seed-wiki-fence-002",
+    "leader_term": "999",
+    "result": "ok",
+    "state": "committed",
+    "promotion_target": "wiki/concepts/rag-overview.md",
+    "reason": "首批整理"
+  },
+  {
+    "ts": "2026-05-22T11:00:00.000Z",
+    "alias": "system",
+    "action": "warning_raised",
+    "path": "wiki/warnings/2026-05-22-drift-detected.md",
+    "fencing_token": "seed-wiki-fence-003",
+    "leader_term": "999",
+    "result": "ok",
+    "state": "committed",
+    "diff_summary": "drift detected: R-001 spec 001 (5 级 recall) vs spec 005 (3 级 recall) jaccard 0.42 < threshold 0.6"
+  },
+  {
+    "ts": "2026-05-22T14:00:00.000Z",
+    "alias": "桂芬",
+    "action": "ingest_commit",
+    "path": "wiki/concepts/draft/_auto/2026-05-22-docs-watcher.md",
+    "fencing_token": "seed-wiki-fence-004",
+    "leader_term": "999",
+    "result": "ok",
+    "state": "committed",
+    "diff_summary": "DocsWatcher auto-ingest docs/features/F027.md"
+  },
+  {
+    "ts": "2026-05-23T03:00:00.000Z",
+    "alias": "system",
+    "action": "warning_raised",
+    "path": "wiki/warnings/2026-05-23-chained-suspect.md",
+    "fencing_token": "seed-wiki-fence-005",
+    "leader_term": "999",
+    "result": "ok",
+    "state": "committed",
+    "diff_summary": "chained_suspect: 7 天内连续 3 次同 series_id 但 sim 0.72 跨 series"
+  }
+]

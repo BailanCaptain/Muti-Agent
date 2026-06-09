@@ -282,7 +282,9 @@ export function formatTombstone(t: ContextTombstone, opts: FormatTombstoneOption
       : opts.headMsgId
         ? `msg_id=${opts.headMsgId}`
         : ""
-  const hint = range ? `详情可调 MCP get_room_context, ${range}` : "详情可调 MCP get_room_context"
+  const hint = range
+    ? `详情优先 query_messages 检索（或 get_room_context 取时序）, ${range}`
+    : "详情优先 query_messages 检索（或 get_room_context 取时序）"
   return `[Tombstone] 此前省略 ${t.omittedCount} 条 · 时间窗 ${from}-${to} UTC · 参与者 ${participants} · 关键词 ${keywords} · ${hint} [/Tombstone]`
 }
 

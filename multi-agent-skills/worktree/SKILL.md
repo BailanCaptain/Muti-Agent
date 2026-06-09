@@ -24,7 +24,7 @@ triggers:
 grep -ri "{关键词}" docs/features/ docs/ROADMAP.md
 ```
 
-同时通过 `search-memories("{关键词}")` 查找历史讨论中的相关信息。
+同时用 `query_messages("{关键词}")`（messages FTS）查历史讨论中的相关信息，知识沉淀用 `search_wiki`。（search-memories 已退役 — F027 #285）
 
 ## 创建 Worktree
 

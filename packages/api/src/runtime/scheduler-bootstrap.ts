@@ -13,18 +13,26 @@
  * Day 1 范围（plan §3 Week 1 Day 1）：
  *   - 11 job adapter 装配（plan §9 映射表）
  *   - StartupReconciler：直接用（业务全在 SQL UPDATE/DELETE，不需要业务回调）
- *   - 其他 jobs：业务侧回调注入 noop（Phase 4 接入真实现）
+ *   - 其他 jobs：业务侧回调按下方更新说明注入真业务（wikiRoot/runner 缺失才 noop fallback）
  *
- * 不做：
- *   - 不接 RoomCompilerTick.compileExecutor 真业务（Phase 4 P19/22 接 room compile）
- *   - 不接 DocsWatcher.onEvent 真 ingest pipeline（Phase 4 P21 接 sanitize + LLM 编译）
- *   - 不接 NightlyHealthCheck.scanEntities 真扫描（Phase 4 接 wiki 扫描）
- *   - 不接 WeeklyDraftDigest.scanDrafts / pushDigest（Phase 4 接 draft 表）
- *   - 不接 DriftDetector.scanTriggers / openUpdateDraft（Phase 4 接 wiki_events）
- *   - 不接 MonthlySnapshot.recompileAllRooms / backup / replaceViewfinder（Phase 4）
- *   - 不接 ArchiveYearlySessions.scanSessions / writeYearlyPack / archiveFile（Phase 4）
- *   - 不接 WikiCompilerDebounce.recompileDerivedViews（Phase 4 派生视图）
- *   - 不接 ChainedAlertNotifier.pushAlert 真 room MCP（Phase 4 接 R-201 推送）
+ * 【已接真业务（下方原 "不做" 列表已 stale，保留作演进记录）】：
+ *   - RoomCompilerTick.compileExecutor：Week 5 hotfix 接真 roomCompileExecutor（server.ts 注入）
+ *   - DocsWatcher.onEvent：final-vision P1-2 接 DocsIngestRunner（含 G11 真 LLM 编译）
+ *   - NightlyHealthCheck/WeeklyDraftDigest/DriftDetector/MonthlySnapshot/ArchiveYearlySessions：
+ *     F027 v3 G2 接真 scanner（见 ~line 200）
+ *   - ChainedAlertNotifier.pushAlert：server.ts 注入 ws broadcast
+ *   原 Phase-3-Day-1 scaffold "不做" 项（下列）现已由 v3 G2 / final-vision / Week5 hotfix 接通：
+ *   - ~~不接 RoomCompilerTick.compileExecutor 真业务~~ → 已接
+ *   - ~~不接 DocsWatcher.onEvent 真 ingest pipeline~~ → 已接
+ *   - ~~不接 NightlyHealthCheck.scanEntities 真扫描~~ → 已接
+ *   - ~~不接 WeeklyDraftDigest.scanDrafts / pushDigest~~ → 已接
+ *   - ~~不接 DriftDetector.scanTriggers / openUpdateDraft~~ → 已接
+ *   - ~~不接 MonthlySnapshot.recompileAllRooms~~ → 已接（MVP recompiled===current）
+ *   - ~~不接 ArchiveYearlySessions.scanSessions~~ → 已接
+ *   - WikiCompilerDebounce.recompileDerivedViews：F027 wiring 接真 reindex（opts.reindexWiki →
+ *     wiki_entity_index 增量重建，search_wiki / adaptive-recall Level 2 的索引 producer）；
+ *     markdown 派生视图（index/sources/log 程序编）重生成仍 follow-up（独立 F-id）。
+ *   - ~~不接 ChainedAlertNotifier.pushAlert 真 room MCP~~ → 已接 ws broadcast
  *
  * 验收（AC-P3-7）：
  *   - API server 启动后 SchedulerRuntime 实例化 + 11 job 注册成功
@@ -44,6 +52,7 @@ import {
   type ChainedAlert,
   ChainedAlertNotifier,
 } from "../services/scheduler/chained-alert-notifier"
+import type { DocsIngestRunner } from "../services/scheduler/docs-ingest-runner"
 import { DocsWatcher } from "../services/scheduler/docs-watcher"
 import { DriftDetector } from "../services/scheduler/drift-detector"
 import type { JobTrace } from "../services/scheduler/job-trace"
@@ -66,6 +75,14 @@ import {
 import { StartupReconciler } from "../services/scheduler/startup-reconciler"
 import { WeeklyDraftDigest } from "../services/scheduler/weekly-draft-digest"
 import { WikiCompilerDebounce } from "../services/scheduler/wiki-compiler-debounce"
+import {
+  scanAgentSessionsFs,
+  scanDriftTriggersDb,
+  scanRoomViewfindersForSnapshot,
+  scanWikiDraftsFs,
+  scanWikiEntitiesFs,
+} from "../services/scheduler/wiki-scanners"
+import { createWikiIndexRecompiler } from "../wiki/wiki-index-recompile"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
 
@@ -86,6 +103,71 @@ export interface SchedulerBootOptions {
   alertRoom?: string
   /** 跳过 boot（CI / 单测）；默认 false。 */
   skipBoot?: boolean
+  /**
+   * Week 5 hotfix · RoomCompiler 真业务接入 (替换 noop compileExecutor).
+   * 见 packages/api/src/orchestrator/production-room-compile-executor.ts.
+   * 缺 → fallback noop (跟 Phase 3 行为一致).
+   */
+  roomCompileExecutor?: () => Promise<{ roomsProcessed: number }>
+  /**
+   * F027 final-vision P1-2 · DocsWatcher.onEvent 真业务接入 (替换 noop onEvent).
+   * 见 packages/api/src/services/scheduler/docs-ingest-runner.ts.
+   *
+   * 缺 → fallback noop (跟 Phase 3 Day 1 行为一致 — boot 不强依赖)。
+   * 传入 → docs/features|bugReport|lessons 增量变化 → 真走 preview → commit → 落 wiki/concepts/draft/_auto/
+   *
+   * docsWatcherEnabled 仍由 MULTI_AGENT_DOCS_WATCHER env 控制（final-vision P1-2 默认改 "1"，
+   * 测试/CI/preview 用 "0" 关）。
+   */
+  docsIngestRunner?: DocsIngestRunner
+  /**
+   * F027 AC-P1-5 codex P2-3 · recent_drops 历史语料库 retention（NightlyVacuum 每夜 prune 超窗）。
+   * 缺 → 不 prune（向后兼容）。server.ts 注入 RecentDropsRepository。
+   */
+  recentDrops?: { pruneOlderThan(cutoffMs: number): number }
+  /**
+   * F027 v3 G2 · wiki 根目录（cron scanner 扫 fs 用）。
+   *
+   * 缺 → 走 noop fallback (跟 v3 之前 Phase 3 行为一致 — boot 不强依赖)。
+   * 传入 → 5 cron job (NightlyHealthCheck / WeeklyDraftDigest / DriftDetector /
+   *        MonthlySnapshot / ArchiveYearlySessions) 接真业务 scanner。
+   *
+   * 约定与 server.ts 其他 caller 一致: `process.env.WIKI_ROOT || path.join(rootDir, ".runtime", "wiki")`。
+   * 内部 fs 路径 `<wikiRoot>/rooms/<id>/viewfinder.md` 等 (跟 RoomCompiler 落盘对齐)。
+   */
+  wikiRoot?: string
+  /**
+   * F027 B2/B1-c · 全局索引（compileWiki）的根 —— **必须等于 GET /api/wiki/index reader 读的根**
+   * （= wikiServices.wikiRoot，单层 `.runtime/wiki`），**不是** wikiRoot（roomCompileWikiRoot，双层
+   * `.runtime/wiki/wiki`，那是 RoomCompiler/room scanner 的根）。两者不同！用错 → compileWiki 写的
+   * index 与 reader 读的根不匹配 → KB tab 恒空（自查抓到的 wiring 陷阱）。
+   * 缺 → 不接 compileWiki（只 reindexWiki）。同时作 scanEntities 的根。
+   */
+  wikiIndexRoot?: string
+  /**
+   * F027 wiring · wiki 搜索索引 reindex 回调（接 WikiCompilerDebounce.recompileDerivedViews）。
+   * 缺 → noop（跟之前 Phase 3 行为一致）。传入 → wiki 写 commit debounce 收敛后增量 reindex
+   * `wiki_entity_index`（search_wiki / adaptive-recall Level 2 的索引 producer）。
+   */
+  reindexWiki?: () => Promise<void>
+  /**
+   * F027 wiring · 把 `WikiCompilerDebounce.onWikiEvent` 交还 caller。
+   * caller（server.ts）在 `createWikiServices.onCommit` 里调它 → wiki 写 commit 触发 debounce。
+   * boot 内建 debounce、caller 早于 boot 建 wikiServices，故用此 late-bind forwarder 串联。
+   */
+  registerOnWikiCommit?: (fire: () => void) => void
+  /**
+   * F027 wiring · WikiCompilerDebounce debounce 窗口 ms（默认 5000）。仅测试需要短窗以真等
+   * debounce 落地、断言 reindex 被触发；生产用默认。
+   */
+  debounceMs?: number
+  /**
+   * F027 wiring · 周期性增量 reindex 间隔 ms（默认 5min）。安全网（codex review A Finding 1）：
+   * debounce 只接住 `update_wiki` 的 onCommit；RoomCompiler / promote / demote 等直接写盘 + 写
+   * wiki_events 的 producer 不走该 hook，它们的新内容靠这条周期 reindex 最终进搜索索引。
+   * reindex 是 mtime 增量（廉价）。仅当 opts.reindexWiki 提供时启动。
+   */
+  reindexIntervalMs?: number
 }
 
 /**
@@ -132,12 +214,19 @@ export async function bootSchedulerRuntime(
   // 3. 11 job instances — 业务回调按 Day 1 范围注入 noop / minimal stub
   const reconciler = new StartupReconciler({ db: opts.db, logger: opts.log })
 
+  // Week 5 hotfix: 如果 caller 注入了真 roomCompileExecutor (server.ts 走真业务),
+  // 用真; 否则 fallback 到 noop (跟 Phase 3 行为一致, 测试 / CI 用).
   const tick = new RoomCompilerTick({
-    compileExecutor: async () => ({ roomsProcessed: 0 }),
+    compileExecutor:
+      opts.roomCompileExecutor ?? (async () => ({ roomsProcessed: 0 })),
     logger: opts.log,
   })
 
-  const docsWatcherEnabled = (process.env.MULTI_AGENT_DOCS_WATCHER ?? "0") === "1"
+  // F027 final-vision P1-2 修：默认 enable docs-watcher (env 默认 "1")，接 DocsIngestRunner 真业务。
+  // - opts.docsIngestRunner 缺时 onEvent fallback noop (保 Phase 3 Day 1 行为 — boot 不强依赖)
+  // - MULTI_AGENT_DOCS_WATCHER=0 显式关 (CI / 单测 / 不需要 ingest 的 preview server)
+  const docsWatcherEnabled = (process.env.MULTI_AGENT_DOCS_WATCHER ?? "1") === "1"
+  const docsIngestRunner = opts.docsIngestRunner
   const watcher = docsWatcherEnabled
     ? new DocsWatcher({
         watchPaths: [
@@ -145,42 +234,93 @@ export async function bootSchedulerRuntime(
           path.join(rootDir, "docs", "bugReport"),
           path.join(rootDir, "docs", "lessons"),
         ],
-        onEvent: async () => {},
+        onEvent: docsIngestRunner
+          ? async (event) => {
+              await docsIngestRunner.runIngest(event)
+            }
+          : async () => {},
         logger: opts.log,
       })
     : null
 
+  // F027 v3 G2 · cron scanner 真业务接通（替换原 5 个 async () => [] noop）。
+  // wikiRoot 缺 → fallback noop（boot 不强依赖；test/CI 跑空 cron 不挂）。
+  // wikiRoot 有 → fs / SQL 真扫；scanner 内部 fail-soft（单文件错跳过 + warn）。
+  const noopScanEntities = async () => []
+  const noopScanDrafts = async () => []
+  const noopScanTriggers = async () => []
+  const noopRecompile = async () => []
+  const noopScanSessions = async () => []
+
   const healthCheck = new NightlyHealthCheck({
-    scanEntities: async () => [],
+    scanEntities: opts.wikiRoot
+      ? scanWikiEntitiesFs(opts.wikiRoot, opts.log)
+      : noopScanEntities,
     logger: opts.log,
   })
 
-  const vacuum = new NightlyVacuum({ db: opts.db, rootDir, logger: opts.log })
+  // F027 AC-P1-5 codex P2-3：NightlyVacuum 接 recent_drops retention（注入才 prune）
+  const vacuum = new NightlyVacuum({
+    db: opts.db,
+    rootDir,
+    logger: opts.log,
+    recentDrops: opts.recentDrops,
+  })
 
   const draftDigest = new WeeklyDraftDigest({
-    scanDrafts: async () => [],
+    scanDrafts: opts.wikiRoot
+      ? scanWikiDraftsFs(opts.wikiRoot, opts.log)
+      : noopScanDrafts,
     logger: opts.log,
   })
 
   const drift = new DriftDetector({
-    scanTriggers: async () => [],
+    // DB 扫不依赖 wikiRoot — 直接接 wiki_events + a2a_calls
+    scanTriggers: scanDriftTriggersDb(opts.db, opts.log),
     logger: opts.log,
   })
 
+  // MonthlySnapshot MVP: scanner 读 current viewfinder.md，recompiled === current
+  // 等价于 drift=0 不触发 replace；真 LLM-from-scratch 重编留独立 F-id（noop fallback OK）。
   const snapshot = new MonthlySnapshot({
-    recompileAllRooms: async () => [],
+    recompileAllRooms: opts.wikiRoot
+      ? scanRoomViewfindersForSnapshot(opts.db, opts.wikiRoot, opts.log)
+      : noopRecompile,
     logger: opts.log,
   })
 
   const archive = new ArchiveYearlySessions({
-    scanSessions: async () => [],
+    scanSessions: opts.wikiRoot
+      ? scanAgentSessionsFs(opts.wikiRoot, opts.log)
+      : noopScanSessions,
     logger: opts.log,
   })
 
+  // F027 B2/B1-c · 全局 markdown 索引重编器（compileWiki 文件源）。
+  // 用 wikiIndexRoot（= GET /api/wiki/index reader 根 = wikiServices.wikiRoot 单层），**不是** wikiRoot
+  // （roomCompileWikiRoot 双层）—— 否则 compileWiki 写的 index 与 reader 读的根不匹配，KB tab 恒空。
+  // scanWikiEntitiesFs 返回 WikiEntity[] 结构兼容 ScannedWikiEntity（frontmatter 经 index sig）。
+  const wikiIndexRecompile = opts.wikiIndexRoot
+    ? createWikiIndexRecompiler({
+        wikiRoot: opts.wikiIndexRoot,
+        scanEntities: scanWikiEntitiesFs(opts.wikiIndexRoot, opts.log),
+        logger: opts.log,
+      })
+    : null
   const debounce = new WikiCompilerDebounce({
-    recompileDerivedViews: async () => {},
+    // F027 wiring · recompileDerivedViews 现接两件（B2/B1-c 补全 — 此前只 reindex，compileWiki 裸奔）：
+    //   ① reindexWiki（wiki_entity_index FTS 增量重建，chunk A）→ 给 search_wiki MCP
+    //   ② wikiIndexRecompile（compileWiki 扫文件重编全局 markdown 索引）→ 给 KB tab / GET /api/wiki/index
+    // 缺 reindexWiki / wikiRoot 各自 noop（互不依赖）。两者都 fail-soft（compileWiki 内部 catch）。
+    recompileDerivedViews: async () => {
+      if (opts.reindexWiki) await opts.reindexWiki()
+      if (wikiIndexRecompile) await wikiIndexRecompile()
+    },
+    debounceMs: opts.debounceMs,
     logger: opts.log,
   })
+  // F027 wiring · 把 onWikiEvent 交还 caller，让 wiki 写 commit（createWikiServices.onCommit）触发本 debounce。
+  opts.registerOnWikiCommit?.(() => debounce.onWikiEvent())
 
   const alertNotifier = new ChainedAlertNotifier({
     pushAlert: async (alert) => {
@@ -309,10 +449,43 @@ export async function bootSchedulerRuntime(
       stop: () => watcher.stop(),
     })
   }
+  // F027 wiring · 周期性增量 reindex 安全网（codex review A Finding 1）。
+  // debounce 只接住 update_wiki 的 onCommit；RoomCompiler / promote / demote 直接写盘 + 写
+  // wiki_events 的 producer 不走该 hook → 它们的新内容靠这条周期 reindex 进搜索索引
+  // （reindex mtime 增量，廉价）。塞进既有 debounce event-driven job（不新增 job）。
+  let reindexInterval: NodeJS.Timeout | null = null
+  const reindexIntervalMs = opts.reindexIntervalMs ?? 5 * 60_000
+  // codex review A delta P2：in-flight guard——reindexWikiEntities 先快照 DB metadata 再异步扫盘
+  // 再单事务写；若扫描慢于 interval，两次重叠 run 会从 stale 快照各自 plan → insert 撞 UNIQUE /
+  // SQLite 争用，且 fail-soft catch 会把反复失败藏掉。本 flag 让上一次没跑完就跳过本 tick（粗粒度
+  // coalesce）。debounce 路径自带 reentrancy guard，这里只补周期路径。
+  let reindexInFlight = false
   eventDrivenJobs.push({
     name: "wiki-compiler-debounce",
-    start: () => {},
-    stop: () => debounce.stop(),
+    start: () => {
+      if (!opts.reindexWiki) return
+      reindexInterval = setInterval(() => {
+        if (reindexInFlight) return // 上一次 reindex 还没跑完 → 跳过本 tick（防堆叠 / stale 快照碰撞）
+        reindexInFlight = true
+        void (async () => {
+          try {
+            await opts.reindexWiki?.()
+          } catch (err) {
+            opts.log.warn({ err }, "periodic wiki reindex failed (caught)")
+          } finally {
+            reindexInFlight = false
+          }
+        })()
+      }, reindexIntervalMs)
+      reindexInterval.unref?.()
+    },
+    stop: () => {
+      if (reindexInterval) {
+        clearInterval(reindexInterval)
+        reindexInterval = null
+      }
+      debounce.stop()
+    },
   })
   eventDrivenJobs.push({
     name: "chained-alert-notifier",

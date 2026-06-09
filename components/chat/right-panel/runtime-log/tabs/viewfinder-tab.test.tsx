@@ -83,8 +83,9 @@ describe("ViewfinderTab 基础渲染", () => {
     await waitFor(() => expect(screen.queryByTestId("viewfinder-loading")).toBeNull())
     const header = screen.getByTestId("viewfinder-header")
     expect(header.textContent).toMatch(/R-201/)
-    expect(header.textContent).toMatch(/coverage 90%/)
-    expect(header.textContent).toMatch(/ledger 23 active/)
+    // P4 hotfix · 中文化：coverage → 覆盖率, ledger → 决策账本, active → 条进行中
+    expect(header.textContent).toMatch(/覆盖率 90%/)
+    expect(header.textContent).toMatch(/决策账本 23 条进行中/)
     expect(header.textContent).toMatch(/D-22/)
   })
 
@@ -95,8 +96,9 @@ describe("ViewfinderTab 基础渲染", () => {
       }),
     )
     render(<ViewfinderTab />)
-    await waitFor(() => expect(screen.queryByText("warn")).toBeTruthy())
-    expect(screen.getByText("warn").className).toMatch(/text-amber/)
+    // P4 hotfix · "warn" → "警告"
+    await waitFor(() => expect(screen.queryByText("警告")).toBeTruthy())
+    expect(screen.getByText("警告").className).toMatch(/text-amber/)
   })
 
   it("coverage status fail → 红色", async () => {
@@ -106,8 +108,9 @@ describe("ViewfinderTab 基础渲染", () => {
       }),
     )
     render(<ViewfinderTab />)
-    await waitFor(() => expect(screen.queryByText("fail")).toBeTruthy())
-    expect(screen.getByText("fail").className).toMatch(/text-red/)
+    // P4 hotfix · "fail" → "失败"
+    await waitFor(() => expect(screen.queryByText("失败")).toBeTruthy())
+    expect(screen.getByText("失败").className).toMatch(/text-red/)
   })
 })
 
@@ -144,11 +147,12 @@ describe("ViewfinderTab markdown 渲染", () => {
     expect(pill).toBeTruthy()
     expect(pill.getAttribute("data-call-id")).toBe("call-abc12345")
     expect(pill.getAttribute("data-status")).toBe("pending")
-    expect(pill.textContent).toMatch(/call-abc12345·pending/)
-    // tooltip 含完整信息
-    expect(pill.getAttribute("title")).toMatch(/call=call-abc12345/)
-    expect(pill.getAttribute("title")).toMatch(/status=pending/)
-    expect(pill.getAttribute("title")).toMatch(/deadline 17:30/)
+    // P4 hotfix · pill 文本用中文 status (pending → 等待)
+    expect(pill.textContent).toMatch(/call-abc12345·等待/)
+    // tooltip 也中文化（调用 / 状态 / 截止）
+    expect(pill.getAttribute("title")).toMatch(/调用 call-abc12345/)
+    expect(pill.getAttribute("title")).toMatch(/状态：等待/)
+    expect(pill.getAttribute("title")).toMatch(/截止 17:30/)
   })
 
   // Day 20 r1 P3 fix (范-r1): pill click → store glue (onClick → openDrawer 那行)
@@ -246,6 +250,8 @@ describe("ViewfinderTab API base + enabled wire", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     const url = String(fetchMock.mock.calls[0]?.[0])
     expect(url).toMatch(/^http:\/\/localhost:8787\//)
+    // P4 hotfix · 新 Header 加了 recompile/refresh 按钮 → 多次 fetch (refetch on click)。
+    // 首次 fetch 是 viewfinder GET, 不是 recompile POST。
     expect(url).toMatch(/\/api\/rooms\/R-201\/viewfinder$/)
   })
 

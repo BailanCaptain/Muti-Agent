@@ -526,3 +526,130 @@ test("Day 6 · DecisionService · ledgerCursor 推进 = MAX(decision_id)", () =>
     safeCleanup(tmp)
   }
 })
+
+// ── F027 final-vision P1-1 修复 ────────────────────────────────────────
+
+test("final-vision P1-1 P1 · kind=supersede + supersedesDecisionId → action=supersede + 新 commit 行", () => {
+  const { svc, db, close, tmp } = makeService()
+  try {
+    const old = svc.commitDecision("R-201", {
+      kind: "commit",
+      content: "旧 spec",
+      evidence: [{ kind: "message", ref: "m1" }],
+      callerAlias: "小孙",
+    })
+    const sup = svc.commitDecision("R-201", {
+      kind: "supersede",
+      content: "新决策接力旧 spec",
+      evidence: [{ kind: "decision", ref: old.decisionId }],
+      callerAlias: "黄仁勋",
+      supersedesDecisionId: old.decisionId,
+    })
+
+    assert.equal(sup.action, "supersede")
+    assert.notEqual(sup.decisionId, old.decisionId)
+
+    const client = getSqliteClient(db)
+    const newRow = client
+      .prepare("SELECT decision_type, content FROM room_decisions WHERE decision_id = ?")
+      .get(Number(sup.decisionId)) as { decision_type: string; content: string }
+    assert.equal(
+      newRow.decision_type,
+      "commit",
+      "supersede 新行必须是 commit 类型 (P1: 与 revoke=reject 分流)",
+    )
+    assert.equal(newRow.content, "新决策接力旧 spec", "content 不加 '撤销' 前缀")
+
+    const oldRow = client
+      .prepare("SELECT status, superseded_by FROM room_decisions WHERE decision_id = ?")
+      .get(Number(old.decisionId)) as { status: string; superseded_by: number }
+    assert.equal(oldRow.status, "superseded")
+    assert.equal(oldRow.superseded_by, Number(sup.decisionId))
+  } finally {
+    close()
+    safeCleanup(tmp)
+  }
+})
+
+test("final-vision P1-1 P1 · kind=supersede 缺 supersedesDecisionId → DECISION_INVALID", () => {
+  const r = validatePostDecision(
+    { id: "R-201" },
+    {
+      kind: "supersede",
+      content: "x",
+      evidence: [{ kind: "message", ref: "m1" }],
+      callerAlias: "小孙",
+    },
+  )
+  assert.equal(r.ok, false)
+  if (r.ok === false) {
+    assert.equal(r.error, "DECISION_INVALID")
+    assert.equal(r.detail?.reason, "supersede_requires_target")
+  }
+})
+
+test("final-vision P1-1 P2 · supersede + message evidence → 新行 source_message_ids 含 msg refs", () => {
+  const { svc, db, close, tmp } = makeService()
+  try {
+    const old = svc.commitDecision("R-201", {
+      kind: "commit",
+      content: "旧",
+      evidence: [{ kind: "message", ref: "seed" }],
+      callerAlias: "小孙",
+    })
+    const sup = svc.commitDecision("R-201", {
+      kind: "supersede",
+      content: "新",
+      evidence: [
+        { kind: "decision", ref: old.decisionId },
+        { kind: "message", ref: "trigger-1" },
+        { kind: "message", ref: "trigger-2" },
+      ],
+      callerAlias: "小孙",
+      supersedesDecisionId: old.decisionId,
+    })
+    const client = getSqliteClient(db)
+    const row = client
+      .prepare("SELECT source_message_ids FROM room_decisions WHERE decision_id = ?")
+      .get(Number(sup.decisionId)) as { source_message_ids: string }
+    const ids = JSON.parse(row.source_message_ids) as string[]
+    // ledger.supersede 内部加 `decision:<oldId>` 在前; service 拼 msg:<ref> 在后
+    assert.deepEqual(ids, [`decision:${old.decisionId}`, "msg:trigger-1", "msg:trigger-2"])
+  } finally {
+    close()
+    safeCleanup(tmp)
+  }
+})
+
+test("final-vision P1-1 P2 · kind=reject + supersedesDecisionId + message evidence → revoke 新行 含 msg refs", () => {
+  const { svc, db, close, tmp } = makeService()
+  try {
+    const old = svc.commitDecision("R-201", {
+      kind: "commit",
+      content: "旧",
+      evidence: [{ kind: "message", ref: "seed" }],
+      callerAlias: "小孙",
+    })
+    const rej = svc.commitDecision("R-201", {
+      kind: "reject",
+      content: "拒绝原因",
+      evidence: [
+        { kind: "decision", ref: old.decisionId },
+        { kind: "message", ref: "trigger-a" },
+      ],
+      callerAlias: "小孙",
+      supersedesDecisionId: old.decisionId,
+    })
+    assert.equal(rej.action, "revoke")
+    const client = getSqliteClient(db)
+    const row = client
+      .prepare("SELECT source_message_ids, decision_type FROM room_decisions WHERE decision_id = ?")
+      .get(Number(rej.decisionId)) as { source_message_ids: string; decision_type: string }
+    assert.equal(row.decision_type, "reject")
+    const ids = JSON.parse(row.source_message_ids) as string[]
+    assert.deepEqual(ids, [`decision:${old.decisionId}`, "msg:trigger-a"])
+  } finally {
+    close()
+    safeCleanup(tmp)
+  }
+})

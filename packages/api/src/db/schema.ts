@@ -293,37 +293,10 @@ export const wikiEvents = sqliteTable(
   ],
 )
 
-// F027 chap 14 · 6 类记忆桶物理表（5 类：room/project/user/feedback/work；
-// conversation 桶物理上由 messages 表承载，不冗余）。
-// type CHECK 由 INIT_SQL 强约束（防漂桶 lint 写错 type 也兜得住）。
-export const wikiMemories = sqliteTable(
-  "wiki_memories",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    type: text("type").notNull(), // room|project|user|feedback|work（CHECK in INIT_SQL）
-    name: text("name").notNull(),
-    canonicalOwnerPath: text("canonical_owner_path").notNull(),
-    promotionTarget: text("promotion_target"),
-    ttlDays: integer("ttl_days"),
-    supersedes: text("supersedes"), // JSON array of paths
-    replacesInBuckets: text("replaces_in_buckets"), // JSON array
-    sourceMessageIds: text("source_message_ids"), // JSON array
-    contributedBy: text("contributed_by").notNull(), // JSON array of aliases
-    crossRefs: text("cross_refs"), // JSON array (V16.4 chap 26 LLM 编译填)
-    dedupDecision: text("dedup_decision"), // JSON object
-    body: text("body").notNull(),
-    state: text("state").notNull().default("draft"), // draft|canonical|deprecated
-    createdAt: text("created_at").notNull(),
-    updatedAt: text("updated_at").notNull(),
-    reserved1: text("reserved_1"),
-    reserved2: text("reserved_2"),
-  },
-  (table) => [
-    index("idx_wiki_memories_type").on(table.type),
-    index("idx_wiki_memories_canonical").on(table.canonicalOwnerPath),
-    index("idx_wiki_memories_state").on(table.state, table.type),
-  ],
-)
+// F027 chunk B · wiki_memories 表已砍（冗余第二存储：md frontmatter ⊇ 表列，无 MCP 读，
+// 唯一读者 wiki-story 已解耦）。记忆 = 文件单一真相源；治理 = NightlyHealthCheck 文件夜扫
+// （R1/R3 已搬入）；召回 = search_wiki → wiki_entity_index。详见 docs/plans/V16.5-final.md
+// chap 14 patch。物理空表（0 行）由小孙手动 DROP（Iron Law：runtime 不擅自 drop）。
 
 // F027 chap 11 · viewfinder anti-drift decision ledger（append-only）。
 // tombstone=1 + superseded_by 软删覆盖，原文不动；MonthlySnapshot 比对漂移。
@@ -397,6 +370,25 @@ export const promptAudit = sqliteTable(
     reserved2: text("reserved_2"),
   },
   (table) => [index("idx_prompt_audit").on(table.alias, table.roomId, table.createdAt)],
+)
+
+// F027 AC-P1-5 · recent_drops — multi-drop cross-correlation 的"最近 drop 语料库"。
+// crossCorrelateDrops 需 7 天窗口的历史 drop + embedding 做相似度对比；commit 落盘写一条，
+// preview 检测查 7 天窗口。embedding 存 JSON 文本（number[] 序列化），缺失=生成失败视为 sim 0。
+export const recentDrops = sqliteTable(
+  "recent_drops",
+  {
+    id: text("id").primaryKey(),
+    rawContent: text("raw_content").notNull(),
+    ingestedAt: integer("ingested_at").notNull(),
+    contributedBy: text("contributed_by").notNull(),
+    seriesId: text("series_id"),
+    embedding: text("embedding"),
+    createdAt: text("created_at").notNull(),
+    reserved1: text("reserved_1"),
+    reserved2: text("reserved_2"),
+  },
+  (table) => [index("idx_recent_drops_ingested_at").on(table.ingestedAt)],
 )
 
 // F027 chap 6 · update_wiki MCP 写入流程的 lease 表（path 维度互斥锁）。
@@ -494,8 +486,8 @@ export const threadSealEvents = sqliteTable("thread_seal_events", {
 // FTS5 虚拟表 wiki_entity_fts 用 content=wiki_entity_index 关联，通过 trigger
 // 自动同步 INSERT/UPDATE/DELETE（见 drizzle-instance.ts INIT_SQL）。
 //
-// 不存 wiki_memories 的 metadata（state/promotion_target/...）—— 那些走 P10
-// wikiMemories 表。本表只为 BM25 / FTS5 全文召回服务。
+// 只为 BM25 / FTS5 全文召回服务（不存 state/promotion_target 等结构化 metadata；
+// F027 chunk B 起 wiki_memories 表已砍，结构化 metadata 走文件 frontmatter）。
 export const wikiEntityIndex = sqliteTable(
   "wiki_entity_index",
   {

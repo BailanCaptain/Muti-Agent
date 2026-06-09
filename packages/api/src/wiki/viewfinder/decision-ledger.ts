@@ -25,6 +25,7 @@ import type {
   DecisionStatus,
   DecisionType,
   RevokeDecisionInput,
+  SupersedeDecisionInput,
 } from "./types"
 import { ViewfinderError } from "./types"
 
@@ -166,6 +167,9 @@ export class DecisionLedger {
    *
    * 新行作为 reject 类决策，content = reason，sourceQuote = reason（自洽 sha）。
    * 返回新决策 id。
+   *
+   * F027 final-vision P1-1 P2 修：extraSourceMessageIds 拼到 `decision:<oldId>` 之后写入
+   * 新行 source_message_ids（人工 reject 操作时触发本次的对话消息 refs 也要审计）。
    */
   revoke(input: RevokeDecisionInput): number {
     const old = this.getById(input.oldDecisionId)
@@ -183,12 +187,16 @@ export class DecisionLedger {
     }
 
     // 1. 写新 reject 决策（解释撤销原因 + 引用旧 decision）
+    const sourceMessageIds = [`decision:${input.oldDecisionId}`]
+    if (input.extraSourceMessageIds) {
+      sourceMessageIds.push(...input.extraSourceMessageIds)
+    }
     const newId = this.append({
       roomId: old.roomId,
       decidedBy: input.decidedBy,
       decisionType: "reject",
       content: `撤销 D-${input.oldDecisionId}: ${input.reason}`,
-      sourceMessageIds: [`decision:${input.oldDecisionId}`],
+      sourceMessageIds,
       sourceQuote: input.reason,
       fencingToken: input.fencingToken,
     })
@@ -206,6 +214,66 @@ export class DecisionLedger {
       throw new ViewfinderError(
         "ledger_revoke",
         `revoke: race? superseded_by UPDATE affected 0 rows for decision_id=${input.oldDecisionId}`,
+      )
+    }
+
+    return newId
+  }
+
+  /**
+   * F027 final-vision P1-1 P1 修：supersede 旧决策（新 commit 行覆盖旧 spec/commit/...）。
+   *
+   * Append-only：旧行不动，写新 commit 行 + UPDATE 旧行 superseded_by。
+   *
+   * 与 revoke 区别：
+   *   - revoke 新行 decisionType="reject"，content 自动加 "撤销 D-<id>: " 前缀
+   *   - supersede 新行 decisionType="commit"，content = reason 原文（接力新决策语义）
+   *
+   * 真相源：docs/plans/F027-phase4-implementation-plan.md AC-P4-9 c 场景 3 step 3.6
+   *   "选 supersede → 写新 ledger 行 supersede_id=旧 spec id"
+   */
+  supersede(input: SupersedeDecisionInput): number {
+    const old = this.getById(input.oldDecisionId)
+    if (!old) {
+      throw new ViewfinderError(
+        "ledger_revoke",
+        `supersede: old decision_id=${input.oldDecisionId} not found`,
+      )
+    }
+    if (old.supersededBy !== null) {
+      throw new ViewfinderError(
+        "ledger_revoke",
+        `supersede: old decision_id=${input.oldDecisionId} already superseded by ${old.supersededBy}`,
+      )
+    }
+
+    const sourceMessageIds = [`decision:${input.oldDecisionId}`]
+    if (input.extraSourceMessageIds) {
+      sourceMessageIds.push(...input.extraSourceMessageIds)
+    }
+    // 1. 写新 commit 决策（接力旧 spec/commit）
+    const newId = this.append({
+      roomId: old.roomId,
+      decidedBy: input.decidedBy,
+      decisionType: "commit",
+      content: input.reason,
+      sourceMessageIds,
+      sourceQuote: input.reason,
+      fencingToken: input.fencingToken,
+    })
+
+    // 2. UPDATE 旧行 superseded_by = newId + status='superseded'
+    const result = this.db
+      .prepare(`
+        UPDATE room_decisions
+           SET superseded_by = ?, status = 'superseded'
+         WHERE decision_id = ? AND superseded_by IS NULL
+      `)
+      .run(newId, input.oldDecisionId)
+    if (Number(result.changes) === 0) {
+      throw new ViewfinderError(
+        "ledger_revoke",
+        `supersede: race? superseded_by UPDATE affected 0 rows for decision_id=${input.oldDecisionId}`,
       )
     }
 

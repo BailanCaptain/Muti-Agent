@@ -243,3 +243,154 @@ test("AC-P3-7 e · pushAlert hook 被 caller 显式装时 SchedulerRuntime.pushA
     safeCleanup(tempDir)
   }
 })
+
+test("F027 wiring f · registerOnWikiCommit 把 debounce.onWikiEvent 交还 caller + boot 不误触发 reindexWiki", async () => {
+  // 接线点：server.ts createWikiServices.onCommit → fireWikiCommit → 此处交还的 hook →
+  //   debounce.onWikiEvent() →(debounce)→ recompileDerivedViews === opts.reindexWiki。
+  //   本测只验 boot 这一段（hook 被交还 + 非启动期误触发）；
+  //   hook→reindex 的 debounce 时序由 wiki-compiler-debounce.test.ts 覆盖，
+  //   reindexWiki→recompileDerivedViews 绑定由 typecheck 覆盖。
+  const tempDir = safeTempDir("F027-wiring-f-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  let reindexCalls = 0
+  let handedBackHook: (() => void) | undefined
+  try {
+    const runtime = await bootSchedulerRuntime({
+      db,
+      log: silentLogger(),
+      rootDir: tempDir,
+      reindexWiki: async () => {
+        reindexCalls += 1
+      },
+      registerOnWikiCommit: (fire) => {
+        handedBackHook = fire
+      },
+    })
+    assert.ok(runtime)
+
+    // registerOnWikiCommit 被调，且交还的是可调用 hook（onWikiEvent 通道）。
+    assert.equal(
+      typeof handedBackHook,
+      "function",
+      "registerOnWikiCommit should hand back a callable",
+    )
+    // boot 本身不跑 reindex（存量索引由 server.ts 启动期显式 reindexWiki() 负责，不在 boot 内）。
+    assert.equal(reindexCalls, 0, "boot should NOT fire reindexWiki spuriously")
+    // 触发 hook 不抛（debounce 起 5s 计时；本测不等它落，只验调用安全）。
+    assert.doesNotThrow(() => handedBackHook?.())
+
+    await runtime.stop()
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F027 wiring g · fire onWikiCommit hook → 真等 debounce 落地 → reindexWiki 被调用（producer 端到端）", async () => {
+  // codex review A Finding 2：补一条真等 debounce 后断言 reindexWiki 被触发的测试。
+  // 短 debounceMs=40 真走 boot 的 debounce 路径；reindexIntervalMs 设大避免周期 reindex 干扰计数。
+  const tempDir = safeTempDir("F027-wiring-g-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  let reindexCalls = 0
+  let hook: (() => void) | undefined
+  try {
+    const runtime = await bootSchedulerRuntime({
+      db,
+      log: silentLogger(),
+      rootDir: tempDir,
+      debounceMs: 40,
+      reindexIntervalMs: 9_999_999, // 周期 reindex 本测不参与（隔离 debounce 路径计数）
+      reindexWiki: async () => {
+        reindexCalls += 1
+      },
+      registerOnWikiCommit: (fire) => {
+        hook = fire
+      },
+    })
+    assert.ok(runtime)
+    assert.equal(reindexCalls, 0, "boot 不应触发 reindex")
+
+    // 模拟 wiki 写 commit → onCommit → hook → debounce.onWikiEvent → (40ms) → reindexWiki
+    hook?.()
+    await sleep(150)
+    assert.ok(reindexCalls >= 1, `debounce 落地后 reindexWiki 应被调用，实际 ${reindexCalls}`)
+
+    await runtime.stop()
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F027 wiring h · 周期 reindex 安全网 → 无 onCommit 也定期触发 reindexWiki（覆盖 RoomCompiler/promote/demote）", async () => {
+  // codex review A Finding 1：debounce 只接 update_wiki；其它直接写盘 producer 靠周期 reindex 兜底。
+  // 短 reindexIntervalMs=60 验证周期触发；全程不 fire onCommit hook，证明触发来自周期而非 debounce。
+  const tempDir = safeTempDir("F027-wiring-h-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  let reindexCalls = 0
+  try {
+    const runtime = await bootSchedulerRuntime({
+      db,
+      log: silentLogger(),
+      rootDir: tempDir,
+      reindexIntervalMs: 60,
+      reindexWiki: async () => {
+        reindexCalls += 1
+      },
+      // 不传 registerOnWikiCommit、不 fire 任何 hook
+    })
+    assert.ok(runtime)
+    await sleep(200)
+    assert.ok(reindexCalls >= 1, `周期 reindex 应至少触发 1 次，实际 ${reindexCalls}`)
+
+    await runtime.stop()
+    // stop 后清 interval：记下当前值，再等一个周期，确认不再增长。
+    const afterStop = reindexCalls
+    await sleep(150)
+    assert.equal(reindexCalls, afterStop, "stop() 后周期 reindex 不应再触发（interval 已清）")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F027 wiring i · 周期 reindex in-flight guard — 慢扫描下不并发重叠（codex delta P2）", async () => {
+  // reindexIntervalMs(30) 远快于单次 reindex 耗时(120ms)；无 guard 会在 250ms 内堆叠多个重叠 run
+  // （maxConcurrent 飙到 ~4，stale 快照碰撞）。in-flight guard 应保证任一时刻最多 1 个 run。
+  const tempDir = safeTempDir("F027-wiring-i-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  let concurrent = 0
+  let maxConcurrent = 0
+  let calls = 0
+  try {
+    const runtime = await bootSchedulerRuntime({
+      db,
+      log: silentLogger(),
+      rootDir: tempDir,
+      reindexIntervalMs: 30,
+      reindexWiki: async () => {
+        calls += 1
+        concurrent += 1
+        maxConcurrent = Math.max(maxConcurrent, concurrent)
+        await sleep(120) // 慢扫描：单次远超 interval
+        concurrent -= 1
+      },
+    })
+    assert.ok(runtime)
+    await sleep(250)
+    assert.ok(calls >= 1, `周期 reindex 应至少触发 1 次，实际 ${calls}`)
+    assert.equal(
+      maxConcurrent,
+      1,
+      `in-flight guard 应防止重叠并发，实际 maxConcurrent=${maxConcurrent}`,
+    )
+    await runtime.stop()
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})

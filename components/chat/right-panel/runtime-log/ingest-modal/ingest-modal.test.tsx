@@ -351,3 +351,142 @@ describe("IngestModal Escape key (范-r1 P2 fix · a11y)", () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 })
+
+describe("IngestModal SeriesSection (F027 P4 Day 10 AC-P4-3 e)", () => {
+  beforeEach(() => {
+    mockSequence([
+      {
+        ok: true,
+        status: 200,
+        json: makePreviewResponse(),
+      },
+    ])
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("(P4-D10-1) 渲染 SeriesSection 输入框 (空 default)", async () => {
+    render(<IngestModal open={true} file={makeFile()} callerAlias="huang" onClose={vi.fn()} />)
+    const input = screen.getByTestId("ingest-series-input") as HTMLInputElement
+    expect(input).toBeTruthy()
+    expect(input.value).toBe("")
+  })
+
+  it("(P4-D10-2) 合法 seriesId ('rag-paper-v1') 透传到 preview fetch body", async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(makePreviewResponse()),
+      } as Response),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    render(<IngestModal open={true} file={makeFile()} callerAlias="huang" onClose={vi.fn()} />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+
+    fireEvent.change(screen.getByTestId("ingest-series-input"), {
+      target: { value: "rag-paper-v1" },
+    })
+
+    await waitFor(() => {
+      const lastCall = fetchMock.mock.calls.at(-1)!
+      const init = lastCall[1] as RequestInit
+      const body = JSON.parse(init.body as string)
+      expect(body.seriesId).toBe("rag-paper-v1")
+    })
+  })
+
+  it("(P4-D10-3) 含空格的 seriesId → 显示 error + 不 trigger preview re-fetch", async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(makePreviewResponse()),
+      } as Response),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    render(<IngestModal open={true} file={makeFile()} callerAlias="huang" onClose={vi.fn()} />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1)) // initial preview
+
+    const beforeCount = fetchMock.mock.calls.length
+    fireEvent.change(screen.getByTestId("ingest-series-input"), {
+      target: { value: "has space" },
+    })
+
+    expect(screen.getByTestId("ingest-series-error-chars")).toBeTruthy()
+    // wait a tick to ensure invalid seriesId did NOT re-trigger preview
+    await new Promise((r) => setTimeout(r, 60))
+    expect(fetchMock.mock.calls.length).toBe(beforeCount)
+  })
+
+  it("(P4-D10-4) seriesId > 64 chars → 显示 'too long' error", async () => {
+    render(<IngestModal open={true} file={makeFile()} callerAlias="huang" onClose={vi.fn()} />)
+    fireEvent.change(screen.getByTestId("ingest-series-input"), {
+      target: { value: "x".repeat(65) },
+    })
+    expect(screen.getByTestId("ingest-series-error-toolong")).toBeTruthy()
+  })
+
+  it("(P4-D10-6) codex r3 P2: invalid seriesId 时 preview 被 reset + commit 按钮 disabled (防 stale preview commit)", async () => {
+    // 序列: 初始 preview (合法 file + 空 seriesId) → 成功
+    //   → 用户输 invalid seriesId → preview 应被 reset → commit 按钮 disabled
+    let previewCount = 0
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/api/wiki/ingest/preview")) {
+        previewCount++
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(makePreviewResponse()),
+      } as Response)
+    }) as unknown as typeof fetch
+
+    render(<IngestModal open={true} file={makeFile()} callerAlias="huang" onClose={vi.fn()} />)
+    await waitFor(() => expect(previewCount).toBe(1)) // 初始 preview 已成功
+
+    // 此时 commit 应可点 (合法 file + 空 seriesId + preview 成功)
+    const commitBtn = screen.getByTestId("ingest-modal-commit") as HTMLButtonElement
+    expect(commitBtn.disabled).toBe(false)
+
+    // 输 invalid seriesId
+    fireEvent.change(screen.getByTestId("ingest-series-input"), {
+      target: { value: "has space" },
+    })
+    expect(screen.getByTestId("ingest-series-error-chars")).toBeTruthy()
+
+    // P2 防御: commit 按钮 disabled (preview.reset + seriesValid 二重保护)
+    await waitFor(() => {
+      expect(commitBtn.disabled).toBe(true)
+    })
+
+    // 用户改回 valid → preview 重新跑 + commit 重新 enabled
+    fireEvent.change(screen.getByTestId("ingest-series-input"), {
+      target: { value: "valid-series" },
+    })
+    await waitFor(() => expect(previewCount).toBe(2)) // re-preview
+    await waitFor(() => expect(commitBtn.disabled).toBe(false))
+  })
+
+  it("(P4-D10-5) 空 seriesId → preview body 不含 seriesId 字段", async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(makePreviewResponse()),
+      } as Response),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    render(<IngestModal open={true} file={makeFile()} callerAlias="huang" onClose={vi.fn()} />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    const body = JSON.parse(init.body as string)
+    expect(body.seriesId).toBeUndefined()
+  })
+})

@@ -652,6 +652,89 @@ test("F027-P5 · memoryPreflight hits 空数组 → 不注入空 [Recall Pack] �
   assert.ok(!result.content.includes("[Recall Pack"))
 })
 
+test("F027-v3 G1 · 默认 result.cap = WAKEUP_TOKEN_CAP (6700)，notInjected = []", async () => {
+  const result = await assemblePrompt(P5_BASE_INPUT, null)
+  // V16.5 chap 20 line 2273 wake-up runtime cap
+  assert.equal(result.cap, 6700)
+  // 短 prompt 远小于 cap → 全部注入
+  assert.deepEqual(result.notInjected, [])
+})
+
+test("F027-v3 G1 · cap 溢出 → 按 DROP_ORDER 砍 recall-pack（最先 drop）", async () => {
+  // 构造 4000 tok recall-pack（远超 6700 - base 才能强制 drop）
+  // base-identity 在 claude provider 下约 1000 tok 内；加 4000 tok recall-pack 还不够触发
+  // 改用超大 viewfinder + recall-pack 双爆才能触发 drop
+  const hugeRecall = "x".repeat(40000) // ~10000 tok
+  const result = await assemblePrompt(
+    {
+      ...P5_BASE_INPUT,
+      memoryPreflight: {
+        hits: [{ score: 0.95, summary: hugeRecall, path: "wiki/x.md" }],
+      },
+    },
+    null,
+  )
+  // recall-pack 应被 drop（DROP_ORDER 第一名）
+  const droppedNames = result.notInjected.map((p) => p.name)
+  assert.ok(
+    droppedNames.includes("recall-pack"),
+    `recall-pack should be dropped first; got: ${JSON.stringify(droppedNames)}`,
+  )
+  // 总 tokens 应 ≤ cap（drop 成功）
+  const totalKept = result.parts.reduce((s, p) => s + p.tokens, 0)
+  assert.ok(
+    totalKept <= result.cap,
+    `kept tokens ${totalKept} should be <= cap ${result.cap}`,
+  )
+  // recall-pack 内容不在 content 里（drop 真砍掉）
+  assert.ok(!result.content.includes("[Recall Pack — Reference Only]"))
+  // base-identity 永远保留
+  assert.ok(result.parts.some((p) => p.name === "base-identity"))
+  // task 永远保留
+  assert.ok(result.parts.some((p) => p.name === "task"))
+  assert.ok(result.content.includes("[用户请求]"))
+})
+
+test("F027-v3 G1 · viewfinder 是 DROP_ORDER 最后一名（recall-pack/handbook 都不足以救场时才砍）", async () => {
+  // 三段都塞超大 → recall + handbook 先 drop，最后才 drop viewfinder
+  const huge = "y".repeat(20000) // ~5000 tok 单段
+  const result = await assemblePrompt(
+    {
+      ...P5_BASE_INPUT,
+      scenario: "wake_up",
+      memoryPreflight: {
+        hits: [{ score: 0.9, summary: huge, path: "wiki/a.md" }],
+      },
+      handbookSlices: { agentActions: huge },
+      viewfinder: { body: huge },
+    },
+    null,
+  )
+  const droppedNames = result.notInjected.map((p) => p.name)
+  // recall-pack + handbook-agent-actions 必先被砍
+  assert.ok(droppedNames.includes("recall-pack"))
+  assert.ok(droppedNames.includes("handbook-agent-actions"))
+  // viewfinder 砍掉 = 三段都超大才会触发（应该被砍）
+  const totalKept = result.parts.reduce((s, p) => s + p.tokens, 0)
+  assert.ok(totalKept <= result.cap)
+})
+
+test("F027-v3 G1 · guardian 模式返回 cap = WAKEUP_TOKEN_CAP，notInjected = []", async () => {
+  const result = await assemblePrompt(
+    {
+      ...P5_BASE_INPUT,
+      policy: POLICY_GUARDIAN,
+      guardianMode: true,
+    },
+    null,
+  )
+  assert.equal(result.cap, 6700)
+  assert.deepEqual(result.notInjected, [])
+  // guardian mode 只有 guardian-prompt 一个 part
+  assert.equal(result.parts.length, 1)
+  assert.equal(result.parts[0].name, "guardian-prompt")
+})
+
 test("F027-P5 · capabilityDigest 全是空白 → sanitize 后空字符串 → 不注入", async () => {
   const result = await assemblePrompt(
     {

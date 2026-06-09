@@ -34,13 +34,14 @@ import { registerDebugA2ARoutes } from "./routes/debug-a2a"
 import { registerDecisionBoardRoutes } from "./routes/decision-board"
 import { registerMessageRoutes } from "./routes/messages"
 import { registerPhase3Routes } from "./routes/phase3"
+import { registerPhase4Routes } from "./routes/phase4"
 import { registerPreviewRoutes } from "./routes/preview"
 import { registerRuntimeConfigRoutes } from "./routes/runtime-config"
 import { registerSessionRuntimeConfigRoutes } from "./routes/session-runtime-config"
 import { registerThreadRoutes } from "./routes/threads"
 import { registerUploadRoutes } from "./routes/uploads"
 import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
-import { createHaikuRunner } from "./runtime/haiku-runner"
+import { createHaikuRunner, createOpusRunner, createSonnetRunner } from "./runtime/haiku-runner"
 import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
 import { bootSchedulerRuntime } from "./runtime/scheduler-bootstrap"
@@ -54,7 +55,12 @@ import { backfillHistoricalTitles } from "./services/session-titler/title-backfi
 import { WorkflowSopService } from "./services/workflow-sop-service"
 import { SkillRegistry } from "./skills/registry"
 import { SopTracker } from "./skills/sop-tracker"
-import { MessagesFtsRepository } from "./wiki/wiki-search"
+import {
+  MessagesFtsRepository,
+  SearchWikiProvider,
+  WikiEntityFtsProvider,
+  reindexWikiEntities,
+} from "./wiki/wiki-search"
 import { createWikiServices } from "./wiki/wiki-services"
 
 /**
@@ -104,6 +110,9 @@ export async function createApiServer(options: {
   const repository = new SessionRepository(drizzleDb)
   // F027 P14.b: messages_fts BM25 召回 repository — query_messages MCP 后端共享一份实例
   const messagesFtsRepo = new MessagesFtsRepository(drizzleDb)
+  // F027 wiring · search_wiki MCP backend：BM25 加权读 wiki_entity_index（name 5x body）。
+  // Phase 4 hybrid 退化为 BM25-only（无 embedded records），与 adaptive-recall Level 2 同源。
+  const searchWikiProvider = new SearchWikiProvider(new WikiEntityFtsProvider(drizzleDb))
   // F022 P2: Haiku auto-titler. Fire-and-forget debounced title generation
   // for session groups with a default "新会话 YYYY-MM-DD …" title. See
   // `services/session-titler/*`.
@@ -137,6 +146,44 @@ export async function createApiServer(options: {
   const { SqliteStore } = await import("./db/sqlite")
   const { EmbeddingService, formatRecallResults } = await import("./services/embedding-service")
   const embeddingStore = new SqliteStore(options.sqlitePath)
+  // F027 P4 AC-P4-9 d5 · worktree-preview-only data seed loader. Double gate:
+  // WORKTREE_PREVIEW=1 (scripts/worktree-preview.ts) + sqlitePath containing
+  // .runtime/worktree-preview/. Both off in prod → no-op. Per-table idempotent +
+  // single tx + fail-closed on fixture schema invalid. 5 unit tests cover all paths.
+  const { applyWorktreePreviewSeed } = await import("./db/worktree-preview-seed")
+  const seedReport = applyWorktreePreviewSeed({
+    db: embeddingStore.db,
+    sqlitePath: options.sqlitePath,
+  })
+  if (seedReport.inserted) {
+    console.log(
+      `[worktree-preview-seed] inserted: room_decisions=${seedReport.inserted.room_decisions}, ` +
+      `wiki_events=${seedReport.inserted.wiki_events}, wiki_leases=${seedReport.inserted.wiki_leases}`,
+    )
+  } else if (seedReport.failed) {
+    console.error(`[worktree-preview-seed] FAILED stage=${seedReport.failed.stage}: ${seedReport.failed.error}`)
+  }
+  // F027 P4 AC-P4-9 a/b · worktree-preview wiki/{warnings,index}/*.md fixture copier.
+  // 同 gate 模式 (WORKTREE_PREVIEW=1 + .runtime/worktree-preview/ path check)。
+  // destWikiRoot 从 sqlitePath 推 (路径同根: .runtime/worktree-preview/data/{multi-agent.sqlite,wiki/})
+  // 跟 plan AC-P4-9 a/b line 253-254 显式目标路径一致。
+  // Note: 当前 wikiServices.wikiRoot 用 process.env.WIKI_ROOT || cwd/.runtime/wiki/，
+  //       跟 fixture copier dest 不一致 (pre-existing 配置 mismatch — Week 5 follow-up)。
+  const { applyWorktreePreviewWikiFixtures } = await import("./db/worktree-preview-wiki-fixtures")
+  const destWikiRoot = path.join(path.dirname(options.sqlitePath), "wiki")
+  const wikiFixturesReport = applyWorktreePreviewWikiFixtures({ destWikiRoot })
+  if (!wikiFixturesReport.gateClosed) {
+    for (const [bucket, status] of Object.entries(wikiFixturesReport.buckets)) {
+      if (!status) continue
+      if ("copied" in status) {
+        console.log(`[worktree-preview-wiki-fixtures] ${bucket}: copied ${status.copied} files`)
+      } else if ("skipped" in status) {
+        console.log(`[worktree-preview-wiki-fixtures] ${bucket}: skipped (${status.existingFiles} existing)`)
+      } else if ("failed" in status) {
+        console.error(`[worktree-preview-wiki-fixtures] ${bucket}: FAILED ${status.failed}`)
+      }
+    }
+  }
   // F026 P3 sibling-guard · WorklistRegistry 提前创建，传给 installA2AGateway
   // 让 a2a-gateway 反查 caller 的 sibling 集合 —— planBetaDispatch / planAssistantCallTagDispatch
   // 都在 openCall 之前命中即拒（reason=sibling-cross-call）。
@@ -221,9 +268,13 @@ export async function createApiServer(options: {
   const workflowSopService = new WorkflowSopService(workflowSopRepo)
   // F027 P3 chap 6: update_wiki MCP services（lease + ACL + service）。
   // wikiRoot 定位：env > 默认 .runtime/wiki/。leaderTerm 留 P3.5 接 compiler_leader。
+  // F027 wiring · wiki 写 commit → 触发 search index 增量 reindex。debounce 在 scheduler
+  // boot 内建（晚于此处），故用 forwarder late-bind：boot 后 registerOnWikiCommit 回填 fireWikiCommit。
+  let fireWikiCommit: (() => void) | undefined
   const wikiServices = createWikiServices({
     db: drizzleDb,
     wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    onCommit: () => fireWikiCommit?.(),
   })
   const decisions = new DecisionManager((event) => broadcaster.broadcast(event), repository)
   messages.setMemoryService(memoryService)
@@ -231,15 +282,70 @@ export async function createApiServer(options: {
   messages.setSopTracker(sopTracker)
   messages.setWorkflowSopService(workflowSopService)
   messages.setDecisionManager(decisions)
-  // F027 Phase 3 P20 Day 7-8 a · AdaptiveRecallCoordinator boot wiring。
-  // Day 7-8 a 注入 noop（enabled=false）— wiring 到位，不真触发 LLM。
-  // Phase 4 接 critique LLM + level2-4 backend + Level5Sink 生产实现后，
-  // 替换为 new AdaptiveRecallCoordinator({enabled: true, executorDeps, ...})。
+  // F027 Phase 4 P4 Day 4 · AdaptiveRecallCoordinator 真启用 (AC-P4-8)。
+  // 装配 5 级 ExecutorDeps + ProductionLevel5Sink + 启用 wake_up/a2a_handoff 触发。
+  //
+  // codex Week 5 j2 FAIL P4-8 (e2) Red→Green: NotificationBroadcast 接入 —
+  // RealtimeServerEvent union 已加 'recall.escalated' (shared/realtime.ts) + 写
+  // RealtimeAuditBroadcaster adapter (wiki/adaptive-recall/realtime-audit-broadcaster.ts)
+  // 把 ProductionLevel5Sink 的 AuditBroadcaster 接到 RealtimeBroadcaster (WS pub/sub)。
+  //
+  // prompt_audit 9 字段写入由 PromptAuditWriter (line 266) 负责，跟 Coordinator
+  // 启用解耦：Coordinator enabled=true → 9 字段填真 recall output；
+  // enabled=false → 9 字段走 disabled 默认（recall_required=false 等）。
   {
-    const { createNoopAdaptiveRecallCoordinator } = await import(
+    const { AdaptiveRecallCoordinator } = await import(
       "./orchestrator/adaptive-recall-coordinator"
     )
-    messages.setAdaptiveRecallCoordinator(createNoopAdaptiveRecallCoordinator())
+    const {
+      createHybridWikiSearchProvider,
+      createProductionRecallExecutorDeps,
+      createSimpleLeaderContext,
+    } = await import("./orchestrator/production-recall-executor-deps")
+    const { ProductionLevel5Sink } = await import("./wiki/adaptive-recall/level5-escalate-sink")
+    const { createRealtimeAuditBroadcaster } = await import(
+      "./wiki/adaptive-recall/realtime-audit-broadcaster"
+    )
+    const { WikiEventsRepository } = await import("./db/repositories/wiki-events-repository")
+
+    const wikiEventsRepo = new WikiEventsRepository(drizzleDb)
+    const auditBroadcaster = createRealtimeAuditBroadcaster(broadcaster)
+    const level5 = new ProductionLevel5Sink({
+      wikiEventsRepo,
+      leaderContext: createSimpleLeaderContext(),
+      broadcaster: auditBroadcaster,
+    })
+    // F027 #286 FU-2 · 冷启召回与 coordinator Level 2 共享同一 hybrid provider（B1-b-2 P3-5）。
+    // 今天 embedded records 空 → 退化 BM25-only（与原 SearchWikiProvider 注入行为等价）；
+    // F028 boot-load embedded records 后冷启 + coordinator 一起升级语义召回。
+    const hybridWikiSearch = createHybridWikiSearchProvider({ drizzleDb, embeddingService })
+    const executorDeps = createProductionRecallExecutorDeps({
+      drizzleDb,
+      wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+      messagesFtsRepo,
+      embeddingService,
+      level5,
+      hybridSearch: hybridWikiSearch,
+    })
+
+    // codex r1 P2-1 修: DEFAULT_RECALL_BUDGET.maxLevels=3 (defaults.ts) — 不传
+    // defaultBudget.maxLevels 时 Level 4 read_wiki backend 永远没跑 (跟 boot log "levels=[2,3,4,5]"
+    // 不符 — 虚假承诺)。wire 时显式 override maxLevels=5 让 critique 真按 5 级阶梯走。
+    messages.setAdaptiveRecallCoordinator(
+      new AdaptiveRecallCoordinator({
+        enabled: true,
+        executorDeps,
+        defaultBudget: { maxLevels: 5 },
+      }),
+    )
+    // F027 B1-b-2 · 冷启 loadTaskMemoryPack 搜索 backend（北极星「新 agent 进新 room 不白板」）。
+    // FU-2（B1-b-2 P3-5）：从 search_wiki MCP 的 SearchWikiProvider 切到 coordinator Level 2
+    // 同一 hybrid 实例 —— 召回 backend 同源，行为今天等价（空 embedded records 退化 BM25）。
+    messages.setMemoryPreflightSearch(hybridWikiSearch)
+    // eslint-disable-next-line no-console
+    console.log(
+      "[F027-P4 AC-P4-8] AdaptiveRecallCoordinator wired: enabled=true, levels=[2,3,4,5], maxLevels=5, broadcaster=on",
+    )
   }
   // F027 Phase 3 P20 Day 8 b · PromptAuditWriter boot wiring (AC-P3-9 b)。
   // 真 writer 注入 — 每次 A2A 拼装写一行 prompt_audit row（9 V15.2 Adaptive Recall
@@ -249,6 +355,71 @@ export async function createApiServer(options: {
     const { PromptAuditWriter } = await import("./wiki/prompt-audit/prompt-audit-writer")
     messages.setPromptAuditWriter(new PromptAuditWriter({ db: drizzleDb }))
   }
+
+  // F027 P4 hotfix · ViewfinderLoader boot wiring（V16.5 §11 + §4 line 396 + §18 line 2117）。
+  // direct turn + A2A caller 用它读 wiki/rooms/<roomId>/viewfinder.md body 注入 assemblePrompt.viewfinder。
+  // Phase 1-3 RoomCompiler 写出 viewfinder.md（writer 侧已通），但 reader 侧从未接通 —
+  // viewfinder 永远不进 agent prompt。本 hotfix 接通最后一公里。
+  {
+    const { ViewfinderService } = await import("./routes/phase3/viewfinder")
+    const viewfinderSvc = new ViewfinderService({
+      db: drizzleDb,
+      wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    })
+    messages.setViewfinderLoader(async (roomId) => {
+      const r = await viewfinderSvc.getViewfinder(roomId).catch(() => null)
+      return r?.viewfinder ? { body: r.viewfinder } : null
+    })
+  }
+    // F027 P4-A1 + fallback j2 P2 修 · CapabilityRegistry boot wiring (V16.5 §13 + §4 fail-closed)。
+    // V16.5 §4 强契约: "wiki 缺失行为: fail-closed 拒启 agent"。
+    // 默认 fail-closed (boot 抛错让 process 退出)；ENV `MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1`
+    // 显式 opt-in degraded mode（worktree-preview / 单测 fixture 不全 wiki 时用）。
+    const wikiLoaderFailSoft = process.env.MULTI_AGENT_WIKI_LOADER_FAIL_SOFT === "1"
+    try {
+      const { loadCapabilityRegistryFromRoot } = await import(
+        "./wiki/capability-registry/loader"
+      )
+      const capRoot = process.env.CAPABILITY_REGISTRY_ROOT || process.cwd()
+      const registry = loadCapabilityRegistryFromRoot(capRoot)
+      messages.setCapabilityRegistry(registry)
+      // eslint-disable-next-line no-console
+      console.log(
+        `[F027-P4-A1] CapabilityRegistry loaded: ${registry.agents.size} agents (sourcePath=${registry.sourcePath})`,
+      )
+    } catch (err) {
+      const msg = `[F027-P4-A1] CapabilityRegistry load failed: ${(err as Error).message}`
+      if (wikiLoaderFailSoft) {
+        // eslint-disable-next-line no-console
+        console.warn(`${msg} — degraded mode (MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1)`)
+      } else {
+        // V16.5 §4 fail-closed: 拒启 agent，避免 silent capability_digest 缺失污染 prompt
+        throw new Error(
+          `${msg}\n  → V16.5 §4 fail-closed: process abort. Set MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1 to opt-in degraded mode (dev only).`,
+        )
+      }
+    }
+    try {
+      const { loadHandbookSlices } = await import("./wiki/handbook-slicer")
+      const handbookRoot = process.env.WIKI_HANDBOOK_ROOT || process.cwd()
+      const slices = await loadHandbookSlices(handbookRoot)
+      messages.setHandbookSlices({ agentActions: slices.agentActions })
+      // eslint-disable-next-line no-console
+      console.log(
+        `[F027-P4-A2] Handbook agentActions slice loaded: ${slices.agentActions.length} chars (handbookRoot=${handbookRoot})`,
+      )
+    } catch (err) {
+      const msg = `[F027-P4-A2] Handbook slice load failed: ${(err as Error).message}`
+      if (wikiLoaderFailSoft) {
+        // eslint-disable-next-line no-console
+        console.warn(`${msg} — degraded mode (MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1)`)
+      } else {
+        // V16.5 §4 fail-closed (同上)
+        throw new Error(
+          `${msg}\n  → V16.5 §4 fail-closed: process abort. Set MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1 to opt-in degraded mode (dev only).`,
+        )
+      }
+    }
 
   // F002: Decision Board + settle → flush → single dispatch pipeline.
   // The board holds [拍板] items across raisers (dedupe by normalized
@@ -472,10 +643,8 @@ export async function createApiServer(options: {
     emitThreadSnapshot: (sessionGroupId) =>
       messages.emitThreadSnapshot(sessionGroupId, broadcaster.broadcast),
     onPublicMessage: (options) => messages.handleAgentPublicMessage(options),
-    getRoomSummary: (sessionGroupId) => {
-      const summary = memoryService.getLastSummary(sessionGroupId)
-      return { summary }
-    },
+    // F027 #285 S3 · getRoomSummary / getMemories 已退役删除（旧 3 记忆工具后端；
+    // 职能 = rooms/<roomId>/session-summary.md + read_wiki/search_wiki）。
     getTaskStatus: (sessionGroupId, agentId) => {
       const statuses = dispatch.getAgentStatuses(sessionGroupId)
       return {
@@ -541,12 +710,6 @@ export async function createApiServer(options: {
         return { text: "(no relevant context found)", hits: [] }
       }
     },
-    getMemories: (sessionGroupId, keyword) => {
-      const memories = keyword
-        ? memoryService.searchMemories(keyword).filter((m) => m.sessionGroupId === sessionGroupId)
-        : memoryService.getMemoriesForGroup(sessionGroupId)
-      return { memories }
-    },
     requestPermission: (params) => approvals.requestPermission(params),
     takeScreenshot: async (params) => {
       const result = await captureScreenshot(uploadsDir, params.url)
@@ -591,6 +754,11 @@ export async function createApiServer(options: {
       const hits = messagesFtsRepo.query(query, { roomId, topK, threadId, role })
       return { hits }
     },
+    // F027 wiring · search_wiki MCP backend — BM25 over wiki_entity_index（全 wiki scope，可选单桶）。
+    searchWiki: async ({ query, topK, scope }) => {
+      const hits = await searchWikiProvider.search(query, { topK, scope })
+      return { hits }
+    },
   })
   registerWsRoute(app, {
     messages,
@@ -608,10 +776,107 @@ export async function createApiServer(options: {
   //   - POST /api/wiki/ingest/preview (Week 1 Day 5)
   //   - POST /api/rooms/:id/decisions + GET /api/rooms/:id/decisions/coverage (Week 2 Day 6 AC-P3-8)
   //   - POST /api/wiki/ingest/commit (Week 2 Day 9-10 AC-P3-10) — 需 wikiServices 注入
+  // F027 final-vision P1-2 · 共享 ingest services（routes 和 docs-watcher 同一 PreviewStore）
+  const { PreviewStore: PreviewStoreCls, IngestPreviewService: IngestPreviewServiceCls, IngestCommitService: IngestCommitServiceCls } =
+    await import("./routes/phase3")
+  const sharedPreviewStore = new PreviewStoreCls()
+
+  // F027 AC-P1-5 · multi-drop 历史语料库 repository（commit 写 / preview 查 7 天窗口）
+  const { RecentDropsRepository } = await import("./db/repositories/recent-drops-repository")
+  const recentDropsRepo = new RecentDropsRepository(drizzleDb)
+
+  // F027 v3 G11 · 给 ingest preview 注入真 LLM compile pipeline 依赖（Opus 4.7 + Haiku fallback）。
+  // 注入后用户 drop 资料 → preview 真编译产 cross_refs/dedup/canonical_owner，commit 落盘编译产物。
+  //   - wikiRoot 用 `<services>/wiki`（双 wiki，与 G2 r2 / roomCompileWikiRoot 同口径 — 真 entity 在此根下）。
+  //   - compileRules 单独从 handbook 取（line 380 只取了 agentActions）；load 失败退空串（fail-soft）。
+  //   - llmClient = Opus 4.7 primary + Haiku 4.5 fallback（AC-P4-8 链；haiku-runner createOpusRunner 已有）。
+  const { createRunnerWithFallback: createCompileRunnerWithFallback } = await import(
+    "./runtime/runner-with-fallback"
+  )
+  const { createProductionCompileLLMClient } = await import(
+    "./wiki/llm-compile/production-compile-llm-client"
+  )
+  const { createProductionIndexLiteLoader } = await import(
+    "./wiki/llm-compile/index-lite-loader"
+  )
+  const { createProductionEntityExistenceChecker } = await import(
+    "./wiki/llm-compile/entity-existence-checker"
+  )
+  const ingestCompileWikiRoot = path.join(
+    process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    "wiki",
+  )
+  let ingestCompileRules = ""
+  try {
+    const { loadHandbookSlices } = await import("./wiki/handbook-slicer")
+    const handbookRoot = process.env.WIKI_HANDBOOK_ROOT || process.cwd()
+    ingestCompileRules = (await loadHandbookSlices(handbookRoot)).compileRules
+  } catch (err) {
+    app.log.warn(
+      { err },
+      "[F027-G11] handbook compileRules load failed; ingest compile uses empty rules",
+    )
+  }
+  const sharedIngestPreview = new IngestPreviewServiceCls({
+    store: sharedPreviewStore,
+    compile: {
+      embedding: embeddingService,
+      indexLoader: createProductionIndexLiteLoader({ wikiRoot: ingestCompileWikiRoot }),
+      entityChecker: createProductionEntityExistenceChecker({ wikiRoot: ingestCompileWikiRoot }),
+      llmClient: createProductionCompileLLMClient({
+        runner: createCompileRunnerWithFallback({
+          primary: createOpusRunner(),
+          fallback: createHaikuRunner(),
+        }),
+        // codex P3(G11)：接生产 logger，让 Opus→Haiku fallback 成功(质量降级)可观测。
+        logger: (msg: string) => app.log.info({ component: "ingest-compile-llm" }, msg),
+      }),
+      handbookCompileRules: ingestCompileRules,
+      logger: (msg) => app.log.info({ component: "ingest-compile" }, msg),
+    },
+    // F027 AC-P1-5 · multi-drop 关联检测（preview 时 embed current + 查 7 天窗口 → crossCorrelate）
+    correlate: {
+      embedding: embeddingService,
+      recentDrops: recentDropsRepo,
+      logger: (msg: string) => app.log.info({ component: "ingest-correlate" }, msg),
+    },
+  })
+  const sharedIngestCommit = wikiServices
+    ? new IngestCommitServiceCls({
+        store: sharedPreviewStore,
+        updateWiki: wikiServices.updateWiki,
+        leases: wikiServices.leases,
+        leaderTerm: () => wikiServices.leader.getCurrent()?.currentTerm ?? "0",
+        // F027 AC-P1-5 · commit 成功后写 recent_drops（用 preview 算好的 embedding）
+        recentDrops: recentDropsRepo,
+      })
+    : undefined
+
   registerPhase3Routes(app, {
     db: drizzleDb,
     wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
     wikiServices,
+    sharedIngestServices: {
+      previewStore: sharedPreviewStore,
+      ingestPreview: sharedIngestPreview,
+      ingestCommit: sharedIngestCommit,
+    },
+  })
+
+  // F027 Phase 4 P4 Day 7 · AC-P4-1 PromoteModal endpoints
+  //   - POST /api/wiki/drafts/promote/preview  (V14 audit preview)
+  //   - POST /api/wiki/drafts/promote          (full promote: V14 + mv + wiki_events)
+  //   - POST /api/wiki/drafts/batch-promote   (Day 11 AC-P4-4)
+  //   - GET  /api/wiki/warnings + /api/wiki/index (Day 17 AC-P4-9 a/b)
+  //
+  // codex Week 4 mid-r1 P1 修: metaWikiRoot 仅在 worktree-preview 模式下覆盖 wikiServices.wikiRoot;
+  // 否则 default fallback wikiServices.wikiRoot (prod 部署 / WIKI_ROOT env 路径正确)
+  const isWorktreePreview =
+    process.env.WORKTREE_PREVIEW === "1" &&
+    options.sqlitePath.replace(/\\/g, "/").includes(".runtime/worktree-preview/")
+  registerPhase4Routes(app, {
+    wikiServices,
+    metaWikiRoot: isWorktreePreview ? destWikiRoot : undefined,
   })
 
   // F027 Phase 3 P20 · scheduler go-live（Week 1 Day 1）
@@ -622,6 +887,123 @@ export async function createApiServer(options: {
   // MULTI_AGENT_SKIP_SCHEDULER=1 跳过（CI / 单测）。
   // 单元测试用 createApiServer 时默认跳过 — vitest 跑 next-app 组件测试只起 fastify
   // 不应起 scheduler。
+  // Week 5 hotfix · 真 RoomCompiler 接入 (小孙浏览器实测 viewfinder=null 根因修).
+  // 复用 P4-8 Sonnet+Haiku fallback runner 作为 judge runner (Sonnet 决策识别 +
+  // quota fail 降级 Haiku).
+  const { createProductionRoomCompileExecutor, createSingleRoomRecompiler } = await import(
+    "./orchestrator/production-room-compile-executor"
+  )
+  const { createRunnerWithFallback } = await import("./runtime/runner-with-fallback")
+  const { createSimpleLeaderContext } = await import(
+    "./orchestrator/production-recall-executor-deps"
+  )
+  const judgeRunner = createRunnerWithFallback({
+    primary: createSonnetRunner(),
+    fallback: createHaikuRunner(),
+  })
+  // ViewfinderService 读 `<wikiRoot>/wiki/rooms/<id>/viewfinder.md`
+  // (注意 path.join wikiRoot + "wiki" + "rooms"); 但 RoomCompiler.run() 直接
+  // 写 `<wikiRoot>/rooms/<id>/viewfinder.md`. 让 RoomCompileExecutor 用
+  // `<wikiServicesRoot>/wiki/` 作 wikiRoot — 写 `<wikiServicesRoot>/wiki/rooms/...`
+  // 跟 ViewfinderService 期望对齐.
+  const roomCompileWikiServicesRoot =
+    process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki")
+  const roomCompileWikiRoot = path.join(roomCompileWikiServicesRoot, "wiki")
+  // F027 P4 hotfix · WikiEventsSink wrap — 让 RoomCompiler 写 viewfinder.md 时留 wiki_events row
+  // (V16.5 §5 line 452 "所有 wiki 写操作走 append-only event log")。
+  // Prompt Inspector 「追溯 wiki 事件」按钮按 path 反查这条 row。
+  const { WikiEventsRepository: WikiEventsRepoCls } = await import(
+    "./db/repositories/wiki-events-repository"
+  )
+  const wikiEventsRepoForCompiler = new WikiEventsRepoCls(drizzleDb)
+  const roomCompileWikiEventsSink: import(
+    "./wiki/room-compiler/room-compiler"
+  ).WikiEventsSinkLike = {
+    appendPending: (input) => {
+      const evt = wikiEventsRepoForCompiler.appendPending(input)
+      return { id: evt.id }
+    },
+    commit: (id, input) => wikiEventsRepoForCompiler.commit(id, input),
+    abort: (id, input) => wikiEventsRepoForCompiler.abort(id, input),
+  }
+  const roomCompileSharedOpts = {
+    db: drizzleDb,
+    wikiRoot: roomCompileWikiRoot,
+    judgeRunner,
+    leaderContext: createSimpleLeaderContext(),
+    logger: app.log,
+    rootDir: process.cwd(),
+    wikiEventsSink: roomCompileWikiEventsSink,
+  }
+  const roomCompileExecutor = createProductionRoomCompileExecutor(roomCompileSharedOpts)
+  // F027 #285 S1 · 会话滚动摘要双写 wiki（rooms/<roomId>/session-summary.md）。
+  // 根 = roomCompileWikiRoot（与 RoomCompiler viewfinder 同根 = reindexWikiEntities 扫描树内，
+  // B2 双根教训实测核对）。表仍是 source of truth，writer fail-soft 不影响摘要主链路。
+  // 目的：search_wiki / read_wiki 接管旧 3 记忆工具职能 → 后端可真退役（#285 S3）。
+  {
+    const { createSessionSummaryWikiWriter } = await import("./wiki/session-summary-writer")
+    memoryService.setSessionSummaryWriter(
+      createSessionSummaryWikiWriter({
+        wikiRoot: roomCompileWikiRoot,
+        resolveRoomId: (sessionGroupId) => sessions.getRoomId(sessionGroupId),
+        warn: (msg) => app.log.warn({}, msg),
+        // receive 德彪 r1 P1-1 · 直写不产 wiki_events → 手动踢 debounce → reindexWiki，
+        // 否则 wiki_entity_index 滞后到下次 boot/别的 commit，search_wiki 读不到新摘要。
+        // fireWikiCommit 是 late-bind forwarder（scheduler boot 后回填），写早于 boot 时为
+        // undefined → no-op，boot 时全量 reindex 兜底。
+        onWritten: () => fireWikiCommit?.(),
+      }),
+    )
+  }
+  // F027 P4 hotfix · single-room recompile (POST /api/rooms/:id/viewfinder/recompile)
+  const singleRoomRecompiler = createSingleRoomRecompiler(roomCompileSharedOpts)
+  {
+    const { registerViewfinderRecompileRoute } = await import(
+      "./routes/phase3/viewfinder-recompile"
+    )
+    registerViewfinderRecompileRoute(app, singleRoomRecompiler)
+  }
+  // F027 P4 hotfix · GET /api/wiki/events?path=X&limit=N — Prompt Inspector「追溯 wiki 事件」按钮
+  {
+    const { registerWikiEventsRoute } = await import("./routes/phase3/wiki-events")
+    registerWikiEventsRoute(app, drizzleDb)
+  }
+
+  // F027 final-vision P1-2 · DocsIngestRunner (docs/* 增量变化 → preview→commit → wiki/_auto/)
+  // commit 服务要求 wikiServices 注入；缺时跳过 runner，docs-watcher 仍 noop fallback。
+  const { DocsIngestRunner: DocsIngestRunnerCls } = await import(
+    "./services/scheduler/docs-ingest-runner"
+  )
+  const docsIngestRunner = sharedIngestCommit
+    ? new DocsIngestRunnerCls({
+        preview: sharedIngestPreview,
+        commit: sharedIngestCommit,
+        logger: app.log,
+      })
+    : undefined
+
+  // F027 wiring · wiki 搜索索引 producer——reindex wiki_entity_index（search_wiki /
+  // adaptive-recall Level 2 的唯一 producer）。
+  //   wikiRoot 传 `<WIKI_ROOT||.runtime/wiki>`（= roomCompileWikiServicesRoot）——reindex 内部
+  //   自己 join("wiki")，磁盘实测文件在 `.runtime/wiki/wiki/<bucket>`，故不能传多套一层的
+  //   roomCompileWikiRoot（会变三层 wiki 扫不到文件）。
+  const reindexWiki = async () => {
+    const report = await reindexWikiEntities({
+      wikiRoot: roomCompileWikiServicesRoot,
+      db: drizzleDb,
+    })
+    app.log.info({ component: "wiki-reindex", ...report }, "F027 wiki entity reindex")
+  }
+  // 启动一次性全量 reindex：debounce 只在新写时增量；存量 wiki 文件需 boot 入索引，否则
+  // search_wiki / Level 2 搜空表。scheduler 跳过时（CI/单测 MULTI_AGENT_SKIP_SCHEDULER=1）一并跳过。
+  if (process.env.MULTI_AGENT_SKIP_SCHEDULER !== "1") {
+    try {
+      await reindexWiki()
+    } catch (err) {
+      app.log.warn({ err }, "F027 initial wiki reindex failed (non-fatal)")
+    }
+  }
+
   const schedulerRuntime = await bootSchedulerRuntime({
     db: drizzleDb,
     log: app.log,
@@ -633,6 +1015,32 @@ export async function createApiServer(options: {
       broadcaster.broadcast({ type: "scheduler.chained_alert", payload: alert } as never),
     rootDir: process.cwd(),
     skipBoot: process.env.MULTI_AGENT_SKIP_SCHEDULER === "1",
+    roomCompileExecutor,
+    docsIngestRunner,
+    // F027 v3 G2 · cron scanner 接真业务（NightlyHealthCheck / WeeklyDraftDigest /
+    // MonthlySnapshot / ArchiveYearlySessions 扫此根；DriftDetector 走 DB 不依赖）。
+    //
+    // G2 r2 修：复用 line 829 `roomCompileWikiRoot` = `<wikiServicesRoot>/wiki/`
+    // （多加一层 wiki 对齐真实文件结构 — 实际 viewfinder.md 在 .runtime/wiki/wiki/rooms/<id>/）。
+    // 之前误传 `<wikiServicesRoot>` 让 scanner 全扫不到真文件（codex G2 review FAIL P1）。
+    //
+    // 约定：wikiRoot 是 markdown 文件实际根（`<X>/rooms/<id>/viewfinder.md` 中的 `<X>`），
+    // 不是 namespace 外层。scanner ts docstring 强调；caller 见 server.ts:829 `roomCompileWikiRoot`。
+    wikiRoot: roomCompileWikiRoot,
+    // F027 B2/B1-c · 全局索引（compileWiki）根 = GET /api/wiki/index reader 根 = wikiServices.wikiRoot
+    // = roomCompileWikiServicesRoot（单层 `.runtime/wiki`），**不是** roomCompileWikiRoot（双层）。
+    // 写到 reader 读不到的根 = KB tab 恒空（compileWiki 同类 wiring 陷阱，自查抓到）。
+    // worktree-preview 模式 reader 读 destWikiRoot fixtures；compileWiki 写单根不碰 fixtures（demo 不破）。
+    wikiIndexRoot: roomCompileWikiServicesRoot,
+    // F027 AC-P1-5 codex P2-3：把 recent_drops repo 注进 scheduler boot，
+    // 让 NightlyVacuum 每夜真 prune 超窗关联语料（不接 → prune 收 undefined 返回 0，retention 形同虚设）。
+    recentDrops: recentDropsRepo,
+    // F027 wiring · search index producer —— debounce.recompileDerivedViews 接 reindex +
+    // 把 onWikiEvent 交还给 createWikiServices.onCommit forwarder（fireWikiCommit）。
+    reindexWiki,
+    registerOnWikiCommit: (fire) => {
+      fireWikiCommit = fire
+    },
   })
   app.addHook("onClose", async () => {
     if (schedulerRuntime) {
@@ -643,6 +1051,24 @@ export async function createApiServer(options: {
       }
     }
   })
+
+  // Week 5 hotfix · 第一次 RoomCompiler tick 立即触发 (而不是等 5min cron),
+  // 让 worktree-preview / dev 启起来后 viewfinder 立即有数据.
+  // 失败 fail-soft (warn 不阻塞 boot).
+  ;(async () => {
+    try {
+      const result = await roomCompileExecutor()
+      app.log.info(
+        { roomsProcessed: result.roomsProcessed },
+        "[room-compile-executor] boot-time compile tick complete",
+      )
+    } catch (err) {
+      app.log.warn(
+        { err: (err as Error).message },
+        "[room-compile-executor] boot-time tick failed (ignored, cron will retry)",
+      )
+    }
+  })()
 
   Object.assign(app, {
     multiAgentContext: {

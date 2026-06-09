@@ -34,7 +34,7 @@ describe("KnowledgeBaseTab 默认渲染", () => {
     vi.restoreAllMocks()
   })
 
-  it("button enabled + Phase 4 placeholder 文案 + 无 modal/error", () => {
+  it("button enabled + 无 modal/error (Day 17 起 KB list 接 real /api/wiki/index)", () => {
     render(<KnowledgeBaseTab />)
     expect(screen.getByTestId("knowledge-base-tab")).toBeTruthy()
     const btn = screen.getByTestId("kb-drop-button") as HTMLButtonElement
@@ -42,13 +42,74 @@ describe("KnowledgeBaseTab 默认渲染", () => {
     expect(btn.textContent).toMatch(/\+ Drop 资料/)
     expect(screen.queryByTestId("ingest-modal")).toBeNull()
     expect(screen.queryByTestId("kb-picker-error")).toBeNull()
-    expect(screen.getByText(/Phase 4 上线/)).toBeTruthy()
+    // Day 17 起 KB list 不再是 placeholder, 而是 kb-empty 或 kb-index-list (取决于 fetch + enabled)
+    // (此测试 activeLvl2 默认非 'knowledge-base' → enabled=false → empty fallback)
   })
 
   it("button 紫色 class (V16.5 wireframe 配色)", () => {
     render(<KnowledgeBaseTab />)
     const btn = screen.getByTestId("kb-drop-button")
     expect(btn.className).toMatch(/bg-violet/)
+  })
+})
+
+describe("KnowledgeBaseTab Day 17 AC-P4-9 b index list (真数据)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("(P4-D17-1) activeLvl2='knowledge-base' + index 非空 → 渲染 list rows", async () => {
+    const { useRuntimeLogStore } = await import("@/components/stores/runtime-log-store")
+    useRuntimeLogStore.setState({ activeLvl2: "knowledge-base" })
+    mockOkFetch({
+      views: [
+        {
+          path: "wiki/index/concepts.md",
+          bucket: "concepts",
+          generatedAt: "2026-05-23T00:00:00Z",
+          compilerVersion: "1.0.0",
+          summary: "concepts view",
+          mtime: "2026-05-23T00:00:00Z",
+        },
+        {
+          path: "wiki/index/methods.md",
+          bucket: "methods",
+          generatedAt: "2026-05-23T00:00:00Z",
+          compilerVersion: "1.0.0",
+          summary: "methods view",
+          mtime: "2026-05-23T00:00:00Z",
+        },
+      ],
+      total: 2,
+    })
+    render(<KnowledgeBaseTab />)
+    await waitFor(() => expect(screen.queryByTestId("kb-index-list")).toBeTruthy())
+    expect(screen.getByTestId("kb-index-row-concepts")).toBeTruthy()
+    expect(screen.getByTestId("kb-index-row-methods")).toBeTruthy()
+  })
+
+  it("(P4-D17-2) activeLvl2='knowledge-base' + index 空 → kb-empty 占位", async () => {
+    const { useRuntimeLogStore } = await import("@/components/stores/runtime-log-store")
+    useRuntimeLogStore.setState({ activeLvl2: "knowledge-base" })
+    mockOkFetch({ views: [], total: 0 })
+    render(<KnowledgeBaseTab />)
+    await waitFor(() => expect(screen.queryByTestId("kb-empty")).toBeTruthy())
+  })
+
+  it("(P4-D17-3) activeLvl2 != 'knowledge-base' → fetch 不触发 (enabled gate)", async () => {
+    const { useRuntimeLogStore } = await import("@/components/stores/runtime-log-store")
+    useRuntimeLogStore.setState({ activeLvl2: "prompt-inspector" })
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ views: [], total: 0 }),
+      } as Response),
+    )
+    globalThis.fetch = fetchMock
+    render(<KnowledgeBaseTab />)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })
 

@@ -17,6 +17,8 @@
  */
 
 import { spawnSync } from "node:child_process"
+import { readFileSync, readdirSync } from "node:fs"
+import { join } from "node:path"
 
 import type { SqliteAdapterLike } from "../room-compiler/sqlite-checkpoint-store"
 import type {
@@ -29,7 +31,7 @@ import type {
 import { computeCoverage } from "./coverage-check"
 import { type MessageInput, extractBroadCandidates, runExtractor } from "./decision-extractor"
 import type { DecisionLedger } from "./decision-ledger"
-import type { DecisionJudgeProvider, PhaseInfo } from "./types"
+import type { DecisionJudgeProvider, FeatureProgress, PhaseInfo } from "./types"
 import { queryBlockerCalls, renderViewfinder } from "./viewfinder-renderer"
 
 const RECENT_MESSAGES_LIMIT = 50
@@ -59,6 +61,21 @@ export interface CompileViewfinderDeps {
   rootDir?: string
   /** §2 git log spawn timeout（ms），默认 5000 */
   gitTimeoutMs?: number
+  /**
+   * §2 进度% + §3 下一步数据源（站会式，小孙 2026-05-31 拍 A）
+   * 默认读 docs/features/<F-id>-*.md 的 AC checklist。测试注入 stub 避免真读盘。
+   * 返回 null = 非 feature 房 / 抓不到清单 → renderer fallback。
+   */
+  featureProgressQuerier?: (
+    recentMessages: ReadonlyArray<MessageInput>,
+    nowIso: string,
+  ) => FeatureProgress | null
+  /**
+   * §1 主题数据源（站会式，小孙 2026-05-31 拍 A）
+   * 默认读 docs/features|bugReport 文档 H1 标题。测试注入 stub 避免真读盘。
+   * 返回 null = 非 feature/bug 房 / 抓不到 → renderer 退 spec 决策 > 房间标题。
+   */
+  topicQuerier?: (recentMessages: ReadonlyArray<MessageInput>, nowIso: string) => string | null
 }
 
 export function createViewfinderCompileFn(deps: CompileViewfinderDeps): CompileFn {
@@ -147,6 +164,18 @@ export function createViewfinderCompileFn(deps: CompileViewfinderDeps): CompileF
       generatedAt,
     )
 
+    // 7.6 §2 进度% + §3 下一步（站会式，小孙 2026-05-31 拍 A）— 读 feature.md AC checklist
+    const featureProgress = (deps.featureProgressQuerier ?? defaultFeatureProgressQuerier(deps))(
+      recentMessages,
+      generatedAt,
+    )
+
+    // 7.7 §1 主题（站会式，小孙 2026-05-31 拍 A）— 读 feature/bug 文档 H1 标题
+    const featureTopic = (deps.topicQuerier ?? defaultTopicQuerier(deps))(
+      recentMessages,
+      generatedAt,
+    )
+
     // 8. renderViewfinder
     const artifact = renderViewfinder({
       roomId: input.roomId,
@@ -159,6 +188,8 @@ export function createViewfinderCompileFn(deps: CompileViewfinderDeps): CompileF
       generatedAt,
       lastCommittedCursor: input.prevCheckpoint?.cursorMessageId ?? null,
       phaseInfo,
+      featureProgress,
+      featureTopic,
     })
 
     // 9. decisionsMd（dump active decisions for human-readable audit）
@@ -314,27 +345,159 @@ function renderDecisionsAuditMd(roomId: string, decisions: ReadonlyArray<Decisio
 // 跨平台：spawnSync git 在 Windows / macOS / Linux 通用（git for Windows 装 PATH）
 // timeout 5s 防 git 卡死；spawn 失败 / 非零退出 / 空 stdout → 全部 fallback null
 
-const FEATURE_ID_REGEX = /\b([FB]\d+)\b/g
 /** r2 范-r1 P2-1 修：单 featureId 回溯 N commits 找首个可 parse 的 */
-const PHASE_QUERY_COMMITS = 10
+// P4-A6 (2026-05-26)：从 10 提到 30。10 个 commits 在密集 commit 期间（如 Phase 4
+// 收稿 + hotfix 链）可能全是 "P4-A1" / "hotfix" 这种非 "Phase X / Day X" subject，
+// 回溯失败 → viewfinder phase 字段为空。扩到 30 让密集 commit 期也能命中历史 Phase 锚。
+const PHASE_QUERY_COMMITS = 30
+
+/**
+ * 扫 recentMessages 抽 feature/bug IDs，**按 recency 降序**（最新出现的 id 排首）。
+ * phaseInfo + featureProgress + topic 共用；querier 取首个能读到文档的 id = 当前站会主题。
+ *
+ * 范-r1 P2-1 修（2026-05-31 codex review）:
+ *   (a) 3 位起 `\b[FB]\d{3,}\b`（项目 id 全 F0xx/B0xx 3 位）——杜绝 "F5 键"/"F1 档位" 闲聊误抓。
+ *   (b) **recency 降序**：原 Set 首次出现序 = 最早 id，房间从 F026 转 F027 会错房读旧 F026。
+ *       recentMessages 是时间正序（caller queryRecent... 已反转 chronological），故从后往前扫，
+ *       每个 message 内多 id 也反着 push，首次见即最新 → 最新房间主题排首。
+ */
+export function extractFeatureIds(recentMessages: ReadonlyArray<MessageInput>): string[] {
+  const ordered: string[] = []
+  const seen = new Set<string>()
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    const matches = [...recentMessages[i].content.matchAll(/\b([FB]\d{3,})\b/g)]
+    for (let j = matches.length - 1; j >= 0; j--) {
+      const id = matches[j][1]
+      if (!seen.has(id)) {
+        seen.add(id)
+        ordered.push(id)
+      }
+    }
+  }
+  return ordered
+}
+
+/** 校验 docId 合法（防 readDocTitle/readFeatureProgress 被未来调用方传未净化 id → 路径穿越）。 */
+function isValidDocId(docId: string): boolean {
+  return /^[FB]\d{3,}$/.test(docId)
+}
+
+// ─── §2 进度% + §3 下一步（站会式，小孙 2026-05-31 拍 A）──────────────────
+//
+// 铁律（小孙拍）：
+//   - % 永远只数 feature.md 的 `- [x]` checkbox，commit 一律不算 AC 完成
+//   - 唯一清单脊柱 = feature.md（不读 plan/evidence 编号，三处编号分叉过）
+//   - 第一条未勾 AC = §3 下一步；intra-AC 进度只在 §2 给定性(in-flight)，不给假%
+
+/**
+ * 匹配 feature.md AC checklist 行：`- [x] **AC-P1-1 · 标题**...`
+ * codex P3-4 修：分隔符放宽 `·` → `[·:：—-]`（中点/半/全角冒号/em-dash/连字符），
+ * 防有人写 `**AC-Px-y: title**` 时整行被跳过 → total 缩水 → % 虚高（fail-soft 无日志难察觉）。
+ * `**AC-P` 前缀仍硬要求，故"普通 todo 不计入 AC"语义不变。
+ */
+const AC_CHECKLIST_RE = /^- \[([ xX])\]\s*\*\*(AC-P\d+-\d+)\s*[·:：—-]\s*(.+?)\*\*/
+
+/** 解析 feature.md 全文 → FeatureProgress（纯函数，便于测试）*/
+export function parseFeatureProgress(featureId: string, content: string): FeatureProgress | null {
+  let total = 0
+  let done = 0
+  let firstUndoneAC: { id: string; title: string } | null = null
+  for (const line of content.split("\n")) {
+    const m = AC_CHECKLIST_RE.exec(line)
+    if (!m) continue
+    total++
+    if (m[1].toLowerCase() === "x") {
+      done++
+    } else if (!firstUndoneAC) {
+      firstUndoneAC = { id: m[2], title: m[3].trim() }
+    }
+  }
+  if (total === 0) return null
+  return { featureId, total, done, pct: Math.round((done / total) * 100), firstUndoneAC }
+}
+
+/** 读 docs/features/<F-id>-*.md → parseFeatureProgress（fail-soft 返 null）*/
+export function readFeatureProgress(featureId: string, rootDir?: string): FeatureProgress | null {
+  // 范-r1 P1-1 修：exported helper 防御性校验 featureId（防未净化 id → join 路径穿越）。
+  if (!isValidDocId(featureId)) return null
+  try {
+    const dir = join(rootDir ?? process.cwd(), "docs", "features")
+    const file = readdirSync(dir).find((f) => f.startsWith(`${featureId}-`) && f.endsWith(".md"))
+    if (!file) return null
+    return parseFeatureProgress(featureId, readFileSync(join(dir, file), "utf-8"))
+  } catch {
+    return null
+  }
+}
+
+// ─── §1 主题：feature/bug 文档 H1 标题（站会式，小孙 2026-05-31 拍 A）─────
+//
+// §1「当前主题」优先取房间所属 feature/bug 文档的完整 H1 标题（带 F-id/B-id 前缀），
+// 让 agent 一眼知道"这房间在做哪个 feature + 主题"。全确定性、零 LLM（AC-P2-9 descope LLM 路径）。
+// 认不出 feature/bug → renderer 退 tombstone spec > active spec > 房间标题。
+
+/** 读 docs/features/<F-id>-*.md 或 docs/bugReport/<B-id>-*.md 的 H1 标题（fail-soft 返 null）*/
+export function readDocTitle(docId: string, rootDir?: string): string | null {
+  // 范-r1 P1-1 修：exported helper 防御性校验 docId（防未来调用方传未净化 id → join 路径穿越）。
+  // 注：F1/F12 前缀碰撞 codex 担心的场景实测已被 `${docId}-` 后缀杜绝（"F12-".startsWith("F1-")=false），
+  // 但 join 穿越面真实，统一在此 hard gate。
+  if (!isValidDocId(docId)) return null
+  const subdir = docId.startsWith("B") ? "bugReport" : "features"
+  try {
+    const dir = join(rootDir ?? process.cwd(), "docs", subdir)
+    const file = readdirSync(dir).find((f) => f.startsWith(`${docId}-`) && f.endsWith(".md"))
+    if (!file) return null
+    for (const line of readFileSync(join(dir, file), "utf-8").split("\n")) {
+      const m = /^#\s+(.+?)\s*$/.exec(line)
+      if (m) return m[1].trim()
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/** 默认 §1 主题查询器：扫房间 feature/bug ID → 读其文档 H1 标题 */
+export function defaultTopicQuerier(
+  deps: Pick<CompileViewfinderDeps, "rootDir">,
+): (recentMessages: ReadonlyArray<MessageInput>, nowIso: string) => string | null {
+  return (recentMessages: ReadonlyArray<MessageInput>): string | null => {
+    for (const docId of extractFeatureIds(recentMessages)) {
+      const title = readDocTitle(docId, deps.rootDir)
+      if (title) return title
+    }
+    return null
+  }
+}
+
+/** 默认 featureProgress 查询器：扫房间 feature ID → 读其 feature.md 清单 */
+export function defaultFeatureProgressQuerier(
+  deps: Pick<CompileViewfinderDeps, "rootDir">,
+): (recentMessages: ReadonlyArray<MessageInput>, nowIso: string) => FeatureProgress | null {
+  return (recentMessages: ReadonlyArray<MessageInput>): FeatureProgress | null => {
+    for (const featureId of extractFeatureIds(recentMessages)) {
+      const progress = readFeatureProgress(featureId, deps.rootDir)
+      if (progress) return progress
+    }
+    return null
+  }
+}
 
 export function defaultPhaseInfoQuerier(
   deps: CompileViewfinderDeps,
+  // 测试可注入确定性 git stub（默认真 spawnSync git log）。让 defaultPhaseInfoQuerier 的回溯单测
+  // 不耦合 live git 历史 —— 否则后续累积的 F027 commit（grep=F027 命中但无 Phase 字样）会把含 Phase
+  // 的旧 commit 挤出 -30 窗口致测试随历史漂移而 flaky。真 git 集成由 safeGitLogSubjects smoke test 覆盖。
+  gitLogSubjects: typeof safeGitLogSubjects = safeGitLogSubjects,
 ): (recentMessages: ReadonlyArray<MessageInput>, nowIso: string) => PhaseInfo | null {
   return (recentMessages, _nowIso) => {
-    // 1. 提房间消息内出现的 feature IDs
-    const featureIds = new Set<string>()
-    for (const m of recentMessages) {
-      const matches = m.content.matchAll(FEATURE_ID_REGEX)
-      for (const match of matches) {
-        featureIds.add(match[1])
-      }
-    }
-    if (featureIds.size === 0) return null
+    // 1. 提房间消息内出现的 feature IDs（recency 降序，与 §1/§3 同源 — codex P2-1 修）
+    const featureIds = extractFeatureIds(recentMessages)
+    if (featureIds.length === 0) return null
 
     // 2-3. r2 范-r1 P2-1 修：每个 featureId 拿 N 个最近 commits，遍历找首个可 parse 的
     for (const featureId of featureIds) {
-      const subjects = safeGitLogSubjects(featureId, {
+      const subjects = gitLogSubjects(featureId, {
         cwd: deps.rootDir,
         timeoutMs: deps.gitTimeoutMs ?? 5000,
       })

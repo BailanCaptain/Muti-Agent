@@ -1,0 +1,78 @@
+/**
+ * F027 B2/B1-c · 全局索引重编 orchestrator —— compileWiki 接 debounce 槽。
+ *
+ * wiring gap（2026-06-05 审计）：compileWiki（全局索引 wiki/index.md + index/v-XXX/*.md 唯一
+ * 生产者，KB tab 读它）此前**零生产调用**——5s debounce 的 recompileDerivedViews 槽被 chunk A 的
+ * reindexWiki（FTS 增量）占了，compileWiki 从没接进去（scheduler-bootstrap.ts:292 注释自承
+ * "markdown 派生视图重编仍 follow-up 独立 F-id"）。本 orchestrator 把 compileWiki 真接进来。
+ *
+ * 链路：scanEntities()（注入；生产用 scanWikiEntitiesFs）→ buildWikiMemoriesFromEntities（按
+ * canonical_owner_path marker 过滤 + 映射）→ compileWiki（写 index.md / index/v-XXX/*.md）。
+ * events 可选注入（喂 log.md + sourceEventSeq）；缺则空（log.md 空，不影响索引主体）。
+ *
+ * **数据现状**：真 wiki 文件现 0 个带 canonical_owner_path（审计）→ 索引现编出来是空壳（诚实：
+ * 还没 canonical 记忆）。B3 backfill 跑 LLM 编译填 frontmatter 后，本 orchestrator 编出非空索引。
+ *
+ * fail-soft：scan / compile 抛错被 catch + log，不让 debounce.fire() 崩（已有 reentrancy guard）。
+ */
+
+import fs from "node:fs"
+import path from "node:path"
+import type { WikiEvent } from "../db/repositories/wiki-events-types"
+import { compileWiki } from "./wiki-compiler"
+import type { ScannedWikiEntity } from "./wiki-memory-from-files"
+import { buildWikiMemoriesFromEntities } from "./wiki-memory-from-files"
+
+export interface WikiIndexRecompileDeps {
+  /** markdown 文件根（`<X>/concepts/*.md` 中的 `<X>`；同 scanWikiEntitiesFs wikiRoot 约定）。 */
+  wikiRoot: string
+  /** 扫 wiki 文件实体（生产注入 scanWikiEntitiesFs(wikiRoot)）。 */
+  scanEntities: () => Promise<ScannedWikiEntity[]>
+  /** 可选：拉 wiki_events 喂 log.md + sourceEventSeq；缺则空数组。 */
+  fetchEvents?: () => Promise<WikiEvent[]>
+  /** 版本号生成（YYYYMMDDNN，chap 19）；缺则按 UTC 当前 YYYYMMDDHH 派生。 */
+  version?: () => string
+  logger?: { error(obj: unknown, msg?: string): void; warn(obj: unknown, msg?: string): void }
+}
+
+function defaultVersion(): string {
+  const d = new Date()
+  const pad = (n: number): string => String(n).padStart(2, "0")
+  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}${pad(d.getUTCHours())}`
+}
+
+/**
+ * 返回一个 recompile fn，接进 WikiCompilerDebounce.recompileDerivedViews（与 reindexWiki 并存）。
+ * 每次 wiki_events 写后 5s idle → 扫文件重编全局索引。
+ */
+export function createWikiIndexRecompiler(deps: WikiIndexRecompileDeps): () => Promise<void> {
+  return async () => {
+    try {
+      const entities = await deps.scanEntities()
+      // B2-P3-2 · heuristic 兜底可观测：缺显式 type/state 的 marker 实体记 warn（不 skip）。
+      const memories = buildWikiMemoriesFromEntities(entities, {
+        warn: (msg) => deps.logger?.warn({}, msg),
+      })
+      const events = deps.fetchEvents ? await deps.fetchEvents() : []
+      const version = (deps.version ?? defaultVersion)()
+      const result = compileWiki({ wikiRoot: deps.wikiRoot, version, events, memories })
+      // F027 B2/B1-c · reader 对齐：compileWiki 写 index/v-<version>/*.md（chap-19 版本化子目录），
+      // 但 GET /api/wiki/index（wiki-meta listIndex）扫 **flat** `index/*.md`（非递归，不入子目录）。
+      // 把当前版本 bucket 文件平铺复制到 index/，让 reader 读到当前索引（否则 KB tab 恒空——自查抓到的
+      // P2 输出布局 ≠ P4 reader 扫描 跨 phase 没对齐）。版本化快照仍留 v-<version>/ 作历史。
+      // 德彪 codex P3-1：只平铺**内容 bucket**（index/rules/concepts/rooms-*/episodes）进 KB tab；
+      // sources.md(provenance) / log.md(wiki_events 审计) 是运营视图非知识桶，排除（否则当 bucket 进列表噪声）。
+      const FLAT_EXCLUDE = new Set(["sources.md", "log.md"])
+      const versionPrefix = `index/v-${version}/`
+      const indexDir = path.join(deps.wikiRoot, "index")
+      for (const rel of result.filesWritten) {
+        const base = path.basename(rel)
+        if (rel.startsWith(versionPrefix) && rel.endsWith(".md") && !FLAT_EXCLUDE.has(base)) {
+          fs.copyFileSync(path.join(deps.wikiRoot, rel), path.join(indexDir, base))
+        }
+      }
+    } catch (err) {
+      deps.logger?.error({ err }, "[wiki-index-recompile] compileWiki failed (caught — debounce 不崩)")
+    }
+  }
+}

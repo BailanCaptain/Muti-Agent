@@ -1,0 +1,24 @@
+{
+  "ac_id": "AC-P4-6",
+  "title": "手 walkthrough 三场景 (V16.5 P22 — /ingest + draft-approval + Coverage anti-drift)",
+  "phase": "phase4",
+  "verdict": "INCONCLUSIVE",
+  "double_pass": {
+    "judge1_verdict": "INCONCLUSIVE",
+    "judge2_verdict": "INCONCLUSIVE",
+    "arbitration_verdict": null,
+    "consensus": true
+  },
+  "evidence_paths": {
+    "screenshots": [],
+    "logs": [],
+    "code_anchors": [
+      "docs/plans/F027-phase4-implementation-plan.md:225 (AC-P4-6 spec)",
+      "docs/plans/F027-phase4-implementation-plan.md §10 (walkthrough 三场景脚本 line 361-413)",
+      ".runtime/reviews/F027-walkthrough-quickref.md (实际代码状态对齐的快查卡)",
+      ".runtime/reviews/F027-pending-walkthrough.md (待小孙物理操作清单)",
+      "scripts/f027-phase4-evidence-runner.ts:118 (AC-P4-6 needsBrowser=true)"
+    ]
+  },
+  "inconclusive_reason": "consensus INCONCLUSIVE — 本 AC 本质就是 walkthrough screenshots + logs, 必须小孙物理操作浏览器执行收集 (per plan O7 决策). 等小孙 Week 5 Day 23 执行 §10 三场景后填 screenshots/ + logs/ 目录 → 升 PASS/CONDITIONAL_PASS"
+}

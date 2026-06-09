@@ -468,6 +468,11 @@ export class SessionRepository {
       a2aDeadlineAt: null,
     }
 
+    // Week 5 hotfix · INSERT messages + message_commit_seq (F027 P7 chap 8)
+    // 之前 message_commit_seq 永空 → RoomCompileExecutor 看 newMessages=0 → viewfinder 永 null
+    // SqliteStore.migrate() 没创建 message_commit_seq 表 (drizzle INIT_SQL 才建);
+    // 老测试用 SqliteStore 直接走 → 表不存在 → INSERT 抛错. 用 try/catch wrap commit_seq
+    // 让 INSERT messages 不受影响 (生产路径表存在 → INSERT 正常; 测试路径表缺 → noop).
     this.store.db
       .prepare(
         `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, group_id, group_role, tool_events, content_blocks, created_at, model, a2a_call_id)
@@ -489,6 +494,16 @@ export class SessionRepository {
         message.model,
         a2aCallId,
       )
+    try {
+      this.store.db
+        .prepare(
+          "INSERT OR IGNORE INTO message_commit_seq (message_id, committed_at) VALUES (?, ?)",
+        )
+        .run(message.id, message.createdAt)
+    } catch {
+      // 表不存在 (老测试 SqliteStore.migrate() 不建; 生产走 drizzle createDrizzleDb 建)
+      // → noop. backfill 也能补 (production-room-compile-executor.ts backfillMessageCommitSeq)
+    }
 
     this.touchThread(threadId, message.createdAt)
     return message

@@ -156,6 +156,22 @@ export class WikiEventsRepository {
       .all()
     return rows.map(hydrate)
   }
+
+  /**
+   * 按 action 查最近 limit 条事件 (AC-P4-9 a Week 4 Day 17 mid-r1 P2 修).
+   *   - 给 WarningsTab merge wiki_events action='warning_raised' rows 用
+   *   - 仅返 committed state (跳过 pending/aborted, 防 in-flight 操作误显示)
+   */
+  getByAction(action: string, limit = 100): WikiEvent[] {
+    const rows = this.db
+      .select()
+      .from(wikiEvents)
+      .where(and(eq(wikiEvents.action, action), eq(wikiEvents.state, "committed")))
+      .orderBy(desc(wikiEvents.ts))
+      .limit(limit)
+      .all()
+    return rows.map(hydrate)
+  }
 }
 
 function serializeJson<T>(value: T[] | null | undefined): string | null {

@@ -16,7 +16,8 @@ import fs from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
 import test from "node:test"
-import { DraftScanner } from "./drafts"
+import Fastify from "fastify"
+import { DraftScanner, registerDraftsRoute } from "./drafts"
 
 function safeTempDir(prefix: string): string {
   const base = path.join(process.cwd(), ".runtime")
@@ -268,6 +269,229 @@ test("Day 3 · DraftScanner · 非 .md 文件忽略", async () => {
     const r = await scanner.list({})
     assert.equal(r.total, 1)
     assert.equal(r.drafts[0]?.title, "OK")
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+// ── F027 readContent（KB tab「展开看全文」）─────────────────────────────────
+test("F027 readContent · 返回 draft 全文（含 frontmatter + body）+ ISO mtime", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-ok-")
+  try {
+    await writeDraft(
+      tmp,
+      "_auto/full.md",
+      { title: "Full Doc", type: "lesson" },
+      "BODY LINE 1\nBODY LINE 2",
+    )
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    const r = await scanner.readContent("wiki/concepts/draft/_auto/full.md")
+    assert.ok(r, "readContent 应返回非 null")
+    assert.ok(r.content.includes("title: Full Doc"), "全文应含 frontmatter")
+    assert.ok(r.content.includes("BODY LINE 1"), "全文应含 body")
+    assert.ok(r.content.includes("BODY LINE 2"))
+    assert.match(r.mtime, /^\d{4}-\d{2}-\d{2}T/, "mtime 应为 ISO 串")
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · 文件不存在 → null（route 转 404）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-404-")
+  try {
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    assert.equal(await scanner.readContent("wiki/concepts/draft/_auto/nope.md"), null)
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · ../ 逃逸 wiki/ namespace → 抛 WikiPathInvalidError", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-escape-")
+  try {
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    await assert.rejects(
+      () => scanner.readContent("wiki/concepts/draft/../../../../etc/passwd"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · wiki/ 内但不在 draft 子树 → 抛 WikiPathInvalidError（只读 draft）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-nondraft-")
+  try {
+    const rulesPath = path.join(tmp, "wiki", "concepts", "rules", "secret.md")
+    await fsp.mkdir(path.dirname(rulesPath), { recursive: true })
+    await fsp.writeFile(rulesPath, "secret", "utf-8")
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    await assert.rejects(
+      () => scanner.readContent("wiki/concepts/rules/secret.md"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · 无 wiki/ 前缀 → 抛 WikiPathInvalidError", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-noprefix-")
+  try {
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    await assert.rejects(
+      () => scanner.readContent("etc/passwd"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent route · 200 全文 / 404 缺失 / 400 非 draft / 400 缺 path", async () => {
+  const tmp = safeTempDir("F027-drafts-content-route-")
+  try {
+    await writeDraft(tmp, "_auto/rt.md", { title: "RT" }, "ROUTE BODY")
+    const app = Fastify()
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    registerDraftsRoute(app, scanner)
+    const ok = await app.inject({
+      method: "GET",
+      url: `/api/wiki/drafts/content?path=${encodeURIComponent("wiki/concepts/draft/_auto/rt.md")}`,
+    })
+    assert.equal(ok.statusCode, 200)
+    assert.ok(ok.json().content.includes("ROUTE BODY"))
+    const miss = await app.inject({
+      method: "GET",
+      url: `/api/wiki/drafts/content?path=${encodeURIComponent("wiki/concepts/draft/_auto/none.md")}`,
+    })
+    assert.equal(miss.statusCode, 404)
+    const bad = await app.inject({
+      method: "GET",
+      url: `/api/wiki/drafts/content?path=${encodeURIComponent("wiki/concepts/rules/x.md")}`,
+    })
+    assert.equal(bad.statusCode, 400)
+    const noparam = await app.inject({ method: "GET", url: "/api/wiki/drafts/content" })
+    assert.equal(noparam.statusCode, 400)
+    await app.close()
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+// ── 德彪 codex review fixes（P1 symlink/junction realpath 围栏 + P2 .md/regular-file）──
+test("F027 readContent · 非 .md → 抛 WikiPathInvalidError（德彪 P2：只读 .md）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-notmd-")
+  try {
+    const txt = path.join(tmp, "wiki", "concepts", "draft", "_auto", "x.txt")
+    await fsp.mkdir(path.dirname(txt), { recursive: true })
+    await fsp.writeFile(txt, "not markdown", "utf-8")
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    await assert.rejects(
+      () => scanner.readContent("wiki/concepts/draft/_auto/x.txt"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · 目标是目录（非普通文件）→ null（德彪 P2）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-dir-")
+  try {
+    // 建一个名为 dir.md 的**目录**（.md 后缀但非普通文件）
+    const dir = path.join(tmp, "wiki", "concepts", "draft", "_auto", "dir.md")
+    await fsp.mkdir(dir, { recursive: true })
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    assert.equal(await scanner.readContent("wiki/concepts/draft/_auto/dir.md"), null)
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · symlink 指向 draft 树外 → 抛 WikiPathInvalidError（德彪 P1 realpath 围栏）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-symlink-")
+  try {
+    const secret = path.join(tmp, "secret.txt")
+    await fsp.writeFile(secret, "TOP SECRET outside draft", "utf-8")
+    const autoDir = path.join(tmp, "wiki", "concepts", "draft", "_auto")
+    await fsp.mkdir(autoDir, { recursive: true })
+    const link = path.join(autoDir, "evil.md")
+    if (trySkipLink(() => fs.symlinkSync(secret, link, "file"), "symlink")) return
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    // 词法检查放行（.md + 在 draft 子树），但 realpath 解析到树外 → 抛
+    await assert.rejects(
+      () => scanner.readContent("wiki/concepts/draft/_auto/evil.md"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+// 德彪 codex r2 P2：只在明确"不支持建链"时跳过，别拿 catch{} 吞掉真失败。返回 true=跳过。
+function trySkipLink(make: () => void, kind: string): boolean {
+  try {
+    make()
+    return false
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    // 德彪 r3：EEXIST=目标已存在（测试 bug），不是"建链不支持"，不该跳过 → 移除，让它 throw 暴露。
+    if (code === "EPERM" || code === "ENOSYS" || code === "EXDEV" || code === "EACCES") {
+      console.log(`${kind} unsupported (${code}), skipping`)
+      return true
+    }
+    throw err
+  }
+}
+
+test("F027 readContent · NTFS ADS（路径含 ':'）→ 抛 WikiPathInvalidError（德彪 r2 P2）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-ads-")
+  try {
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    await assert.rejects(
+      () => scanner.readContent("wiki/concepts/draft/_auto/x.txt:stream.md"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · hardlink 指向 draft 树外 → 抛 WikiPathInvalidError（德彪 r2 P1 nlink）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-hardlink-")
+  try {
+    const secret = path.join(tmp, "secret.txt")
+    await fsp.writeFile(secret, "TOP SECRET via hardlink", "utf-8")
+    const autoDir = path.join(tmp, "wiki", "concepts", "draft", "_auto")
+    await fsp.mkdir(autoDir, { recursive: true })
+    const hard = path.join(autoDir, "hard.md")
+    if (trySkipLink(() => fs.linkSync(secret, hard), "hardlink")) return
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    await assert.rejects(
+      () => scanner.readContent("wiki/concepts/draft/_auto/hard.md"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("F027 readContent · junction 指向 draft 树外目录 → 抛 WikiPathInvalidError（德彪 r2 P1）", async () => {
+  const tmp = safeTempDir("F027-drafts-readcontent-junction-")
+  try {
+    const outsideDir = path.join(tmp, "outside")
+    await fsp.mkdir(outsideDir, { recursive: true })
+    await fsp.writeFile(path.join(outsideDir, "secret.md"), "SECRET via junction", "utf-8")
+    const autoDir = path.join(tmp, "wiki", "concepts", "draft", "_auto")
+    await fsp.mkdir(autoDir, { recursive: true })
+    const jdir = path.join(autoDir, "jdir")
+    if (trySkipLink(() => fs.symlinkSync(outsideDir, jdir, "junction"), "junction")) return
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    await assert.rejects(
+      () => scanner.readContent("wiki/concepts/draft/_auto/jdir/secret.md"),
+      (e: Error) => e.name === "WikiPathInvalidError",
+    )
   } finally {
     safeCleanup(tmp)
   }

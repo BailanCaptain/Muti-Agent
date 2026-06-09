@@ -27,6 +27,12 @@ export type WikiEventAction =
    * appendPending → 立即 commit（contentHash = attemptedHash = sha256(reason)）。
    */
   | "recall_escalate"
+  /**
+   * F027 Phase 4 AC-P4-9 a — DriftDetector / ChainedAlertNotifier / V14PromoteAuditService
+   * 等 jobs/services 落 wiki/warnings/*.md 时写 audit row。
+   * 由 WarningsTab merge wiki_events action='warning_raised' 显示 (plan line 253)。
+   */
+  | "warning_raised"
 
 /**
  * V16.5 chap 5 列表：write 流程的 result 枚举（写意图的结局）。

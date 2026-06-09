@@ -34,6 +34,11 @@ export interface WikiFrontmatter {
   reviewing?: boolean
   /** ISO 创建时刻；用于 draft TTL 计算。 */
   created_at?: string
+  /**
+   * F027 chunk B：被本 entity 覆盖的旧 path 列表（compile pipeline / dedup=supersedes 写）。
+   * deadSupersedes 检测用——指向不存在 entity 的 path = 死链。
+   */
+  supersedes?: string[]
   /** Other arbitrary fields preserved but ignored by health check. */
   [k: string]: unknown
 }
@@ -105,6 +110,27 @@ export interface DraftExpired {
   movedTo: string | null
 }
 
+/**
+ * F027 chunk B（从 wiki-memories-lint R1 搬来）：同一 declared canonical_owner_path
+ * 被 >1 个非 draft entity 声称 = 冲突（应只有一个 canonical 拥有者）。
+ * 表时代 R1 = "多 state=canonical 行"；文件时代 canonical = 非 /draft/ 路径。
+ */
+export interface DuplicateCanonical {
+  canonicalOwnerPath: string
+  /** 声称拥有此 canonical path 的多个 entity 路径（>=2）。 */
+  claimants: string[]
+}
+
+/**
+ * F027 chunk B（从 wiki-memories-lint R3 搬来）：supersedes 指向的旧 path 必须仍存在于
+ * entity 集合（即使已归档）。死链 = 引用从未写入或被物理删除的 path。
+ */
+export interface DeadSupersedes {
+  path: string
+  /** supersedes 中指向不存在 entity 的 path 列表。 */
+  missing: string[]
+}
+
 export interface HealthCheckReport {
   scannedAt: string
   totalEntities: number
@@ -113,6 +139,10 @@ export interface HealthCheckReport {
   missingFrontmatter: MissingFrontmatter[]
   canonicalOwnerDrift: CanonicalOwnerDrift[]
   draftExpired: DraftExpired[]
+  /** F027 chunk B：R1 治理搬文件——重复 canonical 声称。 */
+  duplicateCanonical: DuplicateCanonical[]
+  /** F027 chunk B：R3 治理搬文件——supersedes 死链。 */
+  deadSupersedes: DeadSupersedes[]
 }
 
 const WIKILINK_RE = /\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/g
@@ -145,22 +175,32 @@ export class NightlyHealthCheck {
     // 初始化 inboundCounts 为 0
     for (const e of entities) inboundCounts.set(normalizePath(e.path), 0)
 
+    // F027 #285 receive 德彪 r1 P2-3 · 派生视图豁免判定：generated_by marker
+    // （viewfinder=room-compiler G3 / session-summary=memory-service #285）。派生视图
+    // 不进 canonical KB（无 canonical_owner_path 是设计而非缺陷），缺字段/orphan 报警
+    // = 每夜噪声。不能加 canonical marker 豁免（会进全局索引污染）→ 按 generated_by 过滤。
+    // 注意：仅豁免「被报告」，其 body 的 outbound refs 仍参与 inbound 计数/deadLinks。
+    const isDerivedView = (e: WikiEntity): boolean =>
+      typeof e.frontmatter.generated_by === "string" && e.frontmatter.generated_by.length > 0
+
     for (const entity of entities) {
       const myPath = normalizePath(entity.path)
 
-      // (1) missingFrontmatter
-      const missing: ("sources" | "canonical_owner_path")[] = []
-      if (
-        !Array.isArray(entity.frontmatter.sources) ||
-        entity.frontmatter.sources.length === 0
-      ) {
-        missing.push("sources")
-      }
-      if (typeof entity.frontmatter.canonical_owner_path !== "string") {
-        missing.push("canonical_owner_path")
-      }
-      if (missing.length > 0) {
-        missingFrontmatter.push({ path: entity.path, missing })
+      // (1) missingFrontmatter（派生视图豁免 — P2-3；refs 扫描仍照常走）
+      if (!isDerivedView(entity)) {
+        const missing: ("sources" | "canonical_owner_path")[] = []
+        if (
+          !Array.isArray(entity.frontmatter.sources) ||
+          entity.frontmatter.sources.length === 0
+        ) {
+          missing.push("sources")
+        }
+        if (typeof entity.frontmatter.canonical_owner_path !== "string") {
+          missing.push("canonical_owner_path")
+        }
+        if (missing.length > 0) {
+          missingFrontmatter.push({ path: entity.path, missing })
+        }
       }
 
       // (2) canonicalOwnerDrift
@@ -198,11 +238,12 @@ export class NightlyHealthCheck {
       }
     }
 
-    // (4) orphans = inboundCounts == 0 的（任何 /draft/ 路径豁免——未发布 + 已归档不应被引用）
+    // (4) orphans = inboundCounts == 0 的（任何 /draft/ 路径豁免——未发布 + 已归档不应被引用；
+    //     派生视图豁免 — P2-3：viewfinder/session-summary 本就没人 [[link]] 它们）
     const orphans: string[] = []
     for (const e of entities) {
       const myPath = normalizePath(e.path)
-      if ((inboundCounts.get(myPath) ?? 0) === 0 && !isAnyDraftPath(myPath)) {
+      if ((inboundCounts.get(myPath) ?? 0) === 0 && !isAnyDraftPath(myPath) && !isDerivedView(e)) {
         orphans.push(e.path)
       }
     }
@@ -239,6 +280,36 @@ export class NightlyHealthCheck {
       draftExpired.push({ path: entity.path, ageDays, movedTo })
     }
 
+    // (6) duplicateCanonical（F027 chunk B · wiki-memories-lint R1 搬来）
+    // 同一 declared canonical_owner_path 被 >1 个非 draft entity 声称 → 冲突。
+    // 正常每个 entity 声称自己（== 自身 path）；两个非 draft 声称同一 path = 漂移/重复。
+    const claimantsByPath = new Map<string, string[]>()
+    for (const e of entities) {
+      if (isAnyDraftPath(normalizePath(e.path))) continue
+      const declared = e.frontmatter.canonical_owner_path
+      if (typeof declared !== "string" || declared.length === 0) continue
+      const key = normalizePath(declared)
+      const arr = claimantsByPath.get(key) ?? []
+      arr.push(e.path)
+      claimantsByPath.set(key, arr)
+    }
+    const duplicateCanonical: DuplicateCanonical[] = []
+    for (const [canonicalOwnerPath, claimants] of claimantsByPath) {
+      if (claimants.length > 1) duplicateCanonical.push({ canonicalOwnerPath, claimants })
+    }
+
+    // (7) deadSupersedes（F027 chunk B · wiki-memories-lint R3 搬来）
+    // supersedes 指向的旧 path 必须仍在 entity 集合内（即使已 deprecated/归档）。
+    const deadSupersedes: DeadSupersedes[] = []
+    for (const e of entities) {
+      const sup = e.frontmatter.supersedes
+      if (!Array.isArray(sup) || sup.length === 0) continue
+      const missing = sup
+        .filter((p): p is string => typeof p === "string")
+        .filter((p) => !allPaths.has(normalizePath(p)))
+      if (missing.length > 0) deadSupersedes.push({ path: e.path, missing })
+    }
+
     const report: HealthCheckReport = {
       scannedAt,
       totalEntities: entities.length,
@@ -247,6 +318,8 @@ export class NightlyHealthCheck {
       missingFrontmatter,
       canonicalOwnerDrift,
       draftExpired,
+      duplicateCanonical,
+      deadSupersedes,
     }
 
     if (this.opts.onReport) {
@@ -264,6 +337,8 @@ export class NightlyHealthCheck {
         missingFrontmatter: missingFrontmatter.length,
         canonicalOwnerDrift: canonicalOwnerDrift.length,
         draftExpired: draftExpired.length,
+        duplicateCanonical: duplicateCanonical.length,
+        deadSupersedes: deadSupersedes.length,
       },
       "health check done",
     )

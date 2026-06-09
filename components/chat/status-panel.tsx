@@ -2,6 +2,7 @@
 
 import { useLayoutStore } from "@/components/stores/layout-store"
 import { useRuntimeConfigStore } from "@/components/stores/runtime-config-store"
+import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { useSettingsModalStore } from "@/components/stores/settings-modal-store"
 import { useSettingsStore } from "@/components/stores/settings-store"
 import { useThreadStore } from "@/components/stores/thread-store"
@@ -20,6 +21,8 @@ import { RoomBadge } from "./right-panel/room-badge"
 import { RoomSwitches } from "./right-panel/room-switches"
 // F027 P3-2 (Day 12-13) · RuntimeLog 5-tab 容器，挂在 5 sticky 段下方
 import { RuntimeLog } from "./right-panel/runtime-log"
+// F027 P3-1 扩展（小孙 2026-06-02 · 方案一 split）· 上下两区之间的拖动分隔线
+import { ResizeHandleVertical } from "./right-panel/runtime-log/resize-handle-vertical"
 import { SessionOverridesTab } from "./right-panel/session-overrides-tab"
 
 export function StatusPanel() {
@@ -33,6 +36,8 @@ export function StatusPanel() {
   const openSettings = useSettingsModalStore((state) => state.open)
   // F027 P3-1 (Phase 3 Week 3 Day 11) · 拖宽 width 由 layout-store 集中管理
   const statusPanelWidth = useLayoutStore((state) => state.statusPanelWidth)
+  // F027 P3-1 扩展（方案一 split）· 日志折叠时不显示上下分隔线
+  const runtimeLogCollapsed = useRuntimeLogStore((state) => state.collapsed)
 
   const runtimeLoaded = useRuntimeConfigStore((state) => state.loaded)
   const runtimeLoad = useRuntimeConfigStore((state) => state.load)
@@ -111,36 +116,43 @@ export function StatusPanel() {
       className="relative flex h-screen shrink-0 flex-col gap-3 overflow-hidden border-l border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(255,255,255,0.86))] px-4 py-4 shadow-[-18px_0_48px_rgba(15,23,42,0.04)] backdrop-blur-xl"
     >
       <ResizeHandle />
-      <div className="flex items-center justify-between gap-2">
-        <RoomBadge
-          title={activeGroup?.title ?? "未命名"}
-          roomId={activeGroup?.id ?? ""}
-          globalRoomId={activeGroup?.roomId ?? null}
+      {/* F027 P3-1 扩展（小孙 2026-06-02）：上方 5 段包成可收缩+可滚动区（flex-1 min-h-0），
+          这样 RuntimeLog 竖直拖高时上方内容自动让位/滚动，不会被 aside overflow-hidden 顶出屏幕。 */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+        <div className="flex items-center justify-between gap-2">
+          <RoomBadge
+            title={activeGroup?.title ?? "未命名"}
+            roomId={activeGroup?.id ?? ""}
+            globalRoomId={activeGroup?.roomId ?? null}
+          />
+          <button
+            type="button"
+            onClick={openSettings}
+            aria-label="打开设置"
+            className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+          >
+            <Settings className="h-4 w-4" />
+          </button>
+        </div>
+        <ObservationBar
+          messages={stats.messages}
+          evidence={stats.evidence}
+          followUp={stats.followUp}
+          sessionChainHref="#invocation-chain"
         />
-        <button
-          type="button"
-          onClick={openSettings}
-          aria-label="打开设置"
-          className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-        >
-          <Settings className="h-4 w-4" />
-        </button>
+        <AgentList
+          agents={agents}
+          onConfigClick={(p) => setDrawerProvider(p)}
+          onStopClick={(p) => void stopAgent(p)}
+        />
+        <FoldControls />
+        <RoomSwitches showThinking={showThinking} onToggleThinking={setShowThinking} />
       </div>
-      <ObservationBar
-        messages={stats.messages}
-        evidence={stats.evidence}
-        followUp={stats.followUp}
-        sessionChainHref="#invocation-chain"
-      />
-      <AgentList
-        agents={agents}
-        onConfigClick={(p) => setDrawerProvider(p)}
-        onStopClick={(p) => void stopAgent(p)}
-      />
-      <FoldControls />
-      <RoomSwitches showThinking={showThinking} onToggleThinking={setShowThinking} />
 
-      {/* F027 P3-2 (Day 12-13) · ★ RuntimeLog 5-tab 容器 — 挂在 5 sticky 段下方 */}
+      {/* F027 P3-1 扩展（方案一 split）· 上区 / 日志区之间的拖动分隔线（折叠时隐藏） */}
+      {!runtimeLogCollapsed && <ResizeHandleVertical />}
+
+      {/* F027 P3-2 (Day 12-13) · ★ RuntimeLog 5-tab 容器 — 挂在分隔线下方，固定/可拖高度 */}
       <RuntimeLog />
 
       {drawerProvider ? (

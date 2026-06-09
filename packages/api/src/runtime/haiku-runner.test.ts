@@ -4,16 +4,23 @@ import { EventEmitter } from "node:events"
 import { describe, it, mock } from "node:test"
 import { createHaikuRunner, createOpusRunner, createSonnetRunner } from "./haiku-runner"
 
-type FakeSpawnOpts = { code: number | null; stdout?: string; delayMs?: number; spawnError?: Error }
+type FakeSpawnOpts = {
+  code: number | null
+  stdout?: string
+  stderr?: string
+  delayMs?: number
+  spawnError?: Error
+}
 
 function fakeSpawn(opts: FakeSpawnOpts) {
   const killSpy = mock.fn()
   const stdinEndSpy = mock.fn()
+  const stdinWriteSpy = mock.fn()
   const spawn = () => {
     const proc: any = new EventEmitter()
     proc.stdout = new EventEmitter()
     proc.stderr = new EventEmitter()
-    proc.stdin = { end: stdinEndSpy }
+    proc.stdin = { write: stdinWriteSpy, end: stdinEndSpy }
     proc.kill = killSpy
     if (opts.spawnError) {
       setImmediate(() => proc.emit("error", opts.spawnError))
@@ -23,11 +30,14 @@ function fakeSpawn(opts: FakeSpawnOpts) {
       if (opts.stdout !== undefined) {
         proc.stdout.emit("data", Buffer.from(opts.stdout))
       }
+      if (opts.stderr !== undefined) {
+        proc.stderr.emit("data", Buffer.from(opts.stderr))
+      }
       proc.emit("close", opts.code)
     }, opts.delayMs ?? 1)
     return proc as ChildProcess
   }
-  return { spawn: spawn as any, killSpy, stdinEndSpy }
+  return { spawn: spawn as any, killSpy, stdinEndSpy, stdinWriteSpy }
 }
 
 describe("HaikuRunner", () => {
@@ -48,6 +58,15 @@ describe("HaikuRunner", () => {
     assert.equal(res.ok, false)
     assert.equal(res.text, "")
     assert.equal(res.error, "exit-code-2")
+  })
+
+  it("codex P1(G11): exit≠0 时把 stderr quota 摘要拼进 error（供 runner-with-fallback 识别降级）", async () => {
+    const { spawn } = fakeSpawn({ code: 1, stderr: "Error: quota exceeded for this org" })
+    const r = createHaikuRunner({ spawn })
+    const res = await r.runPrompt("x")
+    assert.equal(res.ok, false)
+    assert.match(res.error ?? "", /^exit-code-1: /)
+    assert.match(res.error ?? "", /quota/)
   })
 
   it("AC-08 precondition: kills process and returns error=timeout after timeoutMs", async () => {
@@ -96,13 +115,15 @@ describe("HaikuRunner", () => {
     assert.equal(killSpy.mock.calls.length, 0, "should not kill when response arrives at 6s")
   })
 
-  it("passes --print --model claude-haiku-4-5 {prompt} to spawn", async () => {
+  it("passes --print --model to argv and writes prompt via stdin (NOT argv — Windows cmdline limit)", async () => {
     let capturedArgs: readonly string[] = []
+    const stdinWriteSpy = mock.fn()
     const spawn = ((_cmd: string, args: readonly string[]) => {
       capturedArgs = args
       const proc: any = new EventEmitter()
       proc.stdout = new EventEmitter()
       proc.stderr = new EventEmitter()
+      proc.stdin = { write: stdinWriteSpy, end: mock.fn() }
       proc.kill = mock.fn()
       setTimeout(() => {
         proc.stdout.emit("data", Buffer.from("ok"))
@@ -119,7 +140,89 @@ describe("HaikuRunner", () => {
     assert.ok(capturedArgs.includes("--model"))
     const modelIdx = capturedArgs.indexOf("--model")
     assert.equal(capturedArgs[modelIdx + 1], "claude-haiku-4-5")
-    assert.ok(capturedArgs.includes("my prompt text"), "prompt should be passed as an argument")
+    // F027 B3 修：prompt 必须走 stdin，不能进 argv（否则大文档触发 spawn ENAMETOOLONG）。
+    assert.ok(
+      !capturedArgs.includes("my prompt text"),
+      "prompt must NOT be in argv (Windows ~32KB cmdline limit → ENAMETOOLONG on large docs)",
+    )
+    assert.equal(stdinWriteSpy.mock.calls.length, 1, "prompt must be written to stdin exactly once")
+    assert.equal(stdinWriteSpy.mock.calls[0].arguments[0], "my prompt text")
+  })
+
+  it("F027 B3 regression: large prompt (>32KB) goes to stdin, argv stays tiny (no spawn ENAMETOOLONG)", async () => {
+    // 真因：45KB lessons-learned.md → prompt 当 argv 传 → Windows CreateProcess ~32KB 上限 → spawn ENAMETOOLONG。
+    const bigPrompt = "x".repeat(64 * 1024) // 64KB，远超 Windows argv 上限
+    let capturedArgs: readonly string[] = []
+    const stdinWriteSpy = mock.fn()
+    const spawn = ((_cmd: string, args: readonly string[]) => {
+      capturedArgs = args
+      const proc: any = new EventEmitter()
+      proc.stdout = new EventEmitter()
+      proc.stderr = new EventEmitter()
+      proc.stdin = { write: stdinWriteSpy, end: mock.fn() }
+      proc.kill = mock.fn()
+      setTimeout(() => {
+        proc.stdout.emit("data", Buffer.from("ok"))
+        proc.emit("close", 0)
+      }, 1)
+      return proc as ChildProcess
+    }) as any
+    const r = createHaikuRunner({ spawn })
+    const res = await r.runPrompt(bigPrompt)
+    assert.equal(res.ok, true)
+    const argvLen = capturedArgs.join(" ").length
+    assert.ok(argvLen < 1024, `argv 必须与 prompt 大小无关，恒小；got ${argvLen} chars`)
+    assert.equal(stdinWriteSpy.mock.calls[0].arguments[0], bigPrompt, "整个大 prompt 走 stdin")
+  })
+
+  it("德彪 codex P2: stdin write error surfaces in failure result (不静默吞)", async () => {
+    // stdin EPIPE（prompt 没喂完子进程就退）→ 进程空输出退出 → error 必须含 stdin-error 供诊断，
+    // 不能伪装成普通 empty-output（无声失败正是本 bug 的教训）。
+    const spawn = (() => {
+      const proc: any = new EventEmitter()
+      proc.stdout = new EventEmitter()
+      proc.stderr = new EventEmitter()
+      const stdin: any = new EventEmitter()
+      stdin.write = mock.fn(() => {
+        setImmediate(() => stdin.emit("error", new Error("EPIPE broken pipe")))
+      })
+      stdin.end = mock.fn()
+      proc.stdin = stdin
+      proc.kill = mock.fn()
+      // exit 0 + 空 stdout → empty-output 分支，应带上 stdin-error tail
+      setTimeout(() => proc.emit("close", 0), 5)
+      return proc as ChildProcess
+    }) as any
+    const r = createHaikuRunner({ spawn })
+    const res = await r.runPrompt("x")
+    assert.equal(res.ok, false)
+    assert.match(res.error ?? "", /empty-output/)
+    assert.match(res.error ?? "", /stdin-error/)
+    assert.match(res.error ?? "", /EPIPE/)
+  })
+
+  it("德彪 codex P2: 成功路径迟到的 benign stdin error 不误判失败（有输出=prompt 已读够）", async () => {
+    const spawn = (() => {
+      const proc: any = new EventEmitter()
+      proc.stdout = new EventEmitter()
+      proc.stderr = new EventEmitter()
+      const stdin: any = new EventEmitter()
+      stdin.write = mock.fn(() => {
+        setImmediate(() => stdin.emit("error", new Error("EPIPE late")))
+      })
+      stdin.end = mock.fn()
+      proc.stdin = stdin
+      proc.kill = mock.fn()
+      setTimeout(() => {
+        proc.stdout.emit("data", Buffer.from("real output"))
+        proc.emit("close", 0)
+      }, 5)
+      return proc as ChildProcess
+    }) as any
+    const r = createHaikuRunner({ spawn })
+    const res = await r.runPrompt("x")
+    assert.equal(res.ok, true, "有有效输出时迟到的 stdin EPIPE 不应翻成失败")
+    assert.equal(res.text, "real output")
   })
 })
 
@@ -131,7 +234,7 @@ describe("OpusRunner (F027 P18 evidence judge)", () => {
       const proc: any = new EventEmitter()
       proc.stdout = new EventEmitter()
       proc.stderr = new EventEmitter()
-      proc.stdin = { end: mock.fn() }
+      proc.stdin = { write: mock.fn(), end: mock.fn() }
       proc.kill = mock.fn()
       setTimeout(() => {
         proc.stdout.emit("data", Buffer.from("ok"))
@@ -154,7 +257,7 @@ describe("SonnetRunner (F027 P12 decision extractor — 小孙拍 sonnet-4-6)", 
       const proc: any = new EventEmitter()
       proc.stdout = new EventEmitter()
       proc.stderr = new EventEmitter()
-      proc.stdin = { end: mock.fn() }
+      proc.stdin = { write: mock.fn(), end: mock.fn() }
       proc.kill = mock.fn()
       setTimeout(() => {
         proc.stdout.emit("data", Buffer.from("ok"))

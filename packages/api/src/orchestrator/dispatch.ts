@@ -38,7 +38,21 @@ export interface A2AGatewayPlanInput {
 }
 
 export interface A2AGatewayPlanResult {
-  mentions: Array<{ provider: Provider; alias: string; callId: string }>
+  mentions: Array<{
+    provider: Provider
+    alias: string
+    callId: string
+    /**
+     * F027 P4-A3 fallback j2 P1 修 (V16.5 §M1 line 422-431)：
+     * handoffContext 由 F026 EnvelopeBuilder 在 dispatch 派发时 derive，**调用方不手填**。
+     * receiverAlias = envelope.protocol.on_behalf_of ?? envelope.protocol.convener_id ?? mention.alias
+     *   （on-behalf 反推按 ADR-003 — convenerTransfer 时 convenerId 已是 on_behalf_of，
+     *    无 convenerTransfer 时 on_behalf_of 单独存）
+     * taskSummary = β path: envelope.task.input.source_message（agent 原文整段）
+     *               γ path: envelope.task.task（cross-role-handoff skill 模板）
+     */
+    handoffContext?: { receiverAlias: string; taskSummary: string }
+  }>
   blockedByGateway: Array<{ provider: Provider; alias: string; reason: string }>
 }
 
@@ -87,6 +101,13 @@ export type QueueEntry = {
    * Undefined for legacy / flag-off dispatches.
    */
   callId?: string
+  /**
+   * F027 P4-A3 fallback j2 P1 修 (V16.5 §M1 line 422-431)：
+   * handoffContext 由 F026 EnvelopeBuilder 在 dispatch 派发时自动填充（gateway 路径下来）。
+   * message-service A2A caller 透传给 assemblePrompt.handoffContext，**不再 caller-side derive**。
+   * undefined 时（gateway 关 / legacy fallback）caller 退到现有 buildA2AHandoffContext 简化路径。
+   */
+  handoffContext?: { receiverAlias: string; taskSummary: string }
 }
 
 export type BlockedDispatch = {
@@ -265,6 +286,9 @@ export class DispatchOrchestrator {
     const sourceRole: MentionSourceRole = options.sourceAlias === "user" ? "user" : "assistant"
     let mentions: Array<{ provider: Provider; alias: string }>
     let gatewayCallIds: Map<Provider, string> | undefined
+    let gatewayHandoffContexts:
+      | Map<Provider, { receiverAlias: string; taskSummary: string }>
+      | undefined
     let blockedByGateway: GatewayBlocked[] | undefined
 
     if (useGateway) {
@@ -294,6 +318,12 @@ export class DispatchOrchestrator {
       })
       mentions = plan.mentions.map((m) => ({ provider: m.provider, alias: m.alias }))
       gatewayCallIds = new Map(plan.mentions.map((m) => [m.provider, m.callId]))
+      // F027 P4-A3 fallback j2 P1 修 — 从 gateway 透 handoffContext 进 entry（V16.5 §M1）
+      gatewayHandoffContexts = new Map(
+        plan.mentions
+          .filter((m) => m.handoffContext !== undefined)
+          .map((m) => [m.provider, m.handoffContext as { receiverAlias: string; taskSummary: string }]),
+      )
       if (plan.blockedByGateway.length > 0) {
         blockedByGateway = plan.blockedByGateway
       }
@@ -400,6 +430,8 @@ export class DispatchOrchestrator {
         parentInvocationId,
         hopIndex: currentHopCount + queued.length,
         callId: gatewayCallIds?.get(mention.provider),
+        // F027 P4-A3 fallback j2 P1 修 (V16.5 §M1)
+        handoffContext: gatewayHandoffContexts?.get(mention.provider),
       })
     }
 

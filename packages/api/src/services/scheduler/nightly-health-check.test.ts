@@ -427,6 +427,92 @@ test("NightlyHealthCheck · draftExpired mover throw → 落 movedTo=null + 不�
   assert.equal(report.draftExpired[0].movedTo, null)
 })
 
+// ── duplicateCanonical (F027 chunk B · lint R1 搬来) ───────────────────
+
+test("NightlyHealthCheck · duplicateCanonical RED — 两个非 draft entity 声称同一 canonical path", async () => {
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/a.md", "[[wiki/concepts/a]]\n", {
+        canonical_owner_path: "wiki/concepts/shared.md",
+      }),
+      entity("wiki/concepts/b.md", "[[wiki/concepts/b]]\n", {
+        canonical_owner_path: "wiki/concepts/shared.md",
+      }),
+    ],
+  })
+  const report = await check.run()
+  assert.equal(report.duplicateCanonical.length, 1)
+  assert.equal(report.duplicateCanonical[0].canonicalOwnerPath, "wiki/concepts/shared.md")
+  assert.deepEqual(report.duplicateCanonical[0].claimants.sort(), [
+    "wiki/concepts/a.md",
+    "wiki/concepts/b.md",
+  ])
+})
+
+test("NightlyHealthCheck · duplicateCanonical GREEN — 每个 entity 声称自己 → 无重复", async () => {
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/a.md", "[[wiki/concepts/a]]\n"),
+      entity("wiki/concepts/b.md", "[[wiki/concepts/b]]\n"),
+    ],
+  })
+  const report = await check.run()
+  assert.equal(report.duplicateCanonical.length, 0)
+})
+
+test("NightlyHealthCheck · duplicateCanonical 豁免 /draft/ — draft 重复声称不报", async () => {
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/draft/d1.md", "# d1\n", {
+        canonical_owner_path: "wiki/concepts/shared.md",
+      }),
+      entity("wiki/concepts/draft/d2.md", "# d2\n", {
+        canonical_owner_path: "wiki/concepts/shared.md",
+      }),
+    ],
+  })
+  const report = await check.run()
+  assert.equal(report.duplicateCanonical.length, 0, "draft 未 promote，重复声称豁免")
+})
+
+// ── deadSupersedes (F027 chunk B · lint R3 搬来) ────────────────────────
+
+test("NightlyHealthCheck · deadSupersedes RED — supersedes 指向不存在的 path", async () => {
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/new.md", "[[wiki/concepts/new]]\n", {
+        supersedes: ["wiki/concepts/gone.md", "wiki/concepts/alive.md"],
+      }),
+      entity("wiki/concepts/alive.md", "[[wiki/concepts/alive]]\n"),
+    ],
+  })
+  const report = await check.run()
+  assert.equal(report.deadSupersedes.length, 1)
+  assert.equal(report.deadSupersedes[0].path, "wiki/concepts/new.md")
+  assert.deepEqual(report.deadSupersedes[0].missing, ["wiki/concepts/gone.md"])
+})
+
+test("NightlyHealthCheck · deadSupersedes GREEN — supersedes 全部存在", async () => {
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/new.md", "[[wiki/concepts/new]]\n", {
+        supersedes: ["wiki/concepts/old.md"],
+      }),
+      entity("wiki/concepts/old.md", "[[wiki/concepts/old]]\n"),
+    ],
+  })
+  const report = await check.run()
+  assert.equal(report.deadSupersedes.length, 0)
+})
+
+test("NightlyHealthCheck · deadSupersedes 无 supersedes 字段 → 跳过", async () => {
+  const check = newCheck({
+    entities: [entity("wiki/concepts/plain.md", "[[wiki/concepts/plain]]\n")],
+  })
+  const report = await check.run()
+  assert.equal(report.deadSupersedes.length, 0)
+})
+
 // ── 复合 fixture: 所有 5 类同时出现 ──────────────────────────────────
 
 test("NightlyHealthCheck · 复合 fixture: 5 类问题同时出现 + report 全字段正确", async () => {
@@ -482,4 +568,42 @@ test("NightlyHealthCheck · onReport 回调被调用 + throw 不打断", async (
   const report = await check.run()
   assert.ok(report)
   assert.equal(reportsReceived.length, 1)
+})
+
+// ─── F027 #285 receive 德彪 r1 P2-3 · 派生视图（generated_by marker）健康检查豁免 ───
+//
+// 德彪实证：rooms/<id>/session-summary.md（#285 双写）会被全量 scanner 报
+// missingFrontmatter（缺 sources/canonical_owner_path）+ orphan —— 但它是派生视图
+// 不进 canonical KB，报警 = 每夜噪声。G3 起 viewfinder 也带 generated_by，同类同豁免。
+// 不能加 canonical marker（会进全局索引污染）→ 按 generated_by 过滤。
+
+test("P2-3 · generated_by 派生视图 → missingFrontmatter + orphans 双豁免", async () => {
+  // 注意：不用 entity() helper（它默认补 sources/canonical_owner_path）。
+  // 派生视图真实形态 = 只有 generated_by，没有 canonical 字段（writer/RoomCompiler 实写）。
+  const entities: WikiEntity[] = [
+    {
+      path: "wiki/rooms/R-201/session-summary.md",
+      body: "## 话题",
+      frontmatter: { generated_by: "memory-service" },
+    },
+    {
+      path: "wiki/rooms/R-201/viewfinder.md",
+      body: "view",
+      frontmatter: { generated_by: "room-compiler" },
+    },
+    // 对照组：真缺字段的非派生实体仍要报
+    { path: "wiki/concepts/real-gap.md", body: "body", frontmatter: {} },
+  ]
+  const check = new NightlyHealthCheck({ scanEntities: async () => entities })
+  const report = await check.run()
+  const flaggedPaths = report.missingFrontmatter.map((m) => m.path)
+  assert.ok(
+    !flaggedPaths.includes("wiki/rooms/R-201/session-summary.md"),
+    "session-summary 是派生视图，不报缺字段",
+  )
+  assert.ok(!flaggedPaths.includes("wiki/rooms/R-201/viewfinder.md"))
+  assert.ok(flaggedPaths.includes("wiki/concepts/real-gap.md"), "非派生实体照报（不误豁免）")
+  assert.ok(!report.orphans.includes("wiki/rooms/R-201/session-summary.md"))
+  assert.ok(!report.orphans.includes("wiki/rooms/R-201/viewfinder.md"))
+  assert.ok(report.orphans.includes("wiki/concepts/real-gap.md"))
 })

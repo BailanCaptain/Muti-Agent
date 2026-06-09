@@ -186,6 +186,169 @@ describe("DecisionLedger.revoke (append-only 纠错)", () => {
       close()
     }
   })
+
+  it("F027 final-vision P1-1 P2: revoke 接受 extraSourceMessageIds → 合并到新行 source_message_ids", () => {
+    const { db, close } = makeDb()
+    try {
+      const ledger = new DecisionLedger(db, () => "2026-05-13T10:00:00Z")
+      const oldId = ledger.append({
+        roomId: ROOM,
+        decidedBy: "小孙",
+        decisionType: "commit",
+        content: "旧决策",
+        sourceMessageIds: ["msg-1"],
+        sourceQuote: "test",
+        fencingToken: FENCING,
+      })
+      const newId = ledger.revoke({
+        oldDecisionId: oldId,
+        reason: "拒绝原因",
+        decidedBy: "小孙",
+        fencingToken: FENCING,
+        extraSourceMessageIds: ["msg:trigger-1", "msg:trigger-2"],
+      })
+      const newRow = ledger.getById(newId)
+      assert.ok(newRow)
+      assert.deepEqual(
+        newRow.sourceMessageIds,
+        [`decision:${oldId}`, "msg:trigger-1", "msg:trigger-2"],
+        "revoke 新行 source_message_ids 必须含 decision:<oldId> + extraSourceMessageIds",
+      )
+    } finally {
+      close()
+    }
+  })
+})
+
+describe("DecisionLedger.supersede (F027 final-vision P1-1)", () => {
+  it("supersede: 写新 commit 行 + UPDATE 旧行 superseded_by + status=superseded", () => {
+    const { db, close } = makeDb()
+    try {
+      let n = 0
+      const ledger = new DecisionLedger(db, () => {
+        n++
+        return `2026-05-27T1${n}:00:00Z`
+      })
+      const oldId = ledger.append({
+        roomId: ROOM,
+        decidedBy: "小孙",
+        decisionType: "spec",
+        content: "旧 spec: ingest 走 LLM compile",
+        sourceMessageIds: ["msg-1"],
+        sourceQuote: "test",
+        fencingToken: FENCING,
+      })
+      const newId = ledger.supersede({
+        oldDecisionId: oldId,
+        reason: "新 spec: ingest 走 sanitized markdown 直接落盘",
+        decidedBy: "小孙",
+        fencingToken: FENCING,
+      })
+
+      assert.notEqual(newId, oldId)
+      const newRow = ledger.getById(newId)
+      assert.ok(newRow)
+      assert.equal(newRow.decisionType, "commit", "supersede 新行必须是 commit 类型 (不是 reject)")
+      assert.equal(
+        newRow.content,
+        "新 spec: ingest 走 sanitized markdown 直接落盘",
+        "supersede 新行 content 直接是 reason 原文 (不加 '撤销 D-X:' 前缀)",
+      )
+      assert.deepEqual(newRow.sourceMessageIds, [`decision:${oldId}`])
+
+      const oldRow = ledger.getById(oldId)
+      assert.ok(oldRow)
+      assert.equal(oldRow.supersededBy, newId, "旧行 superseded_by = 新 commit id")
+      assert.equal(oldRow.status, "superseded", "旧行 status = superseded")
+    } finally {
+      close()
+    }
+  })
+
+  it("supersede: 接受 extraSourceMessageIds → 合并到新行 source_message_ids", () => {
+    const { db, close } = makeDb()
+    try {
+      const ledger = new DecisionLedger(db, () => "2026-05-27T11:00:00Z")
+      const oldId = ledger.append({
+        roomId: ROOM,
+        decidedBy: "小孙",
+        decisionType: "spec",
+        content: "旧",
+        sourceMessageIds: ["msg-1"],
+        sourceQuote: "test",
+        fencingToken: FENCING,
+      })
+      const newId = ledger.supersede({
+        oldDecisionId: oldId,
+        reason: "新",
+        decidedBy: "小孙",
+        fencingToken: FENCING,
+        extraSourceMessageIds: ["msg:abc", "msg:def"],
+      })
+      const newRow = ledger.getById(newId)
+      assert.ok(newRow)
+      assert.deepEqual(newRow.sourceMessageIds, [`decision:${oldId}`, "msg:abc", "msg:def"])
+    } finally {
+      close()
+    }
+  })
+
+  it("supersede 不存在的 decision_id → 抛 ViewfinderError", () => {
+    const { db, close } = makeDb()
+    try {
+      const ledger = new DecisionLedger(db, () => "2026-05-27T10:00:00Z")
+      assert.throws(
+        () =>
+          ledger.supersede({
+            oldDecisionId: 99999,
+            reason: "x",
+            decidedBy: "小孙",
+            fencingToken: FENCING,
+          }),
+        (err: unknown) => err instanceof ViewfinderError && /not found/.test(err.message),
+      )
+    } finally {
+      close()
+    }
+  })
+
+  it("supersede 已被 supersede 的 decision → 抛 ViewfinderError(already superseded)", () => {
+    const { db, close } = makeDb()
+    try {
+      let n = 0
+      const ledger = new DecisionLedger(db, () => {
+        n++
+        return `2026-05-27T1${n}:00:00Z`
+      })
+      const oldId = ledger.append({
+        roomId: ROOM,
+        decidedBy: "小孙",
+        decisionType: "spec",
+        content: "old",
+        sourceMessageIds: ["msg-1"],
+        sourceQuote: "test",
+        fencingToken: FENCING,
+      })
+      ledger.supersede({
+        oldDecisionId: oldId,
+        reason: "first",
+        decidedBy: "小孙",
+        fencingToken: FENCING,
+      })
+      assert.throws(
+        () =>
+          ledger.supersede({
+            oldDecisionId: oldId,
+            reason: "second",
+            decidedBy: "小孙",
+            fencingToken: FENCING,
+          }),
+        (err: unknown) => err instanceof ViewfinderError && /already superseded/.test(err.message),
+      )
+    } finally {
+      close()
+    }
+  })
 })
 
 describe("DecisionLedger.markTombstone (fencingToken 校验)", () => {

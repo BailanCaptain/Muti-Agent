@@ -192,7 +192,29 @@ test("Day 2 · GET drafts · query 字段串 (来自 URL) 也接受", () => {
 test("Day 2 · GET prompt-inspector · 合法 path + 空 query", () => {
   const r = validateGetPromptInspector({ id: "R-201" }, {})
   assert.equal(r.ok, true)
-  if (r.ok) assert.deepEqual(r.value, { roomId: "R-201", threadId: undefined })
+  // P4 hotfix · limit 默认 1（未传 query 时）+ v3 G4 alias 可选字段 (未传 = undefined)
+  if (r.ok)
+    assert.deepEqual(r.value, {
+      roomId: "R-201",
+      threadId: undefined,
+      alias: undefined,
+      limit: 1,
+    })
+})
+
+test("P4 hotfix · GET prompt-inspector · limit=2 query 解析", () => {
+  const r = validateGetPromptInspector({ id: "R-201" }, { limit: "2" })
+  assert.equal(r.ok, true)
+  if (r.ok) assert.equal(r.value.limit, 2)
+})
+
+test("P4 hotfix · GET prompt-inspector · limit 越界 → fallback 1", () => {
+  const r1 = validateGetPromptInspector({ id: "R-201" }, { limit: "0" })
+  assert.equal(r1.ok, true)
+  if (r1.ok) assert.equal(r1.value.limit, 1)
+  const r2 = validateGetPromptInspector({ id: "R-201" }, { limit: "99" })
+  assert.equal(r2.ok, true)
+  if (r2.ok) assert.equal(r2.value.limit, 1)
 })
 
 test("Day 2 · GET prompt-inspector · threadId 传入", () => {
@@ -266,6 +288,88 @@ test("Day 2 · POST preview · 缺 mimeType → VALIDATION_FAILED", () => {
 
 test("Day 2 · POST preview · body 为 null → VALIDATION_FAILED", () => {
   const r = validatePreviewIngest(null)
+  assert.equal(r.ok, false)
+  if (!r.ok) assert.equal(r.error, ErrorCode.VALIDATION_FAILED)
+})
+
+// ── P4 Day 10 AC-P4-3 e · seriesId validation ─────────────────────────
+
+test("P4-D10 · POST preview · seriesId 合法 ([a-zA-Z0-9_-]+ ≤64) → accept", () => {
+  const r = validatePreviewIngest({
+    sourcePath: "rag.md",
+    content: "# RAG\n\nbody",
+    mimeType: "text/markdown",
+    seriesId: "rag-paper-v1",
+  })
+  assert.equal(r.ok, true)
+  if (r.ok) assert.equal(r.value.seriesId, "rag-paper-v1")
+})
+
+test("P4-D10 · POST preview · seriesId 含 underscore + 数字 → accept", () => {
+  const r = validatePreviewIngest({
+    sourcePath: "rag.md",
+    content: "# RAG\n\nbody",
+    mimeType: "text/markdown",
+    seriesId: "series_001",
+  })
+  assert.equal(r.ok, true)
+  if (r.ok) assert.equal(r.value.seriesId, "series_001")
+})
+
+test("P4-D10 · POST preview · seriesId 缺 / 空 → accept + seriesId=undefined", () => {
+  const r1 = validatePreviewIngest({
+    sourcePath: "rag.md",
+    content: "# RAG\n\nbody",
+    mimeType: "text/markdown",
+  })
+  assert.equal(r1.ok, true)
+  if (r1.ok) assert.equal(r1.value.seriesId, undefined)
+
+  const r2 = validatePreviewIngest({
+    sourcePath: "rag.md",
+    content: "# RAG\n\nbody",
+    mimeType: "text/markdown",
+    seriesId: "",
+  })
+  assert.equal(r2.ok, true)
+  if (r2.ok) assert.equal(r2.value.seriesId, undefined)
+})
+
+test("P4-D10 · POST preview · seriesId > 64 chars → VALIDATION_FAILED", () => {
+  const r = validatePreviewIngest({
+    sourcePath: "rag.md",
+    content: "# RAG\n\nbody",
+    mimeType: "text/markdown",
+    seriesId: "x".repeat(65),
+  })
+  assert.equal(r.ok, false)
+  if (!r.ok) {
+    assert.equal(r.error, ErrorCode.VALIDATION_FAILED)
+    assert.match(r.message, /max 64 chars/)
+  }
+})
+
+test("P4-D10 · POST preview · seriesId 含空格 → VALIDATION_FAILED", () => {
+  const r = validatePreviewIngest({
+    sourcePath: "rag.md",
+    content: "# RAG\n\nbody",
+    mimeType: "text/markdown",
+    seriesId: "has space",
+  })
+  assert.equal(r.ok, false)
+  if (!r.ok) {
+    assert.equal(r.error, ErrorCode.VALIDATION_FAILED)
+    assert.match(r.message, /\[a-zA-Z0-9_-\]/)
+  }
+})
+
+test("P4-D10 · POST preview · seriesId 含特殊字符 (@!) → VALIDATION_FAILED", () => {
+  const r = validatePreviewIngest({
+    sourcePath: "rag.md",
+    content: "# RAG\n\nbody",
+    mimeType: "text/markdown",
+    seriesId: "bad@!series",
+  })
   assert.equal(r.ok, false)
   if (!r.ok) assert.equal(r.error, ErrorCode.VALIDATION_FAILED)
 })

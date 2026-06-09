@@ -1,0 +1,32 @@
+{
+  "judge_id": "claude-opus-4-7",
+  "ac_id": "AC-P4-9",
+  "verdict": "CONDITIONAL_PASS",
+  "reasoning": "**第二轮 (post-codex j2 FAIL Red→Green commit 7603f35)**: j1 第一轮 CONDITIONAL_PASS 部分高估 — plan §AC-P4-9 (b) 字面要求 'KB tab multi-select hook 接 AC-P4-4', 第一轮没接, codex j2 FAIL 是对的. 已 Red→Green: (b) KB tab KbDraftsSection 加 multi-select checkbox + 行 [Promote] [Demote] + 顶部 [批量审批 N 份] 按钮 (复用 BatchPromoteModal). (a) warnings tab + (c) Coverage + (d) DB seed 第一轮已完成保持. KB entity-level markdown 表格 parse 推 F028-9 (per F028-FOLLOWUP-BACKLOG.md; plan §(b) 字面没要求 entity parse, 只 multi-select). 全测试绿: 546/546 vitest (含 KB tab + KbDraftsSection) + 2783 node:test. 待 walkthrough warnings/KB/Coverage 三 tab 截图 + boot fixture seed log → 升 PASS.",
+  "cited_evidence": [
+    "packages/api/src/db/worktree-preview-wiki-fixtures.ts (boot copier + double gate)",
+    "packages/api/src/routes/phase4/wiki-meta.ts (WikiMetaScanner listWarnings + listIndex)",
+    "packages/api/src/routes/phase4/wiki-meta.test.ts (11 node:test)",
+    "packages/api/src/db/repositories/wiki-events-repository.ts (getByAction)",
+    "packages/api/src/db/repositories/wiki-events-types.ts (warning_raised literal)",
+    "packages/api/src/server.ts:702 (isWorktreePreview gate)",
+    "components/chat/right-panel/runtime-log/tabs/wiki-meta/use-wiki-meta-data.ts",
+    "components/chat/right-panel/runtime-log/tabs/warnings-tab.tsx",
+    "components/chat/right-panel/runtime-log/tabs/knowledge-base-tab.tsx (KbDraftsSection multi-select 接 P4-4, codex j2 修)",
+    "components/chat/right-panel/runtime-log/prompt-inspector/use-decisions-coverage-data.ts",
+    "components/chat/right-panel/runtime-log/tabs/prompt-inspector-tab.tsx (Coverage section)",
+    "tests/fixtures/wiki/warnings/*.md (5 份)",
+    "tests/fixtures/wiki/index/*.md (4 份)",
+    "commit 7603f35 (KB multi-select)"
+  ],
+  "spec_gate": "PASS",
+  "mechanism_gate": "PASS",
+  "feature_gate": "PASS",
+  "p1_findings": [],
+  "p2_findings": [],
+  "p3_findings": [
+    "browser tab 非空截图待 walkthrough 收 (warnings/KB/Coverage 三个 tab)",
+    "boot fixture seed log 待 walkthrough 期间从 .runtime/worktree-preview/api.log 摘录",
+    "KB entity-level markdown parse 推 F028-9 (per F028-FOLLOWUP-BACKLOG.md)"
+  ]
+}

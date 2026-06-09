@@ -26,7 +26,9 @@
  *
  * 不做（Day 9-10 范围外）：
  *   - 不扩 update-wiki-service 给 'ingest' action 真实现（plan 字面"复用 update_wiki"，复用即 'write'）
- *   - 不接 LLM compile-pipeline（preview 已 sanitize，commit 不再 LLM 编译；Phase 4 接真 LLM 时再加）
+ *   - commit 不重跑 LLM 编译：F027 v3 G11 已接通真编译，但编译在 preview 阶段做（产物存
+ *     PreviewStore.compiledMarkdown），commit 直接落盘该产物（见下方 finalContent 取 compiledMarkdown）；
+ *     preview 未编译 / 编译失败兜底时 commit 退回 raw sanitizedContent。
  *   - 不写 prompt_audit（Day 8 b 是 A2A prompt 拼装路径；ingest commit 是独立写盘动作）
  *   - 不做 retry/CAS reconcile（status='conflict' 直接返 409，让 client 改名 重新 preview/commit）
  */
@@ -51,6 +53,9 @@ const DEFAULT_COMMIT_LEASE_TTL_SECONDS = 30
 /** 落盘目录约定：wiki/concepts/draft/_auto/<filename>（V16.5 chap 7 raw drop + ACL default）。 */
 const TARGET_DRAFT_DIR = "wiki/concepts/draft/_auto"
 
+/** F027 AC-P1-5 · chained_suspect 隔离区（cross-correlation.ts:13 契约 + 小孙 2026-05-31 拍）。 */
+const QUARANTINE_DRAFT_DIR = "wiki/concepts/draft/_quarantined"
+
 export interface IngestCommitServiceDeps {
   store: PreviewStore
   updateWiki: UpdateWikiService
@@ -61,6 +66,29 @@ export interface IngestCommitServiceDeps {
   clock?: () => Date
   /** 注入 commit lease TTL（测试用；默认 30s）。 */
   commitLeaseTtlSeconds?: number
+  /**
+   * F027 AC-P1-5 · multi-drop 历史语料库（注入 → commit 成功后写一条 recent_drops）。
+   * 用 preview 时算好的 embedding，不在 commit 再 embed。不注入 → 跳过（向后兼容）。
+   */
+  recentDrops?: {
+    record(input: {
+      id: string
+      rawContent: string
+      ingestedAt: number
+      contributedBy: string
+      seriesId?: string
+      embedding?: number[]
+    }): void
+  }
+}
+
+/**
+ * F027 final-vision P1-2 r2 修：commit() 第二参 (internal use 给 docs-watcher caller)。
+ * HTTP route 不传；DocsIngestRunner 直接 service-call 时传 versioned path 避免撞名。
+ */
+export interface CommitInternalOpts {
+  /** 覆盖 derivePath；用于 docs-watcher 让 change 事件落新版本化文件名。 */
+  targetPathOverride?: string
 }
 
 export class IngestCommitService {
@@ -70,6 +98,7 @@ export class IngestCommitService {
   private readonly leaderTerm: () => string
   private readonly clock: () => Date
   private readonly commitLeaseTtlSeconds: number
+  private readonly recentDrops?: IngestCommitServiceDeps["recentDrops"]
 
   constructor(deps: IngestCommitServiceDeps) {
     this.store = deps.store
@@ -78,9 +107,19 @@ export class IngestCommitService {
     this.leaderTerm = deps.leaderTerm
     this.clock = deps.clock ?? (() => new Date())
     this.commitLeaseTtlSeconds = deps.commitLeaseTtlSeconds ?? DEFAULT_COMMIT_LEASE_TTL_SECONDS
+    this.recentDrops = deps.recentDrops
   }
 
-  commit(body: PostIngestCommitBody): CommitResult {
+  /**
+   * F027 final-vision P1-2 r2 修：opts.targetPathOverride 允许 docs-watcher caller 指定
+   * versioned final path（如 `_auto/<basename>-<unixMs>.md`），避免重复 ingest 同源文件
+   * 时撞 `_auto/<basename>.md` CAS conflict。
+   *
+   * HTTP route 调用方不传 opts → 用原 derivePath 行为（向后兼容；Day 9-10 单测不破）。
+   * docs-watcher（DocsIngestRunner）直接 service-call 时传 opts.targetPathOverride →
+   * 用之作为 finalPath（仍走 ACL/lease/CAS/wiki_events 全链）。
+   */
+  commit(body: PostIngestCommitBody, opts: CommitInternalOpts = {}): CommitResult {
     // 1. 读 preview entry **不消费**（Week 2 r2 范-r1 P3）。
     //    瞬时失败（CAS conflict / lease_held / internal）后用户可重试同 previewId
     //    而不必重 preview/sanitize；仅在 ok 路径 + 终态错误（denied_acl / path_invalid
@@ -103,7 +142,13 @@ export class IngestCommitService {
     const entry = peeked.entry
 
     // 2. 派生 finalPath（落 wiki/concepts/draft/_auto/<filename>）
-    const finalPath = derivePath(entry.sourcePath)
+    //    F027 final-vision P1-2 r2 修：opts.targetPathOverride 优先（docs-watcher 用 versioned path
+    //    避免 change 事件 CAS 撞名）。HTTP route 默认走 derivePath（向后兼容）。
+    //    F027 AC-P1-5 codex P1-2 修：preview 判 chained_suspect → 后端强制隔离到 _quarantined/，
+    //    不能只靠 preview warning（直接调 commit API 会绕过）。targetPathOverride（docs-watcher）
+    //    不受影响（docs-watcher 不走 correlate，entry.chainedSuspect 必 undefined）。
+    const finalPath =
+      opts.targetPathOverride ?? derivePath(entry.sourcePath, entry.chainedSuspect === true)
 
     // 3. acquire lease（caller 没传 leaseToken 时由 server 兜底 acquire；
     //    传了的话 Day 9-10 范围下还是再 acquire 一次 — caller 传的 token 当前没
@@ -134,6 +179,19 @@ export class IngestCommitService {
     // 失败路径不释放 → lease 被本 endpoint 持有到 TTL，撞名 conflict 后用户立刻重试
     // 同 path 会被 lease_held 干扰。try/finally 兜底释放（ok 路径 double-release 是
     // safe noop，因为 releaseLease 用 fencing_token CAS）。
+    //
+    // F027 P4 Day 10 AC-P4-3 e: 落盘前 inject series_id 进 frontmatter（如 caller 在 preview
+    // 时填写了 seriesId）。后续 multi-drop cross-correlation 查 frontmatter 判 chained 跳过。
+    // F027 v3 G11: 优先落盘 LLM 编译产物（compiledMarkdown，含 cross_refs/dedup/canonical_owner
+    // 完整 frontmatter）。preview 未编译 / 编译失败兜底时退回 raw sanitizedContent。
+    //   - compiledMarkdown 已含 series_id（compile pipeline 写进 frontmatter.ingest_metadata）→ 不再 inject。
+    //   - sanitizedContent 路径保持原 seriesId top-level inject 行为（向后兼容）。
+    const finalContent = entry.compiledMarkdown
+      ? entry.compiledMarkdown
+      : entry.seriesId
+        ? injectSeriesIdIntoFrontmatter(entry.sanitizedContent, entry.seriesId)
+        : entry.sanitizedContent
+
     let response: UpdateWikiResponse
     try {
       response = this.updateWiki.updateWiki(
@@ -141,9 +199,9 @@ export class IngestCommitService {
           path: finalPath,
           action: "write",
           baseHash: null, // 新文件（撞名 → status=conflict）
-          content: entry.sanitizedContent,
+          content: finalContent,
           fencingToken: lease.fencingToken,
-          reason: `ingest_commit previewId=${body.previewId} mime=${entry.mimeType}${entry.targetType ? ` targetType=${entry.targetType}` : ""}`,
+          reason: `ingest_commit previewId=${body.previewId} mime=${entry.mimeType}${entry.targetType ? ` targetType=${entry.targetType}` : ""}${entry.seriesId ? ` seriesId=${entry.seriesId}` : ""}`,
           sourceMessageIds: undefined,
         },
         { alias: body.callerAlias, isServiceIdentity: false },
@@ -166,6 +224,23 @@ export class IngestCommitService {
       response.status === "not_implemented"
     if (shouldConsume) {
       this.store.consume(body.previewId)
+    }
+
+    // F027 AC-P1-5 · commit 成功后写 recent_drops（fail-soft：写失败不影响已落盘 commit）。
+    // 用 preview 时算好的 embedding/contributedBy/ingestedAt（缺省给保守默认）。
+    if (response.status === "ok" && this.recentDrops) {
+      try {
+        this.recentDrops.record({
+          id: body.previewId,
+          rawContent: entry.sanitizedContent,
+          ingestedAt: entry.ingestedAt ?? this.clock().getTime(),
+          contributedBy: entry.contributedBy ?? "user-drop",
+          seriesId: entry.seriesId,
+          embedding: entry.embedding,
+        })
+      } catch {
+        // recent_drops 写失败不回滚 commit（drop 已落盘，关联历史缺一条可接受）
+      }
     }
 
     return this.mapUpdateWikiResponse(response, finalPath, lease.fencingToken)
@@ -280,6 +355,37 @@ export type CommitResult =
     }
 
 /**
+ * F027 P4 Day 10 AC-P4-3 e · 把 series_id 注入到落盘 markdown 的 frontmatter。
+ *
+ * 两种情形:
+ *   1. content 已有 frontmatter (---\n ... \n---\n) → 在闭合 --- 之前插一行 series_id
+ *   2. content 无 frontmatter → prepend minimal frontmatter ---\nseries_id: <id>\n---\n
+ *
+ * 已有 frontmatter 检测:
+ *   - 必须以 "---" 开头 (允许尾随 \n 或 \r\n)
+ *   - 第二个 "---" 必须在合理距离内 (5KB 内, 防 false-positive)
+ *   - 否则当作无 frontmatter 处理 (prepend minimal)
+ *
+ * 不做 (Day 10 范围外):
+ *   - YAML 解析 (KISS — string 操作即可)
+ *   - 已有 series_id 字段 dedupe (caller 不应传同 seriesId 二次 commit)
+ */
+export function injectSeriesIdIntoFrontmatter(content: string, seriesId: string): string {
+  const MAX_FM_SCAN = 5 * 1024 // 5KB 内找闭合 ---
+  const headerMatch = content.match(/^---\s*\n/)
+  if (headerMatch) {
+    const startBodyIdx = headerMatch[0].length
+    const closeIdx = content.indexOf("\n---", startBodyIdx)
+    if (closeIdx > 0 && closeIdx < MAX_FM_SCAN) {
+      // 已有 frontmatter — 在闭合 \n--- 之前插 series_id 行
+      return `${content.slice(0, closeIdx)}\nseries_id: ${seriesId}${content.slice(closeIdx)}`
+    }
+  }
+  // 无 frontmatter (或闭合 --- 太远) — prepend minimal
+  return `---\nseries_id: ${seriesId}\n---\n${content}`
+}
+
+/**
  * 把 sourcePath 派生成 wiki 内 final path。
  *
  * 约定（V16.5 chap 7 raw drop + ACL `wiki/concepts/draft/**`）:
@@ -288,14 +394,17 @@ export type CommitResult =
  *   - 最终路径：wiki/concepts/draft/_auto/<filename>
  *
  * 不做 timestamp 前缀（让 client 自己保证 basename 唯一；撞名走 CAS conflict 错误）。
+ *
+ * F027 AC-P1-5 codex P1-2 修：chained=true → 落 _quarantined/（隔离待审），而非 _auto/。
  */
-function derivePath(sourcePath: string): string {
+function derivePath(sourcePath: string, chained = false): string {
   const basenameRaw = path.basename(sourcePath) || sourcePath.replace(/[\\/]/g, "_")
   let filename = basenameRaw
   if (!/\.(md|txt)$/i.test(filename)) {
     filename = `${filename}.md`
   }
-  return `${TARGET_DRAFT_DIR}/${filename}`
+  const dir = chained ? QUARANTINE_DRAFT_DIR : TARGET_DRAFT_DIR
+  return `${dir}/${filename}`
 }
 
 // ─── Route registration ────────────────────────────────────────────

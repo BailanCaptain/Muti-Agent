@@ -74,6 +74,8 @@ export function IngestModal({
 }: IngestModalProps) {
   const [targetType, setTargetType] = useState<DraftType>("concept")
   const [reason, setReason] = useState<string>("") // Day 19a UI only
+  // F027 P4 Day 10 AC-P4-3 e · Series 字段 (防 chained 误检)
+  const [seriesId, setSeriesId] = useState<string>("")
 
   const previewHook = useIngestPreview()
   const commitHook = useIngestCommit()
@@ -87,14 +89,30 @@ export function IngestModal({
   // 同时 reset commit state 防 stale commit data 还显示着。
   useEffect(() => {
     if (!open || !file) return
+    // codex end-r3 P2 修: invalid seriesId 时 reset stale previewHook.data,
+    // 防止用户改 seriesId 前留下的 valid preview 仍可被 commit (落盘不带新 series_id)
+    if (seriesId.length > 0 && !isValidSeriesId(seriesId)) {
+      previewHook.reset()
+      return
+    }
     commitHook.reset() // 防新 preview + 旧 commit success 同屏
     previewHook.preview({
       sourcePath: file.name,
       content: file.content,
       mimeType: mime,
       targetType,
+      seriesId: seriesId.length > 0 ? seriesId : undefined,
     })
-  }, [open, file, mime, targetType, previewHook.preview, commitHook.reset])
+  }, [
+    open,
+    file,
+    mime,
+    targetType,
+    seriesId,
+    previewHook.preview,
+    previewHook.reset,
+    commitHook.reset,
+  ])
 
   // Commit 成功 → 触发回调 + 不立即 close（让用户看 finalPath 后手动关闭）
   useEffect(() => {
@@ -116,6 +134,7 @@ export function IngestModal({
         previewHook.reset()
         commitHook.reset()
         setReason("")
+        setSeriesId("")
         onClose()
       }
     }
@@ -129,6 +148,7 @@ export function IngestModal({
     previewHook.reset()
     commitHook.reset()
     setReason("")
+    setSeriesId("")
     onClose()
   }
 
@@ -162,6 +182,7 @@ export function IngestModal({
         <div className="flex-1 overflow-y-auto px-4 py-3 text-xs">
           <FileSection file={file} />
           <TypeSection value={targetType} onChange={setTargetType} />
+          <SeriesSection value={seriesId} onChange={setSeriesId} />
           <ReasonSection value={reason} onChange={setReason} />
           <SanitizeSection
             isLoading={previewHook.isLoading}
@@ -182,11 +203,14 @@ export function IngestModal({
             // 范-r1 P1-2 fix: commit 必须 !previewHook.isLoading
             // (旧条件依赖 data 非 null + setData(null) on preview start 间接守住,
             // 但显式 !isLoading 更清晰防 race window 漏)
+            // codex end-r3 P2 第二道防御: seriesId UI invalid 时禁 commit
+            // (preview.reset 已让 data null, 但显式 seriesValid 防 race window)
             !!previewHook.data &&
             !previewHook.isLoading &&
             !previewBlocked &&
             !commitHook.isLoading &&
-            !commitHook.data
+            !commitHook.data &&
+            (seriesId.length === 0 || isValidSeriesId(seriesId))
           }
           isCommitting={commitHook.isLoading}
           isCommitted={!!commitHook.data}
@@ -286,6 +310,63 @@ function ReasonSection({
   )
 }
 
+/**
+ * F027 P4 Day 10 AC-P4-3 e · SeriesSection (V16.5 chap 25 line 2563-2564)
+ *
+ * 🔗 系列 (防 chained 误检) — 可选 free-text input
+ *   - 用户分多次 drop 同一长 paper 的章节时填同一 series_id (例 "rag-paper-v1")
+ *   - backend ingest commit 时 inject 到落盘 markdown frontmatter `series_id: <id>`
+ *   - 后续 multi-drop cross-correlation chained_suspect 检测会跳过同 series_id 命中
+ *   - 限制: 1-64 chars + [a-zA-Z0-9_-]+ (backend contract 强约束; UI 端实时校验)
+ *
+ * 不做 (Week 3+ 范围):
+ *   - dropdown 已有 series list (需 GET /api/wiki/series endpoint, Phase 4+ 接)
+ *   - [+ 新建系列] 按钮 (现在 free-text 就够)
+ */
+const SERIES_ID_PATTERN = /^[a-zA-Z0-9_-]+$/
+
+function isValidSeriesId(value: string): boolean {
+  return value.length > 0 && value.length <= 64 && SERIES_ID_PATTERN.test(value)
+}
+function SeriesSection({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
+  const tooLong = value.length > 64
+  const invalidChars = value.length > 0 && !SERIES_ID_PATTERN.test(value)
+  const hasError = tooLong || invalidChars
+  return (
+    <section className="mb-3" data-testid="ingest-section-series">
+      <h3 className="font-semibold text-[10px] uppercase tracking-wider text-slate-500">
+        🔗 系列 (可选 · 防 chained 误检)
+      </h3>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="如 'rag-paper-v1' — 分多次 drop 同 paper 章节时填同 id"
+        className={`mt-1 w-full rounded border px-2 py-1 text-[11px] font-mono ${
+          hasError ? "border-red-300 text-red-700" : "border-slate-200 text-slate-700"
+        }`}
+        data-testid="ingest-series-input"
+      />
+      {tooLong && (
+        <div className="mt-0.5 text-[10px] text-red-600" data-testid="ingest-series-error-toolong">
+          系列 id 最多 64 字符（当前 {value.length}）
+        </div>
+      )}
+      {invalidChars && !tooLong && (
+        <div className="mt-0.5 text-[10px] text-red-600" data-testid="ingest-series-error-chars">
+          系列 id 只允许字母 / 数字 / _ / -（不可含空格或特殊字符）
+        </div>
+      )}
+    </section>
+  )
+}
+
 function SanitizeSection({
   isLoading,
   error,
@@ -300,7 +381,7 @@ function SanitizeSection({
       <h3 className="font-semibold text-[10px] uppercase tracking-wider text-slate-500">
         ⚠️ 5 层 Sanitize 预扫结果
       </h3>
-      {isLoading && <div className="mt-1 text-[11px] text-slate-400">⏳ 预扫中…</div>}
+      {isLoading && <div className="mt-1 text-[11px] text-slate-400">⏳ 编译中… (Opus 4.7 提取 facts·cross_refs·去重，约 5–30 秒)</div>}
       {error && (
         <div className="mt-1 text-[11px] text-red-500" data-testid="ingest-sanitize-error">
           ⚠ 预扫失败：{error}

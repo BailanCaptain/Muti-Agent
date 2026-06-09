@@ -92,6 +92,14 @@ export class HybridSearchProvider implements WikiSearchProvider {
     const candidates = await this.bm25.search(query, { ...opts, topK: overscan })
     if (candidates.length === 0) return []
 
+    // F027 #286 receive 德彪 r1 P2-1：embedded records 为空（Phase 4 生产现状，boot-load
+    // 推 F028）→ 所有候选必走 !rec fallback，query embedding 算了也弃用。跳过 Step 2-3，
+    // 纯 BM25 直通 —— 否则冷启首轮 / Level 2 每 query 白付 22MB ONNX 模型加载 + 推理延迟。
+    if (this.recordByPath.size === 0) {
+      const rerankedBm25 = await this.reranker.rerank(query, candidates)
+      return rerankedBm25.slice(0, finalTopK)
+    }
+
     // Step 2: query embedding（一次算，所有候选共用）
     const qVec = await this.generateQueryEmbedding(query)
     if (!qVec || qVec.length === 0) {
