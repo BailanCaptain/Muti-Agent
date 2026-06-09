@@ -55,6 +55,7 @@ export class WikiPathInvalidError extends Error {
 export async function readContainedFile(
   abs: string,
   lexicalRoot: string,
+  expectedRealRoot?: string,
 ): Promise<{ content: string; mtime: string } | null> {
   let realRoot: string
   try {
@@ -62,6 +63,14 @@ export async function readContainedFile(
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null // 根目录不存在 = 无内容
     throw err
+  }
+  // 德彪 codex r5 P1：root 身份二次校验 —— caller 先前已 realpath 出 expectedRealRoot；若此处重新 realpath 的
+  // 结果与之不符，说明 root 在校验后被替换（rename + 原路径建 junction）→ 拒，关掉**目录级** swap 窗口。
+  // 剩余仅单文件 realpath(file)→open 极窄 TOCTOU（userland 不可关，既定接受）。
+  if (expectedRealRoot !== undefined && realRoot !== expectedRealRoot) {
+    throw new WikiPathInvalidError(
+      `root identity changed since validation (dir swap?): ${lexicalRoot} → ${realRoot} ≠ ${expectedRealRoot}`,
+    )
   }
   let realAbs: string
   try {

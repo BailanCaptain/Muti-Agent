@@ -242,7 +242,8 @@ export class WikiMetaScanner {
     }
     const absPath = path.join(realWarningsRoot, name)
     try {
-      const read = await readContainedFile(absPath, realWarningsRoot) // 真实根：拼 abs + containment 同源
+      // 真实根：拼 abs + containment + expectedRealRoot 同源（关目录级 swap，德彪 r5）
+      const read = await readContainedFile(absPath, realWarningsRoot, realWarningsRoot)
       return read !== null // 完整 read 成功才算可读（与 content 端点逐字节同路径）
     } catch (err) {
       // WikiPathInvalidError（越界/hardlink）或读错误 → 不可读
@@ -289,7 +290,8 @@ export class WikiMetaScanner {
     // → null → 404，不经 junction 读；读绑定已解析真实根，关掉 lexical-swap）。
     const realWarnings = await this.containedWarningsRoot()
     if (!realWarnings) return null
-    return readContainedFile(path.join(realWarnings, name), realWarnings)
+    // expectedRealRoot=realWarnings → 关目录级 swap（德彪 r5）；剩单文件 realpath→open TOCTOU（既定接受）。
+    return readContainedFile(path.join(realWarnings, name), realWarnings, realWarnings)
   }
 
   /**
@@ -381,7 +383,8 @@ export class WikiMetaScanner {
     // content 端点（readWarningContent 同走 readContainedFile）同源：读成功 ⟺ content 端点 200。
     let read: { content: string; mtime: string } | null
     try {
-      read = await readContainedFile(absPath, warningsRoot) // warningsRoot 已经 containedWarningsRoot 校验
+      // warningsRoot 是 containedWarningsRoot 解析出的真实根；同时作 expectedRealRoot → 关目录级 swap（德彪 r5）。
+      read = await readContainedFile(absPath, warningsRoot, warningsRoot)
     } catch (err) {
       // WikiPathInvalidError（越界/hardlink）或其它 read 错误（EIO/too-large）→ 不进 list（不泄露、不显按钮）
       this.logWarn({ err, absPath }, "wiki-meta: warning rejected/unreadable by containment")

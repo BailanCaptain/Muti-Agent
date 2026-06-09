@@ -8,6 +8,7 @@ import Fastify from "fastify"
 
 import { createDrizzleDb } from "../../db/drizzle-instance"
 import { WikiEventsRepository } from "../../db/repositories/wiki-events-repository"
+import { readContainedFile } from "../../wiki/path-containment"
 import { registerWikiMetaRoutes, WikiMetaScanner } from "./wiki-meta"
 
 /**
@@ -731,6 +732,28 @@ describe("WikiMetaScanner · hasContent ⟺ content 端点 契约一致 (德彪 
       // realWarnings = realWiki/index ≠ realWiki/warnings → 严格等值校验拒 → 不读 index 子树
       assert.equal(list.warnings.length, 0, "warnings 链接到 wikiRoot/index → 越子树 → 拒 → 空 list")
       assert.equal(await scanner.readWarningContent("wiki/warnings/concepts.md"), null)
+    } finally {
+      t.cleanup()
+    }
+  })
+
+  it("readContainedFile expectedRealRoot 不符（目录替换模拟）→ 抛，关目录级 swap（德彪 r5 P1）", async () => {
+    const t = setup()
+    try {
+      const dir = path.join(t.wikiRoot, "warnings")
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, "a.md"), "body")
+      const realDir = fs.realpathSync(dir)
+      // expectedRealRoot 与 realpath(root) 一致 → 正常读到
+      const ok = await readContainedFile(path.join(realDir, "a.md"), realDir, realDir)
+      assert.ok(ok, "expectedRealRoot 正确应读到内容")
+      assert.match(ok?.content ?? "", /body/)
+      // 模拟 root 在校验后被换：传与 realpath(root) 不符的 expectedRealRoot → 必抛（拒目录级 swap）
+      await assert.rejects(
+        () =>
+          readContainedFile(path.join(realDir, "a.md"), realDir, path.join(t.wikiRoot, "ELSEWHERE")),
+        (e: Error) => e.name === "WikiPathInvalidError",
+      )
     } finally {
       t.cleanup()
     }
