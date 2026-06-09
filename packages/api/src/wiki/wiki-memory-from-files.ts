@@ -94,10 +94,37 @@ export function wikiEntityToWikiMemory(entity: ScannedWikiEntity, id: number): W
   }
 }
 
+/** B2-P3-2 · heuristic 触发观测回调（缺省 = 静默，向后兼容）。 */
+export interface BuildWikiMemoriesOptions {
+  /** marker 实体缺显式合法 type/state（heuristic 兜底）时调一次（含 path + 推断值）。 */
+  warn?: (msg: string) => void
+}
+
 /**
  * WikiEntity[] → WikiMemory[]：先按 isCompiledMemoryEntity 过滤（排派生视图/未编译），再映射，
  * id 按序（1-based）。
+ *
+ * B2-P3-2（德彪 B2 review defer 项）：带 marker 但缺/非法 type/state 的实体不 skip
+ * （skip = 静默藏内容，比不完整元数据更糟），heuristic 兜底照旧，但通过 opts.warn 暴露
+ * —— 运营从日志能看到哪些实体以推断元数据进了 canonical 索引（B3 backfill 写规范化
+ * frontmatter 后该 warn 应归零）。
  */
-export function buildWikiMemoriesFromEntities(entities: ScannedWikiEntity[]): WikiMemory[] {
-  return entities.filter(isCompiledMemoryEntity).map((e, i) => wikiEntityToWikiMemory(e, i + 1))
+export function buildWikiMemoriesFromEntities(
+  entities: ScannedWikiEntity[],
+  opts?: BuildWikiMemoriesOptions,
+): WikiMemory[] {
+  return entities.filter(isCompiledMemoryEntity).map((e, i) => {
+    const memory = wikiEntityToWikiMemory(e, i + 1)
+    if (opts?.warn) {
+      const fm = e.frontmatter
+      const typeExplicit = typeof fm.type === "string" && VALID_TYPES.has(fm.type)
+      const stateExplicit = typeof fm.state === "string" && VALID_STATES.has(fm.state)
+      if (!typeExplicit || !stateExplicit) {
+        opts.warn(
+          `wiki-memory-from-files: ${e.path} 缺显式合法 type/state（heuristic 兜底 type=${memory.type} state=${memory.state}）— 实体 frontmatter 应显式化`,
+        )
+      }
+    }
+    return memory
+  })
 }

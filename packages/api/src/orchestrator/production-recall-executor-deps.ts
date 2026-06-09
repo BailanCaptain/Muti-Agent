@@ -47,11 +47,39 @@ import { Level2HybridSearchBackend } from "../wiki/adaptive-recall/level2-hybrid
  *   }))
  */
 
+/**
+ * F027 #286 FU-2 · coordinator Level 2 同款 HybridSearchProvider 工厂。
+ *
+ * 单独抽出来让 server.ts 能构一个实例同时喂两处：
+ *   - createProductionRecallExecutorDeps({hybridSearch}) → Level2HybridSearchBackend
+ *   - messages.setMemoryPreflightSearch(同一实例) → 冷启 loadTaskMemoryPack
+ * 冷启与 coordinator 召回 backend 同源（B1-b-2 P3-5）：今天 embedded records 为空
+ * 退化 BM25-only（hybrid-search-provider.ts:97-100 fallback），F028 boot-load 后两路一起升级。
+ */
+export function createHybridWikiSearchProvider(opts: {
+  drizzleDb: DrizzleDb
+  embeddingService: EmbeddingService
+}): HybridSearchProvider {
+  const wikiEntityFts = new WikiEntityFtsProvider(opts.drizzleDb)
+  const bm25Adapter = new WikiEntityBm25Adapter(wikiEntityFts)
+  return new HybridSearchProvider(
+    bm25Adapter,
+    [], // Phase 4 empty embedded records; degenerate to BM25-only
+    (text) => opts.embeddingService.generateEmbedding(text),
+  )
+}
+
 export interface ProductionRecallExecutorDepsOptions {
   drizzleDb: DrizzleDb
   wikiRoot: string
   messagesFtsRepo: MessagesFtsRepository
   embeddingService: EmbeddingService
+  /**
+   * FU-2 · 预构的 hybrid provider（createHybridWikiSearchProvider 产物）。传入时 level2
+   * 直接 wrap 它（caller 可把同一实例再喂 setMemoryPreflightSearch 实现冷启同源）；
+   * 缺省时 factory 内部自构（向后兼容，行为不变）。
+   */
+  hybridSearch?: HybridSearchProvider
   /** Audit broadcaster: 可选, 未传 → ProductionLevel5Sink 仅写 DB 不推 realtime. Day 4 wire 时用. */
   broadcaster?: AuditBroadcaster
   /** Level 5 sink: 可选注入 (Day 3 默认 NoopLevel5Sink, Day 4 替换 ProductionLevel5Sink). */
@@ -86,14 +114,14 @@ export function createProductionRecallExecutorDeps(
     timeoutMs: opts.critiqueTimeoutMs ?? 30_000,
   })
 
-  // ─── level 2 (Day 2 b) ───────────────────────────────────────────────────
-  const wikiEntityFts = new WikiEntityFtsProvider(opts.drizzleDb)
-  const bm25Adapter = new WikiEntityBm25Adapter(wikiEntityFts)
-  const hybridSearch = new HybridSearchProvider(
-    bm25Adapter,
-    [], // Phase 4 empty embedded records; degenerate to BM25-only
-    (text) => opts.embeddingService.generateEmbedding(text),
-  )
+  // ─── level 2 (Day 2 b / FU-2) ────────────────────────────────────────────
+  // FU-2：优先用 caller 预构实例（与冷启 setMemoryPreflightSearch 同源共享）。
+  const hybridSearch =
+    opts.hybridSearch ??
+    createHybridWikiSearchProvider({
+      drizzleDb: opts.drizzleDb,
+      embeddingService: opts.embeddingService,
+    })
   const level2 = new Level2HybridSearchBackend(hybridSearch)
 
   // ─── level 3 (Day 3 c) — Phase 1 P14 已 ready ─────────────────────────────

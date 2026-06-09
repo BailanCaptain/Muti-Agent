@@ -154,3 +154,79 @@ test("B2 · buildWikiMemoriesFromEntities: 全无 marker（现状）→ 空（�
   ]
   assert.deepEqual(buildWikiMemoriesFromEntities(entities), [])
 })
+
+// ─── F027 #286 B2-P3-2 · heuristic 触发可观测（德彪 B2 review P3-2 defer 项）───
+//
+// 背景：带 canonical_owner_path 但缺/非法 type/state 的实体静默走 heuristic 默认 →
+// 可能以不完整元数据渲染进 canonical 索引，没人知道。收紧 = 不改行为（skip 会静默藏
+// 内容更糟），heuristic 触发时 warn 一次（path + 推断结果），运营可从日志追溯。
+
+test("B2-P3-2 · 缺 type+state → heuristic 应用且 warn 一次（path + 推断值可见）", () => {
+  const warns: string[] = []
+  const memories = buildWikiMemoriesFromEntities(
+    [
+      {
+        path: "wiki/concepts/no-meta.md",
+        frontmatter: { canonical_owner_path: "wiki/concepts/no-meta.md" },
+        body: "body",
+      },
+    ],
+    { warn: (msg) => warns.push(msg) },
+  )
+  assert.equal(memories.length, 1)
+  assert.equal(warns.length, 1, "缺显式 type/state → warn 恰好一次")
+  assert.ok(warns[0]!.includes("wiki/concepts/no-meta.md"), "warn 必须带 path")
+  assert.ok(warns[0]!.includes("type=project"), "warn 带推断 type")
+  assert.ok(warns[0]!.includes("state=canonical"), "warn 带推断 state")
+})
+
+test("B2-P3-2 · 非法 type/state 值（typo）→ 同样 warn（不静默吞非法值）", () => {
+  const warns: string[] = []
+  buildWikiMemoriesFromEntities(
+    [
+      {
+        path: "wiki/concepts/typo.md",
+        frontmatter: {
+          canonical_owner_path: "wiki/concepts/typo.md",
+          type: "lessons", // 非法（合法集是 feedback 等）
+          state: "Canonical", // 非法（大小写敏感）
+        },
+        body: "body",
+      },
+    ],
+    { warn: (msg) => warns.push(msg) },
+  )
+  assert.equal(warns.length, 1)
+  assert.ok(warns[0]!.includes("wiki/concepts/typo.md"))
+})
+
+test("B2-P3-2 · 显式合法 type+state → 不 warn", () => {
+  const warns: string[] = []
+  buildWikiMemoriesFromEntities(
+    [
+      {
+        path: "wiki/concepts/full.md",
+        frontmatter: {
+          canonical_owner_path: "wiki/concepts/full.md",
+          type: "project",
+          state: "canonical",
+        },
+        body: "body",
+      },
+    ],
+    { warn: (msg) => warns.push(msg) },
+  )
+  assert.equal(warns.length, 0)
+})
+
+test("B2-P3-2 · 不传 opts → 行为不变不崩（向后兼容）", () => {
+  const memories = buildWikiMemoriesFromEntities([
+    {
+      path: "wiki/concepts/no-meta.md",
+      frontmatter: { canonical_owner_path: "wiki/concepts/no-meta.md" },
+      body: "body",
+    },
+  ])
+  assert.equal(memories.length, 1)
+  assert.equal(memories[0]!.state, "canonical")
+})

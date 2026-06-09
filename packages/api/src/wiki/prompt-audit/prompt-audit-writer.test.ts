@@ -26,6 +26,7 @@ import type { RecallHit } from "../memory-preflight/types"
 import {
   NoopPromptAuditWriter,
   PromptAuditWriter,
+  buildColdStartRecallAuditPatch,
   buildRecallAuditPatch,
 } from "./prompt-audit-writer"
 
@@ -382,4 +383,43 @@ test("Day 8b · PromptAuditWriter · prompt-inspector 已读字段（scenario / 
     close()
     safeCleanup(tmp)
   }
+})
+
+// ─── F027 #286 FU-3 · buildColdStartRecallAuditPatch（冷启 loadTaskMemoryPack 观测）───
+//
+// 背景（B1-b-2 receive P3-6 follow-up）：冷启支 directRecall 恒 null → recallPatch
+// 全空，Prompt Inspector 看不到冷启召回的结构化字段（[Recall Pack] 只在 partsJson）。
+// 本 builder 从 loadTaskMemoryPack 结果派生 9 字段 patch：trigger=session_bootstrap。
+
+test("FU-3 · buildColdStartRecallAuditPatch · attempted+命中 → required/trigger/topScore/satisfied 全填", () => {
+  const patch = buildColdStartRecallAuditPatch({
+    attempted: true,
+    hits: [
+      { score: 0.95 },
+      { score: 0.8 },
+    ],
+  })
+  assert.equal(patch.recallRequired, true)
+  assert.equal(patch.recallTrigger, "session_bootstrap")
+  assert.equal(patch.topScore, 0.95)
+  assert.equal(patch.recallSatisfied, true)
+  // loadTaskMemoryPack 是轻量 Pack，非 coordinator 5-level executor → path 不冒充
+  assert.equal(patch.recallPath, null)
+  assert.equal(patch.recallBudgetExceeded, false)
+})
+
+test("FU-3 · buildColdStartRecallAuditPatch · attempted 但无命中（null/fail-soft）→ required=true satisfied=false", () => {
+  const patch = buildColdStartRecallAuditPatch({ attempted: true, hits: null })
+  assert.equal(patch.recallRequired, true)
+  assert.equal(patch.recallTrigger, "session_bootstrap")
+  assert.equal(patch.topScore, null)
+  assert.equal(patch.recallSatisfied, false)
+})
+
+test("FU-3 · buildColdStartRecallAuditPatch · 未 attempted（search 未注入）→ 全默认（与现状一致）", () => {
+  const patch = buildColdStartRecallAuditPatch({ attempted: false, hits: null })
+  assert.equal(patch.recallRequired, false)
+  assert.equal(patch.recallTrigger, null)
+  assert.equal(patch.topScore, null)
+  assert.equal(patch.recallSatisfied, false)
 })

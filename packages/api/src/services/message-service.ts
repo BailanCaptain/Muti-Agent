@@ -63,6 +63,7 @@ import type { WikiSearchProvider } from "../wiki/memory-preflight/types"
 import {
   NoopPromptAuditWriter,
   type PromptAuditWriterLike,
+  buildColdStartRecallAuditPatch,
   buildRecallAuditPatch,
 } from "../wiki/prompt-audit/prompt-audit-writer"
 
@@ -74,6 +75,7 @@ import type { SettlementDetector } from "../orchestrator/settlement-detector"
 import { extractSOPBookmark } from "../orchestrator/sop-bookmark"
 import type { SOPBookmark } from "../orchestrator/sop-bookmark"
 import { buildWorklistContinuationPrompt } from "../orchestrator/worklist-continuation"
+import type { BaseCliRuntime } from "../runtime/base-runtime"
 import { runTurn } from "../runtime/cli-orchestrator"
 import { resolveContextWindow } from "../runtime/context-window-resolver"
 import { runContinuationLoop } from "../runtime/continuation-loop"
@@ -441,6 +443,8 @@ export class MessageService {
   // 默认 null —— 未注入时冷启不召回（单测 / 老路径无副作用）；server.ts boot 注入生产
   // SearchWikiProvider（search_wiki MCP 同款 BM25 backend，已对齐 WikiSearchProvider 接口）。
   private memoryPreflightSearch: WikiSearchProvider | null = null
+  // F027 #286 FU-1 · runTurn runtime adapter 测试缝（默认 null = 生产按 provider 选单例）。
+  private cliRuntimeOverride: BaseCliRuntime | null = null
   // F027 Phase 3 P20 Day 8 b · prompt_audit writer wiring (AC-P3-9 b).
   // 默认 noop —— wire 没接通时不写 audit row（单测 / 老路径无副作用）。
   // server.ts boot 注入真 PromptAuditWriter（即使 Coordinator 是 noop，每次
@@ -578,6 +582,15 @@ export class MessageService {
   /** F027 B1-b-2 · 注入冷启召回的 wiki 搜索 backend（server.ts boot 调）。 */
   setMemoryPreflightSearch(search: WikiSearchProvider) {
     this.memoryPreflightSearch = search
+  }
+
+  /**
+   * F027 #286 FU-1 · 测试缝：覆盖 runTurn 的 runtime adapter（cli-orchestrator.ts:72
+   * 既有 test hook 的上游转发）。接线级测试用 fake runtime 捕获 AgentRunInput.prompt
+   * 断言 [Recall Pack] 注入，不 spawn 真 CLI。生产不调 → runTurn 按 provider 选单例。
+   */
+  setCliRuntimeOverride(runtime: BaseCliRuntime) {
+    this.cliRuntimeOverride = runtime
   }
 
   /**
@@ -1673,6 +1686,10 @@ export class MessageService {
       let directMemoryPreflight:
         | { hits: Array<{ score: number; summary: string; path?: string }> }
         | null = null
+      // F027 #286 FU-3 · 冷启召回 audit 观测（B1-b-2 P3-6）：loadTaskMemoryPack 不走
+      // Coordinator → directRecall 恒 null → recallPatch 全空。这里单独构冷启 patch
+      // （trigger=session_bootstrap + topScore/satisfied），Prompt Inspector 可程序化追溯。
+      let coldStartRecallPatch: ReturnType<typeof buildColdStartRecallAuditPatch> | null = null
       if (thread.nativeSessionId === null) {
         directMemoryPreflight = await resolveColdStartRecall(
           this.memoryPreflightSearch,
@@ -1683,6 +1700,10 @@ export class MessageService {
           },
           this.log,
         )
+        coldStartRecallPatch = buildColdStartRecallAuditPatch({
+          attempted: this.memoryPreflightSearch !== null,
+          hits: directMemoryPreflight?.hits ?? null,
+        })
       } else {
         const res = await resolveDirectTurnRecall(this.adaptiveRecallCoordinator, {
           roomId: directTurnRoomId ?? thread.sessionGroupId,
@@ -1735,11 +1756,14 @@ export class MessageService {
         sourceEventIds: options.rootMessageId ? [options.rootMessageId] : [],
         agentSessionRef: thread.nativeSessionId,
         // F027 B1-b · recall patch（Prompt Inspector 显示召回 trigger/required + output 派生字段）。
-        recallPatch: buildRecallAuditPatch({
-          output: directRecall?.output,
-          trigger: directRecall ? deriveTriggerFromScenario(directRecallScenario) : null,
-          recallRequired: directRecall?.executed === true,
-        }),
+        // FU-3：冷启支用 session_bootstrap patch（coordinator patch 在冷启恒空）。
+        recallPatch:
+          coldStartRecallPatch ??
+          buildRecallAuditPatch({
+            output: directRecall?.output,
+            trigger: directRecall ? deriveTriggerFromScenario(directRecallScenario) : null,
+            recallRequired: directRecall?.executed === true,
+          }),
       })
     }
     const systemPrompt = options.systemPrompt ?? assembledDirectTurn!.systemPrompt
@@ -1774,6 +1798,8 @@ export class MessageService {
 
     const createRun = (userMessage: string, sessionIdOverride?: string | null) =>
       runTurn({
+        // F027 #286 FU-1 · 测试缝：fake runtime 注入（生产 null → provider 单例）。
+        runtime: this.cliRuntimeOverride ?? undefined,
         systemPrompt,
         sopStageHint,
         invocationId: identity.invocationId,

@@ -297,9 +297,11 @@ export async function createApiServer(options: {
     const { AdaptiveRecallCoordinator } = await import(
       "./orchestrator/adaptive-recall-coordinator"
     )
-    const { createProductionRecallExecutorDeps, createSimpleLeaderContext } = await import(
-      "./orchestrator/production-recall-executor-deps"
-    )
+    const {
+      createHybridWikiSearchProvider,
+      createProductionRecallExecutorDeps,
+      createSimpleLeaderContext,
+    } = await import("./orchestrator/production-recall-executor-deps")
     const { ProductionLevel5Sink } = await import("./wiki/adaptive-recall/level5-escalate-sink")
     const { createRealtimeAuditBroadcaster } = await import(
       "./wiki/adaptive-recall/realtime-audit-broadcaster"
@@ -313,12 +315,17 @@ export async function createApiServer(options: {
       leaderContext: createSimpleLeaderContext(),
       broadcaster: auditBroadcaster,
     })
+    // F027 #286 FU-2 · 冷启召回与 coordinator Level 2 共享同一 hybrid provider（B1-b-2 P3-5）。
+    // 今天 embedded records 空 → 退化 BM25-only（与原 SearchWikiProvider 注入行为等价）；
+    // F028 boot-load embedded records 后冷启 + coordinator 一起升级语义召回。
+    const hybridWikiSearch = createHybridWikiSearchProvider({ drizzleDb, embeddingService })
     const executorDeps = createProductionRecallExecutorDeps({
       drizzleDb,
       wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
       messagesFtsRepo,
       embeddingService,
       level5,
+      hybridSearch: hybridWikiSearch,
     })
 
     // codex r1 P2-1 修: DEFAULT_RECALL_BUDGET.maxLevels=3 (defaults.ts) — 不传
@@ -332,8 +339,9 @@ export async function createApiServer(options: {
       }),
     )
     // F027 B1-b-2 · 冷启 loadTaskMemoryPack 搜索 backend（北极星「新 agent 进新 room 不白板」）。
-    // 复用 search_wiki MCP 同款 SearchWikiProvider（已对齐 memory-preflight WikiSearchProvider 接口）。
-    messages.setMemoryPreflightSearch(searchWikiProvider)
+    // FU-2（B1-b-2 P3-5）：从 search_wiki MCP 的 SearchWikiProvider 切到 coordinator Level 2
+    // 同一 hybrid 实例 —— 召回 backend 同源，行为今天等价（空 embedded records 退化 BM25）。
+    messages.setMemoryPreflightSearch(hybridWikiSearch)
     // eslint-disable-next-line no-console
     console.log(
       "[F027-P4 AC-P4-8] AdaptiveRecallCoordinator wired: enabled=true, levels=[2,3,4,5], maxLevels=5, broadcaster=on",

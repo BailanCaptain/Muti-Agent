@@ -196,6 +196,41 @@ function maxScore(hits: ReadonlyArray<RecallHit>): number | null {
 }
 
 /**
+ * F027 #286 FU-3 · 冷启（session_bootstrap）loadTaskMemoryPack 结果 → 9 recall fields patch。
+ *
+ * 背景（B1-b-2 receive P3-6）：冷启支不走 Coordinator（spec V16.5 line 95 轻量 Pack），
+ * directRecall 恒 null → audit 行 recall 结构化字段全空，Prompt Inspector 只能从 partsJson
+ * 看到 [Recall Pack] 内容、无法程序化追溯「冷启召回触发没/命中没」。
+ *
+ * 字段语义：
+ *   - attempted = search backend 已注入且冷启 gate（nativeSessionId===null）触发
+ *     → recallRequired=true + trigger="session_bootstrap"
+ *   - hits = resolveColdStartRecall 注入 prompt 的高置信 hits（null = 无命中/fail-soft）
+ *   - recallPath 恒 null：轻量 Pack 不是 coordinator 5-level executor，不冒充 path
+ *   - 未 attempted → 与 buildRecallAuditPatch({}) 全默认一致（不破坏现状语义）
+ */
+export function buildColdStartRecallAuditPatch(args: {
+  attempted: boolean
+  hits: ReadonlyArray<{ score: number }> | null
+}): ReturnType<typeof buildRecallAuditPatch> {
+  if (!args.attempted) {
+    return buildRecallAuditPatch({ output: undefined })
+  }
+  const hits = args.hits ?? []
+  return {
+    recallRequired: true,
+    recallTrigger: "session_bootstrap",
+    recallPath: null,
+    topScore: hits.length > 0 ? Math.max(...hits.map((h) => h.score)) : null,
+    recallSatisfied: hits.length > 0,
+    escalateReason: null,
+    recallTotalMs: null,
+    recallCritiqueCalls: null,
+    recallBudgetExceeded: false,
+  }
+}
+
+/**
  * noop writer — 测试 / 老路径（未 wire）不写 audit 时用。
  * 行为：write() 返回 id=0，不真 INSERT；caller 透明。
  */

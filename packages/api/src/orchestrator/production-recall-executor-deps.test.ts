@@ -160,3 +160,47 @@ describe("createSimpleLeaderContext", () => {
   })
 })
 
+
+// ─── F027 #286 FU-2 · 冷启召回与 coordinator Level 2 共享 hybrid provider ───
+//
+// 背景（B1-b-2 receive P3-5）：冷启 setMemoryPreflightSearch 注入的是 search_wiki MCP
+// 同款 SearchWikiProvider（BM25+rerank），coordinator Level 2 用 HybridSearchProvider
+// （BM25+cosine，Phase 4 空 embedded records 退化 BM25-only）—— 两套构造不同源。
+// FU-2 = 抽 createHybridWikiSearchProvider 工厂共享同一实例：今天行为等价，
+// F028 boot-load embedded records 时冷启与 coordinator 一起升级语义召回。
+
+describe("FU-2 · createHybridWikiSearchProvider + level2 共享实例", () => {
+  it("factory 返回 HybridSearchProvider（coordinator Level 2 同款构造）", async () => {
+    const { createHybridWikiSearchProvider } = await import("./production-recall-executor-deps")
+    const { HybridSearchProvider } = await import(
+      "../wiki/memory-preflight/hybrid-search-provider"
+    )
+    const provider = createHybridWikiSearchProvider({
+      drizzleDb: {} as never,
+      embeddingService: fakeEmbeddingService() as never,
+    })
+    assert.ok(provider instanceof HybridSearchProvider)
+  })
+
+  it("opts.hybridSearch 注入 → level2 用同一实例（冷启/coordinator 同源可共享）", async () => {
+    const calls: Array<{ query: string; topK: number }> = []
+    const fakeHybrid = {
+      search: async (query: string, opts: { topK: number }) => {
+        calls.push({ query, topK: opts.topK })
+        return []
+      },
+    }
+    const deps = createProductionRecallExecutorDeps({
+      drizzleDb: {} as never,
+      wikiRoot: "/tmp/wiki",
+      messagesFtsRepo: {} as never,
+      embeddingService: fakeEmbeddingService() as never,
+      sonnetRunner: fakeRunner(),
+      hybridSearch: fakeHybrid as never,
+    })
+    await deps.level2.searchWiki("查询词", 3)
+    assert.equal(calls.length, 1, "level2 必须转发到注入的共享实例")
+    assert.equal(calls[0]!.query, "查询词")
+    assert.equal(calls[0]!.topK, 3)
+  })
+})

@@ -49,7 +49,10 @@ export function createWikiIndexRecompiler(deps: WikiIndexRecompileDeps): () => P
   return async () => {
     try {
       const entities = await deps.scanEntities()
-      const memories = buildWikiMemoriesFromEntities(entities)
+      // B2-P3-2 · heuristic 兜底可观测：缺显式 type/state 的 marker 实体记 warn（不 skip）。
+      const memories = buildWikiMemoriesFromEntities(entities, {
+        warn: (msg) => deps.logger?.warn({}, msg),
+      })
       const events = deps.fetchEvents ? await deps.fetchEvents() : []
       const version = (deps.version ?? defaultVersion)()
       const result = compileWiki({ wikiRoot: deps.wikiRoot, version, events, memories })
