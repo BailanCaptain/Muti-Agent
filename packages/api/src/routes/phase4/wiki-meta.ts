@@ -31,7 +31,11 @@ import path from "node:path"
 import type { FastifyInstance } from "fastify"
 
 import type { WikiEventsRepository } from "../../db/repositories/wiki-events-repository"
-import { readContainedFile, WikiPathInvalidError } from "../../wiki/path-containment"
+import {
+  canReadContainedFile,
+  readContainedFile,
+  WikiPathInvalidError,
+} from "../../wiki/path-containment"
 import { parseFrontmatter } from "../phase3/frontmatter"
 
 // ─── contracts (inline; mirror Phase 4 endpoint shapes) ──────────────────────
@@ -51,10 +55,12 @@ export interface WarningSummary {
   summary: string
   mtime: string
   /**
-   * F027 修（小孙自验「展开看全文」404）：该警告是否有真 `.md` 文件可读全文。
-   * file-scanned warning（warnings/*.md 真文件）=true；wiki_events 合成 warning（无文件，
-   * 全文即 summary 那一行）=false。前端只对 true 渲染「展开看全文」，避免 event-only 警告
-   * 点开必 404（合成 path 也以 `wiki/warnings/` 开头，故不能靠 path 前缀判别——这是原 bug）。
+   * F027 修（小孙自验「展开看全文」404）：点「展开看全文」**是否会成功返回内容**（content 端点 200）。
+   * 由 listWarnings 末尾用 `canReadContainedFile`（与 content 端点 readWarningContent 同一可读判定）
+   * 统一计算 → **`hasContent=true` ⟺ GET /api/wiki/warnings/content 200**。前端只对 true 渲染按钮。
+   *
+   * 不按 producer 猜（德彪 codex r-warn P2）：合成 path 也以 `wiki/warnings/` 开头（不能靠前缀，原 bug）；
+   * 解析失败但裸读可读的文件不该藏按钮；hardlink 文件会被 content 端点拒（400）不该显按钮。
    */
   hasContent: boolean
 }
@@ -180,7 +186,60 @@ export class WikiMetaScanner {
       if (b.detectedAt === null) return -1
       return Date.parse(b.detectedAt) - Date.parse(a.detectedAt)
     })
+    // 德彪 codex r-warn P2：hasContent 用 content 端点同一套可读判定**统一重算**（producer 占位被覆盖）。
+    // 不按"哪个 producer 造的"猜 —— 否则会发散：解析失败但裸读可读的文件（藏按钮）、hardlink 文件（显按钮却 400）。
+    // 此处与 readWarningContent 共用 resolveWarningAbsPath + canReadContainedFile → hasContent=true ⟺ content 200。
+    for (const w of out) {
+      w.hasContent = await this.computeHasContent(w.path)
+    }
     return { warnings: out, total: out.length }
+  }
+
+  /**
+   * 把 list 给的逻辑 path（'wiki/warnings/<name>'）解析为磁盘 abs path + 施加平铺 basename 白名单。
+   * readWarningContent（content 端点）与 computeHasContent（list hasContent）共用 → 路径派生一致。
+   * 非法 path 抛 WikiPathInvalidError。
+   */
+  private resolveWarningAbsPath(warningPath: string): string {
+    const PREFIX = "wiki/warnings/"
+    if (typeof warningPath !== "string" || !warningPath.startsWith(PREFIX)) {
+      throw new WikiPathInvalidError(`warning path must start with '${PREFIX}': ${warningPath}`)
+    }
+    const name = warningPath.slice(PREFIX.length)
+    if (
+      name.length === 0 ||
+      name.includes("/") ||
+      name.includes("\\") ||
+      name.includes(":") || // 德彪 codex r2 P2：NTFS ADS（`x.txt:stream.md` 绕过 .md 检查）
+      name.includes("..") ||
+      name.includes("\0") ||
+      !name.endsWith(".md")
+    ) {
+      throw new WikiPathInvalidError(`invalid warning filename: ${warningPath}`)
+    }
+    return path.join(this.wikiRoot, "warnings", name)
+  }
+
+  /**
+   * 德彪 codex r-warn P2：list 侧 hasContent 必须 = "content 端点点开会不会 200"，不能按 producer 猜。
+   * 与 readWarningContent 共用 resolveWarningAbsPath + 同一 canReadContainedFile 判定 →
+   * hasContent=true ⟺ readWarningContent 返回内容 ⟺ GET /api/wiki/warnings/content 200。
+   * 非法 path / 不存在 / 目录 / hardlink / 越界 → false（content 端点会 400/404）。
+   */
+  private async computeHasContent(warningPath: string): Promise<boolean> {
+    let absPath: string
+    try {
+      absPath = this.resolveWarningAbsPath(warningPath)
+    } catch {
+      return false // 非法 path → content 端点 400 → 不显展开按钮
+    }
+    const warningsRoot = path.join(this.wikiRoot, "warnings")
+    try {
+      return await canReadContainedFile(absPath, warningsRoot)
+    } catch (err) {
+      this.logWarn({ err, warningPath }, "wiki-meta: hasContent probe failed")
+      return false
+    }
   }
 
   private eventToWarning(ev: {
@@ -200,7 +259,7 @@ export class WikiMetaScanner {
       raisedBy: ev.alias,
       summary: (ev.reason ?? ev.diffSummary ?? "").slice(0, SUMMARY_LEN),
       mtime: ev.ts,
-      hasContent: false, // wiki_events 合成行，磁盘无 .md 文件 → 不可「展开看全文」
+      hasContent: false, // 占位：listWarnings() 末尾用 canReadContainedFile 统一重算（德彪 r-warn P2）
     }
   }
 
@@ -214,24 +273,10 @@ export class WikiMetaScanner {
   async readWarningContent(
     warningPath: string,
   ): Promise<{ content: string; mtime: string } | null> {
-    const PREFIX = "wiki/warnings/"
-    if (typeof warningPath !== "string" || !warningPath.startsWith(PREFIX)) {
-      throw new WikiPathInvalidError(`warning path must start with '${PREFIX}': ${warningPath}`)
-    }
-    const name = warningPath.slice(PREFIX.length)
-    if (
-      name.length === 0 ||
-      name.includes("/") ||
-      name.includes("\\") ||
-      name.includes(":") || // 德彪 codex r2 P2：NTFS ADS（`x.txt:stream.md` 绕过 .md 检查）
-      name.includes("..") ||
-      name.includes("\0") ||
-      !name.endsWith(".md")
-    ) {
-      throw new WikiPathInvalidError(`invalid warning filename: ${warningPath}`)
-    }
+    // resolveWarningAbsPath：平铺 basename 白名单（非法 path 抛 WikiPathInvalidError）。
+    // 与 computeHasContent 共用同一派生 → list hasContent 与本端点路径判定一致。
+    const absPath = this.resolveWarningAbsPath(warningPath)
     const warningsRoot = path.join(this.wikiRoot, "warnings")
-    const absPath = path.join(warningsRoot, name)
     // 德彪 codex P1：realpath containment（防 symlink/junction 跟随逃逸）+ 普通文件校验
     //（name 白名单已强制纯 .md 文件名，此处再防真实路径越界）。
     return readContainedFile(absPath, warningsRoot)
@@ -310,7 +355,7 @@ export class WikiMetaScanner {
       raisedBy: fm?.raised_by ?? null,
       summary,
       mtime: stat.mtime.toISOString(),
-      hasContent: true, // file-scanned，warnings/<fileName>.md 真文件存在 → 可「展开看全文」
+      hasContent: false, // 占位：listWarnings() 末尾用 canReadContainedFile 统一重算（德彪 r-warn P2）
     }
   }
 

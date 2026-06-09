@@ -505,6 +505,128 @@ describe("WikiMetaScanner · readWarningContent (F027 展开看全文)", () => {
   })
 })
 
+describe("WikiMetaScanner · hasContent ⟺ content 端点 契约一致 (德彪 codex r-warn P2)", () => {
+  it("正常文件 → hasContent=true 且 content 端点返回内容", async () => {
+    const t = setup()
+    try {
+      t.writeWarning(
+        "ok.md",
+        "type: warning\nsubtype: drift\nseverity: warn\ndetected_at: 2026-04-10T00:00:00Z",
+        "full body text",
+      )
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      const list = await scanner.listWarnings()
+      const w = list.warnings.find((x) => x.path === "wiki/warnings/ok.md")
+      assert.equal(w?.hasContent, true)
+      const content = await scanner.readWarningContent("wiki/warnings/ok.md")
+      assert.ok(content, "content 端点应返回内容")
+      assert.match(content?.content ?? "", /full body text/)
+    } finally {
+      t.cleanup()
+    }
+  })
+
+  it("event-only（无文件）→ hasContent=false 且 content 端点返回 null", async () => {
+    const t = setup()
+    const dbPath = path.join(t.wikiRoot, "test.sqlite")
+    const { db, close } = createDrizzleDb(dbPath)
+    try {
+      const events = new WikiEventsRepository(db)
+      const ev = events.appendPending({
+        ts: "2026-04-15T11:00:00Z",
+        alias: "桂芬",
+        action: "warning_raised",
+        path: "wiki/warnings/event-only.md",
+        baseHash: null,
+        attemptedHash: "h",
+        diffSummary: "drift",
+        reason: "fired",
+        fencingToken: "ft",
+        leaderTerm: "999",
+        result: "ok",
+      })
+      events.commit(ev.id, { contentHash: "h" })
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot, events })
+      const list = await scanner.listWarnings()
+      const w = list.warnings.find((x) => x.path === "wiki/warnings/event-only.md")
+      assert.equal(w?.hasContent, false)
+      const content = await scanner.readWarningContent("wiki/warnings/event-only.md")
+      assert.equal(content, null)
+    } finally {
+      close()
+      t.cleanup()
+    }
+  })
+
+  it("解析失败文件 + 同 path event → hasContent=true 且裸读返回内容（修 mismatch#1：有内容却藏按钮）", async () => {
+    const t = setup()
+    const dbPath = path.join(t.wikiRoot, "test.sqlite")
+    const { db, close } = createDrizzleDb(dbPath)
+    try {
+      // 真文件存在但 frontmatter 坏 → summarizeWarning 返 null（不进 list）；event 同 path 兜底进 list。
+      // content 端点裸读不解析 frontmatter → 能读出 → hasContent 必须 true（旧"按 producer 猜"会误判 false）。
+      const dir = path.join(t.wikiRoot, "warnings")
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(
+        path.join(dir, "broken.md"),
+        "---\nbroken: [unclosed\n---\n\nreadable raw body",
+      )
+      const events = new WikiEventsRepository(db)
+      const ev = events.appendPending({
+        ts: "2026-04-16T00:00:00Z",
+        alias: "system",
+        action: "warning_raised",
+        path: "wiki/warnings/broken.md",
+        baseHash: null,
+        attemptedHash: "h",
+        diffSummary: "broken fm",
+        reason: "x",
+        fencingToken: "ft",
+        leaderTerm: "999",
+        result: "ok",
+      })
+      events.commit(ev.id, { contentHash: "h" })
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot, events })
+      const list = await scanner.listWarnings()
+      const w = list.warnings.find((x) => x.path === "wiki/warnings/broken.md")
+      assert.ok(w, "event 兜底应让 broken.md 进 list")
+      assert.equal(w?.hasContent, true)
+      const content = await scanner.readWarningContent("wiki/warnings/broken.md")
+      assert.ok(content, "content 端点裸读应成功（不解析 frontmatter）")
+      assert.match(content?.content ?? "", /readable raw body/)
+    } finally {
+      close()
+      t.cleanup()
+    }
+  })
+
+  it("hardlink 文件 → hasContent=false 且 content 端点抛（修 mismatch#2：显按钮却必 400）", async () => {
+    const t = setup()
+    try {
+      const secret = path.join(t.wikiRoot, "secret.txt")
+      fs.writeFileSync(
+        secret,
+        "---\ntype: warning\nsubtype: x\ndetected_at: 2026-04-01T00:00:00Z\n---\n\nbody",
+      )
+      const dir = path.join(t.wikiRoot, "warnings")
+      fs.mkdirSync(dir, { recursive: true })
+      const hard = path.join(dir, "hard.md")
+      if (trySkipLink(() => fs.linkSync(secret, hard), "hardlink")) return
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      const list = await scanner.listWarnings()
+      const w = list.warnings.find((x) => x.path === "wiki/warnings/hard.md")
+      assert.ok(w, "hardlink 文件 frontmatter 有效 → 仍在 list（带 summary）")
+      assert.equal(w?.hasContent, false) // content 端点拒 nlink>1 → 不显按钮
+      await assert.rejects(
+        () => scanner.readWarningContent("wiki/warnings/hard.md"),
+        (e: Error) => e.name === "WikiPathInvalidError",
+      )
+    } finally {
+      t.cleanup()
+    }
+  })
+})
+
 // 德彪 codex r2 P2：只在明确"不支持建链"时跳过，别拿 catch{} 吞真失败。返回 true=跳过。
 function trySkipLink(make: () => void, kind: string): boolean {
   try {
