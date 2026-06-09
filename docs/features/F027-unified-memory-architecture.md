@@ -113,24 +113,24 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
 
 ### Phase 1 AC（后端基础设施）
 
-- [ ] **AC-P1-1 · 4 张新表 schema 通过 drizzle migration**：`wiki_events` / `wiki_memories` / `room_decisions` / `prompt_audit` 全部建表 + 索引 + 复合索引（V16.5.1 F3 实证：`drizzle-instance.ts:253-267` 必须显式建索引）+ EXPLAIN AC ≤ 50ms（fixture: viewfinder failed/timeout 查询 SQL，详见 V16.5 chap 11 F2 段）
-- [ ] **AC-P1-2 · update_wiki MCP 工具 ACL/CAS/lease/fencing 全绿**：fuzz 100 并发写测试（同一 path 多 agent 同时写）通过率 100%（CAS 拒后重试），死锁 0 次，**evidence pack 含 race trace + 重试日志**
-- [ ] **AC-P1-3 · LLM 编译 3 阶段端到端 PASS**（**fixture 锁定**）：
+- [x] **AC-P1-1 · 4 张新表 schema 通过 drizzle migration**：`wiki_events` / `wiki_memories` / `room_decisions` / `prompt_audit` 全部建表 + 索引 + 复合索引（V16.5.1 F3 实证：`drizzle-instance.ts:253-267` 必须显式建索引）+ EXPLAIN AC ≤ 50ms（fixture: viewfinder failed/timeout 查询 SQL，详见 V16.5 chap 11 F2 段）
+- [x] **AC-P1-2 · update_wiki MCP 工具 ACL/CAS/lease/fencing 全绿**：fuzz 100 并发写测试（同一 path 多 agent 同时写）通过率 100%（CAS 拒后重试），死锁 0 次，**evidence pack 含 race trace + 重试日志**
+- [x] **AC-P1-3 · LLM 编译 3 阶段端到端 PASS**（**fixture 锁定**）：
   - 输入 fixture: `tests/fixtures/wiki-ingest/rag-tutorial-input.md`（已锁定一篇 RAG paper, 23 KB）
   - 预期 top-5 相似（Phase 1）：`[F018:0.78, B022:0.65, Microcompact:0.52, L0-DIGEST:0.48, SessionBootstrap:0.45]` ±0.05 容差
   - 预期 schema-only JSON（Phase 2）：`tests/fixtures/wiki-ingest/rag-tutorial-expected.json` 含 `cross_refs[].relation ∈ {extends/supersedes/references/contradicts/implements}` 强制类型 / `dedup_decision.verdict ∈ {new_entity/merge_into/supersedes}` / `canonical_owner_suggestion ∈ {wiki/concepts/, wiki/rules/, wiki/methods/, wiki/people/}`
   - 预期 frontmatter fill 三段（Phase 3）：agent 写 3 字段 + LLM 输出 13 字段 + post derive 3 字段（共 19 字段，对账表见 plan chap 26.7）
   - 写 wiki_events action='ingest' + content_hash 比对 fixture 一致
-- [ ] **AC-P1-4 · sanitize 5 层防御**（**fixture 锁定**）：5 层全部命中触发 fixture（`tests/fixtures/sanitize/L1-unicode.md` 同形字 / `L2-html.md` HTML 注释 / `L3-fence.md` fence role-token / `L4-base64.md` 高熵段 / `L5-multipass.md` chained-instruction）+ chained_suspect 进 `wiki/concepts/draft/_quarantined/`
-- [ ] **AC-P1-5 · multi-drop cross-correlation**：7 天滑动窗口内同 series_id drop sim ≥ 0.8 自动归 series；不同 series 但 sim ≥ 0.7 触发 chained_suspect 警告（fixture: `tests/fixtures/multi-drop/series-vs-chained.md`）
-- [ ] **AC-P1-6 · Agent Wiki Handbook 4 H2 切片 + cross-file dedupe**（**红绿样例锁定**）：
+- [x] **AC-P1-4 · sanitize 5 层防御**（**fixture 锁定**）：5 层全部命中触发 fixture（`tests/fixtures/sanitize/L1-unicode.md` 同形字 / `L2-html.md` HTML 注释 / `L3-fence.md` fence role-token / `L4-base64.md` 高熵段 / `L5-multipass.md` chained-instruction）+ chained_suspect 进 `wiki/concepts/draft/_quarantined/`
+- [x] **AC-P1-5 · multi-drop cross-correlation**：7 天滑动窗口内同 series_id drop sim ≥ 0.8 自动归 series；不同 series 但 sim ≥ 0.7 触发 chained_suspect 警告（fixture: `tests/fixtures/multi-drop/series-vs-chained.md`）
+- [x] **AC-P1-6 · Agent Wiki Handbook 4 H2 切片 + cross-file dedupe**（**红绿样例锁定**）：
   - sliceHandbookByH2() 返回 4 个独立切片（`## 编译规则` / `## Sanitize 规则` / `## Agent 动作手册` / `## Dev / human 部分`）
   - cross-file dedupe lint 红样例：`tests/fixtures/lint/red-handbook-adds-at-rule.md`（handbook 加"@ 规则"段 → 跟 shared-rules 重叠 → lint 红灯）
   - cross-file dedupe lint 绿样例：`tests/fixtures/lint/green-cross-ref-only.md`（handbook 用 `[shared-rules.md § @ rule]` cross-ref 不复制 → lint 绿）
-- [ ] **AC-P1-7 · 唯一注入合约**：扩展 F004 `assemblePrompt` 加 7 字段 + 5 注入区段；runtime 内 grep "Iron Laws" = 1（B022 防回归）；harness 端 grep ≤ 2（接受 CLI 边界）
-- [ ] **AC-P1-8 · agent-sessions ledger**：per-agent S-XXXX.md 写入 + sharding（按 R-XXX 分目录 path: `agent-sessions/R-042/S-001-黄仁勋.md`）+ yearly pack 1/1 03:00 触发；fixture 模拟 100k session 文件归档后 active < 1k
-- [ ] **AC-P1-9 · 6 类记忆桶物理表**：wiki_memories 5 type + messages 表 1 类 = 6 类全覆盖；canonical_owner 防漂桶 lint 红绿测试（fixture: `tests/fixtures/canonical-owner/red-drift.md` vs `green.md`）
-- [ ] **AC-P1-10 · viewfinder anti-drift**（**漂移度阈值锁定**）：
+- [x] **AC-P1-7 · 唯一注入合约**：扩展 F004 `assemblePrompt` 加 7 字段 + 5 注入区段；runtime 内 grep "Iron Laws" = 1（B022 防回归）；harness 端 grep ≤ 2（接受 CLI 边界）
+- [x] **AC-P1-8 · agent-sessions ledger**：per-agent S-XXXX.md 写入 + sharding（按 R-XXX 分目录 path: `agent-sessions/R-042/S-001-黄仁勋.md`）+ yearly pack 1/1 03:00 触发；fixture 模拟 100k session 文件归档后 active < 1k
+- [x] **AC-P1-9 · 6 类记忆桶物理表**：wiki_memories 5 type + messages 表 1 类 = 6 类全覆盖；canonical_owner 防漂桶 lint 红绿测试（fixture: `tests/fixtures/canonical-owner/red-drift.md` vs `green.md`）
+- [x] **AC-P1-10 · viewfinder anti-drift**（**漂移度阈值锁定**）：
   - room_decisions append-only + tombstone 字段 + revoke 纠错（写新行 + UPDATE 旧行 superseded_by）
   - MonthlySnapshot full recompile 触发 → 漂移度 = `1 - jaccard(old.decisions_summary, new.decisions_summary)`
   - 漂移度 > 30% 自动 replace + 推审计通知到指定 room
@@ -140,7 +140,7 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
     - **挂 Phase 2 P19 调度**：`runMonthlySnapshot(roomId)` 闭环触发（NightlyJob cron 1 号 03:00）+ auto-replace IO（写旧 viewfinder 到 audit + replace 新文件） + 审计通知 push
     - **挂 Phase 3 P20 前端**：manual confirm decision API (POST /api/rooms/:id/decisions) + Inspector 显示 Coverage warning unresolved 列表入口
     - **Phase 1 fixture 语义**：fixture `with_anti_drift_intervention` 段含 10 个 block intervention_log 模拟 MonthlySnapshot 检测+ reset 闭环；P19 完成后 fixture 应升级为接真 cron 跑（非模拟）
-- [ ] **AC-P1-11 · memory_preflight 自动召回**（北极星兑现 AC）★：
+- [x] **AC-P1-11 · memory_preflight 自动召回**（北极星兑现 AC）★：
   - 新 agent 进 R-XXX wake-up 时 runtime 自动跑 memory_preflight
   - 提取 task summary 抽 2-5 query → vectorSearch + BM25 hybrid（chap 15 P15 复用 BM25）
   - Quality Gate：score ≥ 0.75 注入 prompt `[Recall Pack]` 区段 / 0.6-0.75 仅 Inspector 看 / < 0.6 丢
@@ -149,28 +149,28 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
     - **P11.a baseline 锁定**：模块骨架 + Quality Gate + Hard Gate + AC 相对排序（F011 > F021 > B022），物理上 cosine baseline 单 vector 顶 ~0.5
     - **P11.b 弱阈值锁定**：HybridSearchProvider 接 BM25 (P14) + cosine (F018 EmbeddingService) + LLM rerank stub (P15 NoopReranker) 框架成立；F011/F021 命中 + F011 排首位 + 总召回 ≥ 2 验证 hybrid 召回功能（`memory-preflight.test.ts:709`）
     - **AC-P1-11 严阈值挂 it.todo 等 Phase 2 真 LLM rerank confidence**：gate confidence ≥ 0.85 + gate confidence ≥ 0.6 + Inspector ≥ 3 物理依赖真 LLM rerank 输出 confidence score（plan chap 12 行 1403 "BM25 + LLM rerank" 原意）。Phase 1 NoopReranker 透传时 hybrid_score = max(bm25_norm, cosine_sim) 同时承担 ranking + gate 双职责，BM25 命中 entity 永远 score=1.0，inspector 中段 (0.6-0.85) 物理不可达。**不改 plan AC 阈值**——范判定"plan 隐含可校准置信度，改 ≥ 1 是验收漂移"。Phase 2 转正路径：接真 LLM rerank（Claude Haiku / Qwen / 本地 cross-encoder）→ 输出 confidence 但**默认未校准**（数字自评、logits、cross-encoder 分都不天然等价概率）→ 必须配 prompt schema + fixture 校准集 + 阈值回归测试，确认 confidence 落 plan 阈值区间后才转正（范-P11.b r2 Q4 修：原"自然落区间"是过度承诺）。同时类型层分离 ranking score vs gate score（范-P11.b r2 Q1：扩 RecallHit 加 rankScore/gateScore，或定义 reranker 覆写 score 后 score === gate confidence）
-- [ ] **AC-P1-12 · Adaptive Recall 5 级 fallback**（**对齐 V16.5 chap 12 行 1398-1410 阶梯**）：5 级 fallback 全部触发 fixture（Level 1 task_memory_pack / Level 2 search_wiki BM25+rerank / Level 3 query_messages FTS5 / Level 4 read_wiki strict path / Level 5 escalate）+ Hard Gate 命中 escalate Sink 被调用
+- [x] **AC-P1-12 · Adaptive Recall 5 级 fallback**（**对齐 V16.5 chap 12 行 1398-1410 阶梯**）：5 级 fallback 全部触发 fixture（Level 1 task_memory_pack / Level 2 search_wiki BM25+rerank / Level 3 query_messages FTS5 / Level 4 read_wiki strict path / Level 5 escalate）+ Hard Gate 命中 escalate Sink 被调用
   - **AC 文字修订**（小孙 2026-05-14 拍 + P13 实施核对 V16.5 chap 12）：原文 "Level 3 LLM rerank" 与 chap 12 行 1402-1406 阶梯对照应为 "Level 3 query_messages FTS5"（LLM rerank 是 Level 2 search_wiki 的一部分，不是独立级）
   - **验收边界**（小孙 2026-05-13 拍 5 个 Open + P13.4 设计核对）：
     - **P13 Phase 1 范围**：AdaptiveRecallExecutor 状态机 + Critique Agent (Sonnet 4.6 LlmCritiqueAgent) + 4 个 Level Backend Adapter（MessagesFtsLevel3Backend / FileSystemLevel4Backend + Level2/5 接口）+ Per-turn Budget 强制 + Judge BLOCKED lint + 防 hallucination 校验（next_level / specific_path）+ 55 单测全绿
     - **挂 Phase 3 P20 wiring**：(a) orchestrator / RoomCompiler 接 executeAdaptiveRecall 调用点；(b) prompt_audit 表 recall_path / recall_satisfied / escalate_reason 等 9 字段真写入；(c) Level5Sink 生产实现（写 wiki_events action='recall_escalate' / 推审计通知 / Inspector UI 显示）— **P13 模块设计上不绑定具体 audit 后端**（避免 library import db/fencing 逻辑），caller 责任
     - **Phase 1 fixture 语义**：P13 单测端到端验证算法正确性（含真 SQLite FTS5 + 真文件 IO + 状态机 + budget 触顶 + critique 防 hallucination），生产 observability（prompt_audit 行数 / wiki_events trace）属 Phase 3 P20 wiring 验收
     - **依赖确认**：P14.b messages_fts + query_messages MCP (f91edf5) 已 done，P13.3 Level 3 直接复用
-- [ ] **AC-P1-13 · alias-aware capability registry**（**fixture 锁定**）：handoff 中性改写测试——sender alias 黄仁勋 → @桂芬 时，receiver 看到的 prompt 不暴露 sender risks
+- [x] **AC-P1-13 · alias-aware capability registry**（**fixture 锁定**）：handoff 中性改写测试——sender alias 黄仁勋 → @桂芬 时，receiver 看到的 prompt 不暴露 sender risks
   - **fixture**: `tests/fixtures/capability-registry/red-leaks-sender-risk.json`（含未脱敏 prompt 含"黄仁勋 unresolved threads / 黄仁勋 token 占比 / sender 内部状态"等 forbidden strings）vs `green-neutralized.json`（中性改写后仅含 `{ task, receiver_capability_digest, collaboration_contract }` required fields）
   - **断言**：red fixture 必须命中 forbidden strings 至少 1 条 → 触发改写；green fixture 必须 0 命中 forbidden strings + 含全部 required fields
-- [ ] **AC-P1-14 · evidence pack + 双 judge**：每个 AC 配 `docs/features/F027/evidence/phase1/<ac>/` 下 prompt.txt / agent_response.txt / db_dump.sql / wiki_state.tar.gz / config.hash / prod_config_diff.txt / result.json + judges/ 异构双 judge JSON（详见 plan chap 16 行 1680-1704）
+- [x] **AC-P1-14 · evidence pack + 双 judge**：每个 AC 配 `docs/features/F027/evidence/phase1/<ac>/` 下 prompt.txt / agent_response.txt / db_dump.sql / wiki_state.tar.gz / config.hash / prod_config_diff.txt / result.json + judges/ 异构双 judge JSON（详见 plan chap 16 行 1680-1704）
 
 ### Phase 2 AC（调度）
 
-- [ ] **AC-P2-1 · 9 scheduled + 2 event-driven jobs 全部就位**（**对齐 plan chap 17 行 1780-1788 schedule 代码**）：
+- [x] **AC-P2-1 · 9 scheduled + 2 event-driven jobs 全部就位**（**对齐 plan chap 17 行 1780-1788 schedule 代码**）：
   - **9 scheduled**：runtime 跑一周内 RoomCompilerTick (5min) / DocsWatcher (实时 watch) / NightlyHealthCheck (4:00) / NightlyVacuum (5:00) / WeeklyDraftDigest (周一 9:00) / DriftDetector (周一 10:00) / MonthlySnapshot (1 号 3:00) / ArchiveYearlySessions (1/1 3:00) / StartupReconciler (启动) 全部命中目标时间窗
   - **2 event-driven**：WikiCompilerDebounce (写 wiki_events 后 5s 触发派生视图重生成) + ChainedAlertNotifier (chained_suspect 命中后实时推 room)
   - evidence pack 含每 job trace log + 触发时间戳
-- [ ] **AC-P2-2 · DocsWatcher 增量编译**（V16.5.3 D1）：手动 touch `docs/features/F999-test.md` → 60s debounce → ingest pipeline → 落 `wiki/concepts/draft/_auto/2026-XX-XX-F999-test.md` + 写 wiki_events
-- [ ] **AC-P2-3 · backfill 脚本 dry-run 模式**（V16.5.3 D2）：`pnpm tsx scripts/backfill-docs.ts --dry-run` 输出 `docs/plans/V16.5-backfill-report-<date>.md`，含类型分布 + 高 cross_refs 密度 + 失败文件列表，**不写盘**
+- [x] **AC-P2-2 · DocsWatcher 增量编译**（V16.5.3 D1）：手动 touch `docs/features/F999-test.md` → 60s debounce → ingest pipeline → 落 `wiki/concepts/draft/_auto/2026-XX-XX-F999-test.md` + 写 wiki_events
+- [x] **AC-P2-3 · backfill 脚本 dry-run 模式**（V16.5.3 D2）：`pnpm tsx scripts/backfill-docs.ts --dry-run` 输出 `docs/plans/V16.5-backfill-report-<date>.md`，含类型分布 + 高 cross_refs 密度 + 失败文件列表，**不写盘**
 - [ ] **AC-P2-4 · backfill 正式跑 + resumable**：跑全部 docs/* 历史存量 → 落 `_backfill/` + 写 wiki_events；中途 kill -9 + `--resume` 跳过已成功文件（按 ingest_event_id 索引）
-- [ ] **AC-P2-5 · Leader Lease**：模拟两个 runtime 实例同时跑 RoomCompilerTick，只有一个能 acquire lease，另一个 noop（DB 触发器拒绝 stale leader_term）
+- [x] **AC-P2-5 · Leader Lease**：模拟两个 runtime 实例同时跑 RoomCompilerTick，只有一个能 acquire lease，另一个 noop（DB 触发器拒绝 stale leader_term）
 
 ### Phase 3 AC（前端）
 
@@ -180,10 +180,10 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
 - [ ] **AC-P3-4 · viewfinder §4 a2a 状态人话化**（V16.5.2）：含 `[a2a_call=xxx]` 引用 → 用 F026 `<AtPill>` 渲染 + click pill in-place drawer 展开 mini call tree（不跳 /debug/a2a）
 - [ ] **AC-P3-5 · prompt-inspector 顶部 wake-up 触发因**（V16.5.2）：显示 `🔔 触发因: [a2a_call=xxx]` + click 同样 in-place drawer
 - [ ] **AC-P3-6 · IngestModal 3 入口 + sanitize 预扫**：composer 拖文件 / [+ Drop 资料] 按钮 / `/ingest` 命令面板三入口任一触发 → preview 显示 5 层 sanitize + LLM 编译预览 + multi-drop 关联 → 你点 [/ingest 编译] 才落盘（**commit 路径走 AC-P3-10**）
-- [ ] **AC-P3-7 · 调度器 go-live + Iron Laws 3 边界**（F027 Phase 3 plan v2/v3 新增）：API server 启动 → `SchedulerRuntime` 实例化 + 11 job 注册 + 真 job_trace 落 `.runtime/job-traces/`；**Iron Laws 3 负断言**：不存在/不创建/不写入 `wiki.config.yaml`；fallback config 来源可观测；Gate 2 未批准时真配置路径保持 BLOCKED（集成测试 + 文件系统断言）
+- [x] **AC-P3-7 · 调度器 go-live + Iron Laws 3 边界**（F027 Phase 3 plan v2/v3 新增）：API server 启动 → `SchedulerRuntime` 实例化 + 11 job 注册 + 真 job_trace 落 `.runtime/job-traces/`；**Iron Laws 3 负断言**：不存在/不创建/不写入 `wiki.config.yaml`；fallback config 来源可观测；Gate 2 未批准时真配置路径保持 BLOCKED（集成测试 + 文件系统断言）
 - [ ] **AC-P3-8 · manual confirm decision API + Inspector unresolved 入口**（F027 Phase 3 plan v3 新增 — 接 AC-P1-10 P20 wiring 挂位）：POST `/api/rooms/:id/decisions` + prompt-inspector Coverage warning unresolved 列表 UI 点击 → manual confirm 写新行；Phase 1 P12 ledger append-only + tombstone 语义不变
-- [ ] **AC-P3-9 · Adaptive Recall production wiring**（F027 Phase 3 plan v3 新增 — 接 AC-P1-12 P20 wiring 挂位）：(a) orchestrator / RoomCompiler 实际调用 `executeAdaptiveRecall`；(b) `prompt_audit` 表 9 字段真写入（recall_path / recall_satisfied / escalate_reason 等）fixture 验证；(c) Level5Sink 生产实现（写 `wiki_events` action='recall_escalate' + 推审计通知 + Inspector UI 显示）
-- [ ] **AC-P3-10 · IngestModal commit endpoint 落盘闭环**（F027 Phase 3 plan v3 新增 — 修 AC-P3-6 闭环）：POST `/api/wiki/ingest/commit` endpoint，前端 [/ingest 编译] → 后端复用 Phase 1 `update_wiki`，含 ACL / CAS / lease / fencing；E2E：preview 不落盘 / commit 才落盘 / 失败不产生 `wiki_events`
+- [x] **AC-P3-9 · Adaptive Recall production wiring**（F027 Phase 3 plan v3 新增 — 接 AC-P1-12 P20 wiring 挂位）：(a) orchestrator / RoomCompiler 实际调用 `executeAdaptiveRecall`；(b) `prompt_audit` 表 9 字段真写入（recall_path / recall_satisfied / escalate_reason 等）fixture 验证；(c) Level5Sink 生产实现（写 `wiki_events` action='recall_escalate' + 推审计通知 + Inspector UI 显示）
+- [x] **AC-P3-10 · IngestModal commit endpoint 落盘闭环**（F027 Phase 3 plan v3 新增 — 修 AC-P3-6 闭环）：POST `/api/wiki/ingest/commit` endpoint，前端 [/ingest 编译] → 后端复用 Phase 1 `update_wiki`，含 ACL / CAS / lease / fencing；E2E：preview 不落盘 / commit 才落盘 / 失败不产生 `wiki_events`
 
 ### Phase 4 AC（审批 UI + 验证）
 
@@ -191,7 +191,7 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
 - [ ] **AC-P4-2 · 审计失败回退**：tainted_source=true draft 二次审计 reject → modal 显示 audit_reason + 不 mv + 不写 promote event + draft 留原位
 - [ ] **AC-P4-3 · 命令面板**：composer 输 `/` 弹下拉 → `/ingest` `/promote` `/demote` `/series` `/rollback` 全部可触发对应 modal / 命令
 - [ ] **AC-P4-4 · 批量审批 UI**（**部分失败语义锁定**）：knowledge-base tab 加 [批量审批] → list view 按 type/mtime 排序 + 一键 promote 选中（共用 reason）；**部分失败行为**：每个 draft 独立 promote（一个失败不阻塞其他），最终弹出报告 modal 显示 `success: N / failed: M (含 audit_reason 列表)`，失败 draft 留原位等下次手动 retry
-- [ ] **AC-P4-5 · 三层验证套件**（plan P18）：每个 AC 跑双 judge + 仲裁；OAuth quota 用尽 → BLOCKED（不再 SKIP=PASS）；evidence pack 不完整 → INCONCLUSIVE
+- [x] **AC-P4-5 · 三层验证套件**（plan P18）：每个 AC 跑双 judge + 仲裁；OAuth quota 用尽 → BLOCKED（不再 SKIP=PASS）；evidence pack 不完整 → INCONCLUSIVE
 - [ ] **AC-P4-6 · 手 walk-through**（plan P22）：你（小孙）按场景 1 / 场景 2 / 场景 3（V16.5 walkthrough 三场景）端到端走一遍；每场景独立 evidence
 
 ## Phase 拆分 + 工时
