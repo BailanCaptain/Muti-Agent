@@ -713,6 +713,28 @@ describe("WikiMetaScanner · hasContent ⟺ content 端点 契约一致 (德彪 
       t.cleanup()
     }
   })
+
+  it("warnings/ 是指向树内别处（wikiRoot/index）的链接 → list 空 + content null（德彪 r4 P1：越子树也拒）", async () => {
+    const t = setup()
+    try {
+      // wikiRoot/index 放一个文件；把 wikiRoot/warnings 做成指向 index 的链接（树内、非逃逸 wikiRoot）
+      const indexDir = path.join(t.wikiRoot, "index")
+      fs.mkdirSync(indexDir, { recursive: true })
+      fs.writeFileSync(
+        path.join(indexDir, "concepts.md"),
+        "---\ntype: warning\nsubtype: x\ndetected_at: 2026-04-01T00:00:00Z\n---\n\nINDEX-SUBTREE body",
+      )
+      const warningsDir = path.join(t.wikiRoot, "warnings")
+      if (trySkipLink(() => fs.symlinkSync(indexDir, warningsDir, "junction"), "junction")) return
+      const scanner = new WikiMetaScanner({ wikiRoot: t.wikiRoot })
+      const list = await scanner.listWarnings()
+      // realWarnings = realWiki/index ≠ realWiki/warnings → 严格等值校验拒 → 不读 index 子树
+      assert.equal(list.warnings.length, 0, "warnings 链接到 wikiRoot/index → 越子树 → 拒 → 空 list")
+      assert.equal(await scanner.readWarningContent("wiki/warnings/concepts.md"), null)
+    } finally {
+      t.cleanup()
+    }
+  })
 })
 
 // 德彪 codex r2 P2：只在明确"不支持建链"时跳过，别拿 catch{} 吞真失败。返回 true=跳过。
