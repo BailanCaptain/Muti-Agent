@@ -642,16 +642,23 @@ describe("featureProgress 站会式 §2/§3（小孙 2026-05-31 拍 A）", () =>
   })
 
   // codex P2-2 re-review 修：硬锁真实 worktree F027 feature.md 生产行为。
-  // worktree 内 39 AC 全未勾 → done=0 / pct=0 / 第一条未勾=AC-P1-1。
-  // 这是"清单没勾即 0%"设计的真相源断言：若有人勾了 / 改了第一条 AC / 改了分隔符致漏计，本测即红。
-  it("readFeatureProgress: 真实 worktree F027 feature.md 硬锁 0%/AC-P1-1（生产行为）", () => {
+  // 原版锁 done=0/AC-P1-1（防虚勾）——2026-06-10 小孙开始真实验收勾选（dev 68cdd6b），
+  // 该锁按设计触发，历史使命完成。现改锁**解析不变量**（done 随小孙验收进度活动，
+  // 锁死具体值 = 小孙每勾一个炸一次 suite）：
+  //   - total=39（分隔符漏计会变小 → % 虚高，仍是硬锁）
+  //   - done/pct/firstUndoneAC 三者自洽（解析口径不漂）
+  it("readFeatureProgress: 真实 worktree F027 feature.md — total=39 硬锁 + done/pct/firstUndone 自洽（生产行为）", () => {
     const p = readFeatureProgress("F027", process.cwd())
     assert.ok(p, "能读到 F027 feature.md")
     assert.equal(p?.featureId, "F027")
     assert.equal(p?.total, 39, "worktree F027 共 39 条 AC（分隔符漏计会变小）")
-    assert.equal(p?.done, 0, "worktree 内全未勾 → done=0（设计：清单没勾即 0%）")
-    assert.equal(p?.pct, 0, "done=0 → pct=0")
-    assert.equal(p?.firstUndoneAC?.id, "AC-P1-1", "第一条未勾 = AC-P1-1")
+    assert.ok(p!.done >= 0 && p!.done <= 39, `done 必须在 [0,39]（实际 ${p!.done}）`)
+    assert.equal(p?.pct, Math.round((p!.done / 39) * 100), "pct 与 done 自洽")
+    if (p!.done < 39) {
+      assert.match(p?.firstUndoneAC?.id ?? "", /^AC-P\d/, "未勾完 → firstUndoneAC 必有且格式合法")
+    } else {
+      assert.equal(p?.firstUndoneAC, null, "全勾 → firstUndoneAC=null")
+    }
   })
 })
 

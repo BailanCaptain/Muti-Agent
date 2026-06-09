@@ -1,10 +1,10 @@
 ---
 id: F027
 title: 统一记忆架构（V16.5 整套 · wiki entity + 派生视图 + 唯一注入合约 + 自动召回）
-status: spec
+status: in-progress
 owner: 黄仁勋
 created: 2026-05-11
-updated: 2026-05-11
+updated: 2026-06-10
 plan_truth_source: docs/plans/V16.5-final.md
 review_history:
   - V16.5: 范德彪 GO + 4 处实施侧硬约束 (F1-F5, 已 inline 进 V16.5.3)
@@ -356,3 +356,14 @@ wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md �
 ---
 
 **最终归属**：F027 是 V16.5 plan 整套立项实施。spec 完整真相在 `docs/plans/V16.5-final.md`，本文件仅作 feat-lifecycle 立项 + AC + 工时锚定 + reviewing 失误归档。
+
+---
+
+## Merge Timeline
+
+| 日期 | 合并 | 内容 |
+|---|---|---|
+| 2026-05-23 | dev `dfbe336` | Phase 3 前端容器 + IngestModal + AC 闭环 |
+| 2026-06-10 | dev `e80427d` | 收尾全链：全文展开（r1-r3 GO）+ 警告 404 修复（6 轮审 GO-with-residual）+ RuntimeLog 拖高 + #286 自动召回 FU 四件（r2 GO）+ #285 session_memories→wiki 深迁移 + 旧 3 记忆工具后端退役（r3 GO）。quality-gate 愿景自检 6 痛点机制层全闭环。 |
+
+**合并后运维步（pending）**：① B3 backfill 55 篇 docs 全量真编译（`backfill-docs.ts --ingest-module`）② 存量 session 摘要导出（`migrate-session-memories.ts`）③ `DROP TABLE wiki_memories` / session_memories 读路径切文件 = 小孙拍。
