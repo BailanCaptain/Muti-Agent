@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { SessionMemoryRecord } from "../db/sqlite"
 import { MemoryService } from "./memory-service"
 
 function createMockRepository(overrides: Record<string, unknown> = {}) {
@@ -123,50 +122,8 @@ test("summarizeSession generates summary from messages", () => {
   assert.ok(result.keywords.includes("feature"))
 })
 
-test("getLastSummary returns null when no memories exist", () => {
-  const repo = createMockRepository({
-    getLatestMemory: () => null,
-  })
-  const service = new MemoryService(repo as never)
-
-  const result = service.getLastSummary("group-1")
-  assert.equal(result, null)
-})
-
-test("getLastSummary returns summary when memory exists", () => {
-  const repo = createMockRepository({
-    getLatestMemory: (): SessionMemoryRecord => ({
-      id: "memory-1",
-      sessionGroupId: "group-1",
-      summary: "Previous session discussed A2A alignment",
-      keywords: "A2A,alignment",
-      createdAt: "2026-04-04T00:00:00.000Z",
-    }),
-  })
-  const service = new MemoryService(repo as never)
-
-  const result = service.getLastSummary("group-1")
-  assert.equal(result, "Previous session discussed A2A alignment")
-})
-
-test("searchMemories delegates to repository", () => {
-  const expectedResults: SessionMemoryRecord[] = [
-    {
-      id: "memory-1",
-      sessionGroupId: "group-1",
-      summary: "Discussed memory features",
-      keywords: "memory,features",
-      createdAt: "2026-04-04T00:00:00.000Z",
-    },
-  ]
-  const repo = createMockRepository({
-    searchMemories: (_keyword: string) => expectedResults,
-  })
-  const service = new MemoryService(repo as never)
-
-  const results = service.searchMemories("memory")
-  assert.deepEqual(results, expectedResults)
-})
+// F027 #285 S3 · getLastSummary / searchMemories 单测随方法退役删除（唯一消费者 =
+// 旧 3 记忆工具 callback 后端，已删）。getOrCreateSummary（自动注入）覆盖见下方测试。
 
 test("F027 B1-a: generateRollingSummary 用注入的 Opus 4.6 runner 输出并写 createMemory", async () => {
   let capturedSummary = ""
@@ -232,4 +189,64 @@ test("F027 B1-a 德彪 codex P2: runner ok 但只吐空白 → 退回 extractive
     "空白 runner 输出 → 退回 extractive",
   )
   assert.equal(capturedSummary, summary)
+})
+
+// ─── F027 #285 S1 · 双写：滚动摘要写表后同步写 wiki/rooms/<roomId>/session-summary.md ───
+
+test("F027 #285 S1: generateRollingSummary 写表后调 sessionSummaryWriter（双写）", async () => {
+  const writes: Array<{ sessionGroupId: string; summary: string; keywords: string }> = []
+  const repo = createMockRepository({
+    createMemory: (g: string, summary: string, k: string) => ({
+      id: "m",
+      sessionGroupId: g,
+      summary,
+      keywords: k,
+      createdAt: "2026-06-10T08:00:00.000Z",
+    }),
+  })
+  const fakeRunner = {
+    runPrompt: async () => ({ ok: true, text: "压缩摘要", durationMs: 1 }),
+  }
+  const service = new MemoryService(repo as never, fakeRunner as never)
+  service.setSessionSummaryWriter({ write: (input) => writes.push(input) })
+  await service.generateRollingSummary("group-1")
+  assert.equal(writes.length, 1, "写表后应双写 wiki 一次")
+  assert.equal(writes[0]!.sessionGroupId, "group-1")
+  assert.equal(writes[0]!.summary, "压缩摘要")
+})
+
+test("F027 #285 S1: summarizeSession 同样双写", () => {
+  const writes: Array<{ sessionGroupId: string; summary: string }> = []
+  const repo = createMockRepository({
+    createMemory: (g: string, summary: string, k: string) => ({
+      id: "m",
+      sessionGroupId: g,
+      summary,
+      keywords: k,
+      createdAt: "2026-06-10T08:00:00.000Z",
+    }),
+  })
+  const service = new MemoryService(repo as never)
+  service.setSessionSummaryWriter({ write: (input) => writes.push(input) })
+  service.summarizeSession("group-2")
+  assert.equal(writes.length, 1)
+  assert.equal(writes[0]!.sessionGroupId, "group-2")
+})
+
+test("F027 #285 S1: writer 未注入 → 行为不变（向后兼容，不抛）", async () => {
+  const repo = createMockRepository({
+    createMemory: (g: string, summary: string, k: string) => ({
+      id: "m",
+      sessionGroupId: g,
+      summary,
+      keywords: k,
+      createdAt: "x",
+    }),
+  })
+  const fakeRunner = {
+    runPrompt: async () => ({ ok: true, text: "ok", durationMs: 1 }),
+  }
+  const service = new MemoryService(repo as never, fakeRunner as never)
+  const summary = await service.generateRollingSummary("group-1")
+  assert.equal(summary, "ok")
 })

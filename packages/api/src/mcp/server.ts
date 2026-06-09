@@ -146,48 +146,11 @@ async function callGetRoomContext(limit?: number): Promise<ToolResult> {
   }
 }
 
-async function callGetRoomSummary(): Promise<ToolResult> {
-  const identity = getCallbackIdentity()
-  const url = new URL(`${identity.apiUrl}/api/callbacks/room-summary`)
-  url.searchParams.set("invocationId", identity.invocationId)
-  url.searchParams.set("callbackToken", identity.callbackToken)
-
-  const response = await requestJson(url.toString(), { method: "GET" })
-  if (response.statusCode >= 400) {
-    return {
-      isError: true,
-      content: [
-        { type: "text", text: `get_room_summary failed: ${JSON.stringify(response.json)}` },
-      ],
-    }
-  }
-
-  return {
-    content: [{ type: "text", text: JSON.stringify(response.json) }],
-  }
-}
-
-async function callSearchRoomMemories(keyword: string): Promise<ToolResult> {
-  const identity = getCallbackIdentity()
-  const url = new URL(`${identity.apiUrl}/api/callbacks/search-memories`)
-  url.searchParams.set("invocationId", identity.invocationId)
-  url.searchParams.set("callbackToken", identity.callbackToken)
-  url.searchParams.set("keyword", keyword)
-
-  const response = await requestJson(url.toString(), { method: "GET" })
-  if (response.statusCode >= 400) {
-    return {
-      isError: true,
-      content: [
-        { type: "text", text: `search_room_memories failed: ${JSON.stringify(response.json)}` },
-      ],
-    }
-  }
-
-  return {
-    content: [{ type: "text", text: JSON.stringify(response.json) }],
-  }
-}
+// F027 #285 S3 · callGetRoomSummary / callSearchRoomMemories / callGetMemory 已退役删除：
+// 旧 3 记忆工具（get_room_summary / search_room_memories / get_memory）B1-a 已从 getTools
+// 摘牌，本轮后端真退役。职能 = rooms/<roomId>/session-summary.md（MemoryService 双写 +
+// migrate-session-memories 存量导出），read_wiki / search_wiki 4 件套覆盖。
+// session_memories 表数据原封不动（Iron Law；物理 DROP 留小孙手动）。
 
 // F027 P14.b: query_messages MCP tool — BM25 全文召回（messages_fts trigram tokenizer），
 // 走 HTTP backend。与 recall_similar_context 互补：semantic 召回靠 embedding cosine，
@@ -944,28 +907,6 @@ async function callUpdateWiki(params: {
   }
 }
 
-async function callGetMemory(keyword?: string): Promise<ToolResult> {
-  const identity = getCallbackIdentity()
-  const url = new URL(`${identity.apiUrl}/api/callbacks/memory`)
-  url.searchParams.set("invocationId", identity.invocationId)
-  url.searchParams.set("callbackToken", identity.callbackToken)
-  if (keyword) {
-    url.searchParams.set("keyword", keyword)
-  }
-
-  const response = await requestJson(url.toString(), { method: "GET" })
-  if (response.statusCode >= 400) {
-    return {
-      isError: true,
-      content: [{ type: "text", text: `get_memory failed: ${JSON.stringify(response.json)}` }],
-    }
-  }
-
-  return {
-    content: [{ type: "text", text: JSON.stringify(response.json) }],
-  }
-}
-
 export async function handleToolCall(name: string, args: Record<string, unknown> | undefined) {
   switch (name) {
     case "post_message": {
@@ -982,15 +923,8 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
       const limit = typeof args?.limit === "number" ? args.limit : undefined
       return callGetRoomContext(limit)
     }
-    case "get_room_summary":
-      return callGetRoomSummary()
-    case "search_room_memories": {
-      const keyword = typeof args?.keyword === "string" ? args.keyword : ""
-      if (!keyword.trim()) {
-        return { isError: true, content: [{ type: "text", text: "keyword is required" }] }
-      }
-      return callSearchRoomMemories(keyword.trim())
-    }
+    // F027 #285 S3 · get_room_summary / search_room_memories / get_memory dispatch 支已删
+    // → 落 default unknown tool（工具早已不广播，残余调用按未知处理）。
     case "recall_similar_context": {
       const query = typeof args?.query === "string" ? args.query : ""
       if (!query.trim()) {
@@ -1024,8 +958,6 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
       return callCreateTask(args as { assignee: string; description: string; priority?: string })
     case "trigger_mention":
       return callTriggerMention(args as { targetAgentId: string; taskSnippet: string })
-    case "get_memory":
-      return callGetMemory(args?.keyword as string | undefined)
     case "request_decision":
       return callRequestDecision(
         args as {

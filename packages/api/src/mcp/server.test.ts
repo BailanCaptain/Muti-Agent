@@ -221,14 +221,25 @@ test("handleToolCall dispatches trigger_mention with correct args", async () => 
   )
 })
 
-test("handleToolCall dispatches get_memory", async () => {
-  await assert.rejects(
-    () => handleToolCall("get_memory", { keyword: "test" }),
-    (err: Error) => {
-      assert.ok(err.message.includes("ECONNREFUSED"), `Expected ECONNREFUSED, got: ${err.message}`)
-      return true
-    },
-  )
+// F027 #285 S3 · 旧 3 记忆工具后端真退役：dispatch 支已删，落 default「unknown tool」。
+// 职能接管：rooms/<roomId>/session-summary.md（S1 双写 + S2 存量导出）经 read_wiki /
+// search_wiki 覆盖。session_memories 表数据不动（Iron Law，DROP 留小孙手动）。
+test("F027 #285 S3 · get_memory 已退役 → unknown tool（不再打后端）", async () => {
+  const result = await handleToolCall("get_memory", { keyword: "test" })
+  assert.equal(result.isError, true)
+  assert.ok(result.content[0]?.text.includes("unknown tool"))
+})
+
+test("F027 #285 S3 · get_room_summary 已退役 → unknown tool", async () => {
+  const result = await handleToolCall("get_room_summary", {})
+  assert.equal(result.isError, true)
+  assert.ok(result.content[0]?.text.includes("unknown tool"))
+})
+
+test("F027 #285 S3 · search_room_memories 已退役 → unknown tool", async () => {
+  const result = await handleToolCall("search_room_memories", { keyword: "architecture" })
+  assert.equal(result.isError, true)
+  assert.ok(result.content[0]?.text.includes("unknown tool"))
 })
 
 test("handleToolCall dispatches get_room_context", async () => {
@@ -241,39 +252,6 @@ test("handleToolCall dispatches get_room_context", async () => {
   )
 })
 
-test("handleToolCall dispatches get_room_summary", async () => {
-  await assert.rejects(
-    () => handleToolCall("get_room_summary", {}),
-    (err: Error) => {
-      assert.ok(err.message.includes("ECONNREFUSED"), `Expected ECONNREFUSED, got: ${err.message}`)
-      return true
-    },
-  )
-})
-
-test("handleToolCall dispatches search_room_memories", async () => {
-  await assert.rejects(
-    () => handleToolCall("search_room_memories", { keyword: "architecture" }),
-    (err: Error) => {
-      assert.ok(err.message.includes("ECONNREFUSED"), `Expected ECONNREFUSED, got: ${err.message}`)
-      return true
-    },
-  )
-})
-
-test("handleToolCall search_room_memories rejects empty keyword", async () => {
-  const result = await handleToolCall("search_room_memories", { keyword: "" })
-  assert.ok(result, "Should return a result")
-  assert.equal(result.isError, true)
-  assert.ok(result.content[0]?.text.includes("keyword is required"))
-})
-
-test("handleToolCall search_room_memories rejects missing keyword", async () => {
-  const result = await handleToolCall("search_room_memories", {})
-  assert.ok(result, "Should return a result")
-  assert.equal(result.isError, true)
-  assert.ok(result.content[0]?.text.includes("keyword is required"))
-})
 
 test("handleToolCall dispatches take_screenshot", async () => {
   await assert.rejects(

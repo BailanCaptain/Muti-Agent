@@ -135,5 +135,5 @@ Bug 先写失败测试再修（先红后绿）。
 
 **记忆工具收敛（F027 B1-a · 2026-06-06 小孙拍）**：
 
-- `search_room_memories` / `get_memory` / `get_room_summary` → **已退役**（不再向你广播）。三者原读旧 `session_memories` 滚动会话摘要——该摘要现由系统**自动注入**进你的 prompt（正常协作 POLICY_FULL），你无需手动取。查 ROOM 对话 / 沉淀用 `query_messages`（messages FTS）、查知识用 `search_wiki` / `read_wiki`。
+- `search_room_memories` / `get_memory` / `get_room_summary` → **已退役**（不广播；F027 #285 起后端 dispatch / 路由也已删除，残余调用按 unknown tool 处理）。三者原读旧 `session_memories` 滚动会话摘要——该摘要现由系统**自动注入**进你的 prompt（正常协作 POLICY_FULL），且同步落 `wiki/rooms/<roomId>/session-summary.md`（要主动查别的 room 摘要用 `read_wiki` / `search_wiki`）。查 ROOM 对话 / 沉淀用 `query_messages`（messages FTS）。
 - `get_room_context`（严格时序近期对话）、`recall_similar_context`（messages 语义召回，4 件套不做 messages 语义）— 仍保留，仅在 4 件套不够时作补充

@@ -1,12 +1,17 @@
 import type { SessionRepository } from "../db/repositories"
 import type { SessionMemoryRecord } from "../db/sqlite"
 import { type HaikuRunner, createOpus46Runner } from "../runtime/haiku-runner"
+import type { SessionSummaryWikiWriter } from "../wiki/session-summary-writer"
 
 /** 会话摘要压缩超时（重任务·长上下文，远大于 runner 默认 15s）。 */
 const SUMMARY_COMPRESS_TIMEOUT_MS = 60_000
 
 export class MemoryService {
   private readonly invalidatedGroups = new Set<string>()
+  // F027 #285 S1 · 滚动摘要双写 wiki（rooms/<roomId>/session-summary.md）。
+  // 默认 null = 不双写（向后兼容）；server.ts boot 注入。表仍是 source of truth，
+  // writer 内部 fail-soft —— wiki 写失败不影响摘要主链路（写表 + 自动注入）。
+  private sessionSummaryWriter: SessionSummaryWikiWriter | null = null
 
   constructor(
     private readonly repository: SessionRepository,
@@ -16,6 +21,11 @@ export class MemoryService {
      */
     private readonly summaryRunner: HaikuRunner = createOpus46Runner(),
   ) {}
+
+  /** F027 #285 S1 · 注入 wiki 双写 writer（server.ts boot 调；测试注 fake）。 */
+  setSessionSummaryWriter(writer: SessionSummaryWikiWriter) {
+    this.sessionSummaryWriter = writer
+  }
 
   invalidateSummary(sessionGroupId: string) {
     this.invalidatedGroups.add(sessionGroupId)
@@ -34,7 +44,15 @@ export class MemoryService {
 
     const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
 
-    return this.repository.createMemory(sessionGroupId, summary, keywords)
+    const record = this.repository.createMemory(sessionGroupId, summary, keywords)
+    // #285 S1 · 双写 wiki（writer 内部 fail-soft，不影响主链路）
+    this.sessionSummaryWriter?.write({
+      sessionGroupId,
+      summary: record.summary,
+      keywords: record.keywords,
+      createdAt: record.createdAt,
+    })
+    return record
   }
 
   /**
@@ -49,7 +67,14 @@ export class MemoryService {
     const keywords = extractKeywords(allMessages.map((m) => m.content).join(" "))
     // F027 B1-a：Claude Opus 4.6 抽象压缩（弃 Gemini）；任何失败 fail-soft 退回 extractive
     const summary = await this.compressSummary(extractive, allMessages)
-    this.repository.createMemory(sessionGroupId, summary, keywords)
+    const record = this.repository.createMemory(sessionGroupId, summary, keywords)
+    // #285 S1 · 双写 wiki（writer 内部 fail-soft，不影响主链路）
+    this.sessionSummaryWriter?.write({
+      sessionGroupId,
+      summary: record.summary,
+      keywords: record.keywords,
+      createdAt: record.createdAt,
+    })
     return summary
   }
 
@@ -137,18 +162,10 @@ ${conversationText}`
     return compressed || extractive
   }
 
-  getLastSummary(sessionGroupId: string): string | null {
-    const record = this.repository.getLatestMemory(sessionGroupId)
-    return record?.summary ?? null
-  }
-
-  searchMemories(keyword: string): SessionMemoryRecord[] {
-    return this.repository.searchMemories(keyword)
-  }
-
-  getMemoriesForGroup(sessionGroupId: string): SessionMemoryRecord[] {
-    return this.repository.listMemories(sessionGroupId)
-  }
+  // F027 #285 S3 · getLastSummary / searchMemories / getMemoriesForGroup 已退役删除：
+  // 唯一消费者是旧 3 记忆工具的 callback 后端（已删）。读路径由
+  // rooms/<roomId>/session-summary.md + read_wiki/search_wiki 接管；
+  // getOrCreateSummary（自动注入）与写路径不动。
 }
 
 /**

@@ -643,10 +643,8 @@ export async function createApiServer(options: {
     emitThreadSnapshot: (sessionGroupId) =>
       messages.emitThreadSnapshot(sessionGroupId, broadcaster.broadcast),
     onPublicMessage: (options) => messages.handleAgentPublicMessage(options),
-    getRoomSummary: (sessionGroupId) => {
-      const summary = memoryService.getLastSummary(sessionGroupId)
-      return { summary }
-    },
+    // F027 #285 S3 · getRoomSummary / getMemories 已退役删除（旧 3 记忆工具后端；
+    // 职能 = rooms/<roomId>/session-summary.md + read_wiki/search_wiki）。
     getTaskStatus: (sessionGroupId, agentId) => {
       const statuses = dispatch.getAgentStatuses(sessionGroupId)
       return {
@@ -711,12 +709,6 @@ export async function createApiServer(options: {
         )
         return { text: "(no relevant context found)", hits: [] }
       }
-    },
-    getMemories: (sessionGroupId, keyword) => {
-      const memories = keyword
-        ? memoryService.searchMemories(keyword).filter((m) => m.sessionGroupId === sessionGroupId)
-        : memoryService.getMemoriesForGroup(sessionGroupId)
-      return { memories }
     },
     requestPermission: (params) => approvals.requestPermission(params),
     takeScreenshot: async (params) => {
@@ -944,6 +936,20 @@ export async function createApiServer(options: {
     wikiEventsSink: roomCompileWikiEventsSink,
   }
   const roomCompileExecutor = createProductionRoomCompileExecutor(roomCompileSharedOpts)
+  // F027 #285 S1 · 会话滚动摘要双写 wiki（rooms/<roomId>/session-summary.md）。
+  // 根 = roomCompileWikiRoot（与 RoomCompiler viewfinder 同根 = reindexWikiEntities 扫描树内，
+  // B2 双根教训实测核对）。表仍是 source of truth，writer fail-soft 不影响摘要主链路。
+  // 目的：search_wiki / read_wiki 接管旧 3 记忆工具职能 → 后端可真退役（#285 S3）。
+  {
+    const { createSessionSummaryWikiWriter } = await import("./wiki/session-summary-writer")
+    memoryService.setSessionSummaryWriter(
+      createSessionSummaryWikiWriter({
+        wikiRoot: roomCompileWikiRoot,
+        resolveRoomId: (sessionGroupId) => sessions.getRoomId(sessionGroupId),
+        warn: (msg) => app.log.warn({}, msg),
+      }),
+    )
+  }
   // F027 P4 hotfix · single-room recompile (POST /api/rooms/:id/viewfinder/recompile)
   const singleRoomRecompiler = createSingleRoomRecompiler(roomCompileSharedOpts)
   {
