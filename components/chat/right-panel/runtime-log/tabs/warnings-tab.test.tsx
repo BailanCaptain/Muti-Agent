@@ -26,6 +26,7 @@ function makeWarning(overrides: Partial<WarningSummary> = {}): WarningSummary {
     raisedBy: "room-compiler",
     summary: "sample warning body",
     mtime: "2026-04-10T08:45:00Z",
+    hasContent: true,
     ...overrides,
   }
 }
@@ -120,6 +121,35 @@ describe("WarningsTab", () => {
     )
     render(<WarningsTab />)
     await waitFor(() => expect(screen.queryByTestId("warnings-error")).toBeTruthy())
+  })
+
+  it("(6) hasContent=true → 渲染「展开看全文」按钮", async () => {
+    mockFetchResponse({
+      warnings: [makeWarning({ path: "wiki/warnings/file.md", hasContent: true })],
+      total: 1,
+    })
+    render(<WarningsTab />)
+    await waitFor(() => expect(screen.queryByTestId("warnings-list")).toBeTruthy())
+    expect(screen.getByTestId("expand-toggle-wiki/warnings/file.md")).toBeTruthy()
+  })
+
+  it("(7) hasContent=false (event-only) → 不渲染展开按钮 (防 404)", async () => {
+    // 合成 path 也以 wiki/warnings/ 开头：靠 hasContent 而非 path 前缀判别 (原 bug 回归守卫)
+    mockFetchResponse({
+      warnings: [
+        makeWarning({
+          path: "wiki/warnings/2026-05-23-chained-suspect.md",
+          source: "wiki_events",
+          hasContent: false,
+        }),
+      ],
+      total: 1,
+    })
+    render(<WarningsTab />)
+    await waitFor(() => expect(screen.queryByTestId("warnings-list")).toBeTruthy())
+    expect(
+      screen.queryByTestId("expand-toggle-wiki/warnings/2026-05-23-chained-suspect.md"),
+    ).toBeNull()
   })
 
   it("(5) activeLvl2 != warnings → fetch 不触发", async () => {

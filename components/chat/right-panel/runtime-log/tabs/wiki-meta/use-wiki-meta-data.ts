@@ -32,6 +32,11 @@ export interface WarningSummary {
   raisedBy: string | null
   summary: string
   mtime: string
+  /**
+   * 该警告是否有真 `.md` 文件可读全文（file-scanned=true / wiki_events 合成=false）。
+   * 前端只对 true 渲染「展开看全文」，避免 event-only 警告点开 404。详见 backend wiki-meta.ts。
+   */
+  hasContent: boolean
 }
 
 export interface ListWarningsResponse {

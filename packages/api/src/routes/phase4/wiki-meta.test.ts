@@ -84,6 +84,9 @@ describe("WikiMetaScanner · listWarnings", () => {
       assert.equal(result.warnings[0].subtype, "tainted_source")
       assert.equal(result.warnings[0].severity, "high")
       assert.equal(result.warnings[1].subtype, "chained_suspect")
+      // F027 修：file-scanned warning → hasContent true（前端据此渲染「展开看全文」）
+      assert.equal(result.warnings[0].hasContent, true)
+      assert.equal(result.warnings[1].hasContent, true)
     } finally {
       t.cleanup()
     }
@@ -173,6 +176,11 @@ describe("WikiMetaScanner · listWarnings", () => {
       assert.equal(eventsOnly?.subtype, "warning_raised")
       assert.equal(eventsOnly?.source, "wiki_events")
       assert.equal(eventsOnly?.raisedBy, "桂芬")
+      // F027 修：event-only warning 无 .md 文件 → hasContent false（前端不渲染「展开看全文」→ 防 404）
+      assert.equal(eventsOnly?.hasContent, false)
+      // 同 list 里 fs warning → hasContent true（对照：合成 path 也以 wiki/warnings/ 开头，靠 hasContent 区分）
+      const fsOnly = result.warnings.find((w) => w.path === "wiki/warnings/fs-only.md")
+      assert.equal(fsOnly?.hasContent, true)
     } finally {
       close()
       t.cleanup()

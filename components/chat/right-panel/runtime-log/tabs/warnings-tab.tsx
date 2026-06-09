@@ -118,9 +118,10 @@ function WarningRow({ warning }: { warning: WarningSummary }) {
           {truncate(warning.summary, 120)}
         </div>
       )}
-      {/* 仅 file-backed warning（wiki/warnings/*.md）可看全文；event-only（source=wiki_events，
-          path 非 warnings 文件）无文件可读，不显示展开避免 404 困惑。 */}
-      {warning.path.startsWith("wiki/warnings/") && (
+      {/* 仅 file-backed warning（warnings/*.md 真文件）可看全文。event-only（source=wiki_events）
+          的合成 path 也以 `wiki/warnings/` 开头，故必须靠 backend 给的 hasContent 判别，不能用
+          path 前缀——后者会把无文件的 event 警告也渲染展开按钮→点开必 404（小孙自验翻车的原 bug）。 */}
+      {warning.hasContent && (
         <ExpandableContent contentPath={warning.path} kind="warning" />
       )}
     </div>

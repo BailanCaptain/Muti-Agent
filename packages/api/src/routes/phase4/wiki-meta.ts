@@ -50,6 +50,13 @@ export interface WarningSummary {
   /** body 前 200 字 truncate */
   summary: string
   mtime: string
+  /**
+   * F027 修（小孙自验「展开看全文」404）：该警告是否有真 `.md` 文件可读全文。
+   * file-scanned warning（warnings/*.md 真文件）=true；wiki_events 合成 warning（无文件，
+   * 全文即 summary 那一行）=false。前端只对 true 渲染「展开看全文」，避免 event-only 警告
+   * 点开必 404（合成 path 也以 `wiki/warnings/` 开头，故不能靠 path 前缀判别——这是原 bug）。
+   */
+  hasContent: boolean
 }
 
 export interface ListWarningsResponse {
@@ -193,6 +200,7 @@ export class WikiMetaScanner {
       raisedBy: ev.alias,
       summary: (ev.reason ?? ev.diffSummary ?? "").slice(0, SUMMARY_LEN),
       mtime: ev.ts,
+      hasContent: false, // wiki_events 合成行，磁盘无 .md 文件 → 不可「展开看全文」
     }
   }
 
@@ -302,6 +310,7 @@ export class WikiMetaScanner {
       raisedBy: fm?.raised_by ?? null,
       summary,
       mtime: stat.mtime.toISOString(),
+      hasContent: true, // file-scanned，warnings/<fileName>.md 真文件存在 → 可「展开看全文」
     }
   }
 
