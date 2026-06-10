@@ -141,6 +141,17 @@ describe("IngestModal preview/sanitize", () => {
     expect(commitBtn.disabled).toBe(true)
   })
 
+  it("德彪 batch1 P3 · blocked 字段缺失（老后端/畸形响应）→ fail-closed 禁 commit", async () => {
+    const legacyResponse = makePreviewResponse() as unknown as Record<string, unknown>
+    delete legacyResponse.blocked
+    mockSequence([{ ok: true, status: 200, json: legacyResponse as never }])
+    render(<IngestModal open={true} file={makeFile()} callerAlias="huang" onClose={vi.fn()} />)
+    await waitFor(() => expect(screen.queryByTestId("ingest-sanitize-clean")).toBeTruthy())
+    expect(screen.getByTestId("ingest-footer-blocked")).toBeTruthy()
+    const commitBtn = screen.getByTestId("ingest-modal-commit") as HTMLButtonElement
+    expect(commitBtn.disabled).toBe(true)
+  })
+
   it("F027 续 · sensitive_token warning 但 blocked=false（隔离段非红线）→ 不误禁 commit", async () => {
     mockSequence([
       {

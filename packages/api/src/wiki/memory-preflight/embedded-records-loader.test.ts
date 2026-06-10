@@ -20,7 +20,7 @@ import { eq } from "drizzle-orm"
 import { createDrizzleDb } from "../../db/drizzle-instance"
 import * as schema from "../../db/schema"
 import { wikiEntityIndex } from "../../db/schema"
-import { EmbeddedWikiRecordsLoader } from "./embedded-records-loader"
+import { EmbeddedWikiRecordsLoader, createSerializedRefresher } from "./embedded-records-loader"
 import { HybridSearchProvider, type BM25CandidateProvider } from "./hybrid-search-provider"
 import type { RecallHit, SearchOptions } from "./types"
 
@@ -192,6 +192,95 @@ describe("EmbeddedWikiRecordsLoader", () => {
     } finally {
       cleanup()
     }
+  })
+})
+
+describe("EmbeddedWikiRecordsLoader 熔断（德彪 batch1 P2-2）", () => {
+  it("连续失败达阈值 → 熔断本轮：剩余行不再打 embedder，aborted=true", async () => {
+    const { drizzle, cleanup } = makeDb()
+    try {
+      // 8 行全失败：阈值 5 → 第 5 行后熔断，embedder 只被调 5 次，8 行全计 failed
+      for (let i = 0; i < 8; i++) {
+        insertEntity(drizzle, { path: `wiki/concepts/f${i}.md`, name: `f${i}`, body: "v", sourceHash: `h${i}` })
+      }
+      let calls = 0
+      const loader = new EmbeddedWikiRecordsLoader({
+        db: drizzle,
+        generateEmbedding: async () => {
+          calls++
+          throw new Error("model load failed")
+        },
+      })
+      const out = await loader.load()
+      assert.equal(out.stats.aborted, true)
+      assert.equal(out.stats.failed, 8)
+      assert.equal(calls, 5, "熔断后剩余行不应再调 embedder（防逐行模型重载）")
+      assert.equal(out.records.length, 0)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("零星失败被成功打断 → 连败计数复位，不熔断", async () => {
+    const { drizzle, cleanup } = makeDb()
+    try {
+      // fail,fail,ok 模式 × 3 = 9 行：连败最多 2，不应熔断
+      for (let i = 0; i < 9; i++) {
+        insertEntity(drizzle, { path: `wiki/concepts/g${i}.md`, name: `g${i}`, body: "v", sourceHash: `h${i}` })
+      }
+      let n = 0
+      const loader = new EmbeddedWikiRecordsLoader({
+        db: drizzle,
+        generateEmbedding: async () => (n++ % 3 === 2 ? [1, 2] : null),
+      })
+      const out = await loader.load()
+      assert.equal(out.stats.aborted, false)
+      assert.equal(out.stats.embedded, 3)
+      assert.equal(out.stats.failed, 6)
+    } finally {
+      cleanup()
+    }
+  })
+})
+
+describe("createSerializedRefresher（德彪 batch1 P2-3）", () => {
+  it("run 在跑时 trigger → 标 dirty 本轮结束补跑一轮（不丢更新）", async () => {
+    let resolveFirst: (() => void) | undefined
+    let runs = 0
+    const trigger = createSerializedRefresher(
+      () =>
+        new Promise<void>((resolve) => {
+          runs++
+          if (runs === 1) {
+            resolveFirst = resolve
+          } else {
+            resolve()
+          }
+        }),
+      () => {},
+    )
+    trigger()
+    assert.equal(runs, 1)
+    trigger() // 第一轮还挂着 → dirty
+    trigger() // 多次重叠只补一轮
+    resolveFirst?.()
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(runs, 2, "重叠触发应合并为一轮补跑")
+  })
+
+  it("run 抛错 → onError 收到，不产生 unhandled rejection；后续 trigger 仍可跑", async () => {
+    const errors: unknown[] = []
+    let runs = 0
+    const trigger = createSerializedRefresher(async () => {
+      runs++
+      if (runs === 1) throw new Error("boom")
+    }, (err) => errors.push(err))
+    trigger()
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(errors.length, 1)
+    trigger()
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(runs, 2, "错误后状态机应复位可再触发")
   })
 })
 

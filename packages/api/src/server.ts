@@ -61,7 +61,10 @@ import {
   WikiEntityFtsProvider,
   reindexWikiEntities,
 } from "./wiki/wiki-search"
-import { EmbeddedWikiRecordsLoader } from "./wiki/memory-preflight/embedded-records-loader"
+import {
+  EmbeddedWikiRecordsLoader,
+  createSerializedRefresher,
+} from "./wiki/memory-preflight/embedded-records-loader"
 import type { HybridSearchProvider } from "./wiki/memory-preflight/hybrid-search-provider"
 import { createWikiServices } from "./wiki/wiki-services"
 
@@ -1001,33 +1004,21 @@ export async function createApiServer(options: {
     generateEmbedding: (text) => embeddingService.generateEmbedding(text),
     warn: (msg) => app.log.warn({}, msg),
   })
-  let embeddedRefreshRunning = false
-  let embeddedRefreshDirty = false
-  const refreshEmbeddedRecords = async () => {
-    const provider = hybridWikiSearch
-    if (!provider) return
-    // 防重入：在跑时再触发只标 dirty，跑完补一轮（不丢最后一次 reindex 的更新）。
-    if (embeddedRefreshRunning) {
-      embeddedRefreshDirty = true
-      return
-    }
-    embeddedRefreshRunning = true
-    try {
-      do {
-        embeddedRefreshDirty = false
-        const { records, stats } = await embeddedRecordsLoader.load()
-        provider.replaceEmbeddedRecords(records)
-        app.log.info(
-          { component: "wiki-embedded-recall", ...stats },
-          "F027 embedded wiki records refreshed (semantic recall live)",
-        )
-      } while (embeddedRefreshDirty)
-    } catch (err) {
-      app.log.warn({ err }, "F027 embedded records refresh failed (non-fatal, BM25-only fallback)")
-    } finally {
-      embeddedRefreshRunning = false
-    }
-  }
+  // 防重入状态机抽自 createSerializedRefresher（德彪 codex batch1 P2-3：内联不可测 → 抽单元）。
+  const refreshEmbeddedRecords = createSerializedRefresher(
+    async () => {
+      const provider = hybridWikiSearch
+      if (!provider) return
+      const { records, stats } = await embeddedRecordsLoader.load()
+      provider.replaceEmbeddedRecords(records)
+      app.log.info(
+        { component: "wiki-embedded-recall", ...stats },
+        "F027 embedded wiki records refreshed (semantic recall live)",
+      )
+    },
+    (err) =>
+      app.log.warn({ err }, "F027 embedded records refresh failed (non-fatal, BM25-only fallback)"),
+  )
   const reindexWiki = async () => {
     const report = await reindexWikiEntities({
       wikiRoot: roomCompileWikiServicesRoot,
@@ -1035,7 +1026,7 @@ export async function createApiServer(options: {
     })
     app.log.info({ component: "wiki-reindex", ...report }, "F027 wiki entity reindex")
     // fire-and-forget：本地 embed 秒级 CPU，不阻塞 debounce/recompile 链。
-    void refreshEmbeddedRecords()
+    refreshEmbeddedRecords()
   }
   // 启动一次性全量 reindex：debounce 只在新写时增量；存量 wiki 文件需 boot 入索引，否则
   // search_wiki / Level 2 搜空表。scheduler 跳过时（CI/单测 MULTI_AGENT_SKIP_SCHEDULER=1）一并跳过。
