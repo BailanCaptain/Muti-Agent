@@ -24,30 +24,34 @@
 
 ## 终态 Schema
 
-### 进程模型（D6/D7/D9 · AC5/AC9 核心）
+### 进程模型（D6/D7/D9/D12/D13 · AC5/AC9 核心 · r2 升级版）
 
+- **控制面单实例（D12 · r2 P1-2）**：控制路由（start/restart/compile-backend）、内存单飞锁、boot reconcile **只存在于主 API**——路由注册处以 `process.env.WORKTREE_PREVIEW` 为门禁（preview 实例该 env=1 → 不注册控制路由，只注册只读 GET）。preview UI 通过 `GET /api/worktrees/capabilities → {control:boolean}` 感知并禁用操作按钮（提示去主 UI）。否则 worktree 自己的 API 收到 compile-backend 会先杀自身进程树（自杀悖论），且多实例锁失效。
+- **worktreeId（D13 · r2 P1-3）**：`slugifyWorktreeId(name) = name.replace(/[^A-Za-z0-9._-]/g, "-") + "-" + sha1(name).slice(0,8)`——状态/日志文件名只由 worktreeId 构成；`feat/F028` 与 `feat-F028` 不碰撞（哈希区分），含专项测试。
 - 主 API 编排器**分别** spawn 两个 detached 子进程（不是 supervisor 整组）：
   - api: `pnpm dev:api`（链 = mount-skills → tsc shared → tsc api → tsx watch）
   - web: `pnpm dev:web`（next dev）
   - cwd = worktree 根（服务端从 `git worktree list` 解析，调用方只给 name）
   - env = `process.env` + `buildPreviewEnv(...)` 子进程注入（**UI 路径零 `.env*` 写入** —— 不调 prepareDotenv）
   - stdio → `<主仓>/.runtime/worktree-preview-ui/<name>-api.log` / `<name>-web.log`（append）
-- 状态文件 `<主仓>/.runtime/worktree-preview-ui/<name>.json`：
+- 状态文件 `<主仓>/.runtime/worktree-preview-ui/<worktreeId>.json`：
 
 ```typescript
 type PreviewState = {
-  worktreeName: string
+  worktreeName: string        // 原始名（展示用）
+  worktreeId: string          // 文件名/键 = slug（D13）
   apiPort: number
   webPort: number
   processes: {
-    api: { pid: number; birthTime: string; startedAt: string } | null
-    web: { pid: number; birthTime: string; startedAt: string } | null
+    api: { pid: number; creationDate: string; startedAt: string } | null  // creationDate = CIM Win32_Process 同源采集
+    web: { pid: number; creationDate: string; startedAt: string } | null
   }
 }
 ```
 
-- **杀进程唯一合法依据**：目标 pid 在状态文件中且 OS 实测 birthTime 与记录一致 → `taskkill /PID <pid> /T /F`。端口被外来进程占用 → 拒绝操作返回 `PORT_OCCUPIED_FOREIGN`（绝不按端口/进程名杀）。
-- **boot reconciliation**：主 API 启动时扫描状态文件，pid 不存在或 birthTime 失配 → 该 process 字段置 null（只清记录，不杀任何进程）。
+- **杀进程唯一合法依据（r2 P1-4 升级）**：kill 前置预检三连——(1) 记录 pid 存在且 OS 实测 CreationDate 与落盘值**精确相等**（spawn 后与预检用同一 CIM 查询源，同表示精确比较，无容差）；(2) 我们端口上的每个 listener pid 都是记录 pid 的**后代**（CIM 进程表 ppid 链向上溯达记录 pid）；(3) 端口断言（≥3100/≥8800 且 ≠3000/≠8787）。预检全过 → `taskkill /PID <记录pid> /T /F`；任一不过 → `PORT_OCCUPIED_FOREIGN` 拒绝（绝不按端口/进程名杀）。**整组重启在任何 kill 之前完成 api+web 双进程全量预检**（半杀不允许）。
+- **SQLITE_PATH 包含性断言（r2 P1-5）**：spawn 前断言 env.SQLITE_PATH realpath 位于 `<目标worktree>/.runtime/worktree-preview/data/` 内，且不等于/不落入主仓 `data/` 与主库 SQLite 实际路径；违反 → 拒 spawn + 审计。
+- **boot reconciliation**：主 API 启动时扫描状态文件，pid 不存在或 CreationDate 失配 → 该 process 字段置 null（只清记录，不杀任何进程）。
 - **并发单飞**：编排器内存 per-name 互斥；持锁期间任何同名操作 → 409。
 - **审计**：每次操作 append 一行 JSON 到 `.runtime/worktree-preview-ui/audit.log`：`{time, action, worktree, ok, stage?, message?}`。
 
@@ -86,7 +90,8 @@ type PreviewActionResponse =
 type PreviewLogResponse = { lines: string[]; logPath: string }
 ```
 
-- 操作端点：POST + 同源校验（Origin 存在且 host 不匹配请求 Host → 403）+ name 必须命中 inventory（杜绝注入）+ isMain 400。
+- 操作端点：POST + **allowed-origin 校验（r2 P1-1）**——Origin 头存在时必须命中白名单 = {主 UI origin（CORS_ORIGIN 配置）} ∪ {registry 各条目 `http://localhost:<webPort>`}；无 Origin（curl/同进程）放行（localhost 信任模型）；**绝不用 Origin==API Host**（前端 :3000/:3100+ 对 API :8787/:8800+ 天生跨源，相等校验会拒掉全部正常请求）。+ name 必须命中 inventory（杜绝注入）+ isMain 400。
+- `GET /api/worktrees/capabilities` → `{ control: boolean }`（主 API true / preview 实例 false，UI 据此禁用操作按钮）。
 - AC8 打开前端：纯前端 `window.open("http://localhost:" + webPort)`，webPort 只能来自 list 响应。
 
 ### 项目目录 API（AC1/AC2）
@@ -96,7 +101,7 @@ type PreviewLogResponse = { lines: string[]; logPath: string }
 // GET /api/project-tree/list?root=main&dir=packages/api/src
 //   → { entries: [{ name, type: "dir"|"file", size: number|null }] }  // 上限 1000 条
 // GET /api/project-tree/content?root=main&path=packages/api/src/config.ts
-//   → { content, mtime, truncated }  // >512KB 截断；NUL 嗅探 → 400 BINARY_FILE；5s 超时 → 504
+//   → { content, mtime, truncated }  // 原语层 maxBytes=512KB 限读截断（r2 P1-6：同 fd 限读，不整读后截）；NUL 嗅探 → 400 BINARY_FILE
 ```
 
 - root 解析单源：`{lexicalRoot, expectedRealRoot}` 一次解析，list/content 共用（同源 containment）。
@@ -151,47 +156,53 @@ RUNTIME_LOG_LVL1_ITEMS = [
 6. detached HEAD 块 → branch:"(detached)" 不抛
 **TDD 循环 → Commit** `feat(F028): worktree 枚举器——porcelain+registry+端口探测+所有权三态 [黄仁勋]`
 
-### Task 2: 安全边界原语（AC6/AC9 守门）
+### Task 2: 安全边界原语（AC6/AC9 守门 · r2 升级）
 
 **Files:** Create `packages/api/src/worktrees/preview-guards.ts` + test
 **失败测试用例**：
 1. `assertWorktreePort`: 8800/8801/3100/3101 过；8787/3000/80/0/-1 抛
 2. `assertOperableWorktree`: isMain 抛；name 不在 inventory 抛；正常返回 entry
-3. `assertOwnedProcess(rec, osBirthTime)`: birthTime 一致过；失配/记录 null 抛 `NotOwnedError`
-4. `assertSameOrigin(originHeader, hostHeader)`: 无 Origin（同源非浏览器 curl）过；Origin host==Host 过；跨源抛
-**TDD → Commit** `feat(F028): preview 安全原语——端口/对象/所有权/同源四重断言 [黄仁勋]`
+3. `assertOwnedProcess(rec, osCreationDate)`: **精确相等**过；任何不等（含 1ms 差）/记录 null 抛 `NotOwnedError`
+4. `assertAllowedOrigin(originHeader, allowedOrigins)`: 无 Origin 过；命中白名单（:3000 主 UI / :3101 registry webPort）过；`http://localhost:8800`（API 自身 Host）**不在白名单 → 抛**（防回归到 Origin==Host）；`http://evil.com` 抛
+5. `assertListenerDescendant(processTable, listenerPid, rootPid)`: ppid 链可达过；不可达抛；表中无 listener 抛；环形 ppid（防御）抛
+6. `slugifyWorktreeId`: `feat/F028` → 无 `/` 且含 8 位哈希；`feat/a-b` 与 `feat-a/b` 与 `feat-a-b` 三者互不碰撞；纯 ASCII 安全字符集断言
+7. `assertSqlitePathContained(sqlitePath, worktreeRoot, mainDataPaths)`: worktree preview data 内过；主仓 `data/` 内抛；等于主库路径抛；`..` 逃逸抛
+**TDD → Commit** `feat(F028): preview 安全原语——端口/对象/所有权/origin/后代/slug/sqlite 七重断言 [黄仁勋]`
 
 ### Task 3: 状态文件存取 + 审计日志 + boot reconcile
 
 **Files:** Create `packages/api/src/worktrees/preview-state.ts` + test
 **失败测试用例**（fs 注入 tmpdir 真文件）：
-1. writeState/readState round-trip；损坏 JSON → null 不抛
+1. writeState/readState round-trip（文件名 = worktreeId slug，name 为 `feat/x` 时不产生子目录）；损坏 JSON → null 不抛
 2. `appendAudit` 追加一行 JSON（含 time/action/worktree/ok）
-3. `reconcileOnBoot`: pid 不存在 → process 字段置 null 落盘；birthTime 失配 → 同；匹配 → 原样；**全程不调 kill**（注入 kill spy 断言 0 调用）
+3. `reconcileOnBoot`: pid 不存在 → process 字段置 null 落盘；CreationDate 失配 → 同；匹配 → 原样；**全程不调 kill**（注入 kill spy 断言 0 调用）
 **TDD → Commit** `feat(F028): preview 状态文件+审计日志+boot reconcile（只清记录不杀进程）[黄仁勋]`
 
 ### Task 4: preview 编排器（compile-backend / restart / start / log / 409）
 
 **Files:** Create `packages/api/src/worktrees/preview-orchestrator.ts` + test
 **失败测试用例**（deps 全注入零真 IO）：
-1. `compileBackend` happy：杀 owned api 进程树 → spawn dev:api → api 端口 ready → ok:true；**web 进程 deps 零调用**（靶向断言）
-2. `compileBackend` 端口被 foreign 占 → `{ok:false, stage:"occupied-foreign"}`，kill 零调用
-3. `restartAll` happy：api+web 都按所有权杀 → 双 spawn → 双端口 ready → ok:true
-4. `start` 已 running(ownership:ui) → ok:false in-progress 语义外：返回 already-running message（spawn 零调用）
-5. `start` 无 registry 条目 → claimPorts 被调（端口动态分配）→ spawn → ok:true
-6. ready-timeout → 已 spawn 子进程按 pid+birthTime 回收，状态文件回滚
-7. spawn 抛 → `{ok:false, stage:"spawn"}` 状态文件不留半截
-8. **AC6**: 注入 8787 listener 构造 → 任何 kill 前断言抛（PreviewGuardError），审计记录 ok:false
-9. **AC10**: 同名并发第二发 → `{ok:false, stage:"in-progress"}`（内存锁），异名并行互不挡
-10. 每操作（成败均）appendAudit 恰一次
-11. `tailLog(name, proc, lines)`: 文件存在尾 N 行；不存在 lines:[]
+1. `compileBackend` happy：预检（CreationDate 精确相等 + listener 后代链 + 端口断言）→ 杀 owned api 进程树 → spawn dev:api → api 端口 ready → ok:true；**web 进程 deps 零调用**（靶向断言）
+2. `compileBackend` listener 非记录 pid 后代（注入外来 listener 进程表）→ `{ok:false, stage:"occupied-foreign"}`，kill 零调用
+3. `compileBackend` CreationDate 差 1ms → `{ok:false, stage:"occupied-foreign"}`，kill 零调用（精确比较回归锚）
+4. `restartAll` happy：**先完成 api+web 双进程全量预检，再开始任何 kill**（调用顺序断言：两次预检都在首个 kill 之前）→ 双杀双 spawn 双 ready → ok:true
+5. `restartAll` web 预检失败 → api 也不杀（半杀禁止），ok:false
+6. `start` 已 running(ownership:ui) → already-running（spawn 零调用）
+7. `start` 无 registry 条目 → claim worker 被调（端口动态分配）→ spawn → ok:true
+8. `start` spawn 前 SQLITE_PATH 断言失败（注入主库路径构造）→ 拒 spawn + 审计 ok:false
+9. ready-timeout → 已 spawn 子进程按记录 pid+CreationDate 回收，状态文件回滚
+10. spawn 抛 → `{ok:false, stage:"spawn"}` 状态文件不留半截
+11. **AC6**: 注入 8787 listener 构造 → 任何 kill 前断言抛，审计 ok:false
+12. **AC10**: 同名并发第二发 → `{ok:false, stage:"in-progress"}`（内存锁，单实例前提 = D12 控制面只在主 API），异名并行互不挡
+13. 每操作（成败均）appendAudit 恰一次
+14. `tailLog(name, proc, lines)`: 文件存在尾 N 行；不存在 lines:[]；日志路径由 worktreeId 构成（`feat/x` 不产生嵌套目录）
 **TDD → Commit** `feat(F028): preview 编排器——靶向编译后端/整组重启/启动/409/审计 [黄仁勋]`
 
 ### Task 5: 编排真实 deps（Windows 适配层）
 
 **Files:** Create `packages/api/src/worktrees/preview-deps.ts` + test
 **失败测试用例**（纯函数解析 + 命令拼装，不跑真命令）：
-1. `parseGetProcessBirthTime(stdout)`: PowerShell `Get-Process -Id X | Select StartTime` 样本 → ISO 串；进程不存在样本 → null
+1. `parseCimProcessTable(stdout)`: `Get-CimInstance Win32_Process | Select ProcessId,ParentProcessId,CreationDate | ConvertTo-Json` 样本 → `{pid, ppid, creationDate}[]`（CreationDate 保留原始机器表示精确比较）；进程不存在/空表样本 → []
 2. `buildTaskkillArgs(pid)` → `["/PID", String(pid), "/T", "/F"]`（args 数组无拼接）
 3. `buildSpawnSpec("api"|“web", worktree, env)` → cwd=worktree.path、detached:true、stdio 指向 `<name>-api.log`、command="pnpm" args=["dev:api"]、**spec.env 含 buildPreviewEnv（@multi-agent/shared）注入且不含 prepareDotenv 调用痕迹**
 4. `parsePortListeners(netstatStdout, [8801,3101])` → pid 集合（仅用于 foreign 检测，永不作为 kill 输入）
@@ -216,11 +227,12 @@ RUNTIME_LOG_LVL1_ITEMS = [
 1. GET /api/worktrees → 200 inventory 透传
 2. GET /:name/summary 未知 name → 404
 3. POST main/preview/compile-backend → 400（isMain）
-4. POST 带跨源 Origin → 403
+4. POST Origin=`http://localhost:3101`（registry webPort 白名单）→ 放行；Origin=`http://localhost:8800`（API 自身）→ **403**；Origin=`http://evil.com` → 403；无 Origin → 放行
 5. POST compile-backend fake ok:true → 200；fake in-progress → **409**；fake 其他 ok:false → 200 body.ok=false
 6. GET log?proc=web → 200 透传；proc 非法值 → 400
 7. name "../x" → 400（inventory 名单外）
 8. server 启动路径调用 reconcileOnBoot 恰一次（bootstrap spy）
+9. **D12 注册门禁**：`WORKTREE_PREVIEW=1` 构造下控制 POST 路由 404（未注册）、只读 GET 正常；无该 env 全注册；GET /api/worktrees/capabilities 分别返回 {control:false}/{control:true}
 **TDD → Commit** `feat(F028): worktrees 路由+同源校验+409 映射+boot reconcile 接线 [黄仁勋]`
 
 ### Task 8: 前端 store 扩展（"worktrees"）
@@ -241,6 +253,7 @@ RUNTIME_LOG_LVL1_ITEMS = [
 6. 未运行行：`[启动]` 显示、`[编译后端]/[打开前端]` 不显示；running 行反之
 7. `[打开前端]` → window.open 被调且 URL=http://localhost:<webPort>（spy）
 8. lvl1 切到 worktrees 才首次 fetch（懒加载）
+9. **D12**: capabilities {control:false} → 全部操作按钮禁用 + "去主 UI 操作"提示（只读列表/摘要正常）
 **TDD → Commit** `feat(F028): WorktreesTab——列表/摘要/编译后端/整组重启/启动/打开前端/日志 [黄仁勋]`
 
 ### Task 10: Phase 1 集成验证（真机）
@@ -271,11 +284,21 @@ RUNTIME_LOG_LVL1_ITEMS = [
 5. >1000 条目录 → 截到 1000 + truncated 标记
 **TDD → Commit** `feat(F028): project-tree list——containment+精确 denylist+条目上限 [黄仁勋]`
 
+### Task 12.5: readContainedFile maxBytes 原语扩展（r2 P1-6）
+
+**Files:** Modify `packages/api/src/wiki/path-containment.ts`（加法可选参数）+ 扩展其既有测试
+**失败测试用例**：
+1. `readContainedFile(abs, root, expectedRealRoot, {maxBytes: 64})` 对 100B 文件 → 返回前 64B + `truncated:true`（**同一 fd 上 `fh.read(buffer, 0, maxBytes+1)` 限读**，不 `fh.readFile` 整读）
+2. ≤maxBytes 文件 → 完整内容 + `truncated:false`
+3. 不传 maxBytes → 行为与现状逐字节一致（**F027 全部既有调用方测试零改动保持绿** = 回归锚）
+4. maxBytes 路径下 nlink>1 拒 / realpath 越界抛——原防御全保留（防御不因新参数旁路）
+**TDD → Commit** `feat(F028): readContainedFile 加 maxBytes 同 fd 限读——原语层资源上限 [黄仁勋]`
+
 ### Task 13: 文件 content（readContainedFile 复用 + 策略层）
 
 **Files:** Create `packages/api/src/project-tree/tree-content.ts` + test
-**用例**：正常 .ts → content+mtime；denylist 路径 → null（404 语义，与隐藏同源判定）；>512KB → 截断+truncated；NUL 字节 → BINARY_FILE；5s 超时（注入慢 read）→ TIMEOUT；越界 → WikiPathInvalidError 透传（只测分流不重测原语）
-**TDD → Commit** `feat(F028): project-tree content——复用原语+截断/二进制/超时策略 [黄仁勋]`
+**用例**：正常 .ts → content+mtime；denylist 路径 → null（404 语义，与隐藏同源判定）；>512KB（原语 maxBytes 透传）→ 截断+truncated；NUL 字节 → BINARY_FILE；越界 → WikiPathInvalidError 透传（只测分流不重测原语）
+**TDD → Commit** `feat(F028): project-tree content——复用原语 maxBytes+二进制拒策略 [黄仁勋]`
 
 ### Task 14: routes/project-tree.ts + server 挂载
 
@@ -305,8 +328,8 @@ quality-gate → acceptance-guardian（worktree preview 环境）→ requesting-
 |------|------|
 | Windows 杀树不净（pnpm→npm→tsx 链） | taskkill /T 树杀 + 杀后端口复探确认空 + 启动前 occupied-foreign 检查兜底 |
 | detached 子进程随主 API 重启失联 | 状态文件 pid+birthTime 持久化；boot reconcile 重建视图；running 真相=端口探测+所有权实测 |
-| birthTime 精度/时区导致误判 foreign | birthTime 统一 ISO UTC 落盘；比较容差 ±2s（进程表查询精度） |
+| CreationDate 误判（PID 复用）| spawn 后与 kill 预检用**同一 CIM 查询源**采集，同表示**精确相等**比较（±2s 容差方案被 r2 否决）；再叠 listener 后代链校验双保险 |
 | spawn 类测试 flaky | 编排器/inventory 测试全 deps 注入零真 IO；真 spawn 只在 Task 10/16 人工集成步 |
 | registry 并发写 | 复用 F024 proper-lockfile 原语 |
-| worktree preview 里的 API 实例也暴露管理端点 | 接受（同信任模型）；registry/状态文件路径解析单源主仓根，行为一致 |
+| preview API 实例收到控制请求自杀 | **D12 控制面单实例**：控制路由仅主 API 注册（WORKTREE_PREVIEW 门禁），preview 实例只读 + capabilities 报 control:false，UI 禁钮导主 UI |
 | UI 路径零 dotenv 注入被 CLI 残留 `.env.development.local` 覆盖 | **不会**——Next.js 官方 Load Order 第 1 位 = `process.env`（"stopping once the variable is found"，nextjs.org/docs/app/guides/environment-variables 2026-03 版实查），子进程 env 注入恒压过 .env 文件 |
