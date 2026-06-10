@@ -123,4 +123,26 @@ describe("F027 P13.4 · FileSystemLevel4Backend", () => {
       cleanup()
     }
   })
+
+  // 德彪 r3 P1 · Windows 大小写旁路:WIKI_PATH_PREFIX 用 /i,大写 DRAFT/_DRAFTS 过前缀校验,
+  // 大小写敏感 includes 会漏判 → Windows fs 不敏感能读真 draft 文件。isDraftRelativePath
+  // 已改 toLowerCase,大写形态同样返 null。
+  it("大写 DRAFT 路径 → 返 null(大小写不敏感闸门)", async () => {
+    const { backend, cleanup } = setup()
+    try {
+      assert.equal(await backend.readWiki("wiki/concepts/DRAFT/x.md"), null)
+      assert.equal(await backend.readWiki("wiki/concepts/Draft/x.md"), null)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("大写 _DRAFTS 路径 → 返 null", async () => {
+    const { backend, cleanup } = setup()
+    try {
+      assert.equal(await backend.readWiki("wiki/concepts/_DRAFTS/x.md"), null)
+    } finally {
+      cleanup()
+    }
+  })
 })

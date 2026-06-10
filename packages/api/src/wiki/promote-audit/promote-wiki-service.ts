@@ -41,7 +41,7 @@ import type { ACLContext } from "../acl-types"
 import { isServiceAlias } from "../acl-types"
 import { writeFileAtomic } from "../atomic-write"
 import { WikiPathInvalidError, safeWikiPath } from "../path-containment"
-import { deriveExemptionTaintedFields } from "./exemption-tainted-fields"
+import { checkExemptionSanitizeBlocked } from "./exemption-tainted-fields"
 import {
   V14PromoteAuditService,
   type V14PromoteAuditInput,
@@ -144,16 +144,24 @@ export class PromoteWikiService {
 
     // ─── 2. V14 二次审计 (read src body 跑 3 步 detection) ─────────────────
     const srcContent = fs.readFileSync(srcAbsolute, "utf-8")
-    // 德彪 r2 P1 · 人审豁免文档(frontmatter 带 ingest_exemption)promote 二审加严:
-    // 服务端 sanitize 复检 src,命中危险片段动态并入 layer 3 taintedSourceFields。
-    // 不依赖 client 传参(不可绕),也不把危险原文持久化进 frontmatter(防 promote 后
-    // 泄进 canonical/FTS)。普通 draft(无 exemption 标记)derived 恒空,零回归。
-    const derivedTainted = deriveExemptionTaintedFields(srcContent)
+    // 德彪 r3 P1 · 人审豁免文档(frontmatter 带 ingest_exemption)promote 二道关:对编译产物
+    // 跑 sanitize 复检,仍 blocked 直接拒。r2 的 layer3 substring 注入被 r3 实测推翻(matched
+    // 归一化后形态 ≠ 原文域,同形字注入 includes 必漏);blocked 判定在归一化域内全文生效、
+    // 无跨域盲区。普通 draft(无 exemption)放行,零回归。client 不可绕(服务端自取 src)。
+    const exemptionCheck = checkExemptionSanitizeBlocked(srcContent)
+    if (exemptionCheck.blocked) {
+      return {
+        status: "audit_rejected",
+        auditReject: {
+          layer: "exemption_sanitize_blocked",
+          matchedPatterns: exemptionCheck.reasons,
+          hint: "人审豁免文档 promote 复检仍触发 sanitize 红线（编译产物残留危险内容）。请人工改写 draft 去除攻击样例/同形字注入后再转正。",
+        },
+      }
+    }
     const auditInput: V14PromoteAuditInput = {
       body: srcContent,
-      taintedSourceFields: derivedTainted.length
-        ? Array.from(new Set([...(req.taintedSourceFields ?? []), ...derivedTainted]))
-        : req.taintedSourceFields,
+      taintedSourceFields: req.taintedSourceFields,
     }
     const auditResult = this.audit.audit(auditInput)
     if (!auditResult.passed) {
@@ -264,7 +272,11 @@ export class PromoteWikiService {
  *   - normalize backslash 兼容 Windows path
  */
 export function isDraftRelativePath(p: string): boolean {
-  const normalized = p.replace(/\\/g, "/")
+  // 德彪 r3 P1 · 大小写不敏感:WIKI_PATH_PREFIX(L4)用 /i,Windows fs 大小写不敏感,
+  // `DRAFT/`/`_DRAFTS/` 大写形态在 Windows 上能读到真 draft 文件 → 必须同样判为 draft,
+  // 否则 L4/promote 闸门被大小写旁路。SQLite LIKE 对 ASCII 本就大小写不敏感,toLowerCase
+  // 让 JS 判定与之对齐(单一口径)。
+  const normalized = p.replace(/\\/g, "/").toLowerCase()
   return normalized.includes("/draft/") || normalized.includes("/_drafts/")
 }
 

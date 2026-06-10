@@ -27,7 +27,7 @@
 import type { FastifyInstance } from "fastify"
 
 import type { WikiLeasesRepository } from "../../db/repositories/wiki-leases-repository"
-import { deriveExemptionTaintedFields } from "../../wiki/promote-audit/exemption-tainted-fields"
+import { checkExemptionSanitizeBlocked } from "../../wiki/promote-audit/exemption-tainted-fields"
 import type { PromoteWikiService } from "../../wiki/promote-audit/promote-wiki-service"
 import { isDraftRelativePath } from "../../wiki/promote-audit/promote-wiki-service"
 import type { V14PromoteAuditService } from "../../wiki/promote-audit/v14-promote-audit-service"
@@ -105,14 +105,31 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
       return { ok: false, code: "INTERNAL_ERROR", error: (err as Error).message }
     }
 
-    // 德彪 r2 P1 · 与 service.promote 同口径:豁免文档 preview 也服务端补 taint 片段,
-    // 否则前端 preview 显示 pass、真 promote 被拒,体验割裂(且 preview 可被绕)。
-    const derivedTainted = deriveExemptionTaintedFields(srcContent)
+    // 德彪 r2 P2 · taintedSourceFields 运行时校验(传非 string[] → 400,防 spread/for-of 抛 500)。
+    const tainted = normalizeTaintedSourceFields(body.taintedSourceFields)
+    if (tainted === INVALID) {
+      reply.code(400)
+      return { ok: false, code: "VALIDATION_ERROR", error: "taintedSourceFields 必须是字符串数组" }
+    }
+    // 德彪 r3 P1 · 与 service.promote 同口径:豁免文档 preview 也跑 sanitize blocked 复检,
+    // 仍 blocked → audit.passed=false(否则前端 preview 显示 pass、真 promote 被拒,体验割裂)。
+    const exemptionCheck = checkExemptionSanitizeBlocked(srcContent)
+    if (exemptionCheck.blocked) {
+      return {
+        ok: true,
+        audit: {
+          passed: false,
+          rejectReason: {
+            layer: "exemption_sanitize_blocked",
+            matchedPatterns: exemptionCheck.reasons,
+            hint: "人审豁免文档复检仍触发 sanitize 红线，需人工改写 draft 去除危险内容后再转正。",
+          },
+        },
+      }
+    }
     const result = deps.audit.audit({
       body: srcContent,
-      taintedSourceFields: derivedTainted.length
-        ? Array.from(new Set([...(body.taintedSourceFields ?? []), ...derivedTainted]))
-        : body.taintedSourceFields,
+      taintedSourceFields: tainted,
     })
     return { ok: true, audit: result }
   })
@@ -223,6 +240,11 @@ function validatePromoteBody(body: PostPromoteBody): ValidatedPromote {
   if (typeof body.reason !== "string" || body.reason.length === 0) {
     return { ok: false, error: "reason required (non-empty)" }
   }
+  // 德彪 r2 P2 · taintedSourceFields 运行时校验(非 string[] → 拒;service union 前必须确定是数组)。
+  const tainted = normalizeTaintedSourceFields(body.taintedSourceFields)
+  if (tainted === INVALID) {
+    return { ok: false, error: "taintedSourceFields 必须是字符串数组" }
+  }
   return {
     ok: true,
     body: {
@@ -230,8 +252,17 @@ function validatePromoteBody(body: PostPromoteBody): ValidatedPromote {
       destWikiPath: body.destWikiPath,
       callerAlias: body.callerAlias,
       reason: body.reason,
-      taintedSourceFields: body.taintedSourceFields,
+      taintedSourceFields: tainted,
       sourceMessageIds: body.sourceMessageIds,
     },
   }
+}
+
+/** 德彪 r2 P2 · taintedSourceFields 归一化哨兵:undefined=未传(放行),INVALID=类型非法(拒)。 */
+const INVALID = Symbol("invalid-tainted-source-fields")
+
+function normalizeTaintedSourceFields(v: unknown): readonly string[] | undefined | typeof INVALID {
+  if (v === undefined || v === null) return undefined
+  if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) return INVALID
+  return v as readonly string[]
 }
