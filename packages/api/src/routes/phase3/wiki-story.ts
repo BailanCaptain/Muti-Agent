@@ -91,13 +91,14 @@ export interface GetWikiStoryResponse {
 const BUCKET_TYPES = ["room", "project", "user", "feedback", "work"] as const
 
 /**
- * wiki_entity_index.bucket（第一层目录）→ chap 14 结构化桶 type。
- * work 缺席：chap 14 把工作发现也归 concepts/，按目录与 project 不可分 → 并入 project。
+ * chap 14 结构化桶 type → wiki_entity_index.bucket（第一层目录）。
+ * work 无目录：chap 14 把工作发现也归 concepts/，按目录与 project 不可分 → 计数并入
+ * project，work 桶恒 0（不脑补 frontmatter taxonomy）。
  */
-const DIR_TO_BUCKET_TYPE: Record<string, (typeof BUCKET_TYPES)[number]> = {
-  rooms: "room",
-  concepts: "project",
-  people: "user",
+const BUCKET_TYPE_TO_DIR: Partial<Record<(typeof BUCKET_TYPES)[number], string>> = {
+  room: "rooms",
+  project: "concepts",
+  user: "people",
   feedback: "feedback",
 }
 
@@ -111,6 +112,12 @@ interface EntityRow {
   name: string
   body: string
   indexedAt: string
+}
+
+interface BucketCountRow {
+  bucket: string
+  total: number
+  draftCount: number | null
 }
 
 export interface WikiStoryServiceDeps {
@@ -129,31 +136,33 @@ export class WikiStoryService {
   getStory(): GetWikiStoryResponse {
     const buckets: WikiBucketStat[] = []
 
-    // F027 续 · 文件真数据源：wiki_entity_index 全量行按 bucket 目录映射到结构化桶。
-    const rows = this.safeRows(
-      "SELECT path, bucket, name, body, indexed_at AS indexedAt FROM wiki_entity_index ORDER BY indexed_at DESC",
-    )
-    const totalEntities = rows.length
-    const byBucketType = new Map<string, EntityRow[]>()
-    for (const row of rows) {
-      const type = DIR_TO_BUCKET_TYPE[row.bucket]
-      if (!type) continue
-      const list = byBucketType.get(type) ?? []
-      list.push(row)
-      byBucketType.set(type, list)
+    // F027 续 · 文件真数据源（德彪 batch2 P2-4：SQL 聚合计数 + 仅每桶 top5 才取 body，
+    // 不全量加载 body 进内存——千级实体 × 1MB body 上限会在同步查询里炸事件循环/内存）。
+    // indexer 落库时 path 已 normalize 为 '/'（wiki-entity-indexer relPath.replace），LIKE 可靠。
+    const totalEntities = this.safeCount("SELECT COUNT(*) AS n FROM wiki_entity_index")
+    const countsByDir = new Map<string, { total: number; draftCount: number }>()
+    for (const row of this.safeRows<BucketCountRow>(
+      "SELECT bucket, COUNT(*) AS total, SUM(CASE WHEN path LIKE '%/draft/%' THEN 1 ELSE 0 END) AS draftCount FROM wiki_entity_index GROUP BY bucket",
+    )) {
+      countsByDir.set(row.bucket, { total: row.total, draftCount: row.draftCount ?? 0 })
     }
 
     let nextEntityId = 1
     for (const type of BUCKET_TYPES) {
-      const list = byBucketType.get(type) ?? []
-      const draftCount = list.filter((r) => isDraftPath(r.path)).length
+      const dir = BUCKET_TYPE_TO_DIR[type]
+      const counts = (dir && countsByDir.get(dir)) || { total: 0, draftCount: 0 }
+      const top5 = dir
+        ? this.safeRows<EntityRow>(
+            "SELECT path, bucket, name, body, indexed_at AS indexedAt FROM wiki_entity_index WHERE bucket = ? ORDER BY indexed_at DESC LIMIT 5",
+            [dir],
+          )
+        : []
       buckets.push({
         type,
-        totalCount: list.length,
-        canonicalCount: list.length - draftCount,
-        draftCount,
-        // rows 已按 indexedAt desc，全桶截前 5 解析 frontmatter
-        topEntities: list.slice(0, 5).map((r) => this.toEntitySummary(r, nextEntityId++)),
+        totalCount: counts.total,
+        canonicalCount: counts.total - counts.draftCount,
+        draftCount: counts.draftCount,
+        topEntities: top5.map((r) => this.toEntitySummary(r, nextEntityId++)),
       })
     }
 
@@ -230,9 +239,9 @@ export class WikiStoryService {
   }
 
   /** safeCount 同款错误语义的多行版（schema mismatch 抛、其他 fail-soft 空数组）。 */
-  private safeRows(sql: string, params: ReadonlyArray<unknown> = []): EntityRow[] {
+  private safeRows<T>(sql: string, params: ReadonlyArray<unknown> = []): T[] {
     try {
-      return this.client.prepare(sql).all(...params) as EntityRow[]
+      return this.client.prepare(sql).all(...params) as T[]
     } catch (err) {
       const msg = (err as Error).message ?? ""
       if (/no such (table|column)/i.test(msg)) {

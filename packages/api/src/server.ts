@@ -65,7 +65,7 @@ import {
   EmbeddedWikiRecordsLoader,
   createSerializedRefresher,
 } from "./wiki/memory-preflight/embedded-records-loader"
-import { isWorktreePreviewMode, resolveWikiRootBase } from "./wiki/resolve-wiki-root"
+import { resolveWikiRootBase } from "./wiki/resolve-wiki-root"
 import type { HybridSearchProvider } from "./wiki/memory-preflight/hybrid-search-provider"
 import { createWikiServices } from "./wiki/wiki-services"
 
@@ -176,13 +176,13 @@ export async function createApiServer(options: {
   }
   // F027 P4 AC-P4-9 a/b · worktree-preview wiki/{warnings,index}/*.md fixture copier.
   // 同 gate 模式 (WORKTREE_PREVIEW=1 + .runtime/worktree-preview/ path check)。
-  // destWikiRoot 从 sqlitePath 推 (路径同根: .runtime/worktree-preview/data/{multi-agent.sqlite,wiki/})
-  // 跟 plan AC-P4-9 a/b line 253-254 显式目标路径一致。
-  // F027 续 · 双根已收敛：preview 模式且无显式 WIKI_ROOT 时 wikiRootBase（上方）=
-  // destWikiRoot 同根（resolve-wiki-root.ts 规则 2），原 "Week 5 follow-up" mismatch 已修。
+  // F027 续 · 双根收敛（德彪 batch2 P1 补刀）：fixtures dest 也走 wikiRootBase——
+  // preview 无 env 时 = dirname(sqlitePath)/wiki（原 destWikiRoot，行为不变）；
+  // preview + 显式 WIKI_ROOT 时 wikiRootBase = WIKI_ROOT，copier 二道 gate
+  // （dest 必须含 .runtime/worktree-preview/）自动关闭 → demo fixtures 不落，
+  // 但读/写/索引全链单根（fixtures 是 demo 种子，宁缺不裂根）。
   const { applyWorktreePreviewWikiFixtures } = await import("./db/worktree-preview-wiki-fixtures")
-  const destWikiRoot = path.join(path.dirname(options.sqlitePath), "wiki")
-  const wikiFixturesReport = applyWorktreePreviewWikiFixtures({ destWikiRoot })
+  const wikiFixturesReport = applyWorktreePreviewWikiFixtures({ destWikiRoot: wikiRootBase })
   if (!wikiFixturesReport.gateClosed) {
     for (const [bucket, status] of Object.entries(wikiFixturesReport.buckets)) {
       if (!status) continue
@@ -885,13 +885,10 @@ export async function createApiServer(options: {
   //   - GET  /api/wiki/warnings + /api/wiki/index (Day 17 AC-P4-9 a/b)
   //
   // codex Week 4 mid-r1 P1 修: metaWikiRoot 仅在 worktree-preview 模式下覆盖 wikiServices.wikiRoot;
-  // 否则 default fallback wikiServices.wikiRoot (prod 部署 / WIKI_ROOT env 路径正确)
-  // F027 续：判定收敛到 resolve-wiki-root.ts 单源（与 wikiRootBase 规则同一份代码）。
-  const isWorktreePreview = isWorktreePreviewMode({ sqlitePath: options.sqlitePath })
-  registerPhase4Routes(app, {
-    wikiServices,
-    metaWikiRoot: isWorktreePreview ? destWikiRoot : undefined,
-  })
+  // F027 续（德彪 batch2 P1）：metaWikiRoot override 删除——wikiServices.wikiRoot 已是
+  // wikiRootBase（preview 下与 fixtures dest 同根），强制 destWikiRoot 反而在
+  // preview + 显式 WIKI_ROOT 时复活双根（writer 写 WIKI_ROOT、meta reader 读 fixtures 根）。
+  registerPhase4Routes(app, { wikiServices })
 
   // F027 Phase 3 P20 · scheduler go-live（Week 1 Day 1）
   //

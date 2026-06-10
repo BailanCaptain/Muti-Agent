@@ -15,10 +15,12 @@
  */
 
 import assert from "node:assert/strict"
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
+import { createDrizzleDb } from "../../db/drizzle-instance"
+import { WikiEventsRepository } from "../../db/repositories/wiki-events-repository"
 import type { HealthCheckReport } from "./nightly-health-check"
 import { createHealthWarningsWriter } from "./health-warnings-writer"
 
@@ -157,7 +159,6 @@ describe("HealthWarningsWriter", () => {
     const { root, cleanup } = makeRoot()
     try {
       const fileAsRoot = path.join(root, "not-a-dir")
-      const { writeFileSync } = await import("node:fs")
       writeFileSync(fileAsRoot, "x")
       const write = createHealthWarningsWriter({
         wikiRoot: fileAsRoot,
@@ -168,6 +169,125 @@ describe("HealthWarningsWriter", () => {
       assert.ok(warns.length > 0)
     } finally {
       cleanup()
+    }
+  })
+
+  it("德彪 batch2 P2-2 · 文件写失败 → warning_raised 事件仍 PREPARE+COMMIT（两路独立 fail-soft）", async () => {
+    const { root, cleanup } = makeRoot()
+    try {
+      const fileAsRoot = path.join(root, "not-a-dir")
+      writeFileSync(fileAsRoot, "x")
+      const events = makeEventsStub()
+      const write = createHealthWarningsWriter({
+        wikiRoot: fileAsRoot,
+        events: events.repo as never,
+        clock: CLOCK,
+        warn: () => {},
+      })
+      await write(emptyReport({ orphans: ["wiki/concepts/x.md"] }))
+      assert.equal(events.appended.length, 1, "fs 故障不应连坐取消事件（tab 走 event 兜底）")
+      assert.deepEqual(events.committed, [42])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("德彪 batch2 P3 · events.commit 返回 false → warn 不静默", async () => {
+    const { root, cleanup } = makeRoot()
+    try {
+      const warns: string[] = []
+      const repo = {
+        appendPending: () => ({ id: 7 }),
+        commit: () => false,
+      }
+      const write = createHealthWarningsWriter({
+        wikiRoot: root,
+        events: repo as never,
+        clock: CLOCK,
+        warn: (m) => warns.push(m),
+      })
+      await write(emptyReport({ orphans: ["wiki/concepts/x.md"] }))
+      assert.ok(
+        warns.some((w) => w.includes("commit returned false")),
+        "CAS false 应留 warn",
+      )
+    } finally {
+      cleanup()
+    }
+  })
+})
+
+describe("HealthWarningsWriter · 真 DB + reject_stale_leader trigger（德彪 batch2 P2-3）", () => {
+  function makeDb() {
+    const dir = mkdtempSync(path.join(tmpdir(), "health-warnings-db-"))
+    const { db, close } = createDrizzleDb(path.join(dir, "test.sqlite"))
+    return {
+      db,
+      cleanup: () => {
+        close()
+        rmSync(dir, { recursive: true, force: true })
+      },
+    }
+  }
+
+  function seedLeader(db: ReturnType<typeof createDrizzleDb>["db"], term: string): void {
+    const client = (db as unknown as { $client: { prepare(sql: string): { run(...a: unknown[]): unknown } } })
+      .$client
+    client
+      .prepare(
+        `INSERT INTO compiler_leader (id, current_term, leader_alias, acquired_at, renewed_at, lease_expires_at)
+         VALUES (1, ?, 'test-leader', '2026-06-10T00:00:00Z', '2026-06-10T00:00:00Z', '2099-01-01T00:00:00Z')`,
+      )
+      .run(term)
+  }
+
+  it("current_term=1000 + 注入真 term → 事件落 committed（'999' 硬编码会被 trigger 拒的场景）", async () => {
+    const { root, cleanup: cleanRoot } = makeRoot()
+    const { db, cleanup: cleanDb } = makeDb()
+    try {
+      seedLeader(db, "1000")
+      const events = new WikiEventsRepository(db)
+      const write = createHealthWarningsWriter({
+        wikiRoot: root,
+        events,
+        // bootstrap 同款注入：真 leader term（这里直接喂 '1000' 模拟 leaseRepo.getCurrent()）
+        leaderContext: { currentLeaderTerm: () => "1000", newFencingToken: () => "tok-1" },
+        clock: CLOCK,
+      })
+      await write(emptyReport({ orphans: ["wiki/concepts/x.md"] }))
+      const rows = events.getByAction("warning_raised", 10)
+      assert.equal(rows.length, 1)
+      assert.equal(rows[0]?.state, "committed")
+    } finally {
+      cleanRoot()
+      cleanDb()
+    }
+  })
+
+  it("current_term=1000 + 旧 '999' term → trigger 拒事件，warn 不抛，文件仍落盘", async () => {
+    const { root, cleanup: cleanRoot } = makeRoot()
+    const { db, cleanup: cleanDb } = makeDb()
+    try {
+      seedLeader(db, "1000")
+      const events = new WikiEventsRepository(db)
+      const warns: string[] = []
+      const write = createHealthWarningsWriter({
+        wikiRoot: root,
+        events,
+        leaderContext: { currentLeaderTerm: () => "999", newFencingToken: () => "tok-2" },
+        clock: CLOCK,
+        warn: (m) => warns.push(m),
+      })
+      await write(emptyReport({ orphans: ["wiki/concepts/x.md"] }))
+      assert.equal(events.getByAction("warning_raised", 10).length, 0, "stale term 应被 trigger 拒")
+      assert.ok(warns.length > 0, "事件失败应 warn")
+      assert.ok(
+        existsSync(path.join(root, "warnings", "nightly-health-2026-06-10.md")),
+        "文件路不受事件失败影响",
+      )
+    } finally {
+      cleanRoot()
+      cleanDb()
     }
   })
 })

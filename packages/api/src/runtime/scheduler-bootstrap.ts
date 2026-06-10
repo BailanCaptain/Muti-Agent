@@ -41,6 +41,7 @@
  *   - app.close() → SchedulerRuntime.stop() idempotent
  */
 
+import { randomUUID } from "node:crypto"
 import os from "node:os"
 import path from "node:path"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
@@ -258,10 +259,17 @@ export async function bootSchedulerRuntime(
   // + wiki_events warning_raised。KB warnings tab 的两个派生数据源此前都无 producer（视图恒空）。
   // 根用 wikiIndexRoot（单层 = WikiMetaScanner 同根，写双层 wikiRoot 视图读不到，B2 双根教训）；
   // 缺 → 不写（与 scanner noop 同档降级）。
+  // 德彪 batch2 P2-3：注入真 leader term —— compiler_leader.current_term 持续递增，
+  // 硬编码 "999" 终会被超过 → reject_stale_leader trigger 永久拒 warning_raised 事件。
+  // 行不存在（启动期/无 leader）→ trigger 自身跳过，"999" 兜底无害。
   const healthWarningsWriter = opts.wikiIndexRoot
     ? createHealthWarningsWriter({
         wikiRoot: opts.wikiIndexRoot,
         events: new WikiEventsRepository(opts.db),
+        leaderContext: {
+          currentLeaderTerm: () => String(leaseRepo.getCurrent()?.currentTerm ?? "999"),
+          newFencingToken: () => randomUUID(),
+        },
         warn: (msg) => opts.log.warn({}, msg),
       })
     : undefined

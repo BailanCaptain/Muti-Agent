@@ -64,15 +64,19 @@ export function createHealthWarningsWriter(
     const fileName = `nightly-health-${date}.md`
     const content = renderWarningMarkdown(report, now, total)
 
+    // 德彪 batch2 P2-2：两条派生数据源（文件 / warning_raised 事件）独立 fail-soft——
+    // wiki-meta 本就支持 event-only warning 兜底（无文件 → hasContent=false 仍显示），
+    // 文件系统故障不应连坐取消事件写入（否则 fs 故障 = 两路全黑）。
+    let fileWritten = false
     try {
       const dir = path.join(deps.wikiRoot, "warnings")
       await fs.mkdir(dir, { recursive: true })
       writeFileAtomic(path.join(dir, fileName), content)
+      fileWritten = true
     } catch (err) {
       warn(
-        `health-warnings-writer: write failed (fail-soft, warnings tab 本轮无文件): ${err instanceof Error ? err.message : String(err)}`,
+        `health-warnings-writer: file write failed (warning_raised 事件仍会写，tab 走 event 兜底): ${err instanceof Error ? err.message : String(err)}`,
       )
-      return
     }
 
     if (!deps.events) return
@@ -91,10 +95,17 @@ export function createHealthWarningsWriter(
         leaderTerm: leaderContext.currentLeaderTerm(),
         result: "ok",
       })
-      deps.events.commit(event.id, { contentHash: sha256(content) })
+      const committed = deps.events.commit(event.id, { contentHash: sha256(content) })
+      if (!committed) {
+        // 德彪 batch2 P3：commit CAS false = row 非 pending（罕见 race），留 warn 别静默
+        // （Level5Sink 同款处理先例）。
+        warn(
+          `health-warnings-writer: wiki_events commit returned false (eventId=${event.id}, row not pending?)`,
+        )
+      }
     } catch (err) {
       warn(
-        `health-warnings-writer: wiki_events warning_raised failed (file 已落盘，仅缺审计行): ${err instanceof Error ? err.message : String(err)}`,
+        `health-warnings-writer: wiki_events warning_raised failed (${fileWritten ? "file 已落盘，仅缺审计行" : "file 也失败，本轮两路全失"}): ${err instanceof Error ? err.message : String(err)}`,
       )
     }
   }
