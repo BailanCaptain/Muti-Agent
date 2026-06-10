@@ -17,7 +17,8 @@
 - AC10 同 worktree 操作单飞，第二发 409
 
 **Architecture:** 后端 `packages/api/src/worktrees/`（inventory / guards / state-store+audit / orchestrator / deps / summary，路由 `routes/worktrees.ts`）+ `packages/api/src/project-tree/`（roots / list / content，复用 `wiki/path-containment.ts#readContainedFile`，路由 `routes/project-tree.ts`）。前端扩展 `runtime-log-store` LVL1（"worktrees"/"project-tree"），`runtime-log/index.tsx` 按 activeLvl1 切面板，新组件 `tabs/worktrees/` `tabs/project-tree/`。
-**Tech Stack:** Fastify（现有 server.ts 模式）、node:child_process detached spawn（args 数组，无 shell 拼接）、taskkill /PID /T /F、PowerShell Get-Process StartTime（birthTime）、F024 `claimPorts`/`buildPreviewEnv` 复用、proper-lockfile（registry 现成）、node:test + tsx（后端）、vitest + testing-library（前端）。
+**Tech Stack:** Fastify（现有 server.ts 模式）、node:child_process detached spawn（args 数组，无 shell 拼接）、taskkill /PID /T /F、PowerShell Get-Process StartTime（birthTime）、node:test + tsx（后端）、vitest + testing-library（前端）。
+**F024 复用边界（实测定型）**：`packages/api` tsconfig `rootDir:"src"` 不能 import 仓库根 `scripts/`——registry 操作走 F024 现成**跨进程 worker**（`worktree-port-registry-claim-worker.ts` stdout JSON / `worktree-preview-shutdown-worker.ts`，shutdown-worker 同款模式）；`buildPreviewEnv` 纯映射**迁移到 `packages/shared/src/preview-env.ts`**（单一真相源），`scripts/worktree-preview.ts` 改为 re-export（F024 既有测试零改动保持绿），api 从 `@multi-agent/shared` 导入。
 
 ---
 
@@ -128,6 +129,16 @@ RUNTIME_LOG_LVL1_ITEMS = [
 
 ## Phase 1 · Worktree tab（AC3-AC10）
 
+### Task 0: buildPreviewEnv 迁 packages/shared（单一真相源，F024 契约保持）
+
+**Files:**
+- Create: `packages/shared/src/preview-env.ts`（+ `packages/shared/src/index.ts` re-export）
+- Modify: `scripts/worktree-preview.ts`（删本地实现，改 `export { buildPreviewEnv, type PreviewEnv } from "../packages/shared/src/preview-env"`）
+- Test: shared 侧新增 `packages/shared/src/preview-env.test.ts`（迁移既有断言）；**`scripts/worktree-preview.test.ts` 零改动必须保持绿**（F024 契约回归证明）
+
+**Steps:** 失败测试（shared 侧 import 断言 env 映射全字段）→ 迁移 → `pnpm test:api` 确认 F024 测试原样绿 → Commit
+`refactor(F028): buildPreviewEnv 迁 shared 单源——scripts re-export 保 F024 契约 [黄仁勋]`
+
 ### Task 1: worktree 枚举器
 
 **Files:** Create `packages/api/src/worktrees/worktree-inventory.ts` + test
@@ -182,8 +193,10 @@ RUNTIME_LOG_LVL1_ITEMS = [
 **失败测试用例**（纯函数解析 + 命令拼装，不跑真命令）：
 1. `parseGetProcessBirthTime(stdout)`: PowerShell `Get-Process -Id X | Select StartTime` 样本 → ISO 串；进程不存在样本 → null
 2. `buildTaskkillArgs(pid)` → `["/PID", String(pid), "/T", "/F"]`（args 数组无拼接）
-3. `buildSpawnSpec("api"|“web", worktree, env)` → cwd=worktree.path、detached:true、stdio 指向 `<name>-api.log`、command="pnpm" args=["dev:api"]、**spec.env 含 buildPreviewEnv 注入且不含 prepareDotenv 调用痕迹**
+3. `buildSpawnSpec("api"|“web", worktree, env)` → cwd=worktree.path、detached:true、stdio 指向 `<name>-api.log`、command="pnpm" args=["dev:api"]、**spec.env 含 buildPreviewEnv（@multi-agent/shared）注入且不含 prepareDotenv 调用痕迹**
 4. `parsePortListeners(netstatStdout, [8801,3101])` → pid 集合（仅用于 foreign 检测，永不作为 kill 输入）
+5. `buildClaimWorkerSpec(registryPath, name)` → command="npx" args=["tsx","scripts/worktree-port-registry-claim-worker.ts",...]（claim 走 F024 跨进程 worker，stdout JSON 解析为 PortEntry；解析坏 JSON → 结构化 error）
+6. `buildShutdownWorkerSpec(registryPath, name)` → 同款（registry 清理走 F024 shutdown-worker）
 **TDD → Commit** `feat(F028): preview 真实 deps——birthTime/taskkill/detached spawn/netstat 解析 [黄仁勋]`
 
 ### Task 6: 进展摘要
