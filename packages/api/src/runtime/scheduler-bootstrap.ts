@@ -41,11 +41,13 @@
  *   - app.close() → SchedulerRuntime.stop() idempotent
  */
 
+import { randomUUID } from "node:crypto"
 import os from "node:os"
 import path from "node:path"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type { FastifyBaseLogger } from "fastify"
 import { CompilerLeaderRepository } from "../db/repositories/compiler-leader-repository"
+import { WikiEventsRepository } from "../db/repositories/wiki-events-repository"
 import type * as schema from "../db/schema"
 import { ArchiveYearlySessions } from "../services/scheduler/archive-yearly-sessions"
 import {
@@ -55,6 +57,7 @@ import {
 import type { DocsIngestRunner } from "../services/scheduler/docs-ingest-runner"
 import { DocsWatcher } from "../services/scheduler/docs-watcher"
 import { DriftDetector } from "../services/scheduler/drift-detector"
+import { createHealthWarningsWriter } from "../services/scheduler/health-warnings-writer"
 import type { JobTrace } from "../services/scheduler/job-trace"
 import { MonthlySnapshot } from "../services/scheduler/monthly-snapshot"
 import { NightlyHealthCheck } from "../services/scheduler/nightly-health-check"
@@ -252,10 +255,35 @@ export async function bootSchedulerRuntime(
   const noopRecompile = async () => []
   const noopScanSessions = async () => []
 
+  // F027 续 · warnings 文件生产链：NHC findings → `<wikiIndexRoot>/warnings/nightly-health-<date>.md`
+  // + wiki_events warning_raised。KB warnings tab 的两个派生数据源此前都无 producer（视图恒空）。
+  // 根用 wikiIndexRoot（单层 = WikiMetaScanner 同根，写双层 wikiRoot 视图读不到，B2 双根教训）；
+  // 缺 → 不写（与 scanner noop 同档降级）。
+  // 德彪 batch2 P2-3 + r2 + r3 P2：leader term = **NHC 轮开始时捕获**本 runtime 持有的
+  // lease term，整轮固定（cron run 包装见下方 nightly-health-check 注册）：
+  //   - 读 DB 现任：执行中被抢占会冒用新 term（r2）；
+  //   - 写入时刻读持有值：跨 demote 重新当选仍冒用新 lease（r3）；
+  //   - "999" 兜底：trigger 只拒小于现任，真实 term 是 1/2/3 量级 → 999 永远通过（r3）。
+  // 捕获值语义：轮中被抢占 → 捕获的旧 term < 新任 → trigger 拒；捕获时无 lease →
+  // null → writer 跳过事件写入（无身份不写，文件路不受影响）。
+  let runtimeLeaseTerm: () => string | null = () => null
+  let nhcRunLeaseTerm: string | null = null
+  const healthWarningsWriter = opts.wikiIndexRoot
+    ? createHealthWarningsWriter({
+        wikiRoot: opts.wikiIndexRoot,
+        events: new WikiEventsRepository(opts.db),
+        leaderContext: {
+          currentLeaderTerm: () => nhcRunLeaseTerm,
+          newFencingToken: () => randomUUID(),
+        },
+        warn: (msg) => opts.log.warn({}, msg),
+      })
+    : undefined
   const healthCheck = new NightlyHealthCheck({
     scanEntities: opts.wikiRoot
       ? scanWikiEntitiesFs(opts.wikiRoot, opts.log)
       : noopScanEntities,
+    onReport: healthWarningsWriter,
     logger: opts.log,
   })
 
@@ -367,7 +395,15 @@ export async function bootSchedulerRuntime(
       timezone: hcCfg.timezone,
       windowMinutes: hcCfg.windowMinutes,
       timeoutSeconds: hcCfg.timeoutSeconds,
-      run: async () => ({ status: "ok", result: await healthCheck.run() }),
+      // r3：轮开始捕获持有 term，整轮固定（finally 清空防泄漏到下一轮/其他路径）。
+      run: async () => {
+        nhcRunLeaseTerm = runtimeLeaseTerm()
+        try {
+          return { status: "ok", result: await healthCheck.run() }
+        } finally {
+          nhcRunLeaseTerm = null
+        }
+      },
     })
   }
 
@@ -510,6 +546,9 @@ export async function bootSchedulerRuntime(
       : undefined,
     logger: opts.log,
   })
+  // 德彪 batch2-r2 P2 · 回填 late-bind：healthWarningsWriter 写 wiki_events 用本 runtime
+  // 持有的 lease term（被抢占即 demote 置 null → fallback 被 trigger 拒，fencing 不被冒用）。
+  runtimeLeaseTerm = () => runtime.currentLeaseTerm()
   await runtime.start()
   opts.log.info(
     {

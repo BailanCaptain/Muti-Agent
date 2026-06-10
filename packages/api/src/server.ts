@@ -61,6 +61,12 @@ import {
   WikiEntityFtsProvider,
   reindexWikiEntities,
 } from "./wiki/wiki-search"
+import {
+  EmbeddedWikiRecordsLoader,
+  createSerializedRefresher,
+} from "./wiki/memory-preflight/embedded-records-loader"
+import { resolveWikiRootBase } from "./wiki/resolve-wiki-root"
+import type { HybridSearchProvider } from "./wiki/memory-preflight/hybrid-search-provider"
 import { createWikiServices } from "./wiki/wiki-services"
 
 /**
@@ -136,6 +142,11 @@ export async function createApiServer(options: {
     ReturnType<typeof import("./runtime/cli-orchestrator").runTurn>
   >()
   const dispatch = new DispatchOrchestrator(sessions, PROVIDER_ALIASES, invocations)
+  // F027 续 · preview 双根修复：wiki 根单一解析（resolve-wiki-root.ts 三规则）。
+  // worktree-preview 且未显式 WIKI_ROOT → 根落 preview data 目录（与 fixture copier /
+  // metaWikiRoot destWikiRoot 同根）；否则行为与原 `WIKI_ROOT || cwd/.runtime/wiki` 完全一致。
+  // 原 line 175 自标的 "reader 读 fixtures 根、writer 写 env 根" mismatch 由此收敛单根。
+  const wikiRootBase = resolveWikiRootBase({ sqlitePath: options.sqlitePath })
   // F018 P4: TranscriptWriter instantiation. dataDir = dirname(sqlitePath) so
   // transcripts live under .runtime/threads/... alongside the SQLite file.
   const { TranscriptWriter } = await import("./services/transcript-writer")
@@ -165,13 +176,13 @@ export async function createApiServer(options: {
   }
   // F027 P4 AC-P4-9 a/b · worktree-preview wiki/{warnings,index}/*.md fixture copier.
   // 同 gate 模式 (WORKTREE_PREVIEW=1 + .runtime/worktree-preview/ path check)。
-  // destWikiRoot 从 sqlitePath 推 (路径同根: .runtime/worktree-preview/data/{multi-agent.sqlite,wiki/})
-  // 跟 plan AC-P4-9 a/b line 253-254 显式目标路径一致。
-  // Note: 当前 wikiServices.wikiRoot 用 process.env.WIKI_ROOT || cwd/.runtime/wiki/，
-  //       跟 fixture copier dest 不一致 (pre-existing 配置 mismatch — Week 5 follow-up)。
+  // F027 续 · 双根收敛（德彪 batch2 P1 补刀）：fixtures dest 也走 wikiRootBase——
+  // preview 无 env 时 = dirname(sqlitePath)/wiki（原 destWikiRoot，行为不变）；
+  // preview + 显式 WIKI_ROOT 时 wikiRootBase = WIKI_ROOT，copier 二道 gate
+  // （dest 必须含 .runtime/worktree-preview/）自动关闭 → demo fixtures 不落，
+  // 但读/写/索引全链单根（fixtures 是 demo 种子，宁缺不裂根）。
   const { applyWorktreePreviewWikiFixtures } = await import("./db/worktree-preview-wiki-fixtures")
-  const destWikiRoot = path.join(path.dirname(options.sqlitePath), "wiki")
-  const wikiFixturesReport = applyWorktreePreviewWikiFixtures({ destWikiRoot })
+  const wikiFixturesReport = applyWorktreePreviewWikiFixtures({ destWikiRoot: wikiRootBase })
   if (!wikiFixturesReport.gateClosed) {
     for (const [bucket, status] of Object.entries(wikiFixturesReport.buckets)) {
       if (!status) continue
@@ -273,7 +284,7 @@ export async function createApiServer(options: {
   let fireWikiCommit: (() => void) | undefined
   const wikiServices = createWikiServices({
     db: drizzleDb,
-    wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    wikiRoot: wikiRootBase,
     onCommit: () => fireWikiCommit?.(),
   })
   const decisions = new DecisionManager((event) => broadcaster.broadcast(event), repository)
@@ -293,6 +304,10 @@ export async function createApiServer(options: {
   // prompt_audit 9 字段写入由 PromptAuditWriter (line 266) 负责，跟 Coordinator
   // 启用解耦：Coordinator enabled=true → 9 字段填真 recall output；
   // enabled=false → 9 字段走 disabled 默认（recall_required=false 等）。
+  //
+  // F027 续 · hybridWikiSearch 提升到 block 外：reindexWiki()（下方 ~line 1000）完成后
+  // EmbeddedWikiRecordsLoader 要对它热替换 embedded records（语义召回转正）。
+  let hybridWikiSearch: HybridSearchProvider | undefined
   {
     const { AdaptiveRecallCoordinator } = await import(
       "./orchestrator/adaptive-recall-coordinator"
@@ -316,12 +331,12 @@ export async function createApiServer(options: {
       broadcaster: auditBroadcaster,
     })
     // F027 #286 FU-2 · 冷启召回与 coordinator Level 2 共享同一 hybrid provider（B1-b-2 P3-5）。
-    // 今天 embedded records 空 → 退化 BM25-only（与原 SearchWikiProvider 注入行为等价）；
-    // F028 boot-load embedded records 后冷启 + coordinator 一起升级语义召回。
-    const hybridWikiSearch = createHybridWikiSearchProvider({ drizzleDb, embeddingService })
+    // 起步 embedded records 空 → BM25-only；boot reindex 后 EmbeddedWikiRecordsLoader
+    // 热替换 records → 冷启 + coordinator 同时升级语义召回（F027 续 · 转正）。
+    hybridWikiSearch = createHybridWikiSearchProvider({ drizzleDb, embeddingService })
     const executorDeps = createProductionRecallExecutorDeps({
       drizzleDb,
-      wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+      wikiRoot: wikiRootBase,
       messagesFtsRepo,
       embeddingService,
       level5,
@@ -364,7 +379,7 @@ export async function createApiServer(options: {
     const { ViewfinderService } = await import("./routes/phase3/viewfinder")
     const viewfinderSvc = new ViewfinderService({
       db: drizzleDb,
-      wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+      wikiRoot: wikiRootBase,
     })
     messages.setViewfinderLoader(async (roomId) => {
       const r = await viewfinderSvc.getViewfinder(roomId).catch(() => null)
@@ -803,7 +818,7 @@ export async function createApiServer(options: {
     "./wiki/llm-compile/entity-existence-checker"
   )
   const ingestCompileWikiRoot = path.join(
-    process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    wikiRootBase,
     "wiki",
   )
   let ingestCompileRules = ""
@@ -854,7 +869,7 @@ export async function createApiServer(options: {
 
   registerPhase3Routes(app, {
     db: drizzleDb,
-    wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    wikiRoot: wikiRootBase,
     wikiServices,
     sharedIngestServices: {
       previewStore: sharedPreviewStore,
@@ -870,14 +885,10 @@ export async function createApiServer(options: {
   //   - GET  /api/wiki/warnings + /api/wiki/index (Day 17 AC-P4-9 a/b)
   //
   // codex Week 4 mid-r1 P1 修: metaWikiRoot 仅在 worktree-preview 模式下覆盖 wikiServices.wikiRoot;
-  // 否则 default fallback wikiServices.wikiRoot (prod 部署 / WIKI_ROOT env 路径正确)
-  const isWorktreePreview =
-    process.env.WORKTREE_PREVIEW === "1" &&
-    options.sqlitePath.replace(/\\/g, "/").includes(".runtime/worktree-preview/")
-  registerPhase4Routes(app, {
-    wikiServices,
-    metaWikiRoot: isWorktreePreview ? destWikiRoot : undefined,
-  })
+  // F027 续（德彪 batch2 P1）：metaWikiRoot override 删除——wikiServices.wikiRoot 已是
+  // wikiRootBase（preview 下与 fixtures dest 同根），强制 destWikiRoot 反而在
+  // preview + 显式 WIKI_ROOT 时复活双根（writer 写 WIKI_ROOT、meta reader 读 fixtures 根）。
+  registerPhase4Routes(app, { wikiServices })
 
   // F027 Phase 3 P20 · scheduler go-live（Week 1 Day 1）
   //
@@ -907,7 +918,7 @@ export async function createApiServer(options: {
   // `<wikiServicesRoot>/wiki/` 作 wikiRoot — 写 `<wikiServicesRoot>/wiki/rooms/...`
   // 跟 ViewfinderService 期望对齐.
   const roomCompileWikiServicesRoot =
-    process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki")
+    wikiRootBase
   const roomCompileWikiRoot = path.join(roomCompileWikiServicesRoot, "wiki")
   // F027 P4 hotfix · WikiEventsSink wrap — 让 RoomCompiler 写 viewfinder.md 时留 wiki_events row
   // (V16.5 §5 line 452 "所有 wiki 写操作走 append-only event log")。
@@ -987,12 +998,37 @@ export async function createApiServer(options: {
   //   wikiRoot 传 `<WIKI_ROOT||.runtime/wiki>`（= roomCompileWikiServicesRoot）——reindex 内部
   //   自己 join("wiki")，磁盘实测文件在 `.runtime/wiki/wiki/<bucket>`，故不能传多套一层的
   //   roomCompileWikiRoot（会变三层 wiki 扫不到文件）。
+  // F027 续 · 语义召回转正：reindex 后从 wiki_entity_index 装 embedded records 热替换进
+  // hybrid provider（冷启 + Level 2 同一实例同时升级）。sourceHash 缓存让 debounce 高频
+  // 刷新只付增量 embed 成本；全失败 → records 维持上轮/空 → BM25-only，天然 fail-soft。
+  const embeddedRecordsLoader = new EmbeddedWikiRecordsLoader({
+    db: drizzleDb,
+    generateEmbedding: (text) => embeddingService.generateEmbedding(text),
+    warn: (msg) => app.log.warn({}, msg),
+  })
+  // 防重入状态机抽自 createSerializedRefresher（德彪 codex batch1 P2-3：内联不可测 → 抽单元）。
+  const refreshEmbeddedRecords = createSerializedRefresher(
+    async () => {
+      const provider = hybridWikiSearch
+      if (!provider) return
+      const { records, stats } = await embeddedRecordsLoader.load()
+      provider.replaceEmbeddedRecords(records)
+      app.log.info(
+        { component: "wiki-embedded-recall", ...stats },
+        "F027 embedded wiki records refreshed (semantic recall live)",
+      )
+    },
+    (err) =>
+      app.log.warn({ err }, "F027 embedded records refresh failed (non-fatal, BM25-only fallback)"),
+  )
   const reindexWiki = async () => {
     const report = await reindexWikiEntities({
       wikiRoot: roomCompileWikiServicesRoot,
       db: drizzleDb,
     })
     app.log.info({ component: "wiki-reindex", ...report }, "F027 wiki entity reindex")
+    // fire-and-forget：本地 embed 秒级 CPU，不阻塞 debounce/recompile 链。
+    refreshEmbeddedRecords()
   }
   // 启动一次性全量 reindex：debounce 只在新写时增量；存量 wiki 文件需 boot 入索引，否则
   // search_wiki / Level 2 搜空表。scheduler 跳过时（CI/单测 MULTI_AGENT_SKIP_SCHEDULER=1）一并跳过。

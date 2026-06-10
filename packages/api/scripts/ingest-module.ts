@@ -90,6 +90,12 @@ export function createIngestModule(opts: IngestModuleOpts): { ingest: IngestFn; 
       { sourcePath: source, content, mimeType: "text/markdown" },
       { provenance: "docs-watcher" },
     )
+    // F027 续：blocked 直报 sanitize_blocked（含红线 reason），不再拿幽灵 previewId 去 commit
+    // 误报 DRAFT_NOT_FOUND（2026-06-09 backfill 12 篇排查教训）。
+    if (previewRes.blocked) {
+      const reasons = previewRes.warnings.map((w) => w.subkind ?? w.kind).join(", ")
+      throw new Error(`ingest preview sanitize_blocked (${reasons}): ${source}`)
+    }
     // 德彪 codex P3-1：crossRefs 从**编译产物**统计（LLM 可能规范化/新增 wikilink），比原始 doc 准。
     const compiled = previewRes.llmCompiledPreview || content
     const crossRefs = (compiled.match(/\[\[[^\]]+\]\]/g) ?? []).length

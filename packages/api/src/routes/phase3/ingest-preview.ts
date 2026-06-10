@@ -156,9 +156,12 @@ export class IngestPreviewService {
     const expiresAt = new Date(createdAt.getTime() + this.previewTtlMs).toISOString()
 
     // blocked: 红线触发或 quarantinedRatio 超阈值 → sanitizedContent 空 + 不生成 LLM 编译预览
+    // previewId="" + blocked=true：blocked 预览从不入 store，发真 id 出去 = 幽灵 id，
+    // 消费方拿去 commit 会误报 DRAFT_NOT_FOUND（backfill 12 篇排查教训）。
     if (sanitized.blocked) {
       return {
-        previewId: this.newId(),
+        previewId: "",
+        blocked: true,
         sanitizedContent: "",
         llmCompiledPreview: "",
         warnings,
@@ -243,6 +246,7 @@ export class IngestPreviewService {
 
     return {
       previewId,
+      blocked: false,
       sanitizedContent: sanitized.sanitizedText,
       llmCompiledPreview,
       warnings,

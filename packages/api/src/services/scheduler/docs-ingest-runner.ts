@@ -139,8 +139,9 @@ export class DocsIngestRunner {
       return { skipped: true, skippedReason: "preview_blocked" }
     }
 
-    // sanitized === '' → preview 内部判 blocked
-    if (previewResult.sanitizedContent === "") {
+    // F027 续：吃显式 blocked flag（旧 sanitizedContent==='' 启发式会把"合法空产出"误判 blocked，
+    // 也依赖 blocked 路径恰好返空串的实现细节）。
+    if (previewResult.blocked) {
       this.log.warn(
         { event, warnings: previewResult.warnings },
         "docs-ingest-runner: preview blocked (sanitize redline), skip commit",

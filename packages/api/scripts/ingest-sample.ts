@@ -144,6 +144,22 @@ async function main() {
       continue
     }
     const ms = Date.now() - started
+    // 德彪 codex batch1 P2-1：blocked（sanitize 红线）≠ 编译失败 —— 原逻辑会写空预览文件
+    // 还标 ok:true 假成功。直报 sanitize_blocked 不写文件。
+    if (res.blocked) {
+      const reasons = res.warnings.map((w) => w.subkind ?? w.kind).join(", ")
+      log(`🚫 ${rel} sanitize_blocked (${reasons})，跳过`)
+      results.push({
+        file: rel,
+        outPath: "",
+        ok: false,
+        fellBackToStub: false,
+        warnings: [`sanitize_blocked: ${reasons}`],
+        bytes: content.length,
+        ms,
+      })
+      continue
+    }
     const compileFailed = res.warnings.some((w) => w.kind === "compile_failed")
     const outName = `${rel.replace(/[\\/]/g, "__")}`
     const outPath = path.join(outDir, outName)

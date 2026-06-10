@@ -188,6 +188,17 @@ export class SchedulerRuntime {
   }
 
   /**
+   * F027 续（德彪 batch2-r2 P2）· 本 runtime 当前**持有**的 leader lease term。
+   *
+   * 给 job 业务回调写 wiki_events 时作 leader_term —— 用持有值而非"读 DB 现任"：
+   * job 执行中被新 leader 抢占 → 本 leader 心跳 renew 失败 selfDemote → lease=null
+   * → caller fallback 旧值/兜底值被 reject_stale_leader trigger 拒，fencing 不被冒用。
+   */
+  currentLeaseTerm(): string | null {
+    return this.leader.getLease()?.currentTerm ?? null
+  }
+
+  /**
    * 起 leader + 注册并启动 cron jobs + 跑 startup jobs + （leader 才）起 event-driven jobs。
    * idempotent。
    */

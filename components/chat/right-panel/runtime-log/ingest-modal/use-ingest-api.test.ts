@@ -23,6 +23,7 @@ function makePreviewResponse(
 ): PreviewIngestResponse {
   return {
     previewId: "preview-uuid-1",
+    blocked: false,
     sanitizedContent: "# Sanitized",
     llmCompiledPreview: "---\ntype: concept\n---\n# Stub",
     warnings: [],

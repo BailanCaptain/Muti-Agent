@@ -160,8 +160,11 @@ export function IngestModal({
     })
   }
 
-  const previewBlocked =
-    previewHook.data?.warnings.some((w) => w.kind === "sensitive_token") ?? false
+  // F027 续：吃 backend 显式 blocked flag。旧 warnings.some(kind==='sensitive_token') 启发式
+  // 会把"隔离段非红线"（同 kind warning 但可 commit）误禁。
+  // 德彪 codex batch1 P3：安全字段 fail-closed —— blocked 缺失（老后端/畸形响应）视为 blocked
+  // 禁 commit，不能 fail-open 放行 ghost preview。
+  const previewBlocked = previewHook.data ? previewHook.data.blocked !== false : false
 
   return (
     <div
