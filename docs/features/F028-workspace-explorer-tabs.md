@@ -96,6 +96,7 @@ RuntimeLog 容器新增两个一级 tab：
 | 2026-06-11 | 讨论收口 + Design Gate 条件放行（小孙 /goal 放权全流程推进，点名德彪审文档愿景对齐） |
 | 2026-06-11 | 德彪 codex r1 愿景审 **NEEDS-WORK**（4 P1 + 5 P2 + 愿景对齐表 3 ❌）；9 findings 全接，AC 重构为 10 条，Design Decisions 扩为 D1-D11 |
 | 2026-06-11 | 德彪 codex r2（文档复审+plan 初审）双 **NEEDS-WORK** 6 P1；全接：allowed-origin 修正、控制面单实例（D12）、worktreeId slug（D13）、后代预检+精确 CreationDate（D7 升级）、SQLITE_PATH 包含断言、readContainedFile maxBytes 原语扩展；r2 明判认可 D10 不建账号体系 |
+| 2026-06-11 | 德彪 codex r3：**文档 GO**；plan NEEDS-WORK（4 P1 残留/深挖 + 2 P2）并依家规 §17 触发 **TAKEOVER**（黄仁勋连续两轮"全修"复验有残留）。黄仁勋降级信息提供者交四件套，**桂芬（gemini CLI）接管 plan 修订**：worktreeId 日志命名统一、resolveControlPlaneOrigins 独立白名单解析器、SQLITE_PATH mkdir 时序+祖先 junction 检查、假超时残留清除、slug ≤40 长度上限、CreationDate 术语统一。待德彪 r4 复审（接管者不得自审） |
 
 ## Links
 
