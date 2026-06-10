@@ -309,3 +309,4 @@ quality-gate → acceptance-guardian（worktree preview 环境）→ requesting-
 | spawn 类测试 flaky | 编排器/inventory 测试全 deps 注入零真 IO；真 spawn 只在 Task 10/16 人工集成步 |
 | registry 并发写 | 复用 F024 proper-lockfile 原语 |
 | worktree preview 里的 API 实例也暴露管理端点 | 接受（同信任模型）；registry/状态文件路径解析单源主仓根，行为一致 |
+| UI 路径零 dotenv 注入被 CLI 残留 `.env.development.local` 覆盖 | **不会**——Next.js 官方 Load Order 第 1 位 = `process.env`（"stopping once the variable is found"，nextjs.org/docs/app/guides/environment-variables 2026-03 版实查），子进程 env 注入恒压过 .env 文件 |
