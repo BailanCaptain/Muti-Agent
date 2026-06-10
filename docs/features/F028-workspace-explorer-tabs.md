@@ -69,8 +69,8 @@ RuntimeLog 容器新增两个一级 tab：
 | D3 | 文件访问权限 | 只读 / 可编辑 | **只读** | 编辑仍走 agent；最小权限面；德彪 r1 判定"不算缩水愿景" |
 | D4 | 项目目录的根 | 仅主仓 / 可切换 | **可切换：主仓 + 任一 worktree** | 与 Worktree tab 联动 |
 | D5 | UI 启动 preview | 只管已运行 / 可启动 | **未运行可从 UI 启动**（AC7） | 自助闭环 |
-| D6 | 进程模型 | 复用 supervisor 进程 / 编排器直管两子进程 | **主 API 编排器分别 spawn dev:api 与 dev:web（detached + 日志落盘 + 状态文件记 pid+birthTime+token）** | 「编译后端」需要单杀 API 子进程；supervisor 整组模型做不到靶向重启（德彪 r1 P2-5/P2-6 连锁结论） |
-| D7 | 杀进程依据 | 端口 listener / pid+birthTime 所有权 | **r2 升级**：kill 前置预检 = 记录 pid 的 CreationDate 同源采集**精确相等**（无容差）+ 端口 listener 必须是记录 pid 的**后代**（CIM ppid 链）；整组重启先全量预检后才 kill；任一不过 → 拒绝+提示 | 德彪 r1 P1-3 + r2 P1-4：端口杀误伤、birthTime ±2s 容差在 PID 复用窗口仍可误杀，后代关系才证明 listener 归属 |
+| D6 | 进程模型 | 复用 supervisor 进程 / 编排器直管两子进程 | **主 API 编排器分别 spawn dev:api 与 dev:web（detached + 日志落盘 + 状态文件记 pid+CreationDate）** | 「编译后端」需要单杀 API 子进程；supervisor 整组模型做不到靶向重启（德彪 r1 P2-5/P2-6 连锁结论） |
+| D7 | 杀进程依据 | 端口 listener / pid+CreationDate 所有权 | **r2 升级**：kill 前置预检 = 记录 pid 的 CreationDate 同源采集**精确相等**（无容差）+ 端口 listener 必须是记录 pid 的**后代**（CIM ppid 链）；整组重启先全量预检后才 kill；任一不过 → 拒绝+提示 | 德彪 r1 P1-3 + r2 P1-4：端口杀误伤、±2s 容差在 PID 复用窗口仍可误杀，后代关系才证明 listener 归属 |
 | D8 | secrets 边界 | 模糊"类" / 精确 denylist | **精确 denylist**：目录 `node_modules` `.git` `.next` `.npm-cache` `.worktrees` `.runtime` `.agents` `data` `.codex` `.gemini` `.obsidian`；文件 `.env*` `auth.json` `*.pem` `*.key` `*.p12` `*.pfx` `id_rsa*` `*.token` `.npmrc`；**隐藏**（list 不出现 + content 404） | 德彪 r1 P2-7："auth/token 类"不可测试；隐藏优于置灰（不暴露存在性） |
 | D9 | UI 路径 dotenv | 复用 F024 prepareDotenv / 零写入 | **UI 路径零 `.env*` 写入**，环境全部子进程 env 注入（Next.js process.env 优先于 .env 文件）；CLI 路径保留 F024 现状 | 德彪 r1 P1-4：运行时自动改 `.env*` 踩铁律 3；CLI 是人工操作不受影响 |
 | D10 | 控制面信任模型 | 引入 auth / localhost 单用户 + allowed-origin + 审计 | **沿用 repo localhost 单用户模型**，加 POST + **allowed-origin 白名单校验**（Origin 存在时须命中主 UI origin / registry webPort origins；Origin==API Host 方案被 r2 否决——前端与 API 天生跨源）+ 审计日志，不建账号体系 | 德彪 r1 P1-2 要求安全合同 + r2 P1-1 修正校验对象；r2 明判认可不建账号体系 |
@@ -97,6 +97,7 @@ RuntimeLog 容器新增两个一级 tab：
 | 2026-06-11 | 德彪 codex r1 愿景审 **NEEDS-WORK**（4 P1 + 5 P2 + 愿景对齐表 3 ❌）；9 findings 全接，AC 重构为 10 条，Design Decisions 扩为 D1-D11 |
 | 2026-06-11 | 德彪 codex r2（文档复审+plan 初审）双 **NEEDS-WORK** 6 P1；全接：allowed-origin 修正、控制面单实例（D12）、worktreeId slug（D13）、后代预检+精确 CreationDate（D7 升级）、SQLITE_PATH 包含断言、readContainedFile maxBytes 原语扩展；r2 明判认可 D10 不建账号体系 |
 | 2026-06-11 | 德彪 codex r3：**文档 GO**；plan NEEDS-WORK（4 P1 残留/深挖 + 2 P2）并依家规 §17 触发 **TAKEOVER**（黄仁勋连续两轮"全修"复验有残留）。黄仁勋降级信息提供者交四件套，**桂芬（gemini CLI）接管 plan 修订**：worktreeId 日志命名统一、resolveControlPlaneOrigins 独立白名单解析器、SQLITE_PATH mkdir 时序+祖先 junction 检查、假超时残留清除、slug ≤40 长度上限、CreationDate 术语统一。待德彪 r4 复审（接管者不得自审） |
+| 2026-06-11 | 德彪 r4（配额 4:11 重置后重派）NEEDS-WORK 3P1+2P2+doc patch 指令 → 桂芬 r5 续修：start 外来端口预检、主 UI origin 固定 :3000 三形态测试、SQLite 先查祖先后建目录（junction 场景断言零创建）、slug 前缀 ≤31、Get-CimInstance 术语统一+删 UI 渲染检查；D6/D7 doc patch（pid+CreationDate）。双侧残留 grep=0（桂芬自查+黄仁勋独立复核）。Task 0（buildPreviewEnv 迁 shared，r2/r3 零质疑纯重构）已在配额窗口期完成于 worktree `16b1438` |
 
 ## Links
 
