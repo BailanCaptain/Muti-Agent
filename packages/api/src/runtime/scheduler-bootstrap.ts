@@ -46,6 +46,7 @@ import path from "node:path"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type { FastifyBaseLogger } from "fastify"
 import { CompilerLeaderRepository } from "../db/repositories/compiler-leader-repository"
+import { WikiEventsRepository } from "../db/repositories/wiki-events-repository"
 import type * as schema from "../db/schema"
 import { ArchiveYearlySessions } from "../services/scheduler/archive-yearly-sessions"
 import {
@@ -55,6 +56,7 @@ import {
 import type { DocsIngestRunner } from "../services/scheduler/docs-ingest-runner"
 import { DocsWatcher } from "../services/scheduler/docs-watcher"
 import { DriftDetector } from "../services/scheduler/drift-detector"
+import { createHealthWarningsWriter } from "../services/scheduler/health-warnings-writer"
 import type { JobTrace } from "../services/scheduler/job-trace"
 import { MonthlySnapshot } from "../services/scheduler/monthly-snapshot"
 import { NightlyHealthCheck } from "../services/scheduler/nightly-health-check"
@@ -252,10 +254,22 @@ export async function bootSchedulerRuntime(
   const noopRecompile = async () => []
   const noopScanSessions = async () => []
 
+  // F027 续 · warnings 文件生产链：NHC findings → `<wikiIndexRoot>/warnings/nightly-health-<date>.md`
+  // + wiki_events warning_raised。KB warnings tab 的两个派生数据源此前都无 producer（视图恒空）。
+  // 根用 wikiIndexRoot（单层 = WikiMetaScanner 同根，写双层 wikiRoot 视图读不到，B2 双根教训）；
+  // 缺 → 不写（与 scanner noop 同档降级）。
+  const healthWarningsWriter = opts.wikiIndexRoot
+    ? createHealthWarningsWriter({
+        wikiRoot: opts.wikiIndexRoot,
+        events: new WikiEventsRepository(opts.db),
+        warn: (msg) => opts.log.warn({}, msg),
+      })
+    : undefined
   const healthCheck = new NightlyHealthCheck({
     scanEntities: opts.wikiRoot
       ? scanWikiEntitiesFs(opts.wikiRoot, opts.log)
       : noopScanEntities,
+    onReport: healthWarningsWriter,
     logger: opts.log,
   })
 
