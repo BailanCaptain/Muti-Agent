@@ -1,7 +1,7 @@
 ---
 id: F028
 title: RuntimeLog 工作区拓展：项目目录浏览 + Worktree 浏览与手动编译
-status: spec
+status: in-progress
 owner: 黄仁勋
 created: 2026-06-11
 ---
@@ -98,6 +98,7 @@ RuntimeLog 容器新增两个一级 tab：
 | 2026-06-11 | 德彪 codex r2（文档复审+plan 初审）双 **NEEDS-WORK** 6 P1；全接：allowed-origin 修正、控制面单实例（D12）、worktreeId slug（D13）、后代预检+精确 CreationDate（D7 升级）、SQLITE_PATH 包含断言、readContainedFile maxBytes 原语扩展；r2 明判认可 D10 不建账号体系 |
 | 2026-06-11 | 德彪 codex r3：**文档 GO**；plan NEEDS-WORK（4 P1 残留/深挖 + 2 P2）并依家规 §17 触发 **TAKEOVER**（黄仁勋连续两轮"全修"复验有残留）。黄仁勋降级信息提供者交四件套，**桂芬（gemini CLI）接管 plan 修订**：worktreeId 日志命名统一、resolveControlPlaneOrigins 独立白名单解析器、SQLITE_PATH mkdir 时序+祖先 junction 检查、假超时残留清除、slug ≤40 长度上限、CreationDate 术语统一。待德彪 r4 复审（接管者不得自审） |
 | 2026-06-11 | 德彪 r4（配额 4:11 重置后重派）NEEDS-WORK 3P1+2P2+doc patch 指令 → 桂芬 r5 续修：start 外来端口预检、主 UI origin 固定 :3000 三形态测试、SQLite 先查祖先后建目录（junction 场景断言零创建）、slug 前缀 ≤31、Get-CimInstance 术语统一+删 UI 渲染检查；D6/D7 doc patch（pid+CreationDate）。双侧残留 grep=0（桂芬自查+黄仁勋独立复核）。Task 0（buildPreviewEnv 迁 shared，r2/r3 零质疑纯重构）已在配额窗口期完成于 worktree `16b1438` |
+| 2026-06-11 | 德彪 r6 NEEDS-WORK 2P1+1P2（SQLITE realpath 首启 ENOENT / Windows pnpm .cmd spawn 适配 / NTFS ADS 冒号流）→ 桂芬 r7 修（plan v5 `e925112`）→ 德彪 r8 **GO，findings 清零（轨迹 9→6→5→3→0），Design Gate 关闭，TAKEOVER 任务结束**。黄仁勋恢复 author，status → in-progress，开 TDD 实施 |
 
 ## Links
 

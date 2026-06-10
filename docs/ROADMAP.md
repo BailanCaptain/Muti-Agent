@@ -9,7 +9,7 @@
 |----|------|------|-------|--------|------|
 | F017 | 跨房间协作感知：侧边栏运行指示 + 全局任务状态 | spec | 桂芬 | internal | [F017](features/F017-cross-room-awareness.md) |
 | F020 | 决策卡片挂载矩阵：按场景分流（单 agent 消息内嵌 / 链级 Footer / 多人讨论收敛后弹）+ 折叠徽章 + 吸收 B007 | spec | 黄仁勋 | internal | [F020](features/F020-decision-card-mounting-matrix.md) |
-| F028 | RuntimeLog 工作区拓展：项目目录浏览 + Worktree 浏览/手动编译 | spec | 黄仁勋 | internal | [F028](features/F028-workspace-explorer-tabs.md) |
+| F028 | RuntimeLog 工作区拓展：项目目录浏览 + Worktree 浏览/手动编译 | in-progress | 黄仁勋 | internal | [F028](features/F028-workspace-explorer-tabs.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features
