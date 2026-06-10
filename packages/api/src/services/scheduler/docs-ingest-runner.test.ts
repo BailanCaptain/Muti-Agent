@@ -41,11 +41,14 @@ function silentLogger() {
   } as never
 }
 
-function makePreviewStub(opts: { blocked?: boolean; previewId?: string } = {}): IngestPreviewService {
+function makePreviewStub(
+  opts: { blocked?: boolean; previewId?: string; sanitizedContent?: string } = {},
+): IngestPreviewService {
   return {
     preview: (_body: PreviewIngestBody): PreviewIngestResponse => ({
-      previewId: opts.previewId ?? "preview-uuid-1",
-      sanitizedContent: opts.blocked ? "" : "sanitized markdown content",
+      previewId: opts.blocked ? "" : (opts.previewId ?? "preview-uuid-1"),
+      blocked: opts.blocked ?? false,
+      sanitizedContent: opts.sanitizedContent ?? (opts.blocked ? "" : "sanitized markdown content"),
       llmCompiledPreview: opts.blocked ? "" : "compiled stub",
       warnings: opts.blocked
         ? [{ kind: "sensitive_token", subkind: "jailbreak_template", message: "redline" }]
@@ -131,6 +134,27 @@ test("P1-2 · DocsIngestRunner · preview blocked (sanitize redline) → skipped
     const commit = makeCommitStub({ ok: true, response: { ingestEventId: "0", finalPath: "x", committedAt: "", fencingToken: "" } })
     const runner = new DocsIngestRunner({
       preview: makePreviewStub({ blocked: true }),
+      commit,
+      logger: silentLogger(),
+    })
+    const result = await runner.runIngest(makeEvent({ absolutePath: f }))
+    assert.equal(result.skipped, true)
+    assert.equal(result.skippedReason, "preview_blocked")
+    assert.equal((commit as unknown as { __calls: unknown[] }).__calls.length, 0, "commit 不应被调用")
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test("F027 续 · DocsIngestRunner · blocked 判定吃 blocked flag 而非 sanitizedContent=='' 启发式", async () => {
+  const tmp = makeTmpDir()
+  try {
+    const f = path.join(tmp, "blocked-with-text.md")
+    writeFileSync(f, "## doc body")
+    const commit = makeCommitStub({ ok: true, response: { ingestEventId: "0", finalPath: "x", committedAt: "", fencingToken: "" } })
+    const runner = new DocsIngestRunner({
+      // blocked=true 但 sanitizedContent 非空 → 仍必须 skip（证明 runner 不依赖空串启发式）
+      preview: makePreviewStub({ blocked: true, sanitizedContent: "partial sanitized text" }),
       commit,
       logger: silentLogger(),
     })

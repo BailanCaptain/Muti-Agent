@@ -50,7 +50,10 @@ export interface PreviewIngestBody {
 }
 
 export interface PreviewIngestResponse {
+  /** blocked=true 时为 ""（backend 不再发从未入 store 的幽灵 id）。 */
   previewId: string
+  /** sanitize 红线触发 → true（commit 必须禁；不能用 warnings kind 推断）。 */
+  blocked: boolean
   sanitizedContent: string
   llmCompiledPreview: string
   warnings: PreviewWarning[]

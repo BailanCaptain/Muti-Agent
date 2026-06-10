@@ -39,6 +39,8 @@ test("Day 5 · ingest preview · happy markdown → sanitized + compiled + 0 war
   assert.ok(r.llmCompiledPreview.includes("preview: true"))
   assert.ok(r.llmCompiledPreview.includes("# Foo concept"))
   assert.equal(r.warnings.length, 0)
+  assert.equal(r.blocked, false)
+  assert.notEqual(r.previewId, "")
 })
 
 test("Day 5 · ingest preview · jailbreak template → blocked + subkind=jailbreak_template（范-r1 P2-3）", async () => {
@@ -50,6 +52,10 @@ test("Day 5 · ingest preview · jailbreak template → blocked + subkind=jailbr
   })
   assert.equal(r.sanitizedContent, "")
   assert.equal(r.llmCompiledPreview, "")
+  // F027 续 · ghost previewId 修：blocked 必须显式标 + 不再发从未入 store 的幽灵 id
+  // （backfill 12 篇拿幽灵 id 去 commit 误报 DRAFT_NOT_FOUND 的教训）
+  assert.equal(r.blocked, true)
+  assert.equal(r.previewId, "")
   assert.ok(r.warnings.length > 0)
   assert.ok(
     r.warnings.some((w) => w.kind === "sensitive_token" && w.subkind === "jailbreak_template"),

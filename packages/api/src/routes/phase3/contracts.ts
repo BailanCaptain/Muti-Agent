@@ -515,8 +515,17 @@ export interface PreviewIngestBody {
 }
 
 export interface PreviewIngestResponse {
-  /** 预览 ID（commit endpoint 会引用此 ID 真落盘）。 */
+  /**
+   * 预览 ID（commit endpoint 会引用此 ID 真落盘）。
+   * blocked=true 时为 ""（从未入 store，发幽灵 id 会让 commit 误报 DRAFT_NOT_FOUND）。
+   */
   previewId: string
+  /**
+   * F027 续 · sanitize 红线触发（jailbreak/危险 HTML/quarantine ratio 超阈值）→ true。
+   * 消费方据此直报 sanitize_blocked，禁止再拿 previewId 去 commit。
+   * 注意不能用 warnings 含 sensitive_token 推断（隔离段非红线也产同 kind warning）。
+   */
+  blocked: boolean
   /** Sanitize 后的内容（5 层 sanitize 过；不含 .env / Gemini cookie 等敏感 token）。 */
   sanitizedContent: string
   /** LLM 编译预览（建议落盘的 final markdown 草稿）。 */

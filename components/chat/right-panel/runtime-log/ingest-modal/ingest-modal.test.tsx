@@ -33,6 +33,7 @@ function makePreviewResponse(
 ): PreviewIngestResponse {
   return {
     previewId: "preview-uuid-1",
+    blocked: false,
     sanitizedContent: "# Sanitized hi",
     llmCompiledPreview: "---\ntype: concept\n---\n# Stub",
     warnings: [],
@@ -111,12 +112,16 @@ describe("IngestModal preview/sanitize", () => {
     expect(commitBtn.disabled).toBe(false)
   })
 
-  it("preview warnings 含 sensitive_token → blocked + commit 按钮 disabled", async () => {
+  it("preview blocked=true → blocked banner + commit 按钮 disabled", async () => {
     mockSequence([
       {
         ok: true,
         status: 200,
         json: makePreviewResponse({
+          blocked: true,
+          previewId: "",
+          sanitizedContent: "",
+          llmCompiledPreview: "",
           warnings: [
             {
               kind: "sensitive_token",
@@ -134,6 +139,32 @@ describe("IngestModal preview/sanitize", () => {
     expect(screen.getByTestId("ingest-footer-blocked")).toBeTruthy()
     const commitBtn = screen.getByTestId("ingest-modal-commit") as HTMLButtonElement
     expect(commitBtn.disabled).toBe(true)
+  })
+
+  it("F027 续 · sensitive_token warning 但 blocked=false（隔离段非红线）→ 不误禁 commit", async () => {
+    mockSequence([
+      {
+        ok: true,
+        status: 200,
+        json: makePreviewResponse({
+          blocked: false,
+          warnings: [
+            {
+              kind: "sensitive_token",
+              subkind: "invisible_format_char",
+              message: "[quarantine:invisible_format_char] segment isolated",
+            },
+          ],
+        }),
+      },
+    ])
+    render(<IngestModal open={true} file={makeFile()} callerAlias="huang" onClose={vi.fn()} />)
+    await waitFor(() =>
+      expect(screen.queryByTestId("ingest-sanitize-warning-sensitive_token")).toBeTruthy(),
+    )
+    expect(screen.queryByTestId("ingest-footer-blocked")).toBeNull()
+    const commitBtn = screen.getByTestId("ingest-modal-commit") as HTMLButtonElement
+    expect(commitBtn.disabled).toBe(false)
   })
 
   it("preview 失败 → sanitize-error 显示 + commit disabled", async () => {
