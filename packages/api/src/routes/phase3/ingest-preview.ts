@@ -512,8 +512,9 @@ function mapTargetTypeToCandidate(
  * F027 v3 G11 · DraftResult → 完整 markdown（frontmatter + body）。
  * frontmatter 用 yaml.stringify 序列化完整 CompiledFrontmatter（含 cross_refs / dedup /
  * facts 等嵌套结构）；body = 标题 + summary + facts 列表（人读 + 落盘内容）。
+ * （导出给 scripts/ingest-human-reviewed.ts 复用——人审豁免通道与 preview 产物同构。）
  */
-function renderCompiledDraft(draft: DraftResult): string {
+export function renderCompiledDraft(draft: DraftResult): string {
   const fm = draft.frontmatter
   const factsBody = fm.facts.map((f) => `- ${f.text}`).join("\n")
   const body = `# ${fm.title}\n\n${fm.summary}\n\n## Facts\n\n${factsBody}\n`
