@@ -514,11 +514,17 @@ function mapTargetTypeToCandidate(
  * facts 等嵌套结构）；body = 标题 + summary + facts 列表（人读 + 落盘内容）。
  * （导出给 scripts/ingest-human-reviewed.ts 复用——人审豁免通道与 preview 产物同构。）
  */
-export function renderCompiledDraft(draft: DraftResult): string {
+export function renderCompiledDraft(
+  draft: DraftResult,
+  extraFrontmatter?: Record<string, unknown>,
+): string {
   const fm = draft.frontmatter
   const factsBody = fm.facts.map((f) => `- ${f.text}`).join("\n")
   const body = `# ${fm.title}\n\n${fm.summary}\n\n## Facts\n\n${factsBody}\n`
-  return `---\n${stringifyYaml(fm)}---\n${body}`
+  // extraFrontmatter 经 yaml.stringify 安全序列化（值含 '---'/换行也不会破栏，
+  // 避免字符串注入审计行的 indexOf 错位——德彪 human-reviewed 审 P1 #5）。
+  const fmOut = extraFrontmatter ? { ...fm, ...extraFrontmatter } : fm
+  return `---\n${stringifyYaml(fmOut)}---\n${body}`
 }
 
 export function registerIngestPreviewRoute(

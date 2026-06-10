@@ -58,11 +58,19 @@ export interface WikiEntityFtsProviderOptions {
   nameWeight?: number
   /** body 列 BM25 权重（默认 1.0） */
   bodyWeight?: number
+  /**
+   * F027 续 · draft 召回准入闸门（德彪 P2 + 小孙拍选项 1）。
+   * 默认 false：path 含 /draft/ 的未 promote 实体**不进召回**（search_wiki / adaptive
+   * recall Level 2 = agent 召回，未审内容不该注入）。promote(mv 到 canonical 路径)后
+   * 自然进召回。true = 逃生舱（KB 调试工具想搜草稿时显式开）。
+   */
+  includeDrafts?: boolean
 }
 
 export class WikiEntityFtsProvider implements WikiSearchProvider {
   private readonly nameWeight: number
   private readonly bodyWeight: number
+  private readonly includeDrafts: boolean
 
   constructor(
     private readonly db: DrizzleDb,
@@ -70,6 +78,7 @@ export class WikiEntityFtsProvider implements WikiSearchProvider {
   ) {
     this.nameWeight = opts?.nameWeight ?? DEFAULT_NAME_WEIGHT
     this.bodyWeight = opts?.bodyWeight ?? DEFAULT_BODY_WEIGHT
+    this.includeDrafts = opts?.includeDrafts ?? false
   }
 
   /** memory-preflight 接口：query + topK + optional scope → RecallHit[] */
@@ -113,6 +122,10 @@ export class WikiEntityFtsProvider implements WikiSearchProvider {
     const nw = Number.isFinite(this.nameWeight) ? this.nameWeight.toFixed(2) : "5.00"
     const bw = Number.isFinite(this.bodyWeight) ? this.bodyWeight.toFixed(2) : "1.00"
 
+    // F027 续 · draft 召回准入闸门：默认排除 path 含 /draft/ 的未 promote 实体。
+    // indexer 落库 path 已 normalize 为 '/'（wiki-entity-indexer relPath.replace），
+    // LIKE '%/draft/%' 可靠;覆盖 draft/_auto/ + draft/_quarantined/。
+    const draftClause = this.includeDrafts ? "" : "AND i.path NOT LIKE '%/draft/%'"
     let sql: string
     let params: unknown[]
     if (buckets && buckets.length > 0) {
@@ -124,6 +137,7 @@ export class WikiEntityFtsProvider implements WikiSearchProvider {
         JOIN wiki_entity_index i ON i.rowid = wiki_entity_fts.rowid
         WHERE wiki_entity_fts MATCH ?
           AND i.bucket IN (${placeholders})
+          ${draftClause}
         ORDER BY rank ASC
         LIMIT ?
       `
@@ -135,6 +149,7 @@ export class WikiEntityFtsProvider implements WikiSearchProvider {
         FROM wiki_entity_fts
         JOIN wiki_entity_index i ON i.rowid = wiki_entity_fts.rowid
         WHERE wiki_entity_fts MATCH ?
+          ${draftClause}
         ORDER BY rank ASC
         LIMIT ?
       `

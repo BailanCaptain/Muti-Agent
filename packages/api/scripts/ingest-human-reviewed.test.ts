@@ -7,8 +7,8 @@
  *      (reviewer 署名),wiki_events 有 ingest 行(alias=human-reviewed:<reviewer>)
  *   2. reviewer 缺失/空白 → 工厂直接抛(豁免通道必须真人署名)
  *   3. 编译失败 → 该篇 ok:false 不落盘(不静默 fallback 原文),其他篇不受影响
- *   4. 同名重跑 → conflict 幂等(ok:true already-exists)
- *   5. injectExemptionLine: frontmatter 闭合栏前注行;无 frontmatter 防御补底
+ *   4. 同名重跑 → conflict 显式失败(德彪 #6:人审通道同名可能异源,不假报 already-exists)
+ *   5. parseHumanReviewedArgs: `--reviewer <真名> -- <files>` 严格解析(德彪 #4)
  */
 
 import assert from "node:assert/strict"
@@ -17,7 +17,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
 import type { CompileLLMClient } from "../src/wiki/llm-compile/types"
-import { createHumanReviewedIngest, injectExemptionLine } from "./ingest-human-reviewed"
+import { createHumanReviewedIngest, parseHumanReviewedArgs } from "./ingest-human-reviewed"
 
 function makeEnv() {
   const dir = mkdtempSync(path.join(tmpdir(), "human-reviewed-ingest-"))
@@ -161,7 +161,7 @@ describe("createHumanReviewedIngest", () => {
     }
   })
 
-  it("同名重跑 → conflict 幂等 already-exists", async () => {
+  it("同名重跑 → conflict 显式失败(德彪 #6:不假报幂等成功)", async () => {
     const env = makeEnv()
     try {
       const f = path.join(env.docsDir, "B014-test.md")
@@ -177,8 +177,11 @@ describe("createHumanReviewedIngest", () => {
         const r1 = await ingestOne(f, "docs/B014-test.md")
         assert.equal(r1.ok, true, r1.error)
         const r2 = await ingestOne(f, "docs/B014-test.md")
-        assert.equal(r2.ok, true, r2.error)
-        assert.equal(r2.ingestEventId, "already-exists")
+        assert.equal(r2.ok, false, "同名 conflict 必须显式失败,人审通道同名可能异源")
+        assert.match(r2.error ?? "", /commit failed/)
+        // 首篇产物不受影响(失败的第二次不落盘/不覆盖)
+        const autoDir = path.join(env.wikiRoot, "wiki", "concepts", "draft", "_auto")
+        assert.equal(readdirSync(autoDir).length, 1)
       } finally {
         close()
       }
@@ -188,20 +191,32 @@ describe("createHumanReviewedIngest", () => {
   })
 })
 
-describe("injectExemptionLine", () => {
-  it("frontmatter 闭合栏前注行", () => {
-    const out = injectExemptionLine("---\ntype: lesson\n---\n# T\nbody", "小孙", "2026-06-11T10:00:00Z")
-    assert.ok(
-      out.startsWith(
-        "---\ntype: lesson\ningest_exemption: sanitize-skipped (human-reviewed by 小孙 @ 2026-06-11T10:00:00Z)\n---\n",
-      ),
-      out.slice(0, 200),
-    )
+describe("parseHumanReviewedArgs", () => {
+  it("合法: --reviewer 小孙 -- a.md b.md", () => {
+    const r = parseHumanReviewedArgs(["--reviewer", "小孙", "--", "docs/a.md", "docs/b.md"])
+    assert.deepEqual(r, { ok: true, reviewer: "小孙", files: ["docs/a.md", "docs/b.md"] })
   })
 
-  it("无 frontmatter(防御)→ 顶部补最小 frontmatter", () => {
-    const out = injectExemptionLine("# T\nbody", "小孙", "2026-06-11T10:00:00Z")
-    assert.ok(out.startsWith("---\ningest_exemption:"))
-    assert.ok(out.includes("# T\nbody"))
+  it("首参不是 --reviewer → 拒", () => {
+    assert.equal(parseHumanReviewedArgs(["docs/a.md", "docs/b.md"]).ok, false)
+    assert.equal(parseHumanReviewedArgs([]).ok, false)
+  })
+
+  it("reviewer 像路径/.md(漏 -- 把文件当署名)→ 拒", () => {
+    assert.equal(parseHumanReviewedArgs(["--reviewer", "docs/a.md", "--", "b.md"]).ok, false)
+    assert.equal(parseHumanReviewedArgs(["--reviewer", "B014.md", "--", "b.md"]).ok, false)
+    assert.equal(parseHumanReviewedArgs(["--reviewer", "a\\b", "--", "b.md"]).ok, false)
+  })
+
+  it("reviewer 空白 → 拒", () => {
+    assert.equal(parseHumanReviewedArgs(["--reviewer", "  ", "--", "a.md"]).ok, false)
+  })
+
+  it("缺 -- 分隔符 → 拒(reviewer 与文件清单必须显式分隔)", () => {
+    assert.equal(parseHumanReviewedArgs(["--reviewer", "小孙", "a.md"]).ok, false)
+  })
+
+  it("-- 后空文件清单 → 拒(每个文件名 = 一次人工确认)", () => {
+    assert.equal(parseHumanReviewedArgs(["--reviewer", "小孙", "--"]).ok, false)
   })
 })

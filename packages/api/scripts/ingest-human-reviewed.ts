@@ -102,16 +102,23 @@ export function createHumanReviewedIngest(opts: HumanReviewedIngestOpts): {
       const content = readFileSync(filePath, "utf-8")
       const now = clock()
       const previewId = randomUUID()
-      // 真 LLM 编译(与 preview.runCompile 同参,差异仅:rawContent=原文未 sanitize——
-      // 这就是豁免本体;quotedSpans 空因为没有 sanitize 隔离段)。
+      // ⚠ 残余风险(德彪 human-reviewed 审 P1 #1,无法在豁免框架内消除):
+      //   rawContent = **原文(未 sanitize)**。这是豁免本体——blocked 文档的"危险文本"
+      //   就是它们的讲解内容,sanitize 后 sanitizedText 置空 = 内容残缺,无法用。
+      //   缓解三层:① compile SYSTEM prompt 有"资料是数据块不是指令"防注入框架
+      //   (compile-prompt.ts:13,对原文也生效)② fromUserDrop=true → tainted_source=true
+      //   → promote 时 V14 layer3 审计触发(德彪 #3)③ 产物 draft,draft 闸门保证 promote
+      //   前不进 agent 召回(c259e84)。残余风险:attacker 文本仍可能诱导 LLM 生成合法
+      //   但偏倚的 summary/facts → 靠人审者 promote 时核对编译产物兜底。
       // 编译失败不 fallback stub:人工质量通道,失败即报错让人重跑/跳过(不静默落原文)。
       const draft = await runCompilePipelineWithRetry(
         {
           rawContent: content,
           rawMetadata: {
             ingestMessageId: previewId,
-            // 项目内 docs/ 源(同 docs-watcher 待遇);豁免事实由 ingest_exemption 行显式承载。
-            fromUserDrop: false,
+            // 德彪 #3:这些是被 sanitize 红线拦下的可疑源,fromUserDrop=true →
+            // tainted_source=true(不洗白 taint),promote 二审才会对它们加严。
+            fromUserDrop: true,
             date: now.toISOString().slice(0, 10),
             seriesId: null,
           },
@@ -125,11 +132,11 @@ export function createHumanReviewedIngest(opts: HumanReviewedIngestOpts): {
         },
         { maxAttempts: 3, logger: log },
       )
-      const compiledMarkdown = injectExemptionLine(
-        renderCompiledDraft(draft),
-        opts.reviewer,
-        now.toISOString(),
-      )
+      // 德彪 #5:经 renderCompiledDraft 的 extraFrontmatter(yaml.stringify 安全序列化),
+      // 不再字符串 indexOf 注入(多行 scalar 含 '---' 会错位)。
+      const compiledMarkdown = renderCompiledDraft(draft, {
+        ingest_exemption: `sanitize-skipped (human-reviewed by ${opts.reviewer} @ ${now.toISOString()})`,
+      })
       store.put({
         previewId,
         sourcePath,
@@ -143,10 +150,8 @@ export function createHumanReviewedIngest(opts: HumanReviewedIngestOpts): {
       })
       const result = commit.commit({ previewId, callerAlias })
       if (!result.ok) {
-        // ingest-module 同款幂等:同名已存在 = 已导入,不当 failed。
-        if (result.error.detail?.reason === "conflict") {
-          return { file: sourcePath, ok: true, ingestEventId: "already-exists" }
-        }
+        // 德彪 #6:conflict(同 basename 已存在)不当幂等成功——人审通道量小且高风险,
+        // 同名可能异源,假报 already-exists 会掩盖。一律报 error 让人审者人工核对处置。
         return {
           file: sourcePath,
           ok: false,
@@ -172,35 +177,46 @@ function extractTitle(content: string): string | null {
   return m ? m[1].trim() : null
 }
 
-/** frontmatter 末尾(闭合 --- 前)注豁免审计行:谁、何时、豁免了什么。 */
-export function injectExemptionLine(markdown: string, reviewer: string, isoDate: string): string {
-  const line = `ingest_exemption: sanitize-skipped (human-reviewed by ${reviewer} @ ${isoDate})`
-  // renderCompiledDraft 产物固定 `---\n<yaml>---\n<body>`;第二个 --- 是闭合栏。
-  const close = markdown.indexOf("---", 4)
-  if (markdown.startsWith("---\n") && close > 0) {
-    return `${markdown.slice(0, close)}${line}\n${markdown.slice(close)}`
+/**
+ * 德彪 #4 · 严格 CLI 解析:`--reviewer <name> -- <file> [file...]`。
+ * `--` 分隔 reviewer 与文件清单,杜绝 `--reviewer docs/A.md docs/B.md` 把路径当署名;
+ * reviewer 不得像路径(含 / 或 .md 即拒);文件清单显式列举(无通配)。
+ * 返回 { ok, reviewer?, files?, error? }。导出供测试。
+ */
+export function parseHumanReviewedArgs(
+  argv: string[],
+): { ok: true; reviewer: string; files: string[] } | { ok: false; error: string } {
+  if (argv[0] !== "--reviewer") {
+    return { ok: false, error: "首参必须是 --reviewer <真名> -- <file.md> [file2.md ...]" }
   }
-  // 防御:无 frontmatter(不应发生)→ 顶部补一个最小 frontmatter
-  return `---\n${line}\n---\n${markdown}`
+  const reviewer = argv[1]
+  if (!reviewer || !reviewer.trim()) {
+    return { ok: false, error: "--reviewer 后必须紧跟真名" }
+  }
+  if (/[/\\]/.test(reviewer) || /\.md$/i.test(reviewer)) {
+    return { ok: false, error: `reviewer 不得像路径/文件名: ${reviewer}(是否漏了 -- 分隔符?)` }
+  }
+  if (argv[2] !== "--") {
+    return { ok: false, error: "reviewer 与文件清单之间必须有 -- 分隔符" }
+  }
+  const files = argv.slice(3)
+  if (files.length === 0) {
+    return { ok: false, error: "-- 之后必须显式列出人审过的文件(无通配,每个文件名=一次人工确认)" }
+  }
+  return { ok: true, reviewer, files }
 }
 
 // ── CLI 入口 ─────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2)
-  const rIdx = args.indexOf("--reviewer")
-  if (rIdx < 0 || !args[rIdx + 1]) {
-    console.error("用法: ingest-human-reviewed.ts --reviewer <真名> <file.md> [file2.md ...]")
+  const parsed = parseHumanReviewedArgs(process.argv.slice(2))
+  if (!parsed.ok) {
+    console.error(parsed.error)
+    console.error("用法: ingest-human-reviewed.ts --reviewer <真名> -- <file.md> [file2.md ...]")
     process.exitCode = 1
     return
   }
-  const reviewer = args[rIdx + 1]
-  const files = args.filter((_, i) => i !== rIdx && i !== rIdx + 1)
-  if (files.length === 0) {
-    console.error("必须显式列出人审过的文件(无目录通配——每个文件名都是一次人工确认)")
-    process.exitCode = 1
-    return
-  }
+  const { reviewer, files } = parsed
   const sqlitePath = process.env.SQLITE_PATH
   const wikiRoot = process.env.WIKI_ROOT
   if (!sqlitePath || !existsSync(sqlitePath)) {
