@@ -66,6 +66,9 @@ function makeEventsStub(opts: { throwOnAppend?: boolean } = {}) {
 
 const CLOCK = () => new Date("2026-06-10T04:05:00Z")
 
+/** stub 用例统一注入的捕获 term（r3：默认 leaderContext 返回 null = 无身份不写事件）。 */
+const STUB_LEADER = { currentLeaderTerm: () => "7", newFencingToken: () => "tok-stub" }
+
 describe("HealthWarningsWriter", () => {
   it("0 findings → 不写文件不发 events", async () => {
     const { root, cleanup } = makeRoot()
@@ -91,6 +94,7 @@ describe("HealthWarningsWriter", () => {
       const write = createHealthWarningsWriter({
         wikiRoot: root,
         events: events.repo as never,
+        leaderContext: STUB_LEADER,
         clock: CLOCK,
       })
       await write(
@@ -126,6 +130,7 @@ describe("HealthWarningsWriter", () => {
       const write = createHealthWarningsWriter({
         wikiRoot: root,
         events: events.repo as never,
+        leaderContext: STUB_LEADER,
         clock: CLOCK,
         warn: (m) => warns.push(m),
       })
@@ -181,6 +186,7 @@ describe("HealthWarningsWriter", () => {
       const write = createHealthWarningsWriter({
         wikiRoot: fileAsRoot,
         events: events.repo as never,
+        leaderContext: STUB_LEADER,
         clock: CLOCK,
         warn: () => {},
       })
@@ -203,6 +209,7 @@ describe("HealthWarningsWriter", () => {
       const write = createHealthWarningsWriter({
         wikiRoot: root,
         events: repo as never,
+        leaderContext: STUB_LEADER,
         clock: CLOCK,
         warn: (m) => warns.push(m),
       })
@@ -211,6 +218,27 @@ describe("HealthWarningsWriter", () => {
         warns.some((w) => w.includes("commit returned false")),
         "CAS false 应留 warn",
       )
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("德彪 batch2-r3 P2 · 捕获 term=null（无 leader 身份）→ 跳过事件写入，文件照写", async () => {
+    const { root, cleanup } = makeRoot()
+    try {
+      const events = makeEventsStub()
+      const warns: string[] = []
+      const write = createHealthWarningsWriter({
+        wikiRoot: root,
+        events: events.repo as never,
+        leaderContext: { currentLeaderTerm: () => null, newFencingToken: () => "t" },
+        clock: CLOCK,
+        warn: (m) => warns.push(m),
+      })
+      await write(emptyReport({ orphans: ["wiki/concepts/x.md"] }))
+      assert.equal(events.appended.length, 0, "无身份不写事件（禁超级 term 兜底）")
+      assert.ok(existsSync(path.join(root, "warnings", "nightly-health-2026-06-10.md")))
+      assert.ok(warns.some((w) => w.includes("skip warning_raised")))
     } finally {
       cleanup()
     }
@@ -255,6 +283,41 @@ describe("HealthWarningsWriter · 真 DB + reject_stale_leader trigger（德彪 
         clock: CLOCK,
       })
       await write(emptyReport({ orphans: ["wiki/concepts/x.md"] }))
+      const rows = events.getByAction("warning_raised", 10)
+      assert.equal(rows.length, 1)
+      assert.equal(rows[0]?.state, "committed")
+    } finally {
+      cleanRoot()
+      cleanDb()
+    }
+  })
+
+  it("r3 · 现实低 term：current_term=2 + 轮中被抢占（捕获 '1'）→ trigger 拒；捕获 '2' → 过", async () => {
+    const { root, cleanup: cleanRoot } = makeRoot()
+    const { db, cleanup: cleanDb } = makeDb()
+    try {
+      seedLeader(db, "2")
+      const events = new WikiEventsRepository(db)
+      const warns: string[] = []
+      // 轮开始捕获 '1'（旧 leader），写入时现任已是 2 → stale 拒（r2 抢占场景的真 DB 锁定）
+      const staleWrite = createHealthWarningsWriter({
+        wikiRoot: root,
+        events,
+        leaderContext: { currentLeaderTerm: () => "1", newFencingToken: () => "tok-s" },
+        clock: CLOCK,
+        warn: (m) => warns.push(m),
+      })
+      await staleWrite(emptyReport({ orphans: ["wiki/concepts/x.md"] }))
+      assert.equal(events.getByAction("warning_raised", 10).length, 0, "捕获旧 term 应被拒")
+      assert.ok(warns.length > 0)
+      // 持有现任 term '2' → 正常通过（'999' 超级 term 已禁，正常量级也必须能写）
+      const liveWrite = createHealthWarningsWriter({
+        wikiRoot: root,
+        events,
+        leaderContext: { currentLeaderTerm: () => "2", newFencingToken: () => "tok-l" },
+        clock: CLOCK,
+      })
+      await liveWrite(emptyReport({ orphans: ["wiki/concepts/x.md"] }))
       const rows = events.getByAction("warning_raised", 10)
       assert.equal(rows.length, 1)
       assert.equal(rows[0]?.state, "committed")

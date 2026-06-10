@@ -33,8 +33,17 @@ export interface HealthWarningsWriterDeps {
   wikiRoot: string
   /** 注入则写 wiki_events warning_raised（PREPARE+COMMIT）；缺省只落文件。 */
   events?: Pick<WikiEventsRepository, "appendPending" | "commit">
-  /** leader 上下文（wiki_events reject_stale_leader trigger 要求）；默认 "999" + uuid。 */
-  leaderContext?: { currentLeaderTerm(): string; newFencingToken(): string }
+  /**
+   * leader 上下文（wiki_events reject_stale_leader trigger 要求）。
+   *
+   * 德彪 batch2-r3 P2 · currentLeaderTerm 返回 **null = 本轮无合法 leader 身份 →
+   * 跳过事件写入**（文件照写）。不允许 "999" 类超级 term 兜底——trigger 只拒
+   * "小于现任"，现实 term 是 1/2/3 量级，"999" 永远通过 = demote 后照样冒写。
+   * caller（scheduler-bootstrap）应在 **job 轮开始时捕获**持有 term 整轮固定，
+   * 轮中被抢占 → 捕获的旧 term < 新任 → trigger 拒，fencing 正确。
+   * 缺省实现返回 null（无身份不写）。
+   */
+  leaderContext?: { currentLeaderTerm(): string | null; newFencingToken(): string }
   clock?: () => Date
   warn?: (msg: string) => void
 }
@@ -49,9 +58,8 @@ export function createHealthWarningsWriter(
   const clock = deps.clock ?? (() => new Date())
   const warn = deps.warn ?? (() => {})
   const leaderContext = deps.leaderContext ?? {
-    // createSimpleLeaderContext 同款："999" 保证 Phase 5 接真 Compiler Leader Lease 前
-    // 不被 reject_stale_leader trigger 拒（production-recall-executor-deps.ts:156 注释）。
-    currentLeaderTerm: () => "999",
+    // 无注入 = 无 leader 身份 → 不写事件（r3：禁超级 term 兜底，见 deps doc）。
+    currentLeaderTerm: () => null,
     newFencingToken: () => createHash("sha256").update(`${Math.random()}`).digest("hex").slice(0, 32),
   }
 
@@ -80,6 +88,14 @@ export function createHealthWarningsWriter(
     }
 
     if (!deps.events) return
+    // r3：轮开始未捕获到持有 lease（demote race / 无身份）→ 不写审计行。
+    const leaderTerm = leaderContext.currentLeaderTerm()
+    if (leaderTerm === null) {
+      warn(
+        "health-warnings-writer: no leader lease term captured for this run — skip warning_raised event (file path unaffected)",
+      )
+      return
+    }
     try {
       const event = deps.events.appendPending({
         ts: now.toISOString(),
@@ -92,7 +108,7 @@ export function createHealthWarningsWriter(
         sourceMessageIds: null,
         reason: `nightly health check: ${total} findings`,
         fencingToken: leaderContext.newFencingToken(),
-        leaderTerm: leaderContext.currentLeaderTerm(),
+        leaderTerm,
         result: "ok",
       })
       const committed = deps.events.commit(event.id, { contentHash: sha256(content) })
