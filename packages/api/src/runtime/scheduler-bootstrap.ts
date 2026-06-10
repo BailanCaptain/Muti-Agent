@@ -259,15 +259,19 @@ export async function bootSchedulerRuntime(
   // + wiki_events warning_raised。KB warnings tab 的两个派生数据源此前都无 producer（视图恒空）。
   // 根用 wikiIndexRoot（单层 = WikiMetaScanner 同根，写双层 wikiRoot 视图读不到，B2 双根教训）；
   // 缺 → 不写（与 scanner noop 同档降级）。
-  // 德彪 batch2 P2-3：注入真 leader term —— compiler_leader.current_term 持续递增，
-  // 硬编码 "999" 终会被超过 → reject_stale_leader trigger 永久拒 warning_raised 事件。
-  // 行不存在（启动期/无 leader）→ trigger 自身跳过，"999" 兜底无害。
+  // 德彪 batch2 P2-3 + r2 P2：leader term 用本 runtime **持有**的 lease term（late-bind，
+  // runtime 下方构造后回填），不读 DB 现任也不硬编码——
+  //   - 读现任：job 执行中被 term+1 抢占后会冒用新 term 通过 reject_stale_leader，破坏 fencing；
+  //   - 硬编码 "999"：current_term 持续递增，超过后审计事件永久被拒。
+  // 持有值语义：被抢占 → 本 leader selfDemote lease=null → fallback "999" 被 trigger 拒
+  // （fencing 正确拒旧 job）；行不存在（启动期）→ trigger 自身跳过，"999" 兜底无害。
+  let runtimeLeaseTerm: () => string | null = () => null
   const healthWarningsWriter = opts.wikiIndexRoot
     ? createHealthWarningsWriter({
         wikiRoot: opts.wikiIndexRoot,
         events: new WikiEventsRepository(opts.db),
         leaderContext: {
-          currentLeaderTerm: () => String(leaseRepo.getCurrent()?.currentTerm ?? "999"),
+          currentLeaderTerm: () => runtimeLeaseTerm() ?? "999",
           newFencingToken: () => randomUUID(),
         },
         warn: (msg) => opts.log.warn({}, msg),
@@ -532,6 +536,9 @@ export async function bootSchedulerRuntime(
       : undefined,
     logger: opts.log,
   })
+  // 德彪 batch2-r2 P2 · 回填 late-bind：healthWarningsWriter 写 wiki_events 用本 runtime
+  // 持有的 lease term（被抢占即 demote 置 null → fallback 被 trigger 拒，fencing 不被冒用）。
+  runtimeLeaseTerm = () => runtime.currentLeaseTerm()
   await runtime.start()
   opts.log.info(
     {
