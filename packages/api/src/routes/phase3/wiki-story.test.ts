@@ -99,21 +99,61 @@ test("G6 · getStory: 5 结构化桶 + conversation 桶 全部返回", () => {
   }
 })
 
-test("F027 chunk B · 5 结构化记忆桶恒返 0（表已砍，无数据源）", () => {
-  const tmp = safeTempDir("F027-chunkB-zero-")
+function insertEntity(
+  db: ReturnType<typeof createDrizzleDb>["db"],
+  row: { path: string; bucket: string; name: string; body?: string; indexedAt?: string },
+): void {
+  rawClient(db)
+    .prepare(
+      `INSERT INTO wiki_entity_index (path, bucket, name, body, source_hash, mtime_ms, indexed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      row.path,
+      row.bucket,
+      row.name,
+      row.body ?? "body",
+      `hash-${row.name}`,
+      1,
+      row.indexedAt ?? "2026-06-10T00:00:00.000Z",
+    )
+}
+
+test("F027 续 · 5 结构化桶接 wiki_entity_index 文件真数据（bucket 目录映射 + draft 判定）", () => {
+  const tmp = safeTempDir("F027-cont-buckets-")
   const dbPath = path.join(tmp, "test.sqlite")
   const { db, close } = createDrizzleDb(dbPath)
   try {
+    insertEntity(db, { path: "wiki/rooms/R-1/session-summary.md", bucket: "rooms", name: "session-summary" })
+    insertEntity(db, { path: "wiki/rooms/R-1/viewfinder.md", bucket: "rooms", name: "viewfinder" })
+    insertEntity(db, {
+      path: "wiki/concepts/draft/_auto/F011-x.md",
+      bucket: "concepts",
+      name: "F011-x",
+      body: "---\ncanonical_owner_path: wiki/concepts/F011-x.md\nsupersedes:\n  - wiki/concepts/old-f011.md\n---\n# F011",
+    })
+    insertEntity(db, { path: "wiki/people/小孙.md", bucket: "people", name: "小孙" })
+    insertEntity(db, { path: "wiki/feedback/lesson-1.md", bucket: "feedback", name: "lesson-1" })
+    // rules 不映射 5 桶，但计入 totalEntities
+    insertEntity(db, { path: "wiki/rules/iron-laws.md", bucket: "rules", name: "iron-laws" })
+
     const svc = new WikiStoryService({ db })
     const story = svc.getStory()
-    for (const type of ["room", "project", "user", "feedback", "work"]) {
-      const b = story.buckets.find((x) => x.type === type)!
-      assert.equal(b.totalCount, 0, `${type} totalCount=0`)
-      assert.equal(b.canonicalCount, 0)
-      assert.equal(b.draftCount, 0)
-      assert.deepEqual(b.topEntities, [])
-    }
-    assert.equal(story.totalEntities, 0)
+    const byType = new Map(story.buckets.map((b) => [b.type, b]))
+    assert.equal(byType.get("room")?.totalCount, 2)
+    assert.equal(byType.get("room")?.canonicalCount, 2)
+    assert.equal(byType.get("project")?.totalCount, 1)
+    assert.equal(byType.get("project")?.draftCount, 1, "draft/ 路径应判 draft")
+    assert.equal(byType.get("user")?.totalCount, 1)
+    assert.equal(byType.get("feedback")?.totalCount, 1)
+    assert.equal(byType.get("work")?.totalCount, 0, "work 与 project 同 concepts/ 目录不可分，并入 project")
+    assert.equal(story.totalEntities, 6, "rules 等非 5 桶 bucket 也计入总数")
+
+    // topEntities frontmatter 解析
+    const projTop = byType.get("project")?.topEntities[0]
+    assert.equal(projTop?.state, "draft")
+    assert.equal(projTop?.canonicalOwnerPath, "wiki/concepts/F011-x.md")
+    assert.deepEqual(projTop?.supersedes, ["wiki/concepts/old-f011.md"])
   } finally {
     close()
     safeCleanup(tmp)
@@ -138,7 +178,19 @@ test("G6 · conversation 桶 走 messages 表 (真数据)", () => {
   }
 })
 
-test("G6 · recent7d: decisionNew 真数据 + entityNew 恒 0（表已砍）", () => {
+function insertWikiEvent(
+  db: ReturnType<typeof createDrizzleDb>["db"],
+  row: { ts: string; action: string; state: string },
+): void {
+  rawClient(db)
+    .prepare(
+      `INSERT INTO wiki_events (ts, alias, action, path, attempted_hash, fencing_token, leader_term, result, state)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(row.ts, "test", row.action, "wiki/concepts/x.md", "h", "tok", "999", "ok", row.state)
+}
+
+test("F027 续 · recent7d: decisionNew 真数据 + entityNew 接 wiki_events committed write/ingest", () => {
   const tmp = safeTempDir("F027-G6-growth-")
   const dbPath = path.join(tmp, "test.sqlite")
   const { db, close } = createDrizzleDb(dbPath)
@@ -148,6 +200,12 @@ test("G6 · recent7d: decisionNew 真数据 + entityNew 恒 0（表已砍）", (
     insertDecision(db, `${yesterday}T05:00:00.000Z`)
     insertDecision(db, `${yesterday}T15:00:00.000Z`)
     insertDecision(db, `${today}T10:00:00.000Z`)
+    // entityNew 源：committed write/ingest 计入；pending / 非 write 类不计
+    insertWikiEvent(db, { ts: `${yesterday}T06:00:00.000Z`, action: "write", state: "committed" })
+    insertWikiEvent(db, { ts: `${yesterday}T07:00:00.000Z`, action: "ingest", state: "committed" })
+    insertWikiEvent(db, { ts: `${yesterday}T08:00:00.000Z`, action: "write", state: "pending" })
+    insertWikiEvent(db, { ts: `${today}T09:00:00.000Z`, action: "promote", state: "committed" })
+    insertWikiEvent(db, { ts: `${today}T11:00:00.000Z`, action: "write", state: "committed" })
 
     const svc = new WikiStoryService({ db })
     const story = svc.getStory()
@@ -155,9 +213,8 @@ test("G6 · recent7d: decisionNew 真数据 + entityNew 恒 0（表已砍）", (
     const yesterdayPoint = story.recent7d.find((p) => p.day === yesterday)!
     assert.equal(todayPoint.decisionNew, 1)
     assert.equal(yesterdayPoint.decisionNew, 2)
-    // entityNew 恒 0（wiki_memories 表已砍）
-    assert.equal(todayPoint.entityNew, 0)
-    assert.equal(yesterdayPoint.entityNew, 0)
+    assert.equal(yesterdayPoint.entityNew, 2, "committed write+ingest 计 2；pending 不计")
+    assert.equal(todayPoint.entityNew, 1, "promote 不计 entityNew")
     assert.equal(story.totalDecisions, 3)
   } finally {
     close()

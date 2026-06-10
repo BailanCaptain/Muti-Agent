@@ -17,16 +17,26 @@
  * 6 类桶定义 (V16.5 chap 14): room|project|user|feedback|work + conversation(messages).
  *
  * ⚠️ F027 chunk B：wiki_memories 表已砍（冗余第二存储；记忆 = 文件单一真相源）。
- *   - 5 个结构化记忆类型桶（room/project/user/feedback/work）目前**无数据源** ——
- *     结构化记忆文件由 LLM compile pipeline (G11) 写，该 pipeline 尚未接线，所以
- *     真实计数 = 0。本 endpoint 返 0（诚实反映"结构化记忆层未填"），不再查已删的表。
- *     G11 接入后改这里 → 扫文件 frontmatter 按 type 聚合（不重建表）。
- *   - conversation 桶（messages）+ 增长曲线 decisionNew（room_decisions）仍是真数据。
+ *
+ * F027 续 · 5 桶接文件真数据源（backfill 后 wiki_entity_index 已有真内容）：
+ *   - 结构化桶 ← wiki_entity_index 按 bucket 目录映射（chap 14 桶定义表的官方路径）：
+ *       rooms/ → room；concepts/ → project；people/ → user；feedback/ → feedback。
+ *       work 桶恒 0：chap 14 把工作发现也归 `wiki/concepts/`，与项目记忆按目录不可分，
+ *       计数并入 project（不脑补 frontmatter taxonomy；等 type 字段约定落地再拆）。
+ *       其他 bucket（rules/methods/archive/warnings…）不进 5 桶但计入 totalEntities。
+ *   - state：path 含 '/draft/' → draft，否则 canonical（文件时代 canonical = 非 draft 路径，
+ *     与 NightlyHealthCheck duplicateCanonical 判定同口径）。
+ *   - topEntities：每桶按 indexedAt desc 前 5，frontmatter（canonical_owner_path/supersedes)
+ *     仅对这 5 条解析（全表 parse 没必要）。
+ *   - 增长曲线 entityNew ← wiki_events action IN ('write','ingest') AND state='committed'
+ *     按日计数（真实写入审计源；indexedAt 是索引时间会被 boot 全量刷新，不能当创建时间）。
+ *   - conversation 桶（messages）+ decisionNew（room_decisions）不变，仍是真数据。
  */
 
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type { FastifyInstance } from "fastify"
 import type * as schema from "../../db/schema"
+import { parseFrontmatter } from "../../services/scheduler/wiki-scanners"
 import type { SqliteAdapterLike } from "../../wiki/room-compiler/sqlite-checkpoint-store"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
@@ -80,6 +90,29 @@ export interface GetWikiStoryResponse {
 
 const BUCKET_TYPES = ["room", "project", "user", "feedback", "work"] as const
 
+/**
+ * wiki_entity_index.bucket（第一层目录）→ chap 14 结构化桶 type。
+ * work 缺席：chap 14 把工作发现也归 concepts/，按目录与 project 不可分 → 并入 project。
+ */
+const DIR_TO_BUCKET_TYPE: Record<string, (typeof BUCKET_TYPES)[number]> = {
+  rooms: "room",
+  concepts: "project",
+  people: "user",
+  feedback: "feedback",
+}
+
+function isDraftPath(p: string): boolean {
+  return p.replace(/\\/g, "/").includes("/draft/")
+}
+
+interface EntityRow {
+  path: string
+  bucket: string
+  name: string
+  body: string
+  indexedAt: string
+}
+
 export interface WikiStoryServiceDeps {
   db: DrizzleDb
 }
@@ -95,13 +128,33 @@ export class WikiStoryService {
 
   getStory(): GetWikiStoryResponse {
     const buckets: WikiBucketStat[] = []
-    let totalEntities = 0
 
+    // F027 续 · 文件真数据源：wiki_entity_index 全量行按 bucket 目录映射到结构化桶。
+    const rows = this.safeRows(
+      "SELECT path, bucket, name, body, indexed_at AS indexedAt FROM wiki_entity_index ORDER BY indexed_at DESC",
+    )
+    const totalEntities = rows.length
+    const byBucketType = new Map<string, EntityRow[]>()
+    for (const row of rows) {
+      const type = DIR_TO_BUCKET_TYPE[row.bucket]
+      if (!type) continue
+      const list = byBucketType.get(type) ?? []
+      list.push(row)
+      byBucketType.set(type, list)
+    }
+
+    let nextEntityId = 1
     for (const type of BUCKET_TYPES) {
-      // F027 chunk B：表已砍，结构化记忆桶返 0（见 emptyBucket / 类 doc）。
-      const stat = this.emptyBucket(type)
-      buckets.push(stat)
-      totalEntities += stat.totalCount
+      const list = byBucketType.get(type) ?? []
+      const draftCount = list.filter((r) => isDraftPath(r.path)).length
+      buckets.push({
+        type,
+        totalCount: list.length,
+        canonicalCount: list.length - draftCount,
+        draftCount,
+        // rows 已按 indexedAt desc，全桶截前 5 解析 frontmatter
+        topEntities: list.slice(0, 5).map((r) => this.toEntitySummary(r, nextEntityId++)),
+      })
     }
 
     // V16.5 chap 14 line 1572: conversation 桶物理上由 messages 表承载 (不冗余)
@@ -128,17 +181,27 @@ export class WikiStoryService {
     }
   }
 
-  /**
-   * F027 chunk B：wiki_memories 表已砍 → 结构化记忆类型桶无数据源，返空（0）。
-   * 不再查表（避免 no-such-table 抛错）。G11 compile pipeline 接入后改为扫文件聚合。
-   */
-  private emptyBucket(type: string): WikiBucketStat {
+  private toEntitySummary(row: EntityRow, id: number): WikiEntitySummary {
+    let canonicalOwnerPath = row.path
+    let supersedes: string[] = []
+    try {
+      const { frontmatter } = parseFrontmatter(row.body)
+      if (typeof frontmatter.canonical_owner_path === "string" && frontmatter.canonical_owner_path) {
+        canonicalOwnerPath = frontmatter.canonical_owner_path
+      }
+      if (Array.isArray(frontmatter.supersedes)) {
+        supersedes = frontmatter.supersedes.filter((s): s is string => typeof s === "string")
+      }
+    } catch {
+      // frontmatter 解析失败 → 用 path 兜底（单条坏文件不挂仪表盘）
+    }
     return {
-      type,
-      totalCount: 0,
-      canonicalCount: 0,
-      draftCount: 0,
-      topEntities: [],
+      id,
+      name: row.name,
+      canonicalOwnerPath,
+      state: isDraftPath(row.path) ? "draft" : "canonical",
+      supersedes,
+      updatedAt: row.indexedAt,
     }
   }
 
@@ -152,8 +215,11 @@ export class WikiStoryService {
       const day = d.toISOString().slice(0, 10)
       const dayStart = `${day}T00:00:00.000Z`
       const dayEnd = `${day}T23:59:59.999Z`
-      // F027 chunk B：wiki_memories 表已砍 → entityNew 无数据源，恒 0（不查已删表）。
-      const entityNew = 0
+      // F027 续：entityNew = wiki_events 已 commit 的 write/ingest 行按日计数（真实写入审计源）。
+      const entityNew = this.safeCount(
+        "SELECT COUNT(*) AS n FROM wiki_events WHERE action IN ('write','ingest') AND state='committed' AND datetime(ts) BETWEEN datetime(?) AND datetime(?)",
+        [dayStart, dayEnd],
+      )
       const decisionNew = this.safeCount(
         "SELECT COUNT(*) AS n FROM room_decisions WHERE datetime(decided_at) BETWEEN datetime(?) AND datetime(?)",
         [dayStart, dayEnd],
@@ -161,6 +227,19 @@ export class WikiStoryService {
       points.push({ day, entityNew, decisionNew })
     }
     return points
+  }
+
+  /** safeCount 同款错误语义的多行版（schema mismatch 抛、其他 fail-soft 空数组）。 */
+  private safeRows(sql: string, params: ReadonlyArray<unknown> = []): EntityRow[] {
+    try {
+      return this.client.prepare(sql).all(...params) as EntityRow[]
+    } catch (err) {
+      const msg = (err as Error).message ?? ""
+      if (/no such (table|column)/i.test(msg)) {
+        throw err
+      }
+      return []
+    }
   }
 
   private safeCount(sql: string, params: ReadonlyArray<unknown> = []): number {
