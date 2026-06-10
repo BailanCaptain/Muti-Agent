@@ -27,6 +27,7 @@
 import type { FastifyInstance } from "fastify"
 
 import type { WikiLeasesRepository } from "../../db/repositories/wiki-leases-repository"
+import { deriveExemptionTaintedFields } from "../../wiki/promote-audit/exemption-tainted-fields"
 import type { PromoteWikiService } from "../../wiki/promote-audit/promote-wiki-service"
 import { isDraftRelativePath } from "../../wiki/promote-audit/promote-wiki-service"
 import type { V14PromoteAuditService } from "../../wiki/promote-audit/v14-promote-audit-service"
@@ -104,9 +105,14 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
       return { ok: false, code: "INTERNAL_ERROR", error: (err as Error).message }
     }
 
+    // 德彪 r2 P1 · 与 service.promote 同口径:豁免文档 preview 也服务端补 taint 片段,
+    // 否则前端 preview 显示 pass、真 promote 被拒,体验割裂(且 preview 可被绕)。
+    const derivedTainted = deriveExemptionTaintedFields(srcContent)
     const result = deps.audit.audit({
       body: srcContent,
-      taintedSourceFields: body.taintedSourceFields,
+      taintedSourceFields: derivedTainted.length
+        ? Array.from(new Set([...(body.taintedSourceFields ?? []), ...derivedTainted]))
+        : body.taintedSourceFields,
     })
     return { ok: true, audit: result }
   })

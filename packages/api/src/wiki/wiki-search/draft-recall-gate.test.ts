@@ -8,8 +8,9 @@
  *   - 修:两个召回源默认排除 /draft/;promote(mv 到 canonical 路径)后自然进召回。
  *   - KB tab 草稿审批列表走独立 GET /api/wiki/drafts(fs 扫描),不受影响。
  *
- * 闸门口径:path 含 '/draft/' = 未 promote(与 NightlyHealthCheck / wiki-story isDraftPath
- * 同口径);含 draft/_auto/、draft/_quarantined/ 全覆盖。
+ * 闸门口径(德彪 r2 P1 扩):/draft/ 或 /_drafts/(demote 回流)= 未 promote,与
+ * promote/demote 判定 isDraftRelativePath 同口径;含 draft/_auto/、draft/_quarantined/、
+ * _drafts/ 全覆盖。L4 read_wiki 同闸门(level4-readwiki-backend.test.ts)。
  */
 
 import assert from "node:assert/strict"
@@ -47,9 +48,13 @@ describe("draft 召回准入闸门 · WikiEntityFtsProvider", () => {
     const dbh = makeDb()
     const fs = makeWikiRoot()
     try {
-      // 两文档都含 zebramarker(query 命中)→ 验证 draft 被命中但被闸门排除,canonical 留下
+      // 多文档都含 zebramarker(query 命中)→ 验证 draft/_drafts 被闸门排除,canonical 留下
       await writeWiki(fs.root, "wiki/concepts/draft/_auto/B014-danger.md",
         "---\ntype: lesson\n---\n# B014 zebramarker enametoolong\nbody\n")
+      await writeWiki(fs.root, "wiki/concepts/_drafts/demoted.md",
+        "---\ntype: concept\n---\n# demoted zebramarker doc\nbody\n")
+      await writeWiki(fs.root, "wiki/concepts/undrafts/legit.md",
+        "---\ntype: concept\n---\n# undrafts zebramarker legit\nbody\n")
       await writeWiki(fs.root, "wiki/concepts/approved.md",
         "---\ntype: concept\n---\n# approved zebramarker entry\nbody\n")
       await reindexWikiEntities({ wikiRoot: fs.root, db: dbh.db })
@@ -58,6 +63,11 @@ describe("draft 召回准入闸门 · WikiEntityFtsProvider", () => {
       const hits = await provider.search("zebramarker", { topK: 10 })
       const paths = hits.map((h) => h.path)
       assert.ok(!paths.some((p) => p.includes("/draft/")), `draft 不应被召回: ${JSON.stringify(paths)}`)
+      // 德彪 r2 P1:demote 回流的 _drafts/ 同样未 promote,必须同闸门
+      assert.ok(!paths.some((p) => p.includes("/_drafts/")), `_drafts 不应被召回: ${JSON.stringify(paths)}`)
+      // ESCAPE 正确性反证:'_' 是 LIKE 单字符通配,不转义会误杀一字之差的 undrafts/
+      assert.ok(paths.some((p) => p === "wiki/concepts/undrafts/legit.md"),
+        `undrafts/ 合法路径不得被 '_' 通配误排: ${JSON.stringify(paths)}`)
       assert.ok(paths.some((p) => p === "wiki/concepts/approved.md"), "canonical 应被召回")
     } finally {
       dbh.cleanup(); fs.cleanup()
@@ -104,10 +114,11 @@ describe("draft 召回准入闸门 · EmbeddedWikiRecordsLoader", () => {
     }).run()
   }
 
-  it("load 排除 /draft/ 行:只装 canonical embedding(语义召回同闸门)", async () => {
+  it("load 排除 /draft/ 与 /_drafts/ 行:只装 canonical embedding(语义召回同闸门)", async () => {
     const dbh = makeDb()
     try {
       insert(dbh.db, "wiki/concepts/draft/_auto/d.md", "d")
+      insert(dbh.db, "wiki/concepts/_drafts/d2.md", "d2")
       insert(dbh.db, "wiki/concepts/canon.md", "canon")
       const loader = new EmbeddedWikiRecordsLoader({
         db: dbh.db,

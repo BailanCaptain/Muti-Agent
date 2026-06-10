@@ -523,7 +523,20 @@ export function renderCompiledDraft(
   const body = `# ${fm.title}\n\n${fm.summary}\n\n## Facts\n\n${factsBody}\n`
   // extraFrontmatter 经 yaml.stringify 安全序列化（值含 '---'/换行也不会破栏，
   // 避免字符串注入审计行的 indexOf 错位——德彪 human-reviewed 审 P1 #5）。
-  const fmOut = extraFrontmatter ? { ...fm, ...extraFrontmatter } : fm
+  // 德彪 r2 P2:extra 键与编译 frontmatter 同名直接抛——否则 caller 可静默覆盖
+  // tainted_source 等安全字段(豁免通道洗白 taint)。fail-loud 优于键白名单：
+  // CompiledFrontmatter 新增安全字段自动受保护，无需同步名单。
+  let fmOut: Record<string, unknown> = fm as unknown as Record<string, unknown>
+  if (extraFrontmatter) {
+    for (const key of Object.keys(extraFrontmatter)) {
+      if (Object.prototype.hasOwnProperty.call(fm, key)) {
+        throw new Error(
+          `renderCompiledDraft: extraFrontmatter key '${key}' 与编译 frontmatter 冲突，禁止覆盖`,
+        )
+      }
+    }
+    fmOut = { ...(fm as unknown as Record<string, unknown>), ...extraFrontmatter }
+  }
   return `---\n${stringifyYaml(fmOut)}---\n${body}`
 }
 

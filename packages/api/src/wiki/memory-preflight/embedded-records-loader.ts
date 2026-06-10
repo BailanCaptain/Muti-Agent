@@ -16,10 +16,10 @@
  * provider 维持 BM25-only 现状，系统行为不变（天然 fail-soft，无需开关）。
  */
 
-import { notLike } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type * as schema from "../../db/schema"
 import { wikiEntityIndex } from "../../db/schema"
+import { isDraftRelativePath } from "../promote-audit/promote-wiki-service"
 import type { EmbeddingGeneratorFn } from "./hybrid-search-provider"
 import type { WikiEntityRecord } from "./in-memory-provider"
 
@@ -76,7 +76,9 @@ export class EmbeddedWikiRecordsLoader {
 
   async load(): Promise<EmbeddedRecordsLoadResult> {
     // F027 续 · draft 召回准入闸门（德彪 P2 + 小孙拍选项 1）：语义召回与 BM25 同闸门,
-    // 排除 path 含 /draft/ 的未 promote 实体（embedding 不该让未审内容进 agent 召回）。
+    // 排除未 promote 实体（embedding 不该让未审内容进 agent 召回）。
+    // 德彪 r2 P1:口径复用 promote/demote 判定 isDraftRelativePath(/draft/ 或 /_drafts/)。
+    // 本就全表 .all() 无 LIMIT 语义,JS 过滤等价且免 LIKE '_' 通配转义坑。
     const rows = this.db
       .select({
         path: wikiEntityIndex.path,
@@ -85,8 +87,8 @@ export class EmbeddedWikiRecordsLoader {
         sourceHash: wikiEntityIndex.sourceHash,
       })
       .from(wikiEntityIndex)
-      .where(notLike(wikiEntityIndex.path, "%/draft/%"))
       .all()
+      .filter((row) => !isDraftRelativePath(row.path))
 
     const records: WikiEntityRecord[] = []
     const stats = { total: rows.length, embedded: 0, reused: 0, failed: 0, aborted: false }

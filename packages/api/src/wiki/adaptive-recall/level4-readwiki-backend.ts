@@ -15,6 +15,7 @@ import { readFile } from "node:fs/promises"
 import path from "node:path"
 import type { Level4Backend } from "./types"
 import type { RecallHit } from "../memory-preflight/types"
+import { isDraftRelativePath } from "../promote-audit/promote-wiki-service"
 
 const EXCERPT_TRUNCATE = 400
 const WIKI_PATH_PREFIX = /^wiki\/[a-z][\w/-]*\.md$/i
@@ -35,6 +36,12 @@ export class FileSystemLevel4Backend implements Level4Backend {
     // 2. 防 path traversal — normalize + 拒绝 ..
     const normalized = path.normalize(requestedPath).replace(/\\/g, "/")
     if (normalized.includes("..") || normalized.startsWith("/")) {
+      return null
+    }
+    // 2.5 draft 召回准入闸门(德彪 r2 P1 + 小孙拍选项 1):L4 是 agent 召回注入路径,
+    // critique 给 exact draft 路径也不得把未 promote 内容注入 prompt——否则 BM25/语义
+    // 闸门被旁路。口径与 promote/demote 同(/draft/ 或 /_drafts/)。
+    if (isDraftRelativePath(normalized)) {
       return null
     }
     // 3. 拼绝对路径 + resolve 验证仍在 wikiRoot 下

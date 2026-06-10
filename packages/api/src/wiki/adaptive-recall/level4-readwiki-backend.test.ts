@@ -91,4 +91,36 @@ describe("F027 P13.4 · FileSystemLevel4Backend", () => {
       cleanup()
     }
   })
+
+  // 德彪 r2 P1 · draft 召回准入闸门(小孙拍选项 1):L4 是 agent 召回注入路径,
+  // critique 给 exact draft 路径不得旁路 BM25/语义闸门。
+  it("draft 路径(文件存在)→ 返 null(召回准入闸门)", async () => {
+    const { backend, root, cleanup } = setup()
+    try {
+      mkdirSync(path.join(root, "wiki", "concepts", "draft", "_auto"), { recursive: true })
+      writeFileSync(
+        path.join(root, "wiki", "concepts", "draft", "_auto", "danger.md"),
+        "# 未审 draft 危险内容\n",
+        "utf8",
+      )
+      assert.equal(await backend.readWiki("wiki/concepts/draft/_auto/danger.md"), null)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("_drafts(demote 回流)路径(文件存在)→ 返 null", async () => {
+    const { backend, root, cleanup } = setup()
+    try {
+      mkdirSync(path.join(root, "wiki", "concepts", "_drafts"), { recursive: true })
+      writeFileSync(
+        path.join(root, "wiki", "concepts", "_drafts", "demoted.md"),
+        "# demoted 未再审内容\n",
+        "utf8",
+      )
+      assert.equal(await backend.readWiki("wiki/concepts/_drafts/demoted.md"), null)
+    } finally {
+      cleanup()
+    }
+  })
 })

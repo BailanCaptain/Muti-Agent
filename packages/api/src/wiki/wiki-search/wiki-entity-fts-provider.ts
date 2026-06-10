@@ -122,10 +122,15 @@ export class WikiEntityFtsProvider implements WikiSearchProvider {
     const nw = Number.isFinite(this.nameWeight) ? this.nameWeight.toFixed(2) : "5.00"
     const bw = Number.isFinite(this.bodyWeight) ? this.bodyWeight.toFixed(2) : "1.00"
 
-    // F027 续 · draft 召回准入闸门：默认排除 path 含 /draft/ 的未 promote 实体。
-    // indexer 落库 path 已 normalize 为 '/'（wiki-entity-indexer relPath.replace），
-    // LIKE '%/draft/%' 可靠;覆盖 draft/_auto/ + draft/_quarantined/。
-    const draftClause = this.includeDrafts ? "" : "AND i.path NOT LIKE '%/draft/%'"
+    // F027 续 · draft 召回准入闸门：默认排除未 promote 实体。
+    // indexer 落库 path 已 normalize 为 '/'（wiki-entity-indexer relPath.replace）。
+    // 覆盖 draft/_auto/ + draft/_quarantined/ + demote 回流的 _drafts/（德彪 r2 P1:
+    // 口径与 promote/demote 判定 isDraftRelativePath 同 = /draft/ 或 /_drafts/）。
+    // '_' 是 LIKE 单字符通配，第二个 pattern 必须 ESCAPE 显式转义，否则 '%/_drafts/%'
+    // 会误排 '/undrafts/' 之类一字之差的合法路径。
+    const draftClause = this.includeDrafts
+      ? ""
+      : "AND i.path NOT LIKE '%/draft/%' AND i.path NOT LIKE '%/\\_drafts/%' ESCAPE '\\'"
     let sql: string
     let params: unknown[]
     if (buckets && buckets.length > 0) {

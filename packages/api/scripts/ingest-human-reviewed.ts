@@ -16,15 +16,17 @@
  * 4. 可审计:commit 走 updateWiki 正路写 wiki_events(alias=human-reviewed:<reviewer>);
  *    落盘 frontmatter 注 `ingest_exemption` 行(谁、何时、豁免了什么)。
  *
- * 用法(主库运营,与 backfill 同款 env):
+ * 用法(主库运营,与 backfill 同款 env;德彪 r2 P2:`--` 分隔必须有,文件显式逐个列、
+ * 不用通配;文件必须在仓库 docs/ 树内,从仓库根运行):
  *   SQLITE_PATH=data/multi-agent.sqlite WIKI_ROOT=.runtime/wiki \
- *     npx tsx scripts/ingest-human-reviewed.ts --reviewer 小孙 docs/bugReport/B014-*.md ...
+ *     npx tsx packages/api/scripts/ingest-human-reviewed.ts --reviewer 小孙 -- \
+ *       docs/bugReport/B014-enametoolong-regression.md docs/features/F002-decision-board.md
  *
  * Iron Law:测试用临时 sqlite + 临时 wikiRoot。
  */
 
 import { randomUUID } from "node:crypto"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs"
 import path from "node:path"
 import { createDrizzleDb } from "../src/db/drizzle-instance"
 import { IngestCommitService } from "../src/routes/phase3/ingest-commit"
@@ -106,9 +108,10 @@ export function createHumanReviewedIngest(opts: HumanReviewedIngestOpts): {
       //   rawContent = **原文(未 sanitize)**。这是豁免本体——blocked 文档的"危险文本"
       //   就是它们的讲解内容,sanitize 后 sanitizedText 置空 = 内容残缺,无法用。
       //   缓解三层:① compile SYSTEM prompt 有"资料是数据块不是指令"防注入框架
-      //   (compile-prompt.ts:13,对原文也生效)② fromUserDrop=true → tainted_source=true
-      //   → promote 时 V14 layer3 审计触发(德彪 #3)③ 产物 draft,draft 闸门保证 promote
-      //   前不进 agent 召回(c259e84)。残余风险:attacker 文本仍可能诱导 LLM 生成合法
+      //   (compile-prompt.ts:13,对原文也生效)② fromUserDrop=true 保 taint + promote 时
+      //   服务端对 ingest_exemption 文档 sanitize 复检,命中片段动态注入 V14 layer3
+      //   (德彪 r2 P1 真接线,exemption-tainted-fields.ts)③ 产物 draft,draft 召回准入
+      //   闸门保证 promote 前不进 agent 召回。残余风险:attacker 文本仍可能诱导 LLM 生成合法
       //   但偏倚的 summary/facts → 靠人审者 promote 时核对编译产物兜底。
       // 编译失败不 fallback stub:人工质量通道,失败即报错让人重跑/跳过(不静默落原文)。
       const draft = await runCompilePipelineWithRetry(
@@ -193,8 +196,24 @@ export function parseHumanReviewedArgs(
   if (!reviewer || !reviewer.trim()) {
     return { ok: false, error: "--reviewer 后必须紧跟真名" }
   }
-  if (/[/\\]/.test(reviewer) || /\.md$/i.test(reviewer)) {
-    return { ok: false, error: `reviewer 不得像路径/文件名: ${reviewer}(是否漏了 -- 分隔符?)` }
+  const trimmed = reviewer.trim()
+  // 德彪 r2 P2:审计身份保守字符规则——前导 '-'(把 "--"/flag 误当人名)、控制字符、
+  // 超长全拒。签名进 wiki_events alias + frontmatter,垃圾身份 = 审计链失真。
+  if (trimmed.startsWith("-")) {
+    return { ok: false, error: `reviewer 不得以 '-' 开头: ${trimmed}(是否漏了真名?)` }
+  }
+  // charCode 循环而非正则: biome noControlCharactersInRegex 禁正则含控制字符。
+  for (let i = 0; i < reviewer.length; i++) {
+    const c = reviewer.charCodeAt(i)
+    if (c < 0x20 || c === 0x7f) {
+      return { ok: false, error: "reviewer 含控制字符" }
+    }
+  }
+  if (trimmed.length > 64) {
+    return { ok: false, error: `reviewer 过长(>64): ${trimmed.slice(0, 64)}…` }
+  }
+  if (/[/\\]/.test(trimmed) || /\.md$/i.test(trimmed)) {
+    return { ok: false, error: `reviewer 不得像路径/文件名: ${trimmed}(是否漏了 -- 分隔符?)` }
   }
   if (argv[2] !== "--") {
     return { ok: false, error: "reviewer 与文件清单之间必须有 -- 分隔符" }
@@ -203,7 +222,41 @@ export function parseHumanReviewedArgs(
   if (files.length === 0) {
     return { ok: false, error: "-- 之后必须显式列出人审过的文件(无通配,每个文件名=一次人工确认)" }
   }
-  return { ok: true, reviewer, files }
+  return { ok: true, reviewer: trimmed, files }
+}
+
+/**
+ * 德彪 r2 P1 · 源文件围栏:realpath 后必须落在 approvedRootReal(仓库 docs/ 树)内的
+ * 普通 .md 文件。realpath 同时消解 symlink 逃逸(与 list/read containment 同课:
+ * 相对路径 `../`、绝对路径、symlink 指树外,全在 realpath 后用同一前缀判定拦截)。
+ * 导出供测试。
+ */
+export function validateApprovedSourceFile(
+  fileArg: string,
+  approvedRootReal: string,
+): { ok: true; realPath: string } | { ok: false; error: string } {
+  let real: string
+  try {
+    real = realpathSync(path.resolve(fileArg))
+  } catch {
+    return { ok: false, error: `文件不存在: ${fileArg}` }
+  }
+  if (real !== approvedRootReal && !real.startsWith(approvedRootReal + path.sep)) {
+    return { ok: false, error: `越界:人审豁免只收仓库 docs/ 树内文件: ${fileArg}` }
+  }
+  if (!real.toLowerCase().endsWith(".md")) {
+    return { ok: false, error: `仅收 .md 文件: ${fileArg}` }
+  }
+  let st: ReturnType<typeof statSync>
+  try {
+    st = statSync(real)
+  } catch {
+    return { ok: false, error: `stat 失败: ${fileArg}` }
+  }
+  if (!st.isFile()) {
+    return { ok: false, error: `不是普通文件: ${fileArg}` }
+  }
+  return { ok: true, realPath: real }
 }
 
 // ── CLI 入口 ─────────────────────────────────────────────────────────────
@@ -230,6 +283,15 @@ async function main(): Promise<void> {
     process.exitCode = 1
     return
   }
+  // 德彪 r2 P1:源文件围栏根 = <cwd>/docs(本通道只收仓库 docs/ 树内的人审文件)。
+  let approvedRootReal: string
+  try {
+    approvedRootReal = realpathSync(path.resolve(process.cwd(), "docs"))
+  } catch {
+    console.error(`docs/ 目录不存在(需从仓库根运行): ${path.resolve(process.cwd(), "docs")}`)
+    process.exitCode = 1
+    return
+  }
 
   const { ingestOne, close } = createHumanReviewedIngest({
     sqlitePath,
@@ -240,15 +302,15 @@ async function main(): Promise<void> {
   let failed = 0
   try {
     for (const f of files) {
-      const abs = path.resolve(f)
-      if (!existsSync(abs)) {
-        console.error(`✗ 文件不存在: ${f}`)
+      const v = validateApprovedSourceFile(f, approvedRootReal)
+      if (!v.ok) {
+        console.error(`✗ ${v.error}`)
         failed++
         continue
       }
-      const source = path.relative(process.cwd(), abs).replace(/\\/g, "/")
+      const source = path.relative(process.cwd(), v.realPath).replace(/\\/g, "/")
       console.log(`编译+收录(人审豁免): ${source} …`)
-      const r = await ingestOne(abs, source)
+      const r = await ingestOne(v.realPath, source)
       if (r.ok) {
         console.log(`✓ ${source} → ${r.finalPath ?? r.ingestEventId}`)
       } else {

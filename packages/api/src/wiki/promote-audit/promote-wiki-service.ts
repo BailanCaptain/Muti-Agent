@@ -41,6 +41,7 @@ import type { ACLContext } from "../acl-types"
 import { isServiceAlias } from "../acl-types"
 import { writeFileAtomic } from "../atomic-write"
 import { WikiPathInvalidError, safeWikiPath } from "../path-containment"
+import { deriveExemptionTaintedFields } from "./exemption-tainted-fields"
 import {
   V14PromoteAuditService,
   type V14PromoteAuditInput,
@@ -143,9 +144,16 @@ export class PromoteWikiService {
 
     // ─── 2. V14 二次审计 (read src body 跑 3 步 detection) ─────────────────
     const srcContent = fs.readFileSync(srcAbsolute, "utf-8")
+    // 德彪 r2 P1 · 人审豁免文档(frontmatter 带 ingest_exemption)promote 二审加严:
+    // 服务端 sanitize 复检 src,命中危险片段动态并入 layer 3 taintedSourceFields。
+    // 不依赖 client 传参(不可绕),也不把危险原文持久化进 frontmatter(防 promote 后
+    // 泄进 canonical/FTS)。普通 draft(无 exemption 标记)derived 恒空,零回归。
+    const derivedTainted = deriveExemptionTaintedFields(srcContent)
     const auditInput: V14PromoteAuditInput = {
       body: srcContent,
-      taintedSourceFields: req.taintedSourceFields,
+      taintedSourceFields: derivedTainted.length
+        ? Array.from(new Set([...(req.taintedSourceFields ?? []), ...derivedTainted]))
+        : req.taintedSourceFields,
     }
     const auditResult = this.audit.audit(auditInput)
     if (!auditResult.passed) {
