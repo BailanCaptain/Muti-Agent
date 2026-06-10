@@ -61,6 +61,8 @@ import {
   WikiEntityFtsProvider,
   reindexWikiEntities,
 } from "./wiki/wiki-search"
+import { EmbeddedWikiRecordsLoader } from "./wiki/memory-preflight/embedded-records-loader"
+import type { HybridSearchProvider } from "./wiki/memory-preflight/hybrid-search-provider"
 import { createWikiServices } from "./wiki/wiki-services"
 
 /**
@@ -293,6 +295,10 @@ export async function createApiServer(options: {
   // prompt_audit 9 字段写入由 PromptAuditWriter (line 266) 负责，跟 Coordinator
   // 启用解耦：Coordinator enabled=true → 9 字段填真 recall output；
   // enabled=false → 9 字段走 disabled 默认（recall_required=false 等）。
+  //
+  // F027 续 · hybridWikiSearch 提升到 block 外：reindexWiki()（下方 ~line 1000）完成后
+  // EmbeddedWikiRecordsLoader 要对它热替换 embedded records（语义召回转正）。
+  let hybridWikiSearch: HybridSearchProvider | undefined
   {
     const { AdaptiveRecallCoordinator } = await import(
       "./orchestrator/adaptive-recall-coordinator"
@@ -316,9 +322,9 @@ export async function createApiServer(options: {
       broadcaster: auditBroadcaster,
     })
     // F027 #286 FU-2 · 冷启召回与 coordinator Level 2 共享同一 hybrid provider（B1-b-2 P3-5）。
-    // 今天 embedded records 空 → 退化 BM25-only（与原 SearchWikiProvider 注入行为等价）；
-    // F028 boot-load embedded records 后冷启 + coordinator 一起升级语义召回。
-    const hybridWikiSearch = createHybridWikiSearchProvider({ drizzleDb, embeddingService })
+    // 起步 embedded records 空 → BM25-only；boot reindex 后 EmbeddedWikiRecordsLoader
+    // 热替换 records → 冷启 + coordinator 同时升级语义召回（F027 续 · 转正）。
+    hybridWikiSearch = createHybridWikiSearchProvider({ drizzleDb, embeddingService })
     const executorDeps = createProductionRecallExecutorDeps({
       drizzleDb,
       wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
@@ -987,12 +993,49 @@ export async function createApiServer(options: {
   //   wikiRoot 传 `<WIKI_ROOT||.runtime/wiki>`（= roomCompileWikiServicesRoot）——reindex 内部
   //   自己 join("wiki")，磁盘实测文件在 `.runtime/wiki/wiki/<bucket>`，故不能传多套一层的
   //   roomCompileWikiRoot（会变三层 wiki 扫不到文件）。
+  // F027 续 · 语义召回转正：reindex 后从 wiki_entity_index 装 embedded records 热替换进
+  // hybrid provider（冷启 + Level 2 同一实例同时升级）。sourceHash 缓存让 debounce 高频
+  // 刷新只付增量 embed 成本；全失败 → records 维持上轮/空 → BM25-only，天然 fail-soft。
+  const embeddedRecordsLoader = new EmbeddedWikiRecordsLoader({
+    db: drizzleDb,
+    generateEmbedding: (text) => embeddingService.generateEmbedding(text),
+    warn: (msg) => app.log.warn({}, msg),
+  })
+  let embeddedRefreshRunning = false
+  let embeddedRefreshDirty = false
+  const refreshEmbeddedRecords = async () => {
+    const provider = hybridWikiSearch
+    if (!provider) return
+    // 防重入：在跑时再触发只标 dirty，跑完补一轮（不丢最后一次 reindex 的更新）。
+    if (embeddedRefreshRunning) {
+      embeddedRefreshDirty = true
+      return
+    }
+    embeddedRefreshRunning = true
+    try {
+      do {
+        embeddedRefreshDirty = false
+        const { records, stats } = await embeddedRecordsLoader.load()
+        provider.replaceEmbeddedRecords(records)
+        app.log.info(
+          { component: "wiki-embedded-recall", ...stats },
+          "F027 embedded wiki records refreshed (semantic recall live)",
+        )
+      } while (embeddedRefreshDirty)
+    } catch (err) {
+      app.log.warn({ err }, "F027 embedded records refresh failed (non-fatal, BM25-only fallback)")
+    } finally {
+      embeddedRefreshRunning = false
+    }
+  }
   const reindexWiki = async () => {
     const report = await reindexWikiEntities({
       wikiRoot: roomCompileWikiServicesRoot,
       db: drizzleDb,
     })
     app.log.info({ component: "wiki-reindex", ...report }, "F027 wiki entity reindex")
+    // fire-and-forget：本地 embed 秒级 CPU，不阻塞 debounce/recompile 链。
+    void refreshEmbeddedRecords()
   }
   // 启动一次性全量 reindex：debounce 只在新写时增量；存量 wiki 文件需 boot 入索引，否则
   // search_wiki / Level 2 搜空表。scheduler 跳过时（CI/单测 MULTI_AGENT_SKIP_SCHEDULER=1）一并跳过。

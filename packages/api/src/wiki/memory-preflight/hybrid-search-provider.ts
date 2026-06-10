@@ -65,7 +65,7 @@ export class HybridSearchProvider implements WikiSearchProvider {
   private readonly minOverscan: number
   private readonly maxOverscan: number
   private readonly reranker: LLMReranker
-  private readonly recordByPath: Map<string, WikiEntityRecord>
+  private recordByPath: Map<string, WikiEntityRecord>
 
   constructor(
     private readonly bm25: BM25CandidateProvider,
@@ -78,6 +78,14 @@ export class HybridSearchProvider implements WikiSearchProvider {
     this.maxOverscan = opts?.maxOverscan ?? DEFAULT_MAX_OVERSCAN
     this.reranker = opts?.reranker ?? new NoopReranker()
     // path -> embedding lookup map（caller 提前 build；生产可加 LRU cache）
+    this.recordByPath = new Map(embedded.map((r) => [r.path, r]))
+  }
+
+  /**
+   * F027 续 · 语义召回转正：EmbeddedWikiRecordsLoader boot/reindex 后热替换 records。
+   * 整 map 原子换引用（不渐进 mutate）——并发 search 要么看旧全集要么看新全集，无半态。
+   */
+  replaceEmbeddedRecords(embedded: ReadonlyArray<WikiEntityRecord>): void {
     this.recordByPath = new Map(embedded.map((r) => [r.path, r]))
   }
 
