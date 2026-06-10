@@ -1,6 +1,6 @@
 # F028 Workspace Explorer Tabs Implementation Plan
 
-> v4 —— 桂芬 gemini r4 接管修订：补齐 start 外来端口预检、明确主 UI Origin 来源、修正 SQLite 目录创建顺序（先查后建）、缩短 worktreeId 长度（≤40）、统一 CreationDate 术语并清理 UI 残留。
+> v5 —— 桂芬 gemini r5 接管修订：修正 SQLITE_PATH 首次启动 realpath 时序（验父目录）、Windows pnpm 启动适配（cmd.exe /c 数组）、项目树拒 NTFS ADS。
 
 **Feature:** F028 — `docs/features/F028-workspace-explorer-tabs.md`
 **Goal:** RuntimeLog 一级 tab 扩展位首次兑现——「Worktree」（列表/进展/编译后端/整组重启/UI 启动/打开前端）+「项目目录」（containment 同源文件树 + 只读看内容），小孙工作区自助可视、自助驱动。
@@ -29,8 +29,8 @@
 - **控制面单实例（D12 · r2 P1-2）**：控制路由（start/restart/compile-backend）、内存单飞锁、boot reconcile **只存在于主 API**——路由注册处以 `process.env.WORKTREE_PREVIEW` 为门禁（preview 实例该 env=1 → 不注册控制路由，只注册只读 GET）。preview UI 通过 `GET /api/worktrees/capabilities → {control:boolean}` 感知并禁用操作按钮（提示去主 UI）。否则 worktree 自己的 API 收到 compile-backend 会先杀自身进程树（自杀悖论），且多实例锁失效。
 - **worktreeId（D13 · r2 P1-3/P2-1）**：`slugifyWorktreeId(name)` = `(sanitize(name) || "wt").slice(0,31) + "-" + sha1(name).slice(0,8)`。截断 sanitize 前缀确保总长 ≤40 字符以规避 Windows 文件路径深度限制。状态文件与日志文件均以 worktreeId 命名。
 - 主 API 编排器**分别** spawn 两个 detached 子进程（不是 supervisor 整组）：
-  - api: `pnpm dev:api`（链 = mount-skills → tsc shared → tsc api → tsx watch）
-  - web: `pnpm dev:web`（next dev）
+  - api: Windows 下为 `command="cmd.exe" args=["/d","/s","/c","pnpm dev:api"]`；POSIX 为 `command="pnpm" args=["dev:api"]`。**绝不使用 shell:true，全参数数组传递**。
+  - web: 同上，args 对应 `dev:web`。
   - cwd = worktree 根（服务端从 `git worktree list` 解析，调用方只给 name）
   - env = `process.env` + `buildPreviewEnv(...)` 子进程注入（**UI 路径零 `.env*` 写入** —— 不调 prepareDotenv）
   - stdio → `<主仓>/.runtime/worktree-preview-ui/<worktreeId>-api.log` / `<worktreeId>-web.log`（append）
@@ -50,7 +50,7 @@ type PreviewState = {
 ```
 
 - **杀进程唯一合法依据（r2 P1-4 升级）**：kill 前置预检三连——(1) 记录 pid 存在且 OS 实测 CreationDate 与落盘值**精确相等**（spawn 后与预检用同一 CIM 查询源，同表示精确比较，无容差；解析器提取 .NET JSON 格式中的整数 epoch-ms）；(2) 我们端口上的每个 listener pid 都是记录 pid 的**后代**（CIM 进程表 ppid 链向上溯达记录 pid）；(3) 端口断言（≥3100/≥8800 且 ≠3000/≠8787）。预检全过 → `taskkill /PID <记录pid> /T /F`；任一不过 → `PORT_OCCUPIED_FOREIGN` 拒绝（绝不按端口/进程名杀）。**整组重启在任何 kill 之前完成 api+web 双进程全量预检**（半杀不允许）。
-- **SQLITE_PATH 包含性断言（r2 P1-5 + r3 P1-3）**：spawn 前执行 **安全目录创建顺序**：(1) 逐级探测现存祖先路径（拒 symlink/junction）→ (2) mkdir 缺失段 → (3) realpath 包含性断言：env.SQLITE_PATH realpath 位于 `<目标worktree>/.runtime/worktree-preview/data/` 内，且不等于/不落入主仓 `data/` 与主库 SQLite 实际路径；违反 → 拒 spawn + 审计。
+- **SQLITE_PATH 包含性断言（r5 修正）**：spawn 前执行 **安全目录创建顺序**：(1) 逐级探测现存祖先路径（拒 symlink/junction）→ (2) `mkdir -p` 缺失段路径（确保 data 文件夹存在）→ (3) **对 data 文件夹 realpath** 并断言其位于 `<目标worktree>/.runtime/worktree-preview/` 内，且不等于/不落入主仓路径；(4) 最终 `SQLITE_PATH` = 该已验 realpath 文件夹 + 受控文件名 `multi-agent.sqlite`（规避首启文件不存在导致 realpath 抛错）。
 - **boot reconciliation**：主 API 启动时扫描状态文件，pid 不存在或 CreationDate 失配 → 该 process 字段置 null（只清记录，不杀任何进程）。
 - **并发单飞**：编排器内存 per-name 互斥；持锁期间任何同名操作 → 409。
 - **审计**：每次操作 append 一行 JSON 到 `.runtime/worktree-preview-ui/audit.log`：`{time, action, worktree, ok, stage?, message?}`。
@@ -105,8 +105,8 @@ type PreviewLogResponse = { lines: string[]; logPath: string }
 ```
 
 - root 解析单源：`{lexicalRoot, expectedRealRoot}` 一次解析，list/content 共用（同源 containment）。
-- list：`opendir` + 每 entry `lstat`，symlink/junction 不跟随不出现；dir 词法+realpath 双校验。
-- content：薄包装 `readContainedFile(abs, root, expectedRealRoot)`（原语已含 realpath/单 fd/nlink 防御）。
+- list：`opendir` + 每 entry `lstat`，symlink/junction 不跟随不出现；dir 词法+realpath 双校验。**拒绝包含 `:` 的相对路径（防 NTFS ADS）**。
+- content：薄包装 `readContainedFile(abs, root, expectedRealRoot)`（原语已含 realpath/单 fd/nlink 防御）。**拒绝包含 `:` 的相对路径（防 NTFS ADS）**。
 - **denylist（D8 常量，list 隐藏 + content 404 同源判定）**：
   目录 `node_modules` `.git` `.next` `.npm-cache` `.worktrees` `.runtime` `.agents` `data` `.codex` `.gemini` `.obsidian`；
   文件 `.env*` `auth.json` `*.pem` `*.key` `*.p12` `*.pfx` `id_rsa*` `*.token` `.npmrc`。
@@ -156,7 +156,7 @@ RUNTIME_LOG_LVL1_ITEMS = [
 6. detached HEAD 块 → branch:"(detached)" 不抛
 **TDD 循环 → Commit** `feat(F028): worktree 枚举器——porcelain+registry+端口探测+所有权三态 [黄仁勋]`
 
-### Task 2: 安全边界原语（AC6/AC9 守门 · r2 升级 · r3 修订）
+### Task 2: 安全边界原语（AC6/AC9 守门 · r2 升级 · r5 修订）
 
 **Files:** Create `packages/api/src/worktrees/preview-guards.ts` + test
 **失败测试用例**：
@@ -167,8 +167,9 @@ RUNTIME_LOG_LVL1_ITEMS = [
 5. `assertAllowedOrigin(originHeader, allowedOrigins)`: 无 Origin 过；命中白名单（:3000 主 UI / :3101 registry webPort）过；`http://localhost:8800`（API 自身 Host）**不在白名单 → 抛**（防回归到 Origin==Host）；`http://evil.com` 抛
 6. `assertListenerDescendant(processTable, listenerPid, rootPid)`: ppid 链可达过；不可达抛；表中无 listener 抛；环形 ppid（防御）抛
 7. `slugifyWorktreeId`: `feat/F028` → 无 `/` 且含 8 位哈希；**sanitize 前缀截断确保总长 ≤40**（`(sanitize(name) || "wt").slice(0,31) + "-" + sha1(name).slice(0,8)`）；超长名/纯 Unicode 名（sanitize 后可能为空）测试。
-8. `assertSqlitePathContained(sqlitePath, worktreeRoot, mainDataPaths)`: worktree preview data 内过；主仓 `data/` 内抛；等于主库路径抛；`..` 逃逸抛
-**TDD → Commit** `feat(F028): preview 安全原语——端口/对象/所有权/origin/后代/slug长度上限/sqlite 七重断言 [黄仁勋]`
+8. `assertSqlitePathContained(sqlitePath, worktreeRoot, mainDataPaths)`: **检查其父目录**。worktree preview data 内过；主仓 `data/` 内抛；等于主库路径抛；`..` 逃逸抛；**DB 文件尚不存在但父目录合法 → 过（r5 修正点）**。
+9. `assertPathNoAds(path)`: 相对路径含 `:` 抛；不含过。
+**TDD → Commit** `feat(F028): preview 安全原语——端口/对象/所有权/origin/后代/slug长度上限/sqlite及ADS断言 [黄仁勋]`
 
 ### Task 3: 状态文件存取 + 审计日志 + boot reconcile
 
@@ -190,7 +191,7 @@ RUNTIME_LOG_LVL1_ITEMS = [
 5. `restartAll` web 预检失败 → api 也不杀（半杀禁止），ok:false
 6. `start` 已 running(ownership:ui) → already-running（spawn 零调用）；**spawn 前增加双端口 foreign 探测，若任一被占 → `occupied-foreign` 且 spawn=0**。
 7. `start` 无 registry 条目 → claim worker 被调（端口动态分配）→ spawn → ok:true
-8. `start` spawn 前安全创建目录：**必须先逐级探测现存祖先路径（拒 symlink/junction）→ 再 mkdir 缺失段 → 再 realpath 断言**；junction 场景测试断言没有发生任何目录创建。
+8. `start` spawn 前安全创建目录：**必须先逐级探测现存祖先路径（拒 symlink/junction）→ 再 `mkdir -p` 缺失段路径（确保 data 文件夹存在）→ 对已创文件夹 realpath 断言**（r5 修订）；junction 场景测试断言没有发生任何目录创建。
 9. ready-timeout → 已 spawn 子进程按记录 pid+CreationDate 回收，状态文件回滚
 10. spawn 抛 → `{ok:false, stage:"spawn"}` 状态文件不留半截
 11. **AC6**: 注入 8787 listener 构造 → 任何 kill 前断言抛，审计 ok:false
@@ -199,17 +200,20 @@ RUNTIME_LOG_LVL1_ITEMS = [
 14. `tailLog(name, proc, lines)`: 文件存在尾 N 行；不存在 lines:[]；日志路径由 worktreeId 构成（`feat/x` 不产生嵌套目录）
 **TDD → Commit** `feat(F028): preview 编排器——靶向编译后端/整组重启/安全目录创建/409/审计 [黄仁勋]`
 
-### Task 5: 编排真实 deps（Windows 适配层）
+### Task 5: 编排真实 deps（Windows 适配层 · r5 修订）
 
 **Files:** Create `packages/api/src/worktrees/preview-deps.ts` + test
 **失败测试用例**（纯函数解析 + 命令拼装，不跑真命令）：
 1. `parseCimProcessTable(stdout)`: `Get-CimInstance Win32_Process | Select ProcessId,ParentProcessId,CreationDate | ConvertTo-Json` 样本 → `{pid, ppid, creationDate}`（从 `\/Date(ms)\/` 提取整数 epoch-ms 用于精确相等比较）；进程不存在/空表样本 → []
 2. `buildTaskkillArgs(pid)` → `["/PID", String(pid), "/T", "/F"]`（args 数组无拼接）
-3. `buildSpawnSpec("api"|“web", worktree, env)` → cwd=worktree.path、detached:true、**stdio 指向 `<worktreeId>-api.log`**、command="pnpm" args=["dev:api"]、**spec.env 含 buildPreviewEnv（@multi-agent/shared）注入且不含 prepareDotenv 调用痕迹**
+3. `buildSpawnSpec("api"|“web", worktree, env)`：
+   - Windows: `command="cmd.exe" args=["/d","/s","/c","pnpm dev:api"]`（固定字面量，防注入）；
+   - POSIX: `command="pnpm" args=["dev:api"]`；
+   - 通用: `cwd=worktree.path`、`detached:true`、`stdio` 指向日志、`env` 含 `buildPreviewEnv` 注入且不含 `prepareDotenv` 调用。
 4. `parsePortListeners(netstatStdout, [8801,3101])` → pid 集合（仅用于 foreign 检测，永不作为 kill 输入）
 5. `buildClaimWorkerSpec(registryPath, name)` → command="npx" args=["tsx","scripts/worktree-port-registry-claim-worker.ts",...]（claim 走 F024 跨进程 worker，stdout JSON 解析为 PortEntry；解析坏 JSON → 结构化 error）
 6. `buildShutdownWorkerSpec(registryPath, name)` → 同款（registry 清理走 F024 shutdown-worker）
-**TDD → Commit** `feat(F028): preview 真实 deps——CreationDate/taskkill/detached spawn/netstat 解析 [黄仁勋]`
+**TDD → Commit** `feat(F028): preview 真实 deps——Windows cmd.exe 适配/taskkill/detached spawn [黄仁勋]`
 
 ### Task 6: 进展摘要
 
@@ -274,16 +278,17 @@ RUNTIME_LOG_LVL1_ITEMS = [
 **用例**：main→主仓 {lexicalRoot, expectedRealRoot}；wt:<name>→worktree 根；未知/已删→null；realpath 失败→null
 **TDD → Commit** `feat(F028): project-tree 根解析器——main/worktree 单源 realpath [黄仁勋]`
 
-### Task 12: 目录 list（containment + denylist + 上限）
+### Task 12: 目录 list（containment + denylist + 上限 · r5 修订）
 
 **Files:** Create `packages/api/src/project-tree/tree-list.ts` + test（真 tmpdir fixture 含 symlink/secrets）
 **用例**：
 1. 排序（dir 前、字母序）+ size 仅 file
 2. D8 目录 denylist 不出现；`.env`/`.env.local`/`auth.json`/`x.pem`/`id_rsa.pub`/`.npmrc` 不出现
-3. 树外 symlink 不出现不抛；dir="../" → WikiPathInvalidError；dir 为树内 junction → 400 语义错误
-4. root swap（expectedRealRoot 失配）→ 400
-5. >1000 条目录 → 截到 1000 + truncated 标记
-**TDD → Commit** `feat(F028): project-tree list——containment+精确 denylist+条目上限 [黄仁勋]`
+3. **拒 ADS**：相对路径含 `:` → 400
+4. 树外 symlink 不出现不抛；dir="../" → WikiPathInvalidError；dir 为树内 junction → 400 语义错误
+5. root swap（expectedRealRoot 失配）→ 400
+6. >1000 条目录 → 截到 1000 + truncated 标记
+**TDD → Commit** `feat(F028): project-tree list——ADS 防御+精确 denylist+条目上限 [黄仁勋]`
 
 ### Task 12.5: readContainedFile maxBytes 原语扩展（r2 P1-6）
 
@@ -295,11 +300,11 @@ RUNTIME_LOG_LVL1_ITEMS = [
 4. maxBytes 路径下 nlink>1 拒 / realpath 越界抛——原防御全保留（防御不因新参数旁路）
 **TDD → Commit** `feat(F028): readContainedFile 加 maxBytes 同 fd 限读——原语层资源上限 [黄仁勋]`
 
-### Task 13: 文件 content（readContainedFile 复用 + 策略层）
+### Task 13: 文件 content（readContainedFile 复用 + 策略层 · r5 修订）
 
 **Files:** Create `packages/api/src/project-tree/tree-content.ts` + test
-**用例**：正常 .ts → content+mtime；denylist 路径 → null（404 语义，与隐藏同源判定）；>512KB（原语 maxBytes 开关）→ 截断+truncated；NUL 字节 → BINARY_FILE；越界 → WikiPathInvalidError 透传（只测分流不重测原语）
-**TDD → Commit** `feat(F028): project-tree content——复用原语 maxBytes+二进制拒策略 [黄仁勋]`
+**用例**：正常 .ts → content+mtime；denylist 路径 → null（404 语义，与隐藏同源判定）；**拒 ADS**（含 `:` 报 400）；>512KB（原语 maxBytes 开关）→ 截断+truncated；NUL 字节 → BINARY_FILE；越界 → WikiPathInvalidError 透传（只测分流不重测原语）
+**TDD → Commit** `feat(F028): project-tree content——ADS 防御+复用原语 maxBytes [黄仁勋]`
 
 ### Task 14: routes/project-tree.ts + server 挂载
 
