@@ -65,6 +65,7 @@ import {
   EmbeddedWikiRecordsLoader,
   createSerializedRefresher,
 } from "./wiki/memory-preflight/embedded-records-loader"
+import { isWorktreePreviewMode, resolveWikiRootBase } from "./wiki/resolve-wiki-root"
 import type { HybridSearchProvider } from "./wiki/memory-preflight/hybrid-search-provider"
 import { createWikiServices } from "./wiki/wiki-services"
 
@@ -141,6 +142,11 @@ export async function createApiServer(options: {
     ReturnType<typeof import("./runtime/cli-orchestrator").runTurn>
   >()
   const dispatch = new DispatchOrchestrator(sessions, PROVIDER_ALIASES, invocations)
+  // F027 续 · preview 双根修复：wiki 根单一解析（resolve-wiki-root.ts 三规则）。
+  // worktree-preview 且未显式 WIKI_ROOT → 根落 preview data 目录（与 fixture copier /
+  // metaWikiRoot destWikiRoot 同根）；否则行为与原 `WIKI_ROOT || cwd/.runtime/wiki` 完全一致。
+  // 原 line 175 自标的 "reader 读 fixtures 根、writer 写 env 根" mismatch 由此收敛单根。
+  const wikiRootBase = resolveWikiRootBase({ sqlitePath: options.sqlitePath })
   // F018 P4: TranscriptWriter instantiation. dataDir = dirname(sqlitePath) so
   // transcripts live under .runtime/threads/... alongside the SQLite file.
   const { TranscriptWriter } = await import("./services/transcript-writer")
@@ -172,8 +178,8 @@ export async function createApiServer(options: {
   // 同 gate 模式 (WORKTREE_PREVIEW=1 + .runtime/worktree-preview/ path check)。
   // destWikiRoot 从 sqlitePath 推 (路径同根: .runtime/worktree-preview/data/{multi-agent.sqlite,wiki/})
   // 跟 plan AC-P4-9 a/b line 253-254 显式目标路径一致。
-  // Note: 当前 wikiServices.wikiRoot 用 process.env.WIKI_ROOT || cwd/.runtime/wiki/，
-  //       跟 fixture copier dest 不一致 (pre-existing 配置 mismatch — Week 5 follow-up)。
+  // F027 续 · 双根已收敛：preview 模式且无显式 WIKI_ROOT 时 wikiRootBase（上方）=
+  // destWikiRoot 同根（resolve-wiki-root.ts 规则 2），原 "Week 5 follow-up" mismatch 已修。
   const { applyWorktreePreviewWikiFixtures } = await import("./db/worktree-preview-wiki-fixtures")
   const destWikiRoot = path.join(path.dirname(options.sqlitePath), "wiki")
   const wikiFixturesReport = applyWorktreePreviewWikiFixtures({ destWikiRoot })
@@ -278,7 +284,7 @@ export async function createApiServer(options: {
   let fireWikiCommit: (() => void) | undefined
   const wikiServices = createWikiServices({
     db: drizzleDb,
-    wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    wikiRoot: wikiRootBase,
     onCommit: () => fireWikiCommit?.(),
   })
   const decisions = new DecisionManager((event) => broadcaster.broadcast(event), repository)
@@ -330,7 +336,7 @@ export async function createApiServer(options: {
     hybridWikiSearch = createHybridWikiSearchProvider({ drizzleDb, embeddingService })
     const executorDeps = createProductionRecallExecutorDeps({
       drizzleDb,
-      wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+      wikiRoot: wikiRootBase,
       messagesFtsRepo,
       embeddingService,
       level5,
@@ -373,7 +379,7 @@ export async function createApiServer(options: {
     const { ViewfinderService } = await import("./routes/phase3/viewfinder")
     const viewfinderSvc = new ViewfinderService({
       db: drizzleDb,
-      wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+      wikiRoot: wikiRootBase,
     })
     messages.setViewfinderLoader(async (roomId) => {
       const r = await viewfinderSvc.getViewfinder(roomId).catch(() => null)
@@ -812,7 +818,7 @@ export async function createApiServer(options: {
     "./wiki/llm-compile/entity-existence-checker"
   )
   const ingestCompileWikiRoot = path.join(
-    process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    wikiRootBase,
     "wiki",
   )
   let ingestCompileRules = ""
@@ -863,7 +869,7 @@ export async function createApiServer(options: {
 
   registerPhase3Routes(app, {
     db: drizzleDb,
-    wikiRoot: process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki"),
+    wikiRoot: wikiRootBase,
     wikiServices,
     sharedIngestServices: {
       previewStore: sharedPreviewStore,
@@ -880,9 +886,8 @@ export async function createApiServer(options: {
   //
   // codex Week 4 mid-r1 P1 修: metaWikiRoot 仅在 worktree-preview 模式下覆盖 wikiServices.wikiRoot;
   // 否则 default fallback wikiServices.wikiRoot (prod 部署 / WIKI_ROOT env 路径正确)
-  const isWorktreePreview =
-    process.env.WORKTREE_PREVIEW === "1" &&
-    options.sqlitePath.replace(/\\/g, "/").includes(".runtime/worktree-preview/")
+  // F027 续：判定收敛到 resolve-wiki-root.ts 单源（与 wikiRootBase 规则同一份代码）。
+  const isWorktreePreview = isWorktreePreviewMode({ sqlitePath: options.sqlitePath })
   registerPhase4Routes(app, {
     wikiServices,
     metaWikiRoot: isWorktreePreview ? destWikiRoot : undefined,
@@ -916,7 +921,7 @@ export async function createApiServer(options: {
   // `<wikiServicesRoot>/wiki/` 作 wikiRoot — 写 `<wikiServicesRoot>/wiki/rooms/...`
   // 跟 ViewfinderService 期望对齐.
   const roomCompileWikiServicesRoot =
-    process.env.WIKI_ROOT || path.join(process.cwd(), ".runtime", "wiki")
+    wikiRootBase
   const roomCompileWikiRoot = path.join(roomCompileWikiServicesRoot, "wiki")
   // F027 P4 hotfix · WikiEventsSink wrap — 让 RoomCompiler 写 viewfinder.md 时留 wiki_events row
   // (V16.5 §5 line 452 "所有 wiki 写操作走 append-only event log")。
