@@ -40,7 +40,8 @@ done
 VALID_STATUSES="spec in-progress done"
 for f in docs/features/*.md; do
   [ -f "$f" ] || continue
-  status=$(grep -m1 '^status:' "$f" | sed 's/^status:\s*//' | tr -d '[:space:]')
+  # || true: 无 status 行时 grep 退出 1，否则 pipefail+errexit 静默杀脚本（下方 -z guard 变死代码）
+  status=$(grep -m1 '^status:' "$f" | sed 's/^status:\s*//' | tr -d '[:space:]' || true)
   if [ -z "$status" ]; then
     continue
   fi
@@ -59,7 +60,7 @@ done
 # --- Check 3: status: done must have completed: field ---
 for f in docs/features/*.md; do
   [ -f "$f" ] || continue
-  status=$(grep -m1 '^status:' "$f" | sed 's/^status:\s*//' | tr -d '[:space:]')
+  status=$(grep -m1 '^status:' "$f" | sed 's/^status:\s*//' | tr -d '[:space:]' || true)
   if [ "$status" = "done" ]; then
     if ! grep -q '^completed:' "$f"; then
       error "$f — status is 'done' but missing 'completed:' date in frontmatter"
@@ -85,9 +86,10 @@ if [ -f "$ROADMAP" ]; then
       fid=$(echo "$line" | grep -oP '^\|\s*F\d+' | tr -d '| ' || true)
       if [ -n "$fid" ]; then
         roadmap_status=$(echo "$line" | awk -F'|' '{print $4}' | tr -d '[:space:]')
-        spec_file=$(find docs/features -name "${fid}-*" -o -name "${fid,,}-*" 2>/dev/null | head -1)
+        # -maxdepth 1: 聚合文件只在 docs/features/ 顶层；嵌套 evidence/ 归档可能同名无 frontmatter
+        spec_file=$(find docs/features -maxdepth 1 \( -name "${fid}-*" -o -name "${fid,,}-*" \) 2>/dev/null | head -1)
         if [ -n "$spec_file" ] && [ -f "$spec_file" ]; then
-          file_status=$(grep -m1 '^status:' "$spec_file" | sed 's/^status:\s*//' | tr -d '[:space:]')
+          file_status=$(grep -m1 '^status:' "$spec_file" | sed 's/^status:\s*//' | tr -d '[:space:]' || true)
           if [ -n "$file_status" ] && [ "$roadmap_status" != "$file_status" ]; then
             error "ROADMAP says $fid='$roadmap_status' but $spec_file says status='$file_status'"
           fi
@@ -99,9 +101,9 @@ if [ -f "$ROADMAP" ]; then
     if [ "$in_completed" -eq 1 ]; then
       fid=$(echo "$line" | grep -oP '^\|\s*F\d+' | tr -d '| ' || true)
       if [ -n "$fid" ]; then
-        spec_file=$(find docs/features -name "${fid}-*" -o -name "${fid,,}-*" 2>/dev/null | head -1)
+        spec_file=$(find docs/features -maxdepth 1 \( -name "${fid}-*" -o -name "${fid,,}-*" \) 2>/dev/null | head -1)
         if [ -n "$spec_file" ] && [ -f "$spec_file" ]; then
-          file_status=$(grep -m1 '^status:' "$spec_file" | sed 's/^status:\s*//' | tr -d '[:space:]')
+          file_status=$(grep -m1 '^status:' "$spec_file" | sed 's/^status:\s*//' | tr -d '[:space:]' || true)
           if [ -n "$file_status" ] && [ "$file_status" != "done" ]; then
             error "ROADMAP completed table has $fid but $spec_file status='$file_status' (expected 'done')"
           fi
