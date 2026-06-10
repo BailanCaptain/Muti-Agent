@@ -41,8 +41,9 @@ RuntimeLog 容器新增两个一级 tab：
 - [ ] AC2: 文件 list/read 走同一 containment 安全原语（与 wiki content 端点同源），树外路径/symlink 逃逸返回 4xx；secrets（`.env*` 等）不可读
 - [ ] AC3: RuntimeLog 一级 tab 新增「Worktree」，列出全部 worktree + 各自 preview 运行状态（端口/起停）
 - [ ] AC4: 选中 worktree 可看进展摘要：分支名、最近 commits、相对 dev 的 diff stat
-- [ ] AC5: 手动编译按钮：重启该 worktree 后端（env 注入正确，孤儿进程先清理），按钮态有进行中/成功/失败反馈
-- [ ] AC6: 编译/重启操作物理上碰不到主库进程与主库数据（:8787 / :3000 / 主 SQLite 保护），有边界测试
+- [ ] AC5: 手动编译按钮：重启该 worktree preview 进程组拾取新代码（重走 mount-skills→tsc shared→tsc api→tsx watch 全链，env 注入正确，孤儿进程先清理），按钮态有进行中/成功/失败反馈 + 日志尾部可见
+- [ ] AC6: 编译/重启/启动操作物理上碰不到主库进程与主库数据（:8787 / :3000 / 主 SQLite 保护），有边界测试
+- [ ] AC7: 未运行的 worktree 可从 UI 直接启动 preview（端口走 F024 registry 动态分配），同样受 AC6 边界约束
 
 ## Dependencies
 
@@ -53,21 +54,29 @@ RuntimeLog 容器新增两个一级 tab：
 
 | 决策 | 选项 | 结论 | 原因 |
 |------|------|------|------|
-| （待 Design Gate） | | | |
+| 交付顺序 | Tab A 先 / Tab B 先 | **Phase 1 = Worktree tab，Phase 2 = 项目目录** | Worktree 痛点更尖（看不到进展+拿不到新代码）；项目目录交互简单可快速跟上。黄仁勋建议，小孙 /goal 放权 |
+| "手动编译"语义 | 仅 tsc / 重启进程组 | **重启该 worktree preview 进程组** | `dev:api` 链中 shared tsc、skills 挂载只在启动跑一次，tsx watch 盖不住；重启=重走全编译链，顺带清孤儿进程，也覆盖 `NEXT_PUBLIC_*` 改动场景 |
+| 文件访问权限 | 只读 / 可编辑 | **只读** | 编辑仍走 agent；最小权限面 |
+| secrets 边界 | 置灰 / 隐藏 | **`.env*` / auth / token 类直接隐藏** | 不给泄露面，置灰仍暴露存在性与文件名 |
+| 项目目录的根 | 仅主仓 / 可切换 | **可切换：主仓 + 任一 worktree** | 与 Worktree tab 联动（选中分支一键跳文件树） |
+| UI 启动 preview | 只管已运行 / 可启动 | **未运行可从 UI 启动**（AC7） | 自助闭环：小孙不需要找 agent 起 preview |
+| Design Gate | — | **已过**：小孙看交互草图初稿后 /goal "做吧"放行；附加要求德彪 review 本文档愿景对齐 | 小孙原话（2026-06-11 /goal）："做吧 按照我们的skills流程走 一直往下推……这个feature文档我觉得就要找德彪讨论下 是否符合我的愿景" |
 
-## Open Questions（讨论中）
+## Open Questions（已收口）
 
-1. 优先级：项目目录 vs worktree 浏览，哪个先交付？
-2. "手动编译"语义：= 重启 worktree 后端进程拾取新代码？还是含真 build 产物？
-3. 项目目录的根：只看主仓，还是可切换到某个 worktree 的根浏览（与 Tab B 联动）？
-4. 文件内容只读是否够用（默认不做编辑，编辑仍走 agent）？
-5. secrets 边界：`.env` / auth 类文件在树中置灰不可读，还是直接隐藏？
+1. ~~优先级~~ → Worktree tab 先（Design Decisions）
+2. ~~"手动编译"语义~~ → 重启 preview 进程组（Design Decisions）
+3. ~~项目目录的根~~ → 可切换（Design Decisions）
+4. ~~只读够用否~~ → 只读（Design Decisions）
+5. ~~secrets 边界~~ → 直接隐藏（Design Decisions）
+6. 小孙"加几块内容"仅列两块，第三块未提及 → 按两块执行；如有新想法另立讨论
 
 ## Timeline
 
 | 日期 | 事件 |
 |------|------|
 | 2026-06-11 | Kickoff（小孙口述 RuntimeLog 未来拓展两项需求） |
+| 2026-06-11 | 讨论收口 + Design Gate 放行（小孙 /goal 放权全流程推进，点名德彪审文档愿景对齐） |
 
 ## Links
 
