@@ -329,6 +329,29 @@ wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md �
 - **prompt 内容同步收敛**（德彪 P2）：context-assembler / burst-context 里主动叫 agent 用旧工具的 3 处 hint 改为「4 件套优先，旧工具作 niche 补充」。
 - 不硬删（665/89/87/83 次真实调用 + 读独立 live store），工具仍可调，仅引导不作首选。store 层迁移（session_memories → wiki）+ memory_preflight 全路径接线 = 单独立项。
 
+## 收尾补丁 · 收录体验（编译模型可配 + 同源 draft 收敛，2026-06-12 小孙拍）
+
+小孙原话（2026-06-12 凌晨，审批 55 篇 draft 时）：①「订阅编译的模型 我前端不能选 这里可以优化一下把」②（同源文档多次保存生成多篇 _auto draft）「这个不是bug吗？那我不就审批两次？？」+「不是新功能需求 就在F027里面闭环！正好看一下改动了文档 wiki是否会自动再后台改 然后走体检什么」。
+
+定性：② 是 V16.5 line 2662 留白的 supersedes future feature（设计内留债，体验上等同 bug）；① 是 G11 compile 链的可配置化收尾。两项归 F027 收尾补丁，不立新 F 号。
+
+### AC-W1 · wiki 编译模型可配（前端可选，热生效）
+
+- [ ] `runtime-config.ts` 增 `wikiCompile.primaryModel`，白名单 = haiku-runner 既有 4 模型（opus-4-7 默认 / sonnet-4-6 / opus-4-6 / haiku-4-5），PUT 非法值 400
+- [ ] compile runner 改为每次调用动态读配置（热生效，不重启）；fallback 链固定 Haiku 4.5 不变；降级 log 带真实 primary 模型名（替换硬编码 "Opus primary failed" 文案）
+- [ ] 前端 runtime config 设置区加「Wiki 编译模型」下拉（沿用 F021 agent 模型选择器模式）
+
+### AC-W2 · 同源 _auto draft 自动收敛（只审最新）
+
+- [ ] 同源 key 推导：frontmatter `sources[0].path` 的 basename 优先（编译产物），否则文件名去 `-<13位unixMs>` 后缀（stub/watcher 版本化名）；两形态互通
+- [ ] watcher ingest commit 成功后，同 key 旧 `_auto` draft 自动搬 `wiki/concepts/draft/_superseded/`（仍在 /draft/ 下，召回三闸门天然继续排除；fail-soft 搬失败不影响 ingest）
+- [ ] 审批列表（GET /api/wiki/drafts）每源只见最新一篇；`_superseded` 不入列表
+- [ ] NHC `isActiveDraftPath` 排除 `_superseded`（不参与 30 天 TTL 二次搬运）
+
+### 活体验证（小孙指定）
+
+本补丁落档 commit 本身改动 `docs/features/F027-*.md` → docs-watcher 应自动收录新 draft（验证「改文档 → wiki 后台自动跟」）；合并后 touch 同一文档第二次，旧 draft 应自动进 `_superseded`（验证 AC-W2）；次日 04:00 NHC 首跑出 warnings 报告（验证体检链）。
+
 ## 后续 follow-up（不在 F027 范围）
 
 - **M8**：F026 cleanup 补 ADR-002/003 CI guard（V16.5 chap 0 V16.5 follow-up）
