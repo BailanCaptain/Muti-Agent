@@ -337,16 +337,18 @@ wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md �
 
 ### AC-W1 · wiki 编译模型可配（前端可选，热生效）
 
-- [ ] `runtime-config.ts` 增 `wikiCompile.primaryModel`，白名单 = haiku-runner 既有 4 模型（opus-4-7 默认 / sonnet-4-6 / opus-4-6 / haiku-4-5），PUT 非法值 400
-- [ ] compile runner 改为每次调用动态读配置（热生效，不重启）；fallback 链固定 Haiku 4.5 不变；降级 log 带真实 primary 模型名（替换硬编码 "Opus primary failed" 文案）
-- [ ] 前端 runtime config 设置区加「Wiki 编译模型」下拉（沿用 F021 agent 模型选择器模式）
+- [x] `runtime-config.ts` 增 `wikiCompile.primaryModel`，白名单 = haiku-runner 既有 4 模型（opus-4-7 默认 / sonnet-4-6 / opus-4-6 / haiku-4-5），PUT 非法值 400
+- [x] compile runner 改为每次调用动态读配置（热生效，不重启）；fallback 链固定 Haiku 4.5 不变；降级 log 带真实 primary 模型名（替换硬编码 "Opus primary failed" 文案）
+- [x] 前端 runtime config 设置区加「Wiki 编译模型」下拉（沿用 F021 agent 模型选择器模式；挂 claude tab——wiki 编译走 claude CLI）
 
 ### AC-W2 · 同源 _auto draft 自动收敛（只审最新）
 
-- [ ] 同源 key 推导：frontmatter `sources[0].path` 的 basename 优先（编译产物），否则文件名去 `-<13位unixMs>` 后缀（stub/watcher 版本化名）；两形态互通
-- [ ] watcher ingest commit 成功后，同 key 旧 `_auto` draft 自动搬 `wiki/concepts/draft/_superseded/`（仍在 /draft/ 下，召回三闸门天然继续排除；fail-soft 搬失败不影响 ingest）
-- [ ] 审批列表（GET /api/wiki/drafts）每源只见最新一篇；`_superseded` 不入列表
-- [ ] NHC `isActiveDraftPath` 排除 `_superseded`（不参与 30 天 TTL 二次搬运）
+- [x] 同源 key 推导：frontmatter `sources[0].path` 的 basename 优先（编译产物），否则文件名去 `-<13位unixMs>` 后缀（stub/watcher 版本化名）；两形态互通
+- [x] watcher ingest commit 成功后，同 key 旧 `_auto` draft 自动搬 `wiki/concepts/draft/_superseded/`（仍在 /draft/ 下，召回三闸门天然继续排除；fail-soft 搬失败不影响 ingest）
+- [x] 审批列表（GET /api/wiki/drafts）每源只见最新一篇；`_superseded` 不入列表
+- [x] NHC `isActiveDraftPath` 排除 `_superseded`（不参与 30 天 TTL 二次搬运）
+
+德彪 review 增补（r1→r3 闭环全落地）：时间戳守卫只搬严格更旧 + DocsIngestRunner 同 path 串行化（防慢 ingest 后完成吃新 draft）+ cleanup `then(cleanup,cleanup)` 防 unhandledRejection + promote/preview/batch 三入口拒 `_superseded`（含 `posix.normalize` 防 `./`//`..` 变体绕过）+ session config 拒收 wikiCompile（全局专属）+ 前端 wikiCompile 并入 setGlobalOverride 单次 PUT。
 
 ### 活体验证（小孙指定）
 
@@ -388,5 +390,6 @@ wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md �
 |---|---|---|
 | 2026-05-23 | dev `dfbe336` | Phase 3 前端容器 + IngestModal + AC 闭环 |
 | 2026-06-10 | dev `e80427d` | 收尾全链：全文展开（r1-r3 GO）+ 警告 404 修复（6 轮审 GO-with-residual）+ RuntimeLog 拖高 + #286 自动召回 FU 四件（r2 GO）+ #285 session_memories→wiki 深迁移 + 旧 3 记忆工具后端退役（r3 GO）。quality-gate 愿景自检 6 痛点机制层全闭环。 |
+| 2026-06-12 | dev `784b5de` | 收尾补丁·收录体验：AC-W1 编译模型可配（动态 runner 热生效 + claude tab 下拉）+ AC-W2 同源 draft 自动收敛（_superseded 归档 + 串行化 + 三入口闸门）。德彪 r1(1P1+3P2)→r2(1P1+1P2)→r3 GO。**生效需主库重启**（小孙 start-project）。 |
 
 **合并后运维步（pending）**：① B3 backfill 55 篇 docs 全量真编译（`backfill-docs.ts --ingest-module`）② 存量 session 摘要导出（`migrate-session-memories.ts`）③ `DROP TABLE wiki_memories` / session_memories 读路径切文件 = 小孙拍。
