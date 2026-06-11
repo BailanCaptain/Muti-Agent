@@ -512,12 +512,32 @@ function mapTargetTypeToCandidate(
  * F027 v3 G11 · DraftResult → 完整 markdown（frontmatter + body）。
  * frontmatter 用 yaml.stringify 序列化完整 CompiledFrontmatter（含 cross_refs / dedup /
  * facts 等嵌套结构）；body = 标题 + summary + facts 列表（人读 + 落盘内容）。
+ * （导出给 scripts/ingest-human-reviewed.ts 复用——人审豁免通道与 preview 产物同构。）
  */
-function renderCompiledDraft(draft: DraftResult): string {
+export function renderCompiledDraft(
+  draft: DraftResult,
+  extraFrontmatter?: Record<string, unknown>,
+): string {
   const fm = draft.frontmatter
   const factsBody = fm.facts.map((f) => `- ${f.text}`).join("\n")
   const body = `# ${fm.title}\n\n${fm.summary}\n\n## Facts\n\n${factsBody}\n`
-  return `---\n${stringifyYaml(fm)}---\n${body}`
+  // extraFrontmatter 经 yaml.stringify 安全序列化（值含 '---'/换行也不会破栏，
+  // 避免字符串注入审计行的 indexOf 错位——德彪 human-reviewed 审 P1 #5）。
+  // 德彪 r2 P2:extra 键与编译 frontmatter 同名直接抛——否则 caller 可静默覆盖
+  // tainted_source 等安全字段(豁免通道洗白 taint)。fail-loud 优于键白名单：
+  // CompiledFrontmatter 新增安全字段自动受保护，无需同步名单。
+  let fmOut: Record<string, unknown> = fm as unknown as Record<string, unknown>
+  if (extraFrontmatter) {
+    for (const key of Object.keys(extraFrontmatter)) {
+      if (Object.prototype.hasOwnProperty.call(fm, key)) {
+        throw new Error(
+          `renderCompiledDraft: extraFrontmatter key '${key}' 与编译 frontmatter 冲突，禁止覆盖`,
+        )
+      }
+    }
+    fmOut = { ...(fm as unknown as Record<string, unknown>), ...extraFrontmatter }
+  }
+  return `---\n${stringifyYaml(fmOut)}---\n${body}`
 }
 
 export function registerIngestPreviewRoute(

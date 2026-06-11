@@ -71,6 +71,8 @@ export type V14AuditLayer =
   | "imperative_statement"
   | "prompt_structure"
   | "tainted_source_direct_quote"
+  /** 德彪 r3 P1 · 人审豁免文档 promote 复检仍 sanitize-blocked(归一化域安全门槛)。 */
+  | "exemption_sanitize_blocked"
 
 export interface V14RejectReason {
   layer: V14AuditLayer

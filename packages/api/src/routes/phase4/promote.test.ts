@@ -320,6 +320,47 @@ describe("promote routes (AC-P4-1)", () => {
       }
     })
 
+    it("(9) 德彪 r2 P2: taintedSourceFields 非字符串数组 → 400 VALIDATION_ERROR(防 spread/for-of 500)", async () => {
+      const t = await setupApp()
+      try {
+        const src = "wiki/concepts/draft/_auto/x.md"
+        writeDraft(t.wikiRoot, src, "# clean")
+        const resp = await t.app.inject({
+          method: "POST",
+          url: "/api/wiki/drafts/promote",
+          payload: {
+            srcDraftPath: src,
+            destWikiPath: "wiki/concepts/x.md",
+            callerAlias: "黄仁勋",
+            reason: "r",
+            taintedSourceFields: 42, // 非数组
+          },
+        })
+        assert.equal(resp.statusCode, 400)
+        assert.equal(resp.json().code, "VALIDATION_ERROR")
+        assert.match(resp.json().error, /taintedSourceFields/)
+      } finally {
+        await t.cleanup()
+      }
+    })
+
+    it("(9a) 德彪 r2 P2: preview taintedSourceFields 含非字符串元素 → 400", async () => {
+      const t = await setupApp()
+      try {
+        const src = "wiki/concepts/draft/_auto/x.md"
+        writeDraft(t.wikiRoot, src, "# clean")
+        const resp = await t.app.inject({
+          method: "POST",
+          url: "/api/wiki/drafts/promote/preview",
+          payload: { srcDraftPath: src, taintedSourceFields: ["ok", 7] },
+        })
+        assert.equal(resp.statusCode, 400)
+        assert.equal(resp.json().code, "VALIDATION_ERROR")
+      } finally {
+        await t.cleanup()
+      }
+    })
+
     it("(8) lease released after success → second promote 同 dest 不被 LEASE_HELD", async () => {
       const t = await setupApp()
       try {

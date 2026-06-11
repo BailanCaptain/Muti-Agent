@@ -27,10 +27,12 @@
 import type { FastifyInstance } from "fastify"
 
 import type { WikiLeasesRepository } from "../../db/repositories/wiki-leases-repository"
+import { checkExemptionSanitizeBlocked } from "../../wiki/promote-audit/exemption-tainted-fields"
 import type { PromoteWikiService } from "../../wiki/promote-audit/promote-wiki-service"
 import { isDraftRelativePath } from "../../wiki/promote-audit/promote-wiki-service"
 import type { V14PromoteAuditService } from "../../wiki/promote-audit/v14-promote-audit-service"
 import { WikiPathInvalidError, safeWikiPath } from "../../wiki/path-containment"
+import { INVALID_TAINTED, normalizeTaintedSourceFields } from "./tainted-source-validation"
 import fs from "node:fs"
 
 const DEFAULT_PROMOTE_LEASE_TTL_SECONDS = 30
@@ -104,9 +106,31 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
       return { ok: false, code: "INTERNAL_ERROR", error: (err as Error).message }
     }
 
+    // 德彪 r2 P2 · taintedSourceFields 运行时校验(传非 string[] → 400,防 spread/for-of 抛 500)。
+    const tainted = normalizeTaintedSourceFields(body.taintedSourceFields)
+    if (tainted === INVALID_TAINTED) {
+      reply.code(400)
+      return { ok: false, code: "VALIDATION_ERROR", error: "taintedSourceFields 必须是字符串数组" }
+    }
+    // 德彪 r3 P1 · 与 service.promote 同口径:豁免文档 preview 也跑 sanitize blocked 复检,
+    // 仍 blocked → audit.passed=false(否则前端 preview 显示 pass、真 promote 被拒,体验割裂)。
+    const exemptionCheck = checkExemptionSanitizeBlocked(srcContent)
+    if (exemptionCheck.blocked) {
+      return {
+        ok: true,
+        audit: {
+          passed: false,
+          rejectReason: {
+            layer: "exemption_sanitize_blocked",
+            matchedPatterns: exemptionCheck.reasons,
+            hint: "人审豁免文档复检仍触发 sanitize 红线，需人工改写 draft 去除危险内容后再转正。",
+          },
+        },
+      }
+    }
     const result = deps.audit.audit({
       body: srcContent,
-      taintedSourceFields: body.taintedSourceFields,
+      taintedSourceFields: tainted,
     })
     return { ok: true, audit: result }
   })
@@ -217,6 +241,11 @@ function validatePromoteBody(body: PostPromoteBody): ValidatedPromote {
   if (typeof body.reason !== "string" || body.reason.length === 0) {
     return { ok: false, error: "reason required (non-empty)" }
   }
+  // 德彪 r2 P2 · taintedSourceFields 运行时校验(非 string[] → 拒;service union 前必须确定是数组)。
+  const tainted = normalizeTaintedSourceFields(body.taintedSourceFields)
+  if (tainted === INVALID_TAINTED) {
+    return { ok: false, error: "taintedSourceFields 必须是字符串数组" }
+  }
   return {
     ok: true,
     body: {
@@ -224,7 +253,7 @@ function validatePromoteBody(body: PostPromoteBody): ValidatedPromote {
       destWikiPath: body.destWikiPath,
       callerAlias: body.callerAlias,
       reason: body.reason,
-      taintedSourceFields: body.taintedSourceFields,
+      taintedSourceFields: tainted,
       sourceMessageIds: body.sourceMessageIds,
     },
   }
