@@ -98,7 +98,7 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 ### Phase 0A — 信源与质量基线（可与 P1a 并行，不整体阻塞）
 
 - [ ] AC-P0a-1: 信源矩阵——30+ 中外平台先轻量可达扫描（可达通道/登录/反爬/成本/内容类型/声明类型/ToS 与账号风险），再对基准命中前 8-12 渠道深测，长尾按需扩展
-- [ ] AC-P0a-2: gold set 真值基准 ≥50 条中英文声明，每条预注册真值标签/时间截点/预期主来源/声明类型；含"仅平台内传播"用例 + 不可证伪/观点/预测/讽刺负样本
+- [ ] AC-P0a-2: gold set 真值基准——**≥150 条**中英文声明，按 声明类型×语言×难度 分层，每层 ≥15；每条预注册真值标签/时间截点/预期主来源/声明类型；含"仅平台内传播"用例 + 不可证伪/观点/预测/讽刺负样本；**train/holdout 7:3 分离，定版即打 tag 冻结，调参与 prompt 迭代只用 train，验收只在 holdout 上跑**
 - [ ] AC-P0a-3: provider smoke test——候选外部 provider 对 gold set 实测召回率/官方源命中/中文覆盖/重复源比例/发布时间准确率 → 选型决策
 - [ ] AC-P0a-4: 声明类型→渠道路由表 + 核查机构白名单（中外 ≥5 家）v1 定稿
 - [ ] AC-P0a-5: 平台合规登记——每平台 ToS/API 条件/账号风险/允许访问方式；禁止绕过验证码/反爬/访问控制
@@ -109,6 +109,7 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 - [ ] AC-P0b-2: headed 登录链路（login-session → lease → WS 状态机 → probeAuth+probeSearchCapability 双探）；非交互桌面报 interactive_session_unavailable
 - [ ] AC-P0b-3: 雪球 pilot 跑通，验收用例必须是**登录后才新增的内容能力**（否则改有真实登录门槛平台）
 - [ ] AC-P0b-4: 默认关闭 + 逐平台授权 + 未 ready 绝不自动弹登录窗 + 小号硬要求
+- [ ] AC-P0b-5: 登录凭证隔离（**可测试验收，每条自动断言**）——profile 与 LLM/agent 子进程隔离（cookie/localStorage/profile 路径不进 prompt/日志/截图/通用子进程）+ ACL 限当前 Windows 用户 + 禁导出 storageState + 登录态截图不进 `.runtime/uploads` 静态暴露路径 + 登录态专用网络 allowlist + serviceWorkers block
 
 ### Phase 1A — 中性底座 + 隔离执行 + 安全 fetch
 
@@ -117,8 +118,8 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 - [ ] AC-P1a-3: Phase A 真隔离——每个异质验证者独立 thread/context，只收同一份 hash 固定 neutral brief；测试放 **sibling-canary**，任何 agent 输出 canary 即 fail
 - [ ] AC-P1a-4: SSRF 防护——拒绝 loopback/私网/link-local/file:/非 HTTP(S)/DNS rebinding/重定向逃逸内网
 - [ ] AC-P1a-5: 防注入——prompt-injection 攻击 corpus 验证网页文本不能触发工具/改检索计划/访问新域/泄露 prompt 或 cookie/改 verdict schema；内容标 UNTRUSTED_CONTENT 经 extractor 转 EvidenceDocument
-- [ ] AC-P1a-6: 只读执行器——agent 仅类型化 search()/fetchPublicResult()，无通用浏览器能力；禁写操作并自动测试；登录态走网络 fail-closed allowlist + serviceWorkers block
-- [ ] AC-P1a-7: 证据可复现——存最终 URL + redirect chain + HTTP 状态 + 抓取时间 + 规范化摘录 + 摘录 hash + 失败原因；版权约束下快照策略
+- [ ] AC-P1a-6: 只读执行器（**仅通用公共 fetch 契约**）——agent 仅类型化 search()/fetchPublicResult()，无通用浏览器能力；禁写操作并自动测试。**登录态专用网络 fail-closed allowlist + serviceWorkers block 的验收归 AC-P0b（Phase 0B），不在 P1A 耦合**（P1A 不依赖登录态分支即可独立验收）
+- [ ] AC-P1a-7: 证据可复现——**强制存**：最终 URL + redirect chain + HTTP 状态 + 抓取时间 + 规范化正文快照（DOM/HTML 归一版）+ **提取器版本号 + 提取规则 id** + 摘录 + 摘录 hash + 失败原因；**快照不可得时显式标 `snapshot-missing`，该证据降级为"线索"不计入可复现等级**（降级语义）；版权边界：快照仅本地留存、不对外分发/二次发布
 
 ### Phase 1B — L1 检索 + 拆解 + 裁决 + 质量门槛
 
@@ -130,17 +131,18 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 - [ ] AC-P1b-6: quorum——正式 verdict 需 ≥2 异质模型 **且** 来源独立性（≥1 primary-source 或 2 独立 origin）；缺席者进 degradation disclosure 不永久废
 - [ ] AC-P1b-7: citation entailment——每核心结论绑定精确 evidence span，独立步骤校验引用真正蕴含结论
 - [ ] AC-P1b-8: 检索纪律——disconfirm-first 反例；absence 需正反两路+相关概念均 0 命中；中英双语各搜一遍；按档位停止判据
-- [ ] AC-P1b-9: **裁决质量门槛（gold set 验收，最关键）**——claim 拆解正确率 / 证据召回 / 引用支持率 / 裁决准确率 / 高置信错误率上限 / 合理弃权率，全设通过阈值
+- [ ] AC-P1b-9: **裁决质量门槛（gold set holdout 验收，最关键）**——v1 起步阈值（待 AC-P0a-3 实测分布后冻结为正式线）：claim 拆解正确率 ≥90% / 证据召回（gold 主来源命中）≥80% / 引用支持率（citation entailment 通过）≥95% / 裁决准确率（claim_relation vs 真值）≥85% / **高置信错误率 ≤2%（硬上限，high-confidence 判错最严重）** / 弃权合理性（insufficient 中真证据不足占比）≥80%（防滥用弃权）；全部在 holdout 上测，不达标不得进 writing-plans 后的实现验收
 - [ ] AC-P1b-10: 档位预算——Light/Full 硬成本+延迟+并发上限+超时+取消；超预算降级报告
 
 ### Phase 1C — L2 渠道 + UI + 入口 + 外发边界
 
 - [ ] AC-P1c-1: 渠道落地——L1 双通用全量 + L2 ≥2 平台专项（基准定优先级）+ 官方白名单，统一 SearchProvider
 - [ ] AC-P1c-2: 渐进式报告 UI——结论摘要→证据链→分歧区（不抹平）→可点击引用（Gemini grounding redirect 解析真实源）；进行中态渐进可见
-- [ ] AC-P1c-3: 外发数据边界——执行前展示将访问 provider + 敏感信息（密钥/私人身份/未公开业务）检测提示或本地降级 + case 级记录外发对象/字段/时间
-- [ ] AC-P1c-4: 入口 A（slash 加 /fact-check）+ 入口 B（自然语言，执行前显示模式/冻结声明/档位/外发范围 + 一键确认/改写）
+- [ ] AC-P1c-3: 外发数据边界——**已确认 provider allowlist**（只发已授权 provider，不在 allowlist 的一律不发）+ **新增/变更 provider 必须重新人工确认才生效** + 敏感信息（密钥/私人身份/未公开业务）命中 **必须强确认或阻断（不是仅提示）** + 入口执行前确认步骤 + case 级记录实际外发对象/字段/时间
+- [ ] AC-P1c-4: 入口 A（slash 加 /fact-check）+ 入口 B（自然语言，执行前显示模式/冻结声明/档位/外发范围 + 一键确认/改写）；**Phase 1 所有用户入口禁止执行 deep-research**——`/deep-research` 在 slash 面板 disabled/preview，自然语言"深挖"类请求显式拒绝并提示"Phase 2 启用"，绝不路由执行；deep-research 仅限内部 fixture（AC-P1c-7）
 - [ ] AC-P1c-5: 缓存——按 canonical URL+内容版本+语言+抓取时间；时效型 claim 有 freshness policy
 - [ ] AC-P1c-6: 保留与清理——case ledger 访问范围 + 日志脱敏（Cookie/token/query URL/postData）+ 保留期限 + 用户清理；登录态截图不进 .runtime/uploads
+- [ ] AC-P1c-7: **deep-research walking skeleton（Phase 1 验收项，防底座被 fact-check 绑架）**——用固定内部 fixture 跑通 开放问题拆解 + 共享 EvidenceItem ledger + 非 verdict ReportProjection；证明中性底座同时支撑两个 projection，不延后到 Phase 2
 
 ### Phase 2 — deep-research projection（复用底座）
 
@@ -153,7 +155,6 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 
 - **OD-1 入口 C**：「核查这条消息」（hover/右键已有消息发起）是否进 scope（德彪 D3-6 移出 AC；我倾向要，最自然动线）
 - **OD-2 主号覆盖**：未来是否提供主号高级覆盖（默认关闭 + 逐平台风险确认）；v1 一律小号
-- **OD-3 登录态默认态**：v1 是否登录态通道全默认关闭、逐平台授权才开（倾向是）
 - **OD-4 UI 方向**：报告卡 + 三态 mockup 是否 OK（上轮已发小孙）
 
 ## Dependencies
@@ -175,7 +176,7 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 | quorum | ≥2 异质模型 **且** 来源独立性（primary-source 或 2 独立 origin） | 德彪 D5：模型异质≠证据独立（可能同一通讯社/转载/索引） |
 | 原生检索定位 | 仅线索，不计正式 quorum | 德彪 D3：不可结构化审计的证据不能进裁决 |
 | 引用 | citation entailment（绑 evidence span + 独立校验蕴含） | 德彪 D5：有链接≠链接支持结论 |
-| 质量验收 | gold set 真值基准 + 裁决准确率/高置信错误率/弃权率阈值 | 德彪 D1：原 AC 只验格式，系统稳定胡判也能过——最致命缺口 |
+| 质量验收 | gold set ≥150 分层 + train/holdout 7:3 冻结 + 起步阈值（裁决准确率≥85%/高置信错误率≤2%/弃权合理性≥80%，P0a 实测后冻结正式线） | 德彪 D1/v2-P5：原 AC 只验格式且阈值占位，系统稳定胡判也能过——最致命缺口 |
 | 外发边界 | feature 级 outbound-data policy（不只 cookie，含声明外发提示+脱敏+记录） | 德彪 D1/D6：用户声明发往外部 API/LLM 也是泄露面 |
 | 登录凭证 | 默认关闭 + 小号硬要求 + 能力隔离 + v1 不接主号；无法承诺零泄露 | 德彪登录态深审：网页凭证本质可代表账号，guard 只降险不归零 |
 | 安全底座 | SSRF + prompt-injection corpus + 只读执行器自动测试 | 德彪 D6：Iron Law §4 延伸；防注入靠能力隔离非 prompt |
@@ -204,6 +205,7 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 | 2026-06-12 | 小孙拍板双模式同 feature；cat-cafe 借鉴核定；Kickoff（1302a7d） |
 | 2026-06-12 | 渠道三层 + 入口 A/B/C + UX 三态（e8cdfe2）；Phase 0 信源矩阵 + 四通道 + 登录态（b04b13c） |
 | 2026-06-12 | 德彪登录态深审 6 [DISAGREE]（能力隔离/profile 隔离/小号硬要求/雪球验收陷阱）+ 整体审 **NEEDS-WORK 9 P1**（质量验收/外发边界/真隔离/四字段 ontology/quorum/citation/SSRF/成本/AC 冲突）→ **全文修订 v2**，AC 重组 AC-Px-n |
+| 2026-06-12 | 德彪 v2 复审 5 RESOLVED + 4 NOT-RESOLVED + 2 NEW-P1 → **v3 精修**：benchmark 冻死真阈值+holdout、快照强制条件+降级语义、外发已确认 provider allowlist、Phase 1 禁用户入口跑 deep-research、walking skeleton 升 Phase 1 AC（AC-P1c-7）、登录凭证隔离升可测试 AC（AC-P0b-5）、P0B/P1A 解耦、删 OD-3 |
 
 ## Links
 
@@ -211,7 +213,8 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
   - `.runtime/reviews/fact-check-design-*.md`（首轮设计讨论）
   - `.runtime/reviews/F029-login-channel-*.md`（登录态深审）
   - `.runtime/reviews/F029-full-design-review-*.md`（整体审 NEEDS-WORK）
-- Plan: 待修订版德彪复审 GO 后进 `writing-plans`
+  - `.runtime/reviews/F029-v2-recheck-*.md`（v2 复审 5 RESOLVED + v3 精修）
+- Plan: 待 v3 德彪三审 GO 后进 `writing-plans`
 - Related: F026 / F027
 
 ## Evolution
