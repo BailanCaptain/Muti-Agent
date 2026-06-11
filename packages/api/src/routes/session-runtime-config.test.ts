@@ -48,6 +48,41 @@ test("F021 GET /api/sessions/:id/runtime-config returns 404 for unknown session"
   })
 })
 
+test("德彪 wiki-ux r1 P2: session PUT config 含 wikiCompile → 400（全局专属段不进 session）", async () => {
+  await withTempRepo(async (repo) => {
+    const groupId = repo.createSessionGroup("Test Room")
+    const app = Fastify()
+    registerSessionRuntimeConfigRoutes(app, { sessions: repo })
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/sessions/${groupId}/runtime-config`,
+      payload: { config: { wikiCompile: { primaryModel: "claude-sonnet-4-6" } } },
+    })
+    await app.close()
+    assert.equal(res.statusCode, 400)
+    const body = res.json() as { errors?: string[] }
+    assert.ok(
+      body.errors?.some((e) => e.includes("wikiCompile")),
+      `errors 应指明 wikiCompile 不收: ${JSON.stringify(body)}`,
+    )
+  })
+})
+
+test("德彪 wiki-ux r1 P2: session PUT pending 含 wikiCompile → 400", async () => {
+  await withTempRepo(async (repo) => {
+    const groupId = repo.createSessionGroup("Test Room")
+    const app = Fastify()
+    registerSessionRuntimeConfigRoutes(app, { sessions: repo })
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/sessions/${groupId}/runtime-config`,
+      payload: { pending: { wikiCompile: { primaryModel: "claude-haiku-4-5" } } },
+    })
+    await app.close()
+    assert.equal(res.statusCode, 400)
+  })
+})
+
 test("F021 PUT /api/sessions/:id/runtime-config persists and round-trips via GET", async () => {
   await withTempRepo(async (repo) => {
     const groupId = repo.createSessionGroup("Test Room")

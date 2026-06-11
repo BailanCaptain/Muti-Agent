@@ -192,6 +192,9 @@ export class DraftScanner {
       }
       const full = path.join(dir, ent.name)
       if (ent.isDirectory()) {
+        // F027 收尾补丁 AC-W2：_superseded 是同源收敛归档区（watcher 同源旧版本自动搬入），
+        // 审批列表只见每源最新一篇 → 整个子树不扫。
+        if (ent.name === "_superseded") continue
         await this.walkInto(full, acc)
         continue
       }

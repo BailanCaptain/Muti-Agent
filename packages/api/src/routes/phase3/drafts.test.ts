@@ -90,6 +90,28 @@ test("Day 3 · DraftScanner · 多 origin 子目录扫 + 默认 type=concept", a
   }
 })
 
+test("AC-W2 · DraftScanner · _superseded 子目录不进审批列表（同源收敛归档区）", async () => {
+  const tmp = safeTempDir("F027-ACW2-drafts-superseded-")
+  try {
+    await writeDraft(tmp, "_auto/F029-pipeline-1781201669303.md", { title: "Newest" }, "body new")
+    await writeDraft(
+      tmp,
+      "_superseded/F029-pipeline-1781200633785.md",
+      { title: "Superseded" },
+      "body old",
+    )
+    await writeDraft(tmp, "_expired/old.md", { title: "Expired" }, "body expired")
+
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    const r = await scanner.list({})
+    assert.equal(r.total, 2, "_superseded 不应计入（_auto + _expired 各 1）")
+    const titles = r.drafts.map((d) => d.title).sort()
+    assert.deepEqual(titles, ["Expired", "Newest"])
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
 test("Day 3 · DraftScanner · frontmatter.type 取 + 越界值 fallback concept", async () => {
   const tmp = safeTempDir("F027-Day3-drafts-type-")
   try {

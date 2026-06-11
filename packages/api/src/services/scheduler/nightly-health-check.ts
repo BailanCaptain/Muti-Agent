@@ -357,11 +357,13 @@ function normalizePath(p: string): string {
  * 范-r1 P2-2: 区分 active draft（应做 TTL）vs 已归档/隔离 draft（跳过 TTL）。
  *   - active：top-level draft + _backfill + _auto + 其他常规 draft 子目录
  *   - non-active：_expired (已归档) + _quarantined (sanitize 隔离)
+ *     + _superseded (F027 收尾补丁 AC-W2 同源收敛归档区 — 已出审批列表，不再 TTL 二次搬运)
  */
 function isActiveDraftPath(normalizedPath: string): boolean {
   if (!normalizedPath.includes("/draft/")) return false
   if (normalizedPath.includes("/draft/_expired/")) return false
   if (normalizedPath.includes("/draft/_quarantined/")) return false
+  if (normalizedPath.includes("/draft/_superseded/")) return false
   return true
 }
 

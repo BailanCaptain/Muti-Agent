@@ -13,7 +13,11 @@ export type AgentOverride = {
   contextWindow?: number
   sealPct?: number
 }
-export type RuntimeConfig = Partial<Record<Provider, AgentOverride>>
+/** F027 收尾补丁 AC-W1 · wiki 收录编译模型（全局段，不进 session 配置）。 */
+export type WikiCompileOverride = { primaryModel?: string }
+export type RuntimeConfig = Partial<Record<Provider, AgentOverride>> & {
+  wikiCompile?: WikiCompileOverride
+}
 export type SessionRuntimeConfig = Partial<Record<Provider, AgentOverride>>
 
 export const SEAL_PCT_MIN = 0.3
@@ -46,7 +50,16 @@ type RuntimeConfigStore = {
   loadError: string | null
   load: () => Promise<void>
   loadSession: (sessionId: string) => Promise<void>
-  setGlobalOverride: (provider: Provider, override: AgentOverride) => Promise<void>
+  /**
+   * F027 收尾补丁 AC-W1（德彪 r1 P2 单 PUT 化）：第三参 wikiCompile 三态——
+   * undefined = 不碰该段；null = 清除（回落默认 Opus 4.7）；对象 = 设值。
+   * agent override 与 wikiCompile 合成一次 PUT，消除两连发的并发覆盖/部分保存窗口。
+   */
+  setGlobalOverride: (
+    provider: Provider,
+    override: AgentOverride,
+    wikiCompile?: WikiCompileOverride | null,
+  ) => Promise<void>
   setSessionOverride: (
     provider: Provider,
     override: AgentOverride,
@@ -152,9 +165,17 @@ export const useRuntimeConfigStore = create<RuntimeConfigStore>((set, get) => ({
     }
   },
 
-  setGlobalOverride: async (provider, override) => {
+  setGlobalOverride: async (provider, override, wikiCompile) => {
     const cleaned = cleanOverride(override)
-    const nextConfig = writeOverride(get().config, provider, cleaned)
+    // 德彪 r1 P2 · agent override + wikiCompile 合成一次 config 更新、一次 PUT
+    const nextConfig: RuntimeConfig = writeOverride(get().config, provider, cleaned)
+    if (wikiCompile !== undefined) {
+      if (wikiCompile !== null && wikiCompile.primaryModel?.trim()) {
+        nextConfig.wikiCompile = { primaryModel: wikiCompile.primaryModel.trim() }
+      } else {
+        delete nextConfig.wikiCompile
+      }
+    }
     set({ config: nextConfig })
 
     try {

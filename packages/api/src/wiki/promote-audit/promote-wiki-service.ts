@@ -125,6 +125,13 @@ export class PromoteWikiService {
         error: `src must be a draft path (contain '/draft/' or '/_drafts/'), got: ${req.srcDraftPath}`,
       }
     }
+    // 德彪 wiki-ux r1 P2 · _superseded 归档版本不可转正（single + batch 共用本闸口）
+    if (isSupersededDraftRelativePath(req.srcDraftPath)) {
+      return {
+        status: "path_invalid",
+        error: `src is a superseded (archived) draft — promote the newest same-source draft instead, got: ${req.srcDraftPath}`,
+      }
+    }
     if (this.isDraftPath(req.destWikiPath)) {
       return {
         status: "path_invalid",
@@ -278,6 +285,19 @@ export function isDraftRelativePath(p: string): boolean {
   // 让 JS 判定与之对齐(单一口径)。
   const normalized = p.replace(/\\/g, "/").toLowerCase()
   return normalized.includes("/draft/") || normalized.includes("/_drafts/")
+}
+
+/**
+ * 德彪 wiki-ux r1 P2 · 归档区判定。`_superseded` 是 AC-W2 同源收敛归档区——已被更新
+ * 版本取代，promote/preview/batch 三入口一律拒绝直接转正（要转正应转最新版本）。
+ *
+ * 德彪 r2 P2：匹配前做 POSIX normalize——`draft/./_superseded/`、`draft//_superseded/`、
+ * `draft/foo/../_superseded/` 等非规范变体经 safeWikiPath 解析后读的是同一归档文件，
+ * 裸 includes 会被绕过。normalize 折叠 `.`/`..`/重复斜杠后再判（与 fs 解析同构）。
+ */
+export function isSupersededDraftRelativePath(p: string): boolean {
+  const normalized = path.posix.normalize(p.replace(/\\/g, "/")).toLowerCase()
+  return normalized.includes("/draft/_superseded/")
 }
 
 function sha256(content: string): string {

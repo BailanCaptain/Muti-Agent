@@ -59,8 +59,10 @@ export function createProductionCompileLLMClient(
         )
       }
       if (result.error === "fallback-haiku-success") {
-        // AC-P4-8：primary(Opus) 失败降级 Haiku。编译仍产出，但质量可能降级 → log 供审计。
-        log("compile LLM fell back to Haiku (Opus primary failed); output quality may be degraded")
+        // AC-P4-8：primary 失败降级 Haiku。编译仍产出，但质量可能降级 → log 供审计。
+        // F027 收尾补丁 AC-W1：primary 现可配（动态 runner），真实模型名由 runner 的
+        // onFallback 审计行携带，本行只报事件不报模型。
+        log("compile LLM fell back to Haiku (primary failed); output quality may be degraded")
       }
 
       let parsed: unknown

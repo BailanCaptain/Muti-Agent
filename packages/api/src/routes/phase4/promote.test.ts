@@ -190,6 +190,43 @@ describe("promote routes (AC-P4-1)", () => {
       }
     })
 
+    it("(4c) 德彪 wiki-ux r1 P2: _superseded 归档 draft preview → 400 PATH_INVALID", async () => {
+      const t = await setupApp()
+      try {
+        const resp = await t.app.inject({
+          method: "POST",
+          url: "/api/wiki/drafts/promote/preview",
+          payload: { srcDraftPath: "wiki/concepts/draft/_superseded/old-version.md" },
+        })
+        assert.equal(resp.statusCode, 400)
+        assert.equal(resp.json().code, "PATH_INVALID")
+        assert.match(resp.json().error, /superseded/i)
+      } finally {
+        await t.cleanup()
+      }
+    })
+
+    it("(4d) 德彪 wiki-ux r2 P2: 非规范路径变体（./ // ..）不得绕过 _superseded 闸口", async () => {
+      const t = await setupApp()
+      try {
+        for (const tricky of [
+          "wiki/concepts/draft/./_superseded/old.md",
+          "wiki/concepts/draft//_superseded/old.md",
+          "wiki/concepts/draft/foo/../_superseded/old.md",
+        ]) {
+          const resp = await t.app.inject({
+            method: "POST",
+            url: "/api/wiki/drafts/promote/preview",
+            payload: { srcDraftPath: tricky },
+          })
+          assert.equal(resp.statusCode, 400, `应拒绝: ${tricky} → ${resp.body}`)
+          assert.equal(resp.json().code, "PATH_INVALID", `应 PATH_INVALID: ${tricky}`)
+        }
+      } finally {
+        await t.cleanup()
+      }
+    })
+
     it("(4b) codex r2 P2-1: 非 draft 路径 (wiki/concepts/x.md 但无 /draft/) → 400 PATH_INVALID", async () => {
       const t = await setupApp()
       try {
@@ -234,6 +271,35 @@ describe("promote routes (AC-P4-1)", () => {
         assert.ok(typeof body.eventId === "number")
         assert.ok(fs.existsSync(path.join(t.wikiRoot, dest)), "dest written")
         assert.ok(!fs.existsSync(path.join(t.wikiRoot, src)), "src unlinked")
+      } finally {
+        await t.cleanup()
+      }
+    })
+
+    it("(5b) 德彪 wiki-ux r1 P2: _superseded 归档 draft 直接 promote → 400 PATH_INVALID", async () => {
+      const t = await setupApp()
+      try {
+        const src = "wiki/concepts/draft/_superseded/rag-1781200000000.md"
+        writeDraft(t.wikiRoot, src, "# RAG old version")
+
+        const resp = await t.app.inject({
+          method: "POST",
+          url: "/api/wiki/drafts/promote",
+          payload: {
+            srcDraftPath: src,
+            destWikiPath: "wiki/concepts/rag.md",
+            callerAlias: "小孙",
+            reason: "误选归档版本",
+          },
+        })
+
+        assert.equal(resp.statusCode, 400)
+        const body = resp.json()
+        assert.match(String(body.error), /superseded/i)
+        assert.ok(
+          fs.existsSync(path.join(t.wikiRoot, src)),
+          "归档 draft 必须原地不动",
+        )
       } finally {
         await t.cleanup()
       }

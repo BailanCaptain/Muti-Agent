@@ -18,6 +18,67 @@ function withTempConfig<T>(fn: (configPath: string) => Promise<T> | T): Promise<
   })
 }
 
+// ── F027 收尾补丁 AC-W1 · wikiCompile.primaryModel ──────────────────────
+
+test("AC-W1 · PUT wikiCompile.primaryModel 白名单值 → 200 + GET 回读", async () => {
+  await withTempConfig(async () => {
+    const app = Fastify()
+    registerRuntimeConfigRoutes(app)
+    const putRes = await app.inject({
+      method: "PUT",
+      url: "/api/runtime-config",
+      payload: {
+        config: {
+          claude: { model: "claude-opus-4-6" },
+          wikiCompile: { primaryModel: "claude-sonnet-4-6" },
+        },
+      },
+    })
+    assert.equal(putRes.statusCode, 200)
+    const getRes = await app.inject({ method: "GET", url: "/api/runtime-config" })
+    await app.close()
+    assert.deepEqual(getRes.json(), {
+      config: {
+        claude: { model: "claude-opus-4-6" },
+        wikiCompile: { primaryModel: "claude-sonnet-4-6" },
+      },
+    })
+  })
+})
+
+test("AC-W1 · PUT wikiCompile.primaryModel 非白名单 → 400 显式拒绝（不静默丢）", async () => {
+  await withTempConfig(async () => {
+    const app = Fastify()
+    registerRuntimeConfigRoutes(app)
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/runtime-config",
+      payload: { config: { wikiCompile: { primaryModel: "gpt-5.4" } } },
+    })
+    await app.close()
+    assert.equal(res.statusCode, 400)
+    const body = res.json() as { errors?: string[] }
+    assert.ok(
+      body.errors?.some((e) => e.includes("wikiCompile.primaryModel")),
+      `errors 应指明 wikiCompile.primaryModel 非法: ${JSON.stringify(body)}`,
+    )
+  })
+})
+
+test("AC-W1 · PUT wikiCompile 非 object → 400", async () => {
+  await withTempConfig(async () => {
+    const app = Fastify()
+    registerRuntimeConfigRoutes(app)
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/runtime-config",
+      payload: { config: { wikiCompile: "claude-sonnet-4-6" } },
+    })
+    await app.close()
+    assert.equal(res.statusCode, 400)
+  })
+})
+
 test("GET /api/models returns catalog with all three agents", async () => {
   const app = Fastify()
   registerRuntimeConfigRoutes(app)

@@ -190,6 +190,39 @@ describe("POST /api/wiki/drafts/batch-promote (AC-P4-4)", () => {
     }
   })
 
+  it("(2b) 德彪 wiki-ux r1 P2: batch 含 _superseded 归档项 → 该项 path_invalid 其余照常", async () => {
+    const t = await setupApp()
+    try {
+      t.writeSrc("wiki/concepts/draft/_auto/a.md", CLEAN_BODY)
+      t.writeSrc("wiki/concepts/draft/_superseded/old-1781200000000.md", CLEAN_BODY)
+
+      const resp = await t.app.inject({
+        method: "POST",
+        url: "/api/wiki/drafts/batch-promote",
+        payload: {
+          items: [
+            { srcDraftPath: "wiki/concepts/draft/_auto/a.md", destWikiPath: "wiki/concepts/a.md" },
+            {
+              srcDraftPath: "wiki/concepts/draft/_superseded/old-1781200000000.md",
+              destWikiPath: "wiki/concepts/old.md",
+            },
+          ],
+          callerAlias: "小孙",
+          reason: "混入归档项",
+        },
+      })
+
+      assert.equal(resp.statusCode, 200)
+      const body = resp.json()
+      assert.equal(body.success.length, 1)
+      assert.equal(body.failed.length, 1)
+      assert.equal(body.failed[0].status, "path_invalid")
+      assert.match(String(body.failed[0].error), /superseded/i)
+    } finally {
+      await t.cleanup()
+    }
+  })
+
   it("(3) 全失败 (3 份 audit_reject) → 200 ok success=0 failed=3 (HTTP 仍 200)", async () => {
     const t = await setupApp()
     try {

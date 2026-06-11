@@ -53,6 +53,91 @@ describe("runtime-config-store session layer", () => {
     expect(calls[0]?.init?.method).toBe("PUT")
   })
 
+  // F027 收尾补丁 AC-W1（德彪 r1 P2 单 PUT 化）：wikiCompile 并入 setGlobalOverride 第三参
+  it("setGlobalOverride 带 wikiCompile → agent override + wikiCompile 合成单次 PUT", async () => {
+    useRuntimeConfigStore.setState({
+      config: { codex: { model: "gpt-5.4" } },
+    } as never)
+    const calls: FetchCall[] = []
+    globalThis.fetch = mockFetch(
+      {
+        ok: true,
+        config: {
+          claude: { model: "claude-opus-4-7" },
+          codex: { model: "gpt-5.4" },
+          wikiCompile: { primaryModel: "claude-sonnet-4-6" },
+        },
+      },
+      calls,
+    ) as typeof fetch
+
+    await useRuntimeConfigStore
+      .getState()
+      .setGlobalOverride(
+        "claude",
+        { model: "claude-opus-4-7" },
+        { primaryModel: "claude-sonnet-4-6" },
+      )
+
+    expect(calls.length).toBe(1)
+    const body = JSON.parse(String(calls[0]?.init?.body)) as {
+      config: Record<string, unknown>
+    }
+    expect(body.config.claude).toEqual({ model: "claude-opus-4-7" })
+    expect(body.config.wikiCompile).toEqual({ primaryModel: "claude-sonnet-4-6" })
+    expect(useRuntimeConfigStore.getState().config.wikiCompile).toEqual({
+      primaryModel: "claude-sonnet-4-6",
+    })
+  })
+
+  it("setGlobalOverride 第三参 null → 同次 PUT 移除 wikiCompile（回落默认）", async () => {
+    useRuntimeConfigStore.setState({
+      config: {
+        claude: { model: "claude-opus-4-7" },
+        wikiCompile: { primaryModel: "claude-sonnet-4-6" },
+      },
+    } as never)
+    const calls: FetchCall[] = []
+    globalThis.fetch = mockFetch(
+      { ok: true, config: { claude: { model: "claude-opus-4-7" } } },
+      calls,
+    ) as typeof fetch
+
+    await useRuntimeConfigStore
+      .getState()
+      .setGlobalOverride("claude", { model: "claude-opus-4-7" }, null)
+
+    expect(calls.length).toBe(1)
+    const body = JSON.parse(String(calls[0]?.init?.body)) as {
+      config: Record<string, unknown>
+    }
+    expect("wikiCompile" in body.config).toBe(false)
+  })
+
+  it("setGlobalOverride 第三参 undefined → 不碰既有 wikiCompile（向后兼容）", async () => {
+    useRuntimeConfigStore.setState({
+      config: { wikiCompile: { primaryModel: "claude-haiku-4-5" } },
+    } as never)
+    const calls: FetchCall[] = []
+    globalThis.fetch = mockFetch(
+      {
+        ok: true,
+        config: {
+          codex: { model: "gpt-5.4" },
+          wikiCompile: { primaryModel: "claude-haiku-4-5" },
+        },
+      },
+      calls,
+    ) as typeof fetch
+
+    await useRuntimeConfigStore.getState().setGlobalOverride("codex", { model: "gpt-5.4" })
+
+    const body = JSON.parse(String(calls[0]?.init?.body)) as {
+      config: Record<string, unknown>
+    }
+    expect(body.config.wikiCompile).toEqual({ primaryModel: "claude-haiku-4-5" })
+  })
+
   it("loadSession populates sessionConfig from GET /api/sessions/:id/runtime-config", async () => {
     const calls: FetchCall[] = []
     globalThis.fetch = mockFetch(

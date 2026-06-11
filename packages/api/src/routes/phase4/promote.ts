@@ -29,7 +29,10 @@ import type { FastifyInstance } from "fastify"
 import type { WikiLeasesRepository } from "../../db/repositories/wiki-leases-repository"
 import { checkExemptionSanitizeBlocked } from "../../wiki/promote-audit/exemption-tainted-fields"
 import type { PromoteWikiService } from "../../wiki/promote-audit/promote-wiki-service"
-import { isDraftRelativePath } from "../../wiki/promote-audit/promote-wiki-service"
+import {
+  isDraftRelativePath,
+  isSupersededDraftRelativePath,
+} from "../../wiki/promote-audit/promote-wiki-service"
 import type { V14PromoteAuditService } from "../../wiki/promote-audit/v14-promote-audit-service"
 import { WikiPathInvalidError, safeWikiPath } from "../../wiki/path-containment"
 import { INVALID_TAINTED, normalizeTaintedSourceFields } from "./tainted-source-validation"
@@ -89,6 +92,15 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
         ok: false,
         code: "PATH_INVALID",
         error: `src must be a draft path (contain '/draft/' or '/_drafts/'), got: ${body.srcDraftPath}`,
+      }
+    }
+    // 德彪 wiki-ux r1 P2 · 归档版本 preview 同口径拒绝（与 service.promote 一致，防体验割裂）
+    if (isSupersededDraftRelativePath(body.srcDraftPath)) {
+      reply.code(400)
+      return {
+        ok: false,
+        code: "PATH_INVALID",
+        error: `src is a superseded (archived) draft — preview/promote the newest same-source draft instead, got: ${body.srcDraftPath}`,
       }
     }
 

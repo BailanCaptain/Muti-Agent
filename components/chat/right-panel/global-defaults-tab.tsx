@@ -7,9 +7,21 @@ import { useSaveStatus } from "./use-save-status"
 
 type Props = { provider: Provider }
 
+// F027 收尾补丁 AC-W1 · wiki 收录编译模型白名单（与后端 WIKI_COMPILE_MODEL_IDS 同步）。
+// fallback 链固定 Haiku 4.5；空值 = 默认 Opus 4.7。
+const WIKI_COMPILE_MODELS: { id: string; label: string }[] = [
+  { id: "claude-opus-4-7", label: "Opus 4.7" },
+  { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+  { id: "claude-opus-4-6", label: "Opus 4.6" },
+  { id: "claude-haiku-4-5", label: "Haiku 4.5" },
+]
+
 export function GlobalDefaultsTab({ provider }: Props) {
   const catalog = useRuntimeConfigStore((s) => s.catalog)
   const override = useRuntimeConfigStore((s) => s.config[provider])
+  const wikiCompileModel = useRuntimeConfigStore(
+    (s) => s.config.wikiCompile?.primaryModel,
+  )
   const setGlobalOverride = useRuntimeConfigStore((s) => s.setGlobalOverride)
 
   const [model, setModel] = useState(override?.model ?? "")
@@ -21,6 +33,8 @@ export function GlobalDefaultsTab({ provider }: Props) {
   const [sealPctPercent, setSealPctPercent] = useState(
     override?.sealPct != null ? String(Math.round(override.sealPct * 100)) : "",
   )
+  // F027 收尾补丁 AC-W1：wiki 编译模型（全局单值，只挂 claude tab；"" = 默认 Opus 4.7）
+  const [wikiModel, setWikiModel] = useState(wikiCompileModel ?? "")
 
   // F021 P2 (范德彪 二轮 review): 切 provider 或异步到达的 override 必须同步到 input。
   useEffect(() => {
@@ -30,12 +44,14 @@ export function GlobalDefaultsTab({ provider }: Props) {
     setSealPctPercent(
       override?.sealPct != null ? String(Math.round(override.sealPct * 100)) : "",
     )
+    setWikiModel(wikiCompileModel ?? "")
   }, [
     provider,
     override?.model,
     override?.effort,
     override?.contextWindow,
     override?.sealPct,
+    wikiCompileModel,
   ])
   const save = useSaveStatus({ idle: "保存全局默认" })
 
@@ -117,6 +133,28 @@ export function GlobalDefaultsTab({ provider }: Props) {
         </div>
       </Field>
 
+      {provider === "claude" && (
+        <Field label="Wiki 编译模型">
+          <select
+            id="global-wiki-compile-model"
+            aria-label="Wiki 编译模型"
+            value={wikiModel}
+            onChange={(e) => setWikiModel(e.target.value)}
+            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-900 outline-none transition focus:border-indigo-400"
+          >
+            <option value="">默认（Opus 4.7）</option>
+            {WIKI_COMPILE_MODELS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+          <div className="mt-1 px-0.5 text-[11px] leading-relaxed text-slate-400">
+            文档收录的 LLM 编译模型 · 走订阅 CLI 不计费 · 保存即热生效（失败自动降级 Haiku 4.5）
+          </div>
+        </Field>
+      )}
+
       <div className="flex gap-2 pt-1">
         <button
           type="button"
@@ -124,16 +162,26 @@ export function GlobalDefaultsTab({ provider }: Props) {
           aria-busy={save.status === "saving"}
           onClick={() =>
             void save.run(() =>
-              setGlobalOverride(provider, {
-                model,
-                effort,
-                contextWindow:
-                  contextWindow.trim() === "" ? undefined : Number(contextWindow),
-                sealPct:
-                  sealPctPercent.trim() === ""
-                    ? undefined
-                    : Number(sealPctPercent) / 100,
-              }),
+              // AC-W1（德彪 r1 P2 单 PUT 化）：claude tab 把 wikiCompile 三态并入同一次
+              // setGlobalOverride（null=清除回默认），单次 PUT 无并发覆盖/部分保存窗口。
+              setGlobalOverride(
+                provider,
+                {
+                  model,
+                  effort,
+                  contextWindow:
+                    contextWindow.trim() === "" ? undefined : Number(contextWindow),
+                  sealPct:
+                    sealPctPercent.trim() === ""
+                      ? undefined
+                      : Number(sealPctPercent) / 100,
+                },
+                provider === "claude"
+                  ? wikiModel.trim() === ""
+                    ? null
+                    : { primaryModel: wikiModel.trim() }
+                  : undefined,
+              ),
             )
           }
           className={`flex-1 rounded-[10px] px-3 py-2.5 text-[12px] font-semibold transition disabled:cursor-not-allowed ${

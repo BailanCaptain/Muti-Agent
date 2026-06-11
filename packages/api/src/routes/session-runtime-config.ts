@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
-import { validateRuntimeConfigInput } from "../runtime/runtime-config"
+import { validateSessionRuntimeConfigInput } from "../runtime/runtime-config"
 
 type SessionRuntimeConfig = Record<string, unknown>
 
@@ -62,13 +62,15 @@ export function registerSessionRuntimeConfigRoutes(
         return { error: "pending must be a plain object." }
       }
 
-      // F021 Phase 6 — AC-29: 同一道字段校验（contextWindow / sealPct / model / effort）
+      // F021 Phase 6 — AC-29: 同一道字段校验（contextWindow / sealPct / model / effort）。
+      // 德彪 wiki-ux r1 P2：session 层用专属 validator——wikiCompile 全局专属，session 出现即 400。
       const errors: string[] = []
       if (hasConfig) {
-        for (const e of validateRuntimeConfigInput(body.config)) errors.push(`config.${e}`)
+        for (const e of validateSessionRuntimeConfigInput(body.config)) errors.push(`config.${e}`)
       }
       if (hasPending) {
-        for (const e of validateRuntimeConfigInput(body.pending)) errors.push(`pending.${e}`)
+        for (const e of validateSessionRuntimeConfigInput(body.pending))
+          errors.push(`pending.${e}`)
       }
       if (errors.length > 0) {
         reply.code(400)

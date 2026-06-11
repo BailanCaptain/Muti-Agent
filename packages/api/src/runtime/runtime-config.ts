@@ -12,7 +12,30 @@ export type AgentOverride = {
 export const SEAL_PCT_MIN = 0.3
 export const SEAL_PCT_MAX = 1.0
 
-export type RuntimeConfig = Partial<Record<AgentKind, AgentOverride>>
+/**
+ * F027 收尾补丁 AC-W1 · wiki 编译模型白名单 = haiku-runner 既有 4 个 CLI runner。
+ * 默认 Opus 4.7（AC-P4-8 原硬编码链的 primary）；fallback 恒 Haiku 4.5 不可配。
+ */
+export const WIKI_COMPILE_MODEL_IDS = [
+  "claude-opus-4-7",
+  "claude-sonnet-4-6",
+  "claude-opus-4-6",
+  "claude-haiku-4-5",
+] as const
+export type WikiCompileModelId = (typeof WIKI_COMPILE_MODEL_IDS)[number]
+export const DEFAULT_WIKI_COMPILE_MODEL: WikiCompileModelId = "claude-opus-4-7"
+
+export type WikiCompileOverride = {
+  primaryModel?: WikiCompileModelId
+}
+
+/** 仅 agent 维度的 overrides（session 快照 / invocation configSnapshot 用——不含 wikiCompile）。 */
+export type AgentOverridesConfig = Partial<Record<AgentKind, AgentOverride>>
+
+export type RuntimeConfig = AgentOverridesConfig & {
+  /** F027 收尾补丁 AC-W1 · wiki ingest 编译 LLM 配置（前端全局默认 tab 可改，热生效）。 */
+  wikiCompile?: WikiCompileOverride
+}
 
 const CONFIG_FILE_NAME = "multi-agent.runtime-config.json"
 const AGENT_KINDS: AgentKind[] = ["claude", "codex", "gemini"]
@@ -121,6 +144,45 @@ export function validateRuntimeConfigInput(input: unknown): string[] {
       }
     }
   }
+  // F027 收尾补丁 AC-W1：wikiCompile 显式校验（白名单外 → 400，不静默丢——
+  // 前端下拉永远发合法值，400 只挡手搓 payload / 版本漂移）。
+  const wcRaw = source.wikiCompile
+  if (wcRaw !== undefined) {
+    if (!wcRaw || typeof wcRaw !== "object" || Array.isArray(wcRaw)) {
+      errors.push("wikiCompile: override must be an object")
+    } else {
+      const pm = (wcRaw as Record<string, unknown>).primaryModel
+      if (
+        pm !== undefined &&
+        (typeof pm !== "string" || !(WIKI_COMPILE_MODEL_IDS as readonly string[]).includes(pm))
+      ) {
+        errors.push(
+          `wikiCompile.primaryModel must be one of: ${WIKI_COMPILE_MODEL_IDS.join(", ")}`,
+        )
+      }
+    }
+  }
+  return errors
+}
+
+/**
+ * 德彪 wiki-ux r1 P2 · session 层校验：agent 字段同全局规则，但 **wikiCompile 是全局专属段**
+ * （PUT /api/runtime-config 才收）——session config / pending 出现即 400。否则 session 路由
+ * 复用全局 validator 会把 wikiCompile 放进 session 存储，flushSessionPending 再带进
+ * invocation configSnapshot（类型断言不做运行时剥离）。
+ */
+export function validateSessionRuntimeConfigInput(input: unknown): string[] {
+  const errors = validateRuntimeConfigInput(input)
+  if (
+    input &&
+    typeof input === "object" &&
+    !Array.isArray(input) &&
+    "wikiCompile" in (input as Record<string, unknown>)
+  ) {
+    errors.push(
+      "wikiCompile is global-only (PUT /api/runtime-config); session config must not include it",
+    )
+  }
   return errors
 }
 
@@ -161,6 +223,17 @@ function sanitize(input: unknown): RuntimeConfig {
       override.sealPct !== undefined
     ) {
       result[agent] = override
+    }
+  }
+  // F027 收尾补丁 AC-W1：wikiCompile 存储层 sanitize（最后防线——历史脏文件/手改只留白名单值）
+  const wcRaw = source.wikiCompile
+  if (wcRaw && typeof wcRaw === "object" && !Array.isArray(wcRaw)) {
+    const pm = (wcRaw as Record<string, unknown>).primaryModel
+    if (
+      typeof pm === "string" &&
+      (WIKI_COMPILE_MODEL_IDS as readonly string[]).includes(pm.trim())
+    ) {
+      result.wikiCompile = { primaryModel: pm.trim() as WikiCompileModelId }
     }
   }
   return result

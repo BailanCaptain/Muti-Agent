@@ -82,7 +82,7 @@ import { resolveContextWindow } from "../runtime/context-window-resolver"
 import { runContinuationLoop } from "../runtime/continuation-loop"
 import { classifyFailure } from "../runtime/failure-classifier"
 import { loadRuntimeConfig, resolveEffectiveOverride } from "../runtime/runtime-config"
-import type { AgentOverride, RuntimeConfig } from "../runtime/runtime-config"
+import type { AgentOverride, AgentOverridesConfig } from "../runtime/runtime-config"
 import { resolveSealThresholds } from "../runtime/seal-config-resolver"
 import type { SkillRegistry } from "../skills/registry"
 import { applySlashCommandHint } from "../skills/slash-route"
@@ -1529,9 +1529,11 @@ export class MessageService {
     // appending the assistant placeholder, so the message row carries the
     // correct snapshot for the chat bubble pill. Order: snapshot → resolve →
     // append. The same snapshot is later emitted on invocation.started.
+    // F027 收尾补丁 AC-W1：session 快照只含 agent overrides（wikiCompile 是全局专属段，
+    // 不进 session / invocation configSnapshot）→ 用窄类型 AgentOverridesConfig。
     const sessionSnapshot = this.sessions.flushSessionPending(
       thread.sessionGroupId,
-    ) as RuntimeConfig
+    ) as AgentOverridesConfig
     const hasSessionSnapshot = Object.keys(sessionSnapshot).length > 0
     const globalConfig = loadRuntimeConfig()
     const globalOverride = globalConfig[thread.provider]

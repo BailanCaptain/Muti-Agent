@@ -41,7 +41,7 @@ import { registerSessionRuntimeConfigRoutes } from "./routes/session-runtime-con
 import { registerThreadRoutes } from "./routes/threads"
 import { registerUploadRoutes } from "./routes/uploads"
 import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
-import { createHaikuRunner, createOpusRunner, createSonnetRunner } from "./runtime/haiku-runner"
+import { createHaikuRunner, createSonnetRunner } from "./runtime/haiku-runner"
 import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
 import { bootSchedulerRuntime } from "./runtime/scheduler-bootstrap"
@@ -800,13 +800,14 @@ export async function createApiServer(options: {
   const { RecentDropsRepository } = await import("./db/repositories/recent-drops-repository")
   const recentDropsRepo = new RecentDropsRepository(drizzleDb)
 
-  // F027 v3 G11 · 给 ingest preview 注入真 LLM compile pipeline 依赖（Opus 4.7 + Haiku fallback）。
+  // F027 v3 G11 · 给 ingest preview 注入真 LLM compile pipeline 依赖。
   // 注入后用户 drop 资料 → preview 真编译产 cross_refs/dedup/canonical_owner，commit 落盘编译产物。
   //   - wikiRoot 用 `<services>/wiki`（双 wiki，与 G2 r2 / roomCompileWikiRoot 同口径 — 真 entity 在此根下）。
   //   - compileRules 单独从 handbook 取（line 380 只取了 agentActions）；load 失败退空串（fail-soft）。
-  //   - llmClient = Opus 4.7 primary + Haiku 4.5 fallback（AC-P4-8 链；haiku-runner createOpusRunner 已有）。
-  const { createRunnerWithFallback: createCompileRunnerWithFallback } = await import(
-    "./runtime/runner-with-fallback"
+  //   - llmClient = 动态 runner（F027 收尾补丁 AC-W1）：primary 每次调用读 runtime config
+  //     （前端全局默认 tab 可改，热生效，默认 Opus 4.7），fallback 恒 Haiku 4.5（AC-P4-8 语义不变）。
+  const { createDynamicWikiCompileRunner } = await import(
+    "./runtime/wiki-compile-runner"
   )
   const { createProductionCompileLLMClient } = await import(
     "./wiki/llm-compile/production-compile-llm-client"
@@ -839,11 +840,15 @@ export async function createApiServer(options: {
       indexLoader: createProductionIndexLiteLoader({ wikiRoot: ingestCompileWikiRoot }),
       entityChecker: createProductionEntityExistenceChecker({ wikiRoot: ingestCompileWikiRoot }),
       llmClient: createProductionCompileLLMClient({
-        runner: createCompileRunnerWithFallback({
-          primary: createOpusRunner(),
-          fallback: createHaikuRunner(),
+        runner: createDynamicWikiCompileRunner({
+          // AC-W1：降级审计带真实 primary 模型名（替换原硬编码 "Opus primary failed" 文案）
+          onFallback: (primaryModel) =>
+            app.log.info(
+              { component: "ingest-compile-llm", primaryModel },
+              `compile LLM fell back to Haiku (primary ${primaryModel} failed); output quality may be degraded`,
+            ),
         }),
-        // codex P3(G11)：接生产 logger，让 Opus→Haiku fallback 成功(质量降级)可观测。
+        // codex P3(G11)：接生产 logger，让 fallback 成功(质量降级)可观测。
         logger: (msg: string) => app.log.info({ component: "ingest-compile-llm" }, msg),
       }),
       handbookCompileRules: ingestCompileRules,
@@ -990,6 +995,9 @@ export async function createApiServer(options: {
         preview: sharedIngestPreview,
         commit: sharedIngestCommit,
         logger: app.log,
+        // F027 收尾补丁 AC-W2 · commit 成功后同源旧 _auto draft 自动搬 draft/_superseded/
+        // （审批列表每源只剩最新）。根与 commit 落盘根同口径（wikiRootBase + AUTO_TARGET_DIR）。
+        autoDraftDir: path.join(wikiRootBase, "wiki", "concepts", "draft", "_auto"),
       })
     : undefined
 

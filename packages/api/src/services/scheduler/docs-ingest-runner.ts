@@ -26,6 +26,7 @@ import type { FastifyBaseLogger } from "fastify"
 import type { IngestCommitService } from "../../routes/phase3/ingest-commit"
 import type { IngestPreviewService } from "../../routes/phase3/ingest-preview"
 import { createLogger } from "../../lib/logger"
+import { supersedeOlderAutoDrafts } from "./auto-draft-supersede"
 import type { DocsEvent } from "./docs-watcher"
 
 const MAX_INGEST_BYTES = 1_048_576 // 1MB (同 contracts MAX_INGEST_CONTENT_BYTES)
@@ -41,6 +42,12 @@ export interface DocsIngestRunnerDeps {
   logger?: FastifyBaseLogger
   /** 注入 clock（测试 deterministic 用；默认 () => Date.now()）。 */
   now?: () => number
+  /**
+   * F027 收尾补丁 AC-W2 · `_auto` 目录绝对路径（= `<wikiRoot>/wiki/concepts/draft/_auto`）。
+   * 传入 → commit 成功后同源旧 draft 自动搬 `draft/_superseded/`（审批列表只剩最新）。
+   * 缺 → 跳过收敛（向后兼容；测试 / 不带 fs 根的 caller 不受影响）。
+   */
+  autoDraftDir?: string
 }
 
 export interface DocsIngestRunResult {
@@ -63,12 +70,21 @@ export class DocsIngestRunner {
   private readonly commit: IngestCommitService
   private readonly log: FastifyBaseLogger
   private readonly now: () => number
+  private readonly autoDraftDir?: string
+  /**
+   * 德彪 r1 P1 · 同 path ingest 串行化。watcher dispatch 是 fire-and-forget，且 LLM 编译
+   * 分钟级——同源两次事件可重叠：慢的那次后落盘（文件名时间戳更大）但内容更旧，再把新
+   * draft 收敛走 = "只留最新"语义反转。按 relativePath 链式排队：后到事件等前一次完整
+   * 结束才开跑（读文件也在排队后，天然读到最新内容）。不同 path 互不阻塞。
+   */
+  private readonly inFlightByPath = new Map<string, Promise<DocsIngestRunResult>>()
 
   constructor(deps: DocsIngestRunnerDeps) {
     this.preview = deps.preview
     this.commit = deps.commit
     this.log = deps.logger ?? createLogger("docs-ingest-runner")
     this.now = deps.now ?? (() => Date.now())
+    this.autoDraftDir = deps.autoDraftDir
   }
 
   /**
@@ -87,12 +103,34 @@ export class DocsIngestRunner {
   }
 
   /**
-   * DocsWatcher.onEvent 入口。
+   * DocsWatcher.onEvent 入口（德彪 r1 P1：同 path 串行化包装；真实业务在 doRunIngest）。
    *
    * unlink 直接跳过；add/change 走完整 preview → commit pipeline。
    * 所有失败 / blocked 写 log warn 但不抛（caller 已是 fail-soft try/catch）。
    */
-  async runIngest(event: DocsEvent): Promise<DocsIngestRunResult> {
+  runIngest(event: DocsEvent): Promise<DocsIngestRunResult> {
+    const key = event.relativePath.replace(/\\/g, "/").toLowerCase()
+    const prev = this.inFlightByPath.get(key) ?? Promise.resolve()
+    const run = prev
+      // 前一次结果（含异常）不影响本次排队——doRunIngest 自身不抛，catch 是 belt+braces
+      .catch(() => undefined)
+      .then(() => this.doRunIngest(event))
+    this.inFlightByPath.set(key, run)
+    // 德彪 r2 P1：cleanup 用 then(onF, onR) 双臂——派生 promise 永不 reject。
+    // `void run.finally(...)` 在 run reject（如 commit 抛错）时会产生一条无人处理的派生
+    // rejection → unhandledRejection → Node 默认终止进程（铁律 2 进程自保）。caller
+    // (watcher dispatch) 仍从返回的 run 自行接错。
+    const cleanup = () => {
+      // 只有自己仍是队尾才清条目（后续已排队的 promise 接管 map slot）
+      if (this.inFlightByPath.get(key) === run) {
+        this.inFlightByPath.delete(key)
+      }
+    }
+    void run.then(cleanup, cleanup)
+    return run
+  }
+
+  private async doRunIngest(event: DocsEvent): Promise<DocsIngestRunResult> {
     if (event.kind === "unlink") {
       this.log.debug({ event }, "docs-ingest-runner: unlink skip")
       return { skipped: true, skippedReason: "unlink_kind" }
@@ -175,6 +213,28 @@ export class DocsIngestRunner {
       },
       "docs-ingest-runner: ingest committed",
     )
+
+    // F027 收尾补丁 AC-W2 · commit 成功后同源旧 _auto draft 收敛进 _superseded。
+    // fail-soft：收敛任何失败只 warn，不影响本次 ingest 结果（supersede 模块自身不抛，
+    // 这层 try/catch 是 belt+braces）。
+    if (this.autoDraftDir) {
+      try {
+        const superseded = await supersedeOlderAutoDrafts({
+          autoDir: this.autoDraftDir,
+          committedFileName: path.basename(commitResult.response.finalPath),
+          logWarn: (obj, msg) => this.log.warn(obj, msg),
+        })
+        if (superseded.moved.length > 0 || superseded.failed.length > 0) {
+          this.log.info(
+            { event, moved: superseded.moved, failed: superseded.failed },
+            "docs-ingest-runner: superseded older same-source drafts",
+          )
+        }
+      } catch (err) {
+        this.log.warn({ err, event }, "docs-ingest-runner: supersede step threw (ignored)")
+      }
+    }
+
     return {
       skipped: false,
       finalPath: commitResult.response.finalPath,

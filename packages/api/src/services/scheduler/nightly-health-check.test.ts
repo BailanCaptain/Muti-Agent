@@ -303,6 +303,26 @@ test("NightlyHealthCheck · draftExpired RED — draft >30 天，reviewing 缺",
   assert.equal(moved[0].dst, "wiki/concepts/draft/_expired/old-auto.md")
 })
 
+test("NightlyHealthCheck · draftExpired AC-W2 — _superseded 归档区不做 TTL 二次搬运", async () => {
+  const now = new Date("2026-06-15T00:00:00.000Z")
+  const oldCreated = new Date("2026-05-01T00:00:00.000Z").toISOString() // 45 天前
+  const moved: Array<{ src: string; dst: string }> = []
+  const check = newCheck({
+    entities: [
+      entity(
+        "wiki/concepts/draft/_superseded/old-version.md",
+        "[[wiki/concepts/draft/_superseded/old-version]]\n",
+        { created_at: oldCreated },
+      ),
+    ],
+    now,
+    movedRecorder: moved,
+  })
+  const report = await check.run()
+  assert.equal(report.draftExpired.length, 0, "_superseded 已是归档区，不应再 TTL 搬 _expired")
+  assert.equal(moved.length, 0, "mover 不应被调用")
+})
+
 test("NightlyHealthCheck · draftExpired GREEN — draft <30 天", async () => {
   const now = new Date("2026-06-15T00:00:00.000Z")
   const recent = new Date("2026-06-10T00:00:00.000Z").toISOString() // 5 天前
