@@ -79,7 +79,7 @@ created: 2026-06-12
 
 **诚实定调**：网页登录凭证本质可代表账号，**无法承诺零泄露**；外发面也不止 cookie——用户输入的声明会发给外部搜索 API 与三家 LLM。策略是把风险压到可控 + 对小孙透明，不是吹绝对安全。
 
-- **外发边界**：用户输入/网页摘录/房间历史不默认全量发所有 provider；执行前展示将访问哪些 provider；检测密钥/私人身份/未公开业务信息并提示或本地降级；case 级记录实际外发对象/字段/时间
+- **外发边界**：用户输入/网页摘录/房间历史不默认全量发所有 provider；只发**已确认 provider allowlist**（不在册不发，新增/变更必须重新人工确认）；执行前展示将访问哪些 provider；检测密钥/私人身份/未公开业务信息命中**必须强确认或阻断（非仅提示）**；case 级记录实际外发对象/字段/时间
 - **登录凭证默认关闭**，逐平台授权；profile 与 agent/LLM 进程隔离，cookie/localStorage/路径不进 prompt/日志/截图/通用子进程；ACL 限当前 Windows 用户 + 推荐 BitLocker；禁导出 storageState；登录态截图**不进 `.runtime/uploads`（静态暴露路径）**；日志脱敏 Cookie/token/query URL/postData
 - **SSRF**：拒绝 loopback/私网/link-local/`file:`/非 HTTP(S)/DNS rebinding/重定向逃逸内网（Iron Law §4 网络边界延伸）
 - **只读由执行器强制 + 自动测试**：禁 POST 写/表单/上传/点赞/关注/发帖/私信
@@ -88,7 +88,7 @@ created: 2026-06-12
 ### 用户入口与 UX 三态
 
 - **入口 A（主）**：composer 打 `/` → 命令面板（复用 F027 `components/chat/composer-slash-menu.tsx`，加 `/fact-check`；`/deep-research` 在 Phase 1 先 disabled/preview）
-- **入口 B**：自然语言"帮我核查/深挖 XXX" → 路由；**执行前显示识别模式 + 冻结声明 + 预计档位 + 外发范围，一键确认或改写**（防误触多模型长任务）
+- **入口 B**：自然语言"帮我核查 XXX"（fact-check）→ 路由；**执行前显示识别模式 + 冻结声明 + 预计档位 + 外发范围，一键确认或改写**（防误触多模型长任务）。**Phase 1 自然语言"深挖/deep-research"类请求直接拒绝并提示"Phase 2 启用"，绝不路由执行**（与 AC-P1c-4 一致）
 - 入口 C「核查这条消息」→ 见 Open Decisions（未拍板，不进 AC）
 
 UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆分/双 agent 检索中/证据计数，复用观测带）→ 报告态（结论摘要置顶 + 证据链/分歧区/引用源折叠）。
@@ -98,8 +98,8 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 ### Phase 0A — 信源与质量基线（可与 P1a 并行，不整体阻塞）
 
 - [ ] AC-P0a-1: 信源矩阵——30+ 中外平台先轻量可达扫描（可达通道/登录/反爬/成本/内容类型/声明类型/ToS 与账号风险），再对基准命中前 8-12 渠道深测，长尾按需扩展
-- [ ] AC-P0a-2: gold set 真值基准——**≥150 条**中英文声明，按 声明类型×语言×难度 分层，每层 ≥15；每条预注册真值标签/时间截点/预期主来源/声明类型；含"仅平台内传播"用例 + 不可证伪/观点/预测/讽刺负样本；**train/holdout 7:3 分离，定版即打 tag 冻结，调参与 prompt 迭代只用 train，验收只在 holdout 上跑**
-- [ ] AC-P0a-3: provider smoke test——候选外部 provider 对 gold set 实测召回率/官方源命中/中文覆盖/重复源比例/发布时间准确率 → 选型决策
+- [ ] AC-P0a-2: gold set 真值基准——**≥300 条起步**中英文声明，按 声明类型×语言×难度 分层（每层 ≥20）；每条预注册真值标签/时间截点/预期主来源/声明类型；含"仅平台内传播"用例 + 不可证伪/观点/预测/讽刺负样本；**train:holdout = 7:3，定版打 tag 冻结，holdout 全程封存、仅最终验收一次性使用，禁止参与任何 provider 选型/阈值调参/prompt 迭代**；**规模与目标挂钩**——若要在 holdout 上以 Wilson 95% 上界验收"高置信错误率 ≤2%"，holdout 高置信子集需 ≥150（按高置信占比反推 gold set 总规模），v1 可先起步规模 + 区间报告 + 降级语义（见 AC-P1b-9），目标线随样本积累收紧
+- [ ] AC-P0a-3: provider smoke test——候选外部 provider **仅在 train 子集**实测召回率/官方源命中/中文覆盖/重复源比例/发布时间准确率 → 选型决策；**holdout 不参与选型（消除数据泄漏）**；正式裁决阈值不由本 AC 单独冻结（见 AC-P1b-9）
 - [ ] AC-P0a-4: 声明类型→渠道路由表 + 核查机构白名单（中外 ≥5 家）v1 定稿
 - [ ] AC-P0a-5: 平台合规登记——每平台 ToS/API 条件/账号风险/允许访问方式；禁止绕过验证码/反爬/访问控制
 
@@ -131,7 +131,7 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 - [ ] AC-P1b-6: quorum——正式 verdict 需 ≥2 异质模型 **且** 来源独立性（≥1 primary-source 或 2 独立 origin）；缺席者进 degradation disclosure 不永久废
 - [ ] AC-P1b-7: citation entailment——每核心结论绑定精确 evidence span，独立步骤校验引用真正蕴含结论
 - [ ] AC-P1b-8: 检索纪律——disconfirm-first 反例；absence 需正反两路+相关概念均 0 命中；中英双语各搜一遍；按档位停止判据
-- [ ] AC-P1b-9: **裁决质量门槛（gold set holdout 验收，最关键）**——v1 起步阈值（待 AC-P0a-3 实测分布后冻结为正式线）：claim 拆解正确率 ≥90% / 证据召回（gold 主来源命中）≥80% / 引用支持率（citation entailment 通过）≥95% / 裁决准确率（claim_relation vs 真值）≥85% / **高置信错误率 ≤2%（硬上限，high-confidence 判错最严重）** / 弃权合理性（insufficient 中真证据不足占比）≥80%（防滥用弃权）；全部在 holdout 上测，不达标不得进 writing-plans 后的实现验收
+- [ ] AC-P1b-9: **裁决质量门槛（冻结 holdout 验收，最关键）**——指标以 holdout 为分母，报 点估计 + **Wilson 95% 置信区间**，达标看区间界非点估计：claim 拆解正确率 ≥90% / 证据召回（gold 主来源命中）≥80% / 引用支持率（citation entailment）≥95% / 裁决准确率（claim_relation vs 真值）≥85%（均取 **Wilson 下界**达标）；**高置信错误率**在 holdout high-confidence 子集上算——**子集 n<80 统计功效不足时不签发"≤X%"结论，只报点估计+区间并列入上线后持续监控；n≥80 用 Wilson 95% 上界验收（v1 门槛上界 ≤5%，长期目标 ≤2% 随样本积累收紧）**；弃权合理性（insufficient 中真证据确不足占比）≥80%；**置信度三档（low/med/high）校准——可靠性分箱 + ECE ≤0.1**；train 上数字仅供开发参考、不作验收
 - [ ] AC-P1b-10: 档位预算——Light/Full 硬成本+延迟+并发上限+超时+取消；超预算降级报告
 
 ### Phase 1C — L2 渠道 + UI + 入口 + 外发边界
@@ -176,7 +176,7 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 | quorum | ≥2 异质模型 **且** 来源独立性（primary-source 或 2 独立 origin） | 德彪 D5：模型异质≠证据独立（可能同一通讯社/转载/索引） |
 | 原生检索定位 | 仅线索，不计正式 quorum | 德彪 D3：不可结构化审计的证据不能进裁决 |
 | 引用 | citation entailment（绑 evidence span + 独立校验蕴含） | 德彪 D5：有链接≠链接支持结论 |
-| 质量验收 | gold set ≥150 分层 + train/holdout 7:3 冻结 + 起步阈值（裁决准确率≥85%/高置信错误率≤2%/弃权合理性≥80%，P0a 实测后冻结正式线） | 德彪 D1/v2-P5：原 AC 只验格式且阈值占位，系统稳定胡判也能过——最致命缺口 |
+| 质量验收 | gold set ≥300 分层 + holdout 封存（provider 选型只用 train，消除泄漏）+ Wilson 95% 区间验收（裁决准确率取下界≥85%；高置信错误率：子集 n<80 不签发只监控，n≥80 上界 v1≤5%/目标≤2%）+ ECE≤0.1 校准 | 德彪 D1/v2-P5/三审：原 AC 只验格式、阈值占位、统计功效不足——系统稳定胡判也能过、最致命缺口 |
 | 外发边界 | feature 级 outbound-data policy（不只 cookie，含声明外发提示+脱敏+记录） | 德彪 D1/D6：用户声明发往外部 API/LLM 也是泄露面 |
 | 登录凭证 | 默认关闭 + 小号硬要求 + 能力隔离 + v1 不接主号；无法承诺零泄露 | 德彪登录态深审：网页凭证本质可代表账号，guard 只降险不归零 |
 | 安全底座 | SSRF + prompt-injection corpus + 只读执行器自动测试 | 德彪 D6：Iron Law §4 延伸；防注入靠能力隔离非 prompt |
