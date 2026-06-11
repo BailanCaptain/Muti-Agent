@@ -127,19 +127,24 @@ describe("F027 P13.4 · FileSystemLevel4Backend", () => {
   // 德彪 r3 P1 · Windows 大小写旁路:WIKI_PATH_PREFIX 用 /i,大写 DRAFT/_DRAFTS 过前缀校验,
   // 大小写敏感 includes 会漏判 → Windows fs 不敏感能读真 draft 文件。isDraftRelativePath
   // 已改 toLowerCase,大写形态同样返 null。
-  it("大写 DRAFT 路径 → 返 null(大小写不敏感闸门)", async () => {
-    const { backend, cleanup } = setup()
+  // 德彪 r4 P2:文件必须真实存在,否则旧(大小写敏感)实现也因 ENOENT 返 null,测不出旁路。
+  // 创建真文件后:旧实现判非 draft → 读到文件返 hit;新实现 toLowerCase → null,两者可区分。
+  it("大写 DRAFT 路径(文件真实存在)→ 返 null(大小写不敏感闸门)", async () => {
+    const { backend, root, cleanup } = setup()
     try {
+      mkdirSync(path.join(root, "wiki", "concepts", "DRAFT"), { recursive: true })
+      writeFileSync(path.join(root, "wiki", "concepts", "DRAFT", "x.md"), "# 大写 DRAFT 危险内容\n", "utf8")
       assert.equal(await backend.readWiki("wiki/concepts/DRAFT/x.md"), null)
-      assert.equal(await backend.readWiki("wiki/concepts/Draft/x.md"), null)
     } finally {
       cleanup()
     }
   })
 
-  it("大写 _DRAFTS 路径 → 返 null", async () => {
-    const { backend, cleanup } = setup()
+  it("大写 _DRAFTS 路径(文件真实存在)→ 返 null", async () => {
+    const { backend, root, cleanup } = setup()
     try {
+      mkdirSync(path.join(root, "wiki", "concepts", "_DRAFTS"), { recursive: true })
+      writeFileSync(path.join(root, "wiki", "concepts", "_DRAFTS", "x.md"), "# _DRAFTS 危险内容\n", "utf8")
       assert.equal(await backend.readWiki("wiki/concepts/_DRAFTS/x.md"), null)
     } finally {
       cleanup()

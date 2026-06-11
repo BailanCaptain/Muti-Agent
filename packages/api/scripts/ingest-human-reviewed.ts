@@ -72,7 +72,10 @@ export function createHumanReviewedIngest(opts: HumanReviewedIngestOpts): {
   const clock = opts.clock ?? (() => new Date())
   const { db, close } = createDrizzleDb(opts.sqlitePath)
   const wikiServices = createWikiServices({ db, wikiRoot: opts.wikiRoot })
-  const store = new PreviewStore()
+  // clock 必须传给 PreviewStore:否则 put 的 expiresAt 用注入时钟、peek 判 expired 用真实
+  // 系统时钟,两者基准不一致 → 注入固定/过去时钟的测试会因真实时间已过 expiresAt 误判过期
+  // (2026-06-11 当天测试硬编码 10:00Z 引爆 gate)。生产默认真实时钟,两处一致,无回归。
+  const store = new PreviewStore({ clock })
   const compileWikiRoot = path.join(opts.wikiRoot, "wiki")
   const llmClient =
     opts.llmClient ??

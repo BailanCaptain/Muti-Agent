@@ -23,7 +23,26 @@ import { createDrizzleDb } from "../../db/drizzle-instance"
 import * as schema from "../../db/schema"
 import { wikiEntityIndex } from "../../db/schema"
 import { EmbeddedWikiRecordsLoader } from "../memory-preflight/embedded-records-loader"
+import { isDraftRelativePath } from "../promote-audit/promote-wiki-service"
 import { WikiEntityFtsProvider, reindexWikiEntities } from "./index"
+
+// 德彪 r4 P2 · isDraftRelativePath 单元测试(直接测函数,不经 fs;闸门口径单一真相源)。
+describe("isDraftRelativePath 大小写不敏感(德彪 r3 P1-2 + r4 P2)", () => {
+  it("小写 /draft/ 与 /_drafts/ → true", () => {
+    assert.equal(isDraftRelativePath("wiki/concepts/draft/_auto/x.md"), true)
+    assert.equal(isDraftRelativePath("wiki/concepts/_drafts/x.md"), true)
+  })
+  it("大写/混合 DRAFT/_DRAFTS/Draft + 反斜杠 → true(Windows fs 大小写不敏感旁路防护)", () => {
+    assert.equal(isDraftRelativePath("wiki/concepts/DRAFT/x.md"), true)
+    assert.equal(isDraftRelativePath("wiki/concepts/_DRAFTS/x.md"), true)
+    assert.equal(isDraftRelativePath("wiki/concepts/Draft/x.md"), true)
+    assert.equal(isDraftRelativePath("wiki\\concepts\\DRAFT\\x.md"), true)
+  })
+  it("canonical 路径 → false(含一字之差的 undrafts/ 不误判)", () => {
+    assert.equal(isDraftRelativePath("wiki/concepts/approved.md"), false)
+    assert.equal(isDraftRelativePath("wiki/concepts/undrafts/x.md"), false)
+  })
+})
 
 function makeDb() {
   const dir = mkdtempSync(path.join(tmpdir(), "draft-gate-db-"))

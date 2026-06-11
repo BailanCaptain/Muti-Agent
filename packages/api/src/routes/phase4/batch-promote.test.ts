@@ -135,6 +135,28 @@ describe("POST /api/wiki/drafts/batch-promote (AC-P4-4)", () => {
     }
   })
 
+  it("(11) 德彪 r4 P2: taintedSourceFields 非字符串数组 → 400(防 batch 透传 {length:1} 进 V14 抛 500)", async () => {
+    const t = await setupApp()
+    try {
+      t.writeSrc("wiki/concepts/draft/_auto/a.md", CLEAN_BODY)
+      const resp = await t.app.inject({
+        method: "POST",
+        url: "/api/wiki/drafts/batch-promote",
+        payload: {
+          items: [{ srcDraftPath: "wiki/concepts/draft/_auto/a.md", destWikiPath: "wiki/concepts/a.md" }],
+          callerAlias: "小孙",
+          reason: "r",
+          taintedSourceFields: { length: 1 }, // 德彪举的攻击向量:非数组对象
+        },
+      })
+      assert.equal(resp.statusCode, 400)
+      assert.equal(resp.json().code, "VALIDATION_ERROR")
+      assert.match(resp.json().error, /taintedSourceFields/)
+    } finally {
+      await t.cleanup()
+    }
+  })
+
   it("(2) 部分失败 中间 V14 reject → 200 ok success=2 failed=1 含 auditReject", async () => {
     const t = await setupApp()
     try {

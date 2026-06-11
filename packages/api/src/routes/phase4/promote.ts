@@ -32,6 +32,7 @@ import type { PromoteWikiService } from "../../wiki/promote-audit/promote-wiki-s
 import { isDraftRelativePath } from "../../wiki/promote-audit/promote-wiki-service"
 import type { V14PromoteAuditService } from "../../wiki/promote-audit/v14-promote-audit-service"
 import { WikiPathInvalidError, safeWikiPath } from "../../wiki/path-containment"
+import { INVALID_TAINTED, normalizeTaintedSourceFields } from "./tainted-source-validation"
 import fs from "node:fs"
 
 const DEFAULT_PROMOTE_LEASE_TTL_SECONDS = 30
@@ -107,7 +108,7 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
 
     // 德彪 r2 P2 · taintedSourceFields 运行时校验(传非 string[] → 400,防 spread/for-of 抛 500)。
     const tainted = normalizeTaintedSourceFields(body.taintedSourceFields)
-    if (tainted === INVALID) {
+    if (tainted === INVALID_TAINTED) {
       reply.code(400)
       return { ok: false, code: "VALIDATION_ERROR", error: "taintedSourceFields 必须是字符串数组" }
     }
@@ -242,7 +243,7 @@ function validatePromoteBody(body: PostPromoteBody): ValidatedPromote {
   }
   // 德彪 r2 P2 · taintedSourceFields 运行时校验(非 string[] → 拒;service union 前必须确定是数组)。
   const tainted = normalizeTaintedSourceFields(body.taintedSourceFields)
-  if (tainted === INVALID) {
+  if (tainted === INVALID_TAINTED) {
     return { ok: false, error: "taintedSourceFields 必须是字符串数组" }
   }
   return {
@@ -256,13 +257,4 @@ function validatePromoteBody(body: PostPromoteBody): ValidatedPromote {
       sourceMessageIds: body.sourceMessageIds,
     },
   }
-}
-
-/** 德彪 r2 P2 · taintedSourceFields 归一化哨兵:undefined=未传(放行),INVALID=类型非法(拒)。 */
-const INVALID = Symbol("invalid-tainted-source-fields")
-
-function normalizeTaintedSourceFields(v: unknown): readonly string[] | undefined | typeof INVALID {
-  if (v === undefined || v === null) return undefined
-  if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) return INVALID
-  return v as readonly string[]
 }

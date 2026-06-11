@@ -28,6 +28,7 @@
 import type { FastifyInstance } from "fastify"
 
 import type { BatchPromoteItem, BatchPromoteService } from "../../wiki/promote-audit/batch-promote-service"
+import { INVALID_TAINTED, normalizeTaintedSourceFields } from "./tainted-source-validation"
 
 const MAX_BATCH_ITEMS = 50
 
@@ -54,13 +55,21 @@ export function registerBatchPromoteRoutes(
       reply.code(400)
       return { ok: false, code: "VALIDATION_ERROR", error: v.error }
     }
+    // 德彪 r4 P2 · taintedSourceFields 运行时校验(与 single promote/preview 同 helper):
+    // 非 string[] → 400。漏校验则 {length:1} 类对象进 V14 detectTaintedDirectQuotes 的
+    // for...of 抛 → 500;数字等静默跳过 layer3。batch 此前透传未校验。
+    const tainted = normalizeTaintedSourceFields(body.taintedSourceFields)
+    if (tainted === INVALID_TAINTED) {
+      reply.code(400)
+      return { ok: false, code: "VALIDATION_ERROR", error: "taintedSourceFields 必须是字符串数组" }
+    }
 
     try {
       const summary = deps.batch.batchPromote({
         items: v.items,
         callerAlias: v.callerAlias,
         reason: v.reason,
-        taintedSourceFields: body.taintedSourceFields,
+        taintedSourceFields: tainted,
         sourceMessageIds: body.sourceMessageIds,
       })
       return {
