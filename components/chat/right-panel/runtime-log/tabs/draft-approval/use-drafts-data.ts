@@ -60,7 +60,10 @@ export function useDraftsData(options: { enabled?: boolean } = {}): UseDraftsDat
     let cancelled = false
     setIsLoading(true)
     setError(null)
-    fetch(`${API_BASE_URL}/api/wiki/drafts`, {
+    // F027 全选三件套：显式 limit=200（后端上限）一次拉满。默认 50 会让 57+ 篇时
+    // 列表只显示最新 50、「全选」名不副实（header total 与可见数对不上）。
+    // >200 篇时仍截断——header 显示 total，差额可见；真到那规模再上分页。
+    fetch(`${API_BASE_URL}/api/wiki/drafts?limit=200`, {
       method: "GET",
       headers: { Accept: "application/json" },
     })

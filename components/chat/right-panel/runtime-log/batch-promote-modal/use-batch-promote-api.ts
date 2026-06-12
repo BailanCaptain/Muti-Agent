@@ -89,6 +89,9 @@ export interface UseBatchPromoteReturn {
   reset: () => void
 }
 
+/** 后端单次上限（mirror routes/phase4/batch-promote MAX_BATCH_ITEMS=50；>50 → 400）。 */
+const MAX_BATCH_ITEMS = 50
+
 export function useBatchPromote(): UseBatchPromoteReturn {
   const [data, setData] = useState<BatchPromoteSummary | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -98,21 +101,33 @@ export function useBatchPromote(): UseBatchPromoteReturn {
     setIsLoading(true)
     setError(null)
     setData(null)
+    // F027 全选三件套：>50 items 按 50 切片顺序提交（全选 57+ 篇单次必 400）。
+    // 整体失败（4xx/5xx/网络）中断后续分片，但已完成分片的结果保留进 data——
+    // promote 是已发生事实，必须如实展示，error 同时置位提示剩余未提交。
+    const merged: BatchPromoteSummary = { ok: true, total: 0, success: [], failed: [] }
+    let firstError: string | null = null
     try {
-      const resp = await fetch(`${API_BASE_URL}/api/wiki/drafts/batch-promote`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(req),
-      })
-      const raw = (await resp.json()) as BatchPromoteResponse
-      if (raw.ok) {
-        setData(raw)
-        return
+      for (let i = 0; i < req.items.length; i += MAX_BATCH_ITEMS) {
+        const chunk = req.items.slice(i, i + MAX_BATCH_ITEMS)
+        const resp = await fetch(`${API_BASE_URL}/api/wiki/drafts/batch-promote`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...req, items: chunk }),
+        })
+        const raw = (await resp.json()) as BatchPromoteResponse
+        if (!raw.ok) {
+          firstError = `${raw.code}: ${raw.error ?? "batch promote failed"}`
+          break
+        }
+        merged.total += raw.total
+        merged.success.push(...raw.success)
+        merged.failed.push(...raw.failed)
       }
-      setError(`${raw.code}: ${raw.error ?? "batch promote failed"}`)
     } catch (err) {
-      setError((err as Error).message ?? "network error")
+      firstError = (err as Error).message ?? "network error"
     } finally {
+      if (merged.total > 0) setData(merged)
+      if (firstError) setError(firstError)
       setIsLoading(false)
     }
   }, [])

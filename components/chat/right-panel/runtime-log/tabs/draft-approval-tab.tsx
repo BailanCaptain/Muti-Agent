@@ -7,6 +7,7 @@ import { BatchPromoteModal } from "../batch-promote-modal/batch-promote-modal"
 import { DemoteModal } from "../demote-modal/demote-modal"
 import { PromoteModal } from "../promote-modal/promote-modal"
 import { ExpandableContent } from "./expandable-content"
+import { IngestSettingsCard } from "./draft-approval/ingest-settings-card"
 import {
   type DraftOrigin,
   type DraftSummary,
@@ -53,6 +54,8 @@ export function DraftApprovalTab() {
   const [demotingDraft, setDemotingDraft] = useState<DraftSummary | null>(null)
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set())
   const [batchOpen, setBatchOpen] = useState(false)
+  // F027 收录设置卡（小孙拍：编译引擎/模型设置放记忆页面族，不放 agent 配置区）
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const handlePromote = useCallback((draft: DraftSummary) => {
     setPromotingDraft(draft)
@@ -91,6 +94,17 @@ export function DraftApprovalTab() {
     })
   }, [])
 
+  // F027 全选三件套（小孙：一个一个点好费劲）：全选 = 勾上当前已加载全部；再点 = 清空。
+  const allSelected =
+    data.drafts.length > 0 && data.drafts.every((d) => selectedPaths.has(d.path))
+  const handleToggleSelectAll = useCallback(() => {
+    setSelectedPaths((prev) => {
+      const all = data.drafts.length > 0 && data.drafts.every((d) => prev.has(d.path))
+      if (all) return new Set()
+      return new Set(data.drafts.map((d) => d.path))
+    })
+  }, [data.drafts])
+
   const handleOpenBatch = useCallback(() => {
     setBatchOpen(true)
   }, [])
@@ -122,11 +136,17 @@ export function DraftApprovalTab() {
       <div className="flex flex-col gap-2 p-3 text-xs" data-testid="draft-approval-tab">
         <Header
           total={data.total}
+          visibleCount={data.drafts.length}
           selectedCount={selectedPaths.size}
+          allSelected={allSelected}
           isLoading={isLoading}
           error={error}
           onOpenBatch={handleOpenBatch}
+          onToggleSelectAll={handleToggleSelectAll}
+          settingsOpen={settingsOpen}
+          onToggleSettings={() => setSettingsOpen((v) => !v)}
         />
+        {settingsOpen && <IngestSettingsCard />}
         <DraftList
           drafts={data.drafts}
           selectedPaths={selectedPaths}
@@ -162,27 +182,66 @@ export function DraftApprovalTab() {
 
 function Header({
   total,
+  visibleCount,
   selectedCount,
+  allSelected,
   isLoading,
   error,
   onOpenBatch,
+  onToggleSelectAll,
+  settingsOpen,
+  onToggleSettings,
 }: {
   total: number
+  visibleCount: number
   selectedCount: number
+  allSelected: boolean
   isLoading: boolean
   error: string | null
   onOpenBatch: () => void
+  onToggleSelectAll: () => void
+  settingsOpen: boolean
+  onToggleSettings: () => void
 }) {
   return (
     <div
       className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-2 py-1.5"
       data-testid="draft-approval-header"
     >
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">
+      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-slate-500">
+        {visibleCount > 0 && (
+          <input
+            type="checkbox"
+            checked={allSelected}
+            ref={(el) => {
+              // 部分选中 → indeterminate（原生属性只能 ref 设）
+              if (el) el.indeterminate = selectedCount > 0 && !allSelected
+            }}
+            onChange={onToggleSelectAll}
+            className="shrink-0 cursor-pointer"
+            aria-label="全选当前列表"
+            title={allSelected ? "清空选择" : `全选当前 ${visibleCount} 份`}
+            data-testid="draft-approval-select-all"
+          />
+        )}
         审批待办 · {total} draft
-        {selectedCount > 0 ? `（已选 ${selectedCount}）` : "（勾选多份后可批量审批）"}
+        {selectedCount > 0 ? `（已选 ${selectedCount}）` : "（勾选或点左侧全选后可批量审批）"}
       </div>
       <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onToggleSettings}
+          className={`rounded px-1.5 py-0.5 text-[10px] transition ${
+            settingsOpen
+              ? "bg-slate-700 text-white"
+              : "text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+          }`}
+          title="收录设置（编译引擎/模型）"
+          aria-label="收录设置"
+          data-testid="draft-approval-settings-toggle"
+        >
+          ⚙
+        </button>
         {selectedCount > 0 && (
           <button
             type="button"

@@ -13,8 +13,9 @@ export type AgentOverride = {
   contextWindow?: number
   sealPct?: number
 }
-/** F027 收尾补丁 AC-W1 · wiki 收录编译模型（全局段，不进 session 配置）。 */
-export type WikiCompileOverride = { primaryModel?: string }
+/** F027 收录设置 · wiki 编译引擎+模型（全局段，不进 session 配置；卡片在审批页）。 */
+export type WikiCompileProvider = "claude" | "codex" | "gemini"
+export type WikiCompileOverride = { provider?: WikiCompileProvider; primaryModel?: string }
 export type RuntimeConfig = Partial<Record<Provider, AgentOverride>> & {
   wikiCompile?: WikiCompileOverride
 }
@@ -48,18 +49,16 @@ type RuntimeConfigStore = {
   activeSessionId: string | null
   loaded: boolean
   loadError: string | null
+  /** 德彪 kb-ux2 r2 P2：上次 load 真失败（loaded 只表示"尝试过"）。收录卡靠它禁保存。 */
+  loadFailed: boolean
   load: () => Promise<void>
   loadSession: (sessionId: string) => Promise<void>
+  setGlobalOverride: (provider: Provider, override: AgentOverride) => Promise<void>
   /**
-   * F027 收尾补丁 AC-W1（德彪 r1 P2 单 PUT 化）：第三参 wikiCompile 三态——
-   * undefined = 不碰该段；null = 清除（回落默认 Opus 4.7）；对象 = 设值。
-   * agent override 与 wikiCompile 合成一次 PUT，消除两连发的并发覆盖/部分保存窗口。
+   * F027 收录设置（审批页卡片专用）：单次 PUT 设/清 wikiCompile 段（null/空 = 清除回默认）。
+   * 与 setGlobalOverride 各管各段、各自单 PUT（小孙拍：收录设置不放 agent 配置区）。
    */
-  setGlobalOverride: (
-    provider: Provider,
-    override: AgentOverride,
-    wikiCompile?: WikiCompileOverride | null,
-  ) => Promise<void>
+  setWikiCompile: (wikiCompile: WikiCompileOverride | null) => Promise<void>
   setSessionOverride: (
     provider: Provider,
     override: AgentOverride,
@@ -105,6 +104,22 @@ function writeOverride(
   return next
 }
 
+// 德彪 kb-ux2 r1+r2 P2：setGlobalOverride / setWikiCompile 都全量 PUT /api/runtime-config。
+// 并发时两类事故：①响应乱序，旧响应覆盖新状态；②前一个失败请求的脏乐观段被后一个
+// 以内存为基的全量 PUT 携带重发（r2 实锤：seq guard 只挡①挡不住②）。
+// 改为严格串行：任务排队执行，执行时才读 config 计算 nextConfig——前序必已落定或
+// 已回滚，乱序与脏携带同时消灭，rollback 快照恒为确认态。localhost 亚秒级 PUT，
+// 排队延迟无感。
+let globalConfigPutChain: Promise<unknown> = Promise.resolve()
+function enqueueGlobalConfigPut<T>(task: () => Promise<T>): Promise<T> {
+  const run = globalConfigPutChain.then(task, task) // 前序失败不阻塞队列
+  globalConfigPutChain = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
+}
+
 // F021 P1 (范德彪 二轮 review): flush/merge 必须在 provider 内按字段合并，
 // 不能直接 { ...active, ...pending } — 否则 pending 只含单字段时会把 active 另一字段吞掉。
 function mergeOverridesFieldwise(
@@ -131,6 +146,7 @@ export const useRuntimeConfigStore = create<RuntimeConfigStore>((set, get) => ({
   activeSessionId: null,
   loaded: false,
   loadError: null,
+  loadFailed: false,
 
   load: async () => {
     try {
@@ -143,9 +159,12 @@ export const useRuntimeConfigStore = create<RuntimeConfigStore>((set, get) => ({
         config: configResponse.config,
         loaded: true,
         loadError: null,
+        loadFailed: false,
       })
     } catch (error) {
-      set({ loadError: (error as Error).message, loaded: true })
+      // 德彪 kb-ux2 r2 P2：loaded:true 只表示"尝试过"（右面板 banner 语义不动）；
+      // loadFailed 单独标记真失败——收录卡靠它禁保存，防默认值清掉未拉到的服务端配置。
+      set({ loadError: (error as Error).message, loaded: true, loadFailed: true })
     }
   },
 
@@ -165,36 +184,66 @@ export const useRuntimeConfigStore = create<RuntimeConfigStore>((set, get) => ({
     }
   },
 
-  setGlobalOverride: async (provider, override, wikiCompile) => {
-    const cleaned = cleanOverride(override)
-    // 德彪 r1 P2 · agent override + wikiCompile 合成一次 config 更新、一次 PUT
-    const nextConfig: RuntimeConfig = writeOverride(get().config, provider, cleaned)
-    if (wikiCompile !== undefined) {
-      if (wikiCompile !== null && wikiCompile.primaryModel?.trim()) {
-        nextConfig.wikiCompile = { primaryModel: wikiCompile.primaryModel.trim() }
+  setGlobalOverride: (provider, override) =>
+    enqueueGlobalConfigPut(async () => {
+      const cleaned = cleanOverride(override)
+      const prevConfig = get().config
+      const nextConfig: RuntimeConfig = writeOverride(prevConfig, provider, cleaned)
+      set({ config: nextConfig })
+
+      try {
+        const response = await fetchJson<{ ok: boolean; config: RuntimeConfig }>(
+          "/api/runtime-config",
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ config: nextConfig }),
+          },
+        )
+        set({ config: response.config })
+      } catch (error) {
+        // F021 P2: rethrow so useSaveStatus can distinguish success vs failure.
+        // 德彪 r2 P2：失败回滚乐观更新（串行下 prevConfig 恒为确认态），否则脏段
+        // 留内存被后续全量 PUT 携带重发。
+        set({ config: prevConfig, loadError: (error as Error).message })
+        throw error
+      }
+    }),
+
+  setWikiCompile: (wikiCompile) =>
+    enqueueGlobalConfigPut(async () => {
+      const prevConfig = get().config
+      const nextConfig: RuntimeConfig = { ...prevConfig }
+      const provider = wikiCompile?.provider
+      const model = wikiCompile?.primaryModel?.trim()
+      if (wikiCompile !== null && (provider || model)) {
+        nextConfig.wikiCompile = {
+          ...(provider ? { provider } : {}),
+          ...(model ? { primaryModel: model } : {}),
+        }
       } else {
         delete nextConfig.wikiCompile
       }
-    }
-    set({ config: nextConfig })
+      set({ config: nextConfig })
 
-    try {
-      const response = await fetchJson<{ ok: boolean; config: RuntimeConfig }>(
-        "/api/runtime-config",
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ config: nextConfig }),
-        },
-      )
-      set({ config: response.config })
-    } catch (error) {
-      // F021 P2: rethrow so useSaveStatus can distinguish success vs failure;
-      // loadError is still set for diagnostics.
-      set({ loadError: (error as Error).message })
-      throw error
-    }
-  },
+      try {
+        const response = await fetchJson<{ ok: boolean; config: RuntimeConfig }>(
+          "/api/runtime-config",
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ config: nextConfig }),
+          },
+        )
+        set({ config: response.config })
+      } catch (error) {
+        // 自由文本入口 → 后端 400 真实可达。脏 wikiCompile 不回滚的话会留在内存，
+        // setGlobalOverride 以 get().config 为基的全量 PUT 反复携带它 → agent 配置
+        // 保存连带 400 直到刷新。串行下 prevConfig 恒为确认态，无条件回滚。
+        set({ config: prevConfig, loadError: (error as Error).message })
+        throw error
+      }
+    }),
 
   setSessionOverride: async (provider, override, isRunning) => {
     const cleaned = cleanOverride(override)

@@ -142,12 +142,16 @@ export function BatchPromoteModal({
     onBatchComplete?.(submitHook.data)
   }, [submitHook.data, onBatchComplete])
 
-  // submit error → 切回 compose phase 显示 error (用户改后重试)
+  // submit error → 切回 compose phase 显示 error (用户改后重试)。
+  // F027 全选三件套：分批提交下 data 与 error 可能并存（前 N 片成功 + 后续片失败）——
+  // 此时 report 优先（promote 已发生，结果必须展示），error 在 report 内横幅提示；
+  // 仅「零分片完成」(data 为空) 才回 compose。否则本 effect 的 setPhase("compose")
+  // 会在同一轮 flush 里盖掉 data effect 的 setPhase("report")，把已成功结果藏掉。
   useEffect(() => {
-    if (submitHook.error && phase === "submitting") {
+    if (submitHook.error && phase === "submitting" && !submitHook.data) {
       setPhase("compose")
     }
-  }, [submitHook.error, phase])
+  }, [submitHook.error, phase, submitHook.data])
 
   const allDestValid = useMemo(() => {
     if (editableRows.length === 0) return false
@@ -228,7 +232,18 @@ export function BatchPromoteModal({
         )}
 
         {phase === "report" && submitHook.data && (
-          <ReportView summary={submitHook.data} />
+          <>
+            {submitHook.error && (
+              <div
+                className="mb-3 p-2 border border-amber-300 rounded bg-amber-50 text-xs text-amber-800"
+                data-testid="batch-promote-partial-error"
+              >
+                ⚠ 后续批次未提交：{submitHook.error}
+                （以下为已完成部分的结果；剩余 draft 留在列表中，可重新全选发起）
+              </div>
+            )}
+            <ReportView summary={submitHook.data} />
+          </>
         )}
 
         {/* Buttons */}

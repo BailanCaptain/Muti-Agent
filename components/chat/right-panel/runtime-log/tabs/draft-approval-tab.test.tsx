@@ -57,6 +57,89 @@ function resetStores() {
   })
 }
 
+describe("F027 全选三件套（小孙：一个一个点好费劲）", () => {
+  beforeEach(() => {
+    resetStores()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("列表 fetch 带 ?limit=200（一次拉满后端上限，否则 57 篇只显示 50）", async () => {
+    mockFetchResponse(makeResponse())
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByTestId("draft-approval-loading")).toBeNull())
+    const url = String(vi.mocked(globalThis.fetch).mock.calls[0]?.[0] ?? "")
+    expect(url).toMatch(/\/api\/wiki\/drafts\?limit=200$/)
+  })
+
+  it("表头全选框：点击 → 全部勾选 + 批量按钮显示 N；再点 → 清空", async () => {
+    const drafts = [
+      makeDraft({ path: "wiki/concepts/draft/_auto/a.md", title: "A" }),
+      makeDraft({ path: "wiki/concepts/draft/_auto/b.md", title: "B" }),
+      makeDraft({ path: "wiki/concepts/draft/_auto/c.md", title: "C" }),
+    ]
+    mockFetchResponse(makeResponse({ drafts, total: 3 }))
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByText("A")).toBeTruthy())
+
+    const selectAll = screen.getByTestId("draft-approval-select-all") as HTMLInputElement
+    expect(selectAll.checked).toBe(false)
+
+    fireEvent.click(selectAll)
+    expect(screen.getByTestId("draft-approval-header").textContent).toMatch(/已选 3/)
+    expect(screen.getByTestId("draft-approval-batch-button").textContent).toMatch(/3 份/)
+    for (const d of drafts) {
+      const cb = screen.getByTestId(`draft-approval-checkbox-${d.path}`) as HTMLInputElement
+      expect(cb.checked).toBe(true)
+    }
+
+    fireEvent.click(selectAll)
+    expect(screen.queryByTestId("draft-approval-batch-button")).toBeNull()
+    for (const d of drafts) {
+      const cb = screen.getByTestId(`draft-approval-checkbox-${d.path}`) as HTMLInputElement
+      expect(cb.checked).toBe(false)
+    }
+  })
+
+  it("部分选中 → 全选框 indeterminate；补点全选 → 全部勾选", async () => {
+    const drafts = [
+      makeDraft({ path: "wiki/concepts/draft/_auto/a.md", title: "A" }),
+      makeDraft({ path: "wiki/concepts/draft/_auto/b.md", title: "B" }),
+    ]
+    mockFetchResponse(makeResponse({ drafts, total: 2 }))
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByText("A")).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId("draft-approval-checkbox-wiki/concepts/draft/_auto/a.md"))
+    const selectAll = screen.getByTestId("draft-approval-select-all") as HTMLInputElement
+    expect(selectAll.indeterminate).toBe(true)
+    expect(selectAll.checked).toBe(false)
+
+    fireEvent.click(selectAll)
+    expect(screen.getByTestId("draft-approval-header").textContent).toMatch(/已选 2/)
+  })
+
+  it("⚙ 收录设置开关：点开渲染 IngestSettingsCard，再点收起", async () => {
+    mockFetchResponse(makeResponse())
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByTestId("draft-approval-loading")).toBeNull())
+
+    expect(screen.queryByTestId("ingest-settings-card")).toBeNull()
+    fireEvent.click(screen.getByTestId("draft-approval-settings-toggle"))
+    expect(screen.getByTestId("ingest-settings-card")).toBeTruthy()
+    fireEvent.click(screen.getByTestId("draft-approval-settings-toggle"))
+    expect(screen.queryByTestId("ingest-settings-card")).toBeNull()
+  })
+
+  it("空列表 → 不渲染全选框", async () => {
+    mockFetchResponse(makeResponse())
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByTestId("draft-approval-loading")).toBeNull())
+    expect(screen.queryByTestId("draft-approval-select-all")).toBeNull()
+  })
+})
+
 describe("DraftApprovalTab 基础渲染", () => {
   beforeEach(() => {
     resetStores()
@@ -242,7 +325,8 @@ describe("DraftApprovalTab API base + enabled wire", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     const url = String(fetchMock.mock.calls[0]?.[0])
     expect(url).toMatch(/^http:\/\/localhost:8787\//)
-    expect(url).toMatch(/\/api\/wiki\/drafts$/)
+    // F027 全选三件套：路径不变 + 显式 limit=200（一次拉满）
+    expect(url).toMatch(/\/api\/wiki\/drafts\?limit=200$/)
   })
 
   it("activeLvl2 != draft-approval → fetch 不触发 (Day 14-15 r2 P2 同款)", async () => {
@@ -368,7 +452,7 @@ describe("DraftApprovalTab AC-P4-4 multi-select 批量审批 (Day 12)", () => {
     expect(screen.getByTestId("draft-approval-checkbox-p2.md")).toBeTruthy()
     expect(screen.queryByTestId("draft-approval-batch-button")).toBeNull()
     expect(screen.getByTestId("draft-approval-header").textContent).toMatch(
-      /勾选多份后可批量审批/,
+      /勾选或点左侧全选后可批量审批/,
     )
   })
 

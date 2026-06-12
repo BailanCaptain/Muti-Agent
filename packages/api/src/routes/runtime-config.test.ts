@@ -46,22 +46,80 @@ test("AC-W1 · PUT wikiCompile.primaryModel 白名单值 → 200 + GET 回读", 
   })
 })
 
-test("AC-W1 · PUT wikiCompile.primaryModel 非白名单 → 400 显式拒绝（不静默丢）", async () => {
+test("收录设置 · primaryModel 自由字符串（小孙：新模型出了白名单不更新怎么办）→ 任意合理 id 200 回读", async () => {
   await withTempConfig(async () => {
     const app = Fastify()
     registerRuntimeConfigRoutes(app)
-    const res = await app.inject({
+    // 非 claude 系 id（codex 引擎模型）也合法——白名单降级为前端建议列表
+    const putRes = await app.inject({
       method: "PUT",
       url: "/api/runtime-config",
-      payload: { config: { wikiCompile: { primaryModel: "gpt-5.4" } } },
+      payload: {
+        config: { wikiCompile: { provider: "codex", primaryModel: "gpt-5.4-codex" } },
+      },
     })
+    assert.equal(putRes.statusCode, 200)
+    const getRes = await app.inject({ method: "GET", url: "/api/runtime-config" })
     await app.close()
-    assert.equal(res.statusCode, 400)
-    const body = res.json() as { errors?: string[] }
-    assert.ok(
-      body.errors?.some((e) => e.includes("wikiCompile.primaryModel")),
-      `errors 应指明 wikiCompile.primaryModel 非法: ${JSON.stringify(body)}`,
-    )
+    assert.deepEqual(getRes.json(), {
+      config: { wikiCompile: { provider: "codex", primaryModel: "gpt-5.4-codex" } },
+    })
+  })
+})
+
+test("收录设置 · provider 枚举外 → 400；primaryModel 空白/超长/控制字符 → 400", async () => {
+  await withTempConfig(async () => {
+    const app = Fastify()
+    registerRuntimeConfigRoutes(app)
+    const badPayloads = [
+      { wikiCompile: { provider: "grok" } },
+      { wikiCompile: { primaryModel: "   " } },
+      { wikiCompile: { primaryModel: "x".repeat(65) } },
+      { wikiCompile: { primaryModel: "bad\u0007id" } },
+      // shell 注入面（model 进 spawn shell:true argv）：元字符/空格必须拒
+      { wikiCompile: { primaryModel: "x & del-something" } },
+      { wikiCompile: { primaryModel: 'a"b' } },
+      { wikiCompile: { primaryModel: "a|b" } },
+      // CLI flag 注入面：`-` 等开头的"模型 id"跟在 -m 后会被 CLI parser 当 flag
+      // （clap/yargs 行为各家不一，不赌）——首字符必须字母数字
+      { wikiCompile: { primaryModel: "--yolo" } },
+      { wikiCompile: { primaryModel: "-m" } },
+      { wikiCompile: { primaryModel: "/etc" } },
+      { wikiCompile: { primaryModel: ".hidden" } },
+      { wikiCompile: { primaryModel: ":tag" } },
+    ]
+    for (const config of badPayloads) {
+      const res = await app.inject({
+        method: "PUT",
+        url: "/api/runtime-config",
+        payload: { config },
+      })
+      assert.equal(res.statusCode, 400, `应 400: ${JSON.stringify(config)} → ${res.body}`)
+      const body = res.json() as { errors?: string[] }
+      assert.ok(
+        body.errors?.some((e) => e.includes("wikiCompile")),
+        `errors 应指明 wikiCompile 字段: ${JSON.stringify(body)}`,
+      )
+    }
+    await app.close()
+  })
+})
+
+test("收录设置 · provider 单独设置（model 留空 = 该引擎 CLI 默认模型）→ 200 回读", async () => {
+  await withTempConfig(async () => {
+    const app = Fastify()
+    registerRuntimeConfigRoutes(app)
+    const putRes = await app.inject({
+      method: "PUT",
+      url: "/api/runtime-config",
+      payload: { config: { wikiCompile: { provider: "gemini" } } },
+    })
+    assert.equal(putRes.statusCode, 200)
+    const getRes = await app.inject({ method: "GET", url: "/api/runtime-config" })
+    await app.close()
+    assert.deepEqual(getRes.json(), {
+      config: { wikiCompile: { provider: "gemini" } },
+    })
   })
 })
 

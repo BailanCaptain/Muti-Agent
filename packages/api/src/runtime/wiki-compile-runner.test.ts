@@ -1,14 +1,15 @@
 /**
- * F027 收尾补丁 AC-W1 · wiki-compile-runner 单测
+ * F027 收录设置 · wiki-compile-runner 单测（三引擎 + 自由模型 id）
  *
- * 真相源：docs/features/F027-unified-memory-architecture.md「收尾补丁 · 收录体验」AC-W1
+ * 真相源：docs/features/F027-unified-memory-architecture.md「收尾补丁 · 收录体验」
+ *   + 小孙 2026-06-13 拍板（模型可自己写 / 不只 claude）
  *
  * 契约：
- *   - 每次 runPrompt 动态读 runtime config（热生效，改配置不用重启）
- *   - primary = wikiCompile.primaryModel（白名单 4 模型，默认 Opus 4.7）
- *   - fallback 链固定 Haiku 4.5（runner-with-fallback 既有语义）
- *   - primary 本身是 Haiku → 直跑不自叠 fallback（避免同模型双跑）
- *   - 降级发生 → onFallback(真实 primary 模型名)（审计 log 用）
+ *   - 每次 runPrompt 动态读 config（热生效）
+ *   - provider 三家分发；model 自由字符串；claude 缺省补 Opus 4.7，codex/gemini 缺省 = CLI 默认
+ *   - fallback 恒 claude Haiku 4.5；primary 即 claude haiku → 直跑不自叠
+ *   - 降级 → onFallback("<provider>:<model|default>")
+ *   - runner 按 label 缓存复用
  */
 
 import assert from "node:assert/strict"
@@ -17,7 +18,9 @@ import type { HaikuRunner, HaikuRunResult } from "./haiku-runner"
 import type { RuntimeConfig } from "./runtime-config"
 import {
   createDynamicWikiCompileRunner,
-  resolveWikiCompileModel,
+  type ResolvedWikiCompileTarget,
+  resolveWikiCompileTarget,
+  wikiCompileTargetLabel,
 } from "./wiki-compile-runner"
 
 function stubRunner(result: Partial<HaikuRunResult>): HaikuRunner & { calls: string[] } {
@@ -36,124 +39,183 @@ function stubRunner(result: Partial<HaikuRunResult>): HaikuRunner & { calls: str
   }
 }
 
-function stubSet(overrides: Partial<Record<string, Partial<HaikuRunResult>>> = {}) {
-  return {
-    "claude-opus-4-7": stubRunner(overrides["claude-opus-4-7"] ?? { text: "from-opus47" }),
-    "claude-sonnet-4-6": stubRunner(overrides["claude-sonnet-4-6"] ?? { text: "from-sonnet" }),
-    "claude-opus-4-6": stubRunner(overrides["claude-opus-4-6"] ?? { text: "from-opus46" }),
-    "claude-haiku-4-5": stubRunner(overrides["claude-haiku-4-5"] ?? { text: "from-haiku" }),
+/** buildRunner 注入：按 label 记录构造与调用。 */
+function stubFactory(overrides: Record<string, Partial<HaikuRunResult>> = {}) {
+  const built: string[] = []
+  const runners = new Map<string, ReturnType<typeof stubRunner>>()
+  const build = (target: ResolvedWikiCompileTarget) => {
+    const label = wikiCompileTargetLabel(target)
+    built.push(label)
+    const r = stubRunner(overrides[label] ?? { text: `from-${label}` })
+    runners.set(label, r)
+    return r
   }
+  return { build, built, runners }
 }
 
-describe("resolveWikiCompileModel", () => {
-  it("缺配置 → 默认 claude-opus-4-7", () => {
-    assert.equal(resolveWikiCompileModel({}), "claude-opus-4-7")
-    assert.equal(resolveWikiCompileModel({ wikiCompile: {} } as RuntimeConfig), "claude-opus-4-7")
+describe("resolveWikiCompileTarget", () => {
+  it("缺配置 → claude + Opus 4.7", () => {
+    assert.deepEqual(resolveWikiCompileTarget({}), {
+      provider: "claude",
+      model: "claude-opus-4-7",
+    })
   })
 
-  it("合法配置 → 取配置值", () => {
-    assert.equal(
-      resolveWikiCompileModel({ wikiCompile: { primaryModel: "claude-sonnet-4-6" } }),
-      "claude-sonnet-4-6",
+  it("claude + 自由 id（建议列表外）原样生效", () => {
+    assert.deepEqual(
+      resolveWikiCompileTarget({ wikiCompile: { primaryModel: "claude-fable-5" } }),
+      { provider: "claude", model: "claude-fable-5" },
     )
+  })
+
+  it("codex/gemini 留空 model → undefined（CLI 默认模型）", () => {
+    assert.deepEqual(resolveWikiCompileTarget({ wikiCompile: { provider: "codex" } }), {
+      provider: "codex",
+      model: undefined,
+    })
+    assert.deepEqual(
+      resolveWikiCompileTarget({ wikiCompile: { provider: "gemini", primaryModel: "  " } }),
+      { provider: "gemini", model: undefined },
+    )
+  })
+
+  it("label：claude:id / codex:default", () => {
+    assert.equal(
+      wikiCompileTargetLabel({ provider: "claude", model: "claude-opus-4-7" }),
+      "claude:claude-opus-4-7",
+    )
+    assert.equal(wikiCompileTargetLabel({ provider: "codex", model: undefined }), "codex:default")
   })
 })
 
-describe("createDynamicWikiCompileRunner", () => {
-  it("默认（空配置）走 Opus 4.7 primary", async () => {
-    const runners = stubSet()
-    const runner = createDynamicWikiCompileRunner({
-      loadConfig: () => ({}),
-      runnersById: runners,
-    })
+describe("createDynamicWikiCompileRunner（三引擎）", () => {
+  it("默认（空配置）走 claude Opus 4.7", async () => {
+    const f = stubFactory()
+    const runner = createDynamicWikiCompileRunner({ loadConfig: () => ({}), buildRunner: f.build })
     const r = await runner.runPrompt("p1")
-    assert.equal(r.text, "from-opus47")
-    assert.equal(runners["claude-opus-4-7"].calls.length, 1)
-    assert.equal(runners["claude-sonnet-4-6"].calls.length, 0)
+    assert.equal(r.text, "from-claude:claude-opus-4-7")
   })
 
-  it("配置 sonnet → sonnet primary，opus 不被调", async () => {
-    const runners = stubSet()
+  it("provider=codex → codex runner 收到调用，claude primary 不构造", async () => {
+    const f = stubFactory()
     const runner = createDynamicWikiCompileRunner({
-      loadConfig: () => ({ wikiCompile: { primaryModel: "claude-sonnet-4-6" } }),
-      runnersById: runners,
+      loadConfig: () => ({ wikiCompile: { provider: "codex", primaryModel: "gpt-5.4" } }),
+      buildRunner: f.build,
     })
     const r = await runner.runPrompt("p1")
-    assert.equal(r.text, "from-sonnet")
-    assert.equal(runners["claude-opus-4-7"].calls.length, 0)
+    assert.equal(r.text, "from-codex:gpt-5.4")
+    assert.ok(!f.built.includes("claude:claude-opus-4-7"), `built: ${f.built.join(",")}`)
   })
 
-  it("两次调用间改配置 → 第二次用新模型（热生效不重启）", async () => {
-    const runners = stubSet()
+  it("claude 自由 id（建议列表外）按需构造并生效", async () => {
+    const f = stubFactory()
+    const runner = createDynamicWikiCompileRunner({
+      loadConfig: () => ({ wikiCompile: { primaryModel: "claude-fable-5" } }),
+      buildRunner: f.build,
+    })
+    const r = await runner.runPrompt("p1")
+    assert.equal(r.text, "from-claude:claude-fable-5")
+  })
+
+  it("两次调用间改配置 → 切引擎热生效；runner 按 label 缓存复用", async () => {
+    const f = stubFactory()
     let config: RuntimeConfig = {}
     const runner = createDynamicWikiCompileRunner({
       loadConfig: () => config,
-      runnersById: runners,
+      buildRunner: f.build,
     })
     await runner.runPrompt("p1")
-    config = { wikiCompile: { primaryModel: "claude-opus-4-6" } }
+    config = { wikiCompile: { provider: "gemini" } }
     await runner.runPrompt("p2")
-    assert.equal(runners["claude-opus-4-7"].calls.length, 1)
-    assert.equal(runners["claude-opus-4-6"].calls.length, 1)
+    config = {}
+    await runner.runPrompt("p3")
+    assert.equal(f.built.filter((l) => l === "claude:claude-opus-4-7").length, 1, "缓存复用不重建")
+    assert.equal(f.runners.get("claude:claude-opus-4-7")?.calls.length, 2)
+    assert.equal(f.runners.get("gemini:default")?.calls.length, 1)
   })
 
-  it("primary timeout → Haiku 兜底成功 + onFallback 收到真实 primary 模型名", async () => {
-    const runners = stubSet({
-      "claude-sonnet-4-6": { ok: false, text: "", error: "timeout" },
+  it("codex primary timeout → claude Haiku 兜底 + onFallback 收 'codex:default'", async () => {
+    const f = stubFactory({
+      "codex:default": { ok: false, text: "", error: "timeout" },
+      "claude:claude-haiku-4-5": { text: "from-haiku" },
     })
     const fallbackSeen: string[] = []
     const runner = createDynamicWikiCompileRunner({
-      loadConfig: () => ({ wikiCompile: { primaryModel: "claude-sonnet-4-6" } }),
-      runnersById: runners,
-      onFallback: (model) => fallbackSeen.push(model),
+      loadConfig: () => ({ wikiCompile: { provider: "codex" } }),
+      buildRunner: f.build,
+      onFallback: (label) => fallbackSeen.push(label),
     })
     const r = await runner.runPrompt("p1")
     assert.equal(r.ok, true)
     assert.equal(r.text, "from-haiku")
     assert.equal(r.error, "fallback-haiku-success")
-    assert.deepEqual(fallbackSeen, ["claude-sonnet-4-6"])
+    assert.deepEqual(fallbackSeen, ["codex:default"])
   })
 
-  it("primary 业务错（非 timeout/quota）→ 不降级原样返回", async () => {
-    const runners = stubSet({
-      "claude-opus-4-7": { ok: false, text: "", error: "empty-output" },
+  // 德彪 kb-ux2 r1 P1：自由输入时代「业务错不降级」站不住——填错 id 是最常见失败形态，
+  // 卡片向小孙承诺「失败自动降级 Haiku 4.5」。wiki 编译链任何 primary 失败都降级
+  //（AC-P4-8 default 谓词只认 timeout/quota，是 primary=fallback 同 CLI 时代的假设）。
+  it("未知 model id（exit-code 业务错）→ 也降级 Haiku + onFallback 审计", async () => {
+    const f = stubFactory({
+      "claude:claude-future-9": { ok: false, text: "", error: "exit-code-1: unknown model" },
+      "claude:claude-haiku-4-5": { text: "from-haiku" },
     })
+    const fallbackSeen: string[] = []
     const runner = createDynamicWikiCompileRunner({
-      loadConfig: () => ({}),
-      runnersById: runners,
+      loadConfig: () => ({ wikiCompile: { primaryModel: "claude-future-9" } }),
+      buildRunner: f.build,
+      onFallback: (label) => fallbackSeen.push(label),
     })
     const r = await runner.runPrompt("p1")
-    assert.equal(r.ok, false)
-    assert.equal(r.error, "empty-output")
-    assert.equal(runners["claude-haiku-4-5"].calls.length, 0)
+    assert.equal(r.ok, true)
+    assert.equal(r.text, "from-haiku")
+    assert.equal(r.error, "fallback-haiku-success")
+    assert.deepEqual(fallbackSeen, ["claude:claude-future-9"])
   })
 
-  it("primary=haiku → 直跑一次，失败也不自叠 fallback 双跑", async () => {
-    const runners = stubSet({
-      "claude-haiku-4-5": { ok: false, text: "", error: "timeout" },
+  it("codex CLI 不可用（spawn-error）→ 跨引擎降级 Haiku（codex 挂 ≠ claude 挂）", async () => {
+    const f = stubFactory({
+      "codex:default": { ok: false, text: "", error: "spawn-error:ENOENT" },
+      "claude:claude-haiku-4-5": { text: "from-haiku" },
+    })
+    const fallbackSeen: string[] = []
+    const runner = createDynamicWikiCompileRunner({
+      loadConfig: () => ({ wikiCompile: { provider: "codex" } }),
+      buildRunner: f.build,
+      onFallback: (label) => fallbackSeen.push(label),
+    })
+    const r = await runner.runPrompt("p1")
+    assert.equal(r.ok, true)
+    assert.equal(r.text, "from-haiku")
+    assert.deepEqual(fallbackSeen, ["codex:default"])
+  })
+
+  it("primary=claude haiku → 直跑一次，失败也不自叠 fallback", async () => {
+    const f = stubFactory({
+      "claude:claude-haiku-4-5": { ok: false, text: "", error: "timeout" },
     })
     const fallbackSeen: string[] = []
     const runner = createDynamicWikiCompileRunner({
       loadConfig: () => ({ wikiCompile: { primaryModel: "claude-haiku-4-5" } }),
-      runnersById: runners,
-      onFallback: (model) => fallbackSeen.push(model),
+      buildRunner: f.build,
+      onFallback: (label) => fallbackSeen.push(label),
     })
     const r = await runner.runPrompt("p1")
     assert.equal(r.ok, false)
     assert.equal(r.error, "timeout")
-    assert.equal(runners["claude-haiku-4-5"].calls.length, 1, "haiku 只跑一次")
+    assert.equal(f.runners.get("claude:claude-haiku-4-5")?.calls.length, 1)
     assert.deepEqual(fallbackSeen, [])
   })
 
-  it("loadConfig 抛错 → 回落默认模型不炸", async () => {
-    const runners = stubSet()
+  it("loadConfig 抛错 → 回落默认引擎+默认模型不炸", async () => {
+    const f = stubFactory()
     const runner = createDynamicWikiCompileRunner({
       loadConfig: () => {
         throw new Error("corrupt config")
       },
-      runnersById: runners,
+      buildRunner: f.build,
     })
     const r = await runner.runPrompt("p1")
-    assert.equal(r.text, "from-opus47")
+    assert.equal(r.text, "from-claude:claude-opus-4-7")
   })
 })

@@ -161,3 +161,13 @@ export function createOpusRunner(deps: HaikuRunnerDeps = {}): HaikuRunner {
 export function createOpus46Runner(deps: HaikuRunnerDeps = {}): HaikuRunner {
   return createClaudeCliRunner(OPUS_46_MODEL, deps)
 }
+
+/**
+ * F027 收录设置 · 任意 claude model id 的通用 runner 工厂。
+ * 小孙拍：wiki 编译模型可自由输入（新模型出了不必等代码更新白名单）——
+ * 具名 4 工厂之外的 id 走本工厂按需构造；id 不存在时 CLI 非零退出（stderr 进 error），
+ * 上层 fallback 链兜底。
+ */
+export function createClaudeModelRunner(model: string, deps: HaikuRunnerDeps = {}): HaikuRunner {
+  return createClaudeCliRunner(model, deps)
+}

@@ -79,7 +79,8 @@ describe("useDraftsData", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     const url = String(fetchMock.mock.calls[0]?.[0])
     expect(url).toMatch(/^http:\/\/localhost:8787\//)
-    expect(url).toMatch(/\/api\/wiki\/drafts$/)
+    // F027 全选三件套：显式 limit=200 一次拉满（默认 50 会截断 57+ 篇场景）
+    expect(url).toMatch(/\/api\/wiki\/drafts\?limit=200$/)
   })
 
   it("fetch 失败 → error 显示 + fail-soft empty", async () => {

@@ -13,8 +13,17 @@ export const SEAL_PCT_MIN = 0.3
 export const SEAL_PCT_MAX = 1.0
 
 /**
- * F027 收尾补丁 AC-W1 · wiki 编译模型白名单 = haiku-runner 既有 4 个 CLI runner。
- * 默认 Opus 4.7（AC-P4-8 原硬编码链的 primary）；fallback 恒 Haiku 4.5 不可配。
+ * F027 收录设置 · wiki 编译引擎三家（claude / codex / gemini CLI，全订阅）。
+ * 默认 claude + Opus 4.7（AC-P4-8 原链）；fallback 恒 claude Haiku 4.5 不可配。
+ */
+export const WIKI_COMPILE_PROVIDERS = ["claude", "codex", "gemini"] as const
+export type WikiCompileProvider = (typeof WIKI_COMPILE_PROVIDERS)[number]
+export const DEFAULT_WIKI_COMPILE_PROVIDER: WikiCompileProvider = "claude"
+
+/**
+ * claude 引擎的**建议**模型列表（前端 datalist 联想用）。
+ * 小孙拍：模型 id 可自由输入（「新模型出了 你这里不更新的怎么办」）——本列表不再是白名单；
+ * primaryModel 只做格式校验（非空/≤64/无控制字符），填错 id 由 CLI 失败 → 降级链兜底（log 可查）。
  */
 export const WIKI_COMPILE_MODEL_IDS = [
   "claude-opus-4-7",
@@ -22,11 +31,34 @@ export const WIKI_COMPILE_MODEL_IDS = [
   "claude-opus-4-6",
   "claude-haiku-4-5",
 ] as const
-export type WikiCompileModelId = (typeof WIKI_COMPILE_MODEL_IDS)[number]
-export const DEFAULT_WIKI_COMPILE_MODEL: WikiCompileModelId = "claude-opus-4-7"
+export const DEFAULT_WIKI_COMPILE_MODEL = "claude-opus-4-7"
+/** primaryModel 自由字符串格式上限（防垃圾/注入；正常 model id 远短于此）。 */
+export const WIKI_COMPILE_MODEL_MAX_LEN = 64
 
 export type WikiCompileOverride = {
-  primaryModel?: WikiCompileModelId
+  /** 编译引擎；缺省 claude。 */
+  provider?: WikiCompileProvider
+  /** 模型 id 自由字符串；缺省/留空 = 该引擎默认（claude→Opus 4.7，codex/gemini→CLI 默认）。 */
+  primaryModel?: string
+}
+
+/**
+ * primaryModel 格式校验（trim 后非空 + ≤64 + 保守字符集）。
+ *
+ * 字符集 `[A-Za-z0-9._:/-]`：覆盖三家真实 id 形态（claude-opus-4-7 / gpt-5.4-codex /
+ * gemini-3-pro / o3 / org/model）。**收紧不是洁癖**：model id 会进 `spawn(..., {shell:true})`
+ * 的 argv（-m <model>），cmd.exe 元字符（& | > ^ " 空格等）可构成命令注入——单一入口
+ * （本校验 + sanitize 同口径）堵死，runner 层不接任何未过此闸的字符串。
+ *
+ * 首字符额外限定字母数字：`-` 开头的"模型 id"（如 `--yolo`）跟在 `-m` 后会被 CLI
+ * parser 当 flag 解析（clap/yargs 行为各家不一，不赌单家语义）——真实 model id 全部
+ * 字母数字开头，零功能代价杀死整类 flag 注入。
+ */
+const WIKI_COMPILE_MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/
+export function isValidWikiCompileModelId(v: string): boolean {
+  const trimmed = v.trim()
+  if (trimmed.length === 0 || trimmed.length > WIKI_COMPILE_MODEL_MAX_LEN) return false
+  return WIKI_COMPILE_MODEL_ID_RE.test(trimmed)
 }
 
 /** 仅 agent 维度的 overrides（session 快照 / invocation configSnapshot 用——不含 wikiCompile）。 */
@@ -144,20 +176,27 @@ export function validateRuntimeConfigInput(input: unknown): string[] {
       }
     }
   }
-  // F027 收尾补丁 AC-W1：wikiCompile 显式校验（白名单外 → 400，不静默丢——
-  // 前端下拉永远发合法值，400 只挡手搓 payload / 版本漂移）。
+  // F027 收录设置：wikiCompile 显式校验。provider 枚举三家；primaryModel 自由字符串只做
+  // 格式校验（小孙拍：新模型可直接写 id，白名单只是前端建议列表——填错 id 由 CLI 失败降级兜底）。
   const wcRaw = source.wikiCompile
   if (wcRaw !== undefined) {
     if (!wcRaw || typeof wcRaw !== "object" || Array.isArray(wcRaw)) {
       errors.push("wikiCompile: override must be an object")
     } else {
-      const pm = (wcRaw as Record<string, unknown>).primaryModel
+      const entry = wcRaw as Record<string, unknown>
       if (
-        pm !== undefined &&
-        (typeof pm !== "string" || !(WIKI_COMPILE_MODEL_IDS as readonly string[]).includes(pm))
+        entry.provider !== undefined &&
+        (typeof entry.provider !== "string" ||
+          !(WIKI_COMPILE_PROVIDERS as readonly string[]).includes(entry.provider))
       ) {
         errors.push(
-          `wikiCompile.primaryModel must be one of: ${WIKI_COMPILE_MODEL_IDS.join(", ")}`,
+          `wikiCompile.provider must be one of: ${WIKI_COMPILE_PROVIDERS.join(", ")}`,
+        )
+      }
+      const pm = entry.primaryModel
+      if (pm !== undefined && (typeof pm !== "string" || !isValidWikiCompileModelId(pm))) {
+        errors.push(
+          `wikiCompile.primaryModel must be a non-empty string (≤${WIKI_COMPILE_MODEL_MAX_LEN} chars, no control chars)`,
         )
       }
     }
@@ -225,15 +264,22 @@ function sanitize(input: unknown): RuntimeConfig {
       result[agent] = override
     }
   }
-  // F027 收尾补丁 AC-W1：wikiCompile 存储层 sanitize（最后防线——历史脏文件/手改只留白名单值）
+  // F027 收录设置：wikiCompile 存储层 sanitize（最后防线——历史脏文件/手改只留合法形态）
   const wcRaw = source.wikiCompile
   if (wcRaw && typeof wcRaw === "object" && !Array.isArray(wcRaw)) {
-    const pm = (wcRaw as Record<string, unknown>).primaryModel
+    const entry = wcRaw as Record<string, unknown>
+    const wc: WikiCompileOverride = {}
     if (
-      typeof pm === "string" &&
-      (WIKI_COMPILE_MODEL_IDS as readonly string[]).includes(pm.trim())
+      typeof entry.provider === "string" &&
+      (WIKI_COMPILE_PROVIDERS as readonly string[]).includes(entry.provider)
     ) {
-      result.wikiCompile = { primaryModel: pm.trim() as WikiCompileModelId }
+      wc.provider = entry.provider as WikiCompileProvider
+    }
+    if (typeof entry.primaryModel === "string" && isValidWikiCompileModelId(entry.primaryModel)) {
+      wc.primaryModel = entry.primaryModel.trim()
+    }
+    if (wc.provider !== undefined || wc.primaryModel !== undefined) {
+      result.wikiCompile = wc
     }
   }
   return result

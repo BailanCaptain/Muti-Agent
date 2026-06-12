@@ -55,14 +55,10 @@ describe("GlobalDefaultsTab", () => {
     const modelInput = screen.getByLabelText("模型")
     fireEvent.change(modelInput, { target: { value: "claude-sonnet-4-6" } })
     fireEvent.click(screen.getByRole("button", { name: "保存全局默认" }))
-    expect(setGlobalOverride).toHaveBeenCalledWith(
-      "claude",
-      {
-        model: "claude-sonnet-4-6",
-        effort: "high",
-      },
-      null, // 德彪 r1 P2：claude tab wiki 下拉空值 = 清除态，与 agent 字段同次提交
-    )
+    expect(setGlobalOverride).toHaveBeenCalledWith("claude", {
+      model: "claude-sonnet-4-6",
+      effort: "high",
+    })
   })
 
   describe("save button feedback (idle → saving → saved → idle)", () => {
@@ -109,78 +105,15 @@ describe("GlobalDefaultsTab", () => {
     })
   })
 
-  // F027 收尾补丁 AC-W1: claude tab 下的「Wiki 编译模型」全局下拉
-  describe("AC-W1: Wiki 编译模型下拉", () => {
-    it("claude tab 渲染下拉并反映 config.wikiCompile.primaryModel", () => {
-      useRuntimeConfigStore.setState({
-        config: {
-          claude: { model: "claude-opus-4-7" },
-          wikiCompile: { primaryModel: "claude-sonnet-4-6" },
-        },
-      } as never)
-      render(<GlobalDefaultsTab provider="claude" />)
-      const select = screen.getByLabelText("Wiki 编译模型") as HTMLSelectElement
-      expect(select.value).toBe("claude-sonnet-4-6")
-    })
-
-    it("未配置时下拉为空值（占位=默认 Opus 4.7）", () => {
-      render(<GlobalDefaultsTab provider="claude" />)
-      const select = screen.getByLabelText("Wiki 编译模型") as HTMLSelectElement
-      expect(select.value).toBe("")
-    })
-
-    it("codex tab 不渲染该下拉（全局 wiki 设置只挂 claude tab）", () => {
-      render(<GlobalDefaultsTab provider="codex" />)
-      expect(screen.queryByLabelText("Wiki 编译模型")).toBeNull()
-    })
-
-    it("改下拉 + 保存 → setGlobalOverride 单次调用第三参带模型（德彪 r1 P2 单 PUT 化）", async () => {
-      const setGlobalOverride = vi.fn().mockResolvedValue(undefined)
-      useRuntimeConfigStore.setState({ setGlobalOverride } as never)
-
-      render(<GlobalDefaultsTab provider="claude" />)
-      fireEvent.change(screen.getByLabelText("Wiki 编译模型"), {
-        target: { value: "claude-haiku-4-5" },
-      })
-      await act(async () => {
-        fireEvent.click(screen.getByRole("button", { name: "保存全局默认" }))
-      })
-      expect(setGlobalOverride).toHaveBeenCalledTimes(1)
-      expect(setGlobalOverride).toHaveBeenCalledWith(
-        "claude",
-        { model: "claude-opus-4-7", effort: "high", contextWindow: undefined, sealPct: undefined },
-        { primaryModel: "claude-haiku-4-5" },
-      )
-    })
-
-    it("下拉清回空值 + 保存 → 第三参 null（同次 PUT 清除回默认）", async () => {
-      const setGlobalOverride = vi.fn().mockResolvedValue(undefined)
-      useRuntimeConfigStore.setState({
-        setGlobalOverride,
-        config: { wikiCompile: { primaryModel: "claude-sonnet-4-6" } },
-      } as never)
-
-      render(<GlobalDefaultsTab provider="claude" />)
-      fireEvent.change(screen.getByLabelText("Wiki 编译模型"), { target: { value: "" } })
-      await act(async () => {
-        fireEvent.click(screen.getByRole("button", { name: "保存全局默认" }))
-      })
-      expect(setGlobalOverride).toHaveBeenCalledTimes(1)
-      const call = setGlobalOverride.mock.calls[0]
-      expect(call[0]).toBe("claude")
-      expect(call[2]).toBeNull()
-    })
-
-    it("非 claude provider 保存 → 第三参 undefined（不碰 wikiCompile）", async () => {
-      const setGlobalOverride = vi.fn().mockResolvedValue(undefined)
-      useRuntimeConfigStore.setState({ setGlobalOverride } as never)
-
-      render(<GlobalDefaultsTab provider="codex" />)
-      await act(async () => {
-        fireEvent.click(screen.getByRole("button", { name: "保存全局默认" }))
-      })
-      expect(setGlobalOverride.mock.calls[0][2]).toBeUndefined()
-    })
+  // F027 收录设置迁移（小孙拍）：「Wiki 编译模型」已搬去审批页 IngestSettingsCard，
+  // 本 tab 不再渲染（守卫防回潮）
+  it("收录设置迁移后：任何 provider tab 都不渲染 Wiki 编译模型控件", () => {
+    useRuntimeConfigStore.setState({
+      config: { wikiCompile: { provider: "codex", primaryModel: "gpt-5.4" } },
+    } as never)
+    render(<GlobalDefaultsTab provider="claude" />)
+    expect(screen.queryByLabelText("Wiki 编译模型")).toBeNull()
+    expect(screen.queryByLabelText("编译模型")).toBeNull()
   })
 
   // F021 Phase 6: 「最大窗口」和「Seal 阈值」两 Field（齿轮可配，AC-25）
@@ -231,16 +164,12 @@ describe("GlobalDefaultsTab", () => {
       })
       fireEvent.click(screen.getByRole("button", { name: "保存全局默认" }))
 
-      expect(setGlobalOverride).toHaveBeenCalledWith(
-        "claude",
-        {
-          model: "",
-          effort: "",
-          contextWindow: 2_000_000,
-          sealPct: 0.6,
-        },
-        null,
-      )
+      expect(setGlobalOverride).toHaveBeenCalledWith("claude", {
+        model: "",
+        effort: "",
+        contextWindow: 2_000_000,
+        sealPct: 0.6,
+      })
     })
 
     it("clearing inputs sends contextWindow / sealPct as undefined (回落代码 fallback)", async () => {
@@ -255,16 +184,12 @@ describe("GlobalDefaultsTab", () => {
       fireEvent.change(screen.getByLabelText("Seal 阈值"), { target: { value: "" } })
       fireEvent.click(screen.getByRole("button", { name: "保存全局默认" }))
 
-      expect(setGlobalOverride).toHaveBeenCalledWith(
-        "claude",
-        {
-          model: "",
-          effort: "",
-          contextWindow: undefined,
-          sealPct: undefined,
-        },
-        null,
-      )
+      expect(setGlobalOverride).toHaveBeenCalledWith("claude", {
+        model: "",
+        effort: "",
+        contextWindow: undefined,
+        sealPct: undefined,
+      })
     })
 
     // F021 P2: 切 provider 后 P6 字段也要同步

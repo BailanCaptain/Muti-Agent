@@ -1,85 +1,130 @@
 /**
- * F027 收尾补丁 AC-W1 · wiki 编译动态 runner
+ * F027 收录设置 · wiki 编译动态 runner（三引擎 + 自由模型 id）
  *
- * 真相源：docs/features/F027-unified-memory-architecture.md「收尾补丁 · 收录体验」AC-W1
+ * 真相源：docs/features/F027-unified-memory-architecture.md「收尾补丁 · 收录体验」
+ *   + 小孙 2026-06-13 追加拍板：①「编译模型 我也要可以自己写 不然有时候新模型出了
+ *   你这里不更新的怎么办」②「你这样写 我这样就只能用claude了」
  *
- * 背景：编译链原在 server.ts boot 时固定 createRunnerWithFallback({primary: Opus 4.7,
- * fallback: Haiku 4.5})（AC-P4-8），primary 改不了——小孙原话「订阅编译的模型 我前端不能选」。
+ * 职责：每次 runPrompt **动态**读 runtime config（收录设置卡改完即热生效，不重启）：
+ *   - provider = wikiCompile.provider（claude / codex / gemini，默认 claude）
+ *   - model = wikiCompile.primaryModel 自由字符串；留空 → 该引擎默认
+ *     （claude→Opus 4.7；codex/gemini→不传 -m 用 CLI 自己的默认）
+ *   - fallback 链恒 claude Haiku 4.5（跨引擎兜底）；primary 即 claude haiku 时直跑不自叠
+ *   - 降级谓词：**任何 primary 失败都降级**（德彪 kb-ux2 r1 P1）——自由输入时代填错 id
+ *     （exit-code 业务错）是最常见失败；跨引擎下 codex/gemini spawn-error ≠ claude 不可用。
+ *     AC-P4-8 的 timeout/quota 谓词是 primary=fallback 同 CLI 时代的假设，不适用本链
+ *     （judge/critique 等其他消费方保持 default 谓词不动）。schema 失败（CLI 成功但产出
+ *     非法 JSON）仍走编译管道既有 3 重试 + stub——与原 claude 链同语义，非本层职责
+ *   - 降级发生 → onFallback("<provider>:<model|default>") 审计
+ *   - loadConfig 抛错 → 回落默认引擎+默认模型（编译主链不因配置文件损坏熔断）
+ *   - runner 按 `${provider}:${model}` 缓存复用（runner 无状态，仅封装 spawn 参数）
  *
- * 职责：每次 runPrompt **动态**读 runtime config 取 primary 模型（前端全局默认 tab 改完即热
- * 生效，不重启），fallback 链固定 Haiku 4.5 不变：
- *   - primary = wikiCompile.primaryModel（白名单 4 模型，默认 Opus 4.7）
- *   - primary 本身是 Haiku → 直跑（不自叠 fallback：同模型失败重跑无意义且双倍延迟）
- *   - 降级发生 → onFallback(真实 primary 模型名)，替换原硬编码 "Opus primary failed" 审计文案
- *   - loadConfig 抛错 → 回落默认模型（编译主链不因配置文件损坏熔断）
- *
- * 成本口径：4 个 runner 全是本机 `claude --print --model <id>` CLI（小孙订阅），非计费 API。
+ * 成本口径：三家全是本机订阅 CLI（claude --print / codex exec / gemini -p），非计费 API。
  */
 
-import {
-  createHaikuRunner,
-  createOpus46Runner,
-  createOpusRunner,
-  createSonnetRunner,
-  type HaikuRunner,
-} from "./haiku-runner"
+import { createClaudeModelRunner, type HaikuRunner } from "./haiku-runner"
 import { createRunnerWithFallback } from "./runner-with-fallback"
 import {
   DEFAULT_WIKI_COMPILE_MODEL,
+  DEFAULT_WIKI_COMPILE_PROVIDER,
   loadRuntimeConfig,
   type RuntimeConfig,
-  type WikiCompileModelId,
+  type WikiCompileProvider,
 } from "./runtime-config"
+import {
+  createCodexPromptRunner,
+  createGeminiPromptRunner,
+} from "./wiki-compile-cli-runners"
 
-const FALLBACK_MODEL: WikiCompileModelId = "claude-haiku-4-5"
+const FALLBACK_MODEL = "claude-haiku-4-5"
 
-/** config → primary 模型（sanitize 已保证白名单内；缺省 → Opus 4.7）。 */
-export function resolveWikiCompileModel(config: RuntimeConfig): WikiCompileModelId {
-  return config.wikiCompile?.primaryModel ?? DEFAULT_WIKI_COMPILE_MODEL
+export interface ResolvedWikiCompileTarget {
+  provider: WikiCompileProvider
+  /** undefined = 该引擎 CLI 默认模型（仅 codex/gemini；claude 恒有具体 id）。 */
+  model: string | undefined
+}
+
+/** config → {provider, model}。claude 缺省模型补 Opus 4.7；codex/gemini 缺省 = CLI 默认。 */
+export function resolveWikiCompileTarget(config: RuntimeConfig): ResolvedWikiCompileTarget {
+  const provider = config.wikiCompile?.provider ?? DEFAULT_WIKI_COMPILE_PROVIDER
+  const raw = config.wikiCompile?.primaryModel?.trim()
+  if (provider === "claude") {
+    return { provider, model: raw || DEFAULT_WIKI_COMPILE_MODEL }
+  }
+  return { provider, model: raw || undefined }
+}
+
+/** 审计标签：`claude:claude-opus-4-7` / `codex:default` / `gemini:gemini-3-pro` …… */
+export function wikiCompileTargetLabel(t: ResolvedWikiCompileTarget): string {
+  return `${t.provider}:${t.model ?? "default"}`
 }
 
 export interface DynamicWikiCompileRunnerDeps {
   /** config 读取器（默认 loadRuntimeConfig — 每次调用现读盘，热生效）。 */
   loadConfig?: () => RuntimeConfig
-  /** runner 注入（测试 stub 用；默认 4 个真 CLI runner，boot 时构造一次复用）。 */
-  runnersById?: Record<WikiCompileModelId, HaikuRunner>
-  /** 降级发生回调（带真实 primary 模型名，caller 接审计 log）。 */
-  onFallback?: (primaryModel: WikiCompileModelId) => void
+  /**
+   * runner 工厂注入（测试 stub 用）。生产默认按 provider 真构造：
+   * claude→createClaudeModelRunner(model)；codex/gemini→各自 CLI prompt runner。
+   */
+  buildRunner?: (target: ResolvedWikiCompileTarget) => HaikuRunner
+  /** 降级发生回调（带 `${provider}:${model|default}` 标签，caller 接审计 log）。 */
+  onFallback?: (primaryLabel: string) => void
+}
+
+function defaultBuildRunner(target: ResolvedWikiCompileTarget): HaikuRunner {
+  switch (target.provider) {
+    case "claude":
+      return createClaudeModelRunner(target.model ?? DEFAULT_WIKI_COMPILE_MODEL)
+    case "codex":
+      return createCodexPromptRunner({ model: target.model })
+    case "gemini":
+      return createGeminiPromptRunner({ model: target.model })
+  }
 }
 
 export function createDynamicWikiCompileRunner(
   deps: DynamicWikiCompileRunnerDeps = {},
 ): HaikuRunner {
   const loadConfig = deps.loadConfig ?? (() => loadRuntimeConfig())
-  const runners: Record<WikiCompileModelId, HaikuRunner> = deps.runnersById ?? {
-    "claude-opus-4-7": createOpusRunner(),
-    "claude-sonnet-4-6": createSonnetRunner(),
-    "claude-opus-4-6": createOpus46Runner(),
-    "claude-haiku-4-5": createHaikuRunner(),
+  const buildRunner = deps.buildRunner ?? defaultBuildRunner
+  // runner 无状态（只封装 spawn 参数）→ 按 label 缓存复用，自由 id 也不会泄漏增长
+  //（同一时刻配置只有一个值；切换累计的条目数 = 用户试过的组合数，天花板极低）
+  const cache = new Map<string, HaikuRunner>()
+  const getRunner = (target: ResolvedWikiCompileTarget): HaikuRunner => {
+    const key = wikiCompileTargetLabel(target)
+    const hit = cache.get(key)
+    if (hit) return hit
+    const built = buildRunner(target)
+    cache.set(key, built)
+    return built
   }
+  const fallbackTarget: ResolvedWikiCompileTarget = { provider: "claude", model: FALLBACK_MODEL }
 
   return {
     async runPrompt(prompt, opts) {
-      let model: WikiCompileModelId
+      let target: ResolvedWikiCompileTarget
       try {
-        model = resolveWikiCompileModel(loadConfig())
+        target = resolveWikiCompileTarget(loadConfig())
       } catch {
-        model = DEFAULT_WIKI_COMPILE_MODEL
+        target = { provider: DEFAULT_WIKI_COMPILE_PROVIDER, model: DEFAULT_WIKI_COMPILE_MODEL }
       }
-      const primary = runners[model]
+      const primary = getRunner(target)
 
-      // primary 即兜底模型 → 直跑一次；失败原样返回（不自叠 fallback 双跑）
-      if (model === FALLBACK_MODEL) {
+      // primary 即兜底模型（claude haiku）→ 直跑一次；失败原样返回（不自叠 fallback 双跑）
+      if (target.provider === "claude" && target.model === FALLBACK_MODEL) {
         return primary.runPrompt(prompt, opts)
       }
 
       const chained = createRunnerWithFallback({
         primary,
-        fallback: runners[FALLBACK_MODEL],
+        fallback: getRunner(fallbackTarget),
+        // 任何 primary 失败都降级（含 exit-code 业务错 / spawn-error）：卡片承诺
+        // 「失败自动降级 Haiku」，且 fallback 是另一家 CLI，primary 挂不代表它挂
+        shouldFallback: () => true,
       })
       const result = await chained.runPrompt(prompt, opts)
       if (result.ok && result.error === "fallback-haiku-success") {
-        deps.onFallback?.(model)
+        deps.onFallback?.(wikiCompileTargetLabel(target))
       }
       return result
     },
