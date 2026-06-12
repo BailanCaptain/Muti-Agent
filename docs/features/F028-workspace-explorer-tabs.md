@@ -33,7 +33,7 @@ RuntimeLog 容器新增两个一级 tab：
 - 选中某个 worktree → 进展摘要：分支、最近 commits、相对 dev（merge-base 基准）的 diff stat、**未提交工作**（staged / unstaged / untracked 计数）
 - **「编译后端」按钮（小孙原话的"手动编译"）**：只重启该 worktree 的 API 进程链（重走 `mount-skills → tsc shared → tsc api → tsx watch`），**不中断**正在热更新的 next dev 前端
 - **「重启整个 preview」次级操作**：API + Web 全组重启（覆盖 `NEXT_PUBLIC_*` 变更等需要重起前端的场景）
-- **「打开前端」**：一键新窗口打开该 worktree 的实时前端 preview URL（小孙原话"实时的前端可以显示"的入口）
+- **「打开前端」**：在面板下方**内嵌 iframe** 显示该 worktree 的实时前端（小孙原话"实时的前端可以显示"的入口；验收期修正——小孙："我不想要打开前端的时候 打开一个新的网页 我想要嵌在下面"）
 - 未运行的 worktree 可从 UI 直接启动 preview
 - 操作反馈：进行中 / 成功 / 失败 + 日志尾部可见
 
@@ -42,18 +42,18 @@ RuntimeLog 容器新增两个一级 tab：
 > r2（德彪 codex r1 NEEDS-WORK 9 findings 修订后）。
 
 **Tab A 项目目录**
-- [ ] AC1: RuntimeLog 一级 tab 新增「项目目录」，树形展示项目结构（根可切：主仓/任一 worktree），目录懒加载展开/收起，点击文件可看内容（只读）
-- [ ] AC2: 文件 list/read 走同一 containment 安全原语（与 wiki content 端点同源 `readContainedFile`：realpath containment + 单 fd + nlink>1 拒），树外路径/symlink/junction 逃逸返回 4xx；**精确 denylist**（见 Design Decisions D8）整树隐藏且 content 端点对其 404（不暴露存在性）；资源上限**在原语层生效**：`readContainedFile` 扩展可选 `maxBytes`（同一 fd 上限读，超限截断标记，杜绝先整读后截断的内存放大；加法参数，既有调用方零改动）、二进制（NUL 嗅探）拒、单目录条目上限 1000
+- [x] AC1: RuntimeLog 一级 tab 新增「项目目录」，树形展示项目结构（根可切：主仓/任一 worktree），目录懒加载展开/收起，点击文件可看内容（只读）
+- [x] AC2: 文件 list/read 走同一 containment 安全原语（与 wiki content 端点同源 `readContainedFile`：realpath containment + 单 fd + nlink>1 拒），树外路径/symlink/junction 逃逸返回 4xx；**精确 denylist**（见 Design Decisions D8）整树隐藏且 content 端点对其 404（不暴露存在性）；资源上限**在原语层生效**：`readContainedFile` 扩展可选 `maxBytes`（同一 fd 上限读，超限截断标记，杜绝先整读后截断的内存放大；加法参数，既有调用方零改动）、二进制（NUL 嗅探）拒、单目录条目上限 1000
 
 **Tab B Worktree**
-- [ ] AC3: RuntimeLog 一级 tab 新增「Worktree」，列出全部 worktree + 各自 preview 状态（registry 端口、端口存活探测、进程所有权：UI 管理 / 非 UI 管理 / 未运行）
-- [ ] AC4: 选中 worktree 可看进展摘要：分支名、HEAD、最近 10 commits、相对 dev 的 diff stat（基准 `merge-base dev HEAD`）、未提交工作计数（staged / unstaged / untracked）
-- [ ] AC5: 「编译后端」按钮：只重启该 worktree API 进程链（mount-skills→tsc shared→tsc api→tsx watch，env 子进程注入），next dev 前端进程不动；「重启整个 preview」为独立次级操作（API+Web 全组）；两者均有进行中/成功/失败按钮态 + 日志尾部可见
-- [ ] AC6: 控制面安全合同：**控制端点（start/restart/compile-backend）只注册在主控制进程**（主 API；worktree preview API 实例经 `WORKTREE_PREVIEW` env 门禁不挂载——preview API 自管自杀悖论 + 单飞锁需单实例）；worktree name→root 仅由服务端从 `git worktree list` 解析（调用方不可传 cwd/命令/env）；spawn 全程无 shell 字符串拼接（args 数组）；操作端点 POST + **allowed-origin 校验**（Origin 头存在时必须命中服务端配置的允许前端 Origin 白名单——主 UI origin + registry 内 webPort origins；**不是** Origin==API Host，前端 :3000/:3100+ 与 API :8787/:8800+ 天生跨源）；每次操作写审计记录（time/action/worktree/result → `.runtime/worktree-preview-ui/audit.log`）；操作物理上碰不到主库进程与主库数据（:8787/:3000 端口断言 + **SQLITE_PATH 包含性断言**：spawn 前验证必须位于目标 worktree `.runtime/worktree-preview/data/` 内且不等于/不落入主库数据路径 + 边界测试）；信任模型 = localhost 单用户 dev（不引入账号体系）
-- [ ] AC7: 未运行的 worktree 可从 UI 启动 preview（端口走 F024 registry 动态分配），同受 AC6/AC9 约束
-- [ ] AC8: 每个 running worktree 提供「打开前端」一键入口（新窗口打开 `http://localhost:<webPort>`），端口来自 registry 不可手填
-- [ ] AC9: 进程所有权：状态文件按**文件系统安全的 worktreeId**（`sanitize(name) + 短哈希`，防 `feat/x` 嵌套路径与碰撞，含专项测试）落 `.runtime/worktree-preview-ui/<worktreeId>.json`，记录 (pid + 进程 CreationDate)；kill 前置预检：**端口 listener pid 必须是记录 pid 的后代**（CIM 进程表 ppid 链解析），且记录 pid 的 OS 实测 CreationDate 与落盘值**精确相等**（同源采集同表示，无容差——±2s 容差方案经德彪 r2 否决，PID 复用窗口可误杀）；整组重启在任何 kill 前完成**双进程全量预检**；任一预检不过 → 拒绝操作并提示（绝不按端口/进程名杀）；主 API 启动时 reconcile（失配只清记录，不杀进程）；UI 路径全程不创建/改写/删除任何 `.env*` 文件（环境仅子进程 env 注入；CLI 路径保留 F024 现状）
-- [ ] AC10: 同一 worktree 操作单飞：并发第二发返回 409 operation_in_progress（拒绝不排队）
+- [x] AC3: RuntimeLog 一级 tab 新增「Worktree」，列出全部 worktree + 各自 preview 状态（registry 端口、端口存活探测、进程所有权：UI 管理 / 非 UI 管理 / 未运行）
+- [x] AC4: 选中 worktree 可看进展摘要：分支名、HEAD、最近 10 commits、相对 dev 的 diff stat（基准 `merge-base dev HEAD`）、未提交工作计数（staged / unstaged / untracked）
+- [x] AC5: 「编译后端」按钮：只重启该 worktree API 进程链（mount-skills→tsc shared→tsc api→tsx watch，env 子进程注入），next dev 前端进程不动；「重启整个 preview」为独立次级操作（API+Web 全组）；两者均有进行中/成功/失败按钮态 + 日志尾部可见
+- [x] AC6: 控制面安全合同：**控制端点（start/restart/compile-backend）只注册在主控制进程**（主 API；worktree preview API 实例经 `WORKTREE_PREVIEW` env 门禁不挂载——preview API 自管自杀悖论 + 单飞锁需单实例）；worktree name→root 仅由服务端从 `git worktree list` 解析（调用方不可传 cwd/命令/env）；spawn 全程无 shell 字符串拼接（args 数组）；操作端点 POST + **allowed-origin 校验**（Origin 头存在时必须命中服务端配置的允许前端 Origin 白名单——主 UI origin + registry 内 webPort origins；**不是** Origin==API Host，前端 :3000/:3100+ 与 API :8787/:8800+ 天生跨源）；每次操作写审计记录（time/action/worktree/result → `.runtime/worktree-preview-ui/audit.log`）；操作物理上碰不到主库进程与主库数据（:8787/:3000 端口断言 + **SQLITE_PATH 包含性断言**：spawn 前验证必须位于目标 worktree `.runtime/worktree-preview/data/` 内且不等于/不落入主库数据路径 + 边界测试）；信任模型 = localhost 单用户 dev（不引入账号体系）
+- [x] AC7: 未运行的 worktree 可从 UI 启动 preview（端口走 F024 registry 动态分配），同受 AC6/AC9 约束
+- [x] AC8: 每个 running worktree 提供「打开前端」一键入口：**接管式内嵌 iframe**——tab 内容整体切换为细头条+iframe 占满，RuntimeLog 面板自动调高 ≥600px（clamp 内，用户已拖更高则保留），收起恢复列表视图（不开新窗口、不与列表抢空间——小孙验收期两次修正），src=`http://localhost:<webPort>` 端口来自 registry 不可手填
+- [x] AC9: 进程所有权：状态文件按**文件系统安全的 worktreeId**（`sanitize(name) + 短哈希`，防 `feat/x` 嵌套路径与碰撞，含专项测试）落 `.runtime/worktree-preview-ui/<worktreeId>.json`，记录 (pid + 进程 CreationDate)；kill 前置预检：**端口 listener pid 必须是记录 pid 的后代**（CIM 进程表 ppid 链解析），且记录 pid 的 OS 实测 CreationDate 与落盘值**精确相等**（同源采集同表示，无容差——±2s 容差方案经德彪 r2 否决，PID 复用窗口可误杀）；整组重启在任何 kill 前完成**双进程全量预检**；任一预检不过 → 拒绝操作并提示（绝不按端口/进程名杀）；主 API 启动时 reconcile（失配只清记录，不杀进程）；UI 路径全程不创建/改写/删除任何 `.env*` 文件（环境仅子进程 env 注入；CLI 路径保留 F024 现状）
+- [x] AC10: 同一 worktree 操作单飞：并发第二发返回 409 operation_in_progress（拒绝不排队）
 
 ## Dependencies
 
@@ -99,6 +99,12 @@ RuntimeLog 容器新增两个一级 tab：
 | 2026-06-11 | 德彪 codex r3：**文档 GO**；plan NEEDS-WORK（4 P1 残留/深挖 + 2 P2）并依家规 §17 触发 **TAKEOVER**（黄仁勋连续两轮"全修"复验有残留）。黄仁勋降级信息提供者交四件套，**桂芬（gemini CLI）接管 plan 修订**：worktreeId 日志命名统一、resolveControlPlaneOrigins 独立白名单解析器、SQLITE_PATH mkdir 时序+祖先 junction 检查、假超时残留清除、slug ≤40 长度上限、CreationDate 术语统一。待德彪 r4 复审（接管者不得自审） |
 | 2026-06-11 | 德彪 r4（配额 4:11 重置后重派）NEEDS-WORK 3P1+2P2+doc patch 指令 → 桂芬 r5 续修：start 外来端口预检、主 UI origin 固定 :3000 三形态测试、SQLite 先查祖先后建目录（junction 场景断言零创建）、slug 前缀 ≤31、Get-CimInstance 术语统一+删 UI 渲染检查；D6/D7 doc patch（pid+CreationDate）。双侧残留 grep=0（桂芬自查+黄仁勋独立复核）。Task 0（buildPreviewEnv 迁 shared，r2/r3 零质疑纯重构）已在配额窗口期完成于 worktree `16b1438` |
 | 2026-06-11 | 德彪 r6 NEEDS-WORK 2P1+1P2（SQLITE realpath 首启 ENOENT / Windows pnpm .cmd spawn 适配 / NTFS ADS 冒号流）→ 桂芬 r7 修（plan v5 `e925112`）→ 德彪 r8 **GO，findings 清零（轨迹 9→6→5→3→0），Design Gate 关闭，TAKEOVER 任务结束**。黄仁勋恢复 author，status → in-progress，开 TDD 实施 |
+| 2026-06-12 | 小孙 :3101 真机验收反馈修正 AC8：「我不想要打开前端的时候 打开一个新的网页 我想要嵌在下面」→ 打开前端改为面板内嵌 iframe，window.open 移除；TDD 红→绿，前端全套 589/589 |
+| 2026-06-12 | 小孙验收反馈 ×2：「前端画面有问题 我只能看到一点点！！！」——iframe 挤在列表/摘要下方+面板默认 320px 高只露一条缝。修正为**接管式视图**（嵌入时 tab 整体让位给 iframe，细头条+收起钮）+ 嵌入时面板自动调高 ≥600px；TDD 红→绿 |
+| 2026-06-13 | 德彪 codex 代码 review r1 **NEEDS-WORK** 3P1+4P2（耗 21.7 万 token）：claim worker shell:true 注入面 / denylist Windows 大小写绕过（守护修复余洞）/ killTree 吞错+缺 plan 要求的杀后端口复探 / spawn 后 CIM 采集失败孤儿 / root 删除竞态 500 / ownership 未逐 alive 端口校验 / 打开前端漏 control 门禁（preview 自嵌递归）。七条全验真零 pushback，TDD 红（13 例）→绿全修（commit 28d269b）；node 直跑 tsx cli 真机验证元字符名 `F028&calc^|evil` 纯字符串往返。披露裁断：guardian 修复判不完备（大小写）、taskkill 连坐记运维 P3、flaky/registry 旧条目不阻塞、AC8 两轮修正确认无残留 |
+| 2026-06-13 | 德彪 code r2 **NEEDS-WORK**：r1 七条全 ✅ 确认修对，新挖 1 P2「NTFS 8.3 短名/别名绕过 denylist」（词法段查不住 realpath 规范化后的 NODE_M~1→node_modules，判本轮必修不准记 TD）+ P3（plan npx 残留）。修：tree-list/tree-content realpath 后对真实相对路径重跑 denylist（list/content 对称），junction 同构稳定复现不赌卷 8dot3name；plan worker 合同同步 node 直跑（commit 057df85）。后端全量 3122 pass |
+| 2026-06-13 | 德彪 code r3 **GO（可进 merge-gate）**：P2 两端对称确认，目录/文件 8.3 短名+junction+hardlink 全拦，正常路径无误杀，P3 同步到位。已知非阻断缺口：文件级别名指向 .env 无独立测试（Windows 文件 symlink 需管理员权限/8.3 赌卷配置，强造即 flaky，实现逻辑已覆盖）。代码 review 链闭环 r1→r2→r3 |
+| 2026-06-13 | merge-gate：AC1-AC10 全打勾，21 commits squash 合入 dev（ff-only，rebase onto aacea1b 零冲突）|
 
 ## Links
 

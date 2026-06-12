@@ -4,46 +4,12 @@ import path from "node:path"
 
 import { claimPorts, releasePorts } from "./worktree-port-registry"
 
-export type PreviewEnv = {
-  API_PORT: string
-  PORT: string
-  CORS_ORIGIN: string
-  NEXT_PUBLIC_API_HTTP_URL: string
-  NEXT_PUBLIC_API_WS_URL: string
-  NEXT_PUBLIC_API_URL: string
-  NEXT_PUBLIC_API_BASE_URL: string
-  NEXT_PUBLIC_APP_TITLE_PREFIX: string
-  SQLITE_PATH: string
-  UPLOADS_DIR: string
-  RUNTIME_EVENTS_DIR: string
-  WORKTREE_PREVIEW: string
-}
-
-export function buildPreviewEnv(input: {
-  repoRoot: string
-  worktreeName: string
-  apiPort: number
-  webPort: number
-}): PreviewEnv {
-  const apiBase = `http://localhost:${input.apiPort}`
-  return {
-    API_PORT: String(input.apiPort),
-    PORT: String(input.webPort),
-    CORS_ORIGIN: `http://localhost:${input.webPort}`,
-    NEXT_PUBLIC_API_HTTP_URL: apiBase,
-    NEXT_PUBLIC_API_WS_URL: `ws://localhost:${input.apiPort}/ws`,
-    NEXT_PUBLIC_API_URL: apiBase,
-    NEXT_PUBLIC_API_BASE_URL: apiBase,
-    NEXT_PUBLIC_APP_TITLE_PREFIX: `[${input.worktreeName}] `,
-    SQLITE_PATH: `${input.repoRoot}/.runtime/worktree-preview/data/multi-agent.sqlite`,
-    UPLOADS_DIR: `${input.repoRoot}/.agents/acceptance/uploads`,
-    RUNTIME_EVENTS_DIR: `${input.repoRoot}/.agents/acceptance/runtime-events`,
-    // F027 P4 AC-P4-9 d5: primary gate for worktree-preview-only seed loader (double guard
-    // with SQLITE_PATH path containing .runtime/worktree-preview/). Production boot never
-    // sets this var → seed loader stays off in prod. Spawned API child inherits via childEnv.
-    WORKTREE_PREVIEW: "1",
-  }
-}
+// F028 Task 0: PreviewEnv + buildPreviewEnv 单一真相源迁至 packages/shared/src/preview-env.ts
+// （主 API 编排器与本 CLI 共用同一份 env 映射）。re-export 保 F024 既有 import 契约，
+// worktree-preview.test.ts 零改动保持绿。
+export { buildPreviewEnv } from "../packages/shared/src/preview-env"
+export type { PreviewEnv } from "../packages/shared/src/preview-env"
+import { buildPreviewEnv, type PreviewEnv } from "../packages/shared/src/preview-env"
 
 export function buildDotenvContent(env: PreviewEnv): string {
   const keys: (keyof PreviewEnv)[] = [

@@ -25,13 +25,20 @@ function resetStore() {
 }
 
 describe("runtime-log-store 常量对齐 V16.5 §18", () => {
-  it("LVL1_ITEMS = 2 项 (system-prompt enabled + logs disabled+future)", () => {
-    expect(RUNTIME_LOG_LVL1_ITEMS).toHaveLength(2)
-    const sp = RUNTIME_LOG_LVL1_ITEMS[0]
-    expect(sp.key).toBe("system-prompt")
-    expect(sp.enabled).toBe(true)
-    const logs = RUNTIME_LOG_LVL1_ITEMS[1]
-    expect(logs.key).toBe("logs")
+  it("LVL1_ITEMS = 4 项 (system-prompt/worktrees/project-tree enabled + logs disabled+future) — F028 双 tab 落位", () => {
+    expect(RUNTIME_LOG_LVL1_ITEMS).toHaveLength(4)
+    expect(RUNTIME_LOG_LVL1_ITEMS.map((i) => i.key)).toEqual([
+      "system-prompt",
+      "worktrees",
+      "project-tree",
+      "logs",
+    ])
+    expect(RUNTIME_LOG_LVL1_ITEMS.filter((i) => i.enabled).map((i) => i.key)).toEqual([
+      "system-prompt",
+      "worktrees",
+      "project-tree",
+    ])
+    const logs = RUNTIME_LOG_LVL1_ITEMS[3]
     expect(logs.enabled).toBe(false)
     expect(logs.futureTag).toBe(true)
   })

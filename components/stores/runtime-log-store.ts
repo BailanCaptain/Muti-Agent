@@ -17,7 +17,7 @@ import { create } from "zustand"
  * reload 误差 ≤ 10px — 真实接入 Week 4，骨架阶段保留 activeLvl1/Lvl2 即可。
  */
 
-export type RuntimeLogLvl1Key = "system-prompt" | "logs"
+export type RuntimeLogLvl1Key = "system-prompt" | "worktrees" | "project-tree" | "logs"
 
 export type RuntimeLogLvl2Key =
   | "viewfinder"
@@ -49,6 +49,10 @@ export interface RuntimeLogLvl2Item {
  */
 export const RUNTIME_LOG_LVL1_ITEMS: ReadonlyArray<RuntimeLogLvl1Item> = [
   { key: "system-prompt", label: "记忆系统", enabled: true },
+  // F028 Phase 1: Worktree tab——「未来扩展位」第一次兑现（feature doc AC3）
+  { key: "worktrees", label: "Worktree", enabled: true },
+  // F028 Phase 2: 项目目录 tab（feature doc AC1）
+  { key: "project-tree", label: "项目目录", enabled: true },
   { key: "logs", label: "日志", enabled: false, futureTag: true },
 ] as const
 

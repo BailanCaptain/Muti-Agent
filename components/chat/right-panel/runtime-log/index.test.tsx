@@ -127,12 +127,22 @@ describe("RuntimeLog Lvl1 tabs (含 r2 P3-1 keyboard nav)", () => {
     expect(useRuntimeLogStore.getState().activeLvl1).toBe("system-prompt")
   })
 
-  it("Lvl1 keyboard 只在 enabled tabs 内导航 (logs disabled 被 skip)", () => {
+  it("Lvl1 keyboard 只在 enabled tabs 内导航 (logs disabled 被 skip) — F028 后 2 enabled", () => {
     render(<RuntimeLog />)
     const sp = screen.getByTestId("runtime-log-lvl1-system-prompt")
-    // 只 1 个 enabled tab (system-prompt)，ArrowRight 循环回自己
+    // F028: enabled = [system-prompt, worktrees, project-tree]，ArrowRight 依次走环（logs 永不落点）
     act(() => {
       fireEvent.keyDown(sp, { key: "ArrowRight" })
+    })
+    expect(useRuntimeLogStore.getState().activeLvl1).toBe("worktrees")
+    const wt = screen.getByTestId("runtime-log-lvl1-worktrees")
+    act(() => {
+      fireEvent.keyDown(wt, { key: "ArrowRight" })
+    })
+    expect(useRuntimeLogStore.getState().activeLvl1).toBe("project-tree")
+    const pt = screen.getByTestId("runtime-log-lvl1-project-tree")
+    act(() => {
+      fireEvent.keyDown(pt, { key: "ArrowRight" })
     })
     expect(useRuntimeLogStore.getState().activeLvl1).toBe("system-prompt")
   })

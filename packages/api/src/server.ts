@@ -36,6 +36,9 @@ import { registerMessageRoutes } from "./routes/messages"
 import { registerPhase3Routes } from "./routes/phase3"
 import { registerPhase4Routes } from "./routes/phase4"
 import { registerPreviewRoutes } from "./routes/preview"
+import { registerProjectTreeRoutes } from "./routes/project-tree"
+import { registerWorktreeRoutes } from "./routes/worktrees"
+import { buildWorktreeRoutesOpts } from "./worktrees/preview-runtime"
 import { registerRuntimeConfigRoutes } from "./routes/runtime-config"
 import { registerSessionRuntimeConfigRoutes } from "./routes/session-runtime-config"
 import { registerThreadRoutes } from "./routes/threads"
@@ -647,6 +650,17 @@ export async function createApiServer(options: {
     uploadsDir,
     broadcast: (event) => broadcaster.broadcast(event),
   })
+
+  // F028: Worktree tab 后端（inventory/summary/preview 控制面）。
+  // D12: 控制路由仅主 API（WORKTREE_PREVIEW 实例内部降级只读）；组合根构建失败
+  // fail-soft——worktree tab 不可用不拖死主服务。
+  try {
+    const worktreeOpts = await buildWorktreeRoutesOpts({ corsOrigin: options.corsOrigin })
+    await registerWorktreeRoutes(app, worktreeOpts)
+    registerProjectTreeRoutes(app, worktreeOpts.projectTree)
+  } catch (err) {
+    app.log.error({ err }, "F028 worktree routes failed to initialize — Worktree tab unavailable")
+  }
 
   registerCallbackRoutes(app, {
     repository,

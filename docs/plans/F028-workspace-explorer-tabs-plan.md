@@ -211,8 +211,8 @@ RUNTIME_LOG_LVL1_ITEMS = [
    - POSIX: `command="pnpm" args=["dev:api"]`；
    - 通用: `cwd=worktree.path`、`detached:true`、`stdio` 指向日志、`env` 含 `buildPreviewEnv` 注入且不含 `prepareDotenv` 调用。
 4. `parsePortListeners(netstatStdout, [8801,3101])` → pid 集合（仅用于 foreign 检测，永不作为 kill 输入）
-5. `buildClaimWorkerSpec(registryPath, name)` → command="npx" args=["tsx","scripts/worktree-port-registry-claim-worker.ts",...]（claim 走 F024 跨进程 worker，stdout JSON 解析为 PortEntry；解析坏 JSON → 结构化 error）
-6. `buildShutdownWorkerSpec(registryPath, name)` → 同款（registry 清理走 F024 shutdown-worker）
+5. `buildClaimWorkerSpec({nodeExe,tsxCliPath,mainRoot,registryPath,worktreeName})` → command=`process.execPath`（node）args=[`<mainRoot>/node_modules/tsx/dist/cli.mjs`,`<mainRoot>/scripts/worktree-port-registry-claim-worker.ts`,registryPath,worktreeName]（**德彪 code r1 P1-1 修订**：废 npx/.cmd shim——npx 是 .cmd 脚本需 shell:true，worktree 名含 cmd 元字符即注入；node 直跑 tsx cli 纯 argv 数组、execFile 无 shell。claim 走 F024 跨进程 worker，stdout JSON 解析为 PortEntry；解析坏 JSON → 结构化 error）
+6. `buildShutdownWorkerSpec({...})` → 同款 node 直跑形态（registry 清理走 F024 shutdown-worker）
 **TDD → Commit** `feat(F028): preview 真实 deps——Windows cmd.exe 适配/taskkill/detached spawn [黄仁勋]`
 
 ### Task 6: 进展摘要

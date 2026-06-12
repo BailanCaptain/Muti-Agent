@@ -56,7 +56,10 @@ export async function readContainedFile(
   abs: string,
   lexicalRoot: string,
   expectedRealRoot?: string,
-): Promise<{ content: string; mtime: string } | null> {
+  // F028 Task 12.5（德彪 r2 P1-6）：可选 maxBytes 同 fd 限读——只读 maxBytes+1 字节判
+  // 截断，杜绝"先整读后截"的内存放大。加法参数：不传时行为与既往逐字节一致。
+  opts?: { maxBytes?: number },
+): Promise<{ content: string; mtime: string; truncated?: boolean } | null> {
   let realRoot: string
   try {
     realRoot = await fsp.realpath(lexicalRoot)
@@ -105,8 +108,18 @@ export async function readContainedFile(
         `refusing multi-hardlink file (possible containment escape): ${abs}`,
       )
     }
-    const content = await handle.readFile("utf-8")
-    return { content, mtime: stat.mtime.toISOString() }
+    const maxBytes = opts?.maxBytes
+    if (maxBytes === undefined) {
+      const content = await handle.readFile("utf-8")
+      return { content, mtime: stat.mtime.toISOString() }
+    }
+    // 同一 FileHandle 限读 maxBytes+1：第 +1 字节仅用于判超限，不进内容。
+    // 截断可能落在多字节 UTF-8 中间（尾部出现替换符）——截断预览语义可接受。
+    const probe = Buffer.alloc(maxBytes + 1)
+    const { bytesRead } = await handle.read(probe, 0, maxBytes + 1, 0)
+    const truncated = bytesRead > maxBytes
+    const content = probe.subarray(0, Math.min(bytesRead, maxBytes)).toString("utf-8")
+    return { content, mtime: stat.mtime.toISOString(), truncated }
   } finally {
     await handle.close()
   }

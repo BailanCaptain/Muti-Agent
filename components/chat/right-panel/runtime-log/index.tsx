@@ -7,6 +7,8 @@ import { Lvl1Tabs } from "./lvl1-tabs"
 import { Lvl2Content } from "./lvl2-content"
 import { Lvl2Tabs } from "./lvl2-tabs"
 import { RuntimeLogHeader } from "./runtime-log-header"
+import { ProjectTreeTab } from "./tabs/project-tree/project-tree-tab"
+import { WorktreesTab } from "./tabs/worktrees/worktrees-tab"
 
 /**
  * F027 Phase 3 Week 3 Day 12-13 (AC-P3-2) · RuntimeLog 容器
@@ -25,6 +27,7 @@ import { RuntimeLogHeader } from "./runtime-log-header"
  */
 export function RuntimeLog() {
   const collapsed = useRuntimeLogStore((state) => state.collapsed)
+  const activeLvl1 = useRuntimeLogStore((state) => state.activeLvl1)
   // F027 P3-1 扩展（小孙 2026-06-02）：展开时高度由 layout-store runtimeLogHeight 控制（可竖直拖高）。
   const runtimeLogHeight = useLayoutStore((state) => state.runtimeLogHeight)
 
@@ -44,8 +47,27 @@ export function RuntimeLog() {
       {!collapsed && (
         <>
           <Lvl1Tabs />
-          <Lvl2Tabs />
-          <Lvl2Content />
+          {/* F028: LVL1 内容切换——always-render + display 控制（保 F027 r2 P2-1
+              的 lvl2 fetch/scroll 状态契约）；WorktreesTab 自带 enabled 懒 fetch 门 */}
+          <div
+            className="flex min-h-0 flex-1 flex-col"
+            style={{ display: activeLvl1 === "system-prompt" ? "flex" : "none" }}
+          >
+            <Lvl2Tabs />
+            <Lvl2Content />
+          </div>
+          <div
+            className="min-h-0 flex-1 overflow-hidden"
+            style={{ display: activeLvl1 === "worktrees" ? "block" : "none" }}
+          >
+            <WorktreesTab />
+          </div>
+          <div
+            className="min-h-0 flex-1 overflow-hidden"
+            style={{ display: activeLvl1 === "project-tree" ? "block" : "none" }}
+          >
+            <ProjectTreeTab />
+          </div>
         </>
       )}
       {/* F027 Phase 3 Day 20 (AC-P3-5/4) · shared a2a click drawer.
