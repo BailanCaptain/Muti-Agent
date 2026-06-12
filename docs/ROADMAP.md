@@ -8,7 +8,8 @@
 | ID | 名称 | 状态 | Owner | Source | Spec |
 |----|------|------|-------|--------|------|
 | F017 | 跨房间协作感知：侧边栏运行指示 + 全局任务状态 | spec | 桂芬 | internal | [F017](features/F017-cross-room-awareness.md) |
-| F020 | 决策卡片挂载矩阵：按场景分流（单 agent 消息内嵌 / 链级 Footer / 多人讨论收敛后弹）+ 折叠徽章 + 吸收 B007 | spec | 黄仁勋 | internal | [F020](features/F020-decision-card-mounting-matrix.md) || F029 | 调研与核查管道：fact-check + deep-research 双模式（统一检索层 + 异质 agent 两阶段独立验证 + 证据账本 + 三轴裁决 + 引用溯源） | spec | 黄仁勋 | internal | [F029](features/F029-research-verification-pipeline.md) |
+| F020 | 决策卡片挂载矩阵：按场景分流（单 agent 消息内嵌 / 链级 Footer / 多人讨论收敛后弹）+ 折叠徽章 + 吸收 B007 | spec | 黄仁勋 | internal | [F020](features/F020-decision-card-mounting-matrix.md) |
+| F029 | 调研与核查管道：fact-check + deep-research 双模式（统一检索层 + 异质 agent 两阶段独立验证 + 证据账本 + 四字段裁决 + 引用溯源 + 搜索条入口） | spec | 黄仁勋 | internal | [F029](features/F029-research-verification-pipeline.md) |
 | F030 | Rich Blocks 只读卡片协议（C1）：card tone/fields + checklist + agent 发送通道 + rich-messaging skill（clowder-ai 借鉴批次 1/6，小孙拍界面体验优先） | spec | 黄仁勋 | internal | [F030](features/F030-rich-blocks-readonly-cards.md) |
 | F031 | WS 消息可靠性：sessionGroup seq + epoch + gap 检测/catch-up（借鉴批次 2/6） | spec | 黄仁勋 | internal | [F031](features/F031-ws-message-reliability-seq-epoch.md) |
 | F032 | SOP 谓词执行器·审计模式：规则谓词化 + 违规审计报告，只报不拦（借鉴批次 3/6） | spec | 黄仁勋 | internal | [F032](features/F032-sop-predicate-audit.md) |
