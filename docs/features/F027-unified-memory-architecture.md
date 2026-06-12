@@ -350,9 +350,30 @@ wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md �
 
 德彪 review 增补（r1→r3 闭环全落地）：时间戳守卫只搬严格更旧 + DocsIngestRunner 同 path 串行化（防慢 ingest 后完成吃新 draft）+ cleanup `then(cleanup,cleanup)` 防 unhandledRejection + promote/preview/batch 三入口拒 `_superseded`（含 `posix.normalize` 防 `./`//`..` 变体绕过）+ session config 拒收 wikiCompile（全局专属）+ 前端 wikiCompile 并入 setGlobalOverride 单次 PUT。
 
+### 收尾补丁 #2 · KB 审批 UX 二连（全选三件套 + 收录设置卡三引擎，2026-06-13 小孙拍）
+
+小孙原话（2026-06-13）：①「审批界面能不能搞个全选 我一个一个点好费劲」②「编译模型 我也要可以自己写 不然有时候新模型出了 你这里不更新的怎么办」③「编译模型放到claude里面不好 就跟我们这个记忆页面放到一起 找个地方设计一下不好吗？你这样写 我这样就只能用claude了」。
+
+#### AC-W3 · 审批列表全选三件套
+
+- [x] drafts 列表拉满：GET /api/wiki/drafts?limit=200（后端上限；>200 篇 header total 可见差额，真到再上分页）
+- [x] 表头三态全选 checkbox（全选当前已加载/再点清空/部分 indeterminate）
+- [x] 批量审批 >50 自动按 50 切片顺序提交合并 summary；部分分片成功+后续失败 → 报告优先展示已完成 + amber 横幅提示剩余未提交（data/error 双态）
+
+#### AC-W4 · 收录设置卡（三引擎 + 模型自由输入）
+
+- [x] 审批页头部 ⚙ 折叠卡：引擎 radio（claude/codex/gemini）+ 模型 input+datalist 可写可选（留空=引擎默认：claude→Opus 4.7，codex/gemini→CLI 默认）；**AC-W1 的 claude tab 下拉撤除迁移至此**（小孙原话③，单一入口防漂移）
+- [x] wikiCompile.primaryModel 白名单降级为前端建议列表，后端只做格式校验：trim 非空 + ≤64 + 字符集 `^[A-Za-z0-9][A-Za-z0-9._:/-]*$`（model 进 spawn argv：cmd 元字符堵命令注入、首字符限字母数字堵 -m 后 flag 注入）
+- [x] wiki-compile-cli-runners：codex `exec -s read-only [-m]` / gemini `--approval-mode plan -p 空参 [-m]`，prompt 走 stdin；shell 仅 win32（.cmd shim）超时 taskkill /T /F 树杀，POSIX 直接 exec；gemini -p 空参平台分形（win32 字面 `""` / POSIX 真空串）
+- [x] 动态 runner 降级谓词放宽：任何 primary 失败都降级 Haiku 4.5（自由 id 填错是主失败形态；跨引擎 primary 挂≠fallback 挂）；schema 失败仍走管道 3 重试+stub（与原链同义）
+
+德彪 review 增补（r1 1P1+3P2 → r2 4P2 → r3 1P2 → r4 GO）：降级谓词放宽 + 树杀/免壳平台分流 + **前端全量 PUT 严格串行化**（乱序覆盖与脏段携带同灭，双写者失败回滚，r1 的 seq guard 中间态被 r2 串行化取代）+ 收录卡 dirty guard/保存中禁输入/loadFailed 禁保存+重试。自审追加：setWikiCompile 失败回滚、model id 首字符限制。活体冒烟（worktree preview :8802）：limit=200 回显 / codex+自由 id roundtrip / `--yolo`、`a|b` 双 400。
+
 ### 活体验证（小孙指定）
 
 本补丁落档 commit 本身改动 `docs/features/F027-*.md` → docs-watcher 应自动收录新 draft（验证「改文档 → wiki 后台自动跟」）；合并后 touch 同一文档第二次，旧 draft 应自动进 `_superseded`（验证 AC-W2）；次日 04:00 NHC 首跑出 warnings 报告（验证体检链）。
+
+收尾补丁 #2 增补（主库重启后）：审批列表一键全选 57+ 篇 / 批量 >50 自动分批 / ⚙ 卡切 codex 或 gemini 跑一次 ingest 看降级 log（gemini `-p` 空参形态是唯一未活测假设，失败被降级链兜住）。
 
 ## 后续 follow-up（不在 F027 范围）
 
@@ -391,5 +412,6 @@ wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md �
 | 2026-05-23 | dev `dfbe336` | Phase 3 前端容器 + IngestModal + AC 闭环 |
 | 2026-06-10 | dev `e80427d` | 收尾全链：全文展开（r1-r3 GO）+ 警告 404 修复（6 轮审 GO-with-residual）+ RuntimeLog 拖高 + #286 自动召回 FU 四件（r2 GO）+ #285 session_memories→wiki 深迁移 + 旧 3 记忆工具后端退役（r3 GO）。quality-gate 愿景自检 6 痛点机制层全闭环。 |
 | 2026-06-12 | dev `784b5de` | 收尾补丁·收录体验：AC-W1 编译模型可配（动态 runner 热生效 + claude tab 下拉）+ AC-W2 同源 draft 自动收敛（_superseded 归档 + 串行化 + 三入口闸门）。德彪 r1(1P1+3P2)→r2(1P1+1P2)→r3 GO。**生效需主库重启**（小孙 start-project）。 |
+| 2026-06-13 | dev `144b632` | 收尾补丁#2·KB 审批 UX：AC-W3 全选三件套（limit=200 + 三态全选 + 50 切片分批双态）+ AC-W4 收录设置卡（三引擎 + 模型自由输入，claude tab 下拉迁来）。德彪 r1(1P1+3P2)→r2(4P2)→r3(1P2)→r4 GO + 自审 2 件（注入双闸/失败回滚）。**生效需主库重启**（与 784b5de 一起）。 |
 
 **合并后运维步（pending）**：① B3 backfill 55 篇 docs 全量真编译（`backfill-docs.ts --ingest-module`）② 存量 session 摘要导出（`migrate-session-memories.ts`）③ `DROP TABLE wiki_memories` / session_memories 读路径切文件 = 小孙拍。
