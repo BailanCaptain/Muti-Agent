@@ -1,9 +1,10 @@
 ---
 id: F028
 title: RuntimeLog 工作区拓展：项目目录浏览 + Worktree 浏览与手动编译
-status: in-progress
+status: done
 owner: 黄仁勋
 created: 2026-06-11
+completed: 2026-06-13
 ---
 
 # F028 — RuntimeLog 工作区拓展：项目目录浏览 + Worktree 浏览与手动编译
@@ -105,6 +106,7 @@ RuntimeLog 容器新增两个一级 tab：
 | 2026-06-13 | 德彪 code r2 **NEEDS-WORK**：r1 七条全 ✅ 确认修对，新挖 1 P2「NTFS 8.3 短名/别名绕过 denylist」（词法段查不住 realpath 规范化后的 NODE_M~1→node_modules，判本轮必修不准记 TD）+ P3（plan npx 残留）。修：tree-list/tree-content realpath 后对真实相对路径重跑 denylist（list/content 对称），junction 同构稳定复现不赌卷 8dot3name；plan worker 合同同步 node 直跑（commit 057df85）。后端全量 3122 pass |
 | 2026-06-13 | 德彪 code r3 **GO（可进 merge-gate）**：P2 两端对称确认，目录/文件 8.3 短名+junction+hardlink 全拦，正常路径无误杀，P3 同步到位。已知非阻断缺口：文件级别名指向 .env 无独立测试（Windows 文件 symlink 需管理员权限/8.3 赌卷配置，强造即 flaky，实现逻辑已覆盖）。代码 review 链闭环 r1→r2→r3 |
 | 2026-06-13 | merge-gate：AC1-AC10 全打勾，21 commits squash 合入 dev（ff-only，rebase onto aacea1b 零冲突）|
+| 2026-06-13 | Completion：桂芬（gemini）跨 agent 愿景验证 **PASS**（证物对照 10/10 ✅，逐字核小孙原话含两轮 AC8 修正）；status→done，ROADMAP 移已完成表。Closes F028 |
 
 ## Links
 

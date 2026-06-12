@@ -46,7 +46,7 @@ created: 2026-06-12
 | 字段 | 取值 | 说明 |
 |---|---|---|
 | `claim_relation` | supported / contradicted / mixed / insufficient | 证据与声明的关系（核心真假轴） |
-| `confidence` | 校准置信带（low/med/high，需 gold set 校准） | 不是拍脑袋，要可校准 |
+| `confidence` | 校准置信带 low/med/high（固定数值代表值 **0.6 / 0.8 / 0.95** 预注册冻结，gold set 校准，ECE 验收见 AC-P1b-9） | 不是拍脑袋，要可校准 |
 | `context_flags` | misleading-context / outdated / cherry-picked（多选） | 表达/上下文属性，从真假轴拆出 |
 | `fabrication` | not-assessed / evidenced | **仅有直接来源谱系证据**才标 evidenced，否则 not-assessed（v1 不自动判意图） |
 
@@ -66,6 +66,7 @@ created: 2026-06-12
 - 路由：claim 打类型标 → 财经→雪球/财新/巨潮/公告；社会新闻→微博/官方通报；国外科技→X/Reddit/HN/官方博客
 - 通道④定位：他方已核结论 = 高性价比线索，但按 source-audit 当二手来源标注，不直接替代裁决
 - **不每个 case 强制全跑所有官方源+核查机构**（德彪砍），按路由命中触发
+- **抖音 v1 排除**（小孙 2026-06-13 拍板）：信源矩阵扫描与路由表均不纳入；登录态平台维持表中 小红书 / X / 微博·雪球完整版 三组
 
 ### 登录态通道工程方案（德彪登录态深审 6 [DISAGREE] 收敛）
 
@@ -85,13 +86,14 @@ created: 2026-06-12
 - **只读由执行器强制 + 自动测试**：禁 POST 写/表单/上传/点赞/关注/发帖/私信
 - **v1 不接主号**（主号风险工程 guard 降不到零）
 
-### 用户入口与 UX 三态
+### 用户入口与 UX（小孙 2026-06-13 拍板：搜索条主入口，方案 C；取代旧入口 A/B/C 框架）
 
-- **入口 A（主）**：composer 打 `/` → 命令面板（复用 F027 `components/chat/composer-slash-menu.tsx`，加 `/fact-check`；`/deep-research` 在 Phase 1 先 disabled/preview）
-- **入口 B**：自然语言"帮我核查 XXX"（fact-check）→ 路由；**执行前显示识别模式 + 冻结声明 + 预计档位 + 外发范围，一键确认或改写**（防误触多模型长任务）。**Phase 1 自然语言"深挖/deep-research"类请求直接拒绝并提示"Phase 2 启用"，绝不路由执行**（与 AC-P1c-4 一致）
-- 入口 C「核查这条消息」→ 见 Open Decisions（未拍板，不进 AC）
+- **主入口：房间顶部常驻搜索条**（小孙意象"像搜索引擎一样"）：左侧 `[🔍 核查 ▼]` 模式切换（核查 fact-check / 深搜 deep-research），输入声明/课题 → 点搜 → **结果以渐进式报告卡落进当前对话流**（非独立页），保住多 agent 可追问优势（"这条证据靠谱吗""再深挖 X"）。Phase 1 切换里 深搜 为 disabled/preview（提示"Phase 2 启用"）
+- **辅助入口**：composer slash `/fact-check`（复用 F027 `components/chat/composer-slash-menu.tsx`；`/deep-research` Phase 1 disabled/preview）+ 自然语言"帮我核查 XXX"路由。与搜索条共用同一执行链
+- **执行前确认（所有入口）**：显示识别模式 + 冻结声明 + 预计档位 + 外发范围，一键确认或改写（防误触多模型长任务）。**Phase 1 任何入口的 deep-research 请求显式拒绝并提示"Phase 2 启用"，绝不路由执行**（与 AC-P1c-4 一致）
+- 已否决：独立搜索页（unifuncs 式——脱离聊天流、不能追问、工作量最大）、composer 内模式切换当主入口（搜索引擎感弱、易和聊天混）。「核查这条消息」消息右键入口 → **Phase 2 再议**（小孙 2026-06-13，不进 v1 AC）
 
-UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆分/双 agent 检索中/证据计数，复用观测带）→ 报告态（结论摘要置顶 + 证据链/分歧区/引用源折叠）。
+UX 三态：入口态（搜索条/slash/自然语言）→ 进行中态（渐进可见：声明冻结/claim 拆分/双 agent 检索中/证据计数，复用观测带）→ 报告态（报告卡：结论摘要置顶 + 证据链/分歧区/引用源折叠，卡内可追问）。
 
 ## Acceptance Criteria
 
@@ -131,7 +133,7 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 - [ ] AC-P1b-6: quorum——正式 verdict 需 ≥2 异质模型 **且** 来源独立性（≥1 primary-source 或 2 独立 origin）；缺席者进 degradation disclosure 不永久废
 - [ ] AC-P1b-7: citation entailment——每核心结论绑定精确 evidence span，独立步骤校验引用真正蕴含结论
 - [ ] AC-P1b-8: 检索纪律——disconfirm-first 反例；absence 需正反两路+相关概念均 0 命中；中英双语各搜一遍；按档位停止判据
-- [ ] AC-P1b-9: **裁决质量门槛（冻结 holdout 验收，最关键）**——指标以 holdout 为分母，报 点估计 + **Wilson 95% 置信区间**，达标看区间界非点估计：claim 拆解正确率 ≥90% / 证据召回（gold 主来源命中）≥80% / 引用支持率（citation entailment）≥95% / 裁决准确率（claim_relation vs 真值）≥85%（均取 **Wilson 下界**达标）；**高置信错误率**在 holdout high-confidence 子集上算 Wilson 95% 上界，**以实际上界 ≤ 门槛判达标**（v1 门槛 ≤5%，长期目标 ≤2% 随样本收紧）；样本规划：零错误达 ≤5% 需 n≥73、达 ≤2% 需 n≥189，子集不足则上界自然超标=不达标并列入上线后持续监控；弃权合理性（insufficient 中真证据确不足占比）≥80%；**置信度校准（ECE 可执行契约）**——三档预注册数值概率区间 low[0.5,0.7)/med[0.7,0.9)/high[0.9,1.0]，分箱 conf_bin 取各档预注册代表值，`ECE=Σ(n_bin/N)·|acc_bin−conf_bin| ≤0.1`；train 上数字仅供开发参考、不作验收
+- [ ] AC-P1b-9: **裁决质量门槛（冻结 holdout 验收，最关键）**——指标以 holdout 为分母，报 点估计 + **Wilson 95% 置信区间**，达标看区间界非点估计：claim 拆解正确率 ≥90% / 证据召回（gold 主来源命中）≥80% / 引用支持率（citation entailment）≥95% / 裁决准确率（claim_relation vs 真值）≥85%（均取 **Wilson 下界**达标）；**高置信错误率**在 holdout high-confidence 子集上算 Wilson 95% 上界，**以实际上界 ≤ 门槛判达标**（v1 门槛 ≤5%，长期目标 ≤2% 随样本收紧）；样本规划：零错误达 ≤5% 需 n≥73、达 ≤2% 需 n≥189，子集不足则上界自然超标=不达标并列入上线后持续监控；弃权合理性（insufficient 中真证据确不足占比）≥80%；**置信度校准（ECE 可执行契约）**——三档预注册数值概率区间 low[0.5,0.7)/med[0.7,0.9)/high[0.9,1.0]，**conf_bin 固定代表值 low=0.6 / med=0.8 / high=0.95**（预注册冻结，禁验收期调整），**acc_bin = 该档 holdout 样本的 claim_relation 正确率**，`ECE=Σ(n_bin/N)·|acc_bin−conf_bin| ≤0.1`；train 上数字仅供开发参考、不作验收
 - [ ] AC-P1b-10: 档位预算——Light/Full 硬成本+延迟+并发上限+超时+取消；超预算降级报告
 
 ### Phase 1C — L2 渠道 + UI + 入口 + 外发边界
@@ -139,7 +141,7 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 - [ ] AC-P1c-1: 渠道落地——L1 双通用全量 + L2 ≥2 平台专项（基准定优先级）+ 官方白名单，统一 SearchProvider
 - [ ] AC-P1c-2: 渐进式报告 UI——结论摘要→证据链→分歧区（不抹平）→可点击引用（Gemini grounding redirect 解析真实源）；进行中态渐进可见
 - [ ] AC-P1c-3: 外发数据边界——**已确认 provider allowlist**（只发已授权 provider，不在 allowlist 的一律不发）+ **新增/变更 provider 必须重新人工确认才生效** + 敏感信息（密钥/私人身份/未公开业务）命中 **必须强确认或阻断（不是仅提示）** + 入口执行前确认步骤 + case 级记录实际外发对象/字段/时间
-- [ ] AC-P1c-4: 入口 A（slash 加 /fact-check）+ 入口 B（自然语言，执行前显示模式/冻结声明/档位/外发范围 + 一键确认/改写）；**Phase 1 所有用户入口禁止执行 deep-research**——`/deep-research` 在 slash 面板 disabled/preview，自然语言"深挖"类请求显式拒绝并提示"Phase 2 启用"，绝不路由执行；deep-research 仅限内部 fixture（AC-P1c-7）
+- [ ] AC-P1c-4: 三入口——**主入口房间顶部搜索条**（[核查/深搜] 模式切换 + 结果报告卡进对话流 + 卡内可追问）+ 辅助 slash `/fact-check` + 自然语言路由；**所有入口执行前确认**（显示模式/冻结声明/档位/外发范围 + 一键确认/改写）；**Phase 1 所有用户入口禁止执行 deep-research**——搜索条深搜挡位与 `/deep-research` slash 均 disabled/preview，自然语言"深挖"类请求显式拒绝并提示"Phase 2 启用"，绝不路由执行；deep-research 仅限内部 fixture（AC-P1c-7）
 - [ ] AC-P1c-5: 缓存——按 canonical URL+内容版本+语言+抓取时间；时效型 claim 有 freshness policy
 - [ ] AC-P1c-6: 保留与清理——case ledger 访问范围 + 日志脱敏（Cookie/token/query URL/postData）+ 保留期限 + 用户清理；登录态截图不进 .runtime/uploads
 - [ ] AC-P1c-7: **deep-research walking skeleton（Phase 1 验收项，防底座被 fact-check 绑架）**——用固定内部 fixture 跑通 开放问题拆解 + 共享 EvidenceItem ledger + 非 verdict ReportProjection；证明中性底座同时支撑两个 projection，不延后到 Phase 2
@@ -153,9 +155,11 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 
 ## Open Decisions（待小孙拍板，非 AC）
 
-- **OD-1 入口 C**：「核查这条消息」（hover/右键已有消息发起）是否进 scope（德彪 D3-6 移出 AC；我倾向要，最自然动线）
 - **OD-2 主号覆盖**：未来是否提供主号高级覆盖（默认关闭 + 逐平台风险确认）；v1 一律小号
-- **OD-4 UI 方向**：报告卡 + 三态 mockup 是否 OK（上轮已发小孙）
+
+已拍板关闭（小孙 2026-06-13，详见 Timeline）：
+- ~~OD-1 入口 C~~：消息右键「核查这条消息」→ **Phase 2 再议，不进 v1**；主入口定为房间顶部搜索条（方案 C）
+- ~~OD-4 UI 方向~~：渐进式报告卡（结论摘要 → 折叠证据链/分歧/引用）✅ 通过
 
 ## Dependencies
 
@@ -170,20 +174,21 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 | 决策 | 结论 | 原因 |
 |------|------|------|
 | 产品形态 | runtime 纵向闭环，skill 只承载方法论 | 德彪：纯 skill 无状态/无证据存储/无可审计引用；小孙要"入口+真正做好" |
+| 用户入口 | **房间顶部搜索条主入口 + 报告卡进对话流（方案 C）**；slash/自然语言降辅助；独立搜索页否决 | 小孙 2026-06-13："像搜索引擎一样"；进对话流保多 agent 可追问，独立页脱离聊天流 |
 | 底座抽象 | **中性领域模型 + 两个 projection**，非 fact-check 专用 schema | 德彪 D2：防底座被单消费者绑架；Phase 1 含 deep-research walking skeleton 证明 |
 | 多 agent 验证 | 两阶段独立性（Phase A 独立 thread + sibling-canary 测试 / Phase B 合并交叉质询） | 德彪 D3：现 runtime 续推喂全历史，"互不可见"必须独立 context + canary 才可证 |
 | verdict 本体 | **四字段**（claim_relation × confidence × context_flags × fabrication） | 德彪 D5：原三轴不正交，misleading 是上下文属性、fabrication 非真假轴 |
 | quorum | ≥2 异质模型 **且** 来源独立性（primary-source 或 2 独立 origin） | 德彪 D5：模型异质≠证据独立（可能同一通讯社/转载/索引） |
 | 原生检索定位 | 仅线索，不计正式 quorum | 德彪 D3：不可结构化审计的证据不能进裁决 |
 | 引用 | citation entailment（绑 evidence span + 独立校验蕴含） | 德彪 D5：有链接≠链接支持结论 |
-| 质量验收 | gold set ≥300 分层 + holdout 封存（provider 选型只用 train，消除泄漏）+ Wilson 95% 区间验收（裁决准确率取下界≥85%；高置信错误率：实际 Wilson 上界判，v1≤5%/目标≤2%，零错误达≤2% 需 n≥189）+ ECE≤0.1（三档数值概率区间预注册）校准 | 德彪 D1/v2-P5/三审：原 AC 只验格式、阈值占位、统计功效不足/Wilson 样本算错——系统稳定胡判也能过、最致命缺口 |
+| 质量验收 | gold set ≥300 分层 + holdout 封存（provider 选型只用 train，消除泄漏）+ Wilson 95% 区间验收（裁决准确率取下界≥85%；高置信错误率：实际 Wilson 上界判，v1≤5%/目标≤2%，零错误达≤2% 需 n≥189）+ ECE≤0.1 校准（三档数值概率区间预注册，conf_bin 固定 low=0.6/med=0.8/high=0.95，acc_bin=该档 holdout claim_relation 正确率） | 德彪 D1/v2-P5/三审/P5 终审：原 AC 只验格式、阈值占位、统计功效不足/Wilson 样本算错/ECE 无固定代表值不可唯一计算——系统稳定胡判也能过、最致命缺口 |
 | 外发边界 | feature 级 outbound-data policy（不只 cookie，含声明外发提示+脱敏+记录） | 德彪 D1/D6：用户声明发往外部 API/LLM 也是泄露面 |
 | 登录凭证 | 默认关闭 + 小号硬要求 + 能力隔离 + v1 不接主号；无法承诺零泄露 | 德彪登录态深审：网页凭证本质可代表账号，guard 只降险不归零 |
 | 安全底座 | SSRF + prompt-injection corpus + 只读执行器自动测试 | 德彪 D6：Iron Law §4 延伸；防注入靠能力隔离非 prompt |
 | Phase 切分 | 0A 基线+0B 登录 spike（不阻塞）/ 1a 底座+1b 裁决+1c 渠道UI / 2 调研 | 德彪 D4：Phase 0 不整体阻塞，Phase 1 过大须拆三段 |
 | 成本 | Light/Full 硬预算+超时+取消+缓存+降级 | 德彪 D7：多 API×多模型×多通道单 case 慢且贵 |
 | 平台合规 | Phase 0 登记 ToS/账号风险；禁绕验证码/反爬 | 德彪 D7：抓取合规边界 |
-| v1 砍掉 | 预测市场 / 完整传播图（先做 lineage 标签）/ 图像视频鉴伪 / 意图自动判断 / 第三原生模型作 Light 硬依赖 / 入口 C（待拍）/ AC17"零重复"字面 | 德彪 D7/D2：YAGNI |
+| v1 砍掉 | 预测市场 / 完整传播图（先做 lineage 标签）/ 图像视频鉴伪 / 意图自动判断 / 第三原生模型作 Light 硬依赖 / 消息右键核查入口（Phase 2 再议）/ **抖音信源** / AC17"零重复"字面 | 德彪 D7/D2：YAGNI；抖音+右键入口为小孙 2026-06-13 拍板 |
 
 ### 方法论移植清单（cat-cafe-skills 借鉴，2026-06-12 核定）
 
@@ -206,6 +211,8 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
 | 2026-06-12 | 渠道三层 + 入口 A/B/C + UX 三态（e8cdfe2）；Phase 0 信源矩阵 + 四通道 + 登录态（b04b13c） |
 | 2026-06-12 | 德彪登录态深审 6 [DISAGREE]（能力隔离/profile 隔离/小号硬要求/雪球验收陷阱）+ 整体审 **NEEDS-WORK 9 P1**（质量验收/外发边界/真隔离/四字段 ontology/quorum/citation/SSRF/成本/AC 冲突）→ **全文修订 v2**，AC 重组 AC-Px-n |
 | 2026-06-12 | 德彪 v2 复审 5 RESOLVED + 4 NOT-RESOLVED + 2 NEW-P1 → **v3 精修**：benchmark 冻死真阈值+holdout、快照强制条件+降级语义、外发已确认 provider allowlist、Phase 1 禁用户入口跑 deep-research、walking skeleton 升 Phase 1 AC（AC-P1c-7）、登录凭证隔离升可测试 AC（AC-P0b-5）、P0B/P1A 解耦、删 OD-3 |
+| 2026-06-13 | 德彪三审 P1/P9 RESOLVED、P5 NOT → Wilson 修正（≤2% 需 n≥189 精确解，三处同步）；P5 终审确认 **Wilson 全对**，补 ECE conf_bin 固定代表值（low=0.6/med=0.8/high=0.95 + acc_bin=holdout claim_relation 正确率）落盘 |
+| 2026-06-13 | 小孙三决定拍板：**主入口=房间顶部搜索条+报告卡进对话流（方案 C）**；**抖音 v1 排除**（登录态平台剩 小红书/X/微博·雪球）；**渐进式报告卡 UI 通过**。OD-1 入口C→Phase 2 再议、OD-4 关闭 |
 
 ## Links
 
@@ -214,7 +221,9 @@ UX 三态：入口态 → 进行中态（渐进可见：声明冻结/claim 拆�
   - `.runtime/reviews/F029-login-channel-*.md`（登录态深审）
   - `.runtime/reviews/F029-full-design-review-*.md`（整体审 NEEDS-WORK）
   - `.runtime/reviews/F029-v2-recheck-*.md`（v2 复审 5 RESOLVED + v3 精修）
-- Plan: 待 v3 德彪三审 GO 后进 `writing-plans`
+  - `.runtime/reviews/F029-P5-recheck-*.md`（P5 benchmark 统计终审：Wilson n≥189 + ECE 固定代表值）
+  - `.runtime/reviews/F029-final-decisions-pending-merge.md`（2026-06-13 小孙三决定）
+- Plan: 待德彪终审 GO 后进 `writing-plans`
 - Related: F026 / F027
 
 ## Evolution

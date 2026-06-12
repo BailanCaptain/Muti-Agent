@@ -8,9 +8,7 @@
 | ID | 名称 | 状态 | Owner | Source | Spec |
 |----|------|------|-------|--------|------|
 | F017 | 跨房间协作感知：侧边栏运行指示 + 全局任务状态 | spec | 桂芬 | internal | [F017](features/F017-cross-room-awareness.md) |
-| F020 | 决策卡片挂载矩阵：按场景分流（单 agent 消息内嵌 / 链级 Footer / 多人讨论收敛后弹）+ 折叠徽章 + 吸收 B007 | spec | 黄仁勋 | internal | [F020](features/F020-decision-card-mounting-matrix.md) |
-| F028 | RuntimeLog 工作区拓展：项目目录浏览 + Worktree 浏览/手动编译 | in-progress | 黄仁勋 | internal | [F028](features/F028-workspace-explorer-tabs.md) |
-| F029 | 调研与核查管道：fact-check + deep-research 双模式（统一检索层 + 异质 agent 两阶段独立验证 + 证据账本 + 三轴裁决 + 引用溯源） | spec | 黄仁勋 | internal | [F029](features/F029-research-verification-pipeline.md) |
+| F020 | 决策卡片挂载矩阵：按场景分流（单 agent 消息内嵌 / 链级 Footer / 多人讨论收敛后弹）+ 折叠徽章 + 吸收 B007 | spec | 黄仁勋 | internal | [F020](features/F020-decision-card-mounting-matrix.md) || F029 | 调研与核查管道：fact-check + deep-research 双模式（统一检索层 + 异质 agent 两阶段独立验证 + 证据账本 + 三轴裁决 + 引用溯源） | spec | 黄仁勋 | internal | [F029](features/F029-research-verification-pipeline.md) |
 | F030 | Rich Blocks 只读卡片协议（C1）：card tone/fields + checklist + agent 发送通道 + rich-messaging skill（clowder-ai 借鉴批次 1/6，小孙拍界面体验优先） | spec | 黄仁勋 | internal | [F030](features/F030-rich-blocks-readonly-cards.md) |
 | F031 | WS 消息可靠性：sessionGroup seq + epoch + gap 检测/catch-up（借鉴批次 2/6） | spec | 黄仁勋 | internal | [F031](features/F031-ws-message-reliability-seq-epoch.md) |
 | F032 | SOP 谓词执行器·审计模式：规则谓词化 + 违规审计报告，只报不拦（借鉴批次 3/6） | spec | 黄仁勋 | internal | [F032](features/F032-sop-predicate-audit.md) |
@@ -44,4 +42,5 @@
 | F022 | 左侧 Sidebar 重设计：全局递增 ROOM ID (R-001) + Haiku 自动命名 + 反向溯源 + 右键菜单四件套 | 2026-04-21 | [F022](features/F022-left-sidebar-redesign.md) |
 | F021 | 右侧面板重设计 — 观测带 + 智能体列表 + 两级配置（全局默认/会话专属）+ Side-Drawer + Phase 6 上下文窗口/Seal 阈值齿轮可配 + fillRatio 观测 + seal 感知（first_completed 2026-04-21 / reopened 2026-04-22 / recompleted 2026-04-26）| 2026-04-26 | [F021](features/F021-right-panel-redesign.md) |
 | F026 | A2A 可靠通信层 v2（Round 2 · Call Tree + Envelope 双层 + 协议透明 + 十一条不变量）：mention-router 三层 fail-closed + on-behalf 语义反推 + Worklist 树形续推 + 方案 X `[Call:]` 强契约 + retry-guard + cold-target burst 兜底 + 前端栏（溯源胶囊/折叠/墓碑/Pulse/淡紫色）。ADR-002/003/004 落盘。Supersedes F015 / Evolved from F003。DoD-1/2/3 全绿（小孙 2026-05-08 真机验场景 1/3 通过） | 2026-05-08 | [F026](features/F026-a2a-reliability-layer.md) |
+| F028 | RuntimeLog 工作区拓展：项目目录浏览 + Worktree 浏览/手动编译（兑现 F027 一级 tab「未来」扩展位）| 2026-06-13 | [F028](features/F028-workspace-explorer-tabs.md) |
 <!-- 完成的 Feature 从活跃表移到此处 -->
