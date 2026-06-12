@@ -213,6 +213,7 @@ UX 三态：入口态（搜索条/slash/自然语言）→ 进行中态（渐进
 | 2026-06-12 | 德彪 v2 复审 5 RESOLVED + 4 NOT-RESOLVED + 2 NEW-P1 → **v3 精修**：benchmark 冻死真阈值+holdout、快照强制条件+降级语义、外发已确认 provider allowlist、Phase 1 禁用户入口跑 deep-research、walking skeleton 升 Phase 1 AC（AC-P1c-7）、登录凭证隔离升可测试 AC（AC-P0b-5）、P0B/P1A 解耦、删 OD-3 |
 | 2026-06-13 | 德彪三审 P1/P9 RESOLVED、P5 NOT → Wilson 修正（≤2% 需 n≥189 精确解，三处同步）；P5 终审确认 **Wilson 全对**，补 ECE conf_bin 固定代表值（low=0.6/med=0.8/high=0.95 + acc_bin=holdout claim_relation 正确率）落盘 |
 | 2026-06-13 | 小孙三决定拍板：**主入口=房间顶部搜索条+报告卡进对话流（方案 C）**；**抖音 v1 排除**（登录态平台剩 小红书/X/微博·雪球）；**渐进式报告卡 UI 通过**。OD-1 入口C→Phase 2 再议、OD-4 关闭 |
+| 2026-06-13 | 德彪终审（d90b8f5）：**P5 RESOLVED**（ECE 可唯一计算）+ 三决定落盘 **CONSISTENT** + **总判定 GO** → 进入 writing-plans 阶段（设计审五轮收敛闭环；doc status 待开码再转 in-progress） |
 
 ## Links
 
@@ -223,7 +224,8 @@ UX 三态：入口态（搜索条/slash/自然语言）→ 进行中态（渐进
   - `.runtime/reviews/F029-v2-recheck-*.md`（v2 复审 5 RESOLVED + v3 精修）
   - `.runtime/reviews/F029-P5-recheck-*.md`（P5 benchmark 统计终审：Wilson n≥189 + ECE 固定代表值）
   - `.runtime/reviews/F029-final-decisions-pending-merge.md`（2026-06-13 小孙三决定）
-- Plan: 待德彪终审 GO 后进 `writing-plans`
+  - `.runtime/reviews/F029-final-confirm-*.md`（德彪终审 GO：P5 RESOLVED + 三决定 CONSISTENT）
+- Plan: `docs/plans/F029-implementation-plan.md`（终审 GO 后启动）
 - Related: F026 / F027
 
 ## Evolution
