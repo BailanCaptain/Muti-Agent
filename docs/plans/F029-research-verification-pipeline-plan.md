@@ -17,7 +17,7 @@
 | AC-P0b-1..5 登录态 spike | AuthenticatedBrowserService 全套 | T0b-1..3 | ⛔ 需小孙小号；lease/FIFO 机械层可单测先行 |
 | AC-P1a-1 中性底座 | 6 实体域模型 | **T1a-1/2/3** | 🟢 今夜 |
 | AC-P1a-2 durable 状态机 | CAS + 幂等 + 断点 | **T1a-4** | 🟢 今夜 |
-| AC-P1a-3 Phase A 真隔离 | neutral brief + sibling-canary | **T1a-7** | 🟢 今夜（fake runtime 单测；真 CLI 接线归 1b） |
+| AC-P1a-3 Phase A 真隔离 | neutral brief + sibling-canary | **T1a-7 + T1b-4**（双件齐才关闭：fake 契约今夜，真 adapter 集成 canary 归 1b） | 🟡 跨批次 |
 | AC-P1a-4 SSRF | url-guard 全规则 | **T1a-5** | 🟢 今夜 |
 | AC-P1a-5 防注入 | extractor + corpus | **T1a-8** | 🟢 今夜（corpus 首版） |
 | AC-P1a-6 只读执行器 | 类型化唯二入口 | **T1a-6** | 🟢 今夜 |
@@ -37,7 +37,7 @@
 
 ## 实测过的代码锚点（2026-06-13 dev HEAD 2bee192 实测）
 
-- 表定义双源：`packages/api/src/db/sqlite.ts`（CREATE TABLE IF NOT EXISTS，476 行）+ `packages/api/src/db/schema.ts`（drizzle 镜像，544 行）；新表两处同步
+- **表定义三源（德彪 plan review P1 纠正，2026-06-13 实测核实）**：生产 boot `server.ts:118 createDrizzleDb()` 先执行 `db/drizzle-instance.ts:91 INIT_SQL`（真正的首跑 DDL），`db/sqlite.ts`（legacy SqliteStore CREATE TABLE）与 `db/schema.ts`（drizzle 定义）随后。**新表必须三处同步**：drizzle-instance.ts INIT_SQL + sqlite.ts + schema.ts；parity 测试仿 `drizzle-instance.test.ts:463,494`（真实 SQLite 表/索引断言，两条启动路径分别验证），不能只靠 schema.test.ts（它只查导出）
 - repo 惯例：`packages/api/src/db/repositories/wiki-leases-repository.ts`（interface+impl+types+test 四件套；CAS 用 `UPDATE ... WHERE` 受影响行数判定）
 - 域模块惯例：`packages/api/src/wiki/`（子模块目录 + 测试同置）；F029 落 `packages/api/src/research/`
 - scheduler：`packages/api/src/services/scheduler/nightly-job-scheduler.ts` + `packages/api/src/runtime/scheduler-bootstrap.ts`（croner）
@@ -181,14 +181,16 @@ export type Verdict = {
 //   字段以 Task 1a-2 表结构为准（id/caseId/状态/预算/task_key/时间戳/来源谱系）
 ```
 
+**类型单一真相源（德彪 plan review 纠正）**：六实体字段在本任务的 `packages/shared/src/research.ts` 一次性冻结（不再"以 T1a-2 表结构为准"）；T1a-2 表结构映射 shared 类型，T1a-3 repo 文件**不得**另建实体类型（`research-types.ts` 只放 repo 输入输出包装/row mapper，实体 import 自 shared）。
 TDD 步骤同模板：守卫函数（`isTerminalState`、`VALID_TRANSITIONS` 表导出）失败测试 → 实现 → commit `feat(F029): T1a-1 中性领域模型共享类型`。
 
-## Task 1a-2: 六表落库（sqlite.ts + schema.ts 双定义）
+## Task 1a-2: 七表落库（**三源同步**：drizzle-instance INIT_SQL + sqlite.ts + schema.ts）
 
 **Files:**
-- Modify: `packages/api/src/db/sqlite.ts`（6×CREATE TABLE IF NOT EXISTS + 索引）
-- Modify: `packages/api/src/db/schema.ts`（drizzle 镜像）
-- Test: `packages/api/src/db/schema.test.ts`（已有 parity 测试模式，补 6 表）
+- Modify: `packages/api/src/db/drizzle-instance.ts`（INIT_SQL 加 7×CREATE TABLE IF NOT EXISTS + 索引——生产首跑 DDL，缺它独立 Drizzle 启动/测试缺表）
+- Modify: `packages/api/src/db/sqlite.ts`（legacy 路径同步）
+- Modify: `packages/api/src/db/schema.ts`（drizzle 定义）
+- Test: `packages/api/src/db/drizzle-instance.test.ts` 模式新增 research 表 parity 断言（真实 SQLite `sqlite_master` 表+索引检查，**两条启动路径分别验证**）；schema.test.ts 补导出检查
 
 表：`research_cases`（state/mode/claim_frozen/budget_tier/task_key UNIQUE 幂等/retry_count/cancelled_reason/timestamps）、`research_question_units`、`research_retrieval_plans`、`research_evidence_items`（final_url/redirect_chain JSON/http_status/fetched_at/snapshot_path/snapshot_hash/extractor_version/extract_rule_id/excerpt/excerpt_hash/reproducibility/origin_domain/provider_id/untrusted=1 固定）、`research_assessments`（verdict 四字段 + evidence_span 绑定 + reasoning + agent_id + phase a/b）、`research_report_projections`（mode/payload JSON/version）。
 外发账本 `research_outbound_log`（case_id/provider_id/fields_sent JSON/sent_at）也在本任务建表（AC-P1c-3 的存储依赖，写入逻辑归 1c）。
@@ -201,8 +203,8 @@ TDD 步骤同模板：守卫函数（`isTerminalState`、`VALID_TRANSITIONS` 表
 - Create: `packages/api/src/db/repositories/research-evidence-repository.ts` + `.test.ts`
 - Modify: `packages/api/src/db/repositories/index.ts`
 
-仿 `wiki-leases-repository` 四件套。CaseRepo：`createCase(task_key 幂等——重复 key 返回既有 case 不重建)/getCase/listByState/transitionState(CAS: UPDATE..WHERE state=expected，返回 boolean)/recordRetry/markCancelled`。EvidenceRepo：`appendEvidence/listByCase/appendAssessment/listAssessments/upsertProjection`。
-测试钉死：幂等重入、CAS 抢占失败返回 false 不抛、terminal 态拒绝再转移、evidence JSON roundtrip。
+仿 `wiki-leases-repository` 四件套，**实体类型一律 import 自 shared/research.ts（repo 文件只放 row mapper，禁第二真相源）**。CaseRepo：`createCase(task_key 幂等——重复 key 返回既有 case 不重建)/getCase/listByState/transitionState(CAS: UPDATE..WHERE state=expected，返回 boolean)/recordRetry/markCancelled` + **QuestionUnit/RetrievalPlan 持久化 API**（`appendQuestionUnits/listQuestionUnits/upsertRetrievalPlan/getRetrievalPlan`——德彪 review 补）。EvidenceRepo：`appendEvidence/listByCase/appendAssessment/listAssessments/upsertProjection`。
+测试钉死：幂等重入、CAS 抢占失败返回 false 不抛、terminal 态拒绝再转移、evidence JSON roundtrip、question-unit/plan roundtrip。
 Commit: `feat(F029): T1a-3 case/evidence repository（CAS 转移 + task_key 幂等）`
 
 ## Task 1a-4: durable case 状态机服务（AC-P1a-2）
@@ -210,7 +212,7 @@ Commit: `feat(F029): T1a-3 case/evidence repository（CAS 转移 + task_key 幂�
 **Files:**
 - Create: `packages/api/src/research/case-state-machine.ts` + `.test.ts`
 
-`VALID_TRANSITIONS`（shared 导出）驱动：created→decomposing→retrieving→assessing→reporting→done；任意非 terminal→failed/cancelled；retrieving/assessing 超预算→partial（部分报告语义）。`advance(caseId, from, to)` 走 repo CAS；`resume(caseId)` 按当前 state 返回下一步动作描述（断点恢复，不依赖 worklist 自由文本）。budget 字段递减接口 + 超时标记。全部 fake-clock 单测。
+`VALID_TRANSITIONS`（shared 导出）驱动：created→decomposing→retrieving→assessing→reporting→done；任意非 terminal→failed/cancelled；retrieving/assessing 超预算→**partial 为显式合法转移**（部分报告语义，含 partial_reason 落库）。`advance(caseId, from, to)` 走 repo CAS；`resume(caseId)` 按当前 state 返回下一步动作描述（断点恢复，不依赖 worklist 自由文本）。**provider retry policy**（AC-P1a-2 显式要求，德彪 review 补）：per-provider `maxAttempts/backoffMs/retryable 错误分类`落 case 级配置字段，`recordRetry` 超限→该 provider 标 exhausted 进 degradation 记录，不死循环。budget 字段递减接口 + 超时标记。全部 fake-clock 单测。
 Commit: `feat(F029): T1a-4 durable case 状态机（CAS 转移+断点恢复+预算）`
 
 ## Task 1a-5: SSRF url-guard + safe-fetch（AC-P1a-4）
@@ -219,7 +221,8 @@ Commit: `feat(F029): T1a-4 durable case 状态机（CAS 转移+断点恢复+预�
 - Create: `packages/api/src/research/safe-fetch/url-guard.ts` + `.test.ts`
 - Create: `packages/api/src/research/safe-fetch/safe-fetch.ts` + `.test.ts`
 
-url-guard 拒绝：非 http/https（file:/ftp:/data:…）、loopback（127/8、::1、localhost）、私网（10/8、172.16/12、192.168/16、169.254/16 link-local、fc00::/7、fe80::/10）、`0.0.0.0`、IP 字面量十进制/八进制混淆（`2130706433`、`017700000001`）。**DNS rebinding**：resolve 后对解析出的每个 IP 复检私网规则，连接 pin 到已校验 IP（undici connect.lookup 注入）。**redirect 逃逸**：safe-fetch 手动跟随（redirect:"manual"），每跳 Location 重过 url-guard，记录完整 redirect_chain；超 5 跳拒绝。响应捕获 final_url/status/headers 时间戳——直接产出 AC-P1a-7 要的谱系字段。测试用本地 fake DNS/手造 30x 链，不打真网。
+url-guard 拒绝：非 http/https（file:/ftp:/data:…）、loopback（127/8、::1、localhost）、私网（10/8、172.16/12、192.168/16、169.254/16 link-local、fc00::/7、fe80::/10）、`0.0.0.0`、IP 字面量十进制/八进制混淆（`2130706433`、`017700000001`）。**DNS rebinding**：resolve 后对解析出的每个 IP 复检私网规则，连接 pin 到已校验 IP（undici connect.lookup 注入）。**redirect 逃逸**：safe-fetch 手动跟随（redirect:"manual"），每跳 Location 重过 url-guard，记录完整 redirect_chain；超 5 跳拒绝。响应捕获 final_url/status/headers 时间戳——直接产出 AC-P1a-7 要的谱系字段。
+**测试网络纪律（德彪 review）**：fake DNS/30x 链一律走**注入 lookup 函数 + 注入 undici dispatcher/MockAgent**，**禁止 bind 真实 localhost 端口**（Iron Law §4：测试也不许碰不属于本服务的端口面）；不打真网。
 Commit: `feat(F029): T1a-5 SSRF url-guard + safe-fetch（DNS pin + redirect 链审计）`
 
 ## Task 1a-6: 类型化只读执行器（AC-P1a-6）
@@ -228,7 +231,7 @@ Commit: `feat(F029): T1a-5 SSRF url-guard + safe-fetch（DNS pin + redirect 链�
 - Create: `packages/api/src/research/providers/search-provider.ts`（接口）+ `provider-registry.ts` + `.test.ts`
 - Create: `packages/api/src/research/providers/fixture-provider.ts`（walking-skeleton/测试用确定性 provider）
 
-`SearchProvider`：`id/kind(api|web-public|authed|factcheck-org)/search(query,opts)→SearchResultRef[]` + `fetchPublicResult(ref)→RawFetchResult`。registry 只暴露这两个操作给上层（**模块导出面测试**：断言 providers/index 导出集合恰为 {registry, 接口类型}，无任何 page/click/goto/evaluate 符号——能力隔离的可测试化）。fetchPublicResult 内部强制走 safe-fetch + 仅 GET（非 GET 抛 `ReadOnlyViolation`，自动测试钉死）。缺 `.env` key 的 provider 注册为 `not-configured`，调用报降级错误不崩 case（0A 解锁后即插）。
+`SearchProvider`：`id/kind(api|web-public|authed|factcheck-org)/search(query,opts)→SearchResultRef[]` + `fetchPublicResult(ref)→RawFetchResult`。**registry 返回冻结窄 facade**（`Object.freeze`，只含 search/fetchPublicResult 两方法，调用方拿不到 provider 实例本体——德彪 review：导出面检查不够，需运行时窄化）；**恶意 provider 测试**：注册一个企图暴露 `goto/click/evaluate/post/upload` 方法与任意 fetch 的 provider，断言 facade 上这些能力全部不可达、其内部 fetch 仍被强制路由 safe-fetch。fetchPublicResult 内部强制走 safe-fetch + 仅 GET（非 GET 抛 `ReadOnlyViolation`，自动测试钉死）。缺 `.env` key 的 provider 注册为 `not-configured`，调用报降级错误不崩 case（0A 解锁后即插）。
 Commit: `feat(F029): T1a-6 类型化只读执行器（唯二操作+GET-only+导出面测试）`
 
 ## Task 1a-7: neutral brief + Phase A 隔离会话 + sibling-canary（AC-P1a-3）
@@ -237,7 +240,8 @@ Commit: `feat(F029): T1a-6 类型化只读执行器（唯二操作+GET-only+导�
 - Create: `packages/api/src/research/verification/neutral-brief.ts` + `.test.ts`
 - Create: `packages/api/src/research/verification/verifier-session.ts` + `.test.ts`
 
-neutral-brief：从 ResearchCase 构造与 agent 无关的 brief（冻结声明/原子 claims/检索纪律/输出 schema），`briefHash = sha256(canonical-json)`——所有验证者收到 hash 相同的同一份。verifier-session：每验证者一次性独立 invocation 上下文（**不注入房间历史**，构造参数里根本没有 room/thread 字段——结构性隔离而非过滤），收 brief 出结构化结果。**sibling-canary 测试**：给 fake-runtime A 的环境塞 canary 串，断言 B 的输入/输出全程不含 canary；任何出现即 fail。真 codex/gemini CLI 接线归 1b（T1b-4），本任务用 fake runtime 钉契约。
+neutral-brief：从 ResearchCase 构造与 agent 无关的 brief（冻结声明/原子 claims/检索纪律/输出 schema），`briefHash = sha256(canonical-json)`——所有验证者收到 hash 相同的同一份。verifier-session：每验证者一次性独立 invocation 上下文（**不注入房间历史**，构造参数里根本没有 room/thread 字段——结构性隔离而非过滤），收 brief 出结构化结果。**sibling-canary 测试**：给 fake-runtime A 的环境塞 canary 串，断言 B 的输入/输出全程不含 canary；任何出现即 fail。
+**验收口径（德彪 review 纠正）**：本任务只钉单元契约，**不独立关闭 AC-P1a-3**——真 codex/gemini adapter 接线 + 真 adapter 上的 sibling-canary 集成测试归 T1b-4，AC-P1a-3 在 T1a-7+T1b-4 双件齐后才打勾（AC 映射表已同步）。
 Commit: `feat(F029): T1a-7 neutral brief + 隔离 verifier session + sibling-canary`
 
 ## Task 1a-8: 确定性 extractor + 注入 corpus（AC-P1a-5）
@@ -246,7 +250,8 @@ Commit: `feat(F029): T1a-7 neutral brief + 隔离 verifier session + sibling-can
 - Create: `packages/api/src/research/evidence/evidence-extractor.ts` + `.test.ts`
 - Create: `packages/api/src/research/evidence/injection-corpus.test.ts` + `fixtures/injection-corpus/*.html`（≥10 样本：指令注入/工具调用诱导/泄 prompt 诱导/改 schema 诱导/新域访问诱导/unicode 混淆）
 
-extractor：HTML→`EvidenceDocument{text, title, publishedAt?, extractorVersion, extractRuleId}`，纯函数确定性（同输入同输出），**绝不**把 script/style/事件属性/原始 HTML 带入 text；输出统一打 `UNTRUSTED_CONTENT` 包络。corpus 测试：对每个样本断言 ①extractor 输出不含可执行内容 ②neutral-brief 构造时 evidence 文本只能进 data 槽位（结构断言：brief 模板的 instruction 段 hash 不随 evidence 内容变化）③url-guard 不因内容产生新放行。
+extractor：HTML→`EvidenceDocument{text, title, publishedAt?, extractorVersion, extractRuleId}`，纯函数确定性（同输入同输出），**绝不**把 script/style/事件属性/原始 HTML 带入 text；输出统一打 `UNTRUSTED_CONTENT` 包络。
+**corpus 断言必须是行为级，不是包装级（德彪 review 纠正）**：对每个恶意样本走"extract→record→brief 构造→输出 schema 校验"的真实管线后断言——①brief instruction 段 hash 不随 evidence 内容变化（注入文本进不了指令位）②伪造"工具调用/改检索计划/访问新域"形状的输出被 verdict schema 校验**拒绝**（fail-closed，附带哪条规则拒的）③url-guard 对同一 URL 的判定与 evidence 内容零相关（行为不可被内容改写）④cookie/secret 形状串经管线后不出现在任何持久化/外发字段。1a 管线内可达的行为全测；需要真 LLM 的端到端注入演练归 1b benchmark runner 附带项。
 Commit: `feat(F029): T1a-8 确定性 extractor + prompt-injection corpus 首版`
 
 ## Task 1a-9: 证据记录器——快照+谱系+降级（AC-P1a-7）
@@ -254,7 +259,7 @@ Commit: `feat(F029): T1a-8 确定性 extractor + prompt-injection corpus 首版`
 **Files:**
 - Create: `packages/api/src/research/evidence/evidence-recorder.ts` + `.test.ts`
 
-safe-fetch 结果 + extractor 输出 → EvidenceItem 持久化：快照写 `.runtime/research/snapshots/<caseId>/<hash>.html`（**不在 `.runtime/uploads`**），DB 存 path+hash；快照写失败 → `reproducibility="snapshot-missing"` 降级为线索并存 failure 原因（**显式降级，不假成功**）。excerpt+hash、extractor 版本、rule id 全链入库。temp-dir 单测含磁盘写失败注入。
+safe-fetch 结果 + extractor 输出 → EvidenceItem 持久化：**规范化快照定义冻结**（德彪 review 补）：存 extractor 归一后的 canonical 形态（UTF-8、剥 script/style/事件属性、属性排序稳定），同输入 bytes→同快照 hash；原始 bytes 不落盘（版权+注入面双收敛）。快照写 `.runtime/research/snapshots/<caseId>/<hash>.html`（**不在 `.runtime/uploads` 静态暴露路径**；caseId/hash 均服务端生成，路径不接受外部输入拼接），DB 存 path+hash；快照写失败 → `reproducibility="snapshot-missing"` 降级为线索并存 failure 原因（**显式降级，不假成功**）。excerpt+hash、extractor 版本、rule id 全链入库。temp-dir 单测含磁盘写失败注入。
 Commit: `feat(F029): T1a-9 evidence recorder（快照谱系+snapshot-missing 降级）`
 
 ## Task 1a-10: Phase 1a 收尾——boot 接线 + quality-gate
@@ -283,6 +288,7 @@ boot 接线有单测（[Codex Judge2] 教训：unit test 绿 ≠ boot wire 上�
 # 检查点与纪律
 
 - 每 Task 一 commit（worktree 内），commit 后 `git rev-parse` 真 hash；测试先红后绿；**写测试前实测被测契约**
+- **无人值守批次纪律（德彪 plan review）**：任一 Task 的测试/typecheck 失败 → 修复为先，修不动即停批次写交接，**禁止跳过该 Task 继续后续或提交半绿 commit**；boot/集成测试显式传临时 SQLite/snapshot 路径 + `close()`，禁触默认 `.runtime` 持久数据（Iron Law §1）；长驻 undici Agent/HTTP server/timer 必须注册关闭钩子（防全量测试挂死）；测试禁 bind 真实 localhost 端口（注入 dispatcher 替代）
 - Phase 1a 完成 → quality-gate → evidence pack → 德彪 code review → 小孙验收 → 才谈合 dev
 - 单测 mock 必须复刻 prod schema 约束（triggers/UNIQUE/CHECK——[Test Schema Faithful to Prod]）
 - 改 AC-P1b-9 任何冻结数字（73/189/0.6/0.8/0.95/≤0.1）= 设计变更，必须回 feature doc + review，代码注释已钉
@@ -292,3 +298,4 @@ boot 接线有单测（[Codex Judge2] 教训：unit test 绿 ≠ boot wire 上�
 | 日期 | 事件 |
 |------|------|
 | 2026-06-13 | plan v1（德彪终审 GO 后；通宵批次=T1a-0..10，0A 先行件时间允许才做） |
+| 2026-06-13 | 德彪 plan review **NEEDS-WORK** → **v2 全收**：DB 三源真相（INIT_SQL 为生产首跑 DDL）+ parity 测试两路启动、shared 类型单一真相源 + QuestionUnit/RetrievalPlan 持久化 API、retry policy/partial 显式转移、registry 冻结窄 facade + 恶意 provider 测试、AC-P1a-3 改 T1a-7+T1b-4 双件关闭、corpus 升行为级断言、规范化快照定义、无人值守纪律（fail-fast/资源关闭/测试禁 bind 端口）。Wilson 73/189 边界他验算确认正确。T1a-0 已绿（worktree 0cc4b58） |
