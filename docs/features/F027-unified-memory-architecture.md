@@ -369,11 +369,36 @@ wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md �
 
 德彪 review 增补（r1 1P1+3P2 → r2 4P2 → r3 1P2 → r4 GO）：降级谓词放宽 + 树杀/免壳平台分流 + **前端全量 PUT 严格串行化**（乱序覆盖与脏段携带同灭，双写者失败回滚，r1 的 seq guard 中间态被 r2 串行化取代）+ 收录卡 dirty guard/保存中禁输入/loadFailed 禁保存+重试。自审追加：setWikiCompile 失败回滚、model id 首字符限制。活体冒烟（worktree preview :8802）：limit=200 回显 / codex+自由 id roundtrip / `--yolo`、`a|b` 双 400。
 
+### 收尾补丁 #3 · 审批体验三连（列表并行 + promote 三态 + 强度可选，2026-06-13 小孙活体验证后拍）
+
+小孙原话：①「为啥我点审批 迟迟没有东西出来 等了好久才出来东西 这么卡吗」②「除了gemini无法选择强度 claude 和 codex应该都是可以选择强度的」③「我点了promote前端能有个进度条吗？不然好了没好哦看不懂 而且报错我也不知道」。
+
+#### AC-W5 · 审批列表后端并行加载
+
+- [x] 根因实测：审批列表 62 篇 draft，后端 walkAllDrafts 逐篇串行 readFile+stat+parseFrontmatter（与 limit=200 无关——无论返回 50/200 都 summarize 全部）
+- [x] walkInto 拆 collectDraftFiles（递归收 .md 路径，串行 readdir cheap）+ `mapWithConcurrency(16)` 并行 summarize（保序 + FD 上限）；symlink/_superseded 排除、ENOENT fresh-wiki 返空、summarizeDraft 失败 null 过滤 — 语义全不变
+
+#### AC-W6 · 收录卡推理强度可选（claude/codex 有，gemini 无）
+
+- [x] runtime-config `wikiCompile.effort` 按 provider 的 `MODEL_CATALOG.efforts` 白名单校验（claude low/medium/high/max；codex none…xhigh；gemini efforts=[] → 拒 400）；validate + sanitize 同口径
+- [x] runner 传参：claude `--effort <v>`（createClaudeModelRunner 第三参）/ codex `--config model_reasoning_effort="<v>"`，复用主 runtime 形态；gemini 不传
+- [x] 动态 runner：resolveWikiCompileTarget 带 effort + 缓存键 `label@effort`（热切强度不命中旧 runner）；defaultBuildRunner 透传 — 生产链经动态 runner 自动生效，server.ts 未改
+- [x] 前端收录卡：强度 `<select>` 读 store.catalog[provider].efforts，非空才渲染（gemini 隐藏 → 小孙②）；切引擎重置强度（防跨引擎非法值）；保存仅本引擎支持才带 effort
+
+#### AC-W7 · promote 三态 + 批量进度
+
+- [x] PromoteModal 三态：进行中 spinner+「正在提交…勿重复点击」/ ✅成功面板显 finalPath（不再静默关弹窗，父 handlePromoteSuccess 改只 refetch）/ ❌错误红框
+- [x] BatchPromoteModal + useBatchPromote：progress {done,total}，submitting 视图「已提交 X/Y」+ 进度条，每片完成累加
+
+德彪 review：r1 = **GO**（P1/P2/P3 全无，"A/B/C 链路与边界处理正确"）。TDD 全程 Red→Green；api 100 + 前端 111 受影响测试 + 双 tsc 零。
+
 ### 活体验证（小孙指定）
 
 本补丁落档 commit 本身改动 `docs/features/F027-*.md` → docs-watcher 应自动收录新 draft（验证「改文档 → wiki 后台自动跟」）；合并后 touch 同一文档第二次，旧 draft 应自动进 `_superseded`（验证 AC-W2）；次日 04:00 NHC 首跑出 warnings 报告（验证体检链）。
 
 收尾补丁 #2 增补（主库重启后）：审批列表一键全选 57+ 篇 / 批量 >50 自动分批 / ⚙ 卡切 codex 或 gemini 跑一次 ingest 看降级 log（gemini `-p` 空参形态是唯一未活测假设，失败被降级链兜住）。
+
+收尾补丁 #3 增补（主库重启后）：① 审批列表加载明显变快（62 篇并行）；② 收录卡切 claude/codex 出现强度下拉、切 gemini 消失，选 high/xhigh 保存后跑一次看 log；③ promote 单篇出进度+成功落地路径、批量出「已提交 X/Y」进度条。
 
 ## 后续 follow-up（不在 F027 范围）
 
@@ -413,5 +438,6 @@ wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md �
 | 2026-06-10 | dev `e80427d` | 收尾全链：全文展开（r1-r3 GO）+ 警告 404 修复（6 轮审 GO-with-residual）+ RuntimeLog 拖高 + #286 自动召回 FU 四件（r2 GO）+ #285 session_memories→wiki 深迁移 + 旧 3 记忆工具后端退役（r3 GO）。quality-gate 愿景自检 6 痛点机制层全闭环。 |
 | 2026-06-12 | dev `784b5de` | 收尾补丁·收录体验：AC-W1 编译模型可配（动态 runner 热生效 + claude tab 下拉）+ AC-W2 同源 draft 自动收敛（_superseded 归档 + 串行化 + 三入口闸门）。德彪 r1(1P1+3P2)→r2(1P1+1P2)→r3 GO。**生效需主库重启**（小孙 start-project）。 |
 | 2026-06-13 | dev `144b632` | 收尾补丁#2·KB 审批 UX：AC-W3 全选三件套（limit=200 + 三态全选 + 50 切片分批双态）+ AC-W4 收录设置卡（三引擎 + 模型自由输入，claude tab 下拉迁来）。德彪 r1(1P1+3P2)→r2(4P2)→r3(1P2)→r4 GO + 自审 2 件（注入双闸/失败回滚）。**生效需主库重启**（与 784b5de 一起）。 |
+| 2026-06-13 | dev `09d7bcf` | 收尾补丁#3·审批体验三连：AC-W5 列表并行加载（mapWithConcurrency 16，62 篇串行→并行）+ AC-W6 收录卡强度可选（claude/codex effort 白名单 + 动态 runner 缓存键含 effort，gemini 隐藏）+ AC-W7 promote 三态（进度/成功显路径/错误）+ 批量「已提交 X/Y」。德彪 r1 GO。**生效需主库重启**（与 784b5de/144b632 一起）。 |
 
 **合并后运维步（pending）**：① B3 backfill 55 篇 docs 全量真编译（`backfill-docs.ts --ingest-module`）② 存量 session 摘要导出（`migrate-session-memories.ts`）③ `DROP TABLE wiki_memories` / session_memories 读路径切文件 = 小孙拍。
