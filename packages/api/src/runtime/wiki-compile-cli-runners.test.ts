@@ -73,6 +73,26 @@ describe("createCodexPromptRunner", () => {
     assert.ok(!fake.calls[1].args.includes("-m"))
   })
 
+  it('补丁#3 · effort → --config model_reasoning_effort="<effort>"（小孙：codex 可选强度）', async () => {
+    const fake = makeFakeSpawn({ stdout: "x" })
+    await createCodexPromptRunner({ spawn: fake.spawn, model: "gpt-5.4", effort: "xhigh" }).runPrompt(
+      "p",
+    )
+    const args = fake.calls[0].args
+    assert.ok(args.includes("-m") && args.includes("gpt-5.4"))
+    assert.ok(args.includes("--config"), `应含 --config: ${args.join(" ")}`)
+    assert.ok(
+      args.some((a) => String(a) === 'model_reasoning_effort="xhigh"'),
+      `应含 model_reasoning_effort="xhigh": ${args.join(" ")}`,
+    )
+  })
+
+  it("补丁#3 · 无 effort → 不带 --config（CLI 默认强度）", async () => {
+    const fake = makeFakeSpawn({ stdout: "x" })
+    await createCodexPromptRunner({ spawn: fake.spawn, model: "gpt-5.4" }).runPrompt("p")
+    assert.ok(!fake.calls[0].args.includes("--config"))
+  })
+
   it("非零退出 → error 含 exit-code + stderr 摘要（fallback 链可识别 quota/rate）", async () => {
     const fake = makeFakeSpawn({ exitCode: 1, stderr: "rate limit exceeded" })
     const r = await createCodexPromptRunner({ spawn: fake.spawn }).runPrompt("p")

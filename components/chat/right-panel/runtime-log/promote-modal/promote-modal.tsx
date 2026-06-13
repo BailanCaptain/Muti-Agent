@@ -150,9 +150,14 @@ export function PromoteModal({
     >
       <div className="bg-white rounded-lg shadow-xl w-[640px] max-h-[80vh] overflow-y-auto p-6">
         <h2 id="promote-modal-title" className="text-lg font-semibold mb-4">
-          Promote draft → wiki
+          {commitHook.data ? "Promote 成功" : "Promote draft → wiki"}
         </h2>
 
+        {/* 补丁#3（小孙「好了没好看不懂」）：成功 → 显式成功面板，不再静默关弹窗 */}
+        {commitHook.data ? (
+          <PromoteSuccessView finalPath={commitHook.data.finalPath} onClose={handleClose} />
+        ) : (
+          <>
         {/* §1 Draft info */}
         <div className="mb-4 text-sm text-gray-600">
           <div className="font-medium text-gray-800">Source draft:</div>
@@ -217,24 +222,73 @@ export function PromoteModal({
           </div>
         ) : null}
 
-        {/* §6 Buttons */}
-        <div className="flex justify-end gap-2 mt-6">
-          <button
-            type="button"
-            onClick={handleClose}
-            className="px-4 py-2 text-sm border rounded hover:bg-gray-50"
+        {/* §6 补丁#3：进行中 → 显式进度态（spinner+文案，禁重复点）；否则按钮 */}
+        {commitHook.isLoading ? (
+          <div
+            className="mt-6 flex items-center gap-2 rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700"
+            data-testid="promote-progress"
+            role="status"
+            aria-live="polite"
           >
-            取消
-          </button>
-          <button
-            type="button"
-            onClick={handlePromote}
-            disabled={!canPromote}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-          >
-            {commitHook.isLoading ? "Promoting..." : "Promote"}
-          </button>
+            <Spinner />
+            正在提交并跑二次审计…（请稍候，勿重复点击）
+          </div>
+        ) : (
+          <div className="flex justify-end gap-2 mt-6">
+            <button
+              type="button"
+              onClick={handleClose}
+              className="px-4 py-2 text-sm border rounded hover:bg-gray-50"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={handlePromote}
+              disabled={!canPromote}
+              className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+            >
+              Promote
+            </button>
+          </div>
+        )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── 补丁#3：进度 spinner + 成功面板（小孙「好了没好看不懂」）─────────────────
+
+function Spinner() {
+  return (
+    <span
+      className="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600"
+      aria-hidden="true"
+    />
+  )
+}
+
+function PromoteSuccessView({ finalPath, onClose }: { finalPath: string; onClose: () => void }) {
+  return (
+    <div data-testid="promote-success">
+      <div className="mb-4 rounded border border-green-300 bg-green-50 p-4">
+        <div className="font-medium text-green-800">✅ 已 promote 到正式 wiki</div>
+        <div className="mt-2 text-xs text-green-700">
+          落地路径：
+          <span className="font-mono break-all">{finalPath}</span>
         </div>
+        <div className="mt-1 text-xs text-green-600">该 draft 已从审批列表移除。</div>
+      </div>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-4 py-2 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+        >
+          完成
+        </button>
       </div>
     </div>
   )

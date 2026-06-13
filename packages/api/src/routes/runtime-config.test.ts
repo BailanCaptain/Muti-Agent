@@ -105,6 +105,61 @@ test("收录设置 · provider 枚举外 → 400；primaryModel 空白/超长/�
   })
 })
 
+test("补丁#3 · wikiCompile.effort 按 provider 白名单校验（claude high / codex xhigh → 200 回读）", async () => {
+  await withTempConfig(async () => {
+    const app = Fastify()
+    registerRuntimeConfigRoutes(app)
+    // claude + high（claude efforts 含 high）
+    let put = await app.inject({
+      method: "PUT",
+      url: "/api/runtime-config",
+      payload: { config: { wikiCompile: { provider: "claude", effort: "high" } } },
+    })
+    assert.equal(put.statusCode, 200)
+    // codex + xhigh（codex efforts 含 xhigh）
+    put = await app.inject({
+      method: "PUT",
+      url: "/api/runtime-config",
+      payload: {
+        config: { wikiCompile: { provider: "codex", primaryModel: "gpt-5.4", effort: "xhigh" } },
+      },
+    })
+    assert.equal(put.statusCode, 200)
+    const getRes = await app.inject({ method: "GET", url: "/api/runtime-config" })
+    await app.close()
+    assert.deepEqual(getRes.json(), {
+      config: { wikiCompile: { provider: "codex", primaryModel: "gpt-5.4", effort: "xhigh" } },
+    })
+  })
+})
+
+test("补丁#3 · wikiCompile.effort 越界 → 400（gemini 无强度 / claude 不含 xhigh / 默认 claude 不含 bogus）", async () => {
+  await withTempConfig(async () => {
+    const app = Fastify()
+    registerRuntimeConfigRoutes(app)
+    const bad = [
+      { wikiCompile: { provider: "gemini", effort: "high" } }, // gemini efforts=[]
+      { wikiCompile: { provider: "claude", effort: "xhigh" } }, // xhigh 是 codex 的
+      { wikiCompile: { effort: "bogus" } }, // 默认 claude，bogus 非法
+      { wikiCompile: { effort: 123 } }, // 非字符串
+    ]
+    for (const config of bad) {
+      const res = await app.inject({
+        method: "PUT",
+        url: "/api/runtime-config",
+        payload: { config },
+      })
+      assert.equal(res.statusCode, 400, `应 400: ${JSON.stringify(config)} → ${res.body}`)
+      const body = res.json() as { errors?: string[] }
+      assert.ok(
+        body.errors?.some((e) => e.includes("effort")),
+        `errors 应指明 effort: ${JSON.stringify(body)}`,
+      )
+    }
+    await app.close()
+  })
+})
+
 test("收录设置 · provider 单独设置（model 留空 = 该引擎 CLI 默认模型）→ 200 回读", async () => {
   await withTempConfig(async () => {
     const app = Fastify()

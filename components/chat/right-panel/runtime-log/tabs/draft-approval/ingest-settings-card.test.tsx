@@ -3,9 +3,16 @@
  */
 
 import { useRuntimeConfigStore } from "@/components/stores/runtime-config-store"
-import { act, fireEvent, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { IngestSettingsCard } from "./ingest-settings-card"
+
+/** 补丁#3：effort 下拉读 store.catalog[provider].efforts（claude/codex 有，gemini=[]）。 */
+const CATALOG_WITH_EFFORTS = {
+  claude: { models: [], efforts: ["low", "medium", "high", "max"] },
+  codex: { models: [], efforts: ["none", "minimal", "low", "medium", "high", "xhigh"] },
+  gemini: { models: [], efforts: [] },
+}
 
 describe("IngestSettingsCard", () => {
   beforeEach(() => {
@@ -29,6 +36,42 @@ describe("IngestSettingsCard", () => {
     const input = screen.getByTestId("ingest-settings-model-input") as HTMLInputElement
     expect(input.value).toBe("")
     expect(input.placeholder).toMatch(/claude-opus-4-7/)
+  })
+
+  it("补丁#3 · claude + catalog 有 efforts → 显示强度下拉（含 high 选项）", () => {
+    useRuntimeConfigStore.setState({ catalog: CATALOG_WITH_EFFORTS } as never)
+    render(<IngestSettingsCard />)
+    const sel = screen.getByTestId("ingest-settings-effort") as HTMLSelectElement
+    expect(within(sel).getByRole("option", { name: "high" })).toBeTruthy()
+  })
+
+  it("补丁#3 · gemini → 强度下拉隐藏（gemini 无 efforts，小孙「gemini 无法选强度」）", () => {
+    useRuntimeConfigStore.setState({
+      catalog: CATALOG_WITH_EFFORTS,
+      config: { wikiCompile: { provider: "gemini" } },
+    } as never)
+    render(<IngestSettingsCard />)
+    expect(screen.queryByTestId("ingest-settings-effort")).toBeNull()
+  })
+
+  it("补丁#3 · 选强度 + 保存 → setWikiCompile 带 effort", async () => {
+    const setWikiCompile = vi.fn().mockResolvedValue(undefined)
+    useRuntimeConfigStore.setState({ catalog: CATALOG_WITH_EFFORTS, setWikiCompile } as never)
+    render(<IngestSettingsCard />)
+    fireEvent.change(screen.getByTestId("ingest-settings-effort"), { target: { value: "high" } })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("ingest-settings-save"))
+    })
+    expect(setWikiCompile).toHaveBeenCalledWith({ provider: "claude", effort: "high" })
+  })
+
+  it("补丁#3 · 反映 store 既有 effort（codex xhigh）", () => {
+    useRuntimeConfigStore.setState({
+      catalog: CATALOG_WITH_EFFORTS,
+      config: { wikiCompile: { provider: "codex", effort: "xhigh" } },
+    } as never)
+    render(<IngestSettingsCard />)
+    expect((screen.getByTestId("ingest-settings-effort") as HTMLSelectElement).value).toBe("xhigh")
   })
 
   it("反映 store 既有配置（provider + 自由模型 id）", () => {

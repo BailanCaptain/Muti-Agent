@@ -42,21 +42,32 @@ export interface ResolvedWikiCompileTarget {
   provider: WikiCompileProvider
   /** undefined = 该引擎 CLI 默认模型（仅 codex/gemini；claude 恒有具体 id）。 */
   model: string | undefined
+  /** 推理强度（补丁#3）；缺省/undefined = CLI 默认强度。gemini 恒无（无强度参数）。 */
+  effort?: string
 }
 
-/** config → {provider, model}。claude 缺省模型补 Opus 4.7；codex/gemini 缺省 = CLI 默认。 */
+/**
+ * config → {provider, model, effort}。claude 缺省模型补 Opus 4.7；codex/gemini 缺省 = CLI 默认。
+ * effort 直接透传（已由 runtime-config 校验按 provider 白名单；gemini 恒无 effort）。
+ */
 export function resolveWikiCompileTarget(config: RuntimeConfig): ResolvedWikiCompileTarget {
   const provider = config.wikiCompile?.provider ?? DEFAULT_WIKI_COMPILE_PROVIDER
   const raw = config.wikiCompile?.primaryModel?.trim()
+  const effort = config.wikiCompile?.effort?.trim() || undefined
   if (provider === "claude") {
-    return { provider, model: raw || DEFAULT_WIKI_COMPILE_MODEL }
+    return { provider, model: raw || DEFAULT_WIKI_COMPILE_MODEL, effort }
   }
-  return { provider, model: raw || undefined }
+  return { provider, model: raw || undefined, effort }
 }
 
-/** 审计标签：`claude:claude-opus-4-7` / `codex:default` / `gemini:gemini-3-pro` …… */
+/** 审计标签：`claude:claude-opus-4-7` / `codex:default` …（effort 不进标签，见 cacheKey）。 */
 export function wikiCompileTargetLabel(t: ResolvedWikiCompileTarget): string {
   return `${t.provider}:${t.model ?? "default"}`
+}
+
+/** 缓存键 = 标签 + effort（effort 改变 spawn 参数，必须区分，否则热切强度命中旧 runner）。 */
+function wikiCompileCacheKey(t: ResolvedWikiCompileTarget): string {
+  return `${wikiCompileTargetLabel(t)}@${t.effort ?? "default"}`
 }
 
 export interface DynamicWikiCompileRunnerDeps {
@@ -74,10 +85,12 @@ export interface DynamicWikiCompileRunnerDeps {
 function defaultBuildRunner(target: ResolvedWikiCompileTarget): HaikuRunner {
   switch (target.provider) {
     case "claude":
-      return createClaudeModelRunner(target.model ?? DEFAULT_WIKI_COMPILE_MODEL)
+      // 补丁#3：effort 透传（createClaudeModelRunner 第三参 → --effort）
+      return createClaudeModelRunner(target.model ?? DEFAULT_WIKI_COMPILE_MODEL, {}, target.effort)
     case "codex":
-      return createCodexPromptRunner({ model: target.model })
+      return createCodexPromptRunner({ model: target.model, effort: target.effort })
     case "gemini":
+      // gemini 无强度（runtime-config 已拒 gemini+effort）——不传
       return createGeminiPromptRunner({ model: target.model })
   }
 }
@@ -91,14 +104,19 @@ export function createDynamicWikiCompileRunner(
   //（同一时刻配置只有一个值；切换累计的条目数 = 用户试过的组合数，天花板极低）
   const cache = new Map<string, HaikuRunner>()
   const getRunner = (target: ResolvedWikiCompileTarget): HaikuRunner => {
-    const key = wikiCompileTargetLabel(target)
+    // 补丁#3：缓存键含 effort（effort 改 spawn 参数；只按 label 缓存会让热切强度命中旧 runner）
+    const key = wikiCompileCacheKey(target)
     const hit = cache.get(key)
     if (hit) return hit
     const built = buildRunner(target)
     cache.set(key, built)
     return built
   }
-  const fallbackTarget: ResolvedWikiCompileTarget = { provider: "claude", model: FALLBACK_MODEL }
+  const fallbackTarget: ResolvedWikiCompileTarget = {
+    provider: "claude",
+    model: FALLBACK_MODEL,
+    effort: undefined,
+  }
 
   return {
     async runPrompt(prompt, opts) {
@@ -106,7 +124,11 @@ export function createDynamicWikiCompileRunner(
       try {
         target = resolveWikiCompileTarget(loadConfig())
       } catch {
-        target = { provider: DEFAULT_WIKI_COMPILE_PROVIDER, model: DEFAULT_WIKI_COMPILE_MODEL }
+        target = {
+          provider: DEFAULT_WIKI_COMPILE_PROVIDER,
+          model: DEFAULT_WIKI_COMPILE_MODEL,
+          effort: undefined,
+        }
       }
       const primary = getRunner(target)
 

@@ -2,7 +2,12 @@ import assert from "node:assert/strict"
 import type { ChildProcess } from "node:child_process"
 import { EventEmitter } from "node:events"
 import { describe, it, mock } from "node:test"
-import { createHaikuRunner, createOpusRunner, createSonnetRunner } from "./haiku-runner"
+import {
+  createClaudeModelRunner,
+  createHaikuRunner,
+  createOpusRunner,
+  createSonnetRunner,
+} from "./haiku-runner"
 
 type FakeSpawnOpts = {
   code: number | null
@@ -147,6 +152,49 @@ describe("HaikuRunner", () => {
     )
     assert.equal(stdinWriteSpy.mock.calls.length, 1, "prompt must be written to stdin exactly once")
     assert.equal(stdinWriteSpy.mock.calls[0].arguments[0], "my prompt text")
+  })
+
+  it("补丁#3 · createClaudeModelRunner(effort) → --effort <effort> 进 argv（小孙：claude 可选强度）", async () => {
+    let capturedArgs: readonly string[] = []
+    const spawn = ((_cmd: string, args: readonly string[]) => {
+      capturedArgs = args
+      const proc: any = new EventEmitter()
+      proc.stdout = new EventEmitter()
+      proc.stderr = new EventEmitter()
+      proc.stdin = { write: mock.fn(), end: mock.fn() }
+      proc.kill = mock.fn()
+      setTimeout(() => {
+        proc.stdout.emit("data", Buffer.from("ok"))
+        proc.emit("close", 0)
+      }, 1)
+      return proc as ChildProcess
+    }) as any
+    await createClaudeModelRunner("claude-opus-4-7", { spawn }, "high").runPrompt("p")
+    assert.ok(
+      capturedArgs.includes("--effort"),
+      `args should include --effort: ${capturedArgs.join(" ")}`,
+    )
+    assert.equal(capturedArgs[capturedArgs.indexOf("--effort") + 1], "high")
+    assert.equal(capturedArgs[capturedArgs.indexOf("--model") + 1], "claude-opus-4-7")
+  })
+
+  it("补丁#3 · createClaudeModelRunner 无 effort → 不带 --effort（CLI 默认强度）", async () => {
+    let capturedArgs: readonly string[] = []
+    const spawn = ((_cmd: string, args: readonly string[]) => {
+      capturedArgs = args
+      const proc: any = new EventEmitter()
+      proc.stdout = new EventEmitter()
+      proc.stderr = new EventEmitter()
+      proc.stdin = { write: mock.fn(), end: mock.fn() }
+      proc.kill = mock.fn()
+      setTimeout(() => {
+        proc.stdout.emit("data", Buffer.from("ok"))
+        proc.emit("close", 0)
+      }, 1)
+      return proc as ChildProcess
+    }) as any
+    await createClaudeModelRunner("claude-opus-4-7", { spawn }).runPrompt("p")
+    assert.ok(!capturedArgs.includes("--effort"))
   })
 
   it("F027 B3 regression: large prompt (>32KB) goes to stdin, argv stays tiny (no spawn ENAMETOOLONG)", async () => {

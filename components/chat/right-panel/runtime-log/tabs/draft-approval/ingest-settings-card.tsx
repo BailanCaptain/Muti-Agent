@@ -36,6 +36,7 @@ const PROVIDERS: { id: WikiCompileProvider; label: string }[] = [
 
 export function IngestSettingsCard() {
   const wikiCompile = useRuntimeConfigStore((s) => s.config.wikiCompile)
+  const catalog = useRuntimeConfigStore((s) => s.catalog)
   const loaded = useRuntimeConfigStore((s) => s.loaded)
   const loadFailed = useRuntimeConfigStore((s) => s.loadFailed)
   const load = useRuntimeConfigStore((s) => s.load)
@@ -43,6 +44,8 @@ export function IngestSettingsCard() {
 
   const [provider, setProvider] = useState<WikiCompileProvider>(wikiCompile?.provider ?? "claude")
   const [model, setModel] = useState(wikiCompile?.primaryModel ?? "")
+  // 补丁#3（小孙「claude/codex 可选强度」）：effort 本地态；"" = 引擎默认强度。
+  const [effort, setEffort] = useState(wikiCompile?.effort ?? "")
   // 德彪 kb-ux2 r1 P2：用户动过输入后，store 异步到达/外部变更不再覆盖（dirty guard）；
   // 保存成功视为与 store 重新对齐，恢复同步
   const [dirty, setDirty] = useState(false)
@@ -58,10 +61,13 @@ export function IngestSettingsCard() {
     if (dirty) return
     setProvider(wikiCompile?.provider ?? "claude")
     setModel(wikiCompile?.primaryModel ?? "")
-  }, [wikiCompile?.provider, wikiCompile?.primaryModel, dirty])
+    setEffort(wikiCompile?.effort ?? "")
+  }, [wikiCompile?.provider, wikiCompile?.primaryModel, wikiCompile?.effort, dirty])
 
   const modelPlaceholder =
     provider === "claude" ? "留空 = claude-opus-4-7" : `留空 = ${provider} CLI 默认模型`
+  // 补丁#3：当前引擎支持的推理强度（claude/codex 非空，gemini=[]）。catalog 来自 /api/models。
+  const efforts = catalog?.[provider]?.efforts ?? []
 
   return (
     <div
@@ -84,6 +90,8 @@ export function IngestSettingsCard() {
               disabled={save.status === "saving"}
               onChange={() => {
                 setProvider(p.id)
+                // 切引擎重置强度：各引擎强度档不同（claude max / codex xhigh），避免跨引擎非法值
+                setEffort("")
                 setDirty(true)
               }}
               aria-label={`引擎 ${p.label}`}
@@ -114,6 +122,27 @@ export function IngestSettingsCard() {
             <option key={id} value={id} />
           ))}
         </datalist>
+        {/* 补丁#3：推理强度下拉（claude/codex 有 efforts；gemini efforts=[] → 不渲染） */}
+        {efforts.length > 0 && (
+          <select
+            value={effort}
+            disabled={save.status === "saving"}
+            onChange={(e) => {
+              setEffort(e.target.value)
+              setDirty(true)
+            }}
+            aria-label="推理强度"
+            data-testid="ingest-settings-effort"
+            className="shrink-0 rounded border border-slate-200 bg-white px-1.5 py-1 text-[11px] text-slate-900 outline-none transition focus:border-indigo-400"
+          >
+            <option value="">强度：默认</option>
+            {efforts.map((e) => (
+              <option key={e} value={e}>
+                {e}
+              </option>
+            ))}
+          </select>
+        )}
         <button
           type="button"
           // !loaded / loadFailed 也禁：配置没真拉到就保存 = 把默认值（claude+空 → null）
@@ -121,13 +150,21 @@ export function IngestSettingsCard() {
           disabled={save.isBusy || !loaded || loadFailed}
           aria-busy={save.status === "saving"}
           onClick={() =>
-            void save.run(() =>
-              setWikiCompile(
-                provider === "claude" && model.trim() === ""
-                  ? null // 全默认 → 清除段（回落 claude + Opus 4.7）
-                  : { provider, ...(model.trim() ? { primaryModel: model.trim() } : {}) },
-              ).then(() => setDirty(false)), // 保存成功 → 与 store 对齐，恢复同步
-            )
+            void save.run(() => {
+              const trimmedModel = model.trim()
+              // effort 仅当本引擎支持时才带（防 gemini 残留旧值；空 = CLI 默认）
+              const eff = efforts.length > 0 ? effort : ""
+              // 全默认（claude + 空模型 + 空强度）→ 清段回落；否则带非空字段
+              const payload =
+                provider === "claude" && trimmedModel === "" && eff === ""
+                  ? null
+                  : {
+                      provider,
+                      ...(trimmedModel ? { primaryModel: trimmedModel } : {}),
+                      ...(eff ? { effort: eff } : {}),
+                    }
+              return setWikiCompile(payload).then(() => setDirty(false))
+            })
           }
           className={`shrink-0 rounded px-2.5 py-1 text-[10px] font-semibold text-white transition disabled:cursor-not-allowed ${
             save.status === "saved"

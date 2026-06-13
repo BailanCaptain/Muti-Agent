@@ -34,6 +34,8 @@ export interface CliPromptRunnerDeps {
   spawn?: SpawnFn
   /** 模型 id；缺省 → 不传 -m，用 CLI 默认模型。 */
   model?: string
+  /** 推理强度；缺省 → 不传，用 CLI 默认（补丁#3「codex 可选强度」）。 */
+  effort?: string
   /** 超时终止钩子（测试注入）。默认在 createCliPromptRunner 内按平台绑定。 */
   killTree?: (proc: ChildProcess) => void
   /** 平台分流注入（测试两分支用）。缺省 = process.platform === "win32"。 */
@@ -134,6 +136,11 @@ function createCliPromptRunner(command: string, args: string[], deps: CliPromptR
 export function createCodexPromptRunner(deps: CliPromptRunnerDeps = {}): HaikuRunner {
   const args = ["exec", "-s", "read-only", "--skip-git-repo-check"]
   if (deps.model?.trim()) args.push("-m", deps.model.trim())
+  // 补丁#3（小孙「codex 可选强度」）：effort → `--config model_reasoning_effort="<value>"`
+  // （同 codex-runtime 主链）。留空 → 不传 → CLI 默认强度。
+  if (deps.effort?.trim()) {
+    args.push("--config", `model_reasoning_effort="${deps.effort.trim()}"`)
+  }
   return createCliPromptRunner("codex", args, deps)
 }
 

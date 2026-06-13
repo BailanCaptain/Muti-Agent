@@ -15,7 +15,12 @@ export type AgentOverride = {
 }
 /** F027 收录设置 · wiki 编译引擎+模型（全局段，不进 session 配置；卡片在审批页）。 */
 export type WikiCompileProvider = "claude" | "codex" | "gemini"
-export type WikiCompileOverride = { provider?: WikiCompileProvider; primaryModel?: string }
+export type WikiCompileOverride = {
+  provider?: WikiCompileProvider
+  primaryModel?: string
+  /** 补丁#3：推理强度（claude/codex 可选；gemini 无）。 */
+  effort?: string
+}
 export type RuntimeConfig = Partial<Record<Provider, AgentOverride>> & {
   wikiCompile?: WikiCompileOverride
 }
@@ -216,10 +221,12 @@ export const useRuntimeConfigStore = create<RuntimeConfigStore>((set, get) => ({
       const nextConfig: RuntimeConfig = { ...prevConfig }
       const provider = wikiCompile?.provider
       const model = wikiCompile?.primaryModel?.trim()
-      if (wikiCompile !== null && (provider || model)) {
+      const effort = wikiCompile?.effort?.trim()
+      if (wikiCompile !== null && (provider || model || effort)) {
         nextConfig.wikiCompile = {
           ...(provider ? { provider } : {}),
           ...(model ? { primaryModel: model } : {}),
+          ...(effort ? { effort } : {}),
         }
       } else {
         delete nextConfig.wikiCompile

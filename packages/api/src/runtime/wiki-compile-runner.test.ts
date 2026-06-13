@@ -58,13 +58,14 @@ describe("resolveWikiCompileTarget", () => {
     assert.deepEqual(resolveWikiCompileTarget({}), {
       provider: "claude",
       model: "claude-opus-4-7",
+      effort: undefined,
     })
   })
 
   it("claude + 自由 id（建议列表外）原样生效", () => {
     assert.deepEqual(
       resolveWikiCompileTarget({ wikiCompile: { primaryModel: "claude-fable-5" } }),
-      { provider: "claude", model: "claude-fable-5" },
+      { provider: "claude", model: "claude-fable-5", effort: undefined },
     )
   })
 
@@ -72,10 +73,11 @@ describe("resolveWikiCompileTarget", () => {
     assert.deepEqual(resolveWikiCompileTarget({ wikiCompile: { provider: "codex" } }), {
       provider: "codex",
       model: undefined,
+      effort: undefined,
     })
     assert.deepEqual(
       resolveWikiCompileTarget({ wikiCompile: { provider: "gemini", primaryModel: "  " } }),
-      { provider: "gemini", model: undefined },
+      { provider: "gemini", model: undefined, effort: undefined },
     )
   })
 
@@ -217,5 +219,50 @@ describe("createDynamicWikiCompileRunner（三引擎）", () => {
     })
     const r = await runner.runPrompt("p1")
     assert.equal(r.text, "from-claude:claude-opus-4-7")
+  })
+
+  // 补丁#3（小孙「claude/codex 可选强度」）：effort 贯通 target + 缓存键
+  it("resolveWikiCompileTarget 带 effort（claude/codex）；无 effort → undefined", () => {
+    assert.deepEqual(
+      resolveWikiCompileTarget({ wikiCompile: { provider: "claude", effort: "high" } }),
+      { provider: "claude", model: "claude-opus-4-7", effort: "high" },
+    )
+    assert.deepEqual(
+      resolveWikiCompileTarget({
+        wikiCompile: { provider: "codex", primaryModel: "gpt-5.4", effort: "xhigh" },
+      }),
+      { provider: "codex", model: "gpt-5.4", effort: "xhigh" },
+    )
+    assert.deepEqual(resolveWikiCompileTarget({ wikiCompile: { provider: "claude" } }), {
+      provider: "claude",
+      model: "claude-opus-4-7",
+      effort: undefined,
+    })
+  })
+
+  it("effort 变化触发重建（缓存键含 effort），buildRunner 收到正确 effort；回到旧值命中缓存", async () => {
+    const built: ResolvedWikiCompileTarget[] = []
+    let config: RuntimeConfig = { wikiCompile: { provider: "claude", effort: "low" } }
+    const runner = createDynamicWikiCompileRunner({
+      loadConfig: () => config,
+      buildRunner: (t) => {
+        built.push(t)
+        return stubRunner({ text: `e=${t.effort ?? "none"}` })
+      },
+    })
+    const r1 = await runner.runPrompt("p")
+    assert.equal(r1.text, "e=low")
+    config = { wikiCompile: { provider: "claude", effort: "high" } }
+    const r2 = await runner.runPrompt("p")
+    assert.equal(r2.text, "e=high", "effort 变化必须重建（缓存键含 effort）")
+    const opusBuilds = built.filter((t) => t.model === "claude-opus-4-7")
+    assert.equal(opusBuilds.length, 2, "low + high 各建一次")
+    config = { wikiCompile: { provider: "claude", effort: "low" } }
+    await runner.runPrompt("p")
+    assert.equal(
+      built.filter((t) => t.model === "claude-opus-4-7").length,
+      2,
+      "回到 low → 命中缓存，不重建",
+    )
   })
 })

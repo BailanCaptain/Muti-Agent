@@ -75,6 +75,30 @@ describe("BatchPromoteModal", () => {
     expect(destA.value).toBe("wiki/concepts/a.md")
   })
 
+  it("补丁#3 · submitting 阶段显示分批进度（已提交 X/Y，小孙进度条）", async () => {
+    let release: ((v: unknown) => void) | undefined
+    globalThis.fetch = vi.fn(
+      () =>
+        new Promise((res) => {
+          release = (v) =>
+            res({ ok: true, status: 200, json: () => Promise.resolve(v) } as Response)
+        }),
+    ) as unknown as typeof fetch
+
+    render(
+      <BatchPromoteModal open={true} rows={THREE_ROWS} callerAlias="小孙" onClose={() => {}} />,
+    )
+    fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: "首批" } })
+    fireEvent.click(screen.getByTestId("batch-promote-submit"))
+
+    // 提交在飞 → 进度态显示 已提交 0/3
+    const prog = await screen.findByTestId("batch-promote-progress")
+    expect(prog.textContent).toContain("0/3")
+
+    release?.({ ok: true, total: 3, success: [], failed: [] })
+    await waitFor(() => screen.getByText(/批量审批结果/))
+  })
+
   it("(3) dest 改成 invalid → 行内红字 + submit 禁用", () => {
     render(
       <BatchPromoteModal open={true} rows={THREE_ROWS} callerAlias="小孙" onClose={() => {}} />,

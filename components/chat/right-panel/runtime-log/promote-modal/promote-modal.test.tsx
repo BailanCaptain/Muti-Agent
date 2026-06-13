@@ -204,6 +204,76 @@ describe("PromoteModal", () => {
     )
   })
 
+  it("补丁#3 · commit 成功 → 显式成功面板含 finalPath（小孙「好了没好看不懂」）", async () => {
+    mockSequence([
+      { ok: true, status: 200, json: { ok: true, audit: { passed: true } } },
+      {
+        ok: true,
+        status: 200,
+        json: { ok: true, finalPath: "wiki/concepts/rag.md", eventId: 7 },
+      },
+    ])
+    render(
+      <PromoteModal
+        open={true}
+        srcDraftPath="wiki/concepts/draft/_auto/rag.md"
+        callerAlias="黄仁勋"
+        onClose={() => {}}
+      />,
+    )
+    await waitFor(() => screen.getByText(/V14 二次审计 PASS/))
+    fireEvent.change(screen.getByLabelText("Target wiki path"), {
+      target: { value: "wiki/concepts/rag.md" },
+    })
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "整理" } })
+    fireEvent.click(screen.getByRole("button", { name: "Promote" }))
+
+    // 成功后不再静默消失：modal 内显式成功面板 + 落地路径
+    const ok = await screen.findByTestId("promote-success")
+    expect(ok.textContent).toContain("wiki/concepts/rag.md")
+    // 成功后表单输入隐去（不再让用户误以为还要再点）
+    expect(screen.queryByLabelText("Target wiki path")).toBeNull()
+  })
+
+  it("补丁#3 · commit 进行中 → 显式进度态（spinner + 文案），不只是弱文字", async () => {
+    let resolveCommit: ((v: unknown) => void) | undefined
+    let call = 0
+    globalThis.fetch = vi.fn(() => {
+      call++
+      if (call === 1) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ ok: true, audit: { passed: true } }),
+        }) as unknown as Promise<Response>
+      }
+      return new Promise((res) => {
+        resolveCommit = (v) =>
+          res({ ok: true, status: 200, json: () => Promise.resolve(v) } as Response)
+      }) as unknown as Promise<Response>
+    }) as unknown as typeof fetch
+
+    render(
+      <PromoteModal
+        open={true}
+        srcDraftPath="wiki/concepts/draft/_auto/rag.md"
+        callerAlias="黄仁勋"
+        onClose={() => {}}
+      />,
+    )
+    await waitFor(() => screen.getByText(/V14 二次审计 PASS/))
+    fireEvent.change(screen.getByLabelText("Target wiki path"), {
+      target: { value: "wiki/concepts/rag.md" },
+    })
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "整理" } })
+    fireEvent.click(screen.getByRole("button", { name: "Promote" }))
+
+    // 提交在飞 → 进度态可见
+    expect(await screen.findByTestId("promote-progress")).toBeTruthy()
+    resolveCommit?.({ ok: true, finalPath: "wiki/concepts/rag.md", eventId: 7 })
+    await screen.findByTestId("promote-success")
+  })
+
   it("(7) commit 422 reject (AC-P4-2) → commit reject panel 显示 (用户改 body 重试)", async () => {
     // preview pass, commit 422 reject (服务端 V14 二次跑时 reject — 罕见但 plan v5 锁的 path)
     mockSequence([

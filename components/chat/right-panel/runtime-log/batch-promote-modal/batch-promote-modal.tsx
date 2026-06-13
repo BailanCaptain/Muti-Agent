@@ -224,10 +224,35 @@ export function BatchPromoteModal({
 
         {phase === "submitting" && (
           <div
-            className="mb-4 p-6 border rounded bg-gray-50 text-center text-sm text-gray-600"
+            className="mb-4 p-6 border rounded bg-gray-50 text-sm text-gray-600"
             data-testid="batch-promote-submitting"
           >
-            正在批量审批 {editableRows.length} 份 draft，请稍候...
+            <div className="mb-3 text-center">
+              正在批量审批 {editableRows.length} 份 draft（每 50 篇一批，请勿关闭）…
+            </div>
+            {/* 补丁#3（小孙进度条）：分批进度 已提交 X/Y + 进度条 */}
+            {submitHook.progress && (
+              <div data-testid="batch-promote-progress" role="status" aria-live="polite">
+                <div className="mb-1 flex justify-between text-xs text-gray-700">
+                  <span>已提交</span>
+                  <span className="font-mono">
+                    {submitHook.progress.done}/{submitHook.progress.total}
+                  </span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded bg-gray-200">
+                  <div
+                    className="h-2 rounded bg-purple-600 transition-all duration-300"
+                    style={{
+                      width: `${
+                        submitHook.progress.total > 0
+                          ? (submitHook.progress.done / submitHook.progress.total) * 100
+                          : 0
+                      }%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         )}
 

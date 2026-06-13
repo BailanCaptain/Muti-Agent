@@ -53,10 +53,39 @@ const DRAFT_TYPES_ALLOWED: ReadonlySet<DraftType> = new Set<DraftType>([
 
 const DEFAULT_LIMIT = 50
 const SUMMARY_LEN = 200
+/**
+ * 补丁#3（小孙「点审批迟迟没东西出来」）：summarize 并发上限。
+ * draft 攒到 62+ 篇后逐篇串行 readFile+stat+parse 是主要延迟源；并行化但设上限防
+ * 大目录（数百篇）一次打开过多文件描述符。16 对 62 篇是 4 波，对 IO 已基本打满。
+ */
+const SUMMARIZE_CONCURRENCY = 16
 
 interface DraftFrontmatter {
   title?: string
   type?: string
+}
+
+/**
+ * 并发上限的保序 map：worker 池抢 index 跑 fn，最多 limit 个同时在飞。空数组直接返空。
+ * 用于 draft summarize 并行化（补丁#3）——比 Promise.all 全量并发多一道 FD 保护。
+ */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  async function worker(): Promise<void> {
+    for (;;) {
+      const i = next++
+      if (i >= items.length) return
+      results[i] = await fn(items[i])
+    }
+  }
+  const poolSize = Math.min(limit, items.length)
+  await Promise.all(Array.from({ length: poolSize }, () => worker()))
+  return results
 }
 
 export interface DraftScannerDeps {
@@ -160,9 +189,11 @@ export class DraftScanner {
   }
 
   private async walkAllDrafts(root: string): Promise<DraftSummary[]> {
-    const out: DraftSummary[] = []
+    // 补丁#3（小孙「点审批迟迟没东西出来」）：先收集所有 .md 路径（目录遍历串行，cheap），
+    // 再并发 summarize（原逐篇串行 readFile+stat+parse 在 62+ 篇时是主要延迟源）。
+    const files: string[] = []
     try {
-      await this.walkInto(root, out)
+      await this.collectDraftFiles(root, files)
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code
       if (code === "ENOENT" || code === "ENOTDIR") {
@@ -171,10 +202,17 @@ export class DraftScanner {
       }
       throw err
     }
-    return out
+    const summaries = await mapWithConcurrency(files, SUMMARIZE_CONCURRENCY, (f) =>
+      this.summarizeDraft(f),
+    )
+    return summaries.filter((s): s is DraftSummary => s !== null)
   }
 
-  private async walkInto(dir: string, acc: DraftSummary[]): Promise<void> {
+  /**
+   * 递归收集 draft 树下所有 .md 绝对路径。目录遍历保持串行（只 readdir，cheap）；
+   * 真正的瓶颈 summarize 在 walkAllDrafts 里并发跑。symlink/_superseded 排除语义不变。
+   */
+  private async collectDraftFiles(dir: string, acc: string[]): Promise<void> {
     let entries: Awaited<ReturnType<typeof this.fsAdapter.readdir>>
     try {
       entries = await this.fsAdapter.readdir(dir)
@@ -195,12 +233,11 @@ export class DraftScanner {
         // F027 收尾补丁 AC-W2：_superseded 是同源收敛归档区（watcher 同源旧版本自动搬入），
         // 审批列表只见每源最新一篇 → 整个子树不扫。
         if (ent.name === "_superseded") continue
-        await this.walkInto(full, acc)
+        await this.collectDraftFiles(full, acc)
         continue
       }
       if (!ent.name.endsWith(".md")) continue
-      const summary = await this.summarizeDraft(full)
-      if (summary) acc.push(summary)
+      acc.push(full)
     }
   }
 

@@ -11,7 +11,7 @@
  */
 
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { DraftApprovalTab } from "./draft-approval-tab"
 import type { DraftSummary, ListDraftsResponse } from "./draft-approval/use-drafts-data"
@@ -399,6 +399,51 @@ describe("DraftApprovalTab AC-P4-3 [Promote] 按钮 (Day 9)", () => {
     await waitFor(() =>
       expect(fetchCalls.some((u) => u.includes("/api/wiki/drafts/promote/preview"))).toBe(true),
     )
+  })
+
+  it("补丁#3 · promote 成功后成功面板保持显示（不被父组件秒关，小孙「好了没好看不懂」）", async () => {
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/api/wiki/drafts/promote/preview")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ ok: true, audit: { passed: true } }),
+        } as Response)
+      }
+      if (url.includes("/api/wiki/drafts/promote")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ ok: true, finalPath: "wiki/concepts/foo.md", eventId: 9 }),
+        } as Response)
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(makeResponse({ drafts: [makeDraft()], total: 1 })),
+      } as Response)
+    }) as unknown as typeof fetch
+
+    render(<DraftApprovalTab />)
+    await waitFor(() => expect(screen.queryByTestId("draft-approval-list")).toBeTruthy())
+    fireEvent.click(
+      screen.getByTestId("draft-approval-promote-concepts/draft/_auto/2026-05-22-foo.md"),
+    )
+    await waitFor(() => screen.getByText(/V14 二次审计 PASS/))
+    fireEvent.change(screen.getByLabelText("Target wiki path"), {
+      target: { value: "wiki/concepts/foo.md" },
+    })
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "整理" } })
+    // 行内也有 "Promote" 按钮 → 限定弹窗内的那个
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Promote" }))
+
+    await waitFor(() => expect(screen.queryByTestId("promote-success")).toBeTruthy(), {
+      timeout: 2000,
+    })
+    // 父组件不得秒关：等一个宏任务后成功面板仍在（旧行为 refetch+setNull 会立即卸载）
+    await new Promise((r) => setTimeout(r, 60))
+    expect(screen.queryByTestId("promote-success")).toBeTruthy()
   })
 
   it("(P4-D9-3) PromoteModal 取消按钮 → modal 关闭", async () => {

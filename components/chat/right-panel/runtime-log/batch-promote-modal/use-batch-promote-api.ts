@@ -81,10 +81,18 @@ export type BatchPromoteResponse = BatchPromoteSummary | BatchPromoteGenericErro
 
 // ── useBatchPromote ──────────────────────────────────────────────────────────
 
+/** 补丁#3（小孙进度条）：分批提交进度 — done = 已提交 items 数，total = 总 items 数。 */
+export interface BatchPromoteProgress {
+  done: number
+  total: number
+}
+
 export interface UseBatchPromoteReturn {
   data: BatchPromoteSummary | null
   isLoading: boolean
   error: string | null
+  /** 分批进行中的进度（提交开始置 {0,total}，每片完成累加；reset/未提交为 null）。 */
+  progress: BatchPromoteProgress | null
   submit: (req: BatchPromoteRequest) => Promise<void>
   reset: () => void
 }
@@ -96,16 +104,21 @@ export function useBatchPromote(): UseBatchPromoteReturn {
   const [data, setData] = useState<BatchPromoteSummary | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [progress, setProgress] = useState<BatchPromoteProgress | null>(null)
 
   const submit = useCallback(async (req: BatchPromoteRequest) => {
     setIsLoading(true)
     setError(null)
     setData(null)
+    // 补丁#3（小孙进度条）：起始 {done:0, total}，每片完成后累加该片 items 数。
+    const total = req.items.length
+    setProgress({ done: 0, total })
     // F027 全选三件套：>50 items 按 50 切片顺序提交（全选 57+ 篇单次必 400）。
     // 整体失败（4xx/5xx/网络）中断后续分片，但已完成分片的结果保留进 data——
     // promote 是已发生事实，必须如实展示，error 同时置位提示剩余未提交。
     const merged: BatchPromoteSummary = { ok: true, total: 0, success: [], failed: [] }
     let firstError: string | null = null
+    let done = 0
     try {
       for (let i = 0; i < req.items.length; i += MAX_BATCH_ITEMS) {
         const chunk = req.items.slice(i, i + MAX_BATCH_ITEMS)
@@ -122,6 +135,8 @@ export function useBatchPromote(): UseBatchPromoteReturn {
         merged.total += raw.total
         merged.success.push(...raw.success)
         merged.failed.push(...raw.failed)
+        done += chunk.length
+        setProgress({ done, total })
       }
     } catch (err) {
       firstError = (err as Error).message ?? "network error"
@@ -135,10 +150,11 @@ export function useBatchPromote(): UseBatchPromoteReturn {
   const reset = useCallback(() => {
     setData(null)
     setError(null)
+    setProgress(null)
     setIsLoading(false)
   }, [])
 
-  return { data, isLoading, error, submit, reset }
+  return { data, isLoading, error, progress, submit, reset }
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

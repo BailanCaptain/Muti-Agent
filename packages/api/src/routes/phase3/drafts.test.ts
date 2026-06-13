@@ -112,6 +112,38 @@ test("AC-W2 · DraftScanner · _superseded 子目录不进审批列表（同源�
   }
 })
 
+test("补丁#3 · DraftScanner · summarize 并行（非串行逐篇，峰值并发>1）", async () => {
+  // 小孙反馈「点审批迟迟没东西出来」根因：62 篇 draft 后端逐篇串行 readFile+stat。
+  // 改并行后，多篇 summarize 应同时 in-flight。用 hang 住的 readFile 量并发峰值：
+  // 串行实现峰值恒=1；并行实现应≥2（带并发上限）。
+  const N = 8
+  let inFlight = 0
+  let peak = 0
+  const fsAdapter = {
+    // 只一层、全 .md 文件（无目录递归）→ readdir 只调一次
+    readdir: async () =>
+      Array.from({ length: N }, (_, i) => ({
+        name: `d${i}.md`,
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+      })),
+    readFile: () =>
+      new Promise<string>((resolve) => {
+        inFlight++
+        peak = Math.max(peak, inFlight)
+        setTimeout(() => {
+          inFlight--
+          resolve("---\ntitle: X\ntype: concept\n---\nbody")
+        }, 5)
+      }),
+    stat: async () => ({ mtime: new Date() }),
+  }
+  const scanner = new DraftScanner({ wikiRoot: "/fake-parallel", fsAdapter })
+  const r = await scanner.list({})
+  assert.equal(r.total, N, "全部 summarize 成功")
+  assert.ok(peak > 1, `summarize 应并行，实测峰值并发=${peak}（串行恒=1）`)
+})
+
 test("Day 3 · DraftScanner · frontmatter.type 取 + 越界值 fallback concept", async () => {
   const tmp = safeTempDir("F027-Day3-drafts-type-")
   try {

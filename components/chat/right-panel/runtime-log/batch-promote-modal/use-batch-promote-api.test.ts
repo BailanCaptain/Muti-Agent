@@ -66,6 +66,51 @@ describe("useBatchPromote 分批提交", () => {
     expect(result.current.error).toBeNull()
   })
 
+  it("补丁#3 · 分批进度：progress 起始 {0,total}，每片累加，终值 = total（小孙进度条）", async () => {
+    const releases: ((s: BatchPromoteSummary) => void)[] = []
+    globalThis.fetch = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { items: BatchPromoteItem[] }
+      return new Promise<Response>((resolve) => {
+        releases.push((summary) => resolve({ ok: true, status: 200, json: async () => summary } as Response))
+        // 记录该片大小供 release 用
+        ;(releases as unknown as { sizes: number[] }).sizes ??= []
+        ;(releases as unknown as { sizes: number[] }).sizes.push(body.items.length)
+      })
+    }) as typeof fetch
+
+    const { result } = renderHook(() => useBatchPromote())
+    let submitDone!: Promise<void>
+    act(() => {
+      submitDone = result.current.submit({
+        items: makeItems(120),
+        callerAlias: "小孙",
+        reason: "整理",
+      })
+    })
+
+    // 第 1 片在飞 → progress 起始 {done:0, total:120}
+    await waitFor(() => expect(releases.length).toBe(1))
+    expect(result.current.progress).toEqual({ done: 0, total: 120 })
+
+    await act(async () => {
+      releases[0](okSummaryFor(makeItems(50)))
+    })
+    await waitFor(() => expect(result.current.progress?.done).toBe(50))
+
+    await waitFor(() => expect(releases.length).toBe(2))
+    await act(async () => {
+      releases[1](okSummaryFor(makeItems(50)))
+    })
+    await waitFor(() => expect(result.current.progress?.done).toBe(100))
+
+    await waitFor(() => expect(releases.length).toBe(3))
+    await act(async () => {
+      releases[2](okSummaryFor(makeItems(20)))
+      await submitDone
+    })
+    expect(result.current.progress).toEqual({ done: 120, total: 120 })
+  })
+
   it(">50 items → 按 50 切片顺序提交并合并 summary（120 → 50/50/20）", async () => {
     const bodies: { items: BatchPromoteItem[] }[] = []
     globalThis.fetch = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {

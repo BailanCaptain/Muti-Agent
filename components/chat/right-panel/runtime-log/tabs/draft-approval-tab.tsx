@@ -74,9 +74,10 @@ export function DraftApprovalTab() {
   }, [])
 
   const handlePromoteSuccess = useCallback(() => {
-    // Promote 成功 → src draft 已 unlink, dest wiki 已写 → refetch drafts list 刷新
+    // Promote 成功 → src draft 已 unlink, dest wiki 已写 → refetch drafts list 刷新。
+    // 补丁#3（小孙「好了没好看不懂」）：**不再 setPromotingDraft(null) 秒关弹窗**——
+    // 让 PromoteModal 停在成功面板（显落地路径），用户点「完成」(onClose) 才关。
     refetch()
-    setPromotingDraft(null)
   }, [refetch])
 
   const handleDemoteSuccess = useCallback(() => {

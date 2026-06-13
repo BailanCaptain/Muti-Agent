@@ -49,7 +49,11 @@ const OPUS_46_MODEL = "claude-opus-4-6"
  *   - SonnetRunner (sonnet-4-6): F027 P12 decision extractor 等需要语义判断准确度的任务
  *     （小孙 2026-05-13 拍板：决策识别准确度优先于 quota；订阅模式 quota 不是约束）
  */
-function createClaudeCliRunner(model: string, deps: HaikuRunnerDeps = {}): HaikuRunner {
+function createClaudeCliRunner(
+  model: string,
+  deps: HaikuRunnerDeps = {},
+  effort?: string,
+): HaikuRunner {
   const spawn = deps.spawn ?? (realSpawn as SpawnFn)
 
   return {
@@ -57,6 +61,9 @@ function createClaudeCliRunner(model: string, deps: HaikuRunnerDeps = {}): Haiku
       const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
       const runtime = resolveClaudeCommand()
       const args = [...runtime.prefixArgs, "--print", "--model", model]
+      // 补丁#3（小孙「claude 可选强度」）：effort → `--effort <value>`（同 claude-runtime 主链）。
+      // 留空 → 不传 → CLI 默认强度。
+      if (effort?.trim()) args.push("--effort", effort.trim())
       const start = Date.now()
       const proc = spawn(runtime.command, args, { shell: runtime.shell })
       // F027 B3: prompt 经 stdin 喂入，**不进 argv**。
@@ -168,6 +175,10 @@ export function createOpus46Runner(deps: HaikuRunnerDeps = {}): HaikuRunner {
  * 具名 4 工厂之外的 id 走本工厂按需构造；id 不存在时 CLI 非零退出（stderr 进 error），
  * 上层 fallback 链兜底。
  */
-export function createClaudeModelRunner(model: string, deps: HaikuRunnerDeps = {}): HaikuRunner {
-  return createClaudeCliRunner(model, deps)
+export function createClaudeModelRunner(
+  model: string,
+  deps: HaikuRunnerDeps = {},
+  effort?: string,
+): HaikuRunner {
+  return createClaudeCliRunner(model, deps, effort)
 }

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import type { AgentKind } from "./model-catalog"
+import { type AgentKind, MODEL_CATALOG } from "./model-catalog"
 
 export type AgentOverride = {
   model?: string
@@ -40,6 +40,19 @@ export type WikiCompileOverride = {
   provider?: WikiCompileProvider
   /** 模型 id 自由字符串；缺省/留空 = 该引擎默认（claude→Opus 4.7，codex/gemini→CLI 默认）。 */
   primaryModel?: string
+  /**
+   * 补丁#3（小孙「claude/codex 应该可选强度」）：推理强度，按 provider 的 efforts 白名单校验
+   * （claude: low/medium/high/max；codex: none…xhigh；gemini 无强度 → 不可设）。留空 = CLI 默认。
+   */
+  effort?: string
+}
+
+/** entry 的有效 provider（合法则取之，否则默认 claude）——effort 白名单按它取。 */
+function resolveWikiCompileProvider(provider: unknown): WikiCompileProvider {
+  return typeof provider === "string" &&
+    (WIKI_COMPILE_PROVIDERS as readonly string[]).includes(provider)
+    ? (provider as WikiCompileProvider)
+    : DEFAULT_WIKI_COMPILE_PROVIDER
 }
 
 /**
@@ -199,6 +212,19 @@ export function validateRuntimeConfigInput(input: unknown): string[] {
           `wikiCompile.primaryModel must be a non-empty string (≤${WIKI_COMPILE_MODEL_MAX_LEN} chars, no control chars)`,
         )
       }
+      // 补丁#3：effort 按 provider 的 efforts 白名单校验（gemini efforts=[] → 任何 effort 非法）。
+      const eff = entry.effort
+      if (eff !== undefined) {
+        const provider = resolveWikiCompileProvider(entry.provider)
+        const allowed = MODEL_CATALOG[provider].efforts
+        if (typeof eff !== "string" || !allowed.includes(eff)) {
+          errors.push(
+            allowed.length === 0
+              ? `wikiCompile.effort: ${provider} 不支持推理强度（请移除 effort）`
+              : `wikiCompile.effort must be one of: ${allowed.join(", ")} (provider ${provider})`,
+          )
+        }
+      }
     }
   }
   return errors
@@ -278,7 +304,18 @@ function sanitize(input: unknown): RuntimeConfig {
     if (typeof entry.primaryModel === "string" && isValidWikiCompileModelId(entry.primaryModel)) {
       wc.primaryModel = entry.primaryModel.trim()
     }
-    if (wc.provider !== undefined || wc.primaryModel !== undefined) {
+    // 补丁#3：effort 按（已 sanitize 的）provider 白名单留存；非法/越界静默丢弃。
+    if (typeof entry.effort === "string") {
+      const provider = wc.provider ?? DEFAULT_WIKI_COMPILE_PROVIDER
+      if (MODEL_CATALOG[provider].efforts.includes(entry.effort)) {
+        wc.effort = entry.effort
+      }
+    }
+    if (
+      wc.provider !== undefined ||
+      wc.primaryModel !== undefined ||
+      wc.effort !== undefined
+    ) {
       result.wikiCompile = wc
     }
   }
