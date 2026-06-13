@@ -89,7 +89,10 @@ export async function buildInventory(deps: InventoryDeps): Promise<WorktreeInven
   const rows = parseWorktreePorcelain(stdout)
   const result: WorktreeInventoryEntry[] = []
   for (const row of rows) {
-    const entry = registry.find((e) => e.worktreeName === row.name)
+    // 合入后真机 bug 修复：F024 CLI `pnpm worktree:preview` 用全分支名 claim registry
+    // （worktreeName=row.branch），F028 自己的 start 用短名（row.name）。两种 key 都要认，
+    // 否则 CLI 起的 preview 全误判未运行。branch 全分支名 git 保证唯一，精确等值不会误吸附。
+    const entry = registry.find((e) => e.worktreeName === row.name || e.worktreeName === row.branch)
     if (!entry) {
       result.push({ ...row, preview: null })
       continue

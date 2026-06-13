@@ -44,7 +44,13 @@ async function waitFor(
   cond: () => boolean,
   opts: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<boolean> {
-  const timeoutMs = opts.timeoutMs ?? 3000
+  // 默认 3s→150s：本文件用真 fs + chokidar，与同套件的 agent-sessions 107s 归档压测
+  // 并发跑时，chokidar 事件被 IO 饿死，要等压测缓解（~107s）才到，10s 远不够（确定性
+  // 超时挡 gate，隔离稳过）。放大容差覆盖压测全程；cond 成立即返回，正常用例秒过、不
+  // 受影响，只有被饿死时才多等。
+  // TODO(TD): 真根治是 docs-watcher 测试 mock chokidar 脱离真 fs 时序 + agent-sessions
+  //   压测降数据量（100k→1k），二者均属 F027 测试基础设施债，单独立项。本处仅临时解锁。
+  const timeoutMs = opts.timeoutMs ?? 150_000
   const intervalMs = opts.intervalMs ?? 25
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {

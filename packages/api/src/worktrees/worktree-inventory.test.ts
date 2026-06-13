@@ -193,3 +193,46 @@ test("F028 T1 · registry entry with dead ports → none", async () => {
   assert.equal(f027.preview.webAlive, false)
   assert.equal(f027.preview.ownership, "none")
 })
+
+// 合入后真机 bug（小孙 2026-06-13 实测）：F024 CLI `pnpm worktree:preview` 用
+// **全分支名** claim registry（worktreeName="feat/F030-..."），但 inventory 只按
+// row.name（短名 "F030"）匹配 → 全 CLI 起的 preview 误判 null（未运行）。
+// 修复：registry key 匹配 row.name **或** row.branch（全分支名），任一命中即认。
+// （德彪 r1 披露 5 只验了"不误吸附"，漏了"该匹配的全分支名 key 没匹配上"反面）
+test("F028 bugfix · registry keyed by full branch name matches (F024 CLI claim)", async () => {
+  const deps = makeDeps({
+    execGitWorktreeList: async () =>
+      [
+        "worktree C:/repo",
+        "HEAD aaaa111122223333aaaa111122223333aaaa1111",
+        "branch refs/heads/dev",
+        "",
+        "worktree C:/repo/.worktrees/F030",
+        "HEAD ffff111122223333ffff111122223333ffff1111",
+        "branch refs/heads/feat/F030-rich-blocks-readonly-cards",
+        "",
+      ].join("\n"),
+    readRegistry: async () => [
+      { worktreeName: "feat/F030-rich-blocks-readonly-cards", apiPort: 8803, webPort: 3103 },
+    ],
+    probePort: async () => true,
+    readState: async () => null,
+  })
+  const inv = await buildInventory(deps)
+  const f030 = inv.find((r) => r.name === "F030")
+  assert.ok(f030?.preview, "F030 应匹配全分支名 registry key，preview 不为 null")
+  assert.equal(f030.preview.apiPort, 8803)
+  assert.equal(f030.preview.webPort, 3103)
+  assert.equal(f030.preview.apiAlive, true)
+})
+
+// 防回归：短名 key 仍匹配（F028 自己用短名 claim）
+test("F028 bugfix · short-name registry key still matches", async () => {
+  const deps = makeDeps({
+    readRegistry: async () => [{ worktreeName: "F028", apiPort: 8801, webPort: 3101 }],
+    probePort: async () => true,
+    readState: async () => null,
+  })
+  const inv = await buildInventory(deps)
+  assert.ok(inv.find((r) => r.name === "F028")?.preview, "短名 key 匹配不能被破坏")
+})
