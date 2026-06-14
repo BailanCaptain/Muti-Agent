@@ -67,6 +67,17 @@ test("truncates preview text to 80 chars", () => {
   assert.equal(out.previews[0]?.text.length, 80)
 })
 
+test("F030 r3 P2: 未闭合 cc_rich 不泄漏进 preview text（前导保留）", () => {
+  const out = applyMessageToSessionGroup(
+    makeGroup(),
+    msg({ content: '结论\n```cc_rich\n{"kind":"card","id":"x"' }),
+  )
+  const text = out.previews[0]?.text ?? ""
+  assert.ok(!text.includes("cc_rich"), `preview 不应含 cc_rich，实际: "${text}"`)
+  assert.ok(!text.includes("{"), `preview 不应含原始 JSON，实际: "${text}"`)
+  assert.equal(text, "结论")
+})
+
 test("keeps target group at original index and leaves others untouched", () => {
   const g1 = makeGroup({ id: "g1" })
   const g2 = makeGroup({ id: "g2" })

@@ -1,6 +1,6 @@
 import crypto from "node:crypto"
 import type { Provider } from "@multi-agent/shared"
-import { PROVIDERS, PROVIDER_ALIASES } from "@multi-agent/shared"
+import { PROVIDERS, PROVIDER_ALIASES, stripRichFencesForPreview } from "@multi-agent/shared"
 import { and, asc, desc, eq, like, or, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import {
@@ -240,7 +240,8 @@ export class DrizzleSessionRepository {
         group.previews.push({
           provider: row.provider as Provider,
           alias: row.alias!,
-          text: (row.lastMessage ?? "").slice(0, 80),
+          // F030 r4 P2：剔除 cc_rich 围栏再截断，防未闭合卡片 JSON 漏进侧栏（/api/bootstrap 走此路径）
+          text: stripRichFencesForPreview(row.lastMessage ?? "").slice(0, 80),
         })
         const count = Number(row.msgCount ?? 0)
         group.messageCount += count

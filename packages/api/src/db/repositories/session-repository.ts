@@ -1,6 +1,6 @@
 import crypto from "node:crypto"
 import type { Provider } from "@multi-agent/shared"
-import { PROVIDERS, PROVIDER_ALIASES } from "@multi-agent/shared"
+import { PROVIDERS, PROVIDER_ALIASES, stripRichFencesForPreview } from "@multi-agent/shared"
 import { perfCollector } from "../../lib/perf-collector"
 import type {
   AgentEventRecord,
@@ -186,7 +186,8 @@ export class SessionRepository {
         group.previews.push({
           provider: row.provider as Provider,
           alias: row.alias!,
-          text: (row.lastMessage ?? "").slice(0, 80),
+          // F030 r4 P2：剔除 cc_rich 围栏再截断，防未闭合卡片 JSON 漏进侧栏
+          text: stripRichFencesForPreview(row.lastMessage ?? "").slice(0, 80),
         })
       }
     }
@@ -858,6 +859,7 @@ export class SessionRepository {
       )
       .get(threadId) as { content: string } | undefined
 
-    return row?.content.slice(0, 80) ?? ""
+    // F030 r7：当前死代码（F009 后无调用方），但若被重新接线即是预览面 → 防御性剔除围栏
+    return stripRichFencesForPreview(row?.content ?? "").slice(0, 80)
   }
 }

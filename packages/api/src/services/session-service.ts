@@ -10,6 +10,7 @@ import type {
   TimelineMessage,
   ToolEvent,
 } from "@multi-agent/shared"
+import { stripRichFencesForPreview } from "@multi-agent/shared"
 import { perfCollector } from "../lib/perf-collector"
 import type { ProviderProfile } from "../runtime/provider-profiles"
 import type { SessionRepository } from "../storage/repositories"
@@ -197,7 +198,7 @@ export class SessionService {
             alias: thread.alias,
             currentModel: thread.currentModel,
             quotaSummary: "额度信息待接入",
-            preview: lastMsg?.content.slice(0, 80) ?? "",
+            preview: stripRichFencesForPreview(lastMsg?.content ?? "").slice(0, 80),
             running: runningThreadIds.has(thread.id),
             sopSkill,
             sopPhase,
@@ -309,7 +310,7 @@ export class SessionService {
             alias: thread.alias,
             currentModel: thread.currentModel,
             quotaSummary: "额度信息待接入",
-            preview: lastMsg?.content.slice(0, 80) ?? "",
+            preview: stripRichFencesForPreview(lastMsg?.content ?? "").slice(0, 80),
             running: runningThreadIds.has(thread.id),
             sopSkill,
             sopPhase,

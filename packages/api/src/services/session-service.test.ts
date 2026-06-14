@@ -174,6 +174,22 @@ test("F2: getActiveGroupDelta preview truncates to 80 chars", () => {
   assert.equal(delta.providers.codex?.preview?.length, 80)
 })
 
+// F030 r3 P2：侧栏 last-message 摘要直接 slice 原始 content，未闭合 cc_rich 的
+// ```cc_rich + JSON 会泄漏到 UI。preview 必须复用 stripRichFencesForPreview 清理。
+test("F030 r3 P2: getActiveGroupDelta preview 不泄漏未闭合 cc_rich", () => {
+  const threads = [makeThread("codex")]
+  const leaky = '结论先行\n```cc_rich\n{"kind":"card","id":"x","title":"T"'
+  const messages = [makeMessage("thread-codex", "m1", leaky, "2026-01-01T00:00:01Z")]
+  const repo = createMockRepository(threads, messages)
+  const service = new SessionService(repo as never, [])
+
+  const preview = service.getActiveGroupDelta("group-1", new Set(), undefined).providers.codex
+    ?.preview
+  assert.ok(preview !== undefined)
+  assert.ok(!preview.includes("cc_rich"), `preview 不应含 cc_rich，实际: "${preview}"`)
+  assert.ok(!preview.includes("{"), `preview 不应含原始 JSON，实际: "${preview}"`)
+})
+
 test("F2: getActiveGroupDelta preview shows latest message even when no new messages since last delta", () => {
   const threads = [makeThread("codex"), makeThread("claude")]
   const messages = [

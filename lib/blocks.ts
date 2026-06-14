@@ -1,4 +1,5 @@
 import type { Provider, TimelineMessage } from "@multi-agent/shared"
+import { parseRichSegments } from "./rich-content"
 
 // ── Block types ─────────────────────────────────────────────────────
 
@@ -36,7 +37,20 @@ export type ImageBlock = {
   meta?: { source?: string; timestamp?: string; viewport?: { width: number; height: number } }
 }
 
-export type Block = MarkdownBlock | ThinkingBlock | CardBlock | DiffBlock | ImageBlock
+export type ChecklistBlock = {
+  kind: "checklist"
+  id: string
+  title?: string
+  items: Array<{ id: string; text: string; checked?: boolean }>
+}
+
+export type Block =
+  | MarkdownBlock
+  | ThinkingBlock
+  | CardBlock
+  | DiffBlock
+  | ImageBlock
+  | ChecklistBlock
 
 // ── normalizeMessageToBlocks ────────────────────────────────────────
 
@@ -59,9 +73,14 @@ export function normalizeMessageToBlocks(message: TimelineMessage): Block[] {
     })
   }
 
-  // 2. Main content → single markdown block (AC10 backward compat)
+  // 2. Main content → markdown（F030：assistant 消息走 cc_rich 围栏解析，
+  //    切出 card/checklist 交错段；通道语义是 agent→小孙，user 粘贴围栏不触发）
   if (message.content) {
-    blocks.push({ kind: "markdown", content: message.content })
+    if (message.role === "assistant") {
+      blocks.push(...parseRichSegments(message.content))
+    } else {
+      blocks.push({ kind: "markdown", content: message.content })
+    }
   }
 
   // 3. ContentBlocks → typed blocks (F008 AC7)

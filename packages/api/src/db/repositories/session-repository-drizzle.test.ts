@@ -92,6 +92,33 @@ test("appendMessage + listMessages round-trip", async () => {
   }
 })
 
+// F030 r4 P2：/api/bootstrap 走 Drizzle listSessionGroups 内联预览（slice 原始 content），
+// 未闭合 cc_rich 的 ```cc_rich + JSON 会泄漏到侧栏。preview 必须先过 stripRichFencesForPreview。
+test("F030 r4 P2: listSessionGroups preview 不泄漏未闭合 cc_rich", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup("Test")
+    repo.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const thread = repo.listThreadsByGroup(groupId).find((t) => t.provider === "codex")
+    assert.ok(thread)
+    repo.appendMessage(thread.id, "assistant", '结论先行\n```cc_rich\n{"kind":"card","id":"x","title":"T"')
+
+    const group = repo.listSessionGroups().find((g) => g.id === groupId)
+    const preview = group?.previews.find((p) => p.provider === "codex")?.text ?? ""
+    assert.ok(!preview.includes("cc_rich"), `preview 不应含 cc_rich，实际: "${preview}"`)
+    assert.ok(!preview.includes("{"), `preview 不应含原始 JSON，实际: "${preview}"`)
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
 // Regression: F011 设的 default limit=1000 在长 thread (>1000 条) 上 ASC + LIMIT
 // 截掉了最新消息，导致前端 timeline 看不到刚发的消息。无显式 limit 时必须返回全部。
 test("listMessages without limit returns ALL messages even when count > 1000", async () => {

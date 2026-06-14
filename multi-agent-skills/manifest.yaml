@@ -312,6 +312,29 @@ skills:
       - name: "/merge"
         description: "合入门禁检查"
 
+  # ── 富媒体消息 ──
+  rich-messaging:
+    description: 在回复正文用 cc_rich 围栏 JSON 发只读卡片（card/checklist），review 结论、AC 清单、状态汇报渲染成结构化卡片（F030）
+    triggers:
+      - "发卡片"
+      - "发个卡片"
+      - "rich block"
+      - "checklist"
+      - "发个清单"
+      - "结构化汇报"
+      - "长结构化汇报"
+      - "review 结论卡片"
+      - "状态卡片"
+    not_for:
+      - "纯文字聊天"
+      - "需要用户点击交互"
+      - "决策拍板（用 request_decision）"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: []
+    sop_step: null
+    slashCommands: []
+
 # SOP 导航牌
 # 每个条目必须有 suggested_skill + ≥1 hard_rules + ≥1 pitfalls
 # （pnpm check:skills 强制校验，见 scripts/skill-mount-check.ts:verifySopNavigationQuality）

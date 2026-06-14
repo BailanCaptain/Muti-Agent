@@ -3,6 +3,7 @@
 import type { Block } from "@/lib/blocks"
 import type { Provider } from "@multi-agent/shared"
 import { CardBlockComponent } from "./rich-blocks/card-block"
+import { ChecklistBlockComponent } from "./rich-blocks/checklist-block"
 import { DiffBlockComponent } from "./rich-blocks/diff-block"
 import { ImageBlockComponent } from "./rich-blocks/image-block"
 import { MarkdownMessage } from "./markdown-message"
@@ -25,6 +26,8 @@ export function BlockRenderer({ blocks, provider }: BlockRendererProps) {
             return null
           case "card":
             return <CardBlockComponent key={index} block={block} />
+          case "checklist":
+            return <ChecklistBlockComponent key={index} block={block} />
           case "diff":
             return <DiffBlockComponent key={index} block={block} />
           case "image":

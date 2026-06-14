@@ -11,6 +11,7 @@ import type {
   TimelineMessage,
   ToolEvent,
 } from "@multi-agent/shared"
+import { stripRichFencesForPreview } from "@multi-agent/shared"
 import {
   AlertCircle,
   AlertTriangle,
@@ -59,8 +60,10 @@ function formatClock(value: string) {
 }
 
 export function buildFoldedPreview(content: string): string {
-  const plain = content
-    .replace(/```[\s\S]*?```/g, "[代码块]")
+  // F030 r3/r5/r7 P2：所有围栏（cc_rich→[卡片]/未闭合隐藏、普通→[代码块]）统一交容器感知的
+  // scanner 折叠——它剥容器前缀（blockquote/list/缩进）后按 char+length 判定围栏，绝不漏内部
+  // cc_rich JSON。不能用贪婪正则 /```...```/（r5：四反引号块里三反引号 cc_rich 被错误配对残留 JSON）。
+  const plain = stripRichFencesForPreview(content)
     .replace(/`([^`]+)`/g, "$1")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, "[图片]")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
