@@ -18,8 +18,42 @@ import type { WorktreeInventoryEntry } from "./worktree-inventory"
  */
 
 const execFileAsync = promisify(execFile)
+
+// B019 防线（check-adr-004-diff.test.ts 同款）：当本测试在 git pre-commit hook 上下文中被
+// tsx --test 触发时，父进程的 GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE 等 env 会让子进程 git
+// **忽略 cwd 直接操作真实 worktree**——本测试 setupRepo 的 `git init/add/commit -m init`
+// 会因此在真 worktree 造出 "init" 提交并清空 index（实测污染过 F027-v14-judge worktree）。
+// 所有对 temp repo 的 git 调用必须显式剥离这些环境变量。
+const GIT_ENV_VARS_TO_STRIP = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_COMMON_DIR",
+  "GIT_NAMESPACE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_AUTHOR_NAME",
+  "GIT_AUTHOR_EMAIL",
+  "GIT_AUTHOR_DATE",
+  "GIT_COMMITTER_NAME",
+  "GIT_COMMITTER_EMAIL",
+  "GIT_COMMITTER_DATE",
+  "GIT_PREFIX",
+  "GIT_EXEC_PATH",
+  "GIT_CONFIG",
+  "GIT_CONFIG_NOSYSTEM",
+]
+function cleanGitEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  for (const key of GIT_ENV_VARS_TO_STRIP) delete env[key]
+  return env
+}
 const git = async (cwd: string, args: string[]): Promise<string> => {
-  const { stdout } = await execFileAsync("git", args, { cwd, windowsHide: true })
+  const { stdout } = await execFileAsync("git", args, {
+    cwd,
+    windowsHide: true,
+    env: cleanGitEnv(),
+  })
   return stdout
 }
 
