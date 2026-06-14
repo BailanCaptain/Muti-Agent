@@ -130,14 +130,14 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
 - [x] **AC-P1-7 · 唯一注入合约**：扩展 F004 `assemblePrompt` 加 7 字段 + 5 注入区段；runtime 内 grep "Iron Laws" = 1（B022 防回归）；harness 端 grep ≤ 2（接受 CLI 边界）
 - [x] **AC-P1-8 · agent-sessions ledger**：per-agent S-XXXX.md 写入 + sharding（按 R-XXX 分目录 path: `agent-sessions/R-042/S-001-黄仁勋.md`）+ yearly pack 1/1 03:00 触发；fixture 模拟 100k session 文件归档后 active < 1k
 - [x] **AC-P1-9 · 6 类记忆桶物理表**：wiki_memories 5 type + messages 表 1 类 = 6 类全覆盖；canonical_owner 防漂桶 lint 红绿测试（fixture: `tests/fixtures/canonical-owner/red-drift.md` vs `green.md`）
-- [x] **AC-P1-10 · viewfinder anti-drift**（**漂移度阈值锁定**）：
-  - room_decisions append-only + tombstone 字段 + revoke 纠错（写新行 + UPDATE 旧行 superseded_by）
-  - MonthlySnapshot full recompile 触发 → 漂移度 = `1 - jaccard(old.decisions_summary, new.decisions_summary)`
-  - 漂移度 > 30% 自动 replace + 推审计通知到指定 room
+- [x] **AC-P1-10 · viewfinder anti-drift**（**漂移度阈值锁定**）— ⚠️ **月度纠错触发器待武装（残债 C1.5，小孙 2026-06-14 拍下轮专做）**：Phase 1 范围（ledger CRUD + drift jaccard 算法 + fixture）达标；但「挂 Phase 2 P19」的 MonthlySnapshot full-recompile → auto-replace 闭环**生产空转**（2026-06-14 审计实测：`scanRoomViewfindersForSnapshot` MVP 透传 `recompiled===current` → drift 恒 0；未注入 `replaceViewfinder/pushAudit/backup`；活库 room_decisions 247 条全 active / tombstone=0 / superseded=0，纠错一次没跑过）。设计 fork（下轮必读：side-effect-free 探针不能碰 room_decisions 账本）见 `F027/evidence/phase4/F027-RESIDUAL-DEBT.md` C1.5。
+  - room_decisions append-only + tombstone 字段 + revoke 纠错（写新行 + UPDATE 旧行 superseded_by）— ledger 原语 ✅；月度自动纠错触发器 ⏸️待武装
+  - MonthlySnapshot full recompile 触发 → 漂移度 = `1 - jaccard(old.decisions_summary, new.decisions_summary)` — drift 算法 ✅；真重编探针 ⏸️待武装（现 recompiled===current 恒 0）
+  - 漂移度 > 30% 自动 replace + 推审计通知到指定 room — ⏸️待武装（replaceViewfinder/pushAudit 未注入；auto-replace 默认 OFF 设计）
   - fixture: `tests/fixtures/viewfinder-drift/100-iter-telephone-game.json` 模拟 100 次总结迭代，**有 anti-drift 干预条件下**（每 10 iter MonthlySnapshot 检测，drift > 30% auto-replace） 最终 jaccard ≥ 0.7（drift ≤ 30%）；同 fixture 含 raw 100 iter（无干预）drift ≈ 0.6 对照组，证明 anti-drift 必需
   - **验收边界**（小孙 2026-05-13 拍 + 范-r3 CONDITIONAL 修后）：
     - **P12 Phase 1 范围**：决策 ledger CRUD（append/revoke/tombstone/queries）+ 关键词宽召 + HaikuRunner yes/no 精筛 + Coverage Check 三集合（broad/resolved/unresolved）+ viewfinder 6 段 rule-based 模板（small fans 拍：不上 LLM 编 viewfinder）+ jaccard drift 算法纯函数 + AC fixture
-    - **挂 Phase 2 P19 调度**：`runMonthlySnapshot(roomId)` 闭环触发（NightlyJob cron 1 号 03:00）+ auto-replace IO（写旧 viewfinder 到 audit + replace 新文件） + 审计通知 push
+    - **挂 Phase 2 P19 调度** — ⏸️ **待武装（残债 C1.5）**：`runMonthlySnapshot(roomId)` 闭环触发（NightlyJob cron 1 号 03:00）+ auto-replace IO（写旧 viewfinder 到 audit + replace 新文件） + 审计通知 push —— cron 已注册但 `recompileAllRooms` 透传 current（drift 恒 0）、未注入 replaceViewfinder/pushAudit/backup，闭环未通；2026-06-14 小孙拍下轮独立做（side-effect-free 探针 + auto-replace 默认 OFF）
     - **挂 Phase 3 P20 前端**：manual confirm decision API (POST /api/rooms/:id/decisions) + Inspector 显示 Coverage warning unresolved 列表入口
     - **Phase 1 fixture 语义**：fixture `with_anti_drift_intervention` 段含 10 个 block intervention_log 模拟 MonthlySnapshot 检测+ reset 闭环；P19 完成后 fixture 应升级为接真 cron 跑（非模拟）
 - [x] **AC-P1-11 · memory_preflight 自动召回**（北极星兑现 AC）★：
