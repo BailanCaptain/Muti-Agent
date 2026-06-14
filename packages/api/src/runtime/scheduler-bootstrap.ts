@@ -56,9 +56,18 @@ import {
 } from "../services/scheduler/chained-alert-notifier"
 import type { DocsIngestRunner } from "../services/scheduler/docs-ingest-runner"
 import { DocsWatcher } from "../services/scheduler/docs-watcher"
-import { DriftDetector } from "../services/scheduler/drift-detector"
+import {
+  type DriftAlert,
+  DriftDetector,
+  type DriftDetectionResult,
+  buildDriftAlert,
+} from "../services/scheduler/drift-detector"
+import { createDriftWarningsWriter } from "../services/scheduler/drift-warnings-writer"
 import { createHealthWarningsWriter } from "../services/scheduler/health-warnings-writer"
 import type { JobTrace } from "../services/scheduler/job-trace"
+import type { WikiLeasesRepository } from "../db/repositories/wiki-leases-repository"
+import type { UpdateWikiService } from "../wiki/update-wiki-service"
+import { createDriftDraftOpener } from "./drift-draft-opener"
 import { MonthlySnapshot } from "../services/scheduler/monthly-snapshot"
 import { NightlyHealthCheck } from "../services/scheduler/nightly-health-check"
 import { NightlyVacuum } from "../services/scheduler/nightly-vacuum"
@@ -80,7 +89,7 @@ import { WeeklyDraftDigest } from "../services/scheduler/weekly-draft-digest"
 import { WikiCompilerDebounce } from "../services/scheduler/wiki-compiler-debounce"
 import {
   scanAgentSessionsFs,
-  scanDriftTriggersDb,
+  scanDriftTriggersDbDeduped,
   scanRoomViewfindersForSnapshot,
   scanWikiDraftsFs,
   scanWikiEntitiesFs,
@@ -88,6 +97,59 @@ import {
 import { createWikiIndexRecompiler } from "../wiki/wiki-index-recompile"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
+
+/**
+ * 收尾修1 · drift draft 开启失败异常——携带 result 供 caller/scheduler 取详情。
+ * 德彪 r1 P1：JobRunOutcome.status 不含 "failed"（那是 job 抛错时 scheduler 才记的），故"业务
+ * 失败"只能靠**抛错**让 scheduler 记 failed（→ ALERT_STATUSES → alertRoom）。
+ */
+export class DriftCronFailure extends Error {
+  constructor(readonly result: DriftDetectionResult) {
+    super(`drift-detector: ${result.failed.length} draft(s) failed to open`)
+    this.name = "DriftCronFailure"
+  }
+}
+
+/**
+ * 收尾修1 · drift cron 编排（抽成可直测纯函数，避开 croner 计时——不复刻 docs-watcher chronic
+ * flaky，设计审 critique P1）。drift.run() 真扫 + 真开 draft（openUpdateDraft 注入时）；开了 draft
+ * 或有失败 → 旁路 pushDriftAlert（先发，保证失败详情也外推）。告警失败只 warn 不拖垮 cron。
+ *
+ * 德彪 r1 P1：**有 draft 开启失败（failed>0）→ 抛 DriftCronFailure**（scheduler 据此记 status=failed
+ * → ALERT_STATUSES → alertRoom），不再一律伪 "ok" 掩盖业务失败。已开成功的 draft 已独立 commit
+ * 进队列（抛错不回滚）。零失败（含零 trigger / 全成功）→ 返回 {status:"ok", result}。
+ */
+export async function runDriftCron(
+  drift: DriftDetector,
+  pushDriftAlert: ((alert: DriftAlert) => void | Promise<void>) | undefined,
+  alertRoom: string,
+  log?: FastifyBaseLogger,
+  driftWarningsWriter?: (result: DriftDetectionResult) => void | Promise<void>,
+): Promise<{ status: "ok"; result: DriftDetectionResult }> {
+  const result = await drift.run()
+  const triggered = result.draftsOpened.length > 0 || result.failed.length > 0
+  if (triggered) {
+    if (pushDriftAlert) {
+      try {
+        await pushDriftAlert(buildDriftAlert(result, alertRoom))
+      } catch (err) {
+        log?.warn({ err: (err as Error).message }, "[drift] pushDriftAlert threw (ignored)")
+      }
+    }
+    // 收尾修1 · 小孙拍：drift 告警走现有「警告」tab —— 往 `<wikiIndexRoot>/warnings/` 写一条 warning
+    // （复用 NHC warnings 原语 + 同套 leader fencing）→ 现有 GET /api/wiki/warnings + warnings-tab
+    // 自动显示，零新前端。fail-soft：告警落盘失败只 warn，不拖垮 cron（已开成功的 draft 已独立进队列）。
+    if (driftWarningsWriter) {
+      try {
+        await driftWarningsWriter(result)
+      } catch (err) {
+        log?.warn({ err: (err as Error).message }, "[drift] driftWarningsWriter threw (ignored)")
+      }
+    }
+  }
+  if (result.failed.length > 0) throw new DriftCronFailure(result)
+  return { status: "ok", result }
+}
 
 export interface SchedulerBootOptions {
   db: DrizzleDb
@@ -100,6 +162,20 @@ export interface SchedulerBootOptions {
   pushAlert?: (trace: JobTrace) => void | Promise<void>
   /** ChainedAlertNotifier 推送 hook（chained_suspect 命中后实时推 room）。 */
   pushChainedAlert?: (alert: ChainedAlert) => void | Promise<void>
+  /**
+   * 收尾修1 · drift draft 落盘依赖（updateWiki 轻路径 + lease）。给则 DriftDetector 真开 draft 进
+   * 审批队列；缺则 dry-run（扫到记内存不落盘，保 CI/单测旧行为）。
+   *
+   * 德彪 r1 P1：opener 在 bootSchedulerRuntime **内部**构造，leaderTerm 用本 runtime 每轮捕获的
+   * currentLeaseTerm（runtimeLeaseTerm），不是 server.ts 读 DB 现任——后者会让被抢占的旧 leader
+   * 冒用新 term 写入（fencing 失效）。故这里只收 deps，不收预构造的 opener。
+   */
+  driftDraftDeps?: { updateWiki: UpdateWikiService; leases: WikiLeasesRepository }
+  /**
+   * 收尾修1 · drift 开了 draft / 有失败时旁路告警 hook（独立于 job status，status 保持真实 ok）。
+   * ⚠️ 当前 ws 无 UI consumer（同 scheduler.alert 档）→ 真信号是 draft 进队列；ws 端到端 UI 是 follow-up。
+   */
+  pushDriftAlert?: (alert: DriftAlert) => void | Promise<void>
   /** Trace 落盘 root；默认 process.cwd()。生产 = worktree root。 */
   rootDir?: string
   /** 告警目标 room；默认 R-201。 */
@@ -268,6 +344,9 @@ export async function bootSchedulerRuntime(
   // null → writer 跳过事件写入（无身份不写，文件路不受影响）。
   let runtimeLeaseTerm: () => string | null = () => null
   let nhcRunLeaseTerm: string | null = null
+  // 德彪 r1 P1 · drift cron 每轮开始捕获本 runtime 持有的 lease term（轮中被抢占→捕获旧 term<新任
+  // → wiki_events reject_stale_leader trigger 拒，旧 leader 不冒用新 term；同 nhcRunLeaseTerm 纪律）。
+  let driftRunLeaseTerm: string | null = null
   const healthWarningsWriter = opts.wikiIndexRoot
     ? createHealthWarningsWriter({
         wikiRoot: opts.wikiIndexRoot,
@@ -287,6 +366,23 @@ export async function bootSchedulerRuntime(
     logger: opts.log,
   })
 
+  // 收尾修1 · DriftDetector 告警走现有「警告」tab（小孙拍，覆盖 ws 通知 UI 选项）：drift cron 检到
+  // trigger / 开 draft 失败时往 `<wikiIndexRoot>/warnings/` 写 warning（复用 NHC 同套原语 + leader
+  // fencing）→ 现有 warnings-tab 自动显示。根 = wikiIndexRoot（单层，同 NHC，写双层视图读不到）；
+  // leader term 用 drift 每轮捕获的 driftRunLeaseTerm（同 opener fencing，被抢占→旧 term 被 trigger 拒）；
+  // 缺 wikiIndexRoot → undefined（不写告警，与 healthWarningsWriter 同档降级，保 CI/单测旧行为）。
+  const driftWarningsWriter = opts.wikiIndexRoot
+    ? createDriftWarningsWriter({
+        wikiRoot: opts.wikiIndexRoot,
+        events: new WikiEventsRepository(opts.db),
+        leaderContext: {
+          currentLeaderTerm: () => driftRunLeaseTerm,
+          newFencingToken: () => randomUUID(),
+        },
+        warn: (msg) => opts.log.warn({}, msg),
+      })
+    : undefined
+
   // F027 AC-P1-5 codex P2-3：NightlyVacuum 接 recent_drops retention（注入才 prune）
   const vacuum = new NightlyVacuum({
     db: opts.db,
@@ -302,9 +398,20 @@ export async function bootSchedulerRuntime(
     logger: opts.log,
   })
 
+  // 德彪 r1 P1：opener 在内部构造，leaderTerm 用每轮捕获的 driftRunLeaseTerm（本 runtime 持有值，
+  // 非 server.ts 读 DB 现任）→ 旧 leader 被抢占后捕获的旧 term 被 trigger 拒，fencing 不被冒用。
+  const driftOpener = opts.driftDraftDeps
+    ? createDriftDraftOpener({
+        updateWiki: opts.driftDraftDeps.updateWiki,
+        leases: opts.driftDraftDeps.leases,
+        leaderTerm: () => driftRunLeaseTerm ?? "0",
+      })
+    : undefined
   const drift = new DriftDetector({
-    // DB 扫不依赖 wikiRoot — 直接接 wiki_events + a2a_calls
-    scanTriggers: scanDriftTriggersDb(opts.db, opts.log),
+    // DB 扫不依赖 wikiRoot — 直接接 wiki_events + a2a_calls；deduped 包装跨 run 去重（读 reason 反解）
+    scanTriggers: scanDriftTriggersDbDeduped(opts.db, opts.log),
+    // 收尾修1：注入 openUpdateDraft → 扫到 trigger 真开 draft 进审批队列（缺则 dry-run，保 CI 旧行为）
+    openUpdateDraft: driftOpener,
     logger: opts.log,
   })
 
@@ -439,7 +546,13 @@ export async function bootSchedulerRuntime(
       timezone: driftCfg.timezone,
       windowMinutes: driftCfg.windowMinutes,
       timeoutSeconds: driftCfg.timeoutSeconds,
-      run: async () => ({ status: "ok", result: await drift.run() }),
+      // 收尾修1：抽成可直测纯函数（避开 croner，不复刻 docs-watcher 计时 flaky，设计审 critique P1）。
+      // 德彪 r1 P1：轮开始捕获本 runtime 持有的 lease term，opener 写 draft 用此捕获值（被抢占→旧
+      // term 被 reject_stale_leader trigger 拒）。
+      run: () => {
+        driftRunLeaseTerm = runtimeLeaseTerm()
+        return runDriftCron(drift, opts.pushDriftAlert, alertRoom, opts.log, driftWarningsWriter)
+      },
     })
   }
 

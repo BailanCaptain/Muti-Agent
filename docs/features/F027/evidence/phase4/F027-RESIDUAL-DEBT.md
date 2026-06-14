@@ -86,8 +86,8 @@ C. Scheduler/UX 长尾 - 单独立 feature 做（不归 F027）
 | ~~C1.1~~ | ~~`DocsWatcher.onEvent` (line 148)~~ | **已完成** — 2026-05-27 final-vision P1-2 修（commit `bfcbba2` + `227daf1`）：DocsIngestRunner 接 preview→commit pipeline + versioned `_auto/<stem>-<unixMs>.md` 避免 change CAS conflict + 默认 enable | n/a |
 | C1.2 | `NightlyHealthCheck.scanEntities` (line 154) | 每晚 4:00 cron 跑空 | 1d |
 | C1.3 | `WeeklyDraftDigest.scanDrafts` (line 161) | 每周一 9:00 cron 跑空 | 0.5d |
-| C1.4 | `DriftDetector.scanTriggers` (line 166) | V16.5 P19.11 trigger 不扫 | 1d |
-| C1.5 | `MonthlySnapshot.recompileAllRooms` (line 171) | 每月 1 号 cron 跑空 | 1d |
+| ~~C1.4~~ | ~~`DriftDetector.scanTriggers`~~ | **已完成** — 2026-06-14 收尾修1（小孙 goal）：scanDriftTriggersDbDeduped 真扫 wiki_events+a2a_calls + openUpdateDraft 真开 `_auto/` draft 进审批队列 + drift 告警走现有「警告」tab（往 `wiki/warnings/` 写 warning，复用 NHC warnings 原语）。德彪 r1→r2 GO | n/a |
+| C1.5 | `MonthlySnapshot.recompileAllRooms` | **小孙 2026-06-14 拍「先放着，下一轮专门做」**（收尾修2）。实测确认审计属实（recompiled===current → drift 恒 0）。设计 fork（下轮必读）：createViewfinderCompileFn 是增量编译+写 room_decisions 账本（铁律雷），出真 drift 信号需建 side-effect-free 探针（① 全量重编只读探针[推荐] / ② 轻量再渲染），auto-replace 默认 OFF 只出 dry-run 体检报告，backup 落 .runtime/snapshots，pushAudit 新 hook。MonthlySnapshot 类本身已全，只缺探针+4 hook 接线 | 1.5d |
 | C1.6 | `ArchiveYearlySessions.scanSessions` (line 176) | 每年 cron 跑空 | 1d |
 | C1.7 | `WikiCompilerDebounce.recompileDerivedViews` (line 181) | wiki/concepts/*.md 改后 index.md 不刷 | 1d |
 

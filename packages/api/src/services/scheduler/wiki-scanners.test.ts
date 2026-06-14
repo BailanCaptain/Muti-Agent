@@ -26,6 +26,7 @@ import {
   parseFrontmatter,
   scanAgentSessionsFs,
   scanDriftTriggersDb,
+  scanDriftTriggersDbDeduped,
   scanRoomViewfindersForSnapshot,
   scanWikiDraftsFs,
   scanWikiEntitiesFs,
@@ -335,6 +336,126 @@ test("G2 · scanDriftTriggersDb: 近 7d a2a_calls failed → handoff_failure tri
     assert.equal(failures[0].ref, "call-001")
   } finally {
     raw.close()
+  }
+})
+
+// ── 收尾修1 · scanDriftTriggersDbDeduped（跨 run 去重，读 reason 反解）──────
+
+function insertLesson(
+  raw: Database.Database,
+  ref: string,
+  tsIso: string,
+): void {
+  raw
+    .prepare(
+      "INSERT INTO wiki_events (ts, alias, action, path, fencing_token, leader_term, result, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(tsIso, "范德彪", "write", `wiki/lessons/${ref}.md`, "tok", "term1", "ok", "committed")
+}
+
+test("修1 · scanDriftTriggersDbDeduped: 已开过 draft 的 trigger（reason=drift:key）被过滤掉", async () => {
+  const { db, raw } = makeTmpDb()
+  try {
+    const yesterday = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+    insertLesson(raw, "LL-031", yesterday)
+    insertLesson(raw, "LL-032", yesterday)
+    // 上次 run 已为 LL-031 开过 drift draft（路径在 _auto/，不会被当 lesson 再扫到）
+    raw
+      .prepare(
+        "INSERT INTO wiki_events (ts, alias, action, path, reason, fencing_token, leader_term, result, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        yesterday,
+        "drift-detector",
+        "write",
+        "wiki/concepts/draft/_auto/drift-new_lesson-LL-031.md",
+        "drift:new_lesson:LL-031",
+        "tokd",
+        "term1",
+        "ok",
+        "committed",
+      )
+
+    const deduped = await scanDriftTriggersDbDeduped(db)()
+    const newLessons = deduped.filter((t) => t.kind === "new_lesson").map((t) => t.ref)
+    assert.deepEqual(newLessons, ["LL-032"], "LL-031 已开过 → 过滤，只剩 LL-032")
+  } finally {
+    raw.close()
+  }
+})
+
+test("修1 · scanDriftTriggersDbDeduped: 无已处理 reason → 全保留（== 裸 scan）", async () => {
+  const { db, raw } = makeTmpDb()
+  try {
+    const yesterday = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+    insertLesson(raw, "LL-040", yesterday)
+    insertLesson(raw, "LL-041", yesterday)
+    const deduped = await scanDriftTriggersDbDeduped(db)()
+    const refs = deduped
+      .filter((t) => t.kind === "new_lesson")
+      .map((t) => t.ref)
+      .sort()
+    assert.deepEqual(refs, ["LL-040", "LL-041"])
+  } finally {
+    raw.close()
+  }
+})
+
+test("修1 · scanDriftTriggersDbDeduped: 外部 alias/path 复用 drift: reason 不污染（德彪 r1 P2）", async () => {
+  const { db, raw } = makeTmpDb()
+  try {
+    const yesterday = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+    insertLesson(raw, "LL-099", yesterday)
+    // 外部 agent（非 drift-detector）用同 reason 写在正常 wiki 路径——不得压掉真 trigger。
+    raw
+      .prepare(
+        "INSERT INTO wiki_events (ts, alias, action, path, reason, fencing_token, leader_term, result, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        yesterday,
+        "范德彪", // 非 drift-detector alias
+        "write",
+        "wiki/concepts/some-doc.md", // 非 _auto/ draft 路径
+        "drift:new_lesson:LL-099",
+        "tokx",
+        "term1",
+        "ok",
+        "committed",
+      )
+    const deduped = await scanDriftTriggersDbDeduped(db)()
+    const refs = deduped.filter((t) => t.kind === "new_lesson").map((t) => t.ref)
+    assert.deepEqual(refs, ["LL-099"], "外部复用 reason 不应压掉真 trigger（alias+path 双约束）")
+  } finally {
+    raw.close()
+  }
+})
+
+test("修1 · scanDriftTriggersDbDeduped: dedup 查询抛错 → fail-open（返全部 trigger，宁多开不漏）", async () => {
+  // wiki_events 缺 reason 列：裸 scan 只 SELECT path/alias/ts 仍工作；loadProcessedDriftKeys
+  // 的 `SELECT reason ...` 抛错 → catch → 返回未过滤 triggers（CAS conflict 兜底重开）。
+  const sqlite = new Database(":memory:")
+  sqlite.exec(`
+    CREATE TABLE wiki_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      alias TEXT NOT NULL,
+      action TEXT NOT NULL,
+      path TEXT NOT NULL,
+      fencing_token TEXT NOT NULL,
+      leader_term TEXT NOT NULL,
+      result TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending'
+    );
+  `)
+  const db = drizzle(sqlite) as unknown as DrizzleDb
+  try {
+    const yesterday = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+    insertLesson(sqlite, "LL-050", yesterday)
+    const deduped = await scanDriftTriggersDbDeduped(db)()
+    const refs = deduped.filter((t) => t.kind === "new_lesson").map((t) => t.ref)
+    assert.deepEqual(refs, ["LL-050"], "dedup 失败也要保住 trigger（fail-open）")
+  } finally {
+    sqlite.close()
   }
 })
 

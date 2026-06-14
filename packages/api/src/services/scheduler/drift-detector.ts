@@ -18,6 +18,7 @@
  * 另一 agent；promoter = 小孙。本类只负责"开 draft"这一步。
  */
 
+import { createHash } from "node:crypto"
 import type { FastifyBaseLogger } from "fastify"
 import { createLogger } from "../../lib/logger"
 
@@ -191,5 +192,76 @@ export function buildUpdateDraft(trigger: DriftTrigger): DriftUpdateDraft {
           "Action: retrospect 此次 handoff 失败，更新协作流程 / capability registry。",
         ].join("\n"),
       }
+  }
+}
+
+// ── 收尾修1 · drift draft 落盘 + 跨 run dedup helper ───────────────────────
+//
+// openUpdateDraft 把 drift trigger 写成 `_auto/` draft（轻路径：sanitize + updateWiki，
+// 不走 LLM 编译——drift draft 是系统生成的 TODO stub，不是需编译的知识实体）。
+// wiki_events.reason 写 `drift:<kind>:<ref>` 精确编码 trigger key——跨 run dedup 直接读
+// reason 反解（避开 basename `drift-<kind>-<ref>` 的 kind 含_/ref 含- 反解歧义，设计审 critique P1）。
+
+/** drift draft 的 wiki_events.reason 前缀。dedup 按此前缀扫已开 draft。 */
+export const DRIFT_DRAFT_REASON_PREFIX = "drift:"
+
+/**
+ * drift draft 落盘的 alias + 目录——opener 写入、scanner dedup 反查的**单一真相**。
+ * 德彪 r1 P2：dedup 必须用 alias+path 双约束，否则任何 committed event 复用 `drift:` reason
+ * 就能永久压掉真 trigger（reason 命名空间污染）。
+ */
+export const DRIFT_DETECTOR_ALIAS = "drift-detector"
+export const DRIFT_DRAFT_DIR = "wiki/concepts/draft/_auto"
+
+/** trigger → wiki_events.reason（精确编码 key，dedup 反解用）。 */
+export function driftDraftReason(trigger: DriftTrigger): string {
+  return `${DRIFT_DRAFT_REASON_PREFIX}${driftTriggerKey(trigger)}`
+}
+
+/** 从 wiki_events.reason 反解 trigger key（非 drift draft → null）。与 driftDraftReason 严格互逆。 */
+export function parseDriftDraftReasonKey(reason: string | null | undefined): string | null {
+  if (typeof reason !== "string" || !reason.startsWith(DRIFT_DRAFT_REASON_PREFIX)) return null
+  const key = reason.slice(DRIFT_DRAFT_REASON_PREFIX.length)
+  return key.length > 0 ? key : null
+}
+
+/**
+ * trigger → draft 文件 basename。ref 清洗 `[^a-zA-Z0-9_-]→_` 防路径注入（handoff call_id 可含
+ * 任意字符）。
+ *
+ * 德彪 r1 P1：单纯清洗会碰撞——`a:b` 与 `a/b` 都 →`a_b` → 同路径，第二个 trigger 用 baseHash:null
+ * 新建只会持续 CAS conflict 永不进审批队列。附**原始 key 的短 hash** 保证路径单射（dedup 仍走
+ * wiki_events.reason 精确编码，与 basename 解耦，故加 hash 不影响去重）。
+ */
+export function driftDraftBasename(trigger: DriftTrigger): string {
+  const safeRef = trigger.ref.replace(/[^a-zA-Z0-9_-]/g, "_")
+  const keyHash = createHash("sha256").update(driftTriggerKey(trigger)).digest("hex").slice(0, 8)
+  return `drift-${trigger.kind}-${safeRef}-${keyHash}`
+}
+
+/**
+ * 收尾修1 · drift 告警（独立 shape，**不复用 ChainedAlert**——那是 chained_suspect 专用语义，
+ * 设计审 critique P2）。drift.run 开了 draft / 有失败时，cron 旁路推此告警。
+ *
+ * ⚠️ 诚实：当前后端 scheduler.* ws 事件全库无 UI consumer（与既有 scheduler.alert 同档）→ 本告警
+ * 推到 ws 线但暂不到小孙屏幕。**小孙真看得到的信号 = drift draft 进审批队列**（openUpdateDraft 落 _auto/）。
+ * ws 端到端 UI 落地是独立 follow-up（前端 RealtimeServerEvent union + handler）。
+ */
+export interface DriftAlert {
+  scannedAt: string
+  draftsOpened: number
+  failed: number
+  /** 开出的 draft 标题（= 审批队列里小孙看到的条目）。 */
+  draftTitles: string[]
+  targetRoom: string
+}
+
+export function buildDriftAlert(result: DriftDetectionResult, targetRoom: string): DriftAlert {
+  return {
+    scannedAt: result.scannedAt,
+    draftsOpened: result.draftsOpened.length,
+    failed: result.failed.length,
+    draftTitles: result.draftsOpened.map((d) => d.title),
+    targetRoom,
   }
 }

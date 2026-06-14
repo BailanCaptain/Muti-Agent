@@ -42,7 +42,13 @@ import type { FastifyBaseLogger } from "fastify"
 import type * as schema from "../../db/schema"
 import type { SqliteAdapterLike } from "../../wiki/room-compiler/sqlite-checkpoint-store"
 import type { DraftEntry } from "./weekly-draft-digest"
-import type { DriftTrigger } from "./drift-detector"
+import {
+  DRIFT_DETECTOR_ALIAS,
+  DRIFT_DRAFT_DIR,
+  type DriftTrigger,
+  driftTriggerKey,
+  parseDriftDraftReasonKey,
+} from "./drift-detector"
 import type { RoomSnapshot } from "./monthly-snapshot"
 import type { SessionEntry } from "./archive-yearly-sessions"
 import type { WikiEntity, WikiFrontmatter } from "./nightly-health-check"
@@ -319,6 +325,59 @@ export function scanDriftTriggersDb(
 
     return triggers
   }
+}
+
+/**
+ * 收尾修1 · scanDriftTriggersDb + 跨 run dedup（已开过 draft 的 trigger 不重开）。
+ *
+ * 读 wiki_events.reason `drift:<kind>:<ref>`（openUpdateDraft 写入）精确反解已处理 key，
+ * 从扫到的 trigger 里 filter 掉。设计审 critique P1/P2：用 reason 精确反解而非 basename
+ * `drift-<kind>-<ref>`（kind 含 `_`、ref 含 `-`，naive split 会把 key 切错 → dedup 永 miss
+ * → 每周重开）。每次 run 都现查 wiki_events（跨 run 最新性天然保证，DriftDetector 类零改动）。
+ */
+export function scanDriftTriggersDbDeduped(
+  db: DrizzleDb,
+  logger?: FastifyBaseLogger,
+): () => Promise<DriftTrigger[]> {
+  const scan = scanDriftTriggersDb(db, logger)
+  return async () => {
+    const triggers = await scan()
+    let processed: Set<string>
+    try {
+      processed = loadProcessedDriftKeys(db, logger)
+    } catch (err) {
+      logger?.warn(
+        { err: (err as Error).message },
+        "[wiki-scanner] drift dedup load failed (skip dedup, may reopen)",
+      )
+      return triggers // fail-open：宁可多开一次（CAS conflict 兜底）也不漏 trigger
+    }
+    return triggers.filter((t) => !processed.has(driftTriggerKey(t)))
+  }
+}
+
+/** 扫 wiki_events 已开的 drift draft，反解 trigger key 集合（dedup 用）。 */
+function loadProcessedDriftKeys(db: DrizzleDb, logger?: FastifyBaseLogger): Set<string> {
+  const adapter = adaptDrizzleDb(db)
+  const keys = new Set<string>()
+  // 德彪 r1 P2：alias + path 双约束防 reason 命名空间污染——只认 drift-detector 自己写到
+  // _auto/ draft 目录的事件，外部任何复用 `drift:` reason 的 event 不能压掉真 trigger。
+  const rows = adapter
+    .prepare(
+      `SELECT reason FROM wiki_events
+        WHERE state = 'committed'
+          AND action IN ('write', 'append', 'patch')
+          AND alias = ?
+          AND path LIKE ?
+          AND reason LIKE 'drift:%'`,
+    )
+    .all(DRIFT_DETECTOR_ALIAS, `${DRIFT_DRAFT_DIR}/%`) as ReadonlyArray<{ reason: string | null }>
+  for (const r of rows) {
+    const key = parseDriftDraftReasonKey(r.reason)
+    if (key) keys.add(key)
+  }
+  logger?.info({ processedDriftKeys: keys.size }, "[wiki-scanner] loaded processed drift keys")
+  return keys
 }
 
 // ── 4. scanRoomViewfindersForSnapshot (MonthlySnapshot) ────────────────

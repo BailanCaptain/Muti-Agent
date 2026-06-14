@@ -1071,6 +1071,15 @@ export async function createApiServer(options: {
       broadcaster.broadcast({ type: "scheduler.alert", payload: trace } as never),
     pushChainedAlert: (alert) =>
       broadcaster.broadcast({ type: "scheduler.chained_alert", payload: alert } as never),
+    // 收尾修1 · DriftDetector 扫到 trigger 真开 draft（轻路径 updateWiki，无 LLM 编译）+ 旁路告警。
+    // 德彪 r1 P1：只传 deps，opener 在 bootSchedulerRuntime 内部用本 runtime 每轮捕获的 lease term
+    // 构造（非这里读 DB 现任——那会让被抢占的旧 leader 冒用新 term 写入，fencing 失效）。
+    driftDraftDeps: {
+      updateWiki: wikiServices.updateWiki,
+      leases: wikiServices.leases,
+    },
+    pushDriftAlert: (alert) =>
+      broadcaster.broadcast({ type: "scheduler.drift_alert", payload: alert } as never),
     rootDir: process.cwd(),
     skipBoot: process.env.MULTI_AGENT_SKIP_SCHEDULER === "1",
     roomCompileExecutor,

@@ -21,8 +21,14 @@ import fs from "node:fs"
 import path from "node:path"
 import test from "node:test"
 import { createDrizzleDb } from "../db/drizzle-instance"
+import {
+  type DriftAlert,
+  type DriftDetectionResult,
+  DriftDetector,
+  type DriftTrigger,
+} from "../services/scheduler/drift-detector"
 import { assertNoConfigFile } from "../services/scheduler/scheduler-config"
-import { bootSchedulerRuntime } from "./scheduler-bootstrap"
+import { DriftCronFailure, bootSchedulerRuntime, runDriftCron } from "./scheduler-bootstrap"
 import type { JobTrace } from "../services/scheduler/job-trace"
 
 function safeTempDir(prefix: string): string {
@@ -393,4 +399,168 @@ test("F027 wiring i · 周期 reindex in-flight guard — 慢扫描下不并发�
     close()
     safeCleanup(tempDir)
   }
+})
+
+// ── 收尾修1 · runDriftCron（抽成纯函数，避开 croner 计时 flaky）─────────────
+//
+// drift cron 的真业务：drift.run() 真扫真开 draft；开了 draft / 有失败 → 旁路 pushDriftAlert。
+// job status 永远真实 ok（扫描/开 draft 不抛即成功，告警走独立旁路，不污染 job-trace 失败指标）。
+
+function driftWith(opts: {
+  triggers: DriftTrigger[]
+  openThrowsRef?: string
+}): DriftDetector {
+  return new DriftDetector({
+    scanTriggers: async () => opts.triggers,
+    openUpdateDraft: async (d) => {
+      if (opts.openThrowsRef && d.trigger.ref === opts.openThrowsRef) {
+        throw new Error("draft store 写失败")
+      }
+    },
+    logger: silentLogger(),
+  })
+}
+
+test("修1 runDriftCron · 开了 draft → pushDriftAlert 收到 buildDriftAlert 形状 + status 真实 ok", async () => {
+  const drift = driftWith({
+    triggers: [
+      { kind: "new_lesson", ref: "LL-040", detail: "a" },
+      { kind: "model_upgrade", ref: "claude-opus-4-8", detail: "b" },
+    ],
+  })
+  const alerts: DriftAlert[] = []
+  const out = await runDriftCron(drift, (a) => {
+      alerts.push(a)
+    }, "R-201", silentLogger())
+
+  assert.equal(out.status, "ok")
+  assert.equal(out.result.draftsOpened.length, 2)
+  assert.equal(alerts.length, 1, "开了 draft 必旁路告警一次")
+  assert.equal(alerts[0].draftsOpened, 2)
+  assert.equal(alerts[0].failed, 0)
+  assert.equal(alerts[0].targetRoom, "R-201")
+  assert.equal(alerts[0].draftTitles.length, 2)
+})
+
+test("修1 runDriftCron · 零 trigger → 不告警 + status ok（不打扰小孙）", async () => {
+  const drift = driftWith({ triggers: [] })
+  const alerts: DriftAlert[] = []
+  const out = await runDriftCron(drift, (a) => {
+      alerts.push(a)
+    }, "R-201", silentLogger())
+  assert.equal(out.status, "ok")
+  assert.equal(alerts.length, 0, "无 draft 无失败 → 不推告警")
+})
+
+test("修1 runDriftCron · 有失败（draftsOpened=0, failed>0）→ 先告警再抛 DriftCronFailure（德彪 r1 P1）", async () => {
+  // JobRunOutcome.status 不含 failed → 业务失败只能抛错让 scheduler 记 failed（→ ALERT_STATUSES）。
+  const drift = driftWith({
+    triggers: [{ kind: "handoff_failure", ref: "ho-X", detail: "x" }],
+    openThrowsRef: "ho-X",
+  })
+  const alerts: DriftAlert[] = []
+  let caught: unknown
+  try {
+    await runDriftCron(
+      drift,
+      (a) => {
+        alerts.push(a)
+      },
+      "R-201",
+      silentLogger(),
+    )
+    assert.fail("应抛 DriftCronFailure")
+  } catch (err) {
+    caught = err
+  }
+  assert.ok(caught instanceof DriftCronFailure, "draft 开启失败必须抛 DriftCronFailure，不伪 ok")
+  assert.equal((caught as DriftCronFailure).result.failed.length, 1)
+  assert.equal(alerts.length, 1, "抛错前先发告警，失败详情仍外推")
+  assert.equal(alerts[0].failed, 1)
+  assert.equal(alerts[0].draftsOpened, 0)
+})
+
+test("修1 runDriftCron · 部分失败（有开成 + 有失败）→ 抛 DriftCronFailure（已开 draft 不回滚）", async () => {
+  const drift = driftWith({
+    triggers: [
+      { kind: "new_lesson", ref: "LL-ok", detail: "a" },
+      { kind: "handoff_failure", ref: "ho-bad", detail: "b" },
+    ],
+    openThrowsRef: "ho-bad",
+  })
+  await assert.rejects(
+    () => runDriftCron(drift, undefined, "R-201", silentLogger()),
+    (err: unknown) => err instanceof DriftCronFailure && err.result.draftsOpened.length === 1,
+  )
+})
+
+test("修1 runDriftCron · pushDriftAlert 抛错被吞，status 仍 ok（告警失败不拖垮 cron）", async () => {
+  const drift = driftWith({ triggers: [{ kind: "new_lesson", ref: "LL-1", detail: "x" }] })
+  const out = await runDriftCron(
+    drift,
+    () => {
+      throw new Error("ws broadcast 挂了")
+    },
+    "R-201",
+    silentLogger(),
+  )
+  assert.equal(out.status, "ok", "告警 hook 抛错必须吞掉，cron 仍返回 ok")
+  assert.equal(out.result.draftsOpened.length, 1)
+})
+
+test("修1 runDriftCron · 无 pushDriftAlert（undefined）→ 不抛 + status ok", async () => {
+  const drift = driftWith({ triggers: [{ kind: "new_lesson", ref: "LL-1", detail: "x" }] })
+  const out = await runDriftCron(drift, undefined, "R-201", silentLogger())
+  assert.equal(out.status, "ok")
+  assert.equal(out.result.draftsOpened.length, 1)
+})
+
+// ── 收尾修1 · driftWarningsWriter（小孙拍：drift 告警走现有「警告」tab）─────────
+//
+// 第 5 参数 driftWarningsWriter：开了 draft / 有失败时往 wiki/warnings/ 写一条 warning（现有 tab
+// 自动显示）。与 pushDriftAlert 同条件触发、同 fail-soft、抛错前也写（失败也告警）。
+
+test("修1 runDriftCron · 开了 draft → driftWarningsWriter 收到 result（draft 进警告 tab）", async () => {
+  const drift = driftWith({ triggers: [{ kind: "new_lesson", ref: "LL-1", detail: "x" }] })
+  const written: DriftDetectionResult[] = []
+  const out = await runDriftCron(drift, undefined, "R-201", silentLogger(), async (r) => {
+    written.push(r)
+  })
+  assert.equal(out.status, "ok")
+  assert.equal(written.length, 1, "开了 draft 必写一条 warning")
+  assert.equal(written[0]?.draftsOpened.length, 1)
+})
+
+test("修1 runDriftCron · 零 trigger → 不写 warning（无 drift 不打扰）", async () => {
+  const drift = driftWith({ triggers: [] })
+  const written: DriftDetectionResult[] = []
+  await runDriftCron(drift, undefined, "R-201", silentLogger(), async (r) => {
+    written.push(r)
+  })
+  assert.equal(written.length, 0, "无 draft 无失败 → 不写 warning")
+})
+
+test("修1 runDriftCron · 有失败 → 抛 DriftCronFailure 前仍写 warning（失败也进警告 tab）", async () => {
+  const drift = driftWith({
+    triggers: [{ kind: "handoff_failure", ref: "ho-X", detail: "x" }],
+    openThrowsRef: "ho-X",
+  })
+  const written: DriftDetectionResult[] = []
+  await assert.rejects(
+    () => runDriftCron(drift, undefined, "R-201", silentLogger(), async (r) => {
+      written.push(r)
+    }),
+    (err: unknown) => err instanceof DriftCronFailure,
+  )
+  assert.equal(written.length, 1, "失败也要先写 warning 再抛")
+  assert.equal(written[0]?.failed.length, 1)
+})
+
+test("修1 runDriftCron · driftWarningsWriter 抛错被吞，status 仍 ok（告警落盘失败不拖垮 cron）", async () => {
+  const drift = driftWith({ triggers: [{ kind: "new_lesson", ref: "LL-1", detail: "x" }] })
+  const out = await runDriftCron(drift, undefined, "R-201", silentLogger(), async () => {
+    throw new Error("warnings 落盘挂了")
+  })
+  assert.equal(out.status, "ok", "warning writer 抛错必须吞掉，cron 仍 ok")
+  assert.equal(out.result.draftsOpened.length, 1)
 })
