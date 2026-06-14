@@ -26,10 +26,21 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8
 
 // ── contract types (mirror routes/phase4/promote.ts + V14PromoteAuditResult) ──
 
+// posture C（德彪 r1 P2）：mirror 后端 V14AuditLayer——删 imperative_statement（regex 层已换 LLM
+// 判官）+ 加 llm_semantic_injection / judge_parse_failed / judge_unavailable + 补 exemption_sanitize_blocked。
 export type V14AuditLayer =
-  | "imperative_statement"
   | "prompt_structure"
   | "tainted_source_direct_quote"
+  | "llm_semantic_injection"
+  | "judge_parse_failed"
+  | "judge_unavailable"
+  | "exemption_sanitize_blocked"
+
+/** judge 基础设施类拒绝（可重试，非内容问题）——UI 文案应提示「稍后重试」而非「改写 body」。 */
+export const RETRYABLE_AUDIT_LAYERS: ReadonlySet<V14AuditLayer> = new Set<V14AuditLayer>([
+  "judge_parse_failed",
+  "judge_unavailable",
+])
 
 export interface V14RejectReason {
   layer: V14AuditLayer
@@ -108,7 +119,12 @@ export function usePromoteAudit(): UsePromoteAuditReturn {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       })
-      const raw = (await resp.json()) as { ok: boolean; audit?: V14PromoteAuditResult; error?: string; code?: string }
+      const raw = (await resp.json()) as {
+        ok: boolean
+        audit?: V14PromoteAuditResult
+        error?: string
+        code?: string
+      }
       if (!resp.ok || !raw.ok || !raw.audit) {
         setError(`${raw.code ?? "HTTP_" + resp.status}: ${raw.error ?? "preview failed"}`)
         setData(null)

@@ -43,8 +43,8 @@ import { writeFileAtomic } from "../atomic-write"
 import { WikiPathInvalidError, safeWikiPath } from "../path-containment"
 import { checkExemptionSanitizeBlocked } from "./exemption-tainted-fields"
 import {
-  V14PromoteAuditService,
   type V14PromoteAuditInput,
+  V14PromoteAuditService,
   type V14RejectReason,
 } from "./v14-promote-audit-service"
 
@@ -106,7 +106,8 @@ export class PromoteWikiService {
     this.audit = cfg.auditService ?? new V14PromoteAuditService()
   }
 
-  promote(req: PromoteRequest): PromoteResponse {
+  // posture C：audit 含 LLM 语义判官 → async。caller（promote route / batch service）已 await。
+  async promote(req: PromoteRequest): Promise<PromoteResponse> {
     // ─── 1. path 校验 ──────────────────────────────────────────────────────
     let srcAbsolute: string
     let destAbsolute: string
@@ -170,7 +171,7 @@ export class PromoteWikiService {
       body: srcContent,
       taintedSourceFields: req.taintedSourceFields,
     }
-    const auditResult = this.audit.audit(auditInput)
+    const auditResult = await this.audit.audit(auditInput)
     if (!auditResult.passed) {
       return {
         status: "audit_rejected",

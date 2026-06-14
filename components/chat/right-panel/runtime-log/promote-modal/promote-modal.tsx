@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
   type PromoteCommitSuccess,
+  RETRYABLE_AUDIT_LAYERS,
   type V14AuditLayer,
   type V14RejectReason,
   usePromoteAudit,
@@ -50,9 +51,20 @@ const ALLOWED_DEST_PREFIXES = [
 ] as const
 
 const LAYER_LABEL_CN: Record<V14AuditLayer, string> = {
-  imperative_statement: "命令式语句",
   prompt_structure: "Prompt 结构",
   tainted_source_direct_quote: "Tainted_source 直引",
+  llm_semantic_injection: "LLM 语义注入",
+  judge_parse_failed: "判官响应异常（可重试）",
+  judge_unavailable: "判官暂不可用（可重试）",
+  exemption_sanitize_blocked: "豁免文档 sanitize 红线",
+}
+
+/** 德彪 r1 P2：judge 基础设施类拒绝是「稍后重试」（非内容问题），不应提示「改写 body」。 */
+function adviceForReject(reject: V14RejectReason): string {
+  if (RETRYABLE_AUDIT_LAYERS.has(reject.layer)) {
+    return "这不是内容问题（LLM 判官暂不可用/响应异常）。请稍后重新 promote，无需改写 draft。"
+  }
+  return "请按 hint 改写 draft body，保存后重新 preview/promote。"
 }
 
 export interface PromoteModalProps {
@@ -114,11 +126,7 @@ export function PromoteModal({
   const reasonValid = reason.trim().length > 0
   const auditPassed = auditHook.data?.passed === true
   const canPromote =
-    !commitHook.isLoading &&
-    !!srcDraftPath &&
-    destPathValid &&
-    reasonValid &&
-    auditPassed === true
+    !commitHook.isLoading && !!srcDraftPath && destPathValid && reasonValid && auditPassed === true
 
   const handleClose = () => {
     auditHook.reset()
@@ -158,100 +166,100 @@ export function PromoteModal({
           <PromoteSuccessView finalPath={commitHook.data.finalPath} onClose={handleClose} />
         ) : (
           <>
-        {/* §1 Draft info */}
-        <div className="mb-4 text-sm text-gray-600">
-          <div className="font-medium text-gray-800">Source draft:</div>
-          <div className="font-mono text-xs break-all">{srcDraftPath ?? "(none)"}</div>
-        </div>
-
-        {/* §2 Target path */}
-        <div className="mb-4">
-          <label htmlFor="promote-dest" className="block text-sm font-medium mb-1">
-            Target wiki path
-          </label>
-          <input
-            id="promote-dest"
-            type="text"
-            value={destWikiPath}
-            onChange={(e) => setDestWikiPath(e.target.value)}
-            placeholder="wiki/concepts/example.md"
-            className="w-full px-3 py-2 border rounded text-sm font-mono"
-          />
-          {destWikiPath.length > 0 && !destPathValid ? (
-            <div className="mt-1 text-xs text-red-600">
-              路径需以 {ALLOWED_DEST_PREFIXES.join(" / ")} 之一开头且以 .md 结尾
+            {/* §1 Draft info */}
+            <div className="mb-4 text-sm text-gray-600">
+              <div className="font-medium text-gray-800">Source draft:</div>
+              <div className="font-mono text-xs break-all">{srcDraftPath ?? "(none)"}</div>
             </div>
-          ) : null}
-        </div>
 
-        {/* §3 Reason */}
-        <div className="mb-4">
-          <label htmlFor="promote-reason" className="block text-sm font-medium mb-1">
-            Reason
-          </label>
-          <textarea
-            id="promote-reason"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="为什么 promote 这个 draft? (会写入 wiki_events.reason)"
-            rows={2}
-            className="w-full px-3 py-2 border rounded text-sm"
-          />
-        </div>
+            {/* §2 Target path */}
+            <div className="mb-4">
+              <label htmlFor="promote-dest" className="block text-sm font-medium mb-1">
+                Target wiki path
+              </label>
+              <input
+                id="promote-dest"
+                type="text"
+                value={destWikiPath}
+                onChange={(e) => setDestWikiPath(e.target.value)}
+                placeholder="wiki/concepts/example.md"
+                className="w-full px-3 py-2 border rounded text-sm font-mono"
+              />
+              {destWikiPath.length > 0 && !destPathValid ? (
+                <div className="mt-1 text-xs text-red-600">
+                  路径需以 {ALLOWED_DEST_PREFIXES.join(" / ")} 之一开头且以 .md 结尾
+                </div>
+              ) : null}
+            </div>
 
-        {/* §4 V14 audit feedback (auto preview on mount) */}
-        <V14AuditPanel
-          isLoading={auditHook.isLoading}
-          error={auditHook.error}
-          audit={auditHook.data}
-        />
+            {/* §3 Reason */}
+            <div className="mb-4">
+              <label htmlFor="promote-reason" className="block text-sm font-medium mb-1">
+                Reason
+              </label>
+              <textarea
+                id="promote-reason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="为什么 promote 这个 draft? (会写入 wiki_events.reason)"
+                rows={2}
+                className="w-full px-3 py-2 border rounded text-sm"
+              />
+            </div>
 
-        {/* AC-P4-2: commit-time 422 reject (用户改 body 后再试) */}
-        {commitHook.rejectReason ? (
-          <RejectPanel
-            title="Promote 被拒（commit 阶段二次审计 fail）"
-            reject={commitHook.rejectReason}
-            advice="请改写 draft body（按下方 hint），保存后重新 preview/promote。"
-          />
-        ) : null}
+            {/* §4 V14 audit feedback (auto preview on mount) */}
+            <V14AuditPanel
+              isLoading={auditHook.isLoading}
+              error={auditHook.error}
+              audit={auditHook.data}
+            />
 
-        {commitHook.error ? (
-          <div className="mb-4 p-3 border border-red-300 rounded bg-red-50 text-sm text-red-700">
-            <div className="font-medium">Promote error</div>
-            <div className="text-xs mt-1 font-mono">{commitHook.error}</div>
-          </div>
-        ) : null}
+            {/* AC-P4-2: commit-time 422 reject (用户改 body 后再试) */}
+            {commitHook.rejectReason ? (
+              <RejectPanel
+                title="Promote 被拒（commit 阶段二次审计 fail）"
+                reject={commitHook.rejectReason}
+                advice={adviceForReject(commitHook.rejectReason)}
+              />
+            ) : null}
 
-        {/* §6 补丁#3：进行中 → 显式进度态（spinner+文案，禁重复点）；否则按钮 */}
-        {commitHook.isLoading ? (
-          <div
-            className="mt-6 flex items-center gap-2 rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700"
-            data-testid="promote-progress"
-            role="status"
-            aria-live="polite"
-          >
-            <Spinner />
-            正在提交并跑二次审计…（请稍候，勿重复点击）
-          </div>
-        ) : (
-          <div className="flex justify-end gap-2 mt-6">
-            <button
-              type="button"
-              onClick={handleClose}
-              className="px-4 py-2 text-sm border rounded hover:bg-gray-50"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              onClick={handlePromote}
-              disabled={!canPromote}
-              className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-            >
-              Promote
-            </button>
-          </div>
-        )}
+            {commitHook.error ? (
+              <div className="mb-4 p-3 border border-red-300 rounded bg-red-50 text-sm text-red-700">
+                <div className="font-medium">Promote error</div>
+                <div className="text-xs mt-1 font-mono">{commitHook.error}</div>
+              </div>
+            ) : null}
+
+            {/* §6 补丁#3：进行中 → 显式进度态（spinner+文案，禁重复点）；否则按钮 */}
+            {commitHook.isLoading ? (
+              <div
+                className="mt-6 flex items-center gap-2 rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700"
+                data-testid="promote-progress"
+                role="status"
+                aria-live="polite"
+              >
+                <Spinner />
+                正在提交并跑二次审计…（请稍候，勿重复点击）
+              </div>
+            ) : (
+              <div className="flex justify-end gap-2 mt-6">
+                <button
+                  type="button"
+                  onClick={handleClose}
+                  className="px-4 py-2 text-sm border rounded hover:bg-gray-50"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePromote}
+                  disabled={!canPromote}
+                  className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                  Promote
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -321,15 +329,15 @@ function V14AuditPanel(props: {
   if (audit.passed) {
     return (
       <div className="mb-4 p-3 border border-green-300 rounded bg-green-50 text-sm text-green-700">
-        V14 二次审计 PASS — 可以 promote
+        结构检查通过 — 转正时做最终语义审计（LLM 判官）
       </div>
     )
   }
   return (
     <RejectPanel
-      title="V14 二次审计 FAIL"
+      title="结构检查 FAIL"
       reject={audit.rejectReason!}
-      advice="请按 hint 改写 draft body，保存后此 modal 会重新 preview。"
+      advice={adviceForReject(audit.rejectReason!)}
     />
   )
 }

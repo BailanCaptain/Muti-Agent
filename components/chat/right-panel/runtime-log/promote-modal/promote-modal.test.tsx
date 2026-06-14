@@ -12,8 +12,8 @@
  *   - (8) 取消按钮 → onClose
  */
 
-import { useState } from "react"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { useState } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { PromoteModal } from "./promote-modal"
@@ -64,7 +64,7 @@ describe("PromoteModal", () => {
     expect(screen.getByRole("dialog")).toBeTruthy()
     expect(screen.getByText("wiki/concepts/draft/_auto/rag.md")).toBeTruthy()
     await waitFor(() => {
-      expect(screen.getByText(/V14 二次审计 PASS/)).toBeTruthy()
+      expect(screen.getByText(/结构检查通过/)).toBeTruthy()
     })
   })
 
@@ -79,7 +79,7 @@ describe("PromoteModal", () => {
       />,
     )
 
-    await waitFor(() => screen.getByText(/V14 二次审计 PASS/))
+    await waitFor(() => screen.getByText(/结构检查通过/))
 
     const promoteBtn = screen.getByRole("button", { name: "Promote" }) as HTMLButtonElement
     expect(promoteBtn.disabled).toBe(true)
@@ -104,7 +104,7 @@ describe("PromoteModal", () => {
           audit: {
             passed: false,
             rejectReason: {
-              layer: "imperative_statement",
+              layer: "prompt_structure",
               matchedPatterns: ["必须", "ignore"],
               hint: "改写为陈述句",
             },
@@ -122,8 +122,8 @@ describe("PromoteModal", () => {
       />,
     )
 
-    await waitFor(() => screen.getByText(/V14 二次审计 FAIL/))
-    expect(screen.getByText(/命令式语句/)).toBeTruthy()
+    await waitFor(() => screen.getByText(/结构检查 FAIL/))
+    expect(screen.getByText(/Prompt 结构/)).toBeTruthy()
     expect(screen.getByText(/必须 \/ ignore/)).toBeTruthy()
     expect(screen.getByText(/改写为陈述句/)).toBeTruthy()
 
@@ -151,7 +151,7 @@ describe("PromoteModal", () => {
       />,
     )
 
-    await waitFor(() => screen.getByText(/V14 二次审计 PASS/))
+    await waitFor(() => screen.getByText(/结构检查通过/))
 
     fireEvent.change(screen.getByLabelText("Target wiki path"), {
       target: { value: "invalid/path/x.md" },
@@ -183,7 +183,7 @@ describe("PromoteModal", () => {
       />,
     )
 
-    await waitFor(() => screen.getByText(/V14 二次审计 PASS/))
+    await waitFor(() => screen.getByText(/结构检查通过/))
     fireEvent.change(screen.getByLabelText("Target wiki path"), {
       target: { value: "wiki/concepts/rag.md" },
     })
@@ -221,7 +221,7 @@ describe("PromoteModal", () => {
         onClose={() => {}}
       />,
     )
-    await waitFor(() => screen.getByText(/V14 二次审计 PASS/))
+    await waitFor(() => screen.getByText(/结构检查通过/))
     fireEvent.change(screen.getByLabelText("Target wiki path"), {
       target: { value: "wiki/concepts/rag.md" },
     })
@@ -261,7 +261,7 @@ describe("PromoteModal", () => {
         onClose={() => {}}
       />,
     )
-    await waitFor(() => screen.getByText(/V14 二次审计 PASS/))
+    await waitFor(() => screen.getByText(/结构检查通过/))
     fireEvent.change(screen.getByLabelText("Target wiki path"), {
       target: { value: "wiki/concepts/rag.md" },
     })
@@ -302,7 +302,7 @@ describe("PromoteModal", () => {
       />,
     )
 
-    await waitFor(() => screen.getByText(/V14 二次审计 PASS/))
+    await waitFor(() => screen.getByText(/结构检查通过/))
     fireEvent.change(screen.getByLabelText("Target wiki path"), {
       target: { value: "wiki/concepts/sneaky.md" },
     })
@@ -352,7 +352,7 @@ describe("PromoteModal", () => {
     }
 
     render(<Wrapper />)
-    await waitFor(() => screen.getByText(/V14 二次审计 PASS/))
+    await waitFor(() => screen.getByText(/结构检查通过/))
     fireEvent.change(screen.getByLabelText("Target wiki path"), {
       target: { value: "wiki/concepts/rag.md" },
     })

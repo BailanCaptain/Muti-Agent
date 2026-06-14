@@ -15,20 +15,21 @@
  *  (11) suggestDestWikiPath helper 推断正确
  */
 
-import { useState } from "react"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { useState } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { BatchPromoteModal } from "./batch-promote-modal"
 import { suggestDestWikiPath } from "./use-batch-promote-api"
 
 function mockOnce(response: { ok: boolean; status: number; json: unknown }) {
-  globalThis.fetch = vi.fn(() =>
-    Promise.resolve({
-      ok: response.ok,
-      status: response.status,
-      json: () => Promise.resolve(response.json),
-    }) as unknown as Promise<Response>,
+  globalThis.fetch = vi.fn(
+    () =>
+      Promise.resolve({
+        ok: response.ok,
+        status: response.status,
+        json: () => Promise.resolve(response.json),
+      }) as unknown as Promise<Response>,
   ) as unknown as typeof fetch
 }
 
@@ -133,9 +134,7 @@ describe("BatchPromoteModal", () => {
     render(
       <BatchPromoteModal open={true} rows={THREE_ROWS} callerAlias="小孙" onClose={() => {}} />,
     )
-    fireEvent.click(
-      screen.getByTestId("batch-promote-remove-wiki/concepts/draft/_auto/b.md"),
-    )
+    fireEvent.click(screen.getByTestId("batch-promote-remove-wiki/concepts/draft/_auto/b.md"))
     expect(screen.getByText("批量审批 2 份 draft → wiki")).toBeTruthy()
     expect(screen.queryByText("B draft")).toBeNull()
   })
@@ -213,7 +212,7 @@ describe("BatchPromoteModal", () => {
             status: "audit_rejected",
             error: "V14 reject",
             auditReject: {
-              layer: "imperative_statement",
+              layer: "llm_semantic_injection",
               matchedPatterns: ["必须", "ignore"],
               hint: "改写为陈述句",
             },
@@ -237,7 +236,7 @@ describe("BatchPromoteModal", () => {
     expect(
       screen.getByTestId("batch-promote-failed-status-wiki/concepts/draft/_auto/b.md").textContent,
     ).toContain("审计驳回")
-    expect(screen.getByText(/命令式语句/)).toBeTruthy()
+    expect(screen.getByText(/LLM 语义注入/)).toBeTruthy()
     expect(screen.getByText(/必须 \/ ignore/)).toBeTruthy()
     expect(screen.getByText(/改写为陈述句/)).toBeTruthy()
     // 失败留原位提示

@@ -3,57 +3,34 @@
  *
  * 真相源: docs/plans/V16.5-final.md line 838-846 (Tainted_source promote 二次审计)
  *
- * Spec (V16.5 line 840-846):
- *   promote 操作前必须经过二次审计:
- *     1. entity body 是否含命令式语句（"必须" / "必需" / "忽略" / "覆盖"等 + 上下文）
- *     2. body 是否含 prompt 结构（`system:` 等）
- *     3. body 是否引用 tainted_source 字段（必须改写为陈述句，不能直引）
+ * Spec (V16.5 line 840-846) promote 前二次审计：
+ *   1. entity body 是否含命令式语句（"必须/忽略/覆盖" 等 + **上下文**）
+ *   2. body 是否含 prompt 结构（`system:` 等）
+ *   3. body 是否引用 tainted_source 字段（必须改写为陈述句，不能直引）
  *
- *   审计失败 → promote 拒绝，要求小孙改写 body
- *   审计通过 + 小孙 confirm → promote 成功，写 wiki_events 含 audit_passed_by: 小孙
+ * 【posture C · 收尾】小孙拍：spec 第 1 步「命令式语句 + 上下文」regex 读不了「上下文/意图」
+ *   —— 旧版 imperative 子串匹配（必须/ignore/must）把任何含这些词的正常自指 wiki 文档全拦
+ *   （小孙 41 篇 _auto draft 全挂，r1-r3 三轮证明 regex 收敛不了）。改为 **LLM 语义判官**
+ *   读意图（v14-llm-judge.ts），复用 wikiCompile 可配模型（createDynamicWikiCompileRunner）。
  *
- * 跟 sanitize 5 层 (sanitize-raw-drop.ts) 的区别:
- *   - sanitize 5 层: drop 入口 时跑（unicode/html/fence/encoding/multi-pass）
- *   - V14 audit: promote 时跑，针对 LLM 已编译的 entity body 做语义层 prompt-injection 检测
+ * 分层（廉价确定性 → 语义）：
+ *   - prompt_structure（字面 system:/[INST]/im_start 标记，686 canonical 实测 0-FP）
+ *   - tainted_source_direct_quote（substring 比对，确定性）
+ *   - llm_semantic_injection（LLM 判官读意图，取代旧 imperative regex 层）
  *
- * 失败语义 (plan v5 AC-P4-2):
- *   - reject reason 标 layer + matched patterns + hint 让用户改写 body
- *   - draft 留原位（caller 不 mv）
- *   - Inspector 显示 reject 历史
+ * 两个入口（设计审 critique P1）：
+ *   - auditStructural(input)：**同步**，只跑结构层 + tainted 层（确定性、0 LLM）。给
+ *     preview / 审批列表 on-mount 做即时禁用判断，不每次挂载烧 LLM。
+ *   - audit(input)：**async**，结构层 → tainted 层 → LLM judge 层。真 promote/batch 的权威裁决。
+ *
+ * 失败语义 (plan v5 AC-P4-2)：reject reason 标 layer + matched patterns + hint。
+ *   judge 三态：llm_semantic_injection（真注入，需改写）/ judge_parse_failed /
+ *   judge_unavailable（后两者是基础设施可重试，**不 fail-open**）。
  */
 
-const IMPERATIVE_PATTERNS_CN: readonly string[] = [
-  "必须",
-  "必需",
-  "忽略",
-  "覆盖",
-  "应当",
-  "应该",
-  "禁止",
-  "不允许",
-  "必要",
-  "无视",
-  "请勿",
-  "切勿",
-] as const
-
-/**
- * EN imperative word-boundary patterns (P2-3 r1 修):
- *   旧版本用 "must " / "ignore " 等 space 后缀字符串匹配，被 `Ignore.` / `ignore\n` /
- *   句尾 `you must` 全部 bypass (codex r1 P2-3)。
- *   改 \b regex 用 word boundary，覆盖标点 / newline / 句尾。
- *   case-insensitive 包词根 + 复合短语两类。
- */
-const IMPERATIVE_PATTERNS_EN_REGEX: readonly { pattern: RegExp; label: string }[] = [
-  { pattern: /\bmust\b/i, label: "must" },
-  { pattern: /\bshall\b/i, label: "shall" },
-  { pattern: /\bshould\b/i, label: "should" },
-  { pattern: /\bignore\b/i, label: "ignore" },
-  { pattern: /\boverride\b/i, label: "override" },
-  { pattern: /\bdisregard\b/i, label: "disregard" },
-  { pattern: /\bforget\b/i, label: "forget" },
-  { pattern: /\breveal\b/i, label: "reveal" },
-] as const
+import type { HaikuRunner } from "../../runtime/haiku-runner"
+import { createDynamicWikiCompileRunner } from "../../runtime/wiki-compile-runner"
+import { type JudgeOutcome, runJudge } from "./v14-llm-judge"
 
 const PROMPT_STRUCTURE_PATTERNS: readonly { pattern: RegExp; label: string }[] = [
   { pattern: /(^|\n)\s*system\s*[:：]/i, label: "system: 行" },
@@ -68,10 +45,15 @@ const PROMPT_STRUCTURE_PATTERNS: readonly { pattern: RegExp; label: string }[] =
 const MIN_TAINTED_DIRECT_QUOTE_LEN = 15
 
 export type V14AuditLayer =
-  | "imperative_statement"
   | "prompt_structure"
   | "tainted_source_direct_quote"
-  /** 德彪 r3 P1 · 人审豁免文档 promote 复检仍 sanitize-blocked(归一化域安全门槛)。 */
+  /** posture C · LLM 语义判官判定为注入（取代旧 imperative_statement regex 层）。 */
+  | "llm_semantic_injection"
+  /** posture C · 判官返回无法解析，裁决不可信（可重试，非内容问题）。 */
+  | "judge_parse_failed"
+  /** posture C · 判官基础设施挂（编译引擎/超时），可重试，非内容问题。 */
+  | "judge_unavailable"
+  /** 德彪 r3 P1 · 人审豁免文档 promote 复检仍 sanitize-blocked（promote-wiki-service 设置）。 */
   | "exemption_sanitize_blocked"
 
 export interface V14RejectReason {
@@ -84,9 +66,8 @@ export interface V14PromoteAuditInput {
   /** Entity body (LLM 已编译的 wiki entity 正文)。 */
   body: string
   /**
-   * tainted_source 字段：drop 时如果 sanitize 把某段 raw text 标 tainted (例如
-   * `quoted_spans` 区段)，promote 时若 body 直引该原文（非陈述句改写） → reject。
-   * 不传 = 跳过 layer 3 检查。
+   * tainted_source 字段：drop 时 sanitize 标 tainted 的 raw text（如 quoted_spans）；
+   * promote 时若 body 直引该原文（非陈述句改写）→ reject。不传 = 跳过 layer 3。
    */
   taintedSourceFields?: readonly string[]
 }
@@ -97,21 +78,40 @@ export interface V14PromoteAuditResult {
   rejectReason?: V14RejectReason
 }
 
-export class V14PromoteAuditService {
-  audit(input: V14PromoteAuditInput): V14PromoteAuditResult {
-    const body = input.body ?? ""
+export interface V14PromoteAuditServiceDeps {
+  /**
+   * LLM 判官 runner。默认 lazy createDynamicWikiCompileRunner（复用 wikiCompile 可配模型，
+   * 与收录设置卡同一套）。测试注 stub。
+   */
+  runner?: HaikuRunner
+  /** 判官 timeout（默认 v14-llm-judge JUDGE_TIMEOUT_MS=60s）。 */
+  judgeTimeoutMs?: number
+}
 
-    const imperative = detectImperative(body)
-    if (imperative.length > 0) {
-      return {
-        passed: false,
-        rejectReason: {
-          layer: "imperative_statement",
-          matchedPatterns: imperative,
-          hint: "wiki entity 不能含命令式语句（必须/忽略/覆盖等）。请改写为陈述句描述事实。",
-        },
-      }
-    }
+export class V14PromoteAuditService {
+  private readonly injectedRunner?: HaikuRunner
+  private readonly judgeTimeoutMs?: number
+  private lazyRunner?: HaikuRunner
+
+  constructor(deps: V14PromoteAuditServiceDeps = {}) {
+    this.injectedRunner = deps.runner
+    this.judgeTimeoutMs = deps.judgeTimeoutMs
+  }
+
+  /** lazy 解析 runner：注入优先；否则首次用时建 dynamic runner（无状态，可共享；不阻塞模块加载）。 */
+  private resolveRunner(): HaikuRunner {
+    if (this.injectedRunner) return this.injectedRunner
+    if (!this.lazyRunner) this.lazyRunner = createDynamicWikiCompileRunner()
+    return this.lazyRunner
+  }
+
+  /**
+   * 同步结构层审计（结构标记 + tainted 直引）。确定性、0 LLM。
+   * 给 preview / 审批列表即时禁用判断用（设计审 critique P1：preview on-mount 不烧 LLM）。
+   * 注意：结构层 pass **不等于**最终通过——真 promote 还要过 LLM judge（见 audit）。
+   */
+  auditStructural(input: V14PromoteAuditInput): V14PromoteAuditResult {
+    const body = input.body ?? ""
 
     const promptStructure = detectPromptStructure(body)
     if (promptStructure.length > 0) {
@@ -141,17 +141,44 @@ export class V14PromoteAuditService {
 
     return { passed: true }
   }
+
+  /**
+   * 权威审计（async）。结构层 → tainted 层（确定性短路，命中即 reject，0 LLM）→ LLM 语义判官。
+   * 真 promote / batch 用。
+   */
+  async audit(input: V14PromoteAuditInput): Promise<V14PromoteAuditResult> {
+    const structural = this.auditStructural(input)
+    if (!structural.passed) return structural
+
+    const judge = await runJudge(input.body ?? "", this.resolveRunner(), {
+      timeoutMs: this.judgeTimeoutMs,
+    })
+    if (judge.result === "safe") return { passed: true }
+    return { passed: false, rejectReason: mapJudgeToReject(judge) }
+  }
 }
 
-function detectImperative(body: string): string[] {
-  const matched = new Set<string>()
-  for (const cn of IMPERATIVE_PATTERNS_CN) {
-    if (body.includes(cn)) matched.add(cn)
+function mapJudgeToReject(judge: JudgeOutcome): V14RejectReason {
+  switch (judge.result) {
+    case "injection":
+      return {
+        layer: "llm_semantic_injection",
+        matchedPatterns: [judge.reason || "LLM 判定为 prompt-injection"],
+        hint: "LLM 语义审计判定本文含 prompt-injection 意图（操纵/越狱/套取系统提示）。请改写为纯描述性陈述句后再转正。",
+      }
+    case "judge_parse_failed":
+      return {
+        layer: "judge_parse_failed",
+        matchedPatterns: [judge.reason || "judge output unparseable"],
+        hint: "LLM 判官返回无法解析，裁决不可信（不是内容问题）。请稍后重试 promote。",
+      }
+    default:
+      return {
+        layer: "judge_unavailable",
+        matchedPatterns: [judge.reason || "judge runner unavailable"],
+        hint: "LLM 判官暂不可用（编译引擎挂/超时），这不是内容问题。请稍后重试 promote。",
+      }
   }
-  for (const { pattern, label } of IMPERATIVE_PATTERNS_EN_REGEX) {
-    if (pattern.test(body)) matched.add(label)
-  }
-  return Array.from(matched)
 }
 
 function detectPromptStructure(body: string): string[] {
@@ -169,8 +196,7 @@ function detectTaintedDirectQuotes(body: string, taintedFields: readonly string[
     const normalized = field.trim()
     if (normalized.length < MIN_TAINTED_DIRECT_QUOTE_LEN) continue
     if (body.includes(normalized)) {
-      const preview =
-        normalized.length > 40 ? `${normalized.slice(0, 40)}...` : normalized
+      const preview = normalized.length > 40 ? `${normalized.slice(0, 40)}...` : normalized
       matched.push(preview)
     }
   }

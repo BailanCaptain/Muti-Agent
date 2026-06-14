@@ -19,7 +19,7 @@
  */
 
 import type { WikiLeasesRepository } from "../../db/repositories/wiki-leases-repository"
-import type { PromoteWikiService, PromoteStatus, PromoteResponse } from "./promote-wiki-service"
+import type { PromoteResponse, PromoteStatus, PromoteWikiService } from "./promote-wiki-service"
 import type { V14RejectReason } from "./v14-promote-audit-service"
 
 export interface BatchPromoteItem {
@@ -71,22 +71,59 @@ export interface BatchPromoteServiceConfig {
   leaseTtlSeconds?: number
 }
 
-const DEFAULT_LEASE_TTL_SECONDS = 30
+// 德彪 r1 P1：lease 须覆盖 LLM 判官最坏耗时（JUDGE_TIMEOUT_MS=60s × primary+fallback = 120s），
+// 否则慢判官 → lease_expired。batch 每项独立 acquire/release（finally），长租仅锁单 dest。
+const DEFAULT_LEASE_TTL_SECONDS = 150
+
+/**
+ * posture C 熔断阈值（设计审 critique P1）：连续 N 次 LLM 判官不可用（基础设施挂，非内容问题）
+ * → 中止剩余项，避免 41 篇逐篇空 spawn + 空 lease 写；UI 一次性提示「判官不可用整批稍后重试」。
+ */
+const JUDGE_UNAVAILABLE_CIRCUIT_BREAK = 3
 
 export class BatchPromoteService {
   constructor(private readonly cfg: BatchPromoteServiceConfig) {}
 
-  batchPromote(req: BatchPromoteRequest): BatchPromoteSummary {
+  // posture C：promote 含 LLM 语义判官 → async，串行 await（保 lease 顺序）。
+  async batchPromote(req: BatchPromoteRequest): Promise<BatchPromoteSummary> {
     const ttl = this.cfg.leaseTtlSeconds ?? DEFAULT_LEASE_TTL_SECONDS
     const success: BatchPromoteSuccess[] = []
     const failed: BatchPromoteFailure[] = []
+    let consecutiveUnavailable = 0
+    let circuitBroken = false
 
     for (const item of req.items) {
-      const result = this.promoteOne(item, req, ttl)
+      // 熔断后剩余项不再真调 LLM/lease，直接标 judge_unavailable（本项未尝试）
+      if (circuitBroken) {
+        failed.push({
+          srcDraftPath: item.srcDraftPath,
+          destWikiPath: item.destWikiPath,
+          status: "audit_rejected",
+          error: `LLM 判官连续 ${JUDGE_UNAVAILABLE_CIRCUIT_BREAK} 次不可用，批量已熔断中止，本项未尝试`,
+          auditReject: {
+            layer: "judge_unavailable",
+            matchedPatterns: ["batch-circuit-break"],
+            hint: "LLM 判官暂不可用（编译引擎挂/超时），批量已熔断。这不是内容问题，请稍后整批重试 promote。",
+          },
+        })
+        continue
+      }
+
+      const result = await this.promoteOne(item, req, ttl)
       if (result.kind === "ok") {
         success.push(result.entry)
+        consecutiveUnavailable = 0
       } else {
         failed.push(result.entry)
+        if (
+          result.entry.status === "audit_rejected" &&
+          result.entry.auditReject?.layer === "judge_unavailable"
+        ) {
+          consecutiveUnavailable += 1
+          if (consecutiveUnavailable >= JUDGE_UNAVAILABLE_CIRCUIT_BREAK) circuitBroken = true
+        } else {
+          consecutiveUnavailable = 0
+        }
       }
     }
 
@@ -97,11 +134,13 @@ export class BatchPromoteService {
     }
   }
 
-  private promoteOne(
+  private async promoteOne(
     item: BatchPromoteItem,
     req: BatchPromoteRequest,
     ttl: number,
-  ): { kind: "ok"; entry: BatchPromoteSuccess } | { kind: "fail"; entry: BatchPromoteFailure } {
+  ): Promise<
+    { kind: "ok"; entry: BatchPromoteSuccess } | { kind: "fail"; entry: BatchPromoteFailure }
+  > {
     const acquired = this.cfg.leases.acquireLease({
       path: item.destWikiPath,
       ownerAlias: req.callerAlias,
@@ -122,7 +161,7 @@ export class BatchPromoteService {
 
     let result: PromoteResponse
     try {
-      result = this.cfg.promote.promote({
+      result = await this.cfg.promote.promote({
         srcDraftPath: item.srcDraftPath,
         destWikiPath: item.destWikiPath,
         callerAlias: req.callerAlias,

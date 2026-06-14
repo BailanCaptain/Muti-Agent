@@ -430,7 +430,7 @@ describe("DraftApprovalTab AC-P4-3 [Promote] 按钮 (Day 9)", () => {
     fireEvent.click(
       screen.getByTestId("draft-approval-promote-concepts/draft/_auto/2026-05-22-foo.md"),
     )
-    await waitFor(() => screen.getByText(/V14 二次审计 PASS/))
+    await waitFor(() => screen.getByText(/结构检查通过/))
     fireEvent.change(screen.getByLabelText("Target wiki path"), {
       target: { value: "wiki/concepts/foo.md" },
     })

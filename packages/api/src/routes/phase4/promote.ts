@@ -7,10 +7,14 @@
  *   - Phase 3 ingest-commit endpoint pattern (packages/api/src/routes/phase3/ingest-commit.ts)
  *
  * 两个 endpoint:
- *   - POST /api/wiki/drafts/promote/preview — V14 audit only (frontend mount 时调，禁用 [Promote] 按钮 if reject)
+ *   - POST /api/wiki/drafts/promote/preview — 结构层 audit only (frontend mount 时调，禁用 [Promote] 按钮 if reject)
  *     body: { srcDraftPath, taintedSourceFields? }
  *     resp 200: V14PromoteAuditResult { passed, rejectReason? }
  *     resp 400/404: src path invalid / not found
+ *     【posture C · 设计审 critique P1】preview 只跑 auditStructural（结构标记 + tainted 直引 +
+ *       豁免 sanitize 复检，确定性、0 LLM）——不每次挂载/列表渲染就烧 LLM。权威 LLM 语义判官
+ *       只在真 promote/batch 跑（见下方 promote endpoint）。结构层 pass = 按钮放行，最终语义裁决
+ *       在转正时做（可能 422 llm_semantic_injection，前端按 reject hint 提示改写/重试）。
  *
  *   - POST /api/wiki/drafts/promote — full V14 + mv + wiki_events
  *     body: { srcDraftPath, destWikiPath, callerAlias, reason, taintedSourceFields?, sourceMessageIds? }
@@ -26,7 +30,9 @@
 
 import type { FastifyInstance } from "fastify"
 
+import fs from "node:fs"
 import type { WikiLeasesRepository } from "../../db/repositories/wiki-leases-repository"
+import { WikiPathInvalidError, safeWikiPath } from "../../wiki/path-containment"
 import { checkExemptionSanitizeBlocked } from "../../wiki/promote-audit/exemption-tainted-fields"
 import type { PromoteWikiService } from "../../wiki/promote-audit/promote-wiki-service"
 import {
@@ -34,11 +40,12 @@ import {
   isSupersededDraftRelativePath,
 } from "../../wiki/promote-audit/promote-wiki-service"
 import type { V14PromoteAuditService } from "../../wiki/promote-audit/v14-promote-audit-service"
-import { WikiPathInvalidError, safeWikiPath } from "../../wiki/path-containment"
 import { INVALID_TAINTED, normalizeTaintedSourceFields } from "./tainted-source-validation"
-import fs from "node:fs"
 
-const DEFAULT_PROMOTE_LEASE_TTL_SECONDS = 30
+// 德彪 r1 P1：lease 在 LLM 判官跑之前 acquire、判官后才 isCurrent 校验 → TTL 必须覆盖判官最坏耗时
+// （JUDGE_TIMEOUT_MS=60s，primary+haiku fallback 最坏 2×60=120s），否则慢判官稳定 lease_expired。
+// promote 是人工唯一-dest 动作，长租无并发代价。
+const DEFAULT_PROMOTE_LEASE_TTL_SECONDS = 150
 
 export interface PromoteRoutesDeps {
   promote: PromoteWikiService
@@ -111,7 +118,11 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
       const e = err as NodeJS.ErrnoException
       if (e.code === "ENOENT") {
         reply.code(404)
-        return { ok: false, code: "SRC_NOT_FOUND", error: `src draft not found: ${body.srcDraftPath}` }
+        return {
+          ok: false,
+          code: "SRC_NOT_FOUND",
+          error: `src draft not found: ${body.srcDraftPath}`,
+        }
       }
       request.log.error({ err }, "promote preview readFile failed")
       reply.code(500)
@@ -140,7 +151,8 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
         },
       }
     }
-    const result = deps.audit.audit({
+    // 结构层 only（确定性、0 LLM）：preview 即时禁用判断，权威 LLM 判官留真 promote 跑
+    const result = deps.audit.auditStructural({
       body: srcContent,
       taintedSourceFields: tainted,
     })
@@ -172,7 +184,7 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
     }
 
     try {
-      const result = deps.promote.promote({
+      const result = await deps.promote.promote({
         srcDraftPath: validation.body.srcDraftPath,
         destWikiPath: validation.body.destWikiPath,
         callerAlias: validation.body.callerAlias,

@@ -27,7 +27,10 @@
 
 import type { FastifyInstance } from "fastify"
 
-import type { BatchPromoteItem, BatchPromoteService } from "../../wiki/promote-audit/batch-promote-service"
+import type {
+  BatchPromoteItem,
+  BatchPromoteService,
+} from "../../wiki/promote-audit/batch-promote-service"
 import { INVALID_TAINTED, normalizeTaintedSourceFields } from "./tainted-source-validation"
 
 const MAX_BATCH_ITEMS = 50
@@ -65,7 +68,7 @@ export function registerBatchPromoteRoutes(
     }
 
     try {
-      const summary = deps.batch.batchPromote({
+      const summary = await deps.batch.batchPromote({
         items: v.items,
         callerAlias: v.callerAlias,
         reason: v.reason,

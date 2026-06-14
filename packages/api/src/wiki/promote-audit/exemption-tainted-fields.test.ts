@@ -18,11 +18,21 @@ import { describe, it } from "node:test"
 import { createDrizzleDb } from "../../db/drizzle-instance"
 import { WikiEventsRepository } from "../../db/repositories/wiki-events-repository"
 import { WikiLeasesRepository } from "../../db/repositories/wiki-leases-repository"
+import type { HaikuRunResult, HaikuRunner } from "../../runtime/haiku-runner"
 import { compileACL } from "../acl-engine"
 import type { ACLConfig } from "../acl-types"
 import { checkExemptionSanitizeBlocked, hasIngestExemption } from "./exemption-tainted-fields"
 import { PromoteWikiService } from "./promote-wiki-service"
 import { V14PromoteAuditService } from "./v14-promote-audit-service"
+
+/** posture C：注 stub runner（safe），单测不真调 LLM 判官。 */
+function safeJudgeRunner(): HaikuRunner {
+  return {
+    async runPrompt(): Promise<HaikuRunResult> {
+      return { ok: true, text: '{"verdict":"safe","reason":"test-safe"}', durationMs: 1 }
+    },
+  }
+}
 
 const EXEMPT_FM =
   "---\ntype: lesson\ningest_exemption: sanitize-skipped (human-reviewed by xs @ 2026-06-11T10:00:00.000Z)\n---\n"
@@ -51,7 +61,9 @@ describe("hasIngestExemption", () => {
 
 describe("checkExemptionSanitizeBlocked", () => {
   it("豁免文档 + 西里尔同形 jailbreak → blocked + reason 含 jailbreak_template", () => {
-    const r = checkExemptionSanitizeBlocked(`${EXEMPT_FM}# 分析\n\n样本 ${CYRILLIC_JAILBREAK} 复盘。\n`)
+    const r = checkExemptionSanitizeBlocked(
+      `${EXEMPT_FM}# 分析\n\n样本 ${CYRILLIC_JAILBREAK} 复盘。\n`,
+    )
     assert.equal(r.blocked, true)
     assert.ok(r.reasons.includes("jailbreak_template"), JSON.stringify(r.reasons))
   })
@@ -64,7 +76,9 @@ describe("checkExemptionSanitizeBlocked", () => {
     assert.equal(r.blocked, false)
   })
   it("非豁免文档(同危险 body)→ 不 blocked(普通 draft 不受影响,零回归)", () => {
-    const r = checkExemptionSanitizeBlocked(`${PLAIN_FM}# 分析\n\n样本 ${CYRILLIC_JAILBREAK} 复盘。\n`)
+    const r = checkExemptionSanitizeBlocked(
+      `${PLAIN_FM}# 分析\n\n样本 ${CYRILLIC_JAILBREAK} 复盘。\n`,
+    )
     assert.equal(r.blocked, false)
   })
 })
@@ -94,7 +108,7 @@ function setupPromote() {
     acl: compileACL(ACL_OPEN),
     wikiRoot,
     currentLeaderTerm: () => "999",
-    auditService: new V14PromoteAuditService(),
+    auditService: new V14PromoteAuditService({ runner: safeJudgeRunner() }),
   })
   const acquire = (relPath: string): string => {
     const r = leases.acquireLease({
@@ -124,14 +138,14 @@ function writeDraft(wikiRoot: string, relPath: string, content: string): void {
 }
 
 describe("promote 服务端 exemption sanitize-blocked 门槛(德彪 r3 P1)", () => {
-  it("豁免 draft 残留西里尔同形 jailbreak → audit_rejected layer exemption_sanitize_blocked + 不 mv", () => {
+  it("豁免 draft 残留西里尔同形 jailbreak → audit_rejected layer exemption_sanitize_blocked + 不 mv", async () => {
     const t = setupPromote()
     try {
       const src = "wiki/concepts/draft/_auto/b022-exempt.md"
       const dest = "wiki/concepts/b022-exempt.md"
       writeDraft(t.wikiRoot, src, `${EXEMPT_FM}# 分析\n\n样本 ${CYRILLIC_JAILBREAK} 复盘。\n`)
       const token = t.acquire(dest)
-      const r = t.service.promote({
+      const r = await t.service.promote({
         srcDraftPath: src,
         destWikiPath: dest,
         callerAlias: "小孙",
@@ -147,7 +161,7 @@ describe("promote 服务端 exemption sanitize-blocked 门槛(德彪 r3 P1)", ()
     }
   })
 
-  it("同 body 无 exemption 标记 → promote ok(普通 draft 零回归)", () => {
+  it("同 body 无 exemption 标记 → promote ok(普通 draft 零回归)", async () => {
     const t = setupPromote()
     try {
       const src = "wiki/concepts/draft/_auto/plain.md"
@@ -155,7 +169,7 @@ describe("promote 服务端 exemption sanitize-blocked 门槛(德彪 r3 P1)", ()
       // 普通 draft body 用干净内容(普通 draft 经 ingest sanitize,不会有同形字残留)
       writeDraft(t.wikiRoot, src, `${PLAIN_FM}# 摘要\n\n一段正常中文摘要。\n`)
       const token = t.acquire(dest)
-      const r = t.service.promote({
+      const r = await t.service.promote({
         srcDraftPath: src,
         destWikiPath: dest,
         callerAlias: "小孙",

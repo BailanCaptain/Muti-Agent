@@ -52,9 +52,12 @@ const ALLOWED_DEST_PREFIXES = [
 ] as const
 
 const LAYER_LABEL_CN: Record<V14AuditLayer, string> = {
-  imperative_statement: "命令式语句",
   prompt_structure: "Prompt 结构",
   tainted_source_direct_quote: "Tainted_source 直引",
+  llm_semantic_injection: "LLM 语义注入",
+  judge_parse_failed: "判官响应异常（可重试）",
+  judge_unavailable: "判官暂不可用（可重试）",
+  exemption_sanitize_blocked: "豁免文档 sanitize 红线",
 }
 
 const STATUS_LABEL_CN: Record<string, string> = {
@@ -326,9 +329,7 @@ function ComposeView(props: {
     <>
       {/* §1 Items 列表 */}
       <div className="mb-4">
-        <div className="text-sm font-medium mb-2 text-gray-800">
-          Draft 列表 ({rows.length} 份)
-        </div>
+        <div className="text-sm font-medium mb-2 text-gray-800">Draft 列表 ({rows.length} 份)</div>
         {rows.length === 0 ? (
           <div
             className="p-3 border rounded bg-yellow-50 text-xs text-yellow-700"
