@@ -35,15 +35,68 @@ is_windows() {
   [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$OSTYPE" == win* ]]
 }
 
+# ── Reparse-point detection (Windows) ──────────────────────────────────
+# Junctions/symlinks on Windows are detected via PowerShell. Probing each
+# path with its own `powershell` process is O(skills × dirs) spawns (~300 for
+# --prune) and measured ~87s on a real repo — blowing the worktree-preview
+# spawn's 120s readiness budget (`dev:api` starts with this script, so the api
+# never bound and the log stayed empty). Instead list every reparse point in a
+# directory with ONE powershell call, cached per dir (lazy). ~300 spawns → 3,
+# ~87s → ~3s.
+#
+# The cache captures each directory's state at first access and is NOT mutated
+# when links are created later this run. That stays correct because: (a) Phase 1
+# checks each (dir, skill) once, against the start state; (b) any link created
+# in Phase 1 points at an existing skill (never dangling), and Phase 2 prune
+# only ever acts on cached links whose target is gone — so a freshly created
+# link being absent from the cache means Phase 2 leaves it, which is correct.
+#
+# Membership is keyed by the FULL path ("$dir/$name"), not a packed string —
+# exact-match avoids false positives from names that are word-substrings of each
+# other (e.g. a junction "foo bar" must not match a plain skill "bar"). Names are
+# dir entries, so the full path is a unique key.
+#
+# Assoc arrays need bash 4+; only the Windows branch uses them (Unix is_link uses
+# [ -L ]), so guard the declaration to keep this script working on bash 3.2 (macOS).
+if is_windows; then
+  declare -A _REPARSE_LOADED   # dir → "1" once that dir has been probed
+  declare -A _REPARSE_SET      # "$dir/$name" → "1" for each reparse-point child
+fi
+
+load_reparse_cache() {
+  local dir="$1"
+  [ -n "${_REPARSE_LOADED[$dir]:-}" ] && return 0
+  # Non-existent dir = no junctions (mount will create it); not a probe failure.
+  if [ ! -d "$dir" ]; then _REPARSE_LOADED[$dir]=1; return 0; fi
+  local win_dir names n
+  win_dir=$(cygpath -w "$dir")
+  # Capture PowerShell's own exit code: empty output is valid (no junctions), but
+  # a *failed* probe must NOT be cached as "no junctions" — that would rebuild real
+  # links and let dangling ones escape --prune (and rm -rf a misjudged junction).
+  # Fail loud instead of relying on `set -e` (is_link runs in if/&& where errexit
+  # is suppressed). No `2>/dev/null` so the failure is diagnosable.
+  if ! names=$(powershell -NoProfile -NonInteractive -InputFormat None -Command \
+    "Get-ChildItem -LiteralPath '$win_dir' -Force -ErrorAction SilentlyContinue | Where-Object { \$_.Attributes -match 'ReparsePoint' } | Select-Object -ExpandProperty Name"); then
+    echo "mount-skills: PowerShell reparse-point probe failed for: $dir" >&2
+    exit 1
+  fi
+  while IFS= read -r n; do
+    n="${n%$'\r'}"   # strip trailing CR from PowerShell's CRLF output
+    [ -n "$n" ] && _REPARSE_SET["$dir/$n"]=1
+  done <<< "$names"
+  _REPARSE_LOADED[$dir]=1   # only after a successful probe
+  return 0                  # empty dir: the while loop's last status would be 1
+}
+
 # Check if a path is a junction/symlink (not a plain directory copy)
 is_link() {
   local p="$1"
   if is_windows; then
-    local win_parent
-    win_parent=$(cygpath -w "$(dirname "$p")")
-    powershell -NoProfile -Command \
-      "(Get-Item -LiteralPath '$win_parent\\$(basename "$p")' -Force -ErrorAction SilentlyContinue).Attributes -match 'ReparsePoint'" \
-      2>/dev/null | grep -qi 'true'
+    # Parameter expansion (not dirname) — is_link runs once per (skill × dir); a
+    # subprocess spawn each adds ~15s on Windows for a full repo. link paths are
+    # always absolute, so "${p%/*}" is the containing dir.
+    load_reparse_cache "${p%/*}"
+    [ -n "${_REPARSE_SET[$p]:-}" ]
   else
     [ -L "$p" ]
   fi
@@ -58,7 +111,7 @@ make_link() {
     local win_link win_target
     win_link=$(cygpath -w "$link")
     win_target=$(cygpath -w "$target")
-    powershell -NoProfile -Command \
+    powershell -NoProfile -NonInteractive -InputFormat None -Command \
       "New-Item -ItemType Junction -Path '$win_link' -Target '$win_target' | Out-Null"
   else
     local rel_target
@@ -78,7 +131,7 @@ pruned=0
 # ── Phase 1: Mount each skill from manifest source ─────────────────────
 for skill_dir in "$SKILLS_SRC"/*/; do
   [ ! -d "$skill_dir" ] && continue
-  name=$(basename "$skill_dir")
+  name="${skill_dir%/}"; name="${name##*/}"
 
   if [ ! -f "$skill_dir/SKILL.md" ]; then
     skipped=$((skipped + 1))
@@ -117,7 +170,7 @@ if $FORCE || $PRUNE; then
     for link in "$target_dir"/*; do
       # Only consider symlinks/junctions
       if is_link "$link"; then
-        name=$(basename "$link")
+        name="${link##*/}"
         if [ ! -d "$SKILLS_SRC/$name" ]; then
           # On Windows junctions need rmdir; Unix symlinks need rm. Try both.
           rm -f "$link" 2>/dev/null || true

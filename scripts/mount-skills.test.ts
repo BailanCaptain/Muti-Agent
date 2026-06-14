@@ -147,4 +147,53 @@ describe("mount-skills.sh — REPO_ROOT override + --prune flag", () => {
     const second = listSymlinks(cliDir).sort()
     assert.deepEqual(second, first)
   })
+
+  // Guards the batched (per-directory) reparse-point detection: on a re-run
+  // where every skill is already mounted, the batched cache must recognize all
+  // pre-existing junctions as unchanged — mounting nothing, pruning nothing.
+  // (This is the hot path that took ~87s with per-path powershell spawns.)
+  it("re-mount with many skills: all recognized as unchanged (batched detection)", () => {
+    const names = ["tdd", "debugging", "merge-gate", "worktree", "quality-gate", "feat-lifecycle"]
+    for (const n of names) makeSkill(n)
+
+    runMount("--prune") // first run mounts all
+    const out = runMount("--prune") // second run: everything already mounted
+
+    assert.match(out, /0 mounted/, `2nd run should mount nothing, got: ${out}`)
+    assert.match(out, /0 pruned/, `2nd run should prune nothing, got: ${out}`)
+    for (const cliName of [".claude", ".agents", ".gemini"]) {
+      const links = listSymlinks(path.join(tmpRoot, cliName, "skills"))
+      for (const n of names) {
+        assert.ok(
+          links.includes(n),
+          `expected ${n} still mounted in ${cliName}, got: ${links.join(",")}`,
+        )
+      }
+    }
+  })
+
+  // Exact-membership guard (codex review P2-2): a junction whose name contains a
+  // space ("alpha beta") must NOT word-substring-match a different skill ("beta").
+  // With the old space-packed membership, "beta" matched " alpha beta " and a
+  // plain-copy "beta" was wrongly left untouched instead of becoming a junction.
+  it("space-named junction does not false-match a substring skill name", () => {
+    makeSkill("alpha beta") // source exists; will be a junction in cache
+    makeSkill("beta") // source exists
+
+    const cliDir = path.join(tmpRoot, ".claude", "skills")
+    mkdirSync(cliDir, { recursive: true })
+    // Pre-seed "alpha beta" as a real junction (so the dir cache contains it)…
+    symlinkSync(path.join(skillsDir, "alpha beta"), path.join(cliDir, "alpha beta"), "junction")
+    // …and "beta" as a PLAIN COPY with SKILL.md (the masquerade the bug missed).
+    mkdirSync(path.join(cliDir, "beta"), { recursive: true })
+    writeFileSync(path.join(cliDir, "beta", "SKILL.md"), "---\nname: beta\n---\n")
+
+    runMount("")
+
+    // beta must be converted to a junction (plain copy replaced), not kept as-is.
+    assert.ok(
+      lstatSync(path.join(cliDir, "beta")).isSymbolicLink(),
+      "beta should be a junction (plain copy replaced), not left as a directory copy",
+    )
+  })
 })
