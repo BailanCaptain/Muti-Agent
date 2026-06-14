@@ -1,11 +1,12 @@
 ---
 id: F028
 title: RuntimeLog 工作区拓展：项目目录浏览 + Worktree 浏览与手动编译
-status: in-progress
+status: done
 owner: 黄仁勋
 created: 2026-06-11
 phase1_completed: 2026-06-13
 reopened: 2026-06-13  # 续作本轮交付：worktree 清理 MVP（AC11-12）。脱管 preview 接管恢复=D 区/AC13 转 OQ8 待小孙拍，不在本轮
+completed: 2026-06-14  # 续作 AC11-12 merged d528d40 + pushed origin/dev。清理按钮 live spot-click=小孙首次使用即验收（control:true 仅主 UI 连真库，不自动跑）；AC13/OQ9 待小孙拍
 ---
 
 # F028 — RuntimeLog 工作区拓展：项目目录浏览 + Worktree 浏览与手动编译
@@ -142,6 +143,7 @@ RuntimeLog 容器新增两个一级 tab：
 | 2026-06-13 | 德彪 codex doc 愿景审 r3 **NEEDS-WORK**（4 P1 残留：tombstone crash 状态机 / branch -d vs OID CAS / 双 registry 实例发现 / resourceId 身份合同）。**但小孙同日拍板「继续吧不需要过度设计了 只做必须做的」+「你做你该做的事吧」**——r3 审的全是企业级删除装置，与小孙最小化诉求冲突。**SCOPE 收敛 MVP**：砍掉 D18-D23（resourceId 哈希/tombstone 事务/数据三分类/managed-root 重验/双 registry 全删/OID CAS/stop 三态），保留 D14-D17（merged 提示 best-effort / 最小白名单+git 守门 / 复用 AC9 预检 kill / branch -d）；AC11-14→AC11-13（清理 MVP）。德彪 r3 findings 不追（审的是被砍设计），愿景信号小孙已直接给。德彪改留**代码 review**（高价值点），不再多轮审 doc 愿景 |
 | 2026-06-14 | 续作 worktree 清理 MVP（AC11+AC12）**实现 + 德彪 codex 代码 review 8 轮闭环 GO**：r1-r6 逐轮真洞（数据安全/统一锁/UI 健壮/非原子 remove 守不可再生原配置/安全门 fail-closed/非原子两态收口/注释真相源/前端始终 refetch/plan 真相源同步/releasePorts 两 key 独立 best-effort），P1 自 r3 清零；r7 抓黄仁勋 merge-gate 前自审的 2 个过度改（POSIX 大小写过度匹配 + detached 端口 churn）→撤回；r8 **GO**（detached registry-key 一致性记独立 TD，CLI/inventory 既有契约，非 F028 引入）。零上下文 acceptance-guardian **PASS**（AC11/12 对码+测；backend 0 fail / frontend 20/20 / typecheck 0；`.agents/acceptance/F028/guardian-r8go/`）。 |
 | 2026-06-14 | **小孙点名愿景 review**（临睡「这个 feature 文档就要找德彪讨论是否符合我的愿景」+ 授权 autonomous 推到 done）。德彪愿景 r1 抓到 **code review 漏的真 P0**：清理按钮硬门 `mergedHint===true`，但 merge-gate 走 squash → feature 做完后 is-ancestor=false → 按钮**恰好在要清理时消失**（测试/guardian 用 mergedHint=true fixture 漏掉）。**修**：按钮改仅 `!isMain`（mergedHint 降 advisory 徽标）+ 测试（squash 后仍可清 / 主仓 never cleanable）；AC13 转出 OQ8；doc 真相源全扫修正；OQ9 记零点击 vs 一键留小孙拍。桂芬跨 agent 愿景验 + 德彪愿景 r2 双判**功能愿景对齐 GO**（一键准自动 + merge-gate lifecycle 足够，零点击=可选）。frontend 21/21 / backend 98/98 / typecheck 0 / check-docs 过。**清理按钮浏览器真机=control:true 仅主 UI（preview 实例 D12 control:false），主 UI 跑 dev 代码→真机必然在 merge 后**：合并后由黄仁勋（牺牲性 worktree）或小孙做 live 验收 spot-check（破坏性按钮）。**剩：merge + push + 合并后真机 + Completion 收尾**；AC13（D 区 takeover）+ OQ9 零点击 待小孙拍 |
+| 2026-06-14 | 德彪愿景 r3 **GO 可 merge**（doc 真相源通过 + 真机 control:true circularity 论证成立，组件+真 git 集成测试足以放行）。**merge-gate**：rebase onto dev（F030 中途落，仅 ROADMAP 冲突已解）→ squash 14 commit 成 1 → **ff-only merge dev `d528d40` + push origin/dev**。feat-lifecycle **Completion**：愿景对照（德彪愿景 3 轮 + 桂芬跨 agent 双 GO）+ AC11/12 全勾 + status→done。**清理按钮 live spot-click 留小孙首用即验收**（control:true 仅主 UI 连真库，Iron Law 1 不自动起；全层已测：21 组件 + 3 真 git 集成 + 路由）。AC13 脱管 takeover（OQ8）+ OQ9 零点击 auto-cleanup 待小孙拍 → 如要另开 follow-up |
 
 ## Links
 
