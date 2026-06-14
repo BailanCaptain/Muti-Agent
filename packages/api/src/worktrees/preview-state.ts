@@ -22,6 +22,8 @@ export type PreviewStateStore = {
   readonly baseDir: string
   readState: (worktreeName: string) => Promise<PreviewState | null>
   writeState: (state: PreviewState) => Promise<void>
+  /** 续作 AC12：删状态文件（清理收口）；不存在不抛（幂等） */
+  deleteState: (worktreeName: string) => Promise<void>
   listStates: () => Promise<PreviewState[]>
   appendAudit: (entry: AuditEntry) => Promise<void>
 }
@@ -53,6 +55,13 @@ export function createPreviewStateStore(deps: {
     async writeState(state) {
       await ensureBase()
       await fs.writeFile(stateFile(state.worktreeName), `${JSON.stringify(state, null, 2)}\n`, "utf8")
+    },
+    async deleteState(worktreeName) {
+      try {
+        await fs.unlink(stateFile(worktreeName))
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err // 不存在 = 幂等成功
+      }
     },
     async listStates() {
       try {

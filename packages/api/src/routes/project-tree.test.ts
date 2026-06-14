@@ -24,7 +24,7 @@ async function makeApp() {
   registerProjectTreeRoutes(app, {
     mainRepoRoot: main,
     inventory: async () => [
-      { name: "main", branch: "dev", head: "a", path: main, isMain: true, preview: null },
+      { name: "main", branch: "dev", head: "a", path: main, isMain: true, preview: null, mergeStatus: null },
     ],
   })
   await app.ready()

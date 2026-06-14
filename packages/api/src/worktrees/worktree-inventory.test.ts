@@ -3,6 +3,7 @@ import { test } from "node:test"
 
 import {
   buildInventory,
+  computeMergeStatus,
   parseWorktreePorcelain,
   type InventoryDeps,
 } from "./worktree-inventory"
@@ -45,8 +46,17 @@ function makeDeps(overrides: Partial<InventoryDeps> = {}): InventoryDeps {
     probePort: async () => false,
     readState: async () => null,
     probeCreationDate: async () => null,
+    baseRef: "dev",
+    execGitAt: async () => {
+      throw new Error("execGitAt not stubbed")
+    },
     ...overrides,
   }
+}
+
+/** is-ancestor 非祖先用退出码 1 抛出（git 真实行为）；坏 ref 用 128 */
+function gitExit(code: number): Error {
+  return Object.assign(new Error(`git exit ${code}`), { code })
 }
 
 // (1) porcelain 3 worktree（含主仓）→ name/branch/head/path/isMain
@@ -235,4 +245,93 @@ test("F028 bugfix · short-name registry key still matches", async () => {
   })
   const inv = await buildInventory(deps)
   assert.ok(inv.find((r) => r.name === "F028")?.preview, "短名 key 匹配不能被破坏")
+})
+
+// ── 续作 AC11 · 合并状态（computeMergeStatus 纯函数）────────────────────────
+
+// rev-list --left-right --count：左=behind 右=ahead
+test("F028 AC11 · computeMergeStatus parses left=behind right=ahead", async () => {
+  const ms = await computeMergeStatus(async (args) => {
+    if (args[0] === "rev-list") return "3\t5\n"
+    return "" // is-ancestor exit 0
+  }, "dev")
+  assert.equal(ms.behind, 3)
+  assert.equal(ms.ahead, 5)
+  assert.equal(ms.mergedHint, true)
+})
+
+// is-ancestor 退出码 1（非祖先）→ mergedHint false；坏 ref(128) → null
+test("F028 AC11 · is-ancestor exit 1 → false; exit 128 → null", async () => {
+  const notMerged = await computeMergeStatus(async (args) => {
+    if (args[0] === "rev-list") return "0\t2"
+    throw gitExit(1)
+  }, "dev")
+  assert.equal(notMerged.mergedHint, false)
+  assert.equal(notMerged.ahead, 2)
+
+  const badRef = await computeMergeStatus(async (args) => {
+    if (args[0] === "rev-list") throw gitExit(128)
+    throw gitExit(128)
+  }, "nonexistent")
+  assert.equal(badRef.mergedHint, null, "坏 ref 不能谎报未合并")
+  assert.equal(badRef.ahead, null)
+  assert.equal(badRef.behind, null)
+})
+
+// 每信号独立：rev-list 挂但 is-ancestor 成功 → ahead/behind null 但 mergedHint 仍 true
+test("F028 AC11 · per-signal try/catch: rev-list fails, is-ancestor ok", async () => {
+  const ms = await computeMergeStatus(async (args) => {
+    if (args[0] === "rev-list") throw gitExit(128)
+    return ""
+  }, "dev")
+  assert.equal(ms.ahead, null)
+  assert.equal(ms.behind, null)
+  assert.equal(ms.mergedHint, true)
+})
+
+// computeMergeStatus 永不抛（即使 execGit 同步爆）
+test("F028 AC11 · computeMergeStatus never throws", async () => {
+  const ms = await computeMergeStatus(async () => {
+    throw new Error("boom no code")
+  }, "dev")
+  assert.deepEqual(ms, { ahead: null, behind: null, mergedHint: null })
+})
+
+// ── 续作 AC11 · buildInventory 接线 ────────────────────────────────────────
+
+// 主仓行 mergeStatus=null；非主行带 mergeStatus
+test("F028 AC11 · main row mergeStatus null; non-main rows computed", async () => {
+  const deps = makeDeps({
+    execGitAt: async (cwd, args) => {
+      assert.ok(cwd.includes("F02"), `execGitAt 只该对非主行调，cwd=${cwd}`)
+      if (args[0] === "rev-list") return "0\t0"
+      return "" // is-ancestor exit 0 = 已含
+    },
+  })
+  const inv = await buildInventory(deps)
+  const main = inv.find((r) => r.isMain)
+  assert.equal(main?.mergeStatus, null, "主仓不算合并状态")
+  const f027 = inv.find((r) => r.name === "F027")
+  assert.deepEqual(f027?.mergeStatus, { ahead: 0, behind: 0, mergedHint: true })
+})
+
+// 一行 git 失败不连累整列表（其它行 + 列表完整）
+test("F028 AC11 · one row's git failure does not break the list", async () => {
+  const deps = makeDeps({
+    execGitAt: async (cwd, args) => {
+      if (cwd.includes("F027")) throw gitExit(128) // F027 整体爆
+      if (args[0] === "rev-list") return "1\t4"
+      return ""
+    },
+  })
+  const inv = await buildInventory(deps)
+  assert.equal(inv.length, 3, "列表仍 3 行")
+  const f027 = inv.find((r) => r.name === "F027")
+  assert.deepEqual(
+    f027?.mergeStatus,
+    { ahead: null, behind: null, mergedHint: null },
+    "爆掉的行降级全 null，不抛、不丢行",
+  )
+  const f028 = inv.find((r) => r.name === "F028")
+  assert.deepEqual(f028?.mergeStatus, { ahead: 4, behind: 1, mergedHint: true })
 })

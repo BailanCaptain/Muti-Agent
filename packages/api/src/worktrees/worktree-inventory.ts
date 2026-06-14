@@ -25,7 +25,21 @@ export type PreviewStatus = {
   ownership: "ui" | "foreign" | "none"
 }
 
-export type WorktreeInventoryEntry = WorktreeRow & { preview: PreviewStatus | null }
+/**
+ * 续作 AC11 · 合并状态（best-effort 提示，非硬门）。每信号独立降级 null。
+ * ahead = HEAD 独占提交数；behind = baseRef 独占；mergedHint = HEAD 是否已被 baseRef 包含。
+ */
+export type MergeStatus = {
+  ahead: number | null
+  behind: number | null
+  mergedHint: boolean | null
+}
+
+export type WorktreeInventoryEntry = WorktreeRow & {
+  preview: PreviewStatus | null
+  /** 主仓行 = null（不算合并状态）；非主行 = MergeStatus（字段各自可降级 null） */
+  mergeStatus: MergeStatus | null
+}
 
 export type RegistryEntry = { worktreeName: string; apiPort: number; webPort: number }
 
@@ -36,9 +50,52 @@ export type InventoryDeps = {
   readState: (worktreeName: string) => Promise<PreviewState | null>
   /** CIM Win32_Process CreationDate（epoch-ms 串）；进程不存在 → null */
   probeCreationDate: (pid: number) => Promise<string | null>
+  /** AC11 合并状态基准（通常 "dev"） */
+  baseRef: string
+  /** AC11：在某 worktree 路径下跑 git（非零退出须 reject，error.code=退出码） */
+  execGitAt: (worktreePath: string, args: string[]) => Promise<string>
 }
 
 const SHORT_HEAD_LEN = 8
+
+function gitExitCode(err: unknown): number | null {
+  if (err && typeof err === "object" && "code" in err) {
+    const code = (err as { code: unknown }).code
+    if (typeof code === "number") return code
+  }
+  return null
+}
+
+/**
+ * AC11 合并状态：两条 git 命令各自独立 try/catch，**永不抛**。
+ * - ahead/behind：`git rev-list --left-right --count <baseRef>...HEAD` → "behind\tahead"
+ * - mergedHint：`git merge-base --is-ancestor HEAD <baseRef>` 纯退出码（0=已含、1=未含、其它=未知 null）
+ */
+export async function computeMergeStatus(
+  execGit: (args: string[]) => Promise<string>,
+  baseRef: string,
+): Promise<MergeStatus> {
+  let ahead: number | null = null
+  let behind: number | null = null
+  let mergedHint: boolean | null = null
+  try {
+    const out = (await execGit(["rev-list", "--left-right", "--count", `${baseRef}...HEAD`])).trim()
+    const m = /^(\d+)\s+(\d+)$/.exec(out)
+    if (m) {
+      behind = Number(m[1])
+      ahead = Number(m[2])
+    }
+  } catch {
+    // 降级 null
+  }
+  try {
+    await execGit(["merge-base", "--is-ancestor", "HEAD", baseRef])
+    mergedHint = true // exit 0
+  } catch (err) {
+    mergedHint = gitExitCode(err) === 1 ? false : null // 1=确定未含；其它（坏 ref/IO）=未知
+  }
+  return { ahead, behind, mergedHint }
+}
 
 /** `git worktree list --porcelain` 块解析；首块 = 主仓（git 契约），detached → "(detached)" */
 export function parseWorktreePorcelain(stdout: string): WorktreeRow[] {
@@ -89,12 +146,24 @@ export async function buildInventory(deps: InventoryDeps): Promise<WorktreeInven
   const rows = parseWorktreePorcelain(stdout)
   const result: WorktreeInventoryEntry[] = []
   for (const row of rows) {
+    // AC11 合并状态：主仓不算；非主行 best-effort 计算，整体爆掉降级 null（不连累列表）
+    let mergeStatus: MergeStatus | null = null
+    if (!row.isMain) {
+      try {
+        mergeStatus = await computeMergeStatus(
+          (args) => deps.execGitAt(row.path, args),
+          deps.baseRef,
+        )
+      } catch {
+        mergeStatus = { ahead: null, behind: null, mergedHint: null }
+      }
+    }
     // 合入后真机 bug 修复：F024 CLI `pnpm worktree:preview` 用全分支名 claim registry
     // （worktreeName=row.branch），F028 自己的 start 用短名（row.name）。两种 key 都要认，
     // 否则 CLI 起的 preview 全误判未运行。branch 全分支名 git 保证唯一，精确等值不会误吸附。
     const entry = registry.find((e) => e.worktreeName === row.name || e.worktreeName === row.branch)
     if (!entry) {
-      result.push({ ...row, preview: null })
+      result.push({ ...row, preview: null, mergeStatus })
       continue
     }
     const [apiAlive, webAlive] = await Promise.all([
@@ -111,6 +180,7 @@ export async function buildInventory(deps: InventoryDeps): Promise<WorktreeInven
     result.push({
       ...row,
       preview: { apiPort: entry.apiPort, webPort: entry.webPort, apiAlive, webAlive, ownership },
+      mergeStatus,
     })
   }
   return result

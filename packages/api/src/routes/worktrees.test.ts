@@ -8,7 +8,7 @@ import { registerWorktreeRoutes, type WorktreeRoutesOpts } from "./worktrees"
 /** F028 Task 7 · worktrees 路由（plan v5 用例 1-9，全 fake 注入） */
 
 const INVENTORY = [
-  { name: "main", branch: "dev", head: "a", path: "C:/repo", isMain: true, preview: null },
+  { name: "main", branch: "dev", head: "a", path: "C:/repo", isMain: true, preview: null, mergeStatus: null },
   {
     name: "F028",
     branch: "feat/x",
@@ -16,6 +16,7 @@ const INVENTORY = [
     path: "C:/repo/.worktrees/F028",
     isMain: false,
     preview: { apiPort: 8801, webPort: 3101, apiAlive: true, webAlive: true, ownership: "ui" as const },
+    mergeStatus: { ahead: 5, behind: 0, mergedHint: false },
   },
 ]
 
@@ -43,10 +44,19 @@ function makeOpts(overrides: Partial<WorktreeRoutesOpts> = {}): WorktreeRoutesOp
       },
       restartAll: async () => ({ ok: true, apiPort: 8801, webPort: 3101 }),
       start: async () => ({ ok: true, apiPort: 8801, webPort: 3101 }),
+      stop: async (name) => {
+        calls.push(`stop:${name}`)
+        return { ok: true, apiPort: 8801, webPort: 3101 }
+      },
+      withCleanupLock: async (_name, _onBusy, fn) => fn(async () => ({ ok: true, apiPort: 0, webPort: 0 })),
       tailLog: async (name, proc, lines) => {
         calls.push(`tail:${name}:${proc}:${lines}`)
         return { lines: ["a", "b"], logPath: "p" }
       },
+    },
+    cleanup: async (name) => {
+      calls.push(`cleanup:${name}`)
+      return { ok: true, steps: [{ name: "safety-gate", ok: true }, { name: "worktree-remove", ok: true }] }
     },
     allowedOrigins: async () => new Set(["http://localhost:3000", "http://localhost:3101"]),
     reconcile: async () => {
@@ -124,6 +134,8 @@ test("F028 T7 · action result mapping 200/409/200-okfalse", async () => {
         compileBackend: async () => ({ ok: false, stage: "in-progress", message: "busy" }),
         restartAll: async () => ({ ok: false, stage: "occupied-foreign", message: "x" }),
         start: async () => ({ ok: true, apiPort: 1, webPort: 2 }),
+        stop: async () => ({ ok: true, apiPort: 1, webPort: 2 }),
+        withCleanupLock: async (_n, _b, fn) => fn(async () => ({ ok: true, apiPort: 0, webPort: 0 })),
         tailLog: async () => ({ lines: [], logPath: "" }),
       },
     }),
@@ -188,4 +200,52 @@ test("F028 T7 · WORKTREE_PREVIEW gate: control routes absent, read-only present
   const cap2 = await mainApp.inject({ method: "GET", url: "/api/worktrees/capabilities" })
   assert.equal(cap2.json().control, true)
   await mainApp.close()
+})
+
+// ── 续作 AC12 · 清理端点 ────────────────────────────────────────────────────
+
+// 清理 happy：200 + {ok, steps} 透传，cleanup(name) 被调
+test("F028 AC12 · POST cleanup returns ok+steps and calls cleanup(name)", async () => {
+  const opts = makeOpts()
+  const app = await makeApp(opts)
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/worktrees/F028/cleanup",
+    headers: { origin: "http://localhost:3000" },
+  })
+  assert.equal(res.statusCode, 200)
+  assert.equal(res.json().ok, true)
+  assert.ok(Array.isArray(res.json().steps))
+  assert.ok(opts.calls.includes("cleanup:F028"))
+  await app.close()
+})
+
+// 清理 control 关（preview 实例 D12）→ 路由不注册 → 404
+test("F028 AC12 · POST cleanup not registered when control disabled (404)", async () => {
+  const app = await makeApp(makeOpts({ controlEnabled: false }))
+  const res = await app.inject({ method: "POST", url: "/api/worktrees/F028/cleanup" })
+  assert.equal(res.statusCode, 404)
+  await app.close()
+})
+
+// 清理错误 Origin → 403（延续 AC6 控制面合同）
+test("F028 AC12 · POST cleanup wrong origin → 403", async () => {
+  const opts = makeOpts()
+  const app = await makeApp(opts)
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/worktrees/F028/cleanup",
+    headers: { origin: "http://evil.example" },
+  })
+  assert.equal(res.statusCode, 403)
+  assert.ok(!opts.calls.includes("cleanup:F028"), "Origin 不过不得进入清理")
+  await app.close()
+})
+
+// 无 Origin（curl/同进程）→ 放行 200
+test("F028 AC12 · POST cleanup without origin allowed (200)", async () => {
+  const app = await makeApp(makeOpts())
+  const res = await app.inject({ method: "POST", url: "/api/worktrees/F028/cleanup" })
+  assert.equal(res.statusCode, 200)
+  await app.close()
 })

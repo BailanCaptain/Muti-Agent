@@ -21,7 +21,7 @@ function deps(main: string, wts: Array<{ name: string; path: string; isMain?: bo
     mainRepoRoot: main,
     inventory: async () =>
       [{ name: "main", path: main, isMain: true }, ...wts.map((w) => ({ isMain: false, ...w }))].map(
-        (w) => ({ ...w, branch: "x", head: "y", preview: null }),
+        (w) => ({ ...w, branch: "x", head: "y", preview: null, mergeStatus: null }),
       ),
   }
 }

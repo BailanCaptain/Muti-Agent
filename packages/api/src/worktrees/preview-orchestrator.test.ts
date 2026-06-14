@@ -17,7 +17,14 @@ import type { PreviewState } from "./preview-state-types"
  * deps 全注入零真 IO；callLog 记录调用序做顺序断言（case 4：双预检先于首杀）。
  */
 
-const WT = { name: "F028", branch: "feat/x", head: "abc", path: "C:/repo/.worktrees/F028", isMain: false }
+const WT = {
+  name: "F028",
+  branch: "feat/x",
+  head: "abc",
+  path: "C:/repo/.worktrees/F028",
+  isMain: false,
+  mergeStatus: null,
+}
 const MAIN = {
   name: "main",
   branch: "dev",
@@ -25,6 +32,7 @@ const MAIN = {
   path: "C:/repo",
   isMain: true,
   preview: null,
+  mergeStatus: null,
 }
 const API_REC = { pid: 100, creationDate: "1700000000100", startedAt: "t0" }
 const WEB_REC = { pid: 200, creationDate: "1700000000200", startedAt: "t0" }
@@ -420,4 +428,139 @@ test("F028 T4 · tailLog uses worktreeId slug paths and tolerates missing file",
   const orch2 = createPreviewOrchestrator(h2.deps)
   const miss = await orch2.tailLog("ghost", "web", 10)
   assert.deepEqual(miss.lines, [])
+})
+
+// ── 续作 AC12 · orchestrator.stop（复用预检 kill，停 preview 供清理）──────────
+
+// stop happy：api+web 记录活 + listener 后代 → 两进程都杀 + ok + 审计 "stop"
+test("F028 AC12 · stop kills both procs when alive + descendant listeners", async () => {
+  const h = await makeHarness()
+  await h.seedState()
+  const orch = createPreviewOrchestrator(h.deps)
+  const res = await orch.stop("F028")
+  assert.equal(res.ok, true)
+  assert.ok(h.calls.includes("kill:100"), "api 杀")
+  assert.ok(h.calls.includes("kill:200"), "web 杀")
+  const audits = await auditLines(h.base)
+  assert.equal(audits.at(-1)?.action, "stop")
+  assert.equal(audits.at(-1)?.ok, true)
+})
+
+// stop 幂等：记录 pid 已死（probeCreationDate null）+ 端口空 → ok，kill 零调用
+test("F028 AC12 · stop is idempotent when recorded pids dead + ports free", async () => {
+  const h = await makeHarness({
+    probeCreationDate: async () => null, // 进程都没了
+    portListeners: async (ports) => {
+      const m = new Map<number, number[]>()
+      for (const p of ports) m.set(p, []) // 端口已空
+      return m
+    },
+  })
+  await h.seedState()
+  const orch = createPreviewOrchestrator(h.deps)
+  const res = await orch.stop("F028")
+  assert.equal(res.ok, true, "已停的 worktree 再 stop 应幂等成功")
+  assert.ok(!h.calls.some((c) => c.startsWith("kill:")), "kill 必须零调用")
+})
+
+// stop foreign：listener 非后代 → occupied-foreign，kill 零调用
+test("F028 AC12 · stop foreign listener → occupied-foreign, zero kill", async () => {
+  const h = await makeHarness({
+    portListeners: async (ports) => {
+      const m = new Map<number, number[]>()
+      for (const p of ports) m.set(p, p === 8801 ? [666] : []) // 8801 被外来 666 占
+      return m
+    },
+  })
+  await h.seedState()
+  const orch = createPreviewOrchestrator(h.deps)
+  const res = await orch.stop("F028")
+  assert.ok(!res.ok && res.stage === "occupied-foreign", "脱管不得杀")
+  assert.ok(!h.calls.some((c) => c.startsWith("kill:")), "kill 必须零调用")
+})
+
+// stop：记录 pid 已死但端口仍被占（PID 复用/外来夺端口）→ occupied-foreign，零杀
+test("F028 AC12 · stop dead pid but port still occupied → occupied-foreign, zero kill", async () => {
+  const h = await makeHarness({
+    probeCreationDate: async () => null, // 记录的进程已死
+    portListeners: async (ports) => {
+      const m = new Map<number, number[]>()
+      for (const p of ports) m.set(p, p === 8801 ? [101] : []) // 端口仍有 listener
+      return m
+    },
+  })
+  await h.seedState()
+  const orch = createPreviewOrchestrator(h.deps)
+  const res = await orch.stop("F028")
+  assert.ok(!res.ok && res.stage === "occupied-foreign", "死记录+占用端口=非我方，禁杀")
+  assert.ok(!h.calls.some((c) => c.startsWith("kill:")))
+})
+
+// ── 续作 AC12 · cleanup 与 preview 共用每-worktree 互斥锁（德彪 code-r1 P2-1）────────
+
+// cleanup 锁持有期间，preview 操作（compile/restart/start/stop）一律 in-progress
+test("F028 AC12 · cleanup lock blocks preview ops while held", async () => {
+  const h = await makeHarness()
+  await h.seedState()
+  const orch = createPreviewOrchestrator(h.deps)
+  let release = () => {}
+  const gate = new Promise<void>((r) => {
+    release = r
+  })
+  const cleanupPromise = orch.withCleanupLock("F028", () => "BUSY", async () => {
+    await gate
+    return "DONE"
+  })
+  // cleanup rm/remove 进行中 → 任何 preview 操作必须被拒（防在被删 worktree 里起进程）
+  const compile = await orch.compileBackend("F028")
+  assert.ok(!compile.ok && compile.stage === "in-progress", "cleanup 期间 compile 应 in-progress")
+  const start = await orch.start("F028")
+  assert.ok(!start.ok && start.stage === "in-progress", "cleanup 期间 start 应 in-progress")
+  release()
+  assert.equal(await cleanupPromise, "DONE")
+  // 释放后恢复
+  const compile2 = await orch.compileBackend("F028")
+  assert.equal(compile2.ok, true)
+})
+
+// 重入 cleanup：第二发拿 onBusy（防双击）
+test("F028 AC12 · withCleanupLock rejects re-entrant cleanup", async () => {
+  const h = await makeHarness()
+  const orch = createPreviewOrchestrator(h.deps)
+  let release = () => {}
+  const gate = new Promise<void>((r) => {
+    release = r
+  })
+  const first = orch.withCleanupLock("F028", () => "BUSY", async () => {
+    await gate
+    return "DONE"
+  })
+  const second = await orch.withCleanupLock("F028", () => "BUSY", async () => "DONE2")
+  assert.equal(second, "BUSY", "第二发 cleanup 应拿 onBusy")
+  release()
+  assert.equal(await first, "DONE")
+})
+
+// 反向：preview 操作进行中，cleanup 拿 onBusy（同集合跨检，对称覆盖）
+test("F028 AC12 · in-flight preview op blocks cleanup lock", async () => {
+  let release = () => {}
+  const gate = new Promise<void>((r) => {
+    release = r
+  })
+  const h = await makeHarness({
+    // 让 compile 的 spawn 卡住，从而持有 inFlight
+    spawnProc: async () => {
+      await gate
+      return { pid: 9001, creationDate: "spawned-9001", logPath: "L" }
+    },
+  })
+  await h.seedState()
+  const orch = createPreviewOrchestrator(h.deps)
+  const compilePromise = orch.compileBackend("F028") // 持有 inFlight 直到 gate
+  // 给事件循环一拍让 compile 进入 inFlight
+  await new Promise((r) => setTimeout(r, 10))
+  const cleanup = await orch.withCleanupLock("F028", () => "BUSY", async () => "DONE")
+  assert.equal(cleanup, "BUSY", "preview 操作进行中时 cleanup 应拿 onBusy")
+  release()
+  await compilePromise
 })

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify"
 
 import { PreviewGuardError, assertAllowedOrigin } from "../worktrees/preview-guards"
 import type { PreviewOrchestrator } from "../worktrees/preview-orchestrator"
+import type { CleanupResult } from "../worktrees/worktree-cleanup"
 import type { WorktreeInventoryEntry } from "../worktrees/worktree-inventory"
 import type { SummaryError, WorktreeSummary } from "../worktrees/worktree-summary"
 
@@ -19,6 +20,8 @@ export type WorktreeRoutesOpts = {
   inventory: () => Promise<WorktreeInventoryEntry[]>
   summary: (name: string, worktreePath: string) => Promise<WorktreeSummary | SummaryError>
   orchestrator: PreviewOrchestrator
+  /** 续作 AC12：清理 worktree（服务端从 inventory 解析目标 + 单飞，安全门在序列内） */
+  cleanup: (name: string) => Promise<CleanupResult>
   allowedOrigins: () => Promise<Set<string>>
   reconcile: () => Promise<void>
 }
@@ -93,4 +96,26 @@ export async function registerWorktreeRoutes(
       },
     )
   }
+
+  // 续作 AC12 · 清理 worktree（服务端从 git worktree list 解析目标，调用方不可传 path）
+  app.post<{ Params: { name: string } }>("/api/worktrees/:name/cleanup", async (req, reply) => {
+    try {
+      assertAllowedOrigin(req.headers.origin, await opts.allowedOrigins())
+    } catch (err) {
+      if (err instanceof PreviewGuardError) {
+        return reply.code(403).send({ error: err.message })
+      }
+      throw err
+    }
+    // 安全门（非主仓 / 在 inventory / 无未提交）由清理序列内部统一裁决，结果落 steps。
+    // 德彪 code-r1 P2-2：任何意外抛出也返回**结构化 steps**（200），前端永不会拿到无 steps 的体。
+    try {
+      return await opts.cleanup(req.params.name)
+    } catch (err) {
+      return reply.code(200).send({
+        ok: false,
+        steps: [{ name: "error", ok: false, message: err instanceof Error ? err.message : String(err) }],
+      })
+    }
+  })
 }

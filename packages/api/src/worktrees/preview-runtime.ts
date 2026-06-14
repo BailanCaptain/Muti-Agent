@@ -11,6 +11,7 @@ import type { CorsOriginConfig } from "./preview-guards"
 import { resolveControlPlaneOrigins } from "./preview-guards"
 import {
   buildClaimWorkerSpec,
+  buildReleaseWorkerSpec,
   buildSpawnSpec,
   buildTaskkillArgs,
   captureSpawnOwnership,
@@ -21,6 +22,7 @@ import {
 } from "./preview-deps"
 import { createPreviewOrchestrator, type OrchestratorDeps, type PreviewOrchestrator } from "./preview-orchestrator"
 import { createPreviewStateStore, reconcileOnBoot, type PreviewStateStore } from "./preview-state"
+import { planArtifactRemoval, runWorktreeCleanup, type CleanupResult } from "./worktree-cleanup"
 import { buildInventory, type WorktreeInventoryEntry } from "./worktree-inventory"
 import { buildWorktreeSummary } from "./worktree-summary"
 import type { ProjectTreeRoutesOpts } from "../routes/project-tree"
@@ -186,6 +188,9 @@ export async function buildWorktreeRoutesOpts(input: {
       probePort,
       readState: (name) => store.readState(name),
       probeCreationDate,
+      baseRef: "dev",
+      // AC11：在 worktree 路径下跑 git；非零退出 execFile 自动 reject 且 err.code=退出码
+      execGitAt: (worktreePath, args) => runGit(args, worktreePath),
     })
 
   const orchestratorDeps: OrchestratorDeps = {
@@ -256,6 +261,62 @@ export async function buildWorktreeRoutesOpts(input: {
 
   const orchestrator: PreviewOrchestrator = createPreviewOrchestrator(orchestratorDeps)
 
+  const tsxCliPath = path.join(mainRoot, "node_modules", "tsx", "dist", "cli.mjs")
+
+  // 续作 AC12 · 预删可再生构建产物：仅 node_modules + .next（planArtifactRemoval 白名单，避
+  // Windows file-busy）。其余 worktree 自造数据由后续 git worktree remove 删。fs.rm force 只表
+  // 示"不存在不报错"，非 git --force。
+  async function rmArtifacts(worktreePath: string): Promise<string[]> {
+    let entries: string[]
+    try {
+      entries = await fsp.readdir(worktreePath)
+    } catch {
+      return []
+    }
+    const removed: string[] = []
+    for (const name of planArtifactRemoval(entries)) {
+      try {
+        await fsp.rm(path.join(worktreePath, name), { recursive: true, force: true })
+        removed.push(name)
+      } catch {
+        // best-effort：后续 git worktree remove（无 --force）会兜底拒残留
+      }
+    }
+    return removed
+  }
+
+  // 续作 AC12 · 清理走 orchestrator 的每-worktree 互斥锁（与 compile/restart/start/stop 共用，
+  // 德彪 code-r1 P2-1：cleanup rm/remove 期间禁起 preview）。stopUnlocked 由锁注入避免自锁。
+  const cleanup = (name: string): Promise<CleanupResult> =>
+    orchestrator.withCleanupLock(
+      name,
+      () => ({ ok: false, steps: [{ name: "in-progress", ok: false, message: `操作进行中：${name}` }] }),
+      (stopUnlocked) =>
+        runWorktreeCleanup({
+          name,
+          inventory,
+          execGitMain: (args) => runGit(args, mainRoot),
+          execGitAt: (worktreePath, args) => runGit(args, worktreePath),
+          // 德彪 code-r3 P1：**不**吞 readdir 失败——读不到目录不能伪装成"没有备份"
+          // （那会 fail-open 让不可再生原配置进非原子删除路径）。让它 reject → 安全门 fail-closed。
+          listEntries: (worktreePath) => fsp.readdir(worktreePath),
+          stopPreview: () => stopUnlocked(),
+          rmArtifacts,
+          releasePorts: async (worktreeName) => {
+            const spec = buildReleaseWorkerSpec({
+              nodeExe: process.execPath,
+              tsxCliPath,
+              mainRoot,
+              registryPath,
+              worktreeName,
+            })
+            await execFileAsync(spec.command, spec.args, { cwd: mainRoot, windowsHide: true })
+          },
+          deleteState: (n) => store.deleteState(n),
+          appendAudit: (e) => store.appendAudit(e),
+        }),
+    )
+
   return {
     controlEnabled: process.env.WORKTREE_PREVIEW !== "1",
     inventory,
@@ -266,6 +327,7 @@ export async function buildWorktreeRoutesOpts(input: {
         execGit: (args) => runGit(args, worktreePath),
       }),
     orchestrator,
+    cleanup,
     allowedOrigins: async () => {
       const registry = await readRegistry()
       return resolveControlPlaneOrigins(

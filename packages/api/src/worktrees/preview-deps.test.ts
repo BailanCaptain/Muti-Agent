@@ -5,6 +5,7 @@ import { buildPreviewEnv } from "@multi-agent/shared"
 
 import {
   buildClaimWorkerSpec,
+  buildReleaseWorkerSpec,
   buildShutdownWorkerSpec,
   buildSpawnSpec,
   buildTaskkillArgs,
@@ -125,6 +126,12 @@ test("F028 r1-P1-1 · worker specs: node direct, args array, no npx/shell", () =
   assert.equal(shutdown.command, "C:/nodejs/node.exe")
   assert.ok(shutdown.args[1].replace(/\\/g, "/").endsWith("scripts/worktree-preview-shutdown-worker.ts"))
   assert.deepEqual(shutdown.args.slice(2), ["C:/repo/.worktree-ports.json", "F028&calc^|evil"])
+
+  // 续作 AC12：release worker 同款 node 直跑 / 元字符名当普通字符串（清理收口走它）
+  const release = buildReleaseWorkerSpec(inputs)
+  assert.equal(release.command, "C:/nodejs/node.exe")
+  assert.ok(release.args[1].replace(/\\/g, "/").endsWith("scripts/worktree-port-registry-release-worker.ts"))
+  assert.deepEqual(release.args.slice(2), ["C:/repo/.worktree-ports.json", "F028&calc^|evil"])
 
   const ok = parseClaimWorkerOutput('{"worktreeName":"F028","apiPort":8802,"webPort":3102}')
   assert.deepEqual(ok, { ok: true, entry: { worktreeName: "F028", apiPort: 8802, webPort: 3102 } })

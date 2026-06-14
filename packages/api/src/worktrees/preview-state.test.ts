@@ -107,3 +107,16 @@ test("F028 T3 · reconcileOnBoot clears stale records, keeps matches, never kill
   assert.equal(reused?.processes.api, null)
   assert.equal(reused?.processes.web, null)
 })
+
+// 续作 AC12 · deleteState：删状态文件，幂等（不存在不抛）
+test("F028 AC12 · deleteState removes state file and is idempotent", async () => {
+  const base = await makeTmpBase()
+  const store = createPreviewStateStore({ baseDir: base, now: () => "T" })
+  await store.writeState(makeState("F028"))
+  assert.equal((await fs.readdir(base)).length, 1)
+  await store.deleteState("F028")
+  assert.equal((await fs.readdir(base)).length, 0, "状态文件应被删")
+  // 再删一次（已不存在）→ 不抛
+  await store.deleteState("F028")
+  assert.equal(await store.readState("F028"), null)
+})

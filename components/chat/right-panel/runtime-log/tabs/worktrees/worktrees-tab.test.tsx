@@ -9,7 +9,7 @@ import { WorktreesTab } from "./worktrees-tab"
 
 const LIST = {
   worktrees: [
-    { name: "main", branch: "dev", head: "aaa", path: "C:/repo", isMain: true, preview: null },
+    { name: "main", branch: "dev", head: "aaa", path: "C:/repo", isMain: true, preview: null, mergeStatus: null },
     {
       name: "F028",
       branch: "feat/F028-x",
@@ -17,6 +17,7 @@ const LIST = {
       path: "C:/repo/.worktrees/F028",
       isMain: false,
       preview: { apiPort: 8801, webPort: 3101, apiAlive: true, webAlive: true, ownership: "ui" },
+      mergeStatus: { ahead: 0, behind: 2, mergedHint: true }, // 已含 dev → 可清理
     },
     {
       name: "F029",
@@ -25,6 +26,7 @@ const LIST = {
       path: "C:/repo/.worktrees/F029",
       isMain: false,
       preview: null,
+      mergeStatus: { ahead: 5, behind: 0, mergedHint: false }, // 未含 → 不可清理
     },
   ],
 }
@@ -40,6 +42,7 @@ const SUMMARY = {
 type FetchPlan = {
   capabilities?: { control: boolean }
   action?: { status: number; body: unknown }
+  cleanup?: unknown
   list?: typeof LIST
 }
 
@@ -60,6 +63,17 @@ function installFetch(plan: FetchPlan = {}) {
       if (url.match(/\/preview\/(compile-backend|restart|start)$/)) {
         const a = plan.action ?? { status: 200, body: { ok: true, apiPort: 8801, webPort: 3101 } }
         return json(a.body, a.status)
+      }
+      if (url.endsWith("/cleanup")) {
+        return json(
+          plan.cleanup ?? {
+            ok: true,
+            steps: [
+              { name: "safety-gate", ok: true },
+              { name: "worktree-remove", ok: true },
+            ],
+          },
+        )
       }
       if (url.endsWith("/api/worktrees")) return json(plan.list ?? LIST)
       return json({ error: `unmocked ${url}` }, 500)
@@ -228,5 +242,171 @@ describe("F028 T9 · WorktreesTab", () => {
     fireEvent.click(await screen.findByTestId("worktree-row-F028"))
     await screen.findByTestId("wt-compile-btn") // api 活 → running 钮组仍在
     expect(screen.queryByTestId("wt-open-btn")).toBeNull()
+  })
+})
+
+// ── 续作 AC11 · 列表合并状态 + 可清理标记 ──────────────────────────────────
+describe("F028 续作 AC11 · 合并状态", () => {
+  it("mergedHint=true 行显示「本地 dev 已包含提交」+「可清理」", async () => {
+    installFetch()
+    render(<WorktreesTab />)
+    activate()
+    const f028 = await screen.findByTestId("worktree-row-F028")
+    expect(f028.textContent).toContain("本地 dev 已包含提交")
+    expect(screen.getByTestId("wt-cleanable-F028")).toBeTruthy()
+  })
+
+  it("mergedHint=false 行不显示已包含徽标、不可清理，但显示 ahead/behind", async () => {
+    installFetch()
+    render(<WorktreesTab />)
+    activate()
+    const f029 = await screen.findByTestId("worktree-row-F029")
+    expect(f029.textContent).not.toContain("本地 dev 已包含提交")
+    expect(screen.queryByTestId("wt-cleanable-F029")).toBeNull()
+    expect(f029.textContent).toMatch(/↑\s*5|ahead 5|\+5/) // ahead 计数可见
+  })
+
+  it("mergeStatus=null（主仓/降级）不崩、不显示可清理", async () => {
+    installFetch()
+    render(<WorktreesTab />)
+    activate()
+    const main = await screen.findByTestId("worktree-row-main")
+    expect(main.textContent).not.toContain("本地 dev 已包含提交")
+    expect(screen.queryByTestId("wt-cleanable-main")).toBeNull()
+  })
+})
+
+// ── 续作 AC12 · 清理按钮 ────────────────────────────────────────────────────
+describe("F028 续作 AC12 · 清理 worktree", () => {
+  it("可清理行（mergedHint=true）选中后 ActionBar 出现「清理」按钮", async () => {
+    installFetch()
+    render(<WorktreesTab />)
+    activate()
+    fireEvent.click(await screen.findByTestId("worktree-row-F028"))
+    expect(await screen.findByTestId("wt-cleanup-btn")).toBeTruthy()
+  })
+
+  // 德彪愿景 review P0：mergedHint 只是 advisory 徽标，绝不作清理按钮硬门——merge-gate 走
+  // squash，feature 做完 squash 合 dev 后 is-ancestor=false → mergedHint=false，若按它硬门
+  // 则恰好在小孙要清理的时刻按钮消失。故 mergedHint=false 的非主仓行仍必须有「清理」按钮。
+  it("未含 dev 的行（mergedHint=false，模拟 squash 合并后）仍有「清理」按钮，但无「已包含提交」徽标", async () => {
+    installFetch()
+    render(<WorktreesTab />)
+    activate()
+    fireEvent.click(await screen.findByTestId("worktree-row-F029"))
+    await screen.findByTestId("wt-start-btn") // 未运行 → 启动钮在
+    expect(await screen.findByTestId("wt-cleanup-btn")).toBeTruthy() // 清理按钮在（后端安全门兜底）
+    expect(screen.queryByTestId("wt-cleanable-F029")).toBeNull() // 但 advisory 徽标不在
+  })
+
+  // 主仓**绝不**出现清理按钮（Iron Law / 安全不变量），无论 mergeStatus 如何
+  it("主仓行无「清理」按钮（never cleanable）", async () => {
+    installFetch()
+    render(<WorktreesTab />)
+    activate()
+    fireEvent.click(await screen.findByTestId("worktree-row-main"))
+    // 等列表就绪
+    await screen.findByTestId("worktree-row-F028")
+    expect(screen.queryByTestId("wt-cleanup-btn")).toBeNull()
+  })
+
+  it("清理需二次确认：点「清理」→ 确认钮出现；点「确认清理」→ 调 /cleanup + 渲染 steps", async () => {
+    installFetch()
+    render(<WorktreesTab />)
+    activate()
+    fireEvent.click(await screen.findByTestId("worktree-row-F028"))
+    fireEvent.click(await screen.findByTestId("wt-cleanup-btn"))
+    // 二次确认出现，且此时还没调 /cleanup
+    const confirm = await screen.findByTestId("wt-cleanup-confirm")
+    expect(fetchCalls.some((c) => c.includes("/cleanup"))).toBe(false)
+    fireEvent.click(confirm)
+    await waitFor(() =>
+      expect(fetchCalls.some((c) => c.startsWith("POST") && c.includes("/cleanup"))).toBe(true),
+    )
+    // steps 结果可见
+    await waitFor(() => expect(screen.getByTestId("wt-cleanup-result")).toBeTruthy())
+    expect(screen.getByTestId("wt-cleanup-result").textContent).toContain("worktree-remove")
+  })
+
+  it("清理成功后刷新列表（再次 GET /api/worktrees）", async () => {
+    installFetch()
+    render(<WorktreesTab />)
+    activate()
+    fireEvent.click(await screen.findByTestId("worktree-row-F028"))
+    fireEvent.click(await screen.findByTestId("wt-cleanup-btn"))
+    const before = fetchCalls.filter((c) => c.endsWith("/api/worktrees")).length
+    fireEvent.click(await screen.findByTestId("wt-cleanup-confirm"))
+    await waitFor(() => {
+      const after = fetchCalls.filter((c) => c.endsWith("/api/worktrees")).length
+      expect(after).toBeGreaterThan(before)
+    })
+  })
+
+  // 德彪 code-r4 P2：git worktree remove 非原子——「已注销但有残留」后端返 ok:false，
+  // 但 worktree 已从 git 消失。前端必须**始终**刷新 inventory（不能只在 ok 时刷），否则
+  // 已注销的行会赖在列表里，违反 AC12「即时从列表消失」。
+  it("清理已注销但残留（ok:false）仍刷新列表（AC12 即时消失）", async () => {
+    installFetch({
+      cleanup: {
+        ok: false,
+        steps: [
+          { name: "safety-gate", ok: true },
+          { name: "stop-preview", ok: true },
+          { name: "rm-artifacts", ok: true },
+          {
+            name: "worktree-remove",
+            ok: false,
+            message: "git worktree remove 中途失败但 worktree 已注销，残留目录需人工删",
+          },
+          { name: "branch-delete", ok: true },
+          { name: "release-ports", ok: true },
+          { name: "delete-state", ok: true },
+        ],
+      },
+    })
+    render(<WorktreesTab />)
+    activate()
+    fireEvent.click(await screen.findByTestId("worktree-row-F028"))
+    fireEvent.click(await screen.findByTestId("wt-cleanup-btn"))
+    const before = fetchCalls.filter((c) => c.endsWith("/api/worktrees")).length
+    fireEvent.click(await screen.findByTestId("wt-cleanup-confirm"))
+    // 结果展示「清理未完成」+ 残留提示
+    const result = await screen.findByTestId("wt-cleanup-result")
+    expect(result.textContent).toContain("清理未完成")
+    expect(result.textContent).toContain("残留")
+    // 关键：ok:false 也必须刷新列表（worktree 已注销）
+    await waitFor(() => {
+      const after = fetchCalls.filter((c) => c.endsWith("/api/worktrees")).length
+      expect(after).toBeGreaterThan(before)
+    })
+  })
+})
+
+// ── 续作 AC12 · 德彪 code-r1 P2 加固 ───────────────────────────────────────
+describe("F028 续作 AC12 · P2 加固", () => {
+  // P2-2：后端异常（无 steps 的体，如 500）→ UI 不崩，展示失败
+  it("清理响应畸形（无 steps）→ 不崩 + 展示失败", async () => {
+    installFetch({ cleanup: { error: "INTERNAL_ERROR", message: "boom" } }) // 无 ok/steps
+    render(<WorktreesTab />)
+    activate()
+    fireEvent.click(await screen.findByTestId("worktree-row-F028"))
+    fireEvent.click(await screen.findByTestId("wt-cleanup-btn"))
+    fireEvent.click(await screen.findByTestId("wt-cleanup-confirm"))
+    const result = await screen.findByTestId("wt-cleanup-result")
+    expect(result.textContent).toContain("清理未完成") // 合成失败，没有 .steps.map 崩溃
+  })
+
+  // P2-1：cleanup 二次确认期间，preview 操作钮禁用（防在将删的 worktree 上起操作）
+  it("cleanup 确认中 → preview 操作钮禁用", async () => {
+    installFetch()
+    render(<WorktreesTab />)
+    activate()
+    fireEvent.click(await screen.findByTestId("worktree-row-F028"))
+    const compile = (await screen.findByTestId("wt-compile-btn")) as HTMLButtonElement
+    expect(compile.disabled).toBe(false)
+    fireEvent.click(screen.getByTestId("wt-cleanup-btn")) // 进 confirming
+    await screen.findByTestId("wt-cleanup-confirm")
+    expect((screen.getByTestId("wt-compile-btn") as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByTestId("wt-restart-btn") as HTMLButtonElement).disabled).toBe(true)
   })
 })

@@ -17,6 +17,12 @@ export type PreviewStatus = {
   ownership: "ui" | "foreign" | "none"
 }
 
+export type MergeStatus = {
+  ahead: number | null
+  behind: number | null
+  mergedHint: boolean | null
+}
+
 export type WorktreeRow = {
   name: string
   branch: string
@@ -24,6 +30,8 @@ export type WorktreeRow = {
   path: string
   isMain: boolean
   preview: PreviewStatus | null
+  /** 续作 AC11：主仓/降级 = null；非主行 best-effort 合并状态 */
+  mergeStatus?: MergeStatus | null
 }
 
 export type WorktreeSummary = {
@@ -116,6 +124,29 @@ export async function postPreviewAction(name: string, action: PreviewAction): Pr
     | { ok: false; stage: string; message: string }
   if (body.ok) return body
   return { ...body, httpStatus: res.status }
+}
+
+export type CleanupStep = { name: string; ok: boolean; message?: string }
+export type CleanupResult = { ok: boolean; steps: CleanupStep[] }
+
+export async function postCleanup(name: string): Promise<CleanupResult> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/worktrees/${encodeURIComponent(name)}/cleanup`, {
+      method: "POST",
+    })
+    const body = (await res.json()) as Partial<CleanupResult> & { error?: string; message?: string }
+    // 德彪 code-r1 P2-2：后端异常（如 500）可能返回无 steps 的体；合成结构化失败，绝不让
+    // 调用方拿到 steps=undefined 后 .map 崩。
+    if (typeof body?.ok === "boolean" && Array.isArray(body.steps)) {
+      return body as CleanupResult
+    }
+    return {
+      ok: false,
+      steps: [{ name: "request", ok: false, message: body?.error ?? body?.message ?? `清理响应异常（HTTP ${res.status}）` }],
+    }
+  } catch (err) {
+    return { ok: false, steps: [{ name: "request", ok: false, message: err instanceof Error ? err.message : String(err) }] }
+  }
 }
 
 export async function fetchLogTail(

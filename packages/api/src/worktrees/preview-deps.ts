@@ -152,6 +152,23 @@ export function buildShutdownWorkerSpec(inputs: WorkerSpawnInputs): WorkerSpec {
 }
 
 /**
+ * F028 续作 AC12 · 纯 registry 条目释放 worker spec（清理收口）。同 claim 的 node 直跑、
+ * shell:false 形态——只 releasePorts，不碰进程（与 shutdown-worker 的 shutdownPreview 区分，
+ * UI 清理的进程停止走 orchestrator.stop，绝不在此重抄 kill）。
+ */
+export function buildReleaseWorkerSpec(inputs: WorkerSpawnInputs): WorkerSpec {
+  return {
+    command: inputs.nodeExe,
+    args: [
+      inputs.tsxCliPath,
+      path.join(inputs.mainRoot, "scripts", "worktree-port-registry-release-worker.ts"),
+      inputs.registryPath,
+      inputs.worktreeName,
+    ],
+  }
+}
+
+/**
  * 德彪 r1 P1-3：taskkill 幂等判定。本机实测（2026-06-13）：不存在 pid → exit 128 +
  * "ERROR: The process \"4194303\" not found."；access denied 等真失败 → exit 1。
  * 中文 Windows stderr 是本地化文案（OEM 编码），**只认 exit code 128，禁止匹配文案**。

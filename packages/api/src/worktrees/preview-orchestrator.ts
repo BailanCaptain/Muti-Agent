@@ -69,6 +69,19 @@ export type PreviewOrchestrator = {
   compileBackend: (name: string) => Promise<PreviewActionResponse>
   restartAll: (name: string) => Promise<PreviewActionResponse>
   start: (name: string) => Promise<PreviewActionResponse>
+  /** 续作 AC12/D16：停 preview（清理前置）。复用 D7 预检纪律，dead pid 幂等成功，foreign 不杀 */
+  stop: (name: string) => Promise<PreviewActionResponse>
+  /**
+   * 续作 AC12（德彪 code-r1 P2-1）：在**每-worktree 互斥锁**下跑 cleanup body。与
+   * compile/restart/start/stop 共用同一把锁——cleanup 期间 preview 操作一律 in-progress、
+   * 反之亦然，杜绝"在正被删除的 worktree 里起进程"。锁被占 → 返回 onBusy()。
+   * fn 收到**不加锁的 stop**（cleanup 已持锁，再走 public stop 会撞自身锁）。
+   */
+  withCleanupLock: <T>(
+    name: string,
+    onBusy: () => T,
+    fn: (stopUnlocked: () => Promise<PreviewActionResponse>) => Promise<T>,
+  ) => Promise<T>
   tailLog: (
     name: string,
     proc: "api" | "web",
@@ -78,6 +91,8 @@ export type PreviewOrchestrator = {
 
 export function createPreviewOrchestrator(deps: OrchestratorDeps): PreviewOrchestrator {
   const inFlight = new Set<string>()
+  // 续作 AC12：cleanup 专用锁。与 inFlight 跨检 = cleanup 与 preview 操作互斥（德彪 code-r1 P2-1）
+  const cleanupInFlight = new Set<string>()
 
   function fail(stage: PreviewActionFail["stage"], message: string): PreviewActionFail {
     return { ok: false, stage, message }
@@ -112,12 +127,50 @@ export function createPreviewOrchestrator(deps: OrchestratorDeps): PreviewOrches
     }
   }
 
+  /**
+   * 续作 AC12/D16 · stop 专用裁决（与 compile/restart 预检不同点：dead pid 是幂等 skip
+   * 而非 foreign）。我方进程活着 + listener 全后代 → "kill"；记录进程已死/被复用且端口空
+   * → "skip"（已停）；端口仍被非我方占（活进程非后代 / 死记录但端口有 listener）→ 抛
+   * NotOwnedError（绝不按端口杀）。
+   */
+  async function stopVerdict(
+    rec: ProcessRecord | null,
+    port: number,
+    table: ProcessTableRow[],
+    listeners: number[],
+  ): Promise<"kill" | "skip"> {
+    if (!rec) {
+      if (listeners.length > 0) {
+        throw new NotOwnedError(`port ${port} occupied by unmanaged process(es) ${listeners.join(",")}`)
+      }
+      return "skip"
+    }
+    const actual = await deps.probeCreationDate(rec.pid)
+    if (actual !== null && actual === rec.creationDate) {
+      for (const pid of listeners) {
+        try {
+          assertListenerDescendant(table, pid, rec.pid)
+        } catch (err) {
+          throw new NotOwnedError(err instanceof Error ? err.message : String(err))
+        }
+      }
+      return "kill"
+    }
+    // 记录的进程已死或被 PID 复用
+    if (listeners.length > 0) {
+      throw new NotOwnedError(
+        `port ${port} occupied by non-owned process(es) ${listeners.join(",")} (recorded pid ${rec.pid} gone)`,
+      )
+    }
+    return "skip"
+  }
+
   async function withOperation(
     name: string,
     action: string,
     body: () => Promise<PreviewActionResponse>,
   ): Promise<PreviewActionResponse> {
-    if (inFlight.has(name)) {
+    if (inFlight.has(name) || cleanupInFlight.has(name)) {
       const res = fail("in-progress", `operation already in progress for ${name}`)
       await deps.store.appendAudit({ action, worktree: name, ok: false, stage: res.stage, message: res.message })
       return res
@@ -212,6 +265,47 @@ export function createPreviewOrchestrator(deps: OrchestratorDeps): PreviewOrches
       webPort: ports.webPort,
       processes: { api: null, web: null },
     }
+  }
+
+  /**
+   * 停 preview 的实际逻辑（**不含锁**）。public `stop` 包 withOperation（inFlight）；
+   * cleanup 路径已持 cleanupInFlight（互斥保证），直接调本函数避免与自身锁死（德彪 code-r1 P2-1）。
+   */
+  async function doStop(name: string): Promise<PreviewActionResponse> {
+    const state = await deps.store.readState(name)
+    const inventory = await deps.inventory()
+    const entry = inventory.find((e) => e.name === name) ?? null
+    const ports = state
+      ? { apiPort: state.apiPort, webPort: state.webPort }
+      : entry?.preview
+        ? { apiPort: entry.preview.apiPort, webPort: entry.preview.webPort }
+        : null
+    if (!ports) return { ok: true, apiPort: 0, webPort: 0 } // 无端口无状态 → 已停，幂等成功
+
+    const [table, listeners] = await Promise.all([
+      deps.processTable(),
+      deps.portListeners([ports.apiPort, ports.webPort]),
+    ])
+    const apiRec = state?.processes.api ?? null
+    const webRec = state?.processes.web ?? null
+    // 双进程全量预检（半杀禁止）：任一 foreign 即抛，先于任何 kill
+    const apiVerdict = await stopVerdict(apiRec, ports.apiPort, table, listeners.get(ports.apiPort) ?? [])
+    const webVerdict = await stopVerdict(webRec, ports.webPort, table, listeners.get(ports.webPort) ?? [])
+
+    const working = state ?? baseState(name, ports)
+    for (const [proc, rec, port, verdict] of [
+      ["api", apiRec, ports.apiPort, apiVerdict],
+      ["web", webRec, ports.webPort, webVerdict],
+    ] as const) {
+      if (verdict === "kill" && rec) {
+        const killFailure = await killAndConfirmFree(proc, rec.pid, port, working)
+        if (killFailure) return killFailure
+      } else if (rec) {
+        working.processes[proc] = null // skip（已死/被复用）：清陈旧记录
+        await deps.store.writeState(working)
+      }
+    }
+    return { ok: true, apiPort: ports.apiPort, webPort: ports.webPort }
   }
 
   return {
@@ -315,6 +409,20 @@ export function createPreviewOrchestrator(deps: OrchestratorDeps): PreviewOrches
         }
         return { ok: true, apiPort: ports.apiPort, webPort: ports.webPort }
       }),
+
+    stop: (name) => withOperation(name, "stop", () => doStop(name)),
+
+    async withCleanupLock(name, onBusy, fn) {
+      // 与 preview 操作（inFlight）跨检：任一占用 → onBusy（杜绝在被删 worktree 里起进程）。
+      if (inFlight.has(name) || cleanupInFlight.has(name)) return onBusy()
+      cleanupInFlight.add(name)
+      try {
+        // fn 拿到**不加锁的 stop**——cleanupInFlight 已保证互斥，再走 withOperation 会撞自身锁
+        return await fn(() => doStop(name))
+      } finally {
+        cleanupInFlight.delete(name)
+      }
+    },
 
     tailLog: async (name, proc, lines) => {
       const logPath = path.join(deps.store.baseDir, `${slugifyWorktreeId(name)}-${proc}.log`)
