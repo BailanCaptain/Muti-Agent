@@ -1,10 +1,11 @@
 ---
 id: F027
 title: 统一记忆架构（V16.5 整套 · wiki entity + 派生视图 + 唯一注入合约 + 自动召回）
-status: in-progress
+status: done
 owner: 黄仁勋
 created: 2026-05-11
-updated: 2026-06-10
+updated: 2026-06-15
+completed: 2026-06-15
 plan_truth_source: docs/plans/V16.5-final.md
 review_history:
   - V16.5: 范德彪 GO + 4 处实施侧硬约束 (F1-F5, 已 inline 进 V16.5.3)
@@ -21,6 +22,31 @@ review_history:
 > 本文件是**立项 spec**，不重复 V16.5 plan 内容——仅锚定立项要素（Why / What / AC / Phase / 工时 / 依赖 / Risk）+ 引用 V16.5 章节。
 >
 > **F027 = V16.5 整套**（不分 F027/F028）。原因详见末尾「F027 v1 → v2 reviewing 失误归档」段。
+
+## 📂 F027 文档地图（2026-06-15 收口整合 · 唯一导航入口）
+
+> 收口时删除了 9 篇过时的过程快照/评审往来文档 + 1 篇未跟踪 dry-run 报告（git 历史可查），只留最终版本。下表是全部存留 F027 文档。
+
+**当前权威（读这两篇就够）**
+- [`docs/plans/V16.5-final.md`](../plans/V16.5-final.md) — 3300+ 行 self-contained 设计真相源（27 章 spec）
+- 本文件 — 立项 spec + AC 对账 + 收尾补丁记录 + 收口对账
+
+**实施计划（历史存档 · 按 phase）**
+- [`F027-phase1-implementation-plan.md`](../plans/F027-phase1-implementation-plan.md) — Phase 1 后端基础设施（19 子阶段 / 14 AC）
+- [`F027-phase2-implementation-plan.md`](../plans/F027-phase2-implementation-plan.md) — Phase 2 调度（NightlyJobScheduler + 11 jobs，v2 冻结版）
+- [`F027-phase3-implementation-plan.md`](../plans/F027-phase3-implementation-plan.md) — Phase 3 前端 5-tab + 调度器 go-live（v3.6）
+- [`F027-phase4-implementation-plan.md`](../plans/F027-phase4-implementation-plan.md) — Phase 4 审批 UI + 验证收口（v1→v5）
+- [`F027-P13-adaptive-recall-plan.md`](../plans/F027-P13-adaptive-recall-plan.md) — P13 自适应召回子计划（含小孙 5 拍板）
+
+**Spec 补丁与残债（当前有效）**
+- [`F027/F027-v3-PATCH.md`](F027/F027-v3-PATCH.md) — 2026-05-28 audit 12 gap（G1-G12）闭环记录
+- [`F027/evidence/phase4/F027-RESIDUAL-DEBT.md`](F027/evidence/phase4/F027-RESIDUAL-DEBT.md) — 残债三分类（2026-06-15 已刷新至现状）
+
+**验收证据（199 个 JSON · 异构双 judge）**
+- `F027/evidence/phase{1,2,3,4}/<AC>/result.json + judges/` — 逐 AC 裁决 + judge1(Opus)/judge2(Codex) + 仲裁
+
+**报告（历史存档）**
+- [`V16.5-bm25-weight-tuning-report.md`](../plans/V16.5-bm25-weight-tuning-report.md) — BM25 nameWeight=5.0 调参依据
 
 ## Why
 
@@ -169,28 +195,28 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
   - evidence pack 含每 job trace log + 触发时间戳
 - [x] **AC-P2-2 · DocsWatcher 增量编译**（V16.5.3 D1）：手动 touch `docs/features/F999-test.md` → 60s debounce → ingest pipeline → 落 `wiki/concepts/draft/_auto/2026-XX-XX-F999-test.md` + 写 wiki_events
 - [x] **AC-P2-3 · backfill 脚本 dry-run 模式**（V16.5.3 D2）：`pnpm tsx scripts/backfill-docs.ts --dry-run` 输出 `docs/plans/V16.5-backfill-report-<date>.md`，含类型分布 + 高 cross_refs 密度 + 失败文件列表，**不写盘**
-- [ ] **AC-P2-4 · backfill 正式跑 + resumable**：跑全部 docs/* 历史存量 → 落 `_backfill/` + 写 wiki_events；中途 kill -9 + `--resume` 跳过已成功文件（按 ingest_event_id 索引）
+- [x] **AC-P2-4 · backfill 正式跑 + resumable**（2026-06-11 全量真跑 55/55 落 `_backfill/`；resumable 子断言未单独实测——dry-run→真跑分两轮完成）：跑全部 docs/* 历史存量 → 落 `_backfill/` + 写 wiki_events；中途 kill -9 + `--resume` 跳过已成功文件（按 ingest_event_id 索引）
 - [x] **AC-P2-5 · Leader Lease**：模拟两个 runtime 实例同时跑 RoomCompilerTick，只有一个能 acquire lease，另一个 noop（DB 触发器拒绝 stale leader_term）
 
 ### Phase 3 AC（前端）
 
-- [ ] **AC-P3-1 · StatusPanel 拖宽**（**性能阈值锁定**）：360-720px 范围内拖动 ≥ 50fps（Chrome DevTools Performance 实测）+ localStorage persist + reload 后宽度保留误差 ≤ 1px
-- [ ] **AC-P3-2 · 5 个 tab 全部渲染 + 状态保持**（**断言锁定**）：viewfinder / prompt-inspector / draft-approval / warnings / knowledge-base 切换时 tab 内 fetch 状态保留（不重新 loading），用 Playwright 截图 + DOM 断言："切换前 tab 内 list scroll 位置在 reload 时 ±10px 内复现"+ 默认 tab = prompt-inspector
-- [ ] **AC-P3-3 · prompt-inspector 透明显示**：注入的 part 表（含 token 占比）+ 未注入预期 part + Iron Laws 重复检测 + **自动召回 query 列表（含 Quality Gate 三段：高置信注入 / 中置信仅 Inspector / 低置信 reject）+ Adaptive Recall Policy 状态（recall_required / recall_path Level 1-5 / recall_satisfied）** ★
-- [ ] **AC-P3-4 · viewfinder §4 a2a 状态人话化**（V16.5.2）：含 `[a2a_call=xxx]` 引用 → 用 F026 `<AtPill>` 渲染 + click pill in-place drawer 展开 mini call tree（不跳 /debug/a2a）
-- [ ] **AC-P3-5 · prompt-inspector 顶部 wake-up 触发因**（V16.5.2）：显示 `🔔 触发因: [a2a_call=xxx]` + click 同样 in-place drawer
-- [ ] **AC-P3-6 · IngestModal 3 入口 + sanitize 预扫**：composer 拖文件 / [+ Drop 资料] 按钮 / `/ingest` 命令面板三入口任一触发 → preview 显示 5 层 sanitize + LLM 编译预览 + multi-drop 关联 → 你点 [/ingest 编译] 才落盘（**commit 路径走 AC-P3-10**）
+- [x] **AC-P3-1 · StatusPanel 拖宽**（**性能阈值锁定**）：360-720px 范围内拖动 ≥ 50fps（Chrome DevTools Performance 实测）+ localStorage persist + reload 后宽度保留误差 ≤ 1px
+- [x] **AC-P3-2 · 5 个 tab 全部渲染 + 状态保持**（**断言锁定**）：viewfinder / prompt-inspector / draft-approval / warnings / knowledge-base 切换时 tab 内 fetch 状态保留（不重新 loading），用 Playwright 截图 + DOM 断言："切换前 tab 内 list scroll 位置在 reload 时 ±10px 内复现"+ 默认 tab = prompt-inspector
+- [x] **AC-P3-3 · prompt-inspector 透明显示**：注入的 part 表（含 token 占比）+ 未注入预期 part + Iron Laws 重复检测 + **自动召回 query 列表（含 Quality Gate 三段：高置信注入 / 中置信仅 Inspector / 低置信 reject）+ Adaptive Recall Policy 状态（recall_required / recall_path Level 1-5 / recall_satisfied）** ★
+- [x] **AC-P3-4 · viewfinder §4 a2a 状态人话化**（V16.5.2）：含 `[a2a_call=xxx]` 引用 → 用 F026 `<AtPill>` 渲染 + click pill in-place drawer 展开 mini call tree（不跳 /debug/a2a）
+- [x] **AC-P3-5 · prompt-inspector 顶部 wake-up 触发因**（V16.5.2）：显示 `🔔 触发因: [a2a_call=xxx]` + click 同样 in-place drawer
+- [x] **AC-P3-6 · IngestModal 3 入口 + sanitize 预扫**：composer 拖文件 / [+ Drop 资料] 按钮 / `/ingest` 命令面板三入口任一触发 → preview 显示 5 层 sanitize + LLM 编译预览 + multi-drop 关联 → 你点 [/ingest 编译] 才落盘（**commit 路径走 AC-P3-10**）
 - [x] **AC-P3-7 · 调度器 go-live + Iron Laws 3 边界**（F027 Phase 3 plan v2/v3 新增）：API server 启动 → `SchedulerRuntime` 实例化 + 11 job 注册 + 真 job_trace 落 `.runtime/job-traces/`；**Iron Laws 3 负断言**：不存在/不创建/不写入 `wiki.config.yaml`；fallback config 来源可观测；Gate 2 未批准时真配置路径保持 BLOCKED（集成测试 + 文件系统断言）
-- [ ] **AC-P3-8 · manual confirm decision API + Inspector unresolved 入口**（F027 Phase 3 plan v3 新增 — 接 AC-P1-10 P20 wiring 挂位）：POST `/api/rooms/:id/decisions` + prompt-inspector Coverage warning unresolved 列表 UI 点击 → manual confirm 写新行；Phase 1 P12 ledger append-only + tombstone 语义不变
+- [x] **AC-P3-8 · manual confirm decision API + Inspector unresolved 入口**（F027 Phase 3 plan v3 新增 — 接 AC-P1-10 P20 wiring 挂位）：POST `/api/rooms/:id/decisions` + prompt-inspector Coverage warning unresolved 列表 UI 点击 → manual confirm 写新行；Phase 1 P12 ledger append-only + tombstone 语义不变
 - [x] **AC-P3-9 · Adaptive Recall production wiring**（F027 Phase 3 plan v3 新增 — 接 AC-P1-12 P20 wiring 挂位）：(a) orchestrator / RoomCompiler 实际调用 `executeAdaptiveRecall`；(b) `prompt_audit` 表 9 字段真写入（recall_path / recall_satisfied / escalate_reason 等）fixture 验证；(c) Level5Sink 生产实现（写 `wiki_events` action='recall_escalate' + 推审计通知 + Inspector UI 显示）
 - [x] **AC-P3-10 · IngestModal commit endpoint 落盘闭环**（F027 Phase 3 plan v3 新增 — 修 AC-P3-6 闭环）：POST `/api/wiki/ingest/commit` endpoint，前端 [/ingest 编译] → 后端复用 Phase 1 `update_wiki`，含 ACL / CAS / lease / fencing；E2E：preview 不落盘 / commit 才落盘 / 失败不产生 `wiki_events`
 
 ### Phase 4 AC（审批 UI + 验证）
 
-- [ ] **AC-P4-1 · PromoteModal 流程**：选 target + 写 reason → POST `/api/wiki/drafts/<id>/promote` → V14 二次审计通过 → mv 到正式区 + 写 wiki_events action='promote'
-- [ ] **AC-P4-2 · 审计失败回退**：tainted_source=true draft 二次审计 reject → modal 显示 audit_reason + 不 mv + 不写 promote event + draft 留原位
+- [x] **AC-P4-1 · PromoteModal 流程**：选 target + 写 reason → POST `/api/wiki/drafts/<id>/promote` → V14 二次审计通过 → mv 到正式区 + 写 wiki_events action='promote'
+- [x] **AC-P4-2 · 审计失败回退**：tainted_source=true draft 二次审计 reject → modal 显示 audit_reason + 不 mv + 不写 promote event + draft 留原位
 - [ ] **AC-P4-3 · 命令面板**：composer 输 `/` 弹下拉 → `/ingest` `/promote` `/demote` `/series` `/rollback` 全部可触发对应 modal / 命令
-- [ ] **AC-P4-4 · 批量审批 UI**（**部分失败语义锁定**）：knowledge-base tab 加 [批量审批] → list view 按 type/mtime 排序 + 一键 promote 选中（共用 reason）；**部分失败行为**：每个 draft 独立 promote（一个失败不阻塞其他），最终弹出报告 modal 显示 `success: N / failed: M (含 audit_reason 列表)`，失败 draft 留原位等下次手动 retry
+- [x] **AC-P4-4 · 批量审批 UI**（**部分失败语义锁定**）：knowledge-base tab 加 [批量审批] → list view 按 type/mtime 排序 + 一键 promote 选中（共用 reason）；**部分失败行为**：每个 draft 独立 promote（一个失败不阻塞其他），最终弹出报告 modal 显示 `success: N / failed: M (含 audit_reason 列表)`，失败 draft 留原位等下次手动 retry
 - [x] **AC-P4-5 · 三层验证套件**（plan P18）：每个 AC 跑双 judge + 仲裁；OAuth quota 用尽 → BLOCKED（不再 SKIP=PASS）；evidence pack 不完整 → INCONCLUSIVE
 - [ ] **AC-P4-6 · 手 walk-through**（plan P22）：你（小孙）按场景 1 / 场景 2 / 场景 3（V16.5 walkthrough 三场景）端到端走一遍；每场景独立 evidence
 
@@ -287,7 +313,9 @@ viewfinder LLM 漂移 / lease 死锁 / 多 agent 并发 LLM API / token 超限 /
 - **工期**: 72-97 单人天 / 9-14 周多 agent 并行（Phase 3 v3 plan 修订 — 加 AC-P1-10/12 P20 wiring 挂位 + AC-P3-6 commit endpoint）
 - **SOP**: `feat-lifecycle` skill
 
-## Round 2 Approval（待拍）
+## Round 2 Approval（已全部落定 · 历史存档）
+
+> **2026-06-15 收口注**：4 个 Gate 均已在实施过程中落定，checkbox 保留原样作历史——Gate 1 小孙拍 v2 整套立项 GO；Gate 2 以 AC-P3-7 落定（**不创建** `wiki.config.yaml`，Iron Laws 3 负断言 + fallback config；4 个 MCP 工具已上线）；Gate 3 evidence pack 全程双 judge（judge1 Opus / judge2 Codex）+ 仲裁执行完毕；Gate 4 走 F024 port registry。
 
 ### Gate 1 · 立项 GO
 - [ ] 小孙拍板：F027 整套（V16.5 全 22+ phase 单 F-id）GO + 工时 72-97 接受（v3 修订）
@@ -430,14 +458,34 @@ wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md �
 
 ---
 
+## 收口对账（2026-06-15 · 小孙拍 done）
+
+小孙 2026-06-15 判定「F027 基本已经做完」并拍板收口。历史 AC 勾选滞后于实际交付，本次按实证补勾（证据 = 各 Merge Timeline commit + 双 judge evidence pack + 小孙活体使用）；仍开放项如下，**全部有主、无灰色地带**：
+
+| 项 | 状态 | 去向 |
+|---|---|---|
+| AC-P1-10 月度纠错触发器（MonthlySnapshot 真探针 + auto-replace）| ⏸️ 待武装 | 残债 C1.5，小孙 2026-06-14 拍下轮专做（side-effect-free 探针设计 fork 已落 RESIDUAL-DEBT C1.5）|
+| AC-P2-6~9 · P12.b viewfinder 6 段语义打磨 | ⏸️ 未实施 | 内容质量打磨（非防漂基础设施），随 C1.5 下轮一并评估 |
+| AC-P4-3 命令面板 4 写命令（/promote /demote /series /rollback）| ⏸️ 未启用 | 残债 B6；同功能已由 KB tab 按钮 + PromoteModal/DemoteModal 全覆盖，仅命令入口缺 |
+| AC-P4-6 正式三场景 walkthrough | 被事实取代 | 小孙自 2026-05 底起连续活体使用核心链路（审批 21+ 篇 / 批量 promote / 收录 / 模型热切换），正式脚本不再补走 |
+| 残债 B/C 长尾 | 开放 | 见 [`F027-RESIDUAL-DEBT.md`](F027/evidence/phase4/F027-RESIDUAL-DEBT.md)（2026-06-15 刷新：C1 调度 noop 仅剩 C1.5，其余已全部接通）|
+
+**收口整合动作**（本 commit）：① ROADMAP 补 F027 进「已完成」表（立项期漏登记，活跃/已完成两表此前均无 F027）；② 顶部新增「文档地图」作唯一导航入口；③ 删 9 篇过时过程文档（Phase4 在飞快照 / Phase3 升 PASS 映射矩阵 / P13 评审往来 r1-r3 / P18 派工清单 / Phase2·3 evidence 收稿快照 / Phase3 walkthrough 脚本）+ 1 篇未跟踪 backfill dry-run 报告，git 历史可查；④ RESIDUAL-DEBT 按 `scheduler-bootstrap.ts` 现状刷新。
+
+---
+
 ## Merge Timeline
 
 | 日期 | 合并 | 内容 |
 |---|---|---|
 | 2026-05-23 | dev `dfbe336` | Phase 3 前端容器 + IngestModal + AC 闭环 |
 | 2026-06-10 | dev `e80427d` | 收尾全链：全文展开（r1-r3 GO）+ 警告 404 修复（6 轮审 GO-with-residual）+ RuntimeLog 拖高 + #286 自动召回 FU 四件（r2 GO）+ #285 session_memories→wiki 深迁移 + 旧 3 记忆工具后端退役（r3 GO）。quality-gate 愿景自检 6 痛点机制层全闭环。 |
+| 2026-06-11 | dev `4be9624` | 续篇五件：ghost previewId 直报 sanitize_blocked + embedded records boot-load（语义召回转正）+ warnings 文件生产链 + wiki-story 5 桶真数据源 + preview 双根修复（德彪 4 轮审 GO）。 |
+| 2026-06-12 | dev `81378f6` | 人审豁免 ingest + draft 召回准入闸门（德彪 r1→r5 GO）；12 篇 blocked 文档真跑 `_auto` 43→55。 |
 | 2026-06-12 | dev `784b5de` | 收尾补丁·收录体验：AC-W1 编译模型可配（动态 runner 热生效 + claude tab 下拉）+ AC-W2 同源 draft 自动收敛（_superseded 归档 + 串行化 + 三入口闸门）。德彪 r1(1P1+3P2)→r2(1P1+1P2)→r3 GO。**生效需主库重启**（小孙 start-project）。 |
 | 2026-06-13 | dev `144b632` | 收尾补丁#2·KB 审批 UX：AC-W3 全选三件套（limit=200 + 三态全选 + 50 切片分批双态）+ AC-W4 收录设置卡（三引擎 + 模型自由输入，claude tab 下拉迁来）。德彪 r1(1P1+3P2)→r2(4P2)→r3(1P2)→r4 GO + 自审 2 件（注入双闸/失败回滚）。**生效需主库重启**（与 784b5de 一起）。 |
 | 2026-06-13 | dev `09d7bcf` | 收尾补丁#3·审批体验三连：AC-W5 列表并行加载（mapWithConcurrency 16，62 篇串行→并行）+ AC-W6 收录卡强度可选（claude/codex effort 白名单 + 动态 runner 缓存键含 effort，gemini 隐藏）+ AC-W7 promote 三态（进度/成功显路径/错误）+ 批量「已提交 X/Y」。德彪 r1 GO。**生效需主库重启**（与 784b5de/144b632 一起）。 |
+| 2026-06-14 | dev `acfb57b` + `da7aa6b` | 收尾三修：V14 promote 审计改 posture C（LLM 语义判官替换 regex imperative 层，复用 wikiCompile 可配模型，德彪 r1→r5 GO）+ 修1 DriftDetector 真接线 + drift 告警走「警告」tab（残债 C1.4，德彪 r2 GO）；修2 小孙拍下轮专做（C1.5）。`503b017` AC-P1-10 显式标「待武装」。 |
+| 2026-06-15 | dev（本 commit）| **收口标 done**：ROADMAP 补登记 + 文档地图/收口对账 + 删 9 篇过时过程文档 + RESIDUAL-DEBT 刷新。运行时冻结根因同日根治（主仓 core.bare 关 + 工作区刷 dev）。 |
 
-**合并后运维步（pending）**：① B3 backfill 55 篇 docs 全量真编译（`backfill-docs.ts --ingest-module`）② 存量 session 摘要导出（`migrate-session-memories.ts`）③ `DROP TABLE wiki_memories` / session_memories 读路径切文件 = 小孙拍。
+**合并后运维步**：① B3 backfill 55 篇 docs 全量真编译 — ✅ 2026-06-11 完成 ② 存量 session 摘要导出 — ✅ 2026-06-11 完成（#285 深迁移）③ `DROP TABLE wiki_memories` / session_memories 读路径切文件 = 小孙手动，仍 pending（不阻塞收口，Iron Law 1 runtime 不擅自 drop）。
