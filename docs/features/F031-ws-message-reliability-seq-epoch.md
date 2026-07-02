@@ -70,12 +70,12 @@ WS 广播流中丢失的事件目前**不可检测**——表现为"这条消息
 
 ## Acceptance Criteria（2026-07-02 立项细化）
 
-- [ ] AC1: 服务端 sequencer 模块（per-sessionGroup 单调 seq + 进程 epoch UUID）在 broadcast 咽喉注入；直发通道显式不注（含设计注释）；单测覆盖（多组独立计数 / 无 groupId 跳过 / N socket 同 seq）
-- [ ] AC2: 快照水位线：**仅** `GET /api/session-groups/:groupId` 响应携带 `{ epoch, seq }`（bootstrap 不带，德彪 r1 P2）；客户端以水位线换基线，seq ≤ 水位线的流事件丢弃不误报
-- [ ] AC3: 客户端 gap 检测：连续通过 / 跳号触发 catch-up（复用 selectSessionGroup 全量重拉）+ console.warn 丢失区间 / 陈旧 seq 丢弃 / epoch 变化重置 + 全量重拉；catch-up debounce + 失败重试上限 + 降级；切房间改 subscribe-before-fetch；单测覆盖
-- [ ] AC4: delta 幂等化：`assistant_delta` / `assistant_thinking_delta` 携带 offset（emit 源头注入，双通道，thinking 两个 emit 源 :1877/:1955 都注）；客户端 segment 入队 + **flush 时刻**逐段判定（dup 丢弃 / hole 丢段并触发 catch-up / 对齐追加），snapshot 与 RAF 任意交错收敛；content 与 thinking 独立 offset；retry 清零重启对齐；单测覆盖
-- [ ] AC5: 集成测试五场景：① socket evict 丢广播 → gap → catch-up 收敛 ② 服务端重启（epoch 变化）→ 重置收敛 ③ 同组双 socket 一方收直发事件不造成另一方假 gap ④ catch-up 快照已含某 streamed delta，随后到达的同 delta 不得重复追加（德彪 r1 OQ5）⑤ **delta 已入 RAF pending 队列 → 快照换基线 → flush 不得重复追加**（德彪 r2 P1 复现场景）
-- [ ] AC6: 可观测性：gap / dup / hole 事件客户端有结构化 console.warn（组 / epoch / 丢失区间 / 触发的动作），让"消息没显示"从玄学变成一行日志
+- [x] AC1: 服务端 sequencer 模块（per-sessionGroup 单调 seq + 进程 epoch UUID）在 broadcast 咽喉注入；直发通道显式不注（含设计注释）；单测覆盖（多组独立计数 / 无 groupId 跳过 / N socket 同 seq）
+- [x] AC2: 快照水位线：**仅** `GET /api/session-groups/:groupId` 响应携带 `{ epoch, seq }`（bootstrap 不带，德彪 r1 P2）；客户端以水位线换基线，seq ≤ 水位线的流事件丢弃不误报
+- [x] AC3: 客户端 gap 检测：连续通过 / 跳号触发 catch-up（复用 selectSessionGroup 全量重拉）+ console.warn 丢失区间 / 陈旧 seq 丢弃 / epoch 变化重置 + 全量重拉；catch-up debounce + 失败重试上限 + 降级；切房间改 subscribe-before-fetch；单测覆盖
+- [x] AC4: delta 幂等化：`assistant_delta` / `assistant_thinking_delta` 携带 offset（emit 源头注入，双通道，thinking 两个 emit 源 :1877/:1955 都注）；客户端 segment 入队 + **flush 时刻**逐段判定（dup 丢弃 / hole 丢段并触发 catch-up / 对齐追加），snapshot 与 RAF 任意交错收敛；content 与 thinking 独立 offset；retry 清零重启对齐；单测覆盖
+- [x] AC5: 集成测试五场景：① socket evict 丢广播 → gap → catch-up 收敛 ② 服务端重启（epoch 变化）→ 重置收敛 ③ 同组双 socket 一方收直发事件不造成另一方假 gap ④ catch-up 快照已含某 streamed delta，随后到达的同 delta 不得重复追加（德彪 r1 OQ5）⑤ **delta 已入 RAF pending 队列 → 快照换基线 → flush 不得重复追加**（德彪 r2 P1 复现场景）
+- [x] AC6: 可观测性：gap / dup / hole 事件客户端有结构化 console.warn（组 / epoch / 丢失区间 / 触发的动作），让"消息没显示"从玄学变成一行日志
 
 ## Dependencies
 
@@ -103,6 +103,9 @@ WS 广播流中丢失的事件目前**不可检测**——表现为"这条消息
 - 2026-07-03 Design Gate r1 NEEDS-WORK（范德彪）：P1 delta 非幂等（catch-up 把丢变重复，锚点全实证）→ 修订入 offset 幂等化；P2 subscribe-before-fetch + bootstrap 水位线收窄。AC 4→6 条 → r2 送审
 - 2026-07-03 Design Gate r2 NEEDS-WORK（范德彪）：P1 offset 入口判重拦不住已入 RAF 队列的 delta → 修订为 segment 队列 + flush 时刻判定；residual risk：thinking 两个 emit 源（:1877/:1955）都要注 offset。集成测试 +第⑤场景 → r3 送审
 - 2026-07-03 **Design Gate r3 GO**（范德彪，"可以开 worktree 进 TDD"）+ 实现要点：offset 必须在 `assistantContent += delta` 前捕获。实现启动：worktree `.worktrees/F031`（feat/F031-ws-reliability）+ plan `docs/plans/F031-ws-reliability-plan.md`
+- 2026-07-03 实现完成（TDD 6 commit，43 新用例）+ quality-gate PASS（typecheck/build/test/lint 全绿 + preview :8804 活体 curl 见真 wsWatermark）
+- 2026-07-03 Code Review：德彪 r4 NEEDS-WORK（P1 切房间 pending 窗口终版事件丢 / P2 dispatch.blocked 提取规则不同源）→ 全修（beginSwitch pending 对账补拉 + extractSessionGroupId 上移 shared）→ r5 NEEDS-WORK（P1 fresh monitor 静默采纳吞 pending）→ 修（pending 判定优先）→ **r6 GO（0 P1 / 0 P2）**
+- 2026-07-03 **MERGED**：rebase origin/dev（608e7e7）后全量 api 3501 + 组件 781 绿 → squash `7e700d4` 合 dev + push。剩：completion 收口（跨 agent 愿景验证 + 小孙确认活体表现）
 
 ## Evolution
 
