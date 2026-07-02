@@ -6,6 +6,7 @@ import {
   OptimisticLockError,
 } from "../db/repositories/workflow-sop-repository"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
+import { resolveDecisionParams } from "./decision-callback-mapping"
 import type { SessionService } from "../services/session-service"
 import type { WorkflowSopService } from "../services/workflow-sop-service"
 import { WorkflowSopValidationError, validateUpdateSopBody } from "../services/workflow-sop-service"
@@ -153,6 +154,8 @@ export function registerCallbackRoutes(
     requestDecision?: (
       sessionGroupId: string,
       params: {
+        // F033: kind 已在路由层经 resolveDecisionParams 映射为内部 kind
+        kind: "multi_choice" | "inline_confirmation"
         title: string
         description?: string
         options: Array<{ id: string; label: string; description?: string }>
@@ -617,6 +620,7 @@ export function registerCallbackRoutes(
     "/api/callbacks/request-decision",
     async (request: FastifyRequest, reply: FastifyReply) => {
       const body = request.body as CallbackBody & {
+        kind?: string
         title?: string
         description?: string
         options?: Array<{ id: string; label: string; description?: string }>
@@ -634,9 +638,20 @@ export function registerCallbackRoutes(
         return { error: "Invalid invocation identity." }
       }
 
-      if (!body.title?.trim() || !body.options?.length) {
+      if (!body.title?.trim()) {
         reply.code(400)
-        return { error: "title and options are required." }
+        return { error: "title is required." }
+      }
+
+      // F033: kind 映射 + options 校验统一走 resolveDecisionParams（confirm 可省 options）
+      const resolved = resolveDecisionParams({
+        kind: body.kind,
+        options: body.options,
+        multiSelect: body.multiSelect,
+      })
+      if (!resolved.ok) {
+        reply.code(400)
+        return { error: resolved.error }
       }
 
       const thread = options.repository.getThreadById(invocation.threadId)
@@ -647,10 +662,11 @@ export function registerCallbackRoutes(
 
       if (options.requestDecision) {
         const result = await options.requestDecision(thread.sessionGroupId, {
+          kind: resolved.value.kind,
           title: body.title.trim(),
           description: body.description,
-          options: body.options,
-          multiSelect: body.multiSelect ?? false,
+          options: resolved.value.options,
+          multiSelect: resolved.value.multiSelect,
           sourceProvider: thread.provider,
           sourceAlias: thread.alias,
           anchorMessageId: body.anchorMessageId,
@@ -658,7 +674,7 @@ export function registerCallbackRoutes(
         return { ok: true, selectedIds: result.selectedIds }
       }
 
-      return { ok: true, selectedIds: body.options.length > 0 ? [body.options[0].id] : [] }
+      return { ok: true, selectedIds: resolved.value.options.length > 0 ? [resolved.value.options[0].id] : [] }
     },
   )
 

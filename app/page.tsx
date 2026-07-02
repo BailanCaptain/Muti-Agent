@@ -67,7 +67,8 @@ export default function HomePage() {
   const setSocketState = useSettingsStore((state) => state.setSocketState)
   const incrementUnread = useThreadStore((state) => state.incrementUnread)
   const addDecisionRequest = useDecisionStore((state) => state.addRequest)
-  const removeDecisionRequest = useDecisionStore((state) => state.removeRequest)
+  // F033: decision.resolved 不再只 remove，pending 移轨 records（disabled 卡留在时间线）
+  const resolveDecisionFromWs = useDecisionStore((state) => state.resolveFromWs)
   const receiveBoardFlush = useDecisionBoardStore((state) => state.receiveFlush)
   const removeBoardItem = useDecisionBoardStore((state) => state.removeItem)
 
@@ -239,7 +240,11 @@ export default function HomePage() {
 
         if (event.type === "decision.resolved") {
           if (!isCurrentSession(event.payload.sessionGroupId)) return
-          removeDecisionRequest(event.payload.requestId)
+          resolveDecisionFromWs(
+            event.payload.requestId,
+            event.payload.decisions,
+            event.payload.userInput,
+          )
           return
         }
 
@@ -326,7 +331,7 @@ export default function HomePage() {
     removeBoardItem,
     applyPendingChange,
     recordMessageInGroup,
-    removeDecisionRequest,
+    resolveDecisionFromWs,
     replaceActiveGroup,
     selectSessionGroup,
     setSocketState,

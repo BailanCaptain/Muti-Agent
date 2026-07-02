@@ -329,6 +329,22 @@ const INIT_SQL = `
   CREATE INDEX IF NOT EXISTS idx_room_decisions_status_type
     ON room_decisions(room_id, decision_type, status);
 
+  -- F033 · request_decision 决策卡生命周期（pending→resolved/timeout/orphaned）。
+  -- pending 的 blocking promise 在内存；重启后残留 pending 行由 boot orphan 兜底（fail-closed 不恢复）。
+  CREATE TABLE IF NOT EXISTS decision_records (
+    request_id TEXT PRIMARY KEY,
+    session_group_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    verdicts TEXT,
+    user_input TEXT,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_decision_records_group
+    ON decision_records(session_group_id, created_at);
+
   -- chap 18 · prompt 拼装审计（assembler 每次拼装同步写一条）
   CREATE TABLE IF NOT EXISTS prompt_audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

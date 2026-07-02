@@ -3231,7 +3231,7 @@ export class MessageService {
    * Returns the selected option IDs.
    */
   async requestDecision(params: {
-    kind: "multi_choice" | "fan_in_selector"
+    kind: "multi_choice" | "fan_in_selector" | "inline_confirmation"
     title: string
     description?: string
     options: Array<{
@@ -3244,6 +3244,7 @@ export class MessageService {
     sourceProvider?: import("@multi-agent/shared").Provider
     sourceAlias?: string
     multiSelect?: boolean
+    anchorMessageId?: string
   }): Promise<string[]> {
     if (!this.decisions) return []
     const response = await this.decisions.request(params)

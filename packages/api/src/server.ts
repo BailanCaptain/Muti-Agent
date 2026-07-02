@@ -11,6 +11,7 @@ import type { CorsOrigin } from "./config"
 import { ensurePreMigrationBackup } from "./db/backup"
 import { createDrizzleDb } from "./db/drizzle-instance"
 import { AuthorizationRuleRepository, SessionRepository } from "./db/repositories"
+import { DecisionRecordRepository } from "./db/repositories/decision-record-repository"
 import { DrizzleWorkflowSopRepository } from "./db/repositories/workflow-sop-repository"
 import { AppEventBus } from "./events/event-bus"
 import { createLogger, setRootLogger } from "./lib/logger"
@@ -294,7 +295,18 @@ export async function createApiServer(options: {
     wikiRoot: wikiRootBase,
     onCommit: () => fireWikiCommit?.(),
   })
-  const decisions = new DecisionManager((event) => broadcaster.broadcast(event), repository)
+  // F033: 决策卡生命周期账本。boot 先 orphan 上一进程残留的 pending 行——
+  // blocking promise 与 MCP invocation 都已随进程死亡，fail-closed 不恢复（AC2）。
+  const decisionRecordRepo = new DecisionRecordRepository(drizzleDb)
+  const orphanedDecisions = decisionRecordRepo.orphanAllPending()
+  if (orphanedDecisions > 0) {
+    app.log.info({ orphanedDecisions }, "F033 boot: stale pending decision records orphaned")
+  }
+  const decisions = new DecisionManager(
+    (event) => broadcaster.broadcast(event),
+    repository,
+    decisionRecordRepo,
+  )
   messages.setMemoryService(memoryService)
   messages.setSkillRegistry(skillRegistry)
   messages.setSopTracker(sopTracker)
@@ -628,7 +640,11 @@ export async function createApiServer(options: {
   registerRuntimeConfigRoutes(app)
   registerSessionRuntimeConfigRoutes(app, { sessions: repository })
   registerAuthorizationRoutes(app, { approvals, ruleStore })
-  registerDecisionBoardRoutes(app, { messageService: messages, decisions })
+  registerDecisionBoardRoutes(app, {
+    messageService: messages,
+    decisions,
+    decisionRecords: decisionRecordRepo,
+  })
   registerDebugA2ARoutes(app, { callRegistry })
   registerUploadRoutes(app, uploadsDir)
 
@@ -712,8 +728,10 @@ export async function createApiServer(options: {
       })
     },
     requestDecision: async (sessionGroupId, params) => {
+      // F033: kind 由路由层映射（select/multi_select/confirm → 内部 kind）；
+      // anchorMessageId 断线修复——MCP 一直有广告、callbacks 一直有传，这里原先丢弃。
       const selectedIds = await messages.requestDecision({
-        kind: "multi_choice",
+        kind: params.kind,
         title: params.title,
         description: params.description,
         options: params.options,
@@ -721,6 +739,7 @@ export async function createApiServer(options: {
         sourceProvider: params.sourceProvider,
         sourceAlias: params.sourceAlias,
         multiSelect: params.multiSelect,
+        anchorMessageId: params.anchorMessageId,
       })
       return { selectedIds }
     },

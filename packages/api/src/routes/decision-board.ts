@@ -1,3 +1,4 @@
+import type { DecisionRecord } from "@multi-agent/shared"
 import type { FastifyInstance, FastifyRequest } from "fastify"
 import type { DecisionManager } from "../orchestrator/decision-manager"
 import type { MessageService } from "../services/message-service"
@@ -18,12 +19,31 @@ type DecisionBoardRespondBody = {
  */
 export function registerDecisionBoardRoutes(
   app: FastifyInstance,
-  deps: { messageService: MessageService; decisions: DecisionManager },
+  deps: {
+    messageService: MessageService
+    decisions: DecisionManager
+    // F033: decision_records 账本（可选注入，未接时端点优雅降级为空）
+    decisionRecords?: {
+      listBySessionGroup: (
+        sessionGroupId: string,
+        opts?: { excludePending?: boolean; limit?: number },
+      ) => DecisionRecord[]
+    }
+  },
 ): void {
   app.get("/api/decisions/pending", async (request: FastifyRequest) => {
     const { sessionGroupId } = request.query as { sessionGroupId?: string }
     if (!sessionGroupId) return { pending: [] }
     return { pending: deps.decisions.getPendingRequests(sessionGroupId) }
+  })
+
+  // F033 AC2: 已决/超时/孤儿卡片的渲染真相源（pending 的活句柄仍走 /pending 内存 Map）
+  app.get("/api/decisions/records", async (request: FastifyRequest) => {
+    const { sessionGroupId } = request.query as { sessionGroupId?: string }
+    if (!sessionGroupId || !deps.decisionRecords) return { records: [] }
+    return {
+      records: deps.decisionRecords.listBySessionGroup(sessionGroupId, { excludePending: true }),
+    }
   })
 
   app.get("/api/decisions/board-pending", async (request: FastifyRequest) => {

@@ -455,6 +455,12 @@ export function getTools() {
       inputSchema: {
         type: "object",
         properties: {
+          kind: {
+            type: "string",
+            enum: ["select", "multi_select", "confirm"],
+            description:
+              "F033 卡片类型：select=单选（显式提交）、multi_select=多选、confirm=确认操作（可省略 options，默认 确认/取消；超时自动拒绝）。不传 = 兼容旧行为（multi_choice + multiSelect 参数）。",
+          },
           title: { type: "string", description: "卡片标题" },
           description: { type: "string", description: "可选���说明文字" },
           options: {
@@ -468,7 +474,7 @@ export function getTools() {
               },
               required: ["id", "label"],
             },
-            description: "选项列表（2-6 个）",
+            description: "选项列表（2-6 个；kind=confirm 时可省略，默认 确认/取消）",
           },
           multiSelect: { type: "boolean", description: "是否允许多选，默认 false" },
           anchorMessageId: {
@@ -477,7 +483,7 @@ export function getTools() {
               "可选：将决策卡片嵌入到指定消息气泡中（inline card）。如果不提供，卡片作为独立系统卡片显示。",
           },
         },
-        required: ["title", "options"],
+        required: ["title"],
       },
     },
     {
@@ -686,13 +692,16 @@ async function callTriggerMention(params: {
 }
 
 async function callRequestDecision(params: {
+  kind?: "select" | "multi_select" | "confirm"
   title: string
   description?: string
-  options: Array<{ id: string; label: string; description?: string }>
+  options?: Array<{ id: string; label: string; description?: string }>
   multiSelect?: boolean
   anchorMessageId?: string
 }): Promise<ToolResult> {
-  if (!params.options?.length || params.options.length < 2) {
+  // F033: confirm 可省略 options（服务端默认 确认/取消）；其余 kind 仍要求 ≥2。
+  // 完整校验在 /api/callbacks/request-decision 的 resolveDecisionParams，这里只做快速失败。
+  if (params.kind !== "confirm" && (!params.options?.length || params.options.length < 2)) {
     return {
       isError: true,
       content: [{ type: "text", text: "至少需要 2 个选项。" }],
@@ -705,6 +714,7 @@ async function callRequestDecision(params: {
     body: {
       invocationId: identity.invocationId,
       callbackToken: identity.callbackToken,
+      kind: params.kind,
       title: params.title,
       description: params.description,
       options: params.options,
@@ -718,6 +728,20 @@ async function callRequestDecision(params: {
       isError: true,
       content: [
         { type: "text", text: `request_decision failed: ${JSON.stringify(response.json)}` },
+      ],
+    }
+  }
+
+  // confirm + 默认选项时给人类可读结论（自定义 options 语义由调用方自行解释）
+  if (params.kind === "confirm" && !params.options?.length) {
+    const json = response.json as { selectedIds?: string[] }
+    const confirmed = json.selectedIds?.includes("confirm") ?? false
+    return {
+      content: [
+        {
+          type: "text",
+          text: `${JSON.stringify(response.json)}\n${confirmed ? "用户已确认。" : "用户未确认（取消或超时）。"}`,
+        },
       ],
     }
   }
@@ -961,9 +985,10 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
     case "request_decision":
       return callRequestDecision(
         args as {
+          kind?: "select" | "multi_select" | "confirm"
           title: string
           description?: string
-          options: Array<{ id: string; label: string; description?: string }>
+          options?: Array<{ id: string; label: string; description?: string }>
           multiSelect?: boolean
           anchorMessageId?: string
         },

@@ -5,6 +5,7 @@ import { useSettingsStore } from "@/components/stores/settings-store"
 import { normalizeMessageToBlocks } from "@/lib/blocks"
 import { formatTokenCount } from "@/lib/format"
 import type {
+  DecisionRecord,
   DecisionRequest,
   DispatchValidationRetryReason,
   Provider,
@@ -27,7 +28,7 @@ import { memo, useState } from "react"
 import { PROVIDER_ACCENT, bubbleTheme, thinkingTheme } from "../theme"
 import { BlockRenderer } from "./block-renderer"
 import { CollapsibleBlock } from "./collapsible-block"
-import { DecisionCard } from "./decision-card"
+import { DecisionCard, DecisionRecordCard } from "./decision-card"
 import {
   DispatchRetryProgressCard,
   DispatchRetryStreamingLock,
@@ -39,6 +40,8 @@ import { ProviderAvatar } from "./provider-avatar"
 interface MessageBubbleProps {
   message: TimelineMessage
   inlineDecisions?: DecisionRequest[]
+  // F033: 已决决策卡（disabled 留痕），与 inlineDecisions 同锚不同轨
+  inlineRecords?: DecisionRecord[]
   onDecisionRespond?: (
     requestId: string,
     decisions: Array<{
@@ -275,6 +278,7 @@ function DispatchRetryExhaustedBanner({
 export const MessageBubble = memo(function MessageBubble({
   message,
   inlineDecisions,
+  inlineRecords,
   onDecisionRespond,
   onDelete,
   onCopy,
@@ -468,12 +472,17 @@ export const MessageBubble = memo(function MessageBubble({
               )}
             </div>
 
-            {/* Inline Decisions */}
-            {inlineDecisions && inlineDecisions.length > 0 && onDecisionRespond && (
+            {/* Inline Decisions（live 可点） + Records（F033 已决留痕） */}
+            {((inlineDecisions && inlineDecisions.length > 0 && onDecisionRespond) ||
+              (inlineRecords && inlineRecords.length > 0)) && (
               <div className="space-y-2 border-t border-slate-200/60 px-4 py-3">
-                {inlineDecisions.map((req) => (
-                  <DecisionCard key={req.requestId} request={req} onRespond={onDecisionRespond} />
+                {inlineRecords?.map((record) => (
+                  <DecisionRecordCard key={record.requestId} record={record} />
                 ))}
+                {onDecisionRespond &&
+                  inlineDecisions?.map((req) => (
+                    <DecisionCard key={req.requestId} request={req} onRespond={onDecisionRespond} />
+                  ))}
               </div>
             )}
 

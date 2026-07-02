@@ -540,9 +540,13 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     get().replaceActiveGroup(payload.activeGroup)
     get().resetUnread(groupId)
 
-    const { fetchPending: fetchDecisions } = await import("./decision-store").then((m) => m.useDecisionStore.getState())
+    const { fetchPending: fetchDecisions, fetchRecords: fetchDecisionRecords } = await import(
+      "./decision-store"
+    ).then((m) => m.useDecisionStore.getState())
     const { fetchPendingFlush } = await import("./decision-board-store").then((m) => m.useDecisionBoardStore.getState())
     void fetchDecisions(groupId)
+    // F033: 已决卡片（records）随房间切换同步拉取，刷新不丢
+    void fetchDecisionRecords(groupId)
     void fetchPendingFlush(groupId)
   },
   updateModel: async (provider, model) => {

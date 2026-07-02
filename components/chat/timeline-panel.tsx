@@ -6,7 +6,8 @@ import { useVirtualizer } from "@tanstack/react-virtual"
 import { useCallback, useEffect, useMemo, useRef } from "react"
 import { ConnectorBubble } from "./connector-bubble"
 import { InlineDecisionBoard } from "./decision-board-modal"
-import { DecisionCard } from "./decision-card"
+import { DecisionCard, DecisionRecordCard } from "./decision-card"
+import { splitDecisionsForTimeline } from "./decision-timeline"
 import { MessageBubble, buildFoldedPreview } from "./message-bubble"
 import { SystemNoticeBubble } from "./system-notice-bubble"
 import { TimelineMinimap, buildMinimapMarkers } from "./timeline-minimap"
@@ -15,44 +16,41 @@ export function TimelinePanel() {
   const timeline = useThreadStore((state) => state.timeline)
   const activeGroupId = useThreadStore((state) => state.activeGroupId)
   const allPendingDecisions = useDecisionStore((state) => state.pending)
+  const allDecisionRecords = useDecisionStore((state) => state.records)
   const respondDecision = useDecisionStore((state) => state.respond)
   const latestMessageId = timeline.at(-1)?.id
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const sessionDecisions = useMemo(
-    () => allPendingDecisions.filter((r) => r.sessionGroupId === activeGroupId),
-    [allPendingDecisions, activeGroupId],
+  // F033: pending（活卡）与 records（已决 disabled 卡）分轨拆解，纯函数已单测
+  const {
+    inlineDecisionsByMsgId,
+    standAloneDecisions,
+    inlineRecordsByMsgId,
+    standaloneRecords,
+  } = useMemo(
+    () => splitDecisionsForTimeline(allPendingDecisions, allDecisionRecords, activeGroupId),
+    [allPendingDecisions, allDecisionRecords, activeGroupId],
   )
-
-  const { inlineDecisionsByMsgId, standAloneDecisions } = useMemo(() => {
-    const byMsg = new Map<string, typeof sessionDecisions>()
-    const standalone: typeof sessionDecisions = []
-    for (const d of sessionDecisions) {
-      if (d.anchorMessageId) {
-        const list = byMsg.get(d.anchorMessageId)
-        if (list) list.push(d)
-        else byMsg.set(d.anchorMessageId, [d])
-      } else {
-        standalone.push(d)
-      }
-    }
-    return { inlineDecisionsByMsgId: byMsg, standAloneDecisions: standalone }
-  }, [sessionDecisions])
 
   type RenderItem =
     | { kind: "message"; data: (typeof timeline)[number] }
     | { kind: "decision"; data: (typeof standAloneDecisions)[number] }
+    | { kind: "record"; data: (typeof standaloneRecords)[number] }
 
   const renderItems: RenderItem[] = useMemo(() => {
     const items: RenderItem[] = []
     for (const m of timeline) {
       items.push({ kind: "message", data: m })
     }
+    // 已决卡在前（历史留痕），pending 卡在后（等待操作，靠近底部）
+    for (const r of standaloneRecords) {
+      items.push({ kind: "record", data: r })
+    }
     for (const d of standAloneDecisions) {
       items.push({ kind: "decision", data: d })
     }
     return items
-  }, [timeline, standAloneDecisions])
+  }, [timeline, standAloneDecisions, standaloneRecords])
 
   const virtualizer = useVirtualizer({
     count: renderItems.length,
@@ -79,7 +77,8 @@ export function TimelinePanel() {
     () =>
       buildMinimapMarkers(
         renderItems.map((item) =>
-          item.kind === "decision"
+          // F033: record（已决卡）与 decision 同样不打标（decision pending-only 语义不变）
+          item.kind === "decision" || item.kind === "record"
             ? { kind: "decision" as const }
             : {
                 kind: "message" as const,
@@ -142,6 +141,8 @@ export function TimelinePanel() {
                       request={item.data}
                       onRespond={respondDecision}
                     />
+                  ) : item.kind === "record" ? (
+                    <DecisionRecordCard record={item.data} />
                   ) : item.data.messageType === "connector" ? (
                     <ConnectorBubble message={item.data} />
                   ) : item.data.messageType === "system_notice" ? (
@@ -150,6 +151,7 @@ export function TimelinePanel() {
                     <MessageBubble
                       message={item.data}
                       inlineDecisions={inlineDecisionsByMsgId.get(item.data.id)}
+                      inlineRecords={inlineRecordsByMsgId.get(item.data.id)}
                       onDecisionRespond={respondDecision}
                       onCopy={handleCopy}
                     />

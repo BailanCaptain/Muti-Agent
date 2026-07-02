@@ -277,6 +277,29 @@ export type DecisionVerdict = {
   modification?: string
 }
 
+// F033 · 决策卡生命周期持久化（decision_records 表）。
+// pending 只存在于服务器存活期间（blocking promise 在内存）；
+// 重启后残留 pending 行被 orphan——promise 与 MCP invocation 已死，fail-closed 不恢复。
+export type DecisionRecordStatus = "pending" | "resolved" | "timeout" | "orphaned"
+
+export type DecisionRecord = {
+  requestId: string
+  sessionGroupId: string
+  kind: DecisionRequest["kind"]
+  title: string
+  description?: string
+  options: DecisionOption[]
+  multiSelect?: boolean
+  anchorMessageId?: string
+  sourceProvider?: Provider
+  sourceAlias?: string
+  status: DecisionRecordStatus
+  verdicts?: DecisionVerdict[]
+  userInput?: string
+  createdAt: string
+  resolvedAt?: string
+}
+
 export type BlockedDispatchAttempt = {
   sessionGroupId: string
   rootMessageId: string

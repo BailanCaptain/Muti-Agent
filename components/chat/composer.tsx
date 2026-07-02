@@ -550,7 +550,14 @@ export function Composer() {
       }
     }
 
-    if (event.key === "Enter" && !event.shiftKey && !showSuggestions && !showSlashMenu) {
+    // F033 AC4: 中文 IME 组合态的 Enter 是候选确认，不是发送（clowder B3 教训）
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing &&
+      !showSuggestions &&
+      !showSlashMenu
+    ) {
       event.preventDefault()
       submitMessage(value)
     }

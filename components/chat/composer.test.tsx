@@ -49,6 +49,39 @@ function makeFile(name: string, content: string, type = "text/markdown"): File {
   return new File([content], name, { type })
 }
 
+// F033 AC4 · 中文 IME 组合态 Enter（候选确认）不得触发发送（clowder B3 教训，全库原 0 守卫）
+describe("Composer · IME isComposing 守卫", () => {
+  beforeEach(() => resetStores())
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function getTextarea(): HTMLTextAreaElement {
+    const boxes = screen.getAllByRole("textbox")
+    const ta = boxes.find((el) => el.tagName === "TEXTAREA")
+    if (!ta) throw new Error("composer textarea not found")
+    return ta as HTMLTextAreaElement
+  }
+
+  it("isComposing=true 的 Enter 不触发 sendMessage", () => {
+    const sendSpy = vi.fn()
+    useChatStore.setState({ sendMessage: sendSpy, drafts: { "G-1": "拼音候选中" } })
+    render(<Composer />)
+
+    fireEvent.keyDown(getTextarea(), { key: "Enter", isComposing: true })
+    expect(sendSpy).not.toHaveBeenCalled()
+  })
+
+  it("普通 Enter 仍正常发送（回归锚）", () => {
+    const sendSpy = vi.fn()
+    useChatStore.setState({ sendMessage: sendSpy, drafts: { "G-1": "正常消息" } })
+    render(<Composer />)
+
+    fireEvent.keyDown(getTextarea(), { key: "Enter", isComposing: false })
+    expect(sendSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
 function makeDataTransfer(files: File[]): DataTransfer {
   const dt = {
     files: files as unknown as FileList,

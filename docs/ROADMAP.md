@@ -11,7 +11,7 @@
 | F020 | 决策卡片挂载矩阵：按场景分流（单 agent 消息内嵌 / 链级 Footer / 多人讨论收敛后弹）+ 折叠徽章 + 吸收 B007 | spec | 黄仁勋 | internal | [F020](features/F020-decision-card-mounting-matrix.md) |
 | F029 | 调研与核查管道：fact-check + deep-research 双模式（统一检索层 + 异质 agent 两阶段独立验证 + 证据账本 + 四字段裁决 + 引用溯源 + 搜索条入口） | spec | 黄仁勋 | internal | [F029](features/F029-research-verification-pipeline.md) |
 | F032 | SOP 谓词执行器·审计模式：规则谓词化 + 违规审计报告，只报不拦（借鉴批次 3/6） | spec | 黄仁勋 | internal | [F032](features/F032-sop-predicate-audit.md) |
-| F033 | 交互卡片：select/confirm 选择块，结构化响应保留（借鉴批次 4/6，Blocked by F030，Related F020） | spec | 黄仁勋 | internal | [F033](features/F033-interactive-cards.md) |
+| F033 | 交互卡片：select/confirm 选择块，结构化响应保留（借鉴批次 4/6，F030 已解锁，Related F020） | in-progress | 黄仁勋 | internal | [F033](features/F033-interactive-cards.md) |
 | F034 | SOP 谓词硬拦截·确定性边界：WorkflowSop 流转/merge gate/MCP 操作（借鉴批次 5/6，Blocked by F032） | spec | 黄仁勋 | internal | [F034](features/F034-sop-predicate-enforcement.md) |
 | F037 | 日报邮件推送系统（DailyBrief）：每日 07:30 五板块中文 HTML 日报（AI 推理/训练加权 + 热点 + 篮球/电竞 + 股票）+ 周一 GitHub 周榜 + LLM 速览摘要 + 单源失败隔离 + 出站白名单/外发账本 | spec | 黄仁勋 | internal | [F037](features/F037-daily-news-digest.md) |
 <!-- 新 Feature 在此行上方添加 -->

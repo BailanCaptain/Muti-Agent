@@ -332,6 +332,25 @@ export const roomDecisions = sqliteTable(
   ],
 )
 
+// F033 · request_decision 决策卡生命周期持久化。
+// payload = JSON（title/description/options/multiSelect/anchorMessageId/sourceProvider/sourceAlias），
+// 结构字段只拆高频查询要用的列（session_group_id/kind/status/created_at）。
+export const decisionRecords = sqliteTable(
+  "decision_records",
+  {
+    requestId: text("request_id").primaryKey(),
+    sessionGroupId: text("session_group_id").notNull(),
+    kind: text("kind").notNull(),
+    payload: text("payload").notNull(),
+    status: text("status").notNull().default("pending"),
+    verdicts: text("verdicts"),
+    userInput: text("user_input"),
+    createdAt: text("created_at").notNull(),
+    resolvedAt: text("resolved_at"),
+  },
+  (table) => [index("idx_decision_records_group").on(table.sessionGroupId, table.createdAt)],
+)
+
 // F027 chap 18 · prompt 拼装审计（assembler 每次拼装同步写一条）。
 // V15.1+V15.2 加固字段（recall_* / top_score / escalate_reason）一次性入表，
 // Phase 1 P11 memory_preflight + P13 Adaptive Recall 直接落库不再 ALTER。
