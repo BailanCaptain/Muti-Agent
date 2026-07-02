@@ -14,7 +14,6 @@
 | F032 | SOP 谓词执行器·审计模式：规则谓词化 + 违规审计报告，只报不拦（借鉴批次 3/6） | spec | 黄仁勋 | internal | [F032](features/F032-sop-predicate-audit.md) |
 | F033 | 交互卡片：select/confirm 选择块，结构化响应保留（借鉴批次 4/6，Blocked by F030，Related F020） | spec | 黄仁勋 | internal | [F033](features/F033-interactive-cards.md) |
 | F034 | SOP 谓词硬拦截·确定性边界：WorkflowSop 流转/merge gate/MCP 操作（借鉴批次 5/6，Blocked by F032） | spec | 黄仁勋 | internal | [F034](features/F034-sop-predicate-enforcement.md) |
-| F035 | 前端加载性能：bundle 基线先行 + 代码分割（借鉴批次 6/6；D2 重构不立项——前提数据错误） | in-progress | 黄仁勋 | internal | [F035](features/F035-frontend-load-performance.md) |
 | F037 | 日报邮件推送系统（DailyBrief）：每日 07:30 五板块中文 HTML 日报（AI 推理/训练加权 + 热点 + 篮球/电竞 + 股票）+ 周一 GitHub 周榜 + LLM 速览摘要 + 单源失败隔离 + 出站白名单/外发账本 | spec | 黄仁勋 | internal | [F037](features/F037-daily-news-digest.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
@@ -47,4 +46,5 @@
 | F028 | RuntimeLog 工作区拓展：项目目录浏览 + Worktree 浏览/手动编译（主线 AC1-10）+ **续作 worktree 清理 MVP**（AC11 列表合并状态 + AC12 一键清理/清完即时消失）。AC13 脱管 takeover + OQ9 零点击 auto-cleanup 待小孙拍 | 2026-06-14 | [F028](features/F028-workspace-explorer-tabs.md) |
 | F027 | 统一记忆架构（V16.5 整套）：三层 wiki + wiki_events 事件源（ACL/CAS/lease/fencing）+ 6 类记忆桶（文件真相源）+ memory_preflight 自动召回 + Adaptive Recall 5 级 fallback + viewfinder 防漂 ledger + 11 调度 jobs + RuntimeLog 5-tab（取景器/Inspector/审批/警告/KB）+ IngestModal/promote 审批全链 + V14 LLM 语义判官 + docs-watcher/backfill 收录。残债：月度纠错待武装（C1.5 下轮专做）+ B/C 长尾见 RESIDUAL-DEBT | 2026-06-15 | [F027](features/F027-unified-memory-architecture.md) |
 | F036 | 前端 Notion/clowder 风 restyle（OKLCH token + 4 档表面高度 + 暖中性/暖金 accent）+ 前端审计收口 11 项（删死链/进度条对齐封存阈值/封存阈值改名/圆角 token 统一/xhigh+effort 白名单/删死代码/cli-output 删孤儿/三「下一轮」语义/长会话导航 D 标记轨/rich 卡型 table+progress/restyle 测试债）。范德彪 r1→r2 GO + 小孙活体验收通过 | 2026-07-02 | [F036](features/F036-notion-restyle.md) |
+| F035 | 前端加载性能：bundle 基线实测（首屏 313.8 KiB gzip / 底座 147 不可分割）+ 400 KiB 预算门脚本（measure-first-load.mjs 零依赖 + 假绿 fail-fast）+ AC4 合法提前 close（localhost 分割收益 7-19% 体感为零，三条重开触发器）。D0 ignoreBuildErrors 独立先合。德彪 r1→r2 CONFIRMED-GO | 2026-07-03 | [F035](features/F035-frontend-load-performance.md) |
 <!-- 完成的 Feature 从活跃表移到此处 -->

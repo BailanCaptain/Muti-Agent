@@ -1,14 +1,15 @@
 ---
 id: F035
 title: 前端加载性能：bundle 基线 + 代码分割（D1）
-status: in-progress
+status: done
 owner: 黄仁勋
 created: 2026-06-13
+completed: 2026-07-03
 ---
 
 # F035 — 前端加载性能：bundle 基线 + 代码分割（D1）
 
-> clowder-ai 借鉴批次第 6 个（队尾）。2026-07-03 基线实测完成，走 AC4 合法提前 close 出口（数据不支持分割）。德彪 r1 GO（零 P1 + 5 P2 全修 `67b81f0`）→ r2 CONFIRMED-GO（5/5 逐条复核 ✅）。
+> clowder-ai 借鉴批次第 6 个（队尾）。**DONE 2026-07-03**：AC4 合法提前 close（数据不支持分割）。D0 独立合入 `c4949dc`，F035 squash `96a4547`。德彪 r1 GO → r2 CONFIRMED-GO（5 P2 全修 5/5 复核）+ 零上下文交叉验证 ALIGNED（独立复跑数字逐字节一致，两条失败路径实测；桂芬 CLI 地区墙不可用，验证由零上下文 agent 替补并披露）。后续可选 TD：预算门接 CI 自动化（G2，德彪 OQ3 拍本轮不挂）。
 
 ## Why
 
