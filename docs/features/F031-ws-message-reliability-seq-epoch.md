@@ -102,6 +102,7 @@ WS 广播流中丢失的事件目前**不可检测**——表现为"这条消息
 - 2026-07-02 立项启动：锚点复核（ws.ts:58 ✅ / client.ts:76 ✅ / 双通道拓扑为新发现）+ AC 细化 + 设计提案 → Design Gate（范德彪）
 - 2026-07-03 Design Gate r1 NEEDS-WORK（范德彪）：P1 delta 非幂等（catch-up 把丢变重复，锚点全实证）→ 修订入 offset 幂等化；P2 subscribe-before-fetch + bootstrap 水位线收窄。AC 4→6 条 → r2 送审
 - 2026-07-03 Design Gate r2 NEEDS-WORK（范德彪）：P1 offset 入口判重拦不住已入 RAF 队列的 delta → 修订为 segment 队列 + flush 时刻判定；residual risk：thinking 两个 emit 源（:1877/:1955）都要注 offset。集成测试 +第⑤场景 → r3 送审
+- 2026-07-03 **Design Gate r3 GO**（范德彪，"可以开 worktree 进 TDD"）+ 实现要点：offset 必须在 `assistantContent += delta` 前捕获。实现启动：worktree `.worktrees/F031`（feat/F031-ws-reliability）+ plan `docs/plans/F031-ws-reliability-plan.md`
 
 ## Evolution
 
