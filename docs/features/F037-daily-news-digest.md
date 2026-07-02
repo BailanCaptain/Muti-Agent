@@ -67,7 +67,11 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 
 ## Dependencies
 
-- 邮件通道凭证：小孙人工开通并填 `.env`（Iron Law §3）—— **Phase 1 实施前置阻塞项**
+- 邮件通道凭证（QQ SMTP，D3 已拍）：小孙人工操作 —— QQ 邮箱网页版 → 设置 → 账号 → 开启「IMAP/SMTP 服务」（短信验证）→ 取 16 位授权码，然后 `.env` 加三行（Iron Law §3，代码只读）：
+  - `MULTI_AGENT_DIGEST_SMTP_USER`=QQ 邮箱地址
+  - `MULTI_AGENT_DIGEST_SMTP_PASS`=16 位授权码
+  - `MULTI_AGENT_DIGEST_TO`=收件箱（bailan.captain@gmail.com）
+  - host/port 代码默认 `smtp.qq.com:465`（非敏感不进 .env）。**Phase 1 活体发信前置阻塞项**（开发/测试用 mock sender 不阻塞）
 - GitHub PAT（免费，推荐：Search API 10/min → 30/min）
 - 无阻塞性 Feature 依赖；Related: F029（外发边界设计参考，其代码未落地不可依赖）
 
@@ -77,12 +81,12 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 |---|------|------|------|------|
 | D1 | 运行宿主 | api 进程 SchedulerRuntime / 独立进程 / GitHub Actions | SchedulerRuntime | 复用 leader/幂等/trace/告警；startup catch-up 解决机器不在线 |
 | D2 | 中间格式 | Markdown → HTML | Markdown 中间格式 | daily_stock_analysis 先例；渲染/发送解耦 |
-| D3 | 邮件通道 | QQ SMTP / Resend / Gmail SMTP | **OPEN — 待小孙拍**（建议 QQ SMTP，Gmail SMTP 大陆被墙排除） | 网络可靠性第一约束；需小孙物理操作拿授权码 |
+| D3 | 邮件通道 | QQ SMTP / Resend / Gmail SMTP | **QQ SMTP（小孙拍 2026-07-03）**；EmailSender 仍接口化，Resend 留作 Phase 2 备通道 | 国内直连零网络问题；Gmail SMTP 大陆被墙排除 |
 | D4 | X 一手源 | 白嫖 smol.ai recap / 按量付费直采 | Phase 1 白嫖 smol.ai（544 账号 X recap 全文 RSS） | 官方 API 无免费档（~$45/月）；三方灰色；Phase 2 再拍 |
 | D5 | RSSHub | Phase 1 自建 / 公共实例试探 / 不用 | Phase 1 公共实例尽力（fallback 链），Phase 2 境内自建 | rsshub.app 已废；降低 MVP 部署面 |
 | D6 | 发送时间 | — | 默认 07:30 Asia/Shanghai，config 可改 | 上班前可读 |
 | D7 | 日报语言 | — | 全中文（英文源 LLM 译摘），原文链接保留 | 阅读效率 |
-| D8 | 股票范围 | 大盘+市场新闻 / 含个股自选 | **OPEN — 待小孙拍**（默认 Phase 1 只做大盘+市场要闻，个股进 Phase 2 AC13） | 个股需要自选清单输入 |
+| D8 | 股票范围 | 大盘+市场新闻 / 含个股自选 | **Phase 1 只做大盘+市场要闻（小孙拍 2026-07-03）**；个股自选进 Phase 2 AC13 | 个股需要自选清单输入；小孙原话「个股自选先不加」 |
 | D9 | 凭证管理 | — | 密钥全走 `.env` 人工填；板块开关/收件人/时间走 config | Iron Law §3 |
 
 ## Timeline
@@ -90,7 +94,7 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 | 日期 | 事件 |
 |------|------|
 | 2026-07-02 | 小孙提需求；4 路并行调研（AI/股票+邮件/体育+热点+GitHub/仓内摸底）完成 |
-| 2026-07-03 | Kickoff；待 Design Gate（D3/D8 小孙拍 + 后端设计 @范德彪 审） |
+| 2026-07-03 | Kickoff；小孙拍 D3=QQ SMTP、D8=Phase 1 大盘+市场要闻（个股先不加）；派范德彪设计审 |
 
 ## Links
 
