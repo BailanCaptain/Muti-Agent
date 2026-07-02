@@ -8,9 +8,6 @@ created: 2026-07-03
 
 # F037 — 日报邮件推送系统（DailyBrief）
 
-**Status**: spec
-**Created**: 2026-07-03
-
 ## Why
 
 小孙原话（2026-07-02）：
