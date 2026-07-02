@@ -20,6 +20,19 @@ if errorlevel 1 (
   exit /b 1
 )
 
+:: Ensure Git's bash is on PATH. `bash scripts/mount-skills.sh` below needs it, and
+:: the worktree-preview UI spawns `cmd /c pnpm dev:api` (first step is `bash ...`)
+:: which inherits THIS process's PATH -- so launching from a cmd/PowerShell that lacks
+:: Git\bin silently breaks the Worktree tab "start" button. Add it here if missing.
+where bash.exe >nul 2>nul
+if errorlevel 1 (
+  for /f "delims=" %%i in ('where git.exe 2^>nul') do (
+    for %%j in ("%%~dpi..") do if exist "%%~fj\bin\bash.exe" set "PATH=%%~fj\bin;%PATH%"
+  )
+  where bash.exe >nul 2>nul
+  if errorlevel 1 echo [Multi-Agent] WARNING: bash not found ^(install Git for Windows^); dev:api / preview may fail.
+)
+
 if not exist ".runtime" mkdir ".runtime"
 
 echo [Multi-Agent] Stopping stale processes...
