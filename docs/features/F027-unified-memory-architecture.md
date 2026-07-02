@@ -486,6 +486,7 @@ wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md �
 | 2026-06-13 | dev `144b632` | 收尾补丁#2·KB 审批 UX：AC-W3 全选三件套（limit=200 + 三态全选 + 50 切片分批双态）+ AC-W4 收录设置卡（三引擎 + 模型自由输入，claude tab 下拉迁来）。德彪 r1(1P1+3P2)→r2(4P2)→r3(1P2)→r4 GO + 自审 2 件（注入双闸/失败回滚）。**生效需主库重启**（与 784b5de 一起）。 |
 | 2026-06-13 | dev `09d7bcf` | 收尾补丁#3·审批体验三连：AC-W5 列表并行加载（mapWithConcurrency 16，62 篇串行→并行）+ AC-W6 收录卡强度可选（claude/codex effort 白名单 + 动态 runner 缓存键含 effort，gemini 隐藏）+ AC-W7 promote 三态（进度/成功显路径/错误）+ 批量「已提交 X/Y」。德彪 r1 GO。**生效需主库重启**（与 784b5de/144b632 一起）。 |
 | 2026-06-14 | dev `acfb57b` + `da7aa6b` | 收尾三修：V14 promote 审计改 posture C（LLM 语义判官替换 regex imperative 层，复用 wikiCompile 可配模型，德彪 r1→r5 GO）+ 修1 DriftDetector 真接线 + drift 告警走「警告」tab（残债 C1.4，德彪 r2 GO）；修2 小孙拍下轮专做（C1.5）。`503b017` AC-P1-10 显式标「待武装」。 |
-| 2026-06-15 | dev（本 commit）| **收口标 done**：ROADMAP 补登记 + 文档地图/收口对账 + 删 9 篇过时过程文档 + RESIDUAL-DEBT 刷新。运行时冻结根因同日根治（主仓 core.bare 关 + 工作区刷 dev）。 |
+| 2026-06-15 | dev `11a093f` | **收口标 done**：ROADMAP 补登记 + 文档地图/收口对账 + 删 9 篇过时过程文档 + RESIDUAL-DEBT 刷新。运行时冻结根因同日根治（主仓 core.bare 关 + 工作区刷 dev）。 |
+| 2026-06-15 | dev `3eb787d` | done 后补丁·promote 归桶三件（小孙拍选项 A + F007 误伤修复）：suggestedDestPath 按 LLM canonical_owner_suggestion 四桶预填（单篇/批量）+ promote 落盘刷 canonical_owner_path（单行标量守卫/CRLF 保真）+ sanitize 裸 "system prompt" 红线改攻击语态共现判定（30+ exfil 动词双向 80 字窗 + 问句 + 折叠文本防跨行拆词，裸模板同口径收口既有缺口）。德彪 r1(1P1+2P2)→r2→r3→r4 GO，PoC 全部逐字入测。**生效需主库重启**。 |
 
 **合并后运维步**：① B3 backfill 55 篇 docs 全量真编译 — ✅ 2026-06-11 完成 ② 存量 session 摘要导出 — ✅ 2026-06-11 完成（#285 深迁移）③ `DROP TABLE wiki_memories` / session_memories 读路径切文件 = 小孙手动，仍 pending（不阻塞收口，Iron Law 1 runtime 不擅自 drop）。
