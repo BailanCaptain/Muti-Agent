@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import Fastify from "fastify"
 import { registerThreadRoutes } from "./threads"
+import { GroupSequencer } from "./ws-sequencer"
 
 function makeSessionsStub(hasPendingDispatches = false) {
   return {
@@ -39,6 +40,7 @@ test("GET /api/session-groups/:groupId includes hasPendingDispatches from dispat
     stopThread: () => true,
     stopAgent: () => true,
     redisSummary: null,
+    sequencer: new GroupSequencer(),
     getDispatchState: (_groupId) => ({
       hasPendingDispatches: pendingState,
       dispatchBarrierActive: false,
@@ -61,6 +63,7 @@ test("POST /api/threads/:threadId/model includes hasPendingDispatches from dispa
     stopThread: () => true,
     stopAgent: () => true,
     redisSummary: null,
+    sequencer: new GroupSequencer(),
     getDispatchState: (_groupId) => ({
       hasPendingDispatches: true,
       dispatchBarrierActive: false,
@@ -87,6 +90,7 @@ test("POST /api/threads/:threadId/cancel/:agentId returns 200 when agent is runn
     stopThread: () => true,
     stopAgent: (_threadId, _agentId) => true,
     redisSummary: null,
+    sequencer: new GroupSequencer(),
   })
 
   const response = await app.inject({
@@ -108,6 +112,7 @@ test("POST /api/threads/:threadId/cancel/:agentId returns 409 when agent has no 
     stopThread: () => true,
     stopAgent: (_threadId, _agentId) => false,
     redisSummary: null,
+    sequencer: new GroupSequencer(),
   })
 
   const response = await app.inject({
@@ -128,6 +133,7 @@ test("POST /api/threads/:threadId/cancel/:agentId returns 501 when stopAgent is 
     getRunningThreadIds: () => new Set<string>(),
     stopThread: () => true,
     redisSummary: null,
+    sequencer: new GroupSequencer(),
   })
 
   const response = await app.inject({

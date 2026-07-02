@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import type { SessionService } from "../services/session-service"
+import type { GroupSequencer } from "./ws-sequencer"
 
 type SendModelBody = {
   model?: string
@@ -20,6 +21,8 @@ export function registerThreadRoutes(
     redisSummary: unknown
     getDispatchState?: (groupId: string) => DispatchState
     flushActiveStreaming?: (groupId: string) => void
+    // F031 · group snapshot 水位线来源（只读 current，不消耗计数器）
+    sequencer: GroupSequencer
   },
 ) {
   app.get("/health", async () => ({
@@ -97,6 +100,13 @@ export function registerThreadRoutes(
 
   app.get("/api/session-groups/:groupId", async (request) => {
     const params = request.params as { groupId: string }
+    // F031 · read-before-build：水位线必须在快照组装（含 flushActiveStreaming）之前读。
+    // 组装期间广播的新事件 seq > 水位线 → 既进快照也走流 = 过投递（offset/messageId
+    // 幂等兜底）；反序读取会让客户端把未进快照的事件当"已覆盖"丢弃 = 真丢失。
+    const wsWatermark = {
+      epoch: options.sequencer.epoch,
+      seq: options.sequencer.current(params.groupId),
+    }
     options.flushActiveStreaming?.(params.groupId)
     return {
       activeGroup: options.sessions.getActiveGroup(
@@ -104,6 +114,7 @@ export function registerThreadRoutes(
         options.getRunningThreadIds(),
         options.getDispatchState?.(params.groupId),
       ),
+      wsWatermark,
     }
   })
 

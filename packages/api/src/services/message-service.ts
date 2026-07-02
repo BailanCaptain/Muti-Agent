@@ -78,6 +78,7 @@ import type { SOPBookmark } from "../orchestrator/sop-bookmark"
 import { buildWorklistContinuationPrompt } from "../orchestrator/worklist-continuation"
 import type { BaseCliRuntime } from "../runtime/base-runtime"
 import { runTurn } from "../runtime/cli-orchestrator"
+import { StreamAccumulator } from "./stream-accumulator"
 import { resolveContextWindow } from "../runtime/context-window-resolver"
 import { runContinuationLoop } from "../runtime/continuation-loop"
 import { classifyFailure } from "../runtime/failure-classifier"
@@ -1617,11 +1618,13 @@ export class MessageService {
 
     const startedAt = new Date().toISOString()
     let promptRequestedByCli: string | null = null
-    let thinking = ""
+    // F031 AC4 · content / thinking 改 StreamAccumulator：push 原子返回 append 前
+    // offset 给 delta emit 用（独立 offset 空间），杜绝先 append 后取长度的错序。
+    const thinkingAcc = new StreamAccumulator()
     let stderrLineBuf = ""
     let toolEventsJson = "[]"
     let run: ActiveRun | null = null
-    let assistantContent = ""
+    const contentAcc = new StreamAccumulator()
     let lastContentFlushAt = Date.now()
     const CONTENT_FLUSH_INTERVAL_MS = 3000
 
@@ -1630,8 +1633,8 @@ export class MessageService {
       sessionGroupId: thread.sessionGroupId,
       flush: () => {
         this.sessions.overwriteMessage(assistant.id, {
-          content: assistantContent,
-          thinking,
+          content: contentAcc.current,
+          thinking: thinkingAcc.current,
           toolEvents: toolEventsJson,
         })
       },
@@ -1838,17 +1841,22 @@ export class MessageService {
         nativeSessionId: sessionIdOverride ?? thread.nativeSessionId,
         userMessage,
         onAssistantDelta: (delta: string) => {
-          assistantContent += delta
           options.emit({
             type: "assistant_delta",
-            payload: { sessionGroupId: thread.sessionGroupId, messageId: assistant.id, delta },
+            payload: {
+              sessionGroupId: thread.sessionGroupId,
+              messageId: assistant.id,
+              delta,
+              // F031 AC4 · push 返回 append 前 offset（客户端 flush 时刻幂等判定基准）
+              offset: contentAcc.push(delta),
+            },
           })
           const now = Date.now()
           if (now - lastContentFlushAt >= CONTENT_FLUSH_INTERVAL_MS) {
             lastContentFlushAt = now
             this.sessions.overwriteMessage(assistant.id, {
-              content: assistantContent,
-              thinking,
+              content: contentAcc.current,
+              thinking: thinkingAcc.current,
               toolEvents: toolEventsJson,
             })
           }
@@ -1874,13 +1882,15 @@ export class MessageService {
         },
         onModel: () => {},
         onToolActivity: (line: string) => {
-          thinking += `${line}\n`
           options.emit({
             type: "assistant_thinking_delta",
             payload: {
               sessionGroupId: thread.sessionGroupId,
               messageId: assistant.id,
               delta: `${line}\n`,
+              // F031 AC4 · thinking emit 源 1/2（源 2 = 下方 stderr cleaned chunk，
+              // 共用 thinkingAcc 同一 offset 空间）
+              offset: thinkingAcc.push(`${line}\n`),
             },
           })
         },
@@ -1952,13 +1962,14 @@ export class MessageService {
             if (parts.length > 0) {
               const cleanedChunk = filterStderrNoise(parts.join("\n") + "\n")
               if (cleanedChunk.trim()) {
-                thinking += cleanedChunk
                 options.emit({
                   type: "assistant_thinking_delta",
                   payload: {
                     sessionGroupId: thread.sessionGroupId,
                     messageId: assistant.id,
                     delta: cleanedChunk,
+                    // F031 AC4 · thinking emit 源 2/2（与 onToolActivity 共用 thinkingAcc）
+                    offset: thinkingAcc.push(cleanedChunk),
                   },
                 })
               }
@@ -1977,7 +1988,7 @@ export class MessageService {
           promptRequestedByCli = prompt
           this.sessions.overwriteMessage(assistant.id, {
             content: prompt,
-            thinking,
+            thinking: thinkingAcc.current,
             toolEvents: toolEventsJson,
           })
           options.emit({
@@ -2022,7 +2033,7 @@ export class MessageService {
           if (!promptRequestedByCli) {
             this.sessions.overwriteMessage(assistant.id, {
               content: accumulated || "[empty response]",
-              thinking,
+              thinking: thinkingAcc.current,
               toolEvents: toolEventsJson,
             })
           }
@@ -2222,8 +2233,9 @@ export class MessageService {
           }
 
           // 实际 spawn retry：复用 createRun 闭包，传 correctionPrompt 替代 user message
-          // 注意：assistantContent 闭包变量被 retry 流写入；retry 前清空避免与 bad content 拼接
-          assistantContent = ""
+          // 注意：contentAcc 闭包被 retry 流写入；retry 前清空避免与 bad content 拼接。
+          // F031 · set("") 同时把 offset 基准归零 —— 与客户端 resetAssistantStream 清零对齐
+          contentAcc.set("")
           const correctionPrompt = buildCorrectionPrompt({
             reason: decision.reason,
             originalText: workingContent,
@@ -2479,7 +2491,8 @@ export class MessageService {
       if (stderrLineBuf.trim()) {
         const remainder = filterStderrNoise(stderrLineBuf)
         if (remainder.trim()) {
-          thinking += remainder
+          // 收尾 remainder 只入库不 emit delta —— push 仅为保持累计器一致，offset 不外发
+          thinkingAcc.push(remainder)
         }
         stderrLineBuf = ""
       }
@@ -2498,12 +2511,12 @@ export class MessageService {
         const existingBlocksJson = this.sessions.getContentBlocksJson(assistant.id)
         const derivedBlocks = deriveContentBlocks({
           content: accumulatedContent || "",
-          thinking,
+          thinking: thinkingAcc.current,
         })
         const mergedBlocks = mergeDerivedWithExistingBlocks(existingBlocksJson, derivedBlocks)
         this.sessions.overwriteMessage(assistant.id, {
           content: accumulatedContent || "[empty response]",
-          thinking,
+          thinking: thinkingAcc.current,
           toolEvents: toolEventsJson,
           contentBlocks: JSON.stringify(mergedBlocks),
         })
@@ -2729,14 +2742,14 @@ export class MessageService {
       // B023 AC1: catch 路径 append 不 overwrite — 保留流式累积的 assistantContent，
       // 末尾追加 [runtime] 错误信息。修复前直接覆盖导致前端看到内容瞬间消失。
       const composedContent = composeFinalContentOnError({
-        assistantContent: assistantContent || "",
+        assistantContent: contentAcc.current || "",
         errorMessage: message,
       })
       // F026 P11 · 错误终态也派生 content_blocks（保 thinking + error text 结构）
       const existingErrorBlocksJson = this.sessions.getContentBlocksJson(assistant.id)
       const derivedErrorBlocks = deriveContentBlocks({
         content: composedContent,
-        thinking,
+        thinking: thinkingAcc.current,
       })
       const mergedErrorBlocks = mergeDerivedWithExistingBlocks(
         existingErrorBlocksJson,
@@ -2744,7 +2757,7 @@ export class MessageService {
       )
       this.sessions.overwriteMessage(assistant.id, {
         content: composedContent,
-        thinking,
+        thinking: thinkingAcc.current,
         toolEvents: toolEventsJson,
         contentBlocks: JSON.stringify(mergedErrorBlocks),
       })

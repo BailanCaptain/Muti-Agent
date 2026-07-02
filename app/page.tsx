@@ -14,11 +14,17 @@ import { useDecisionStore } from "@/components/stores/decision-store"
 import { useDispatchRetryStore } from "@/components/stores/dispatch-retry-store"
 import { useLayoutStore } from "@/components/stores/layout-store"
 import { useSettingsStore } from "@/components/stores/settings-store"
-import { useThreadStore } from "@/components/stores/thread-store"
+import { setDeltaHoleHandler, useThreadStore } from "@/components/stores/thread-store"
 // F027 P3-5 (Day 14-15) · wake-up 触发因 store · WS event "wake.trigger" 拦截入这里
 import { useWakeTriggerStore } from "@/components/stores/wake-trigger-store"
 import { connectRealtime } from "@/components/ws/client"
-import { type BlockedDispatchAttempt, PROVIDER_ALIASES } from "@multi-agent/shared"
+// F031 · WS 广播流 gap 检测：观测带 seq 事件，跳号/epoch 变化/delta 空洞 → catch-up 全量重拉
+import { streamMonitor } from "@/components/ws/stream-monitor"
+import {
+  type BlockedDispatchAttempt,
+  PROVIDER_ALIASES,
+  type SequencedRealtimeServerEvent,
+} from "@multi-agent/shared"
 import { PanelLeft, PanelLeftClose, PanelRight, PanelRightClose } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 
@@ -80,6 +86,21 @@ export default function HomePage() {
       setStatus(error instanceof Error ? error.message : "引导程序启动失败")
     })
 
+    // F031 · catch-up = 复用 selectSessionGroup 全量重拉（与 onReconnect 同路径）。
+    // 成功路径 selectSessionGroup 内部 setBaseline 已复位护栏；失败计数达上限降级。
+    streamMonitor.onCatchUp(() => {
+      const groupId = useThreadStore.getState().activeGroupId
+      const resync = groupId ? selectSessionGroup(groupId) : bootstrap()
+      void resync
+        .then(() => streamMonitor.catchUpDone(true))
+        .catch((error) => {
+          streamMonitor.catchUpDone(false)
+          setStatus(error instanceof Error ? `补拉失败：${error.message}` : "补拉失败")
+        })
+    })
+    // F031 · delta 空洞（offset > 当前长度 = 消息内丢段）与 seq gap 共用 catch-up 通道
+    setDeltaHoleHandler((info) => streamMonitor.reportHole(info))
+
     // Keep one websocket subscription for the page and fan updates into the local stores.
     const disconnect = connectRealtime({
       onOpen: () => {
@@ -106,15 +127,19 @@ export default function HomePage() {
         const activeId = () => useThreadStore.getState().activeGroupId
         const isCurrentSession = (groupId: string) => groupId === activeId()
 
+        // F031 · gap 检测前置观测：drop = seq ≤ 快照水位线（已覆盖的陈旧重放），跳过；
+        // 跳号/epoch 变化在 observe 内部触发 catch-up，事件本身照常往下走
+        if (streamMonitor.observe(event as SequencedRealtimeServerEvent) === "drop") return
+
         if (event.type === "assistant_delta") {
           if (!isCurrentSession(event.payload.sessionGroupId)) return
-          applyAssistantDelta(event.payload.messageId, event.payload.delta)
+          applyAssistantDelta(event.payload.messageId, event.payload.delta, event.payload.offset)
           return
         }
 
         if (event.type === "assistant_thinking_delta") {
           if (!isCurrentSession(event.payload.sessionGroupId)) return
-          applyThinkingDelta(event.payload.messageId, event.payload.delta)
+          applyThinkingDelta(event.payload.messageId, event.payload.delta, event.payload.offset)
           return
         }
 
@@ -279,7 +304,12 @@ export default function HomePage() {
       },
     })
 
-    return disconnect
+    return () => {
+      // F031 · 卸载时解除 monitor/hole 接线，避免 handler 持有已卸载组件的闭包
+      streamMonitor.onCatchUp(null)
+      setDeltaHoleHandler(null)
+      disconnect()
+    }
   }, [
     addDecisionRequest,
     appendTimelineMessage,

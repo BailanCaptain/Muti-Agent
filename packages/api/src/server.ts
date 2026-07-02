@@ -44,6 +44,7 @@ import { registerSessionRuntimeConfigRoutes } from "./routes/session-runtime-con
 import { registerThreadRoutes } from "./routes/threads"
 import { registerUploadRoutes } from "./routes/uploads"
 import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
+import { GroupSequencer } from "./routes/ws-sequencer"
 import { createHaikuRunner, createSonnetRunner } from "./runtime/haiku-runner"
 import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
@@ -141,6 +142,9 @@ export async function createApiServer(options: {
   const broadcaster: RealtimeBroadcaster = {
     broadcast: () => {},
   }
+  // F031 · WS 广播序列器：per-sessionGroup seq + 进程 epoch。
+  // registerWsRoute 在 broadcast 咽喉消耗；threads 快照端点只读 current() 做水位线。
+  const wsSequencer = new GroupSequencer()
   const invocations = new InvocationRegistry<
     ReturnType<typeof import("./runtime/cli-orchestrator").runTurn>
   >()
@@ -618,6 +622,7 @@ export async function createApiServer(options: {
       dispatchBarrierActive: dispatch.isSessionGroupCancelled(groupId),
     }),
     flushActiveStreaming: (groupId) => messages.flushActiveStreaming(groupId),
+    sequencer: wsSequencer,
   })
   registerMessageRoutes(app)
   registerRuntimeConfigRoutes(app)
@@ -792,6 +797,7 @@ export async function createApiServer(options: {
   registerWsRoute(app, {
     messages,
     broadcaster,
+    sequencer: wsSequencer,
     approvals,
     onDecisionRespond: (requestId, decisions_payload, userInput) =>
       decisions.respond(requestId, decisions_payload, userInput),

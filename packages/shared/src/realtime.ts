@@ -341,6 +341,12 @@ export type RealtimeServerEvent =
         sessionGroupId: string
         messageId: string
         delta: string
+        /**
+         * F031 · 服务端该消息累计 content 长度（本段 append **前**捕获）。
+         * 客户端 flush 时刻据此判定：=== 当前长度追加 / < 重复丢弃 / > 空洞触发 catch-up。
+         * 可选 = 向后兼容：无 offset 的 legacy delta 走盲追加老行为。
+         */
+        offset?: number
       }
     }
   | {
@@ -349,6 +355,12 @@ export type RealtimeServerEvent =
         sessionGroupId: string
         messageId: string
         delta: string
+        /**
+         * F031 · 同 assistant_delta.offset，但作用于 thinking 累计器（独立 offset 空间）。
+         * thinking 有两个 emit 源（onToolActivity / stderr cleaned chunk），共用同一累计器，
+         * 两处都必须在 append 前捕获。
+         */
+        offset?: number
       }
     }
   | {
@@ -709,4 +721,29 @@ export type DecisionBoardItem = {
   firstRaisedAt: string
   /** True when team reached consensus during Phase 2 discussion. */
   converged?: boolean
+}
+
+/**
+ * F031 · WS 广播流水位线。`GET /api/session-groups/:groupId` 快照响应携带
+ * （read-before-build：组装快照前读取，过投递安全 / 欠投递不安全），
+ * 客户端以此换基线：seq ≤ watermark.seq 的流事件视为快照已覆盖直接丢弃。
+ * bootstrap 不带（无单组语义，德彪 F031 Design Gate r1 P2）。
+ */
+export type WsWatermark = {
+  /** 服务端进程启动时的 randomUUID；重启后 seq 归零靠 epoch 变化区分 */
+  epoch: string
+  /** 该 sessionGroup 当前已消耗的最大 seq（0 = 从未广播过） */
+  seq: number
+}
+
+/**
+ * F031 · broadcast 通道线格式：ws.ts broadcast 咽喉给带 sessionGroupId 的事件
+ * 盖顶层 `{seq, epoch}`（同一事件发 N 个订阅 socket 共用同一 seq）。
+ * 直发通道（send_message 的 socket-bound per-turn emit）**显式不注**——直发只达
+ * 单 socket，消耗同组计数器会给其他订阅 socket 制造假 gap。
+ * 交集类型一处定义，不逐 union 分支手改（德彪 r1 OQ4）。
+ */
+export type SequencedRealtimeServerEvent = RealtimeServerEvent & {
+  seq?: number
+  epoch?: string
 }

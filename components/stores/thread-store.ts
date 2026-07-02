@@ -14,9 +14,12 @@ import {
   type ThreadSnapshotDelta,
   type TimelineMessage,
   type ToolEvent,
+  type WsWatermark,
 } from "@multi-agent/shared"
 import { create } from "zustand"
 import { subscribeToRoom } from "@/components/ws/client"
+// 循环仅存在于类型层（stream-monitor 只 type-import 本模块的 DeltaHoleInfo），运行时无环
+import { streamMonitor } from "@/components/ws/stream-monitor"
 
 type ProviderCardState = {
   threadId: string
@@ -131,8 +134,10 @@ type ThreadStore = {
   // F022 Phase 3.5 (AC-14k): realtime push after Haiku renames or manual rename.
   applyTitleUpdate: (groupId: string, title: string, titleLockedAt: string | null) => void
   replaceActiveGroup: (group: ActiveGroupPayload) => void
-  applyAssistantDelta: (messageId: string, delta: string) => void
-  applyThinkingDelta: (messageId: string, delta: string) => void
+  // F031 AC4 · offset = 服务端 append 前累计长度；缺省 = legacy 盲追加。
+  // 幂等判定在 flushDeltas 时刻（segment 队列），不在此入口。
+  applyAssistantDelta: (messageId: string, delta: string, offset?: number) => void
+  applyThinkingDelta: (messageId: string, delta: string, offset?: number) => void
   /**
    * F026 P3.1 · AC-22 retry 触发时清空对应 messageId 的 streaming buffer
    * （pendingDeltas + timeline.content），防止 retry 后新 delta 与旧不合规内容拼接。
@@ -357,9 +362,53 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
-type PendingDelta = { content?: string; thinking?: string }
+// F031 AC4 · pendingDeltas 改 offset segment 队列（德彪 r2 P1）：
+// apply* 只入队 {offset, text}，幂等判定延迟到 flush 时刻以当时 timeline 长度为准——
+// 入口判定拦不住"已入 RAF 队列、快照（replaceActiveGroup）换基线后才 flush"的重复段。
+type DeltaSegment = { offset?: number; text: string }
+type PendingDelta = { content: DeltaSegment[]; thinking: DeltaSegment[] }
 let pendingDeltas = new Map<string, PendingDelta>()
 let rafScheduled = false
+
+export type DeltaHoleInfo = {
+  messageId: string
+  kind: "content" | "thinking"
+  /** flush 时刻 timeline 当前长度（期望的下一段 offset） */
+  expected: number
+  /** 实际到达段的 offset */
+  got: number
+}
+
+// 消息内空洞（offset > 当前长度 = 中间丢段）上报钩子；page.tsx 注册 → 触发 catch-up。
+// 模块级回调而非 store state：flushDeltas 在 set() 归约器外调用，避免渲染期副作用。
+let deltaHoleHandler: ((info: DeltaHoleInfo) => void) | null = null
+export function setDeltaHoleHandler(fn: ((info: DeltaHoleInfo) => void) | null) {
+  deltaHoleHandler = fn
+}
+
+/**
+ * flush 时刻逐段幂等判定：
+ *   offset 缺省（legacy 服务端）→ 盲追加（旧行为）
+ *   offset === 当前长度 → 追加；offset < → 重复丢弃（快照已覆盖）；
+ *   offset > → 丢段 + 上报 hole（不留队等序——catch-up 快照自带全量内容）
+ */
+function applySegments(
+  base: string,
+  segments: DeltaSegment[],
+  messageId: string,
+  kind: DeltaHoleInfo["kind"],
+): string {
+  let out = base
+  for (const seg of segments) {
+    if (seg.offset === undefined || seg.offset === out.length) {
+      out += seg.text
+      continue
+    }
+    if (seg.offset < out.length) continue
+    deltaHoleHandler?.({ messageId, kind, expected: out.length, got: seg.offset })
+  }
+  return out
+}
 
 function flushDeltas(set: (fn: (state: ThreadStore) => Partial<ThreadStore>) => void) {
   rafScheduled = false
@@ -372,8 +421,12 @@ function flushDeltas(set: (fn: (state: ThreadStore) => Partial<ThreadStore>) => 
       if (!delta) return msg
       return {
         ...msg,
-        content: delta.content !== undefined ? msg.content + delta.content : msg.content,
-        thinking: delta.thinking !== undefined ? (msg.thinking ?? "") + delta.thinking : msg.thinking,
+        content: delta.content.length
+          ? applySegments(msg.content, delta.content, msg.id, "content")
+          : msg.content,
+        thinking: delta.thinking.length
+          ? applySegments(msg.thinking ?? "", delta.thinking, msg.id, "thinking")
+          : msg.thinking,
       }
     }),
   }))
@@ -467,14 +520,23 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     await get().selectSessionGroup(payload.groupId)
   },
   selectSessionGroup: async (groupId) => {
-    const payload = await fetchJson<{ activeGroup: ActiveGroupPayload }>(
+    // F031 · subscribe-before-fetch（德彪 r1 P2）：先订阅再拉快照，缩窄
+    // "fetch 与 subscribe 生效之间的新组事件被 shouldDeliver 过滤掉"的丢失窗口；
+    // 残余 race（订阅生效前广播的事件）靠 gap → catch-up 自愈。
+    // beginSwitch（德彪 r4 P1）：fetch 在途时新组事件被 page isCurrentSession 丢弃，
+    // monitor 记账最高 seq，setBaseline 对账 > 水位线即补拉——终版事件不丢。
+    streamMonitor.beginSwitch(groupId)
+    subscribeToRoom(groupId)
+    const payload = await fetchJson<{ activeGroup: ActiveGroupPayload; wsWatermark?: WsWatermark }>(
       `/api/session-groups/${groupId}`,
     )
     // F026 review#4 fix · 切房间清 pendingByRoot + settledByRoot（避免跨房间状态泄漏；
     // 新 snapshot 自带最新 a2aCallStatus，不需要 terminal cache 兜底）
     set({ activeGroupId: groupId, pendingByRoot: {}, settledByRoot: {} })
-    // F026 P0 Day2 · 切房间时告知 ws 后端 subscribe 新 group；后端 broadcaster 用 sessionGroupId 强过滤
-    subscribeToRoom(groupId)
+    // F031 · 快照水位线换基线：seq ≤ 水位线的流事件此后按"快照已覆盖"丢弃
+    if (payload.wsWatermark) {
+      streamMonitor.setBaseline(groupId, payload.wsWatermark)
+    }
     get().replaceActiveGroup(payload.activeGroup)
     get().resetUnread(groupId)
 
@@ -567,9 +629,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       }),
     }))
   },
-  applyAssistantDelta: (messageId, delta) => {
-    const existing = pendingDeltas.get(messageId) ?? {}
-    existing.content = (existing.content ?? "") + delta
+  applyAssistantDelta: (messageId, delta, offset) => {
+    const existing = pendingDeltas.get(messageId) ?? { content: [], thinking: [] }
+    existing.content.push({ offset, text: delta })
     pendingDeltas.set(messageId, existing)
     scheduleDeltaFlush(set)
   },
@@ -610,9 +672,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       }
     })
   },
-  applyThinkingDelta: (messageId, delta) => {
-    const existing = pendingDeltas.get(messageId) ?? {}
-    existing.thinking = (existing.thinking ?? "") + delta
+  applyThinkingDelta: (messageId, delta, offset) => {
+    const existing = pendingDeltas.get(messageId) ?? { content: [], thinking: [] }
+    existing.thinking.push({ offset, text: delta })
     pendingDeltas.set(messageId, existing)
     scheduleDeltaFlush(set)
   },
