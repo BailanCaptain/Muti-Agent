@@ -42,10 +42,11 @@ import {
 import type { V14PromoteAuditService } from "../../wiki/promote-audit/v14-promote-audit-service"
 import { INVALID_TAINTED, normalizeTaintedSourceFields } from "./tainted-source-validation"
 
-// 德彪 r1 P1：lease 在 LLM 判官跑之前 acquire、判官后才 isCurrent 校验 → TTL 必须覆盖判官最坏耗时
-// （JUDGE_TIMEOUT_MS=60s，primary+haiku fallback 最坏 2×60=120s），否则慢判官稳定 lease_expired。
+// 德彪 r1 P1：lease 在 LLM 判官跑之前 acquire、判官后才 isCurrent 校验 → TTL 必须覆盖判官最坏耗时。
+// 后台化补丁德彪 r1 P2：audit 对 judge_parse_failed 自动重试一次 → 最坏 = 2×(primary 60s +
+// fallback 60s) = 240s，150s 会出现「审计安全通过却 LEASE_FENCING_FAILED」。留 60s 余量取 300s。
 // promote 是人工唯一-dest 动作，长租无并发代价。
-const DEFAULT_PROMOTE_LEASE_TTL_SECONDS = 150
+const DEFAULT_PROMOTE_LEASE_TTL_SECONDS = 300
 
 export interface PromoteRoutesDeps {
   promote: PromoteWikiService

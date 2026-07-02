@@ -10,6 +10,7 @@
  *   - truncate summary 100 字
  */
 
+import { usePromoteJobsStore } from "@/components/stores/promote-jobs-store"
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -55,6 +56,9 @@ function resetStores() {
     activeLvl2: "draft-approval", // 让 enabled=true 触发 fetch
     collapsed: false,
   })
+  // F027 promote 后台化：module 级 jobs store 跨用例保留（前一用例的 ok job 会让
+  // PromoteModal 直接渲染成功面板），每用例重置
+  usePromoteJobsStore.getState().resetAll()
 }
 
 describe("F027 全选三件套（小孙：一个一个点好费劲）", () => {

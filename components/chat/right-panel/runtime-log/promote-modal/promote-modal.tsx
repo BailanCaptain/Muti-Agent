@@ -2,13 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 
+import { usePromoteJobsStore } from "@/components/stores/promote-jobs-store"
 import {
   type PromoteCommitSuccess,
   RETRYABLE_AUDIT_LAYERS,
   type V14AuditLayer,
   type V14RejectReason,
   usePromoteAudit,
-  usePromoteCommit,
 } from "./use-promote-api"
 
 /**
@@ -99,7 +99,13 @@ export function PromoteModal({
   const [reason, setReason] = useState<string>("")
 
   const auditHook = usePromoteAudit()
-  const commitHook = usePromoteCommit()
+  // F027 promote 后台化（小孙「promote 会把整个网占住」）：提交生命周期在 store 里跑，
+  // 弹窗只是视图——关掉弹窗请求照常进行，结果在列表行徽标 + 重开弹窗可见。
+  const job = usePromoteJobsStore((s) => (srcDraftPath ? s.jobs[srcDraftPath] : undefined))
+  const startPromote = usePromoteJobsStore((s) => s.startPromote)
+  const clearJob = usePromoteJobsStore((s) => s.clearJob)
+  const jobRunning = job?.status === "running"
+  const jobOk = job?.status === "ok"
 
   // F027 bucket-routing 补丁：打开时按后端建议预填 Target path。ref 记录已预填的 src，
   // 同一 src 只填一次——用户手动清空/改写后不回填（deps 故意不含 destWikiPath）。
@@ -121,19 +127,25 @@ export function PromoteModal({
     // (avoid re-preview on every render)
   }, [open, srcDraftPath, skipAutoPreview, auditHook.preview])
 
-  // codex end-r3 P1 修: ref 追踪已 notify 的 success object，防 onPromoteSuccess identity
-  // 不稳 (parent useDraftsData refetch 每次 render 新 identity) 导致 effect 重 trigger 多次
-  // 调 callback → refetch loop。同一 PromoteCommitSuccess reference 只 notify 一次。
-  const notifiedRef = useRef<PromoteCommitSuccess | null>(null)
+  // 德彪后台化 r1 P2：成功面板用本地快照——job ok 触发 refetch 后 store 会 pruneOkJobs，
+  // 若直接读 store 条目，面板会在展示中途被 GC 打回表单视图。
+  const [successInfo, setSuccessInfo] = useState<{ finalPath: string } | null>(null)
+
+  // codex end-r3 P1 修（改 store 后语义不变）：同一 src 的 ok 只 notify 一次，防
+  // onPromoteSuccess identity 不稳（parent refetch 每次 render 新 identity）触发 refetch loop。
+  const notifiedOkSrcRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!commitHook.data) {
-      notifiedRef.current = null
-      return
+    if (!jobOk || !srcDraftPath || !job?.finalPath) return
+    if (notifiedOkSrcRef.current === srcDraftPath) return
+    notifiedOkSrcRef.current = srcDraftPath
+    setSuccessInfo({ finalPath: job.finalPath })
+    const payload: PromoteCommitSuccess = {
+      ok: true,
+      finalPath: job.finalPath,
+      eventId: job.eventId ?? 0,
     }
-    if (notifiedRef.current === commitHook.data) return
-    notifiedRef.current = commitHook.data
-    onPromoteSuccess?.(commitHook.data)
-  }, [commitHook.data, onPromoteSuccess])
+    onPromoteSuccess?.(payload)
+  }, [jobOk, srcDraftPath, job?.finalPath, job?.eventId, onPromoteSuccess])
 
   const destPathValid = useMemo(() => {
     if (destWikiPath.length === 0) return false
@@ -144,20 +156,28 @@ export function PromoteModal({
   const reasonValid = reason.trim().length > 0
   const auditPassed = auditHook.data?.passed === true
   const canPromote =
-    !commitHook.isLoading && !!srcDraftPath && destPathValid && reasonValid && auditPassed === true
+    !jobRunning && !!srcDraftPath && destPathValid && reasonValid && auditPassed === true
 
+  // 关弹窗不取消任务（后台化本意）；只清视图态。job 留在 store 供行徽标/重开查看。
   const handleClose = () => {
     auditHook.reset()
-    commitHook.reset()
     setDestWikiPath("")
     setReason("")
+    setSuccessInfo(null)
     prefilledForSrcRef.current = null
+    notifiedOkSrcRef.current = null
     onClose()
   }
 
-  const handlePromote = async () => {
+  // 成功面板点「完成」：ok 项已被列表 refetch 消化，清掉 store 条目防堆积。
+  const handleSuccessClose = () => {
+    if (srcDraftPath) clearJob(srcDraftPath)
+    handleClose()
+  }
+
+  const handlePromote = () => {
     if (!srcDraftPath || !canPromote) return
-    await commitHook.commit({
+    void startPromote({
       srcDraftPath,
       destWikiPath,
       callerAlias,
@@ -177,12 +197,12 @@ export function PromoteModal({
     >
       <div className="bg-white rounded-lg shadow-xl w-[640px] max-h-[80vh] overflow-y-auto p-6">
         <h2 id="promote-modal-title" className="text-lg font-semibold mb-4">
-          {commitHook.data ? "Promote 成功" : "Promote draft → wiki"}
+          {successInfo ? "Promote 成功" : "Promote draft → wiki"}
         </h2>
 
         {/* 补丁#3（小孙「好了没好看不懂」）：成功 → 显式成功面板，不再静默关弹窗 */}
-        {commitHook.data ? (
-          <PromoteSuccessView finalPath={commitHook.data.finalPath} onClose={handleClose} />
+        {successInfo ? (
+          <PromoteSuccessView finalPath={successInfo.finalPath} onClose={handleSuccessClose} />
         ) : (
           <>
             {/* §1 Draft info */}
@@ -234,32 +254,43 @@ export function PromoteModal({
             />
 
             {/* AC-P4-2: commit-time 422 reject (用户改 body 后再试) */}
-            {commitHook.rejectReason ? (
+            {job?.status === "failed" && job.rejectReason ? (
               <RejectPanel
                 title="Promote 被拒（commit 阶段二次审计 fail）"
-                reject={commitHook.rejectReason}
-                advice={adviceForReject(commitHook.rejectReason)}
+                reject={job.rejectReason}
+                advice={adviceForReject(job.rejectReason)}
               />
             ) : null}
 
-            {commitHook.error ? (
+            {job?.status === "failed" && job.error ? (
               <div className="mb-4 p-3 border border-red-300 rounded bg-red-50 text-sm text-red-700">
                 <div className="font-medium">Promote error</div>
-                <div className="text-xs mt-1 font-mono">{commitHook.error}</div>
+                <div className="text-xs mt-1 font-mono">{job.error}</div>
               </div>
             ) : null}
 
-            {/* §6 补丁#3：进行中 → 显式进度态（spinner+文案，禁重复点）；否则按钮 */}
-            {commitHook.isLoading ? (
-              <div
-                className="mt-6 flex items-center gap-2 rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700"
-                data-testid="promote-progress"
-                role="status"
-                aria-live="polite"
-              >
-                <Spinner />
-                正在提交并跑二次审计…（请稍候，勿重复点击）
-              </div>
+            {/* §6 后台化：进行中 → 非阻塞提示 + 可关闭（判官最长 ~60s，不再困住整页） */}
+            {jobRunning ? (
+              <>
+                <div
+                  className="mt-6 flex items-center gap-2 rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700"
+                  data-testid="promote-progress"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <Spinner />
+                  已提交，审核在后台进行——可以关闭本窗口，结果会显示在审批列表行。
+                </div>
+                <div className="flex justify-end mt-4">
+                  <button
+                    type="button"
+                    onClick={handleClose}
+                    className="px-4 py-2 text-sm border rounded hover:bg-gray-50"
+                  >
+                    关闭（后台继续）
+                  </button>
+                </div>
+              </>
             ) : (
               <div className="flex justify-end gap-2 mt-6">
                 <button

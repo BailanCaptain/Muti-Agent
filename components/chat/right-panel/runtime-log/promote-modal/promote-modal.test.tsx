@@ -16,6 +16,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { useState } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import { usePromoteJobsStore } from "@/components/stores/promote-jobs-store"
 import { PromoteModal } from "./promote-modal"
 
 function mockSequence(responses: Array<{ ok: boolean; status: number; json: unknown }>) {
@@ -32,6 +33,8 @@ function mockSequence(responses: Array<{ ok: boolean; status: number; json: unkn
 
 beforeEach(() => {
   globalThis.fetch = vi.fn() as unknown as typeof fetch
+  // 后台化：提交生命周期在 module 级 zustand store 里，用例间必须重置防状态串场
+  usePromoteJobsStore.getState().resetAll()
 })
 
 afterEach(() => {
@@ -460,5 +463,38 @@ describe("PromoteModal · src 切换清残留（德彪 r1 P2-2）", () => {
       />,
     )
     expect((screen.getByLabelText("Target wiki path") as HTMLInputElement).value).toBe("")
+  })
+})
+
+describe("PromoteModal · 成功面板本地快照（德彪后台化 r1 P2）", () => {
+  it("job ok 被 pruneOkJobs GC 后，成功面板仍显示 finalPath", async () => {
+    mockSequence([
+      { ok: true, status: 200, json: { ok: true, audit: { passed: true } } },
+      {
+        ok: true,
+        status: 200,
+        json: { ok: true, finalPath: "/abs/wiki/concepts/p.md", eventId: 7 },
+      },
+    ])
+    render(
+      <PromoteModal
+        open={true}
+        srcDraftPath="wiki/concepts/draft/_auto/p.md"
+        suggestedDestPath="wiki/concepts/p.md"
+        callerAlias="黄仁勋"
+        onClose={() => {}}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "归档" } })
+    await waitFor(() => expect(screen.getByText(/结构检查通过/)).toBeTruthy())
+    fireEvent.click(screen.getByRole("button", { name: "Promote" }))
+    await waitFor(() => expect(screen.getByTestId("promote-success")).toBeTruthy())
+    // 模拟 tab 端 refetch 消费后对账式 GC（该 src 已消行 → 条目被清）
+    usePromoteJobsStore.getState().pruneOkJobsMissingFrom([])
+    await waitFor(() =>
+      expect(screen.getByTestId("promote-success").textContent).toContain(
+        "/abs/wiki/concepts/p.md",
+      ),
+    )
   })
 })

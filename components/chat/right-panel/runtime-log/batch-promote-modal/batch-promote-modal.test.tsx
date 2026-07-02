@@ -19,6 +19,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { useState } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import { usePromoteJobsStore } from "@/components/stores/promote-jobs-store"
 import { BatchPromoteModal } from "./batch-promote-modal"
 import { suggestDestWikiPath } from "./use-batch-promote-api"
 
@@ -39,6 +40,8 @@ function mockReject(message: string) {
 
 beforeEach(() => {
   globalThis.fetch = vi.fn() as unknown as typeof fetch
+  // 后台化：批量生命周期在 module 级 zustand store 里，用例间必须重置防状态串场
+  usePromoteJobsStore.getState().resetAll()
 })
 
 afterEach(() => {

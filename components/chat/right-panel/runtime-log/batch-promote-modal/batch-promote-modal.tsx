@@ -2,13 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 
+import { usePromoteJobsStore } from "@/components/stores/promote-jobs-store"
 import type { V14AuditLayer, V14RejectReason } from "../promote-modal/use-promote-api"
 import {
   type BatchPromoteFailureEntry,
   type BatchPromoteSuccessEntry,
   type BatchPromoteSummary,
   suggestDestWikiPath,
-  useBatchPromote,
 } from "./use-batch-promote-api"
 
 /**
@@ -106,7 +106,13 @@ export function BatchPromoteModal({
   const [reason, setReason] = useState<string>("")
   const [phase, setPhase] = useState<"compose" | "submitting" | "report">("compose")
 
-  const submitHook = useBatchPromote()
+  // F027 promote 后台化：批量提交生命周期在 store 里跑，弹窗关掉分片照常提交，
+  // 进度/结果同时供 tab 横幅使用。本组件的 phase 只是视图态。
+  const batch = usePromoteJobsStore((s) => s.batch)
+  const startBatch = usePromoteJobsStore((s) => s.startBatch)
+  const dismissBatch = usePromoteJobsStore((s) => s.dismissBatch)
+  const batchData = batch?.status === "done" ? batch.summary : null
+  const batchError = batch?.status === "done" ? batch.error : null
 
   // codex mid-r1 P1 修: 只在 open 从 false→true 边沿初始化一次，
   // 不在 rows 变时重置 phase (否则 submit 成功后 parent 清 selectedPaths/refetch
@@ -128,36 +134,35 @@ export function BatchPromoteModal({
       })),
     )
     setReason("")
-    setPhase("compose")
-    submitHook.reset()
+    // 后台化：关掉重开时如果上一批还在跑，直接进 submitting 视图接着看进度
+    setPhase(usePromoteJobsStore.getState().batch?.status === "running" ? "submitting" : "compose")
     // 仅当 modal 打开边沿时初始化；rows 是 first-open 快照
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, rows])
 
-  // submit 完成 (data 落定) → 切 report phase + notify parent
+  // submit 完成 (store batch 落定) → 切 report phase + notify parent
   // codex Day 8 P1 pattern: useRef 防多次 trigger (parent re-render identity 不稳)
   const notifiedRef = useRef<BatchPromoteSummary | null>(null)
   useEffect(() => {
-    if (!submitHook.data) {
+    if (!batchData) {
       notifiedRef.current = null
       return
     }
-    if (notifiedRef.current === submitHook.data) return
-    notifiedRef.current = submitHook.data
+    if (notifiedRef.current === batchData) return
+    notifiedRef.current = batchData
     setPhase("report")
-    onBatchComplete?.(submitHook.data)
-  }, [submitHook.data, onBatchComplete])
+    onBatchComplete?.(batchData)
+  }, [batchData, onBatchComplete])
 
   // submit error → 切回 compose phase 显示 error (用户改后重试)。
   // F027 全选三件套：分批提交下 data 与 error 可能并存（前 N 片成功 + 后续片失败）——
   // 此时 report 优先（promote 已发生，结果必须展示），error 在 report 内横幅提示；
-  // 仅「零分片完成」(data 为空) 才回 compose。否则本 effect 的 setPhase("compose")
-  // 会在同一轮 flush 里盖掉 data effect 的 setPhase("report")，把已成功结果藏掉。
+  // 仅「零分片完成」(summary 为空) 才回 compose。
   useEffect(() => {
-    if (submitHook.error && phase === "submitting" && !submitHook.data) {
+    if (batchError && phase === "submitting" && !batchData) {
       setPhase("compose")
     }
-  }, [submitHook.error, phase, submitHook.data])
+  }, [batchError, phase, batchData])
 
   const allDestValid = useMemo(() => {
     if (editableRows.length === 0) return false
@@ -170,8 +175,9 @@ export function BatchPromoteModal({
   const reasonValid = reason.trim().length > 0
   const canSubmit = phase === "compose" && allDestValid && reasonValid && editableRows.length > 0
 
+  // 关弹窗不取消批次（后台化本意）；report 已看完才顺手清横幅态。
   const handleClose = () => {
-    submitHook.reset()
+    if (phase === "report") dismissBatch()
     setEditableRows([])
     setReason("")
     setPhase("compose")
@@ -186,10 +192,10 @@ export function BatchPromoteModal({
     setEditableRows((prev) => prev.filter((_, i) => i !== idx))
   }
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (!canSubmit) return
     setPhase("submitting")
-    await submitHook.submit({
+    void startBatch({
       items: editableRows.map((r) => ({
         srcDraftPath: r.srcDraftPath,
         destWikiPath: r.destWikiPath,
@@ -211,8 +217,8 @@ export function BatchPromoteModal({
       <div className="bg-white rounded-lg shadow-xl w-[720px] max-h-[85vh] overflow-y-auto p-6">
         <h2 id="batch-promote-modal-title" className="text-lg font-semibold mb-4">
           {phase === "report"
-            ? `批量审批结果 · ${submitHook.data?.success.length ?? 0} 成功 / ${
-                submitHook.data?.failed.length ?? 0
+            ? `批量审批结果 · ${batchData?.success.length ?? 0} 成功 / ${
+                batchData?.failed.length ?? 0
               } 失败`
             : `批量审批 ${editableRows.length} 份 draft → wiki`}
         </h2>
@@ -224,7 +230,7 @@ export function BatchPromoteModal({
             setReason={setReason}
             onDestEdit={handleDestEdit}
             onRemoveRow={handleRemoveRow}
-            error={submitHook.error}
+            error={batchError}
           />
         )}
 
@@ -234,15 +240,15 @@ export function BatchPromoteModal({
             data-testid="batch-promote-submitting"
           >
             <div className="mb-3 text-center">
-              正在批量审批 {editableRows.length} 份 draft（每 50 篇一批，请勿关闭）…
+              正在批量审批（每 50 篇一批）——可以关闭本窗口，进度会显示在审批页顶部横幅。
             </div>
             {/* 补丁#3（小孙进度条）：分批进度 已提交 X/Y + 进度条 */}
-            {submitHook.progress && (
+            {batch?.progress && (
               <div data-testid="batch-promote-progress" role="status" aria-live="polite">
                 <div className="mb-1 flex justify-between text-xs text-gray-700">
                   <span>已提交</span>
                   <span className="font-mono">
-                    {submitHook.progress.done}/{submitHook.progress.total}
+                    {batch.progress.done}/{batch.progress.total}
                   </span>
                 </div>
                 <div className="h-2 w-full overflow-hidden rounded bg-gray-200">
@@ -250,8 +256,8 @@ export function BatchPromoteModal({
                     className="h-2 rounded bg-purple-600 transition-all duration-300"
                     style={{
                       width: `${
-                        submitHook.progress.total > 0
-                          ? (submitHook.progress.done / submitHook.progress.total) * 100
+                        batch.progress.total > 0
+                          ? (batch.progress.done / batch.progress.total) * 100
                           : 0
                       }%`,
                     }}
@@ -259,21 +265,31 @@ export function BatchPromoteModal({
                 </div>
               </div>
             )}
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={handleClose}
+                className="px-4 py-2 text-sm border rounded hover:bg-gray-50"
+                data-testid="batch-promote-close-bg"
+              >
+                关闭（后台继续）
+              </button>
+            </div>
           </div>
         )}
 
-        {phase === "report" && submitHook.data && (
+        {phase === "report" && batchData && (
           <>
-            {submitHook.error && (
+            {batchError && (
               <div
                 className="mb-3 p-2 border border-amber-300 rounded bg-amber-50 text-xs text-amber-800"
                 data-testid="batch-promote-partial-error"
               >
-                ⚠ 后续批次未提交：{submitHook.error}
+                ⚠ 后续批次未提交：{batchError}
                 （以下为已完成部分的结果；剩余 draft 留在列表中，可重新全选发起）
               </div>
             )}
-            <ReportView summary={submitHook.data} />
+            <ReportView summary={batchData} />
           </>
         )}
 
