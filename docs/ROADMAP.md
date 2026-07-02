@@ -14,7 +14,7 @@
 | F032 | SOP 谓词执行器·审计模式：规则谓词化 + 违规审计报告，只报不拦（借鉴批次 3/6） | spec | 黄仁勋 | internal | [F032](features/F032-sop-predicate-audit.md) |
 | F033 | 交互卡片：select/confirm 选择块，结构化响应保留（借鉴批次 4/6，Blocked by F030，Related F020） | spec | 黄仁勋 | internal | [F033](features/F033-interactive-cards.md) |
 | F034 | SOP 谓词硬拦截·确定性边界：WorkflowSop 流转/merge gate/MCP 操作（借鉴批次 5/6，Blocked by F032） | spec | 黄仁勋 | internal | [F034](features/F034-sop-predicate-enforcement.md) |
-| F035 | 前端加载性能：bundle 基线先行 + 代码分割（借鉴批次 6/6；D2 重构不立项——前提数据错误） | spec | 黄仁勋 | internal | [F035](features/F035-frontend-load-performance.md) |
+| F035 | 前端加载性能：bundle 基线先行 + 代码分割（借鉴批次 6/6；D2 重构不立项——前提数据错误） | in-progress | 黄仁勋 | internal | [F035](features/F035-frontend-load-performance.md) |
 | F037 | 日报邮件推送系统（DailyBrief）：每日 07:30 五板块中文 HTML 日报（AI 推理/训练加权 + 热点 + 篮球/电竞 + 股票）+ 周一 GitHub 周榜 + LLM 速览摘要 + 单源失败隔离 + 出站白名单/外发账本 | spec | 黄仁勋 | internal | [F037](features/F037-daily-news-digest.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
