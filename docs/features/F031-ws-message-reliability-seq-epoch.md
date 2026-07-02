@@ -1,9 +1,10 @@
 ---
 id: F031
 title: WS 消息可靠性：sessionGroup seq + epoch + gap 检测/catch-up（F-B）
-status: in-progress
+status: done
 owner: 黄仁勋
 created: 2026-06-13
+completed: 2026-07-03
 ---
 
 # F031 — WS 消息可靠性：sessionGroup seq + epoch（F-B）
@@ -105,7 +106,8 @@ WS 广播流中丢失的事件目前**不可检测**——表现为"这条消息
 - 2026-07-03 **Design Gate r3 GO**（范德彪，"可以开 worktree 进 TDD"）+ 实现要点：offset 必须在 `assistantContent += delta` 前捕获。实现启动：worktree `.worktrees/F031`（feat/F031-ws-reliability）+ plan `docs/plans/F031-ws-reliability-plan.md`
 - 2026-07-03 实现完成（TDD 6 commit，43 新用例）+ quality-gate PASS（typecheck/build/test/lint 全绿 + preview :8804 活体 curl 见真 wsWatermark）
 - 2026-07-03 Code Review：德彪 r4 NEEDS-WORK（P1 切房间 pending 窗口终版事件丢 / P2 dispatch.blocked 提取规则不同源）→ 全修（beginSwitch pending 对账补拉 + extractSessionGroupId 上移 shared）→ r5 NEEDS-WORK（P1 fresh monitor 静默采纳吞 pending）→ 修（pending 判定优先）→ **r6 GO（0 P1 / 0 P2）**
-- 2026-07-03 **MERGED**：rebase origin/dev（608e7e7）后全量 api 3501 + 组件 781 绿 → squash `7e700d4` 合 dev + push。剩：completion 收口（跨 agent 愿景验证 + 小孙确认活体表现）
+- 2026-07-03 **MERGED**：rebase origin/dev（608e7e7）后全量 api 3501 + 组件 781 绿 → squash `7e700d4` 合 dev + push
+- 2026-07-03 **DONE（小孙拍板收口）**：跨 agent 愿景验证因桂芬不可用（gemini CLI IneligibleTierError 地区墙）由小孙直接拍板豁免；独立验证已由范德彪 r4→r6 三轮真 diff review 覆盖。活体观察项转日常：正常使用下 console 不应出现 catch-up 风暴/假 gap `[F031:ws-gap]` 日志
 
 ## Evolution
 
