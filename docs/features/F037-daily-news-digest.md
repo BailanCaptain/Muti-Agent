@@ -47,7 +47,7 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 
 **SafeHttpClient 出站安全合同（P1-1）**：仅 http/https 且优先 https；白名单=**完整 host 枚举**为主，仅对自有/明确可控域允许受控后缀；禁 userinfo；非常规端口默认拒；每次请求前解析全部 A/AAAA 并按 IANA special-use **精确段**拒绝 loopback/private/link-local/multicast/reserved/IPv4-mapped IPv6（防 DNS rebinding）；**关闭自动 redirect**，设跳数上限且每跳重做 URL/host/DNS/IP 全套校验（防 redirect 逃逸）；响应体流式读取 + 解压后大小上限 + 超时 + abort（防 body bomb）。实施时附测试矩阵：每条合同至少一个用例。
 
-**发送幂等状态机（P1-2 → D10）**：外部 SMTP 无法 exactly-once，拍 **at-least-once + 有界重试**：业务日期 ledger（原子创建/rename）记 attempted→sent/failed 三态；发送前 durable 写 attempted，SMTP 成功后写 sent commit；恢复时见 attempted 无 sent（结果未知）→ 补发一次并记 R-201 提示可能重复；attempted≥2 仍无 sent → 停止自动补发，推 R-201 转人工。理由：日报场景「偶收重复」优于「静默缺报」。
+**发送幂等状态机（P1-2 → D10）**：外部 SMTP 无法 exactly-once，拍 **at-least-once + 有界重试**：业务日期 ledger（原子创建/rename）= attempted 计数 + sent 唯一终态（失败只记在 attempt 明细里，**failed 不是终态**——防实现时误当终态造成静默缺报，德彪 r2 术语统一）；发送前 durable 写 attempted，SMTP 成功后写 sent commit；恢复时见 attempted 无 sent（结果未知）→ 补发一次并记 R-201 提示可能重复；attempted≥2 仍无 sent → 停止自动补发，推 R-201 转人工。理由：日报场景「偶收重复」优于「静默缺报」。
 
 **catch-up = reconcile 单入口（P1-3 → D11）**：幂等函数 `reconcile(businessDate)` =「ledger 无 sent 且 now ≥ 发送时间 → 生成+发送」，三个触发点共用同一入口：① 07:30 主 cron ② 进程 startup job ③ **每小时安全网 cron** —— 第三点专门覆盖「follower takeover 成 leader 后不会补跑 startup jobs」的缺口（`scheduler-runtime.ts:223` startup 仅进程启动时跑、`:340` leader guard；takeover 只启 event-driven jobs）。
 
@@ -110,11 +110,13 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 |------|------|
 | 2026-07-02 | 小孙提需求；4 路并行调研（AI/股票+邮件/体育+热点+GitHub/仓内摸底）完成 |
 | 2026-07-03 | Kickoff；小孙拍 D3=QQ SMTP、D8=Phase 1 大盘+市场要闻（个股先不加）；派范德彪设计审 |
-| 2026-07-03 | 范德彪设计审 r1 NEEDS-WORK（3 P1 + 5 P2）→ 全接：设计合同 v2 落盘（SafeHttpClient/幂等状态机 D10/reconcile D11/fetcher 合同/LLM 护栏/AC12 渲染验收）；待 r2 复审 |
+| 2026-07-03 | 范德彪设计审 r1 NEEDS-WORK（3 P1 + 5 P2）→ 全接：设计合同 v2 落盘（SafeHttpClient/幂等状态机 D10/reconcile D11/fetcher 合同/LLM 护栏/AC12 渲染验收）→ **r2 GO，Design Gate 通过**（1 条非阻断术语统一已修：ledger=attempted 计数+sent 唯一终态） |
+| 2026-07-03 | 实施计划落盘 `docs/plans/F037-daily-news-digest-plan.md`（15 Task，TDD） |
 
 ## Links
 
 - Discussion: [F037-daily-digest-sources-research.md](../discussions/F037-daily-digest-sources-research.md)（信息源逐个实测验证 + 排除清单 + 方法论借鉴）
+- Plan: [F037-daily-news-digest-plan.md](../plans/F037-daily-news-digest-plan.md)（Phase 1 = 15 Task）
 - Related: [F029](F029-research-verification-pipeline.md)（外发数据边界设计参考）
 
 ## Evolution
