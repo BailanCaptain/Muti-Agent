@@ -37,6 +37,25 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
+  # DocsWatcher 默认 chokidar 工厂的真 fs 端到端门禁（范-r1 flaky P2-1）。
+  # 单独 job 串行跑（无并发饿死），故可从上面并行 `pnpm test` 排除，但默认生产路径必须有此门禁，
+  # 否则 import/options 兼容性/工厂返回值回归会 typecheck + 必跑测试双绿漏过。
+  docs-watcher-fs-smoke:
+    name: DocsWatcher FS Smoke (serial)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Real-chokidar integration smoke (default factory gate)
+        env:
+          DOCS_WATCHER_FS_IT: "1"
+        run: pnpm exec tsx --test packages/api/src/services/scheduler/docs-watcher.test.ts
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

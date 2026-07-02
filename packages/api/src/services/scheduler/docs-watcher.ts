@@ -52,6 +52,12 @@ export interface DocsWatcherOptions {
   /** 额外 ignored patterns；默认含 tmp / swap / .DS_Store / .git/。 */
   ignored?: (string | RegExp)[]
   logger?: FastifyBaseLogger
+  /**
+   * 可注入 watcher 工厂（测试用：注入 fake source 直驱合成 add/change/unlink 事件，脱离真
+   * chokidar / 真 fs / 真 timer 时序 → 确定性 + 负载免疫）。默认 = chokidar（production 路径，
+   * 行为不变）。详见 FileWatchSource / defaultChokidarFactory。
+   */
+  watchSourceFactory?: WatchSourceFactory
 }
 
 const DEFAULT_IGNORED: (string | RegExp)[] = [
@@ -64,8 +70,41 @@ const DEFAULT_IGNORED: (string | RegExp)[] = [
   /[/\\]node_modules[/\\]/,
 ]
 
-// 仅类型导入（不引入运行时依赖；chokidar 是 ESM-only 用 await import 动态加载）
-type ChokidarFSWatcher = import("chokidar").FSWatcher
+/**
+ * DocsWatcher 依赖的最小文件监听事件面（chokidar FSWatcher 的子集）。
+ * 抽出此 seam 让测试注入 fake source —— DocsWatcher 自有逻辑（debounce 收敛 / kind 收敛 /
+ * unlink cancel pending / relativePath / onEvent 错误隔离）得以脱离真 chokidar + 真 fs 时序
+ * 做确定性单测（不再被满负载下 chokidar 事件饿死 → 不 flaky）。
+ */
+export interface FileWatchSource {
+  on(event: "add" | "change" | "unlink", handler: (filePath: string) => void): unknown
+  on(event: "error", handler: (err: unknown) => void): unknown
+  once(event: "ready", handler: () => void): unknown
+  close(): Promise<void>
+}
+
+/** chokidar 兼容的构造 options（DocsWatcher 传给 factory 的子集）。 */
+export interface WatchSourceOptions {
+  ignored: (string | RegExp)[]
+  ignoreInitial: boolean
+  persistent: boolean
+  awaitWriteFinish: { stabilityThreshold: number; pollInterval: number }
+}
+
+/** watcher 工厂：production 默认走 chokidar；测试注入 fake source。 */
+export type WatchSourceFactory = (
+  paths: string[],
+  options: WatchSourceOptions,
+) => FileWatchSource | Promise<FileWatchSource>
+
+/**
+ * 默认 chokidar 工厂（production 路径，行为与原实现一致）。
+ * chokidar v5 是 ESM-only：用 await import 动态引入（同 embedding-service.ts:165 模式）。
+ */
+const defaultChokidarFactory: WatchSourceFactory = async (paths, options) => {
+  const { watch } = await import("chokidar")
+  return watch(paths, options) as unknown as FileWatchSource
+}
 
 export class DocsWatcher {
   private readonly watchPaths: string[]
@@ -74,8 +113,9 @@ export class DocsWatcher {
   private readonly stabilityMs: number
   private readonly ignored: (string | RegExp)[]
   private readonly log: FastifyBaseLogger
+  private readonly watchSourceFactory: WatchSourceFactory
 
-  private fsWatcher: ChokidarFSWatcher | null = null
+  private fsWatcher: FileWatchSource | null = null
   private readonly debounceTimers = new Map<string, NodeJS.Timeout>()
   /** Track last seen kind per path（debounce 收敛时使用）。 */
   private readonly pendingKinds = new Map<string, DocsEventKind>()
@@ -87,6 +127,7 @@ export class DocsWatcher {
     this.stabilityMs = opts.stabilityMs ?? 1500
     this.ignored = [...DEFAULT_IGNORED, ...(opts.ignored ?? [])]
     this.log = opts.logger ?? createLogger("docs-watcher")
+    this.watchSourceFactory = opts.watchSourceFactory ?? defaultChokidarFactory
   }
 
   /** 启动 chokidar watcher。idempotent。 */
@@ -95,14 +136,14 @@ export class DocsWatcher {
       this.log.debug("watcher already started, start() noop")
       return
     }
-    const { watch } = await import("chokidar")
     // 范-r1 P3 修复：pollInterval clamp [10ms, 100ms]
     //   - 10ms 绝对最小（防极小 stabilityMs 下 5ms 过度 CPU；tests-only 场景）
     //   - 100ms 上限（production stabilityMs >= 1000ms 时不需要更频繁）
     //   - target = stability/3（确保 stability 内能 poll ≥ 2 次收敛判定）
     // production 推荐 stabilityMs >= 1000ms（pollInterval 即 100ms）。
     const pollInterval = Math.max(10, Math.min(100, Math.floor(this.stabilityMs / 3)))
-    const fsWatcher = watch(this.watchPaths, {
+    // watcher 经可注入工厂创建（默认 chokidar；测试注入 fake source 脱离真 fs 时序）
+    const fsWatcher = await this.watchSourceFactory(this.watchPaths, {
       ignored: this.ignored,
       ignoreInitial: true, // 启动时已存在的文件不算 add（避免 backfill 由 watcher 触发）
       persistent: true,
@@ -180,8 +221,7 @@ export class DocsWatcher {
     if (existingTimer) clearTimeout(existingTimer)
     // last kind 收敛规则：保留更"早"的 kind（add 优先于 change，因为对 caller 是新文件信号）
     const prevKind = this.pendingKinds.get(abs)
-    const finalKind: DocsEventKind =
-      prevKind === "add" ? "add" : kind // 只有 prev=add 才不被 change 覆盖
+    const finalKind: DocsEventKind = prevKind === "add" ? "add" : kind // 只有 prev=add 才不被 change 覆盖
     this.pendingKinds.set(abs, finalKind)
 
     const timer = setTimeout(() => {
