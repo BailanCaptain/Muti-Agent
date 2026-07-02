@@ -1,5 +1,11 @@
 import { RICH_FENCE_TAG, RichBlockSchema } from "@multi-agent/shared"
-import type { CardBlock, ChecklistBlock, MarkdownBlock } from "./blocks"
+import type {
+  CardBlock,
+  ChecklistBlock,
+  MarkdownBlock,
+  ProgressBlock,
+  TableBlock,
+} from "./blocks"
 
 /**
  * F030 AC3/AC4 · cc_rich 内联围栏解析器。
@@ -16,7 +22,12 @@ import type { CardBlock, ChecklistBlock, MarkdownBlock } from "./blocks"
 
 const MAX_RICH_BLOCKS_PER_MESSAGE = 8
 
-export type RichSegment = MarkdownBlock | CardBlock | ChecklistBlock
+export type RichSegment =
+  | MarkdownBlock
+  | CardBlock
+  | ChecklistBlock
+  | TableBlock
+  | ProgressBlock
 
 // CommonMark：围栏 = 行首 ≤3 空格 + ≥3 个 ` 或 ~，info string 跟在后面。
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})(.*)$/
@@ -67,7 +78,7 @@ function tryEmitRichBlock(s: Scanner, rawLines: string[], jsonLines: string[]): 
   s.seenIds.add(result.data.id)
   s.emitted += 1
   flushMarkdown(s)
-  s.segments.push(result.data as CardBlock | ChecklistBlock)
+  s.segments.push(result.data as CardBlock | ChecklistBlock | TableBlock | ProgressBlock)
 }
 
 export function parseRichSegments(content: string): RichSegment[] {

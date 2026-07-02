@@ -313,7 +313,7 @@ export const MessageBubble = memo(function MessageBubble({
   if (isUser) {
     return (
       <div className="mb-4">
-        <div className="rounded-2xl border border-orange-200/70 bg-gradient-to-br from-rose-50 via-orange-50 to-amber-50 px-5 py-4 shadow-sm">
+        <div className="rounded-2xl border border-accent-200 bg-accent-50 px-5 py-4">
           <div className="mb-2 flex items-center gap-2 text-[11px] text-slate-400">
             <ProviderAvatar identity="user" size="sm" />
             <span className="font-semibold text-slate-700">{displayAlias}</span>
@@ -391,7 +391,7 @@ export const MessageBubble = memo(function MessageBubble({
 
         {isFolded ? (
           <button
-            className="flex w-full items-center gap-2 px-4 py-3 text-left text-xs text-slate-500 transition-colors hover:bg-white/60"
+            className="flex w-full items-center gap-2 px-4 py-3 text-left text-xs text-slate-500 transition-colors hover:bg-surface-elevated"
             onClick={() => toggleMessage(message.id, message.provider)}
             title="点击展开"
             type="button"

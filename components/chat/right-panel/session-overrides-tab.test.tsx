@@ -220,7 +220,7 @@ describe("SessionOverridesTab", () => {
         sessionConfig: { claude: { sealPct: 0.55 } },
       })
       render(<SessionOverridesTab provider="claude" isRunning={false} />)
-      const seal = screen.getByLabelText("Seal 阈值") as HTMLInputElement
+      const seal = screen.getByLabelText(/自动封存阈值/) as HTMLInputElement
       expect(seal.value).toBe("55")
     })
 
@@ -232,7 +232,7 @@ describe("SessionOverridesTab", () => {
       fireEvent.change(screen.getByLabelText("最大窗口"), {
         target: { value: "2000000" },
       })
-      fireEvent.change(screen.getByLabelText("Seal 阈值"), {
+      fireEvent.change(screen.getByLabelText(/自动封存阈值/), {
         target: { value: "60" },
       })
       fireEvent.click(screen.getByRole("button", { name: "应用到当前会话" }))

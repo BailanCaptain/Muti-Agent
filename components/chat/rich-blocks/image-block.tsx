@@ -43,14 +43,14 @@ export function ImageBlockComponent({ block }: { block: ImageBlock }) {
           <img
             src={block.url}
             alt={block.alt ?? ""}
-            className="max-h-64 rounded-lg border border-zinc-200 object-contain transition hover:border-zinc-400 hover:shadow-md"
+            className="max-h-64 rounded-lg border border-slate-200 object-contain transition hover:border-slate-400 hover:shadow-md"
           />
         </button>
         {block.alt && (
-          <figcaption className="mt-1 text-xs text-zinc-500">{block.alt}</figcaption>
+          <figcaption className="mt-1 text-xs text-slate-500">{block.alt}</figcaption>
         )}
         {block.meta?.viewport && (
-          <span className="text-[10px] text-zinc-600">
+          <span className="text-[10px] text-slate-600">
             {block.meta.viewport.width}&times;{block.meta.viewport.height}
           </span>
         )}

@@ -116,6 +116,29 @@ describe("AgentList", () => {
     expect(detail.textContent).toMatch(/\(剩余\s*0%\)/)
   })
 
+  it("F036 #2: context bar color follows real seal thresholds (warn=action-0.1), not hardcoded 0.5/0.7", () => {
+    const mk = (fillRatio: number) => [
+      {
+        provider: "claude" as const,
+        alias: "黄仁勋",
+        model: "claude-opus-4-7",
+        running: false,
+        fillRatio,
+        window: 200_000,
+        actionPct: 0.9,
+      },
+    ]
+    // 0.72：旧逻辑 >0.7 飘红（与"剩余18%"矛盾）；新逻辑 < warn(0.8) → 绿
+    const { rerender } = render(<AgentList agents={mk(0.72)} />)
+    expect(screen.getByTestId("agent-context-bar").getAttribute("class")).toMatch(/bg-emerald-400/)
+    // 0.82：warn(0.8) ≤ x < action(0.9) → 琥珀
+    rerender(<AgentList agents={mk(0.82)} />)
+    expect(screen.getByTestId("agent-context-bar").getAttribute("class")).toMatch(/bg-amber-400/)
+    // 0.92：≥ action(0.9) → 红
+    rerender(<AgentList agents={mk(0.92)} />)
+    expect(screen.getByTestId("agent-context-bar").getAttribute("class")).toMatch(/bg-rose-400/)
+  })
+
   it("AC-31: detail not rendered when fillRatio is null (no data yet)", () => {
     const agents = [
       {

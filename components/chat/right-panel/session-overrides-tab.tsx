@@ -92,7 +92,7 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
           value={model}
           onChange={(e) => setModel(e.target.value)}
           placeholder={globalOverride?.model ?? "系统默认"}
-          className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] text-slate-900 outline-none transition focus:border-indigo-400"
+          className="w-full rounded-field border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] text-slate-900 outline-none transition focus:border-indigo-400"
         />
         <datalist id={modelListId}>
           {providerCatalog?.models.map((m) => (
@@ -110,7 +110,7 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
           value={effort}
           onChange={(e) => setEffort(e.target.value)}
           disabled={!providerCatalog?.efforts.length}
-          className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-900 outline-none transition focus:border-indigo-400 disabled:bg-slate-50 disabled:text-slate-400"
+          className="w-full rounded-field border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-900 outline-none transition focus:border-indigo-400 disabled:bg-slate-50 disabled:text-slate-400"
         >
           <option value="">{globalOverride?.effort ?? "默认"}</option>
           {providerCatalog?.efforts.map((e) => (
@@ -139,12 +139,12 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
               ? String(globalOverride.contextWindow)
               : "模型默认"
           }
-          className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] text-slate-900 outline-none transition focus:border-indigo-400"
+          className="w-full rounded-field border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] text-slate-900 outline-none transition focus:border-indigo-400"
         />
       </Field>
 
       <Field
-        label="Seal 阈值"
+        label="自动封存阈值（Seal）"
         badge={hasSealPctOverride ? "override" : "inherit"}
         inheritValue={
           globalOverride?.sealPct != null
@@ -155,7 +155,7 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
         <div className="flex items-center gap-2">
           <input
             id={`session-seal-pct-${provider}`}
-            aria-label="Seal 阈值"
+            aria-label="自动封存阈值（Seal）"
             type="number"
             min={30}
             max={100}
@@ -167,19 +167,22 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
                 ? String(Math.round(globalOverride.sealPct * 100))
                 : "代码默认"
             }
-            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] text-slate-900 outline-none transition focus:border-indigo-400"
+            className="w-full rounded-field border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] text-slate-900 outline-none transition focus:border-indigo-400"
           />
           <span className="text-[12px] text-slate-500">%</span>
         </div>
+        <p className="mt-1 px-0.5 text-[11px] leading-relaxed text-slate-500">
+          本会话专属：上下文达此比例本轮末自动封存，下一轮开新 native session（保留摘要接力）。留空 = 继承全局默认。
+        </p>
       </Field>
 
       {isRunning && (
-        <div className="flex gap-2 rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-800">
+        <div className="flex gap-2 rounded-field border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-800">
           <span className="text-[13px] leading-none">⏱</span>
           <div>
-            <b className="font-semibold">会话运行中 · 将在下一轮生效</b>
+            <b className="font-semibold">会话运行中 · 配置下一轮启动时生效</b>
             <div className="mt-0.5 text-amber-700/80">
-              运行中，下一轮生效（改动写入 pending，invocation 启动时自动应用）
+              运行中，下一轮生效：本会话配置改动先写入 pending，下次 invocation 启动时自动套用，不打断当前轮（区别于「封存」是换新 session、「排队」是发消息）
             </div>
           </div>
         </div>
@@ -195,7 +198,7 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
               setSessionOverride(provider, buildPayload(), false),
             )
           }
-          className={`flex-1 rounded-[10px] px-3 py-2.5 text-[12px] font-semibold transition disabled:cursor-not-allowed ${
+          className={`flex-1 rounded-field px-3 py-2.5 text-[12px] font-semibold transition disabled:cursor-not-allowed ${
             applyStatus.status === "saved"
               ? "bg-emerald-600 text-white disabled:bg-emerald-600 disabled:text-white"
               : "bg-slate-900 text-white hover:bg-slate-800 disabled:bg-slate-300 disabled:text-slate-500"
@@ -213,7 +216,7 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
                 setSessionOverride(provider, buildPayload(), true),
               )
             }
-            className={`flex-1 rounded-[10px] px-3 py-2.5 text-[12px] font-semibold transition disabled:opacity-50 ${
+            className={`flex-1 rounded-field px-3 py-2.5 text-[12px] font-semibold transition disabled:opacity-50 ${
               pendingStatus.status === "saved"
                 ? "bg-emerald-600 text-white"
                 : "bg-slate-100 text-slate-900 hover:bg-slate-200"
@@ -241,7 +244,7 @@ export function SessionOverridesTab({ provider, isRunning }: Props) {
             )
           })
         }
-        className={`w-full rounded-[10px] border px-3 py-2 text-[11px] transition disabled:opacity-50 ${
+        className={`w-full rounded-field border px-3 py-2 text-[11px] transition disabled:opacity-50 ${
           clearStatus.status === "saved"
             ? "border-emerald-300 bg-emerald-50 text-emerald-700"
             : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"

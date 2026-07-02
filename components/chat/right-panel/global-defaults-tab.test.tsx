@@ -133,7 +133,7 @@ describe("GlobalDefaultsTab", () => {
         config: { claude: { sealPct: 0.55 } },
       })
       render(<GlobalDefaultsTab provider="claude" />)
-      const seal = screen.getByLabelText("Seal 阈值") as HTMLInputElement
+      const seal = screen.getByLabelText(/自动封存阈值/) as HTMLInputElement
       // 0.55 → 显示 "55"（百分比）
       expect(seal.value).toBe("55")
       expect(seal.type).toBe("number")
@@ -145,7 +145,7 @@ describe("GlobalDefaultsTab", () => {
       })
       render(<GlobalDefaultsTab provider="claude" />)
       expect((screen.getByLabelText("最大窗口") as HTMLInputElement).value).toBe("")
-      expect((screen.getByLabelText("Seal 阈值") as HTMLInputElement).value).toBe("")
+      expect((screen.getByLabelText(/自动封存阈值/) as HTMLInputElement).value).toBe("")
     })
 
     it("save button sends contextWindow + sealPct (sealPct converted from % back to fraction)", async () => {
@@ -159,7 +159,7 @@ describe("GlobalDefaultsTab", () => {
       fireEvent.change(screen.getByLabelText("最大窗口"), {
         target: { value: "2000000" },
       })
-      fireEvent.change(screen.getByLabelText("Seal 阈值"), {
+      fireEvent.change(screen.getByLabelText(/自动封存阈值/), {
         target: { value: "60" },
       })
       fireEvent.click(screen.getByRole("button", { name: "保存全局默认" }))
@@ -181,7 +181,7 @@ describe("GlobalDefaultsTab", () => {
 
       render(<GlobalDefaultsTab provider="claude" />)
       fireEvent.change(screen.getByLabelText("最大窗口"), { target: { value: "" } })
-      fireEvent.change(screen.getByLabelText("Seal 阈值"), { target: { value: "" } })
+      fireEvent.change(screen.getByLabelText(/自动封存阈值/), { target: { value: "" } })
       fireEvent.click(screen.getByRole("button", { name: "保存全局默认" }))
 
       expect(setGlobalOverride).toHaveBeenCalledWith("claude", {
@@ -202,11 +202,11 @@ describe("GlobalDefaultsTab", () => {
       })
       const { rerender } = render(<GlobalDefaultsTab provider="claude" />)
       expect((screen.getByLabelText("最大窗口") as HTMLInputElement).value).toBe("1000000")
-      expect((screen.getByLabelText("Seal 阈值") as HTMLInputElement).value).toBe("50")
+      expect((screen.getByLabelText(/自动封存阈值/) as HTMLInputElement).value).toBe("50")
 
       rerender(<GlobalDefaultsTab provider="codex" />)
       expect((screen.getByLabelText("最大窗口") as HTMLInputElement).value).toBe("400000")
-      expect((screen.getByLabelText("Seal 阈值") as HTMLInputElement).value).toBe("70")
+      expect((screen.getByLabelText(/自动封存阈值/) as HTMLInputElement).value).toBe("70")
     })
   })
 })

@@ -2,13 +2,76 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+ * F036 Design tokens — 移植自 clowder-ai theme-tokens.css（light-only）
+ * 哲学：OKLCH 感知一致 + 4 档表面高度（sunken→canvas）+ 暖金 accent（≈Claude clay）。
+ * 单一真相源：换主题 = 改 hue/chroma，全站自适应。
+ * ============================================================ */
 :root {
   color-scheme: light;
+
+  /* Hue/Chroma 锚点 */
+  --accent-hue: 50; /* warm gold / copper — 品牌 & 交互色 */
+  --accent-chroma: 0.14;
+  --surface-hue: 80; /* warm beige — 页面底色，独立于 accent */
+
+  /* --- Neutral 11 档（warm, hue 30, chroma 0.005 —— 几乎不带色的暖灰） --- */
+  --neutral-50: oklch(0.985 0.005 30);
+  --neutral-100: oklch(0.965 0.005 30);
+  --neutral-200: oklch(0.915 0.005 30);
+  --neutral-300: oklch(0.84 0.005 30);
+  --neutral-400: oklch(0.71 0.005 30);
+  --neutral-500: oklch(0.56 0.005 30);
+  --neutral-600: oklch(0.45 0.005 30);
+  --neutral-700: oklch(0.36 0.005 30);
+  --neutral-800: oklch(0.27 0.005 30);
+  --neutral-900: oklch(0.2 0.005 30);
+  --neutral-950: oklch(0.13 0.005 30);
+
+  /* --- App Accent 9 档（单 hue 派生，accent-500 vs surface ≥4.5:1） --- */
+  --accent-50: oklch(0.97 calc(var(--accent-chroma) * 0.2) var(--accent-hue));
+  --accent-100: oklch(0.94 calc(var(--accent-chroma) * 0.3) var(--accent-hue));
+  --accent-200: oklch(0.88 calc(var(--accent-chroma) * 0.5) var(--accent-hue));
+  --accent-300: oklch(0.78 calc(var(--accent-chroma) * 0.7) var(--accent-hue));
+  --accent-400: oklch(0.65 calc(var(--accent-chroma) * 0.9) var(--accent-hue));
+  --accent-500: oklch(0.55 var(--accent-chroma) var(--accent-hue));
+  --accent-600: oklch(0.45 var(--accent-chroma) var(--accent-hue));
+  --accent-700: oklch(0.35 calc(var(--accent-chroma) * 0.9) var(--accent-hue));
+  --accent-900: oklch(0.2 calc(var(--accent-chroma) * 0.5) var(--accent-hue));
+
+  /* --- Surface 4 档（warm beige，越浅越白）--- */
+  --surface-sunken: oklch(0.92 0.015 var(--surface-hue)); /* #EEE5DB 输入/代码/凹槽 */
+  --surface: oklch(0.95 0.012 var(--surface-hue)); /* #F6EFE7 侧栏/右栏/页面底 */
+  --surface-elevated: oklch(0.99 0.005 var(--surface-hue)); /* #FCFAF8 聊天主区（最亮·近白） */
+  --surface-canvas: oklch(0.995 0.003 var(--surface-hue)); /* #FFFDFB 浮起卡片/输入框 */
+
+  /* --- Semantic 5 色 --- */
+  --semantic-critical: oklch(0.57 0.12 38);
+  --semantic-success: oklch(0.57 0.12 135);
+  --semantic-warning: oklch(0.57 0.12 46);
+  --semantic-info: oklch(0.57 0.12 209);
+  --semantic-spotlight: oklch(0.67 0.12 46);
+
+  /* --- 文本 / 边框 语义 alias --- */
+  --text-primary: var(--neutral-900);
+  --text-secondary: var(--neutral-600);
+  --text-muted: var(--neutral-500);
+  --border-default: var(--neutral-300);
+  --border-subtle: var(--neutral-200);
+  --accent: var(--accent-500);
+  --accent-hover: var(--accent-600);
+
+  /* --- Elevation 阴影（柔、单层；平面不投影，只浮层用） --- */
+  --shadow-elevation-1: 0 1px 2px oklch(0 0 0 / 0.06);
+  --shadow-elevation-2: 0 4px 10px oklch(0 0 0 / 0.1);
+  --shadow-elevation-3: 0 14px 28px oklch(0 0 0 / 0.15);
 }
 
 body {
-  font-family: "Avenir Next", "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
-  @apply min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(255,244,214,0.55),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(209,250,229,0.4),transparent_22%),linear-gradient(180deg,#f8fafc_0%,#f5f7fb_100%)] text-slate-800 antialiased;
+  font-family: var(--font-sans), "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  /* clowder 模型：页面底 = surface（暖米），阅读区在组件里抬到 elevated（近白） */
+  @apply min-h-screen text-slate-900 antialiased;
+  background: var(--surface);
 }
 
 * {
@@ -18,7 +81,7 @@ body {
 code,
 pre,
 .font-mono {
-  font-family: "JetBrains Mono", "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", Menlo,
+  font-family: var(--font-mono), "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", Menlo,
     monospace;
 }
 
@@ -35,12 +98,15 @@ pre,
 }
 
 @layer components {
+  /* 旧"毛玻璃"语义重定义为平面浮层（去 backdrop-blur，全站生效） */
   .glass-surface {
-    @apply bg-white/70 backdrop-blur-xl border border-slate-200/30 shadow-[0_8px_32px_rgba(15,23,42,0.04)];
+    background: var(--surface-canvas);
+    @apply border border-slate-200;
+    box-shadow: var(--shadow-elevation-1);
   }
 
   .shadow-soft {
-    @apply shadow-[0_8px_30px_rgb(0,0,0,0.04)];
+    box-shadow: var(--shadow-elevation-1);
   }
 
   @keyframes breathe {
@@ -48,12 +114,10 @@ pre,
     100% {
       transform: scale(1);
       opacity: 1;
-      filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.2));
     }
     50% {
-      transform: scale(1.05);
+      transform: scale(1.04);
       opacity: 0.92;
-      filter: drop-shadow(0 0 15px rgba(245, 158, 11, 0.35));
     }
   }
 
@@ -62,8 +126,8 @@ pre,
   }
 
   @keyframes approval-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
-    50% { box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15); }
+    0%, 100% { box-shadow: 0 0 0 0 rgba(168, 107, 46, 0); }
+    50% { box-shadow: 0 0 0 3px rgba(168, 107, 46, 0.12); }
   }
 
   .approval-pulse {

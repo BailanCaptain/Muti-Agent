@@ -91,13 +91,14 @@ describe("Composer dragEnter / dragLeave", () => {
     vi.restoreAllMocks()
   })
 
-  it("dragEnter Files → dragOver=true + drag-hint 显示 + 紫色边框 class", () => {
+  it("dragEnter Files → dragOver=true + drag-hint 显示 + 暖金边框 class", () => {
     render(<Composer />)
     const form = screen.getByTestId("composer-form")
     fireEvent.dragEnter(form, { dataTransfer: makeDataTransfer([makeFile("foo.md", "x")]) })
     expect(form.getAttribute("data-drag-over")).toBe("true")
     expect(screen.getByTestId("composer-drag-hint")).toBeTruthy()
-    expect(form.className).toMatch(/border-violet/)
+    // F036 restyle：拖拽态边框 violet → 暖金 accent
+    expect(form.className).toMatch(/border-accent-400/)
   })
 
   it("dragLeave → dragOver=false (counter 归 0 后)", () => {

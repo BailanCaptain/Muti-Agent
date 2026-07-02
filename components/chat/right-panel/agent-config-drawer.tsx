@@ -46,7 +46,7 @@ export function AgentConfigDrawer({
   const tabClass = (active: boolean) =>
     `flex-1 rounded-lg px-3 py-1.5 text-[12px] font-medium transition ${
       active
-        ? "bg-white text-slate-900 font-semibold shadow-[0_2px_6px_rgba(15,23,42,0.06)]"
+        ? "bg-surface-canvas text-slate-900 font-semibold shadow-sm"
         : "bg-transparent text-slate-500 hover:text-slate-700"
     }`
 
@@ -65,7 +65,7 @@ export function AgentConfigDrawer({
         aria-hidden={isOpen ? "false" : "true"}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="flex w-[460px] max-w-[92vw] max-h-[80vh] flex-col rounded-[18px] border border-slate-200 bg-white shadow-[0_32px_64px_rgba(15,23,42,0.18)]"
+        className="flex w-[460px] max-w-[92vw] max-h-[80vh] flex-col rounded-panel border border-slate-200 bg-surface-elevated shadow-lg"
       >
         <header className="flex items-center gap-3 px-5 pb-3 pt-5">
           <ProviderAvatar identity={provider} size="md" />
@@ -83,7 +83,7 @@ export function AgentConfigDrawer({
           </button>
         </header>
 
-        <div role="tablist" className="mx-5 flex gap-0.5 rounded-[10px] bg-slate-100 p-[3px]">
+        <div role="tablist" className="mx-5 flex gap-0.5 rounded-field bg-slate-100 p-[3px]">
           <button
             type="button"
             role="tab"

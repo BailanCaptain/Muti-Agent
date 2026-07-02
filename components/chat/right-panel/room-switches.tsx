@@ -11,7 +11,7 @@ export function RoomSwitches({ showThinking, onToggleThinking }: Props) {
       <div className="px-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
         房间开关
       </div>
-      <label className="flex cursor-pointer items-center justify-between gap-2 rounded-[12px] border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900">
+      <label className="flex cursor-pointer items-center justify-between gap-2 rounded-field border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900">
         <span className="flex items-center gap-2">
           心里话模式
           <span className="text-[10px] text-slate-400">显示 thinking</span>

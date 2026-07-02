@@ -309,9 +309,9 @@ export default function HomePage() {
   const toggleStatusPanel = useLayoutStore((state) => state.toggleStatusPanel)
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[radial-gradient(circle_at_20%_20%,rgba(245,208,254,0.18),transparent_35%),radial-gradient(circle_at_80%_20%,rgba(255,244,214,0.18),transparent_35%),radial-gradient(circle_at_50%_80%,rgba(224,242,254,0.18),transparent_35%),linear-gradient(180deg,#f8fafc_0%,#f1f5f9_100%)]">
+    <div className="flex h-screen w-full overflow-hidden bg-surface">
       {sidebarCollapsed ? (
-        <div className="flex h-screen w-12 shrink-0 flex-col items-center border-r border-slate-200/70 bg-[linear-gradient(180deg,#fcf9f4_0%,#f7f8fb_100%)] py-4">
+        <div className="flex h-screen w-12 shrink-0 flex-col items-center border-r border-slate-200 bg-surface py-4">
           <button
             className="rounded-lg p-2 text-slate-400 transition hover:bg-white/70 hover:text-slate-600"
             onClick={toggleSidebar}
@@ -347,7 +347,7 @@ export default function HomePage() {
             </button>
           )}
         </ChatHeader>
-        <div className="flex flex-1 flex-col overflow-hidden bg-white/45 backdrop-blur-sm">
+        <div className="flex flex-1 flex-col overflow-hidden bg-surface-elevated">
           <TimelinePanel />
           <div className="p-6">
             <div className="mx-auto max-w-4xl">
@@ -366,7 +366,7 @@ export default function HomePage() {
         </div>
       )}
       {statusPanelCollapsed ? (
-        <div className="flex h-screen w-12 shrink-0 flex-col items-center border-l border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(255,255,255,0.86))] py-4">
+        <div className="flex h-screen w-12 shrink-0 flex-col items-center border-l border-slate-200 bg-surface py-4">
           <button
             className="rounded-lg p-2 text-slate-400 transition hover:bg-white/70 hover:text-slate-600"
             onClick={toggleStatusPanel}

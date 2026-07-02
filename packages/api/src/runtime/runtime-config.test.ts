@@ -95,6 +95,52 @@ test("F021 P1: resolveEffectiveOverride returns undefined when neither set", () 
   assert.equal(resolveEffectiveOverride({}, undefined), undefined)
 })
 
+test("F036 P0#2: resolveEffectiveOverride drops bogus effort when agent passed (注入前白名单)", () => {
+  // session effort 越界 + 传 agent → effort 丢弃（回落 CLI 默认），防 bogus 注入崩子进程；model 留
+  assert.deepEqual(
+    resolveEffectiveOverride({ effort: "bogus" }, { model: "claude-opus-4-7" }, "claude"),
+    { model: "claude-opus-4-7" },
+  )
+  // claude 不含 minimal（codex 专属）→ 丢，无 model → undefined
+  assert.equal(resolveEffectiveOverride({ effort: "minimal" }, undefined, "claude"), undefined)
+  // gemini efforts=[] → 任何 effort 丢
+  assert.equal(resolveEffectiveOverride({ effort: "high" }, undefined, "gemini"), undefined)
+})
+
+test("F036 P0#2: resolveEffectiveOverride keeps valid effort per agent catalog", () => {
+  // claude 含 xhigh（F036 实测 CLI 2.1.177 补 catalog）
+  assert.deepEqual(resolveEffectiveOverride({ effort: "xhigh" }, undefined, "claude"), {
+    effort: "xhigh",
+  })
+  // codex 含 minimal
+  assert.deepEqual(resolveEffectiveOverride({ effort: "minimal" }, undefined, "codex"), {
+    effort: "minimal",
+  })
+})
+
+test("F036 P0#2: resolveEffectiveOverride without agent keeps effort (向后兼容)", () => {
+  // 不传 agent → 不校验（历史行为），effort 原样保留
+  assert.deepEqual(resolveEffectiveOverride({ effort: "bogus" }, undefined), { effort: "bogus" })
+})
+
+test("F036 P0#2: saveRuntimeConfig drops bogus agent effort, keeps valid (catalog 白名单)", () => {
+  const { configPath, dir } = tmpConfigPath()
+  try {
+    saveRuntimeConfig(
+      { claude: { model: "claude-opus-4-7", effort: "bogus" }, codex: { effort: "xhigh" } },
+      configPath,
+    )
+    const loaded = loadRuntimeConfig(configPath)
+    // claude.effort=bogus 丢（model 留）；codex.effort=xhigh 留
+    assert.deepEqual(loaded, {
+      claude: { model: "claude-opus-4-7" },
+      codex: { effort: "xhigh" },
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("saveRuntimeConfig trims whitespace on write", () => {
   const { configPath, dir } = tmpConfigPath()
   try {

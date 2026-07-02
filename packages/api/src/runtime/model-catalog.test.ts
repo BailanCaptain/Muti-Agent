@@ -14,8 +14,9 @@ test("catalog contains all three agents with non-empty models", () => {
   }
 })
 
-test("claude efforts match CLI --help (low/medium/high/max)", () => {
-  assert.deepEqual(MODEL_CATALOG.claude.efforts, ["low", "medium", "high", "max"])
+test("claude efforts match CLI --help (low/medium/high/xhigh/max)", () => {
+  // 实测 CLI 2.1.177：`claude --help` → --effort <level> (low, medium, high, xhigh, max)
+  assert.deepEqual(MODEL_CATALOG.claude.efforts, ["low", "medium", "high", "xhigh", "max"])
 })
 
 test("codex efforts match CLI error variant list (none/minimal/low/medium/high/xhigh)", () => {

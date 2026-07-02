@@ -42,7 +42,7 @@ export type WikiCompileOverride = {
   primaryModel?: string
   /**
    * 补丁#3（小孙「claude/codex 应该可选强度」）：推理强度，按 provider 的 efforts 白名单校验
-   * （claude: low/medium/high/max；codex: none…xhigh；gemini 无强度 → 不可设）。留空 = CLI 默认。
+   * （claude: low/medium/high/xhigh/max；codex: none…xhigh；gemini 无强度 → 不可设）。留空 = CLI 默认。
    */
   effort?: string
 }
@@ -133,9 +133,16 @@ export function saveRuntimeConfig(
 export function resolveEffectiveOverride(
   session: AgentOverride | undefined,
   global: AgentOverride | undefined,
+  agent?: AgentKind,
 ): AgentOverride | undefined {
   const model = session?.model ?? global?.model
-  const effort = session?.effort ?? global?.effort
+  let effort = session?.effort ?? global?.effort
+  // F036 P0#2：effort 闭集白名单——注入前最后防线，覆盖 session config（不过 sanitize 存储层）、
+  // 历史脏数据、直调 API 绕过 UI 的越界值。bogus effort 丢弃（回落 CLI 默认），防子进程启动即崩；
+  // model 仍自由输入。传 agent 才校验（缺省/未知 agent 不校验，保向后兼容）。
+  if (effort && agent && MODEL_CATALOG[agent] && !MODEL_CATALOG[agent].efforts.includes(effort)) {
+    effort = undefined
+  }
   if (!model && !effort) return undefined
   const result: AgentOverride = {}
   if (model) result.model = model
@@ -165,7 +172,8 @@ export function validateRuntimeConfigInput(input: unknown): string[] {
     }
     const entry = raw as Record<string, unknown>
     // 注意：model / effort 仍走 sanitize 静默 drop（历史行为，前端 model 选择器
-    // 永远发合法值；改成 400 是 scope 外）。这里只校验 P6 新加的两字段。
+    // 永远发合法值；改成 400 是 scope 外）。F036 P0#2：effort 在 sanitize 里按 agent
+    // catalog efforts 白名单留存（闭集），bogus 静默丢；model 仍自由输入。这里只校验 P6 两字段。
     if (entry.contextWindow !== undefined) {
       const value = entry.contextWindow
       if (
@@ -263,8 +271,13 @@ function sanitize(input: unknown): RuntimeConfig {
     if (typeof entry.model === "string" && entry.model.trim()) {
       override.model = entry.model.trim()
     }
+    // F036 P0#2：effort 是闭集（CLI 固定取值），按 agent 的 catalog efforts 白名单留存；
+    // 越界静默丢弃（与 model 自由输入区别开——bogus effort 会让 CLI 子进程启动即崩）。
     if (typeof entry.effort === "string" && entry.effort.trim()) {
-      override.effort = entry.effort.trim()
+      const eff = entry.effort.trim()
+      if (MODEL_CATALOG[agent].efforts.includes(eff)) {
+        override.effort = eff
+      }
     }
     if (
       typeof entry.contextWindow === "number" &&

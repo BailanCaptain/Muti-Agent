@@ -179,12 +179,13 @@ describe("ConnectorBubble · a2a 视觉原语接入 (F2-F8)", () => {
   })
 })
 
-describe("ConnectorBubble · multi_mention 聚合气泡（无 a2aCallId）保持原样", () => {
-  it("不带 a2aCallId 时仍走 indigo 渐变全宽样式", () => {
+describe("ConnectorBubble · multi_mention 聚合气泡（无 a2aCallId）走全宽样式", () => {
+  it("不带 a2aCallId 时走暖色 surface-canvas 全宽样式", () => {
     const { container } = render(<ConnectorBubble message={makeMultiMention()} />)
-    // multi_mention 分支保留原 indigo 渐变 — 用 from-indigo 命中
+    // F036 restyle：multi_mention 分支 indigo 渐变 → 暖色 surface-canvas（rounded-floating 全宽）
     const html = container.innerHTML
-    expect(html).toMatch(/from-indigo-50/)
+    expect(html).toMatch(/bg-surface-canvas/)
+    expect(html).toMatch(/rounded-floating/)
   })
 
   it("不带 a2aCallId 时不渲染 AtPill（F1 仅对 a2a 分支生效）", () => {

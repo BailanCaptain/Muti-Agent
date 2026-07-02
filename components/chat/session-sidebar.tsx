@@ -420,7 +420,7 @@ export function SessionSidebar() {
   const closeContextMenu = useCallback(() => setContextMenu(null), [])
 
   return (
-    <aside className="flex h-screen w-[280px] shrink-0 flex-col border-r border-slate-200/30 bg-white/70 backdrop-blur-xl px-3 py-4 shadow-[4px_0_24px_rgba(15,23,42,0.04)]">
+    <aside className="flex h-screen w-[280px] shrink-0 flex-col border-r border-slate-200 bg-surface px-3 py-4">
       {/* Header */}
       <div className="mb-4 flex items-center justify-between px-1">
         <h2 className="text-sm font-semibold tracking-wide text-slate-800">
@@ -440,7 +440,7 @@ export function SessionSidebar() {
       <label className="relative mb-3 block px-1">
         <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
         <input
-          className="w-full rounded-md border border-slate-200/60 bg-white/60 py-1.5 pl-8 pr-3 text-sm text-slate-700 placeholder-slate-400 outline-none transition focus:border-slate-300 focus:ring-1 focus:ring-slate-300"
+          className="w-full rounded-md border border-slate-200 bg-surface-canvas py-1.5 pl-8 pr-3 text-sm text-slate-700 placeholder-slate-400 outline-none transition focus:border-slate-300 focus:ring-1 focus:ring-slate-300"
           onChange={(e) => setSearch(e.target.value)}
           placeholder="搜索..."
           type="text"
@@ -707,7 +707,7 @@ const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedA
     <button
       className={`group relative w-full rounded-md px-2.5 py-2 text-left transition ${
         active
-          ? "border-l-[3px] border-amber-500 bg-white/90 shadow-sm"
+          ? "border-l-[3px] border-amber-500 bg-surface-canvas shadow-sm"
           : "border-l-[3px] border-transparent hover:bg-amber-50/60"
       }`}
       onClick={handleClick}
@@ -740,7 +740,7 @@ const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedA
         {isRenaming ? (
           <input
             ref={inputRef}
-            className="min-w-0 flex-1 rounded border border-amber-500/40 bg-white/90 px-1.5 py-0.5 text-sm font-medium text-slate-800 outline-none focus:border-amber-500"
+            className="min-w-0 flex-1 rounded border border-amber-500/40 bg-surface-canvas px-1.5 py-0.5 text-sm font-medium text-slate-800 outline-none focus:border-amber-500"
             maxLength={40}
             onChange={(e) => setDraft(e.target.value)}
             onClick={(e) => e.stopPropagation()}

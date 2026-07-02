@@ -23,8 +23,8 @@ export const MODEL_CATALOG: ModelCatalog = {
       { name: "claude-sonnet-4-6", label: "Sonnet 4.6（平衡）" },
       { name: "claude-haiku-4-5", label: "Haiku 4.5（快速）" },
     ],
-    // 来源：`claude --help` 明文输出
-    efforts: ["low", "medium", "high", "max"],
+    // 来源：`claude --help` 明文输出（实测 CLI 2.1.177：--effort <level> = low, medium, high, xhigh, max）
+    efforts: ["low", "medium", "high", "xhigh", "max"],
   },
   codex: {
     models: [

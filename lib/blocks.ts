@@ -44,6 +44,28 @@ export type ChecklistBlock = {
   items: Array<{ id: string; text: string; checked?: boolean }>
 }
 
+// F036 #10：以下两型与 @multi-agent/shared 的 Rich{Table,Progress}Block z.infer 结构一致
+// （parseRichSegments 把 schema 验证后的 result.data 直接当 Block push）。
+export type TableBlock = {
+  kind: "table"
+  id: string
+  title?: string
+  columns: string[]
+  rows: string[][]
+}
+
+export type ProgressBlock = {
+  kind: "progress"
+  id: string
+  title?: string
+  items: Array<{
+    label: string
+    value: number
+    tone?: "info" | "success" | "warning" | "danger"
+    caption?: string
+  }>
+}
+
 export type Block =
   | MarkdownBlock
   | ThinkingBlock
@@ -51,6 +73,8 @@ export type Block =
   | DiffBlock
   | ImageBlock
   | ChecklistBlock
+  | TableBlock
+  | ProgressBlock
 
 // ── normalizeMessageToBlocks ────────────────────────────────────────
 

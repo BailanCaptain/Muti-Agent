@@ -146,7 +146,7 @@ export function SlashCommandMenu({
   return (
     <div
       ref={containerRef}
-      className="absolute bottom-full left-2 z-20 mb-2 w-72 overflow-hidden rounded-2xl border border-slate-200 bg-white/95 shadow-[0_20px_50px_rgba(15,23,42,0.12)] backdrop-blur"
+      className="absolute bottom-full left-2 z-20 mb-2 w-72 overflow-hidden rounded-2xl border border-slate-200 bg-surface-canvas shadow-lg"
       data-testid="composer-slash-menu"
       role="listbox"
       tabIndex={-1}

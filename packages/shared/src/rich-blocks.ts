@@ -44,13 +44,66 @@ export const RichChecklistBlockSchema = z.object({
     }),
 })
 
-export const RichBlockSchema = z.discriminatedUnion("kind", [
-  RichCardBlockSchema,
-  RichChecklistBlockSchema,
-])
+// F036 #10 卡型扩展：只读数据表格。列 ≤8、行 ≤50、单元格 ≤300——同 card/checklist 的
+// fail-closed 上限闸门。
+export const RichTableBlockSchema = z.object({
+  kind: z.literal("table"),
+  id: z.string().min(1).max(64),
+  title: z.string().max(200).optional(),
+  columns: z.array(z.string().min(1).max(60)).min(1).max(8),
+  // 行宽 == 列数的跨字段约束**不能**挂这里（成员上的 .refine 会把外层变 ZodEffects →
+  // 进不了 discriminatedUnion；checklist 的 refine 挂内层 items 数组才不破）。改放最终
+  // union 的 superRefine（见下方 RichBlockSchema）——成员仍是 ZodObject。
+  rows: z.array(z.array(z.string().max(300)).max(8)).min(1).max(50),
+})
+
+// F036 #10 卡型扩展：只读进度/计量条。覆盖里程碑进度、投票计票（read-only tally；
+// 真投票交互归 F033 交互卡）。value = 0~100 百分比，caption 放原始计数（"12/20"/"3 票"）。
+export const RichProgressBlockSchema = z.object({
+  kind: z.literal("progress"),
+  id: z.string().min(1).max(64),
+  title: z.string().max(200).optional(),
+  items: z
+    .array(
+      z.object({
+        label: z.string().min(1).max(80),
+        value: z.number().min(0).max(100),
+        tone: z.enum(["info", "success", "warning", "danger"]).optional(),
+        caption: z.string().max(60).optional(),
+      }),
+    )
+    .min(1)
+    .max(20),
+})
+
+export const RichBlockSchema = z
+  .discriminatedUnion("kind", [
+    RichCardBlockSchema,
+    RichChecklistBlockSchema,
+    RichTableBlockSchema,
+    RichProgressBlockSchema,
+  ])
+  // F036 #10 范德彪-r P2：table 行宽必须 == 列数，否则整段 fail-closed 降级纯文本。
+  // 渲染只遍历 columns，超宽行的多余单元格会被静默丢弃（错误对比/计票数据）；缺位行也拒，
+  // 不靠渲染层补位猜测。放 union 的 superRefine（而非成员 .refine）——成员仍是 ZodObject，
+  // 不破 discriminatedUnion。
+  .superRefine((val, ctx) => {
+    if (val.kind === "table") {
+      const bad = val.rows.findIndex((r) => r.length !== val.columns.length)
+      if (bad >= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["rows", bad],
+          message: `table row ${bad} has ${val.rows[bad].length} cells, expected ${val.columns.length}`,
+        })
+      }
+    }
+  })
 
 export type RichCardBlock = z.infer<typeof RichCardBlockSchema>
 export type RichChecklistBlock = z.infer<typeof RichChecklistBlockSchema>
+export type RichTableBlock = z.infer<typeof RichTableBlockSchema>
+export type RichProgressBlock = z.infer<typeof RichProgressBlockSchema>
 export type RichBlock = z.infer<typeof RichBlockSchema>
 
 // 围栏 marker（剥掉容器前缀后判定）：≥3 个 ` 或 ~，info string 跟其后。

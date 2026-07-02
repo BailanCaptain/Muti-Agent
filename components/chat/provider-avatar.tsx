@@ -50,9 +50,9 @@ const avatarTheme: Record<
     mainEmoji: "🙀",
     subEmoji: "🔪",
     subTransform: "-rotate-[15deg] translate-x-[15%] translate-y-[10%]",
-    shell: "from-sky-100/80 via-cyan-50/80 to-blue-100/80",
-    ring: "ring-sky-200/80",
-    shadow: "shadow-sky-500/20",
+    shell: "from-teal-100/80 via-cyan-50/80 to-cyan-100/80",
+    ring: "ring-teal-200/80",
+    shadow: "shadow-teal-500/20",
   },
 }
 
@@ -109,19 +109,19 @@ export function ProviderAvatar({ identity, size = "md", className = "" }: Provid
 
   return (
     <div
-      className={`relative inline-flex items-center justify-center bg-gradient-to-br bg-white/50 backdrop-blur-md ring-1 shadow-lg transition-transform hover:scale-105 ${dimensions.shell} ${theme.shell} ${theme.ring} ${theme.shadow} ${className}`.trim()}
+      className={`relative inline-flex items-center justify-center bg-gradient-to-br ring-1 transition-transform hover:scale-105 ${dimensions.shell} ${theme.shell} ${theme.ring} ${className}`.trim()}
     >
       <div className="absolute inset-0 z-0 mix-blend-overlay opacity-20 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.8)_0%,transparent_70%)]" />
 
       <span
-        className={`relative z-10 flex items-center justify-center drop-shadow-md ${dimensions.mainSize}`}
+        className={`relative z-10 flex items-center justify-center ${dimensions.mainSize}`}
         style={{ transform: "translateY(-5%)" }}
       >
         {theme.mainEmoji}
       </span>
 
       <span
-        className={`absolute z-20 drop-shadow-lg ${dimensions.subPosition} ${dimensions.subSize} ${theme.subTransform}`}
+        className={`absolute z-20 ${dimensions.subPosition} ${dimensions.subSize} ${theme.subTransform}`}
       >
         {theme.subEmoji}
       </span>

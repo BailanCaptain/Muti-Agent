@@ -12,34 +12,31 @@ type ToneStyle = {
   icon: ComponentType<{ className?: string }>
 }
 
-// 对齐 decision-card 的视觉语言：圆角全框 + 渐变底 + 柔和带色阴影 + tone 图标。
+// 对齐 decision-card 的视觉语言（F036 restyle）：圆角全框 + 扁平实底 + elevation-1 阴影 + tone 图标。
+// 去渐变 / 去带色辉光阴影；info 默认态走暖金 accent，语义三态（成功/警告/危险）保留 hue。
 const TONE_STYLES: Record<string, ToneStyle> = {
   info: {
-    container:
-      "border-sky-200/70 bg-gradient-to-br from-sky-50 to-blue-50/40 shadow-[0_4px_16px_rgba(59,130,246,0.08)]",
-    iconWrap: "bg-sky-100/80",
-    iconColor: "text-sky-500",
+    container: "border-accent-200 bg-accent-50 shadow-sm",
+    iconWrap: "bg-accent-100",
+    iconColor: "text-accent-600",
     icon: Info,
   },
   success: {
-    container:
-      "border-emerald-200/70 bg-gradient-to-br from-emerald-50 to-teal-50/40 shadow-[0_4px_16px_rgba(16,185,129,0.10)]",
-    iconWrap: "bg-emerald-100/80",
-    iconColor: "text-emerald-500",
+    container: "border-emerald-200 bg-emerald-50 shadow-sm",
+    iconWrap: "bg-emerald-100",
+    iconColor: "text-emerald-600",
     icon: CheckCircle2,
   },
   warning: {
-    container:
-      "border-amber-200/70 bg-gradient-to-br from-amber-50 to-orange-50/40 shadow-[0_4px_16px_rgba(245,158,11,0.10)]",
-    iconWrap: "bg-amber-100/80",
-    iconColor: "text-amber-500",
+    container: "border-amber-200 bg-amber-50 shadow-sm",
+    iconWrap: "bg-amber-100",
+    iconColor: "text-amber-600",
     icon: AlertTriangle,
   },
   danger: {
-    container:
-      "border-rose-200/70 bg-gradient-to-br from-rose-50 to-red-50/40 shadow-[0_4px_16px_rgba(244,63,94,0.10)]",
-    iconWrap: "bg-rose-100/80",
-    iconColor: "text-rose-500",
+    container: "border-rose-200 bg-rose-50 shadow-sm",
+    iconWrap: "bg-rose-100",
+    iconColor: "text-rose-600",
     icon: XCircle,
   },
 }
@@ -76,7 +73,7 @@ export function CardBlockComponent({ block }: { block: CardBlock }) {
           {block.fields.map((f, i) => (
             <div
               key={i}
-              className="flex items-baseline gap-1.5 rounded-lg border border-white/70 bg-white/60 px-2 py-1"
+              className="flex items-baseline gap-1.5 rounded-lg border border-slate-200 bg-surface-canvas px-2 py-1"
             >
               <span className="text-[10px] uppercase tracking-wide text-slate-400">{f.label}</span>
               <span className="font-mono text-xs font-semibold text-slate-700">{f.value}</span>

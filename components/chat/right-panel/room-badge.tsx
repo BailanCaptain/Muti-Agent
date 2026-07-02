@@ -14,11 +14,11 @@ export function RoomBadge({ title, roomId, globalRoomId }: Props) {
   const shortHash = formatShortHash(roomId)
   return (
     <div
-      className="flex flex-1 items-center gap-2 rounded-[12px] bg-gradient-to-r from-indigo-50 via-violet-50 to-indigo-50 px-3 py-2 text-[11px] ring-1 ring-indigo-100/80"
+      className="flex flex-1 items-center gap-2 rounded-field bg-accent-50 px-3 py-2 text-[11px] ring-1 ring-accent-200"
       role="status"
       aria-label="房间归属徽章"
     >
-      <span className="rounded-full bg-white/80 px-1.5 py-0.5 text-[9px] font-bold tracking-[0.18em] text-indigo-500 ring-1 ring-indigo-100">
+      <span className="rounded-full bg-surface-canvas px-1.5 py-0.5 text-[9px] font-bold tracking-[0.18em] text-accent-700 ring-1 ring-accent-200">
         ROOM
       </span>
       <span className="flex-1 truncate text-[12px] font-semibold text-slate-900">
@@ -29,7 +29,7 @@ export function RoomBadge({ title, roomId, globalRoomId }: Props) {
           {globalRoomId}
         </span>
       ) : (
-        <span className="font-mono text-[10px] text-indigo-400/90">#{shortHash}</span>
+        <span className="font-mono text-[10px] text-accent-500">#{shortHash}</span>
       )}
     </div>
   )

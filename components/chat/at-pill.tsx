@@ -106,7 +106,7 @@ export function AtPill({
             e.stopPropagation()
             onRetry?.()
           }}
-          className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-white/60 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 transition hover:bg-white"
+          className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-surface-canvas px-1.5 py-0.5 text-[10px] font-medium text-rose-700 transition hover:bg-surface-elevated"
         >
           <RotateCcw className="h-2.5 w-2.5" aria-hidden="true" />
           重发

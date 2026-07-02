@@ -574,10 +574,10 @@ export function Composer() {
   return (
     <>
     <form
-      className={`flex flex-col gap-3 rounded-[30px] border bg-white/90 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur transition-colors ${
+      className={`flex flex-col gap-3 rounded-panel border bg-surface-sunken p-4 transition-colors ${
         dragOver
-          ? "border-violet-400 bg-violet-50/70 ring-2 ring-violet-200"
-          : "border-slate-200/80"
+          ? "border-accent-400 bg-accent-50 ring-2 ring-accent-200"
+          : "border-slate-200 focus-within:border-slate-300"
       }`}
       data-testid="composer-form"
       data-drag-over={dragOver ? "true" : "false"}
@@ -592,7 +592,7 @@ export function Composer() {
     >
       {dragOver && (
         <div
-          className="rounded-2xl border-2 border-violet-300 border-dashed bg-violet-100/40 px-4 py-2 text-center text-[11px] text-violet-700"
+          className="rounded-2xl border-2 border-accent-300 border-dashed bg-accent-50 px-4 py-2 text-center text-[11px] text-accent-700"
           data-testid="composer-drag-hint"
         >
           📎 拖入 .md / .markdown / .json / .txt → IngestModal；图片 → 附件
@@ -651,7 +651,7 @@ export function Composer() {
                   className={`group flex items-center gap-2 rounded-xl border px-2.5 py-1.5 transition-colors ${
                     isNext
                       ? "border-amber-200/80 bg-gradient-to-r from-amber-50 to-white shadow-sm ring-1 ring-amber-100/60"
-                      : "border-slate-200/60 bg-white/70 hover:bg-white"
+                      : "border-slate-200 bg-surface-canvas hover:bg-surface-elevated"
                   }`}
                 >
                   {isNext ? (
@@ -788,7 +788,7 @@ export function Composer() {
         />
 
         {showSuggestions && (
-          <div className="absolute bottom-full left-2 z-20 mb-2 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white/95 shadow-[0_20px_50px_rgba(15,23,42,0.12)] backdrop-blur">
+          <div className="absolute bottom-full left-2 z-20 mb-2 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-surface-canvas shadow-lg">
             {suggestions.map((item, index) => {
               const active = index === highlight
               const theme = item.kind === "provider" ? mentionTheme[item.provider] : everyoneTheme

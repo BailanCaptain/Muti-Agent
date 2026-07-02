@@ -6,6 +6,8 @@ import { CardBlockComponent } from "./rich-blocks/card-block"
 import { ChecklistBlockComponent } from "./rich-blocks/checklist-block"
 import { DiffBlockComponent } from "./rich-blocks/diff-block"
 import { ImageBlockComponent } from "./rich-blocks/image-block"
+import { ProgressBlockComponent } from "./rich-blocks/progress-block"
+import { TableBlockComponent } from "./rich-blocks/table-block"
 import { MarkdownMessage } from "./markdown-message"
 
 type BlockRendererProps = {
@@ -32,6 +34,10 @@ export function BlockRenderer({ blocks, provider }: BlockRendererProps) {
             return <DiffBlockComponent key={index} block={block} />
           case "image":
             return <ImageBlockComponent key={index} block={block} />
+          case "table":
+            return <TableBlockComponent key={index} block={block} />
+          case "progress":
+            return <ProgressBlockComponent key={index} block={block} />
         }
       })}
     </>

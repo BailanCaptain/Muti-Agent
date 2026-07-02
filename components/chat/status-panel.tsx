@@ -113,7 +113,7 @@ export function StatusPanel() {
         minWidth: `${360}px`,
         maxWidth: `${1200}px`,
       }}
-      className="relative flex h-screen shrink-0 flex-col gap-3 overflow-hidden border-l border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(255,255,255,0.86))] px-4 py-4 shadow-[-18px_0_48px_rgba(15,23,42,0.04)] backdrop-blur-xl"
+      className="relative flex h-screen shrink-0 flex-col gap-3 overflow-hidden border-l border-slate-200 bg-surface px-4 py-4"
     >
       <ResizeHandle />
       {/* F027 P3-1 扩展（小孙 2026-06-02）：上方 5 段包成可收缩+可滚动区（flex-1 min-h-0），
@@ -138,7 +138,6 @@ export function StatusPanel() {
           messages={stats.messages}
           evidence={stats.evidence}
           followUp={stats.followUp}
-          sessionChainHref="#invocation-chain"
         />
         <AgentList
           agents={agents}

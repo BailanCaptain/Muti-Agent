@@ -74,7 +74,7 @@ export function InlineDecisionBoard() {
 
   return (
     <div
-      className="mx-auto my-4 w-full max-w-[980px] overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 shadow-[0_4px_24px_rgba(15,23,42,0.08)]"
+      className="mx-auto my-4 w-full max-w-[980px] overflow-hidden rounded-2xl border border-slate-200 bg-surface-canvas shadow-lg"
       style={{ animation: "decisionBoardSlideUp 220ms cubic-bezier(0.2, 0.8, 0.2, 1)" }}
     >
       {/* Header */}
@@ -211,7 +211,7 @@ function DivergentItemCard({ item }: { item: DecisionBoardItem }) {
         {item.raisers.map((r) => (
           <span
             key={`${r.provider}-${r.alias}`}
-            className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2 py-0.5 text-slate-600"
+            className="inline-flex items-center gap-1 rounded-full bg-surface-canvas px-2 py-0.5 text-slate-600"
           >
             <ProviderAvatar identity={r.provider} size="xs" />
             {r.alias}

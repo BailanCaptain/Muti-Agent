@@ -1540,7 +1540,11 @@ export class MessageService {
     const snapshotForProvider: AgentOverride | undefined = sessionSnapshot[thread.provider]
     // F021 P1 (范德彪 review): merge at field granularity so a session snapshot
     // that only sets `effort` still inherits `model` from the global override.
-    const runtimeOverride = resolveEffectiveOverride(snapshotForProvider, globalOverride)
+    const runtimeOverride = resolveEffectiveOverride(
+      snapshotForProvider,
+      globalOverride,
+      thread.provider,
+    )
     const resolvedModel = runtimeOverride?.model ?? thread.currentModel
     // F021 Phase 6: 三层 seal 阈值（会话 → 全局 → 代码 fallback）。
     // 用户在齿轮里调 sealPct 时这里立刻生效，不再绑死 SEAL_THRESHOLDS_BY_PROVIDER。

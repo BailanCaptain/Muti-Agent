@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>长会话导航 · 四种形态预览</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" />
+<style>
+  :root{
+    --surface:#F6EFE7; --elevated:#FCFAF8; --sunken:#EEE5DB; --canvas:#FFFDFB;
+    --accent:#a86a2e; --accent-50:#faf1e6; --accent-100:#f3e3cd; --accent-600:#875320;
+    --text:#242220; --secondary:#605d59; --muted:#7d7a76; --border:#e8e5e2;
+    --claude:#7C3AED; --codex:#D97706; --gemini:#0D9488;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    background:var(--surface);color:var(--text);}
+  .topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:12px 18px;background:var(--elevated);border-bottom:1px solid var(--border);}
+  .topbar h1{font-size:15px;margin:0 14px 0 0;font-weight:700;}
+  .topbar .hint{font-size:12px;color:var(--muted);margin-left:auto;}
+  .seg{display:flex;gap:6px;flex-wrap:wrap;}
+  .seg button{font:inherit;font-size:13px;cursor:pointer;border:1px solid var(--border);
+    background:var(--canvas);color:var(--secondary);padding:6px 12px;border-radius:10px;transition:all .15s;}
+  .seg button:hover{background:var(--surface);}
+  .seg button.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+
+  .app{display:flex;height:calc(100vh - 54px);}
+  .rail{flex:0 0 200px;background:var(--surface);border-right:1px solid var(--border);padding:14px 12px;font-size:12px;color:var(--muted);}
+  .rail.right{border-right:none;border-left:1px solid var(--border);flex-basis:220px;}
+  .rail .r-title{font-weight:600;color:var(--secondary);margin-bottom:10px;}
+  .rail .r-item{padding:8px 10px;border-radius:8px;margin-bottom:6px;background:var(--canvas);border:1px solid var(--border);}
+  .rail .r-card{padding:10px;border-radius:12px;margin-bottom:8px;background:var(--canvas);border:1px solid var(--border);}
+
+  .center{flex:1;position:relative;display:flex;flex-direction:column;min-width:0;background:var(--elevated);}
+  .chat{flex:1;overflow-y:auto;padding:20px 28px;position:relative;scroll-behavior:smooth;}
+  .composer{flex:0 0 auto;margin:0 28px 18px;border:1px solid var(--border);background:var(--canvas);border-radius:20px;
+    padding:12px 16px;color:var(--muted);font-size:13px;}
+
+  .msg{margin-bottom:18px;display:flex;gap:10px;align-items:flex-start;}
+  .av{flex:0 0 30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;background:var(--accent-50);}
+  .bubble{max-width:78%;}
+  .who{font-size:12px;color:var(--muted);margin-bottom:4px;}
+  .who b{color:var(--text);font-weight:600;}
+  .body{font-size:14px;line-height:1.7;color:var(--text);}
+  .msg.user .ubox{border:1px solid rgba(168,106,46,.35);background:var(--accent-50);border-radius:16px;padding:12px 16px;}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;margin-right:6px;}
+  .tag.claude{color:var(--claude);background:#f3edfd;} .tag.codex{color:var(--codex);background:#fdf1de;}
+  .deco{border-radius:16px;border:1px solid var(--accent-100);background:var(--accent-50);padding:14px 16px;max-width:80%;}
+  .deco .dh{font-weight:600;color:var(--accent-600);font-size:13px;margin-bottom:6px;}
+  .notice{font-size:12px;color:var(--secondary);background:var(--sunken);border:1px solid var(--border);
+    border-radius:10px;padding:8px 12px;text-align:center;max-width:60%;margin:0 auto 18px;}
+
+  /* ---------- A. 大纲面板 ---------- */
+  #outline{position:absolute;top:16px;right:22px;width:236px;z-index:30;display:none;
+    background:var(--canvas);border:1px solid var(--border);border-radius:14px;box-shadow:0 14px 28px rgba(0,0,0,.12);overflow:hidden;}
+  #outline .oh{font-size:12px;font-weight:600;color:var(--secondary);padding:10px 12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;}
+  #outline .ol{max-height:340px;overflow-y:auto;padding:6px;}
+  #outline .oi{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--text);padding:8px 9px;border-radius:8px;cursor:pointer;}
+  #outline .oi:hover{background:var(--surface);}
+  #outline .oi .dot{flex:0 0 auto;font-size:11px;}
+  #outline .oi .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  /* ---------- B. 悬浮快捷按钮 ---------- */
+  #floating{position:absolute;right:22px;bottom:96px;z-index:30;display:none;flex-direction:column;gap:8px;}
+  #floating button{font:inherit;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px;
+    background:var(--canvas);border:1px solid var(--border);box-shadow:0 4px 10px rgba(0,0,0,.10);
+    color:var(--secondary);padding:8px 12px;border-radius:999px;}
+  #floating button:hover{background:var(--surface);color:var(--text);}
+
+  /* ---------- C. 轮次导航条 ---------- */
+  #turnbar{display:none;align-items:center;gap:12px;background:var(--canvas);border-bottom:1px solid var(--border);
+    padding:9px 22px;font-size:13px;color:var(--secondary);}
+  #turnbar b{color:var(--text);}
+  #turnbar button{font:inherit;font-size:12px;cursor:pointer;border:1px solid var(--border);background:var(--surface);
+    color:var(--secondary);padding:5px 12px;border-radius:8px;}
+  #turnbar select{font:inherit;font-size:12px;border:1px solid var(--border);background:var(--canvas);border-radius:8px;padding:5px 8px;color:var(--text);}
+
+  /* ---------- D. 滚动条标记 ---------- */
+  #markers{position:absolute;top:0;right:4px;bottom:0;width:14px;z-index:30;display:none;}
+  #markers .mk{position:absolute;right:2px;width:10px;height:10px;border-radius:50%;cursor:pointer;border:2px solid var(--elevated);transform:translateY(-50%);}
+  #markers .mk:hover{outline:2px solid rgba(168,106,46,.4);}
+  .legend{font-size:11px;color:var(--muted);padding:8px 12px;background:var(--surface);border-top:1px solid var(--border);}
+  .legend span{margin-right:14px;}
+  .swatch{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;vertical-align:middle;}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>长会话导航 · 四种形态</h1>
+    <div class="seg" id="seg">
+      <button data-v="outline" class="active">A · 大纲面板</button>
+      <button data-v="floating">B · 悬浮按钮</button>
+      <button data-v="turnbar">C · 轮次导航条</button>
+      <button data-v="markers">D · 滚动条标记</button>
+      <button data-v="none">全关(原样)</button>
+    </div>
+    <span class="hint">点切换 · 蓝点=你的提问 / 橙=决策 / 红=封存,都能点着跳</span>
+  </div>
+
+  <div class="app">
+    <aside class="rail">
+      <div class="r-title">会话</div>
+      <div class="r-item">D-前端设计协作</div>
+      <div class="r-item" style="opacity:.6">归档列表</div>
+    </aside>
+
+    <section class="center">
+      <div id="turnbar">
+        <span>第 <b id="tb-cur">1</b>/<b>4</b> 轮</span>
+        <button onclick="turnStep(-1)">◀ 上一轮</button>
+        <button onclick="turnStep(1)">下一轮 ▶</button>
+        <select id="tb-sel" onchange="jumpTo(this.value)">
+          <option value="m1">跳到第 1 轮 · 前端能优化啥</option>
+          <option value="m2">跳到第 2 轮 · notion 比较号</option>
+          <option value="m3">跳到第 3 轮 · 还是不对</option>
+          <option value="m4">跳到第 4 轮 · 这个不错 继续</option>
+        </select>
+      </div>
+
+      <div class="chat" id="chat">
+        <!-- outline overlay -->
+        <div id="outline">
+          <div class="oh"><span>会话大纲</span><span style="color:var(--muted)">6</span></div>
+          <div class="ol" id="ol"></div>
+        </div>
+        <!-- floating overlay -->
+        <div id="floating">
+          <button onclick="stepUser(-1)">↑ 我的上一条</button>
+          <button onclick="stepUser(1)">↓ 我的下一条</button>
+          <button onclick="jumpTo('end')">⤓ 跳到最新</button>
+        </div>
+        <!-- scrollbar markers overlay -->
+        <div id="markers"></div>
+
+        <div class="msg user" id="m1">
+          <div class="av">🤠</div>
+          <div class="bubble"><div class="who"><b>你</b> · 14:01</div>
+            <div class="ubox"><div class="body">前端还有什么可以更新优化的？参考下 clowder</div></div></div>
+        </div>
+        <div class="msg" id="a1">
+          <div class="av">🐶</div>
+          <div class="bubble"><div class="who"><span class="tag claude">claude</span><b>黄仁勋</b> · 14:01</div>
+            <div class="body">好的，我去对照 clowder 的设计系统看看，整理一份能拍板的清单给你……（一大段）</div></div>
+        </div>
+        <div class="msg user" id="m2">
+          <div class="av">🤠</div>
+          <div class="bubble"><div class="who"><b>你</b> · 14:08</div>
+            <div class="ubox"><div class="body">notion 比较号</div></div></div>
+        </div>
+        <div class="msg" id="a2">
+          <div class="av">🐶</div>
+          <div class="bubble"><div class="who"><span class="tag claude">claude</span><b>黄仁勋</b> · 14:09</div>
+            <div class="body">移植 clowder 的 token 体系：4 档表面高度、暖中性、暖金 accent……（很长的一段说明，占好几屏，所以你才需要导航）</div></div>
+        </div>
+        <div class="deco" id="d1" style="margin:0 0 18px 40px">
+          <div class="dh">◆ 决策请求 · 选哪种风格？</div>
+          <div class="body" style="font-size:13px;color:var(--secondary)">Notion / Linear / 拟物 …（可点选项）</div>
+        </div>
+        <div class="msg user" id="m3">
+          <div class="av">🤠</div>
+          <div class="bubble"><div class="who"><b>你</b> · 14:25</div>
+            <div class="ubox"><div class="body">还是不对</div></div></div>
+        </div>
+        <div class="notice" id="s1">⚑ 黄仁勋 上下文已用 90%，自动封存，下一轮开新 session</div>
+        <div class="msg user" id="m4">
+          <div class="av">🤠</div>
+          <div class="bubble"><div class="who"><b>你</b> · 14:40</div>
+            <div class="ubox"><div class="body">这个不错 继续往下第二轮</div></div></div>
+        </div>
+        <div class="msg" id="a4">
+          <div class="av">🐶</div>
+          <div class="bubble"><div class="who"><span class="tag claude">claude</span><b>黄仁勋</b> · 14:41</div>
+            <div class="body">方向立住了，第二轮把长尾冷色也收干净……（结尾）</div></div>
+        </div>
+        <div style="height:40px"></div>
+      </div>
+
+      <div class="legend" id="legend" style="display:none">
+        <span><i class="swatch" style="background:var(--claude)"></i>你的提问</span>
+        <span><i class="swatch" style="background:var(--accent)"></i>决策</span>
+        <span><i class="swatch" style="background:#dc2626"></i>封存</span>
+      </div>
+
+      <div class="composer">输入你的指令。使用 @ 可唤起智能体列表。</div>
+    </section>
+
+    <aside class="rail right">
+      <div class="r-title">智能体</div>
+      <div class="r-card"><b>黄仁勋</b> · claude<br><span style="color:var(--muted)">空闲 · 待命</span></div>
+      <div class="r-card"><b>范德彪</b> · codex</div>
+      <div class="r-card"><b>桂芬</b> · gemini</div>
+    </aside>
+  </div>
+
+<script>
+  // 锚点定义：图标 + 文案 + 目标 id + 标记颜色
+  const ANCHORS = [
+    {dot:"🔵", color:"var(--claude)", t:"你: 前端能优化啥", id:"m1", kind:"user"},
+    {dot:"🔵", color:"var(--claude)", t:"你: notion 比较号", id:"m2", kind:"user"},
+    {dot:"🟠", color:"var(--accent)", t:"决策: 选哪种风格", id:"d1", kind:"decision"},
+    {dot:"🔵", color:"var(--claude)", t:"你: 还是不对", id:"m3", kind:"user"},
+    {dot:"🔴", color:"#dc2626", t:"封存: 黄仁勋", id:"s1", kind:"seal"},
+    {dot:"🔵", color:"var(--claude)", t:"你: 这个不错 继续", id:"m4", kind:"user"},
+  ];
+  const USERS = ANCHORS.filter(a=>a.kind==="user").map(a=>a.id);
+  const chat = document.getElementById('chat');
+
+  function jumpTo(id){
+    if(id==="end"){ chat.scrollTo({top:chat.scrollHeight, behavior:"smooth"}); return; }
+    const el = document.getElementById(id);
+    if(!el) return;
+    chat.scrollTo({top: el.offsetTop - 16, behavior:"smooth"});
+    el.animate([{outline:"2px solid rgba(168,106,46,.6)"},{outline:"2px solid transparent"}],{duration:1200});
+  }
+  let userIdx = USERS.length-1;
+  function stepUser(d){ userIdx = Math.max(0, Math.min(USERS.length-1, userIdx+d)); jumpTo(USERS[userIdx]); }
+  let turnCur = 1;
+  function turnStep(d){ turnCur = Math.max(1, Math.min(4, turnCur+d)); document.getElementById('tb-cur').textContent=turnCur; jumpTo(USERS[turnCur-1]); }
+
+  // 渲染大纲
+  const ol = document.getElementById('ol');
+  ANCHORS.forEach(a=>{
+    const d=document.createElement('div'); d.className='oi'; d.onclick=()=>jumpTo(a.id);
+    d.innerHTML = `<span class="dot">${a.dot}</span><span class="t">${a.t}</span>`;
+    ol.appendChild(d);
+  });
+
+  // 渲染滚动条标记（按元素位置投影到右侧轨道）
+  function renderMarkers(){
+    const box=document.getElementById('markers'); box.innerHTML="";
+    const total=chat.scrollHeight;
+    ANCHORS.forEach(a=>{
+      const el=document.getElementById(a.id); if(!el) return;
+      const pct=(el.offsetTop)/(total);
+      const mk=document.createElement('div'); mk.className='mk';
+      mk.style.top=(pct*100)+"%"; mk.style.background=a.color; mk.title=a.t;
+      mk.onclick=()=>jumpTo(a.id);
+      box.appendChild(mk);
+    });
+  }
+
+  // 切换形态
+  const variants=["outline","floating","turnbar","markers"];
+  function setVariant(v){
+    document.getElementById('outline').style.display = v==="outline"?"block":"none";
+    document.getElementById('floating').style.display = v==="floating"?"flex":"none";
+    document.getElementById('turnbar').style.display = v==="turnbar"?"flex":"none";
+    document.getElementById('markers').style.display = v==="markers"?"block":"none";
+    document.getElementById('legend').style.display = v==="markers"?"block":"none";
+    if(v==="markers") renderMarkers();
+  }
+  document.getElementById('seg').addEventListener('click',e=>{
+    const b=e.target.closest('button'); if(!b) return;
+    [...document.querySelectorAll('#seg button')].forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    setVariant(b.dataset.v);
+  });
+  setVariant("outline");
+  window.addEventListener('resize', ()=>{ if(document.getElementById('markers').style.display==="block") renderMarkers(); });
+</script>
+</body>
+</html>

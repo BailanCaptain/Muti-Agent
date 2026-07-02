@@ -48,11 +48,11 @@ function isPlaceholderConnectorEnvelope(
  *
  * 1. **a2a dispatch connector** (`a2aCallId` non-empty) — F026 P5 派发占位
  *    issuer thread 上的 「{convener} 正在征询 {target}」占位卡片。承载 F2/F3/F4/F5/F7/F8
- *    全部视觉原语（溯源胶囊 / 超时墓碑 / 折叠群组 / Visual Silo / 紫底 / display_mode）。
- *    使用 provider bubbleTheme 简洁卡片，不复用 indigo 渐变全宽样式。
+ *    全部视觉原语（溯源胶囊 / 超时墓碑 / 折叠群组 / Visual Silo / 密谋区 / display_mode）。
+ *    使用 provider bubbleTheme 简洁卡片，不复用 multi_mention 全宽样式。
  *
  * 2. **multi_mention aggregate** (`a2aCallId` 为空) — Phase 1/2 并行思考聚合
- *    保留原 indigo 渐变全宽样式（不变）。
+ *    走暖色 surface-canvas 全宽聚合样式（F036 restyle：原 indigo 渐变已去冷色）。
  */
 export function ConnectorBubble({ message }: ConnectorBubbleProps) {
   // R-107 fix · placeholder envelope 不渲染（破碎数据兜底）
@@ -134,7 +134,7 @@ function A2aConnectorBubble({ message }: ConnectorBubbleProps) {
   )
 }
 
-/* ── multi_mention 聚合气泡分支：原 indigo 渐变样式不动 ── */
+/* ── multi_mention 聚合气泡分支：F036 暖色 surface-canvas 全宽样式 ── */
 
 function MultiMentionConnectorBubble({ message }: ConnectorBubbleProps) {
   const source = message.connectorSource
@@ -148,13 +148,13 @@ function MultiMentionConnectorBubble({ message }: ConnectorBubbleProps) {
   return (
     <div className="mb-6 flex w-full flex-col items-stretch">
       <div
-        className={`mx-auto w-full max-w-[780px] rounded-[28px] border border-indigo-200/70 bg-gradient-to-br from-indigo-50/70 via-white to-violet-50/50 px-6 shadow-[0_18px_40px_rgba(79,70,229,0.08)] ${
+        className={`mx-auto w-full max-w-[780px] rounded-floating border border-slate-200 bg-surface-canvas px-6 shadow-md ${
           hasBody ? "py-5" : "py-3"
         }`}
       >
         <header
           className={`flex flex-wrap items-center gap-3 ${
-            expanded && hasBody ? "mb-4 border-b border-indigo-100/80 pb-3" : ""
+            expanded && hasBody ? "mb-4 border-b border-slate-200 pb-3" : ""
           } ${collapsible ? "cursor-pointer select-none" : ""}`}
           onClick={collapsible ? () => setExpanded((v) => !v) : undefined}
           role={collapsible ? "button" : undefined}
@@ -171,7 +171,7 @@ function MultiMentionConnectorBubble({ message }: ConnectorBubbleProps) {
           }
         >
           {collapsible ? (
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500">
               {expanded ? (
                 <ChevronDown className="h-4 w-4" aria-hidden="true" />
               ) : (
@@ -179,31 +179,31 @@ function MultiMentionConnectorBubble({ message }: ConnectorBubbleProps) {
               )}
             </span>
           ) : (
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500">
               <Users className="h-4 w-4" aria-hidden="true" />
             </span>
           )}
           <div className="flex flex-col">
-            <span className="text-[13px] font-semibold tracking-wide text-indigo-900">
+            <span className="text-[13px] font-semibold tracking-wide text-slate-800">
               {label}
               {collapsible && !expanded ? (
-                <span className="ml-2 text-[11px] font-normal text-indigo-500/80">
+                <span className="ml-2 text-[11px] font-normal text-slate-500">
                   （点击展开）
                 </span>
               ) : null}
             </span>
-            <span className="text-[10px] text-indigo-500/80">{formatClock(message.createdAt)}</span>
+            <span className="text-[10px] text-slate-500">{formatClock(message.createdAt)}</span>
           </div>
 
           {targets.length > 0 ? (
             <div className="ml-auto flex items-center gap-2">
               {initiator ? (
-                <div className="flex items-center gap-1.5 border-r border-indigo-200/60 pr-2">
-                  <span className="text-[10px] text-indigo-500/80">发起：</span>
+                <div className="flex items-center gap-1.5 border-r border-slate-200 pr-2">
+                  <span className="text-[10px] text-slate-500">发起：</span>
                   <ProviderAvatar identity={initiator} size="xs" />
                 </div>
               ) : null}
-              <span className="text-[10px] text-indigo-500/80">参与：</span>
+              <span className="text-[10px] text-slate-500">参与：</span>
               <div className="flex -space-x-1.5">
                 {targets.map((provider) => (
                   <ProviderAvatar key={provider} identity={provider} size="xs" />

@@ -44,3 +44,54 @@ describe("BlockRenderer × unclosed cc_rich (F030 AC6 黑框)", () => {
     expect(screen.queryByText(/生成中/)).not.toBeInTheDocument()
   })
 })
+
+// F036 #10 卡型扩展端到端：closed cc_rich → schema → parseRichSegments → 卡片渲染
+describe("BlockRenderer × F036 #10 table/progress", () => {
+  it("renders a table card from a closed cc_rich table fence", () => {
+    const json = JSON.stringify({
+      kind: "table",
+      id: "t1",
+      title: "对比",
+      columns: ["A", "B"],
+      rows: [["1", "2"]],
+    })
+    const blocks = normalizeMessageToBlocks(msg({ content: `\`\`\`cc_rich\n${json}\n\`\`\`` }))
+    const { container } = render(<BlockRenderer blocks={blocks} provider="claude" />)
+    expect(container.querySelector('[data-block="table"]')).toBeTruthy()
+    expect(screen.getByText("对比")).toBeInTheDocument()
+    expect(container.querySelector("pre")).toBeNull()
+  })
+
+  it("renders a progress card from a closed cc_rich progress fence", () => {
+    const json = JSON.stringify({
+      kind: "progress",
+      id: "p1",
+      title: "进度",
+      items: [{ label: "X", value: 70 }],
+    })
+    const blocks = normalizeMessageToBlocks(msg({ content: `\`\`\`cc_rich\n${json}\n\`\`\`` }))
+    const { container } = render(<BlockRenderer blocks={blocks} provider="claude" />)
+    expect(container.querySelector('[data-block="progress"]')).toBeTruthy()
+    expect(screen.getByText("进度")).toBeInTheDocument()
+    expect(screen.getByText("70%")).toBeInTheDocument()
+  })
+
+  it("does NOT render a table card for a ragged table (row width != columns) — fail-closed", () => {
+    // 缺位行（2 列 1 格）→ union superRefine 拒 → 不出 table 卡（范德彪-r P2：避免静默丢数据）
+    const under = JSON.stringify({ kind: "table", id: "t1", columns: ["A", "B"], rows: [["x"]] })
+    const blocksU = normalizeMessageToBlocks(msg({ content: `\`\`\`cc_rich\n${under}\n\`\`\`` }))
+    expect(
+      render(<BlockRenderer blocks={blocksU} provider="claude" />).container.querySelector(
+        '[data-block="table"]',
+      ),
+    ).toBeNull()
+    // 超宽行（2 列 3 格）→ 同样拒 → 不出 table 卡
+    const over = JSON.stringify({ kind: "table", id: "t2", columns: ["A", "B"], rows: [["x", "y", "z"]] })
+    const blocksO = normalizeMessageToBlocks(msg({ content: `\`\`\`cc_rich\n${over}\n\`\`\`` }))
+    expect(
+      render(<BlockRenderer blocks={blocksO} provider="claude" />).container.querySelector(
+        '[data-block="table"]',
+      ),
+    ).toBeNull()
+  })
+})

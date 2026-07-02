@@ -105,7 +105,7 @@ test("收录设置 · provider 枚举外 → 400；primaryModel 空白/超长/�
   })
 })
 
-test("补丁#3 · wikiCompile.effort 按 provider 白名单校验（claude high / codex xhigh → 200 回读）", async () => {
+test("补丁#3 · wikiCompile.effort 按 provider 白名单校验（claude high/xhigh / codex xhigh → 200 回读）", async () => {
   await withTempConfig(async () => {
     const app = Fastify()
     registerRuntimeConfigRoutes(app)
@@ -114,6 +114,13 @@ test("补丁#3 · wikiCompile.effort 按 provider 白名单校验（claude high 
       method: "PUT",
       url: "/api/runtime-config",
       payload: { config: { wikiCompile: { provider: "claude", effort: "high" } } },
+    })
+    assert.equal(put.statusCode, 200)
+    // claude + xhigh（实测 CLI 2.1.177 含 xhigh — F036 补 catalog）
+    put = await app.inject({
+      method: "PUT",
+      url: "/api/runtime-config",
+      payload: { config: { wikiCompile: { provider: "claude", effort: "xhigh" } } },
     })
     assert.equal(put.statusCode, 200)
     // codex + xhigh（codex efforts 含 xhigh）
@@ -133,13 +140,13 @@ test("补丁#3 · wikiCompile.effort 按 provider 白名单校验（claude high 
   })
 })
 
-test("补丁#3 · wikiCompile.effort 越界 → 400（gemini 无强度 / claude 不含 xhigh / 默认 claude 不含 bogus）", async () => {
+test("补丁#3 · wikiCompile.effort 越界 → 400（gemini 无强度 / claude 不含 minimal / 默认 claude 不含 bogus）", async () => {
   await withTempConfig(async () => {
     const app = Fastify()
     registerRuntimeConfigRoutes(app)
     const bad = [
       { wikiCompile: { provider: "gemini", effort: "high" } }, // gemini efforts=[]
-      { wikiCompile: { provider: "claude", effort: "xhigh" } }, // xhigh 是 codex 的
+      { wikiCompile: { provider: "claude", effort: "minimal" } }, // minimal 是 codex 专属，claude 没有
       { wikiCompile: { effort: "bogus" } }, // 默认 claude，bogus 非法
       { wikiCompile: { effort: 123 } }, // 非字符串
     ]

@@ -7,8 +7,9 @@ import { useCallback, useEffect, useMemo, useRef } from "react"
 import { ConnectorBubble } from "./connector-bubble"
 import { InlineDecisionBoard } from "./decision-board-modal"
 import { DecisionCard } from "./decision-card"
-import { MessageBubble } from "./message-bubble"
+import { MessageBubble, buildFoldedPreview } from "./message-bubble"
 import { SystemNoticeBubble } from "./system-notice-bubble"
+import { TimelineMinimap, buildMinimapMarkers } from "./timeline-minimap"
 
 export function TimelinePanel() {
   const timeline = useThreadStore((state) => state.timeline)
@@ -72,7 +73,36 @@ export function TimelinePanel() {
     navigator.clipboard.writeText(content)
   }, [])
 
+  // F036 #9 导航标记锚点：序位投影（见 timeline-minimap.tsx）。把 renderItems 降维成纯
+  // MinimapItem 交 buildMinimapMarkers（纯函数·已单测）。决策不打标（pending-only，见该函数注释）。
+  const minimapMarkers = useMemo(
+    () =>
+      buildMinimapMarkers(
+        renderItems.map((item) =>
+          item.kind === "decision"
+            ? { kind: "decision" as const }
+            : {
+                kind: "message" as const,
+                role: item.data.role,
+                messageType: item.data.messageType,
+                alias: item.data.alias,
+                content: item.data.content,
+              },
+        ),
+        buildFoldedPreview,
+      ),
+    [renderItems],
+  )
+
+  const handleJump = useCallback(
+    (index: number) => {
+      virtualizer.scrollToIndex(index, { align: "start" })
+    },
+    [virtualizer],
+  )
+
   return (
+    <div className="relative flex min-h-0 flex-1 flex-col">
     <div
       className="flex flex-1 flex-col overflow-y-auto bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),transparent_26%),linear-gradient(180deg,rgba(248,250,252,0.96),rgba(247,249,252,0.72))] px-6 py-8"
       ref={scrollRef}
@@ -80,7 +110,7 @@ export function TimelinePanel() {
       <div className="mx-auto w-full max-w-[980px]">
         {renderItems.length === 0 ? (
           <div className="flex min-h-[40vh] items-center justify-center text-slate-400">
-            <div className="rounded-[28px] border border-dashed border-slate-200 bg-white/70 px-8 py-6 text-center shadow-[0_12px_30px_rgba(15,23,42,0.04)]">
+            <div className="rounded-floating border border-dashed border-slate-300 bg-surface-canvas px-8 py-6 text-center shadow-sm">
               <p className="text-sm italic">尚无消息。</p>
             </div>
           </div>
@@ -131,6 +161,8 @@ export function TimelinePanel() {
         )}
         <InlineDecisionBoard />
       </div>
+    </div>
+      <TimelineMinimap markers={minimapMarkers} onJump={handleJump} />
     </div>
   )
 }

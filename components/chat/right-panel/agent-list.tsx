@@ -22,9 +22,13 @@ type Props = {
   onStopClick?: (provider: Provider) => void
 }
 
-function fillRatioTone(ratio: number) {
-  if (ratio > 0.7) return { text: "text-rose-600", bar: "bg-rose-400" }
-  if (ratio > 0.5) return { text: "text-amber-600", bar: "bg-amber-400" }
+// F036 #2：上下文条颜色对齐「真实封存阈值」，不再写死 0.5/0.7（否则 claude 0.72 飘红却显示"剩余18%"自相矛盾）。
+// action = 该 agent 的自动封存阈值（provider 定，随齿轮 sealPct 覆盖）；warn = action - 0.1（实测三 provider 恒定 0.1 gap）。
+function fillRatioTone(ratio: number, actionPct: number | null) {
+  const action = actionPct ?? 0.9 // 缺省按最宽（claude action=0.9）
+  const warn = action - 0.1
+  if (ratio >= action) return { text: "text-rose-600", bar: "bg-rose-400" }
+  if (ratio >= warn) return { text: "text-amber-600", bar: "bg-amber-400" }
   return { text: "text-emerald-600", bar: "bg-emerald-400" }
 }
 
@@ -34,10 +38,11 @@ function fmtTokens(n: number) {
   return String(n)
 }
 
+// 每 agent 身份色（claude 紫 / codex 琥珀 / gemini 青——F036 桂芬 sky→teal 同步）；soft 渐变收暖到 surface-canvas。
 const providerAccent: Record<Provider, { bar: string; soft: string }> = {
-  claude: { bar: "bg-violet-400", soft: "from-violet-50/70 to-white" },
-  codex: { bar: "bg-amber-400", soft: "from-amber-50/70 to-white" },
-  gemini: { bar: "bg-sky-400", soft: "from-sky-50/70 to-white" },
+  claude: { bar: "bg-violet-400", soft: "from-violet-50/70 to-surface-canvas" },
+  codex: { bar: "bg-amber-400", soft: "from-amber-50/70 to-surface-canvas" },
+  gemini: { bar: "bg-teal-400", soft: "from-teal-50/70 to-surface-canvas" },
 }
 
 export function AgentList({ agents, onConfigClick, onStopClick }: Props) {
@@ -53,12 +58,12 @@ export function AgentList({ agents, onConfigClick, onStopClick }: Props) {
         {agents.map((agent) => {
           const ratio = agent.fillRatio ?? null
           const hasRatio = ratio != null
-          const tone = hasRatio ? fillRatioTone(ratio) : null
+          const tone = hasRatio ? fillRatioTone(ratio, agent.actionPct ?? null) : null
           const accent = providerAccent[agent.provider]
           return (
             <li
               key={agent.provider}
-              className={`relative overflow-hidden rounded-[14px] border border-slate-200/80 bg-gradient-to-br ${accent.soft} px-3.5 py-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:shadow-[0_4px_14px_rgba(15,23,42,0.06)]`}
+              className={`relative overflow-hidden rounded-card border border-slate-200/80 bg-gradient-to-br ${accent.soft} px-3.5 py-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:shadow-[0_4px_14px_rgba(15,23,42,0.06)]`}
             >
               <span className={`absolute inset-y-3 left-0 w-[3px] rounded-r-full ${accent.bar}`} />
               <div className="grid grid-cols-[36px_1fr_auto] items-start gap-3">
@@ -91,7 +96,7 @@ export function AgentList({ agents, onConfigClick, onStopClick }: Props) {
                     ) : null}
                   </div>
                   <div className="mt-1 flex min-w-0 items-center">
-                    <span className="relative inline-flex shrink-0 items-center gap-1 rounded-full bg-white/70 px-2 py-0.5 font-mono text-[10px] font-medium text-slate-600 ring-1 ring-slate-200/60">
+                    <span className="relative inline-flex shrink-0 items-center gap-1 rounded-full bg-surface-canvas px-2 py-0.5 font-mono text-[10px] font-medium text-slate-600 ring-1 ring-slate-200">
                       {agent.model ?? "未设置"}
                       {agent.hasSessionOverride ? (
                         <span
@@ -111,7 +116,7 @@ export function AgentList({ agents, onConfigClick, onStopClick }: Props) {
                       aria-label={`停止 ${agent.alias}`}
                       title="停止运行"
                       onClick={() => onStopClick(agent.provider)}
-                      className="flex h-7 w-7 items-center justify-center rounded-[10px] bg-rose-50 text-rose-600 ring-1 ring-rose-200/70 transition hover:bg-rose-100 hover:text-rose-700"
+                      className="flex h-7 w-7 items-center justify-center rounded-field bg-rose-50 text-rose-600 ring-1 ring-rose-200/70 transition hover:bg-rose-100 hover:text-rose-700"
                     >
                       <Square className="h-3 w-3 fill-current" aria-hidden="true" />
                     </button>
@@ -120,7 +125,7 @@ export function AgentList({ agents, onConfigClick, onStopClick }: Props) {
                     type="button"
                     aria-label={`配置 ${agent.alias}`}
                     onClick={() => onConfigClick?.(agent.provider)}
-                    className="flex h-7 w-7 items-center justify-center rounded-[10px] bg-white/80 text-slate-500 ring-1 ring-slate-200/60 transition hover:bg-white hover:text-slate-900"
+                    className="flex h-7 w-7 items-center justify-center rounded-field bg-surface-canvas text-slate-500 ring-1 ring-slate-200 transition hover:bg-surface-elevated hover:text-slate-900"
                   >
                     <Settings className="h-3.5 w-3.5" />
                   </button>
