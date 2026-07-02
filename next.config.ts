@@ -8,9 +8,6 @@ const API_ORIGIN =
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   typedRoutes: true,
-  typescript: {
-    ignoreBuildErrors: true
-  },
   async rewrites() {
     return [
       { source: "/uploads/:path*", destination: `${API_ORIGIN}/uploads/:path*` },
