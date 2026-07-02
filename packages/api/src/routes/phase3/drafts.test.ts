@@ -550,3 +550,61 @@ test("F027 readContent · junction 指向 draft 树外目录 → 抛 WikiPathInv
     safeCleanup(tmp)
   }
 })
+
+// ─── F027 bucket-routing 补丁 · suggestedDestPath（LLM canonical_owner_suggestion 透出） ──
+
+test("bucket routing · canonical_owner_suggestion 合法桶 → suggestedDestPath 按桶分流", async () => {
+  const tmp = safeTempDir("F027-bucket-suggest-")
+  try {
+    await writeDraft(
+      tmp,
+      "_auto/foo.md",
+      { title: "foo", canonical_owner_suggestion: "wiki/methods/" },
+      "body",
+    )
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    const r = await scanner.list({})
+    assert.equal(r.drafts.length, 1)
+    assert.equal(r.drafts[0].suggestedDestPath, "wiki/methods/foo.md")
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("bucket routing · 无 suggestion / 非法桶 → fallback wiki/concepts/", async () => {
+  const tmp = safeTempDir("F027-bucket-fallback-")
+  try {
+    await writeDraft(tmp, "_auto/nosug.md", { title: "nosug" }, "body")
+    await writeDraft(
+      tmp,
+      "_auto/evil.md",
+      { title: "evil", canonical_owner_suggestion: "wiki/../../etc/" },
+      "body",
+    )
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    const r = await scanner.list({})
+    const nosug = r.drafts.find((d) => d.path.endsWith("nosug.md"))
+    const evil = r.drafts.find((d) => d.path.endsWith("evil.md"))
+    assert.equal(nosug?.suggestedDestPath, "wiki/concepts/nosug.md")
+    assert.equal(evil?.suggestedDestPath, "wiki/concepts/evil.md")
+  } finally {
+    safeCleanup(tmp)
+  }
+})
+
+test("bucket routing · versioned 文件名去 -<13位时间戳> 后缀", async () => {
+  const tmp = safeTempDir("F027-bucket-version-")
+  try {
+    await writeDraft(
+      tmp,
+      "_auto/notes-1749629000000.md",
+      { title: "notes", canonical_owner_suggestion: "wiki/rules/" },
+      "body",
+    )
+    const scanner = new DraftScanner({ wikiRoot: tmp })
+    const r = await scanner.list({})
+    assert.equal(r.drafts[0].suggestedDestPath, "wiki/rules/notes.md")
+  } finally {
+    safeCleanup(tmp)
+  }
+})

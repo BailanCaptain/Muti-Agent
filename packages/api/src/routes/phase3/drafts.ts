@@ -29,6 +29,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { FastifyInstance } from "fastify"
+import { WikiPathInvalidError, readContainedFile, safeWikiPath } from "../../wiki/path-containment"
 import {
   type DraftSummary,
   type DraftType,
@@ -39,7 +40,6 @@ import {
   toErrorResponse,
   validateListDrafts,
 } from "./contracts"
-import { readContainedFile, safeWikiPath, WikiPathInvalidError } from "../../wiki/path-containment"
 import { parseFrontmatter } from "./frontmatter"
 
 const DRAFT_TYPES_ALLOWED: ReadonlySet<DraftType> = new Set<DraftType>([
@@ -63,6 +63,31 @@ const SUMMARIZE_CONCURRENCY = 16
 interface DraftFrontmatter {
   title?: string
   type?: string
+  canonical_owner_suggestion?: string
+}
+
+/**
+ * F027 bucket-routing 补丁 · suggestion 合法桶白名单（与 PromoteModal ALLOWED_DEST_PREFIXES
+ * 的四个知识桶对齐）。compile pipeline 的 canonical_owner_suggestion 落在此集合内才采纳，
+ * 否则 fallback wiki/concepts/（防 frontmatter 注入奇怪路径进 promote 预填）。
+ */
+const SUGGESTION_BUCKETS: ReadonlySet<string> = new Set([
+  "wiki/concepts/",
+  "wiki/rules/",
+  "wiki/methods/",
+  "wiki/people/",
+])
+
+/** watcher 版本化文件名后缀（`<stem>-<13位unixMs>.md`），与 auto-draft-supersede 同源约定。 */
+const VERSION_SUFFIX_BEFORE_EXT = /-\d{13}(?=\.md$)/
+
+function deriveSuggestedDestPath(fm: DraftFrontmatter | null, relPath: string): string {
+  const raw =
+    typeof fm?.canonical_owner_suggestion === "string" ? fm.canonical_owner_suggestion.trim() : ""
+  const normalized = raw.endsWith("/") ? raw : `${raw}/`
+  const bucket = SUGGESTION_BUCKETS.has(normalized) ? normalized : "wiki/concepts/"
+  const fileName = relPath.split("/").pop() ?? relPath
+  return `${bucket}${fileName.replace(VERSION_SUFFIX_BEFORE_EXT, "")}`
 }
 
 /**
@@ -281,6 +306,7 @@ export class DraftScanner {
       mtime: stat.mtime.toISOString(),
       summary,
       origin,
+      suggestedDestPath: deriveSuggestedDestPath(fmRaw, relPath),
     }
   }
 

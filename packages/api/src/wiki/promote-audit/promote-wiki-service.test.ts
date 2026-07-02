@@ -296,3 +296,206 @@ describe("PromoteWikiService", async () => {
     assert.equal(r.auditReject?.layer, "tainted_source_direct_quote")
   })
 })
+
+// ─── F027 bucket-routing 补丁 · promote 落盘刷新 canonical_owner_path ────────────
+describe("PromoteWikiService · canonical_owner_path 刷新", async () => {
+  it("promote 落盘时 canonical_owner_path 刷成 dest 正式路径，正文不变", async () => {
+    const { service, wikiRoot, acquireLease, cleanup } = setupTest()
+    try {
+      const src = "wiki/concepts/draft/_auto/routing.md"
+      const dest = "wiki/methods/routing.md"
+      writeDraft(
+        wikiRoot,
+        src,
+        "---\ntitle: routing\ncanonical_owner_path: wiki/concepts/draft/_auto/routing.md\ncanonical_owner_suggestion: wiki/methods/\n---\n# Routing\n\nbody text",
+      )
+      const token = acquireLease(dest, "黄仁勋")
+      const r = await service.promote({
+        srcDraftPath: src,
+        destWikiPath: dest,
+        callerAlias: "黄仁勋",
+        reason: "归桶",
+        fencingToken: token,
+      })
+      assert.equal(r.status, "ok")
+      const destContent = fs.readFileSync(path.join(wikiRoot, dest), "utf-8")
+      assert.ok(destContent.includes("canonical_owner_path: wiki/methods/routing.md"))
+      assert.ok(!destContent.includes("canonical_owner_path: wiki/concepts/draft/"))
+      assert.ok(destContent.includes("# Routing\n\nbody text"))
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("无 frontmatter 的 draft → 内容原样落盘，不注入 frontmatter", async () => {
+    const { service, wikiRoot, acquireLease, cleanup } = setupTest()
+    try {
+      const src = "wiki/concepts/draft/_auto/plain.md"
+      const dest = "wiki/concepts/plain.md"
+      const body = "# Plain\n\nno frontmatter here"
+      writeDraft(wikiRoot, src, body)
+      const token = acquireLease(dest, "黄仁勋")
+      const r = await service.promote({
+        srcDraftPath: src,
+        destWikiPath: dest,
+        callerAlias: "黄仁勋",
+        reason: "plain",
+        fencingToken: token,
+      })
+      assert.equal(r.status, "ok")
+      assert.equal(fs.readFileSync(path.join(wikiRoot, dest), "utf-8"), body)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("frontmatter 无 canonical_owner_path 字段 → 不插入、内容原样", async () => {
+    const { service, wikiRoot, acquireLease, cleanup } = setupTest()
+    try {
+      const src = "wiki/concepts/draft/_auto/nofield.md"
+      const dest = "wiki/concepts/nofield.md"
+      const content = "---\ntitle: nofield\n---\n# NoField\n\nbody"
+      writeDraft(wikiRoot, src, content)
+      const token = acquireLease(dest, "黄仁勋")
+      const r = await service.promote({
+        srcDraftPath: src,
+        destWikiPath: dest,
+        callerAlias: "黄仁勋",
+        reason: "nofield",
+        fencingToken: token,
+      })
+      assert.equal(r.status, "ok")
+      assert.equal(fs.readFileSync(path.join(wikiRoot, dest), "utf-8"), content)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("正文里出现 canonical_owner_path: 字样不受影响（只改 frontmatter 区）", async () => {
+    const { service, wikiRoot, acquireLease, cleanup } = setupTest()
+    try {
+      const src = "wiki/concepts/draft/_auto/bodyref.md"
+      const dest = "wiki/rules/bodyref.md"
+      writeDraft(
+        wikiRoot,
+        src,
+        "---\ncanonical_owner_path: wiki/concepts/draft/_auto/bodyref.md\n---\n正文说明：frontmatter 的 canonical_owner_path: wiki/concepts/old.md 字段含义。",
+      )
+      const token = acquireLease(dest, "黄仁勋")
+      const r = await service.promote({
+        srcDraftPath: src,
+        destWikiPath: dest,
+        callerAlias: "黄仁勋",
+        reason: "bodyref",
+        fencingToken: token,
+      })
+      assert.equal(r.status, "ok")
+      const destContent = fs.readFileSync(path.join(wikiRoot, dest), "utf-8")
+      assert.ok(destContent.startsWith("---\ncanonical_owner_path: wiki/rules/bodyref.md\n---\n"))
+      assert.ok(destContent.includes("canonical_owner_path: wiki/concepts/old.md 字段含义"))
+    } finally {
+      cleanup()
+    }
+  })
+})
+
+// ─── 德彪 r1 P2-1 · rewriteCanonicalOwnerPath 折行/CRLF 边界 ───
+describe("rewriteCanonicalOwnerPath · YAML 边界（德彪 r1 P2-1）", async () => {
+  it("折行标量 canonical_owner_path: > → 整段原样保留（不产生孤儿续行）", async () => {
+    const { service, wikiRoot, acquireLease, cleanup } = setupTest()
+    try {
+      const src = "wiki/concepts/draft/_auto/folded.md"
+      const dest = "wiki/rules/folded.md"
+      const content =
+        "---\ncanonical_owner_path: >\n  wiki/concepts/draft/_auto/folded.md\n---\n# Folded\n"
+      writeDraft(wikiRoot, src, content)
+      const token = acquireLease(dest, "黄仁勋")
+      const r = await service.promote({
+        srcDraftPath: src,
+        destWikiPath: dest,
+        callerAlias: "黄仁勋",
+        reason: "folded",
+        fencingToken: token,
+      })
+      assert.equal(r.status, "ok")
+      assert.equal(fs.readFileSync(path.join(wikiRoot, dest), "utf-8"), content)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("空值 + 缩进续行 → 原样保留", async () => {
+    const { service, wikiRoot, acquireLease, cleanup } = setupTest()
+    try {
+      const src = "wiki/concepts/draft/_auto/emptyval.md"
+      const dest = "wiki/rules/emptyval.md"
+      const content =
+        "---\ncanonical_owner_path:\n  wiki/concepts/draft/_auto/emptyval.md\n---\nbody\n"
+      writeDraft(wikiRoot, src, content)
+      const token = acquireLease(dest, "黄仁勋")
+      const r = await service.promote({
+        srcDraftPath: src,
+        destWikiPath: dest,
+        callerAlias: "黄仁勋",
+        reason: "emptyval",
+        fencingToken: token,
+      })
+      assert.equal(r.status, "ok")
+      assert.equal(fs.readFileSync(path.join(wikiRoot, dest), "utf-8"), content)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("CRLF 文件 → 替换值且保留 \r\n 行尾", async () => {
+    const { service, wikiRoot, acquireLease, cleanup } = setupTest()
+    try {
+      const src = "wiki/concepts/draft/_auto/crlf.md"
+      const dest = "wiki/concepts/crlf.md"
+      writeDraft(
+        wikiRoot,
+        src,
+        "---\r\ntitle: crlf\r\ncanonical_owner_path: wiki/concepts/draft/_auto/crlf.md\r\n---\r\nbody\r\n",
+      )
+      const token = acquireLease(dest, "黄仁勋")
+      const r = await service.promote({
+        srcDraftPath: src,
+        destWikiPath: dest,
+        callerAlias: "黄仁勋",
+        reason: "crlf",
+        fencingToken: token,
+      })
+      assert.equal(r.status, "ok")
+      const destContent = fs.readFileSync(path.join(wikiRoot, dest), "utf-8")
+      assert.ok(destContent.includes("canonical_owner_path: wiki/concepts/crlf.md\r\n"))
+    } finally {
+      cleanup()
+    }
+  })
+})
+
+// ─── 德彪 r2 P2 · 注释 + 缩进续行形态 ───
+describe("rewriteCanonicalOwnerPath · 注释续行（德彪 r2 P2）", async () => {
+  it("canonical_owner_path: # 注释 + 缩进续行 → 原样保留", async () => {
+    const { service, wikiRoot, acquireLease, cleanup } = setupTest()
+    try {
+      const src = "wiki/concepts/draft/_auto/cmt.md"
+      const dest = "wiki/rules/cmt.md"
+      const content =
+        "---\ncanonical_owner_path: # hand-authored comment\n  wiki/concepts/draft/_auto/cmt.md\ntitle: Cmt\n---\nbody\n"
+      writeDraft(wikiRoot, src, content)
+      const token = acquireLease(dest, "黄仁勋")
+      const r = await service.promote({
+        srcDraftPath: src,
+        destWikiPath: dest,
+        callerAlias: "黄仁勋",
+        reason: "cmt",
+        fencingToken: token,
+      })
+      assert.equal(r.status, "ok")
+      assert.equal(fs.readFileSync(path.join(wikiRoot, dest), "utf-8"), content)
+    } finally {
+      cleanup()
+    }
+  })
+})

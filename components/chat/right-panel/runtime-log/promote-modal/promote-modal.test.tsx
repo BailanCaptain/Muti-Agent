@@ -383,3 +383,82 @@ describe("PromoteModal", () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 })
+
+describe("PromoteModal · suggestedDestPath 预填（F027 bucket-routing 补丁）", () => {
+  it("打开时 Target wiki path 预填后端建议，用户仍可改", async () => {
+    mockSequence([{ ok: true, status: 200, json: { ok: true, audit: { passed: true } } }])
+    render(
+      <PromoteModal
+        open={true}
+        srcDraftPath="wiki/concepts/draft/_auto/foo.md"
+        suggestedDestPath="wiki/methods/foo.md"
+        callerAlias="黄仁勋"
+        onClose={() => {}}
+      />,
+    )
+    const input = screen.getByLabelText("Target wiki path") as HTMLInputElement
+    expect(input.value).toBe("wiki/methods/foo.md")
+    fireEvent.change(input, { target: { value: "wiki/rules/foo.md" } })
+    expect((screen.getByLabelText("Target wiki path") as HTMLInputElement).value).toBe(
+      "wiki/rules/foo.md",
+    )
+  })
+
+  it("无建议 → 输入保持为空（原行为不变）", () => {
+    mockSequence([{ ok: true, status: 200, json: { ok: true, audit: { passed: true } } }])
+    render(
+      <PromoteModal
+        open={true}
+        srcDraftPath="wiki/concepts/draft/_auto/bar.md"
+        callerAlias="黄仁勋"
+        onClose={() => {}}
+      />,
+    )
+    expect((screen.getByLabelText("Target wiki path") as HTMLInputElement).value).toBe("")
+  })
+
+  it("用户清空后不回填（同一 src 只预填一次）", () => {
+    mockSequence([{ ok: true, status: 200, json: { ok: true, audit: { passed: true } } }])
+    render(
+      <PromoteModal
+        open={true}
+        srcDraftPath="wiki/concepts/draft/_auto/baz.md"
+        suggestedDestPath="wiki/people/baz.md"
+        callerAlias="黄仁勋"
+        onClose={() => {}}
+      />,
+    )
+    const input = screen.getByLabelText("Target wiki path") as HTMLInputElement
+    expect(input.value).toBe("wiki/people/baz.md")
+    fireEvent.change(input, { target: { value: "" } })
+    expect((screen.getByLabelText("Target wiki path") as HTMLInputElement).value).toBe("")
+  })
+})
+
+describe("PromoteModal · src 切换清残留（德彪 r1 P2-2）", () => {
+  it("open 状态下切换 src 且新 src 无建议 → dest 清空，不残留上一篇的目标路径", () => {
+    mockSequence([{ ok: true, status: 200, json: { ok: true, audit: { passed: true } } }])
+    const { rerender } = render(
+      <PromoteModal
+        open={true}
+        srcDraftPath="wiki/concepts/draft/_auto/a.md"
+        suggestedDestPath="wiki/methods/a.md"
+        callerAlias="黄仁勋"
+        onClose={() => {}}
+      />,
+    )
+    expect((screen.getByLabelText("Target wiki path") as HTMLInputElement).value).toBe(
+      "wiki/methods/a.md",
+    )
+    rerender(
+      <PromoteModal
+        open={true}
+        srcDraftPath="wiki/concepts/draft/_auto/b.md"
+        suggestedDestPath={null}
+        callerAlias="黄仁勋"
+        onClose={() => {}}
+      />,
+    )
+    expect((screen.getByLabelText("Target wiki path") as HTMLInputElement).value).toBe("")
+  })
+})

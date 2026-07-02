@@ -236,6 +236,12 @@ export interface DraftSummary {
   summary: string
   /** _backfill / _auto / user-drop 三类 origin（V16.5.3 D3）。 */
   origin: "user-drop" | "auto" | "backfill" | "expired"
+  /**
+   * F027 bucket-routing 补丁 · promote 目标路径建议：LLM 编译的 canonical_owner_suggestion
+   * （合法桶白名单校验，非法/缺失 fallback wiki/concepts/）+ 文件名（去 -<13位unixMs> 版本后缀）。
+   * PromoteModal 预填 / BatchPromoteModal 行初值用；用户可改。
+   */
+  suggestedDestPath: string
 }
 
 export interface ListDraftsResponse {
@@ -684,10 +690,7 @@ export function validatePostDecision(
     return { ok: false, error: "DECISION_INVALID", message: "body required" }
   }
   const kindRaw = takeOptionalString(b.kind)
-  if (
-    kindRaw === undefined ||
-    !["commit", "reject", "tombstone", "supersede"].includes(kindRaw)
-  ) {
+  if (kindRaw === undefined || !["commit", "reject", "tombstone", "supersede"].includes(kindRaw)) {
     return {
       ok: false,
       error: "DECISION_INVALID",

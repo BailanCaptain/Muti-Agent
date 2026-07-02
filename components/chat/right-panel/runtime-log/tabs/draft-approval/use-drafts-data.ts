@@ -23,6 +23,8 @@ export interface DraftSummary {
   mtime: string
   summary: string
   origin: DraftOrigin
+  /** F027 bucket-routing 补丁 · 后端按 LLM canonical_owner_suggestion 算好的 promote 目标建议（可缺，旧后端兼容）。 */
+  suggestedDestPath?: string
 }
 
 export interface ListDraftsResponse {

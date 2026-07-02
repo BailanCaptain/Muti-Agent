@@ -6,7 +6,6 @@ import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { BatchPromoteModal } from "../batch-promote-modal/batch-promote-modal"
 import { DemoteModal } from "../demote-modal/demote-modal"
 import { PromoteModal } from "../promote-modal/promote-modal"
-import { ExpandableContent } from "./expandable-content"
 import { IngestSettingsCard } from "./draft-approval/ingest-settings-card"
 import {
   type DraftOrigin,
@@ -14,6 +13,7 @@ import {
   type DraftType,
   useDraftsData,
 } from "./draft-approval/use-drafts-data"
+import { ExpandableContent } from "./expandable-content"
 
 /**
  * F027 Phase 3-4 (AC-P3-2 + AC-P4-1 + AC-P4-3 + AC-P4-4) · DraftApprovalTab
@@ -96,8 +96,7 @@ export function DraftApprovalTab() {
   }, [])
 
   // F027 全选三件套（小孙：一个一个点好费劲）：全选 = 勾上当前已加载全部；再点 = 清空。
-  const allSelected =
-    data.drafts.length > 0 && data.drafts.every((d) => selectedPaths.has(d.path))
+  const allSelected = data.drafts.length > 0 && data.drafts.every((d) => selectedPaths.has(d.path))
   const handleToggleSelectAll = useCallback(() => {
     setSelectedPaths((prev) => {
       const all = data.drafts.length > 0 && data.drafts.every((d) => prev.has(d.path))
@@ -129,7 +128,11 @@ export function DraftApprovalTab() {
     if (selectedPaths.size === 0) return []
     return data.drafts
       .filter((d) => selectedPaths.has(d.path))
-      .map((d) => ({ srcDraftPath: d.path, displayTitle: d.title }))
+      .map((d) => ({
+        srcDraftPath: d.path,
+        displayTitle: d.title,
+        suggestedDestPath: d.suggestedDestPath,
+      }))
   }, [data.drafts, selectedPaths])
 
   return (
@@ -159,6 +162,7 @@ export function DraftApprovalTab() {
       <PromoteModal
         open={promotingDraft !== null}
         srcDraftPath={promotingDraft?.path ?? null}
+        suggestedDestPath={promotingDraft?.suggestedDestPath ?? null}
         callerAlias={getCurrentUserAlias()}
         onClose={handlePromoteModalClose}
         onPromoteSuccess={handlePromoteSuccess}
@@ -345,10 +349,7 @@ function DraftRow({
             aria-label={`select ${draft.path}`}
             data-testid={`draft-approval-checkbox-${draft.path}`}
           />
-          <span
-            className="truncate font-medium text-[11px] text-slate-700"
-            title={draft.path}
-          >
+          <span className="truncate font-medium text-[11px] text-slate-700" title={draft.path}>
             {draft.title}
           </span>
         </label>

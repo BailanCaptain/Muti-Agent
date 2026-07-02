@@ -152,11 +152,14 @@ export class PromoteWikiService {
 
     // ─── 2. V14 二次审计 (read src body 跑 3 步 detection) ─────────────────
     const srcContent = fs.readFileSync(srcAbsolute, "utf-8")
+    // F027 bucket-routing 补丁：落盘内容 = owner_path 刷成 dest 后的版本（审计/哈希/写盘
+    // 三者用同一份，保「审的即写的」）。src 文件本身不动。
+    const destContent = rewriteCanonicalOwnerPath(srcContent, req.destWikiPath)
     // 德彪 r3 P1 · 人审豁免文档(frontmatter 带 ingest_exemption)promote 二道关:对编译产物
     // 跑 sanitize 复检,仍 blocked 直接拒。r2 的 layer3 substring 注入被 r3 实测推翻(matched
     // 归一化后形态 ≠ 原文域,同形字注入 includes 必漏);blocked 判定在归一化域内全文生效、
     // 无跨域盲区。普通 draft(无 exemption)放行,零回归。client 不可绕(服务端自取 src)。
-    const exemptionCheck = checkExemptionSanitizeBlocked(srcContent)
+    const exemptionCheck = checkExemptionSanitizeBlocked(destContent)
     if (exemptionCheck.blocked) {
       return {
         status: "audit_rejected",
@@ -168,7 +171,7 @@ export class PromoteWikiService {
       }
     }
     const auditInput: V14PromoteAuditInput = {
-      body: srcContent,
+      body: destContent,
       taintedSourceFields: req.taintedSourceFields,
     }
     const auditResult = await this.audit.audit(auditInput)
@@ -203,7 +206,7 @@ export class PromoteWikiService {
 
     // ─── 5. PREPARE: wiki_events appendPending ────────────────────────────
     const ts = new Date().toISOString()
-    const contentHash = sha256(srcContent)
+    const contentHash = sha256(destContent)
     let eventId = 0
     try {
       const event = this.cfg.events.appendPending({
@@ -231,7 +234,7 @@ export class PromoteWikiService {
 
     // ─── 6. atomic write: src content → dest path ─────────────────────────
     try {
-      writeFileAtomic(destAbsolute, srcContent)
+      writeFileAtomic(destAbsolute, destContent)
     } catch (err) {
       // PREPARE 已落，但 atomic write fail → abort wiki_events
       this.cfg.events.abort(eventId, {
@@ -299,6 +302,30 @@ export function isDraftRelativePath(p: string): boolean {
 export function isSupersededDraftRelativePath(p: string): boolean {
   const normalized = path.posix.normalize(p.replace(/\\/g, "/")).toLowerCase()
   return normalized.includes("/draft/_superseded/")
+}
+
+/**
+ * F027 bucket-routing 补丁 · promote 落盘时把 frontmatter 的 canonical_owner_path 刷成
+ * dest 正式路径（此前 src 原样拷贝 → 存量正式区 entity 的 owner_path 全指着 draft 旧址）。
+ * 只在「文件以 frontmatter 开头 且 frontmatter 区内已有 canonical_owner_path 单行字段」时
+ * 替换；无 frontmatter / 无该字段不注入（最小改动，不拼 YAML 结构）。正文同名字样不受影响。
+ * 已知边界：compile pipeline 写的 owner_path 恒为单行；若未来出现 YAML 折行值，替换不命中
+ * 原样保留（fail-safe 方向）。
+ */
+export function rewriteCanonicalOwnerPath(content: string, destWikiPath: string): string {
+  if (!content.startsWith("---\n") && !content.startsWith("---\r\n")) return content
+  const fmEnd = content.indexOf("\n---", 3)
+  if (fmEnd < 0) return content
+  const fmRegion = content.slice(0, fmEnd)
+  // 德彪 r1 P2-1 + r2 P2：只改「单行普通标量」——值首字符非空白/>/|/#（排除 YAML 折行 `>`、
+  // 字面量 `|`、空值+缩进续行、`# 注释`+续行四种形态，替换会留孤儿续行写坏 frontmatter）；
+  // (\r?) 捕获保留 CRLF 行尾。
+  const rewritten = fmRegion.replace(
+    /^canonical_owner_path:[ \t]*[^\s>|#][^\n\r]*(\r?)$/m,
+    `canonical_owner_path: ${destWikiPath}$1`,
+  )
+  if (rewritten === fmRegion) return content
+  return rewritten + content.slice(fmEnd)
 }
 
 function sha256(content: string): string {

@@ -24,12 +24,7 @@
  */
 
 import { pass1Unicode, pass2Html, pass3Fence, pass4Encoding } from "./passes"
-import type {
-  RedLineTrigger,
-  SanitizeOptions,
-  SanitizePassOutput,
-  SanitizeResult,
-} from "./types"
+import type { RedLineTrigger, SanitizeOptions, SanitizePassOutput, SanitizeResult } from "./types"
 
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024 // 10 MB
 const DEFAULT_MAX_QUARANTINED_RATIO = 0.3
@@ -56,13 +51,44 @@ const JAILBREAK_TEMPLATES: readonly string[] = [
   "act as a",
   "pretend to be",
   "pretend you are",
-  "system prompt",
   "reveal your prompt",
   "reveal your instructions",
   "forget your instructions",
   "override your instructions",
   "your new task is",
   "from now on you",
+] as const
+
+/**
+ * 语境正则红线（小写文本上扫）。裸 "system prompt" 是本项目技术文档的日常词汇
+ * （2026-06-15 F007/F019 人审豁免文档 promote 复检实测误伤），从裸子串降为
+ * 「攻击语态共现」判定。德彪 r1 P1 修：动词枚举+固定方向被 6 类 PoC 绕过
+ * （provide/return 缺、倒序 "system prompt: reveal it"、复数 prompts、>40 字 padding、
+ * 松散问句），改为——
+ *   - exfil/override 动词与 "system prompt(s)" **双向** 80 字符窗内共现（动词在前限同句
+ *     [^.!?]，名词在前用行窗 [^\n]——"system prompt. now reveal it" 类跨句仍算攻击）
+ *   - 问句 what … system prompt(s)（60 字窗，不再要求 is/are 紧邻）
+ *   - 授令句式 new system prompt / your system prompt is
+ * 纯语义改写（不含字面 system prompt）本层不管，归 promote LLM 判官（posture C）。
+ */
+const EXFIL_VERBS =
+  "reveal|ignore|disregard|override|forget|leak|show|print|repeat|output|dump|expose|bypass|share|tell|give|send|paste|copy|disclose|quote|recite|provide|return|display|read|fetch|retrieve|write|list|say|reproduce|transcribe"
+const JAILBREAK_CONTEXT_REGEXES: readonly { pattern: RegExp; label: string }[] = [
+  {
+    pattern: new RegExp(`\\b(?:${EXFIL_VERBS})\\b[^\\n.!?]{0,80}\\bsystem prompts?\\b`),
+    label: "attack-verb … system prompt",
+  },
+  {
+    pattern: new RegExp(`\\bsystem prompts?\\b[^\\n]{0,80}\\b(?:${EXFIL_VERBS})\\b`),
+    label: "system prompt … attack-verb",
+  },
+  // 问句式套取（what … system prompt）—— 无攻击动词但同为 exfiltration 意图
+  {
+    pattern: /\bwhat\b[^\n.!?]{0,60}\bsystem prompts?\b/,
+    label: "what … system prompt",
+  },
+  { pattern: /\bnew system prompts?\b/, label: "new system prompt" },
+  { pattern: /\byour system prompt is\b/, label: "your system prompt is" },
 ] as const
 
 export function sanitizeRawDrop(input: string, options?: SanitizeOptions): SanitizeResult {
@@ -111,15 +137,33 @@ export function sanitizeRawDrop(input: string, options?: SanitizeOptions): Sanit
     }
   }
 
-  // Pass 5 收尾：jailbreak 模板检测（在 sanitized text 上）
+  // Pass 5 收尾：jailbreak 模板检测。
+  // 德彪 r2/r3 P1 · 换行拆分绕过：裸模板 + 语境正则**统一跑在「空白折叠」文本上**
+  // （\s+ → 单空格）——"ignore previous\ninstructions" / "what is your\nsystem prompt?" /
+  // "system\nprompt" 类跨行字面攻击折叠后照常命中（r3 前裸模板走 indexOf(lowerText)，
+  // 是补丁前既有的同族缺口，一并收口）。
+  // 已知接受的 FP 面：折叠把相邻 markdown 列表项接成一句，动词与 system prompt 跨项共现
+  // 会误红——本层 fail-closed 方向，误伤走人审豁免/改写通道（有既定流程）。
+  // position 为折叠文本上的近似位置（trigger 只用于展示/去重，不回写原文）。
   const lowerText = current.toLowerCase()
+  const collapsedText = lowerText.replace(/\s+/g, " ")
   for (const tpl of JAILBREAK_TEMPLATES) {
-    const idx = lowerText.indexOf(tpl)
+    const idx = collapsedText.indexOf(tpl)
     if (idx >= 0) {
       allTriggers.push({
         reason: "jailbreak_template",
         matched: tpl,
         position: idx,
+      })
+    }
+  }
+  for (const { pattern, label } of JAILBREAK_CONTEXT_REGEXES) {
+    const m = pattern.exec(collapsedText)
+    if (m) {
+      allTriggers.push({
+        reason: "jailbreak_template",
+        matched: label,
+        position: m.index,
       })
     }
   }

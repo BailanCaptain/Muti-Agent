@@ -70,6 +70,11 @@ function adviceForReject(reject: V14RejectReason): string {
 export interface PromoteModalProps {
   open: boolean
   srcDraftPath: string | null
+  /**
+   * F027 bucket-routing 补丁 · 后端按 LLM canonical_owner_suggestion 算好的目标路径建议。
+   * 打开时预填 Target wiki path（每个 src 只预填一次，用户可改/可清空不回填）。
+   */
+  suggestedDestPath?: string | null
   /** 当前用户 alias (commit endpoint callerAlias 必填)。 */
   callerAlias: string
   /** 关联 audit trail 的 message ids (可选)。 */
@@ -83,6 +88,7 @@ export interface PromoteModalProps {
 export function PromoteModal({
   open,
   srcDraftPath,
+  suggestedDestPath,
   callerAlias,
   sourceMessageIds,
   onClose,
@@ -94,6 +100,18 @@ export function PromoteModal({
 
   const auditHook = usePromoteAudit()
   const commitHook = usePromoteCommit()
+
+  // F027 bucket-routing 补丁：打开时按后端建议预填 Target path。ref 记录已预填的 src，
+  // 同一 src 只填一次——用户手动清空/改写后不回填（deps 故意不含 destWikiPath）。
+  // 德彪 r1 P2-2：新 src 首次进入必须无条件 set（建议缺省 set ""），否则 open 态切 src
+  // 且新 src 无建议时残留上一篇的 dest，可能把 B promote 到 A 的目标路径。
+  const prefilledForSrcRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!open || !srcDraftPath) return
+    if (prefilledForSrcRef.current === srcDraftPath) return
+    prefilledForSrcRef.current = srcDraftPath
+    setDestWikiPath(suggestedDestPath ?? "")
+  }, [open, srcDraftPath, suggestedDestPath])
 
   // Auto preview on modal open + srcDraftPath available
   useEffect(() => {
@@ -133,6 +151,7 @@ export function PromoteModal({
     commitHook.reset()
     setDestWikiPath("")
     setReason("")
+    prefilledForSrcRef.current = null
     onClose()
   }
 

@@ -8,10 +8,7 @@ import { DemoteModal } from "../demote-modal/demote-modal"
 import { IngestModal, type IngestModalFile } from "../ingest-modal/ingest-modal"
 import { PromoteModal } from "../promote-modal/promote-modal"
 import { type DraftSummary, useDraftsData } from "./draft-approval/use-drafts-data"
-import {
-  type IndexViewSummary,
-  useIndexData,
-} from "./wiki-meta/use-wiki-meta-data"
+import { type IndexViewSummary, useIndexData } from "./wiki-meta/use-wiki-meta-data"
 import { WikiPhilosophyPanel } from "./wiki-philosophy/wiki-philosophy-panel"
 
 /**
@@ -119,7 +116,11 @@ export function KnowledgeBaseTab() {
     const drafts = draftsData.data.drafts ?? []
     return drafts
       .filter((d) => selectedDraftPaths.has(d.path))
-      .map((d) => ({ srcDraftPath: d.path, displayTitle: d.title }))
+      .map((d) => ({
+        srcDraftPath: d.path,
+        displayTitle: d.title,
+        suggestedDestPath: d.suggestedDestPath,
+      }))
   }, [draftsData.data.drafts, selectedDraftPaths])
 
   const handleDropClick = useCallback(() => {
@@ -203,11 +204,7 @@ export function KnowledgeBaseTab() {
         {/* F027 v3 G6 · Wiki 哲学 panel (顶部 narrative + 6 桶 stats + 7d growth + supersede 链) */}
         <WikiPhilosophyPanel enabled={activeLvl2 === "knowledge-base"} />
         {/* §A · 派生视图 wiki/index/*.md (AC-P4-9 b) */}
-        <IndexList
-          data={indexData.data}
-          isLoading={indexData.isLoading}
-          error={indexData.error}
-        />
+        <IndexList data={indexData.data} isLoading={indexData.isLoading} error={indexData.error} />
         {/* §B · drafts list (codex Week 5 j2 FAIL P4-3 b + P4-4 Red→Green) */}
         <KbDraftsSection
           drafts={draftsData.data.drafts ?? []}
@@ -231,6 +228,7 @@ export function KnowledgeBaseTab() {
       <PromoteModal
         open={promotingDraft !== null}
         srcDraftPath={promotingDraft?.path ?? null}
+        suggestedDestPath={promotingDraft?.suggestedDestPath ?? null}
         callerAlias={getCurrentUserAlias()}
         onClose={handlePromoteModalClose}
         onPromoteSuccess={handlePromoteSuccess}
@@ -279,9 +277,7 @@ function KbDraftsSection({
       <div className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-2 py-1.5">
         <div className="text-[10px] uppercase tracking-wider text-slate-500">
           Drafts · {total}{" "}
-          {selectedPaths.size > 0
-            ? `（已选 ${selectedPaths.size}）`
-            : "（勾选多份后可批量审批）"}
+          {selectedPaths.size > 0 ? `（已选 ${selectedPaths.size}）` : "（勾选多份后可批量审批）"}
         </div>
         <div className="flex items-center gap-2">
           {selectedPaths.size > 0 && (
@@ -301,11 +297,7 @@ function KbDraftsSection({
             </span>
           )}
           {error && (
-            <span
-              className="text-[10px] text-red-500"
-              data-testid="kb-drafts-error"
-              title={error}
-            >
+            <span className="text-[10px] text-red-500" data-testid="kb-drafts-error" title={error}>
               ⚠ 加载失败
             </span>
           )}

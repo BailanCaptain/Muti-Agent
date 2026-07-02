@@ -75,6 +75,8 @@ export interface BatchPromoteRow {
   srcDraftPath: string
   /** 显示名 (从 draft-approval list 传，UI 友好)。 */
   displayTitle?: string
+  /** F027 bucket-routing 补丁 · 后端 LLM 建议目标路径；有则作 dest 初值（可编辑），缺则退回路径推导。 */
+  suggestedDestPath?: string
 }
 
 export interface BatchPromoteModalProps {
@@ -121,7 +123,8 @@ export function BatchPromoteModal({
       rows.map((r) => ({
         srcDraftPath: r.srcDraftPath,
         displayTitle: r.displayTitle,
-        destWikiPath: suggestDestWikiPath(r.srcDraftPath),
+        // F027 bucket-routing 补丁：优先后端 LLM 建议桶（wiki/methods/ 等），缺则退回纯路径推导（恒 concepts）
+        destWikiPath: r.suggestedDestPath ?? suggestDestWikiPath(r.srcDraftPath),
       })),
     )
     setReason("")

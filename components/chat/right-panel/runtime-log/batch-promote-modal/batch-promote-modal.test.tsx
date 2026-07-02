@@ -399,3 +399,25 @@ describe("BatchPromoteModal", () => {
     expect(suggestDestWikiPath("wiki/concepts/x.md")).toBe("wiki/concepts/x.md")
   })
 })
+
+describe("BatchPromoteModal · suggestedDestPath 行初值（F027 bucket-routing 补丁）", () => {
+  it("row 带 suggestedDestPath → dest 初值用建议桶；缺省行退回路径推导", () => {
+    render(
+      <BatchPromoteModal
+        open={true}
+        rows={[
+          {
+            srcDraftPath: "wiki/concepts/draft/_auto/m.md",
+            displayTitle: "M",
+            suggestedDestPath: "wiki/methods/m.md",
+          },
+          { srcDraftPath: "wiki/concepts/draft/_auto/c.md", displayTitle: "C" },
+        ]}
+        callerAlias="小孙"
+        onClose={() => {}}
+      />,
+    )
+    expect(screen.getByDisplayValue("wiki/methods/m.md")).toBeTruthy()
+    expect(screen.getByDisplayValue("wiki/concepts/c.md")).toBeTruthy()
+  })
+})
