@@ -8,6 +8,13 @@ import { DemoteModal } from "../demote-modal/demote-modal"
 import { PromoteModal } from "../promote-modal/promote-modal"
 import { IngestSettingsCard } from "./draft-approval/ingest-settings-card"
 import {
+  BatchPromoteBanner,
+  PromoteJobBadge,
+  PromoteRowButton,
+  usePromoteJobsAutoRefetch,
+  usePromoteOkJobsGc,
+} from "./draft-approval/promote-jobs-ui"
+import {
   type DraftOrigin,
   type DraftSummary,
   type DraftType,
@@ -46,7 +53,7 @@ function getCurrentUserAlias(): string {
 
 export function DraftApprovalTab() {
   const activeLvl2 = useRuntimeLogStore((state) => state.activeLvl2)
-  const { data, isLoading, error, refetch } = useDraftsData({
+  const { data, isLoading, error, hasLoaded, refetch } = useDraftsData({
     enabled: activeLvl2 === "draft-approval",
   })
 
@@ -54,6 +61,12 @@ export function DraftApprovalTab() {
   const [demotingDraft, setDemotingDraft] = useState<DraftSummary | null>(null)
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set())
   const [batchOpen, setBatchOpen] = useState(false)
+  // F027 promote 后台化：后台任务出 ok → 自动 refetch（成功行消失，无需人工刷新）
+  usePromoteJobsAutoRefetch(refetch)
+  // 对账式 ok GC：行真消失才清护栏（unlink-fail 兜底见 promote-jobs-ui）。
+  // 德彪 r3 P2：门用 hasLoaded——tab 隐藏时 disabled 分支的空列表是「未加载」，
+  // 用 !isLoading && !error 会把它当「加载到空」误清护栏。
+  usePromoteOkJobsGc(data.drafts, hasLoaded)
   // F027 收录设置卡（小孙拍：编译引擎/模型设置放记忆页面族，不放 agent 配置区）
   const [settingsOpen, setSettingsOpen] = useState(false)
 
@@ -151,6 +164,7 @@ export function DraftApprovalTab() {
           onToggleSettings={() => setSettingsOpen((v) => !v)}
         />
         {settingsOpen && <IngestSettingsCard />}
+        <BatchPromoteBanner />
         <DraftList
           drafts={data.drafts}
           selectedPaths={selectedPaths}
@@ -360,16 +374,9 @@ function DraftRow({
       <div className="mt-0.5 flex flex-wrap items-center gap-1">
         <Badge label={draft.type} kind="type" value={draft.type} />
         <Badge label={originLabel(draft.origin)} kind="origin" value={draft.origin} />
+        <PromoteJobBadge path={draft.path} />
         <div className="ml-auto flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => onPromote(draft)}
-            className="rounded bg-blue-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-blue-700"
-            data-testid={`draft-approval-promote-${draft.path}`}
-            title="提升此 draft 到正式 wiki path (走 V14 二次审计)"
-          >
-            Promote
-          </button>
+          <PromoteRowButton draft={draft} onPromote={onPromote} testIdPrefix="draft-approval" />
           <button
             type="button"
             onClick={() => onDemote(draft)}

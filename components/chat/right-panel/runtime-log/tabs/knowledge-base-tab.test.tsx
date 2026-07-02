@@ -10,6 +10,7 @@
  *   - IngestModal onClose → modalFile cleared
  */
 
+import { usePromoteJobsStore } from "@/components/stores/promote-jobs-store"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { KnowledgeBaseTab } from "./knowledge-base-tab"
@@ -28,6 +29,11 @@ function mockOkFetch(payload: unknown) {
 function makeFile(name: string, content: string, type = "text/markdown"): File {
   return new File([content], name, { type })
 }
+
+// F027 promote 后台化：module 级 jobs store 跨用例保留，每用例重置防串场
+beforeEach(() => {
+  usePromoteJobsStore.getState().resetAll()
+})
 
 describe("KnowledgeBaseTab 默认渲染", () => {
   afterEach(() => {

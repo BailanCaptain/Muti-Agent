@@ -42,6 +42,12 @@ export interface UseDraftsDataReturn {
   data: ListDraftsResponse
   isLoading: boolean
   error: string | null
+  /**
+   * 后台化德彪 r3 P2：本轮 enabled 下**成功 fetch 过**才 true。tab 隐藏（disabled）时
+   * 重置为 false——disabled 分支的空列表是「未加载」不是「加载到空」，对账式 ok GC
+   * 只能在 hasLoaded=true 时跑，否则切走 tab 的瞬间会把 unlink-fail 护栏误清。
+   */
+  hasLoaded: boolean
   refetch: () => void
 }
 
@@ -50,6 +56,7 @@ export function useDraftsData(options: { enabled?: boolean } = {}): UseDraftsDat
   const [data, setData] = useState<ListDraftsResponse>(emptyResponse())
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [hasLoaded, setHasLoaded] = useState(false)
   const [refetchTrigger, setRefetchTrigger] = useState(0)
 
   useEffect(() => {
@@ -57,6 +64,7 @@ export function useDraftsData(options: { enabled?: boolean } = {}): UseDraftsDat
       setData(emptyResponse())
       setIsLoading(false)
       setError(null)
+      setHasLoaded(false)
       return
     }
     let cancelled = false
@@ -77,11 +85,13 @@ export function useDraftsData(options: { enabled?: boolean } = {}): UseDraftsDat
         if (cancelled) return
         setData(json)
         setIsLoading(false)
+        setHasLoaded(true)
       })
       .catch((err: unknown) => {
         if (cancelled) return
         setError(err instanceof Error ? err.message : String(err))
         setIsLoading(false)
+        setHasLoaded(false)
         setData(emptyResponse())
       })
     return () => {
@@ -89,5 +99,5 @@ export function useDraftsData(options: { enabled?: boolean } = {}): UseDraftsDat
     }
   }, [enabled, refetchTrigger])
 
-  return { data, isLoading, error, refetch: () => setRefetchTrigger((n) => n + 1) }
+  return { data, isLoading, error, hasLoaded, refetch: () => setRefetchTrigger((n) => n + 1) }
 }

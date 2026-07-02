@@ -1,34 +1,12 @@
-import type { RealtimeServerEvent } from "@multi-agent/shared"
-
 /**
  * F026 P0 Day2 · I3 Broadcaster 后端强隔离。
  *
- * 返回 event 所属 sessionGroupId：
- *   - 绝大多数 server event payload 带 sessionGroupId（assistant_delta / thread_snapshot /
- *     approval.resolved / decision.* 等）
- *   - `approval.request` / `decision.request`：payload 本身是 request 对象，内部带 sessionGroupId
- *   - `dispatch.blocked`：payload.attempts 是数组，同一批拦截必定同一会话；取 attempts[0]
- *   - `message.created`：payload.sessionGroupId 可选——这类"无会话绑定"事件按 null 处理
- *     (见 shouldDeliver 的 legacy fan-out 策略)
- *   - `status` / `preview.auto_open`：payload.sessionGroupId 可选，同上
- *
- * 返回 null = "此事件无 group 绑定"，broadcaster 对未订阅或任意 group 均 fan-out（legacy 兼容）。
+ * extractSessionGroupId 本体 F031 起上移 shared（realtime-routing.ts）——客户端
+ * StreamMonitor 的 seq 校验必须与服务端 broadcast 过滤/注 seq 用同一套提取规则
+ * （德彪 r4 P2：dispatch.blocked 两端规则不同源 → 假 gap）。此处 re-export 保持
+ * api 侧既有 import 路径不变。
  */
-export function extractSessionGroupId(event: RealtimeServerEvent): string | null {
-  const payload = event.payload as Record<string, unknown> | undefined
-  if (!payload) return null
-
-  const direct = payload.sessionGroupId
-  if (typeof direct === "string" && direct.length > 0) return direct
-
-  if (event.type === "dispatch.blocked") {
-    const attempts = (payload as { attempts?: Array<{ sessionGroupId?: string }> }).attempts
-    const first = attempts?.[0]?.sessionGroupId
-    return typeof first === "string" && first.length > 0 ? first : null
-  }
-
-  return null
-}
+export { extractSessionGroupId } from "@multi-agent/shared"
 
 /**
  * 严格隔离策略（P0 Design Decision）：

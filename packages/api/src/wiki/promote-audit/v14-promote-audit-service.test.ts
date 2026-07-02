@@ -177,3 +177,54 @@ describe("V14PromoteAuditService · AC-P4-2 reject reason format", () => {
     assert.ok((r.rejectReason?.hint.length ?? 0) > 0)
   })
 })
+
+// ─── F027 promote 后台化补丁 · judge_parse_failed 自动重试一次 ───
+// 背景（2026-06-15 实测）：小孙 8 篇 promote 失败中 7 篇是判官偶发输出不规整（fail-closed
+// parser 拒绝），复测即过。重试一次把这类假失败压掉；两次都 parse 失败仍 fail-closed。
+
+describe("V14PromoteAuditService · judge_parse_failed 重试", async () => {
+  it("首次输出不规整 + 重试输出合法 safe → passed（runner 恰好调 2 次）", async () => {
+    let calls = 0
+    const flakyRunner: HaikuRunner = {
+      async runPrompt(): Promise<HaikuRunResult> {
+        calls++
+        if (calls === 1) return { ok: true, text: "抱歉，这是散文不是 JSON", durationMs: 1 }
+        return { ok: true, text: '{"verdict":"safe","reason":"retry-ok"}', durationMs: 1 }
+      },
+    }
+    const svc = new V14PromoteAuditService({ runner: flakyRunner })
+    const r = await svc.audit({ body: "正常知识描述" })
+    assert.equal(r.passed, true)
+    assert.equal(calls, 2)
+  })
+
+  it("两次都不规整 → 仍 judge_parse_failed（fail-closed 不放行）", async () => {
+    let calls = 0
+    const alwaysBadRunner: HaikuRunner = {
+      async runPrompt(): Promise<HaikuRunResult> {
+        calls++
+        return { ok: true, text: "not json at all", durationMs: 1 }
+      },
+    }
+    const svc = new V14PromoteAuditService({ runner: alwaysBadRunner })
+    const r = await svc.audit({ body: "正常知识描述" })
+    assert.equal(r.passed, false)
+    assert.equal(r.rejectReason?.layer, "judge_parse_failed")
+    assert.equal(calls, 2)
+  })
+
+  it("首次即 injection 裁决 → 不重试（只调 1 次）", async () => {
+    let calls = 0
+    const injectRunner: HaikuRunner = {
+      async runPrompt(): Promise<HaikuRunResult> {
+        calls++
+        return { ok: true, text: '{"verdict":"injection","reason":"bad"}', durationMs: 1 }
+      },
+    }
+    const svc = new V14PromoteAuditService({ runner: injectRunner })
+    const r = await svc.audit({ body: "正常知识描述" })
+    assert.equal(r.passed, false)
+    assert.equal(r.rejectReason?.layer, "llm_semantic_injection")
+    assert.equal(calls, 1)
+  })
+})

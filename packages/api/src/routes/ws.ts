@@ -1,9 +1,15 @@
-import type { OptionVerdict, RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared"
+import type {
+  OptionVerdict,
+  RealtimeClientEvent,
+  RealtimeServerEvent,
+  SequencedRealtimeServerEvent,
+} from "@multi-agent/shared"
 import type { FastifyInstance } from "fastify"
 import { createLogger } from "../lib/logger"
 import type { ApprovalManager } from "../orchestrator/approval-manager"
 import type { MessageService } from "../services/message-service"
 import { extractSessionGroupId, shouldDeliver } from "./ws-routing"
+import type { GroupSequencer } from "./ws-sequencer"
 
 const log = createLogger("ws")
 
@@ -45,6 +51,7 @@ export function registerWsRoute(
   options: {
     messages: MessageService
     broadcaster: RealtimeBroadcaster
+    sequencer: GroupSequencer
     approvals?: ApprovalManager
     onDecisionRespond?: (
       requestId: string,
@@ -60,9 +67,19 @@ export function registerWsRoute(
     //   - 事件带 groupId → 仅发给订阅相同 group 的 socket（strict mode · 未订阅 socket 拒收）
     //   - 事件无 groupId → fan-out 所有 socket（legacy 兼容 · 当前仅 status/preview.auto_open 部分形态）
     const eventGroupId = extractSessionGroupId(event)
+    // F031 · 仅 broadcast 通道注 seq/epoch：循环前盖一次，同组 N socket 收同一 seq。
+    // 直发通道（下方 handleClientEvent 的 socket-bound emit）不注——直发只达单 socket，
+    // 消耗同组计数器会给其他订阅 socket 制造假 gap → catch-up 风暴。
+    const outbound: SequencedRealtimeServerEvent = eventGroupId
+      ? {
+          ...event,
+          seq: options.sequencer.next(eventGroupId),
+          epoch: options.sequencer.epoch,
+        }
+      : event
     for (const socket of sockets) {
       if (!shouldDeliver(socket.sessionGroupId, eventGroupId)) continue
-      if (!sendSocketEvent(socket, event)) {
+      if (!sendSocketEvent(socket, outbound)) {
         sockets.delete(socket)
       }
     }

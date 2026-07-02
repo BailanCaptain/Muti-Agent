@@ -150,9 +150,18 @@ export class V14PromoteAuditService {
     const structural = this.auditStructural(input)
     if (!structural.passed) return structural
 
-    const judge = await runJudge(input.body ?? "", this.resolveRunner(), {
+    let judge = await runJudge(input.body ?? "", this.resolveRunner(), {
       timeoutMs: this.judgeTimeoutMs,
     })
+    // F027 promote 后台化补丁：judge_parse_failed 是「判官输出不规整被 fail-closed parser
+    // 拒绝」的基础设施抖动（2026-06-15 实测 8 篇失败 7 篇属此类，复测即过）——同请求内
+    // 自动重试一次压掉假失败；两次都不规整仍 fail-closed 返回。真裁决（safe/injection）
+    // 与 judge_unavailable（runner 层已带 fallback 链）不重试。
+    if (judge.result === "judge_parse_failed") {
+      judge = await runJudge(input.body ?? "", this.resolveRunner(), {
+        timeoutMs: this.judgeTimeoutMs,
+      })
+    }
     if (judge.result === "safe") return { passed: true }
     return { passed: false, rejectReason: mapJudgeToReject(judge) }
   }

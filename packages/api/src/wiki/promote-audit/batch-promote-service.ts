@@ -71,9 +71,10 @@ export interface BatchPromoteServiceConfig {
   leaseTtlSeconds?: number
 }
 
-// 德彪 r1 P1：lease 须覆盖 LLM 判官最坏耗时（JUDGE_TIMEOUT_MS=60s × primary+fallback = 120s），
-// 否则慢判官 → lease_expired。batch 每项独立 acquire/release（finally），长租仅锁单 dest。
-const DEFAULT_LEASE_TTL_SECONDS = 150
+// 德彪 r1 P1：lease 须覆盖 LLM 判官最坏耗时。后台化补丁德彪 r1 P2：judge_parse_failed 自动
+// 重试一次 → 最坏 2×(primary 60s + fallback 60s) = 240s，留余量取 300s（与 promote route 同步）。
+// batch 每项独立 acquire/release（finally），长租仅锁单 dest。
+const DEFAULT_LEASE_TTL_SECONDS = 300
 
 /**
  * posture C 熔断阈值（设计审 critique P1）：连续 N 次 LLM 判官不可用（基础设施挂，非内容问题）

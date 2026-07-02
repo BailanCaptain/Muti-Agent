@@ -7,6 +7,13 @@ import { BatchPromoteModal } from "../batch-promote-modal/batch-promote-modal"
 import { DemoteModal } from "../demote-modal/demote-modal"
 import { IngestModal, type IngestModalFile } from "../ingest-modal/ingest-modal"
 import { PromoteModal } from "../promote-modal/promote-modal"
+import {
+  BatchPromoteBanner,
+  PromoteJobBadge,
+  PromoteRowButton,
+  usePromoteJobsAutoRefetch,
+  usePromoteOkJobsGc,
+} from "./draft-approval/promote-jobs-ui"
 import { type DraftSummary, useDraftsData } from "./draft-approval/use-drafts-data"
 import { type IndexViewSummary, useIndexData } from "./wiki-meta/use-wiki-meta-data"
 import { WikiPhilosophyPanel } from "./wiki-philosophy/wiki-philosophy-panel"
@@ -61,6 +68,11 @@ export function KnowledgeBaseTab() {
   const [demotingDraft, setDemotingDraft] = useState<DraftSummary | null>(null)
   const [selectedDraftPaths, setSelectedDraftPaths] = useState<Set<string>>(new Set())
   const [batchOpen, setBatchOpen] = useState(false)
+  // F027 promote 后台化：后台任务出 ok → 自动 refetch（成功行消失）
+  usePromoteJobsAutoRefetch(draftsData.refetch)
+  // 对账式 ok GC：行真消失才清护栏（unlink-fail 兜底见 promote-jobs-ui）。
+  // 德彪 r3 P2：门用 hasLoaded（disabled 空列表≠加载到空，防切 tab 误清护栏）。
+  usePromoteOkJobsGc(draftsData.data.drafts ?? [], draftsData.hasLoaded)
 
   const handleToggleSelect = useCallback((path: string) => {
     setSelectedDraftPaths((prev) => {
@@ -88,8 +100,9 @@ export function KnowledgeBaseTab() {
   }, [])
 
   const handlePromoteSuccess = useCallback(() => {
+    // 后台化德彪 r1 P3：与审批 tab 对齐——不自动关弹窗，让成功面板显 finalPath，
+    // 用户点「完成」（onClose→handleSuccessClose 清 store 条目）才关。
     draftsData.refetch()
-    setPromotingDraft(null)
   }, [draftsData])
 
   const handleDemoteSuccess = useCallback(() => {
@@ -274,6 +287,7 @@ function KbDraftsSection({
 }) {
   return (
     <div className="flex flex-col gap-2" data-testid="kb-drafts-section">
+      <BatchPromoteBanner />
       <div className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-2 py-1.5">
         <div className="text-[10px] uppercase tracking-wider text-slate-500">
           Drafts · {total}{" "}
@@ -364,15 +378,8 @@ function KbDraftRow({
           </span>
         </label>
         <div className="ml-auto flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => onPromote(draft)}
-            className="rounded bg-blue-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-blue-700"
-            data-testid={`kb-draft-promote-${draft.path}`}
-            title="提升此 draft 到正式 wiki path (走 V14 二次审计)"
-          >
-            Promote
-          </button>
+          <PromoteJobBadge path={draft.path} />
+          <PromoteRowButton draft={draft} onPromote={onPromote} testIdPrefix="kb-draft" />
           <button
             type="button"
             onClick={() => onDemote(draft)}
