@@ -211,13 +211,14 @@ busy/archived 状态回执：connector 消费 status 事件（如「会话已归
 | 2026-07-03 | 小孙拍板：D1=飞书 / D3=专用移动房间 / D6=三阶段 / D7=不做微信（「按你推荐的来」）|
 | 2026-07-03 | 新需求「别人手机进房间聊天」→ 评估：多人 PWA 不可行（零用户体系 + 网络可达双硬伤），改**飞书群桥接**提级 Phase 2（D13 + AC10-13 + 归因两级），PWA 降 Phase 3 小孙自用 → v3 落盘（`8a9ad42`）派德彪 r2 |
 | 2026-07-03 | 德彪 r2：**NEEDS-WORK** —— r1 七条吸收核验全 ✅；群桥接抓 3 新 P1（同行前缀杀 @ 派发=classifyMention 行首 gray 实锤 / 群白名单≠成员授权 / 双绑定无溯源互串）+ 2 P2（finished payload 缺 messageId / phase 表矛盾）。v4 全接（`ae6e0e1`）：合同 8-11 + D14-D16 + AC3/10-13 重写 + Phase 4 划出交付范围 |
-| 2026-07-03 | 德彪 r3：吸收对照 5/6 ✅，唯一 ❌ = v3 残留句「白名单群内全员可发」与 D14 冲突（:126）+ 建议 :107 门公式补成员项。v5 两处清残留（grep 全文无其他残留）→ 派 r4 确认 |
+| 2026-07-03 | 德彪 r3：吸收对照 5/6 ✅，唯一 ❌ = v3 残留句「白名单群内全员可发」与 D14 冲突（:126）+ 建议 :107 门公式补成员项。v5 两处清残留（`c430c69`，grep 全文无其他残留）→ 派 r4 确认 |
+| 2026-07-03 | 德彪 r4：**GO** —— 两处修复确认到位，残留仅 changelog 复述不构成新口径。**Design Gate 关闭**（小孙拍板 D1-D16 + 德彪 r1→r4）→ writing-plans 产出 Phase 1 实施计划（16 Task，见 Links）→ 开 worktree 动工 |
 
 ## Links
 
 - 调研详情：本文档「调研结论」节（clowder-ai file:line 锚点已内联）
 - 设计审 r1 verdict：`.runtime/reviews/` scratch（不入库）
-- Plan: 待 Design Gate（小孙拍板 + r2 GO）后走 writing-plans
+- Plan: [F040 Phase 1 实施计划](../plans/F040-phase1-plan.md)（16 Task · TDD · 终态 schema 先行）
 - Related: F029 / F037 / F026 / F031
 
 ## Evolution
