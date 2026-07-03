@@ -118,14 +118,14 @@ argument-hint: "[阶段: kickoff|discussion|completion] [Fxxx 或主题]"
 
 | 类型 | 判断标准 | 确认人 | 方式 |
 |------|---------|--------|------|
-| **前端 UI/UX** | 用户能看到的改动 | **小孙** | wireframe / 文字描述 → 小孙 OK 后继续 |
+| **前端 UI/UX** | 用户能看到的改动 | **小孙** | wireframe / 文字描述 → 小孙 OK 后继续；实现期走 `design-taste`（视觉纪律 + token 真相源） |
 | **纯后端** | API/数据模型/内部逻辑 | **其他 agent** | `collaborative-thinking` 讨论达成共识 |
 | **架构级** | 跨模块、新基础设施 | **agents 讨论 → 小孙拍板** | 先出方案再上报 |
 | **Trivial** | ≤5 行、纯重构、文档 | 跳过 | 跳过 Design Gate |
 
 **流程**：
 1. 判断功能类型 → 选择确认路径
-2. 前端：画 wireframe 或文字描述 → 发小孙 → 等 OK
+2. 前端：画 wireframe 或文字描述 → 发小孙 → 等 OK → 实现走 `design-taste`（对标 DESIGN.md，视觉方向不走样）
 3. 后端：`collaborative-thinking` → 拉相关 agent 讨论 API 契约/数据模型
 4. 架构：agent 讨论 → 结论给小孙 → 小孙拍板
 5. 确认产出归档到 feature doc 的 Design Decisions 章节
