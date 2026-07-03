@@ -34,6 +34,7 @@ feat-lifecycle → Design Gate → writing-plans → worktree → tdd
 | `writing-skills` | 创建或修改 Multi-Agent skill 的元技能 | `/write-skill` | `quality-gate` |
 | `rich-messaging` | 用 cc_rich 围栏 JSON 发只读卡片/清单（review 结论、AC 清单、状态汇报） | — | — |
 | `webapp-testing` | Playwright 真浏览器验证前后端交互（E2E 回归 / feature 点击流专项） | `/e2e` | `quality-gate` |
+| `design-taste` | 前端视觉纪律：DESIGN.md token 真相源 + 量化审计 + 一致性锁 + 状态全周期 | `/taste` | `quality-gate` |
 
 ### 参考文件（`refs/`，按需读取）
 

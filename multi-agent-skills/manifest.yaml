@@ -336,6 +336,35 @@ skills:
       - name: "/e2e"
         description: "浏览器自动化验证"
 
+  # ── 前端视觉纪律 ──
+  design-taste:
+    description: 前端视觉工作纪律——DESIGN.md token 真相源 + 量化审计 + config 级色族重映射 + 一致性锁 + 状态全周期（F036/F039 沉淀，精华取 design.md/taste-skill/ui-ux-pro-max 三库）
+    triggers:
+      - "视觉"
+      - "好看"
+      - "不够好看"
+      - "样式"
+      - "restyle"
+      - "打磨"
+      - "配色"
+      - "选色"
+      - "字号"
+      - "圆角"
+      - "动效"
+      - "design token"
+      - "UI 组件样式"
+    not_for:
+      - "布局 IA 重构"
+      - "纯逻辑改动"
+      - "视觉最终裁决"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: ["quality-gate"]
+    sop_step: null
+    slashCommands:
+      - name: "/taste"
+        description: "前端视觉纪律与审计"
+
   # ── 富媒体消息 ──
   rich-messaging:
     description: 在回复正文用 cc_rich 围栏 JSON 发只读卡片（card/checklist），review 结论、AC 清单、状态汇报渲染成结构化卡片（F030）
