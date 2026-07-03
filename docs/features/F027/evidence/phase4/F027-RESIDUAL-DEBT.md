@@ -6,7 +6,7 @@
 > **替代**: `F028-FOLLOWUP-BACKLOG.md`（保留作历史归档，不再被引用）
 >
 > **2026-06-15 收口刷新**（F027 标 done 时对账 `scheduler-bootstrap.ts:24-35` 头注释 + 代码实证）：
-> C1 调度 noop 七项中**仅剩 C1.5 待武装**，其余六项已由 v3 G2 / final-vision / chunk B / 收尾修1 接通；
+> C1 调度 noop 七项**已全部接通**（C1.5 于 2026-07-03 收尾修2 `7471da7` 收口，其余六项由 v3 G2 / final-vision / chunk B / 收尾修1 接通）；
 > C6.1 已接 ws broadcast；C7.2 体验目标已被收尾补丁 AC-W2 同源收敛取代。逐项见下表删除线标注。
 
 ---
@@ -91,7 +91,7 @@ C. Scheduler/UX 长尾 - 单独立 feature 做（不归 F027）
 | ~~C1.2~~ | ~~`NightlyHealthCheck.scanEntities`~~ | **已完成** — v3 G2 接 `scanWikiEntitiesFs` 真扫描 + chunk B（R1 重复 canonical / R3 死 supersedes 治理搬 NHC）+ 续篇 warnings 文件生产链（报告落 `wiki/warnings/` 进「警告」tab） | n/a |
 | ~~C1.3~~ | ~~`WeeklyDraftDigest.scanDrafts`~~ | **已完成** — v3 G2 接通 scanDrafts/pushDigest（scheduler-bootstrap.ts:28 头注释 ~~不接~~ 已划销） | n/a |
 | ~~C1.4~~ | ~~`DriftDetector.scanTriggers`~~ | **已完成** — 2026-06-14 收尾修1（小孙 goal）：scanDriftTriggersDbDeduped 真扫 wiki_events+a2a_calls + openUpdateDraft 真开 `_auto/` draft 进审批队列 + drift 告警走现有「警告」tab（往 `wiki/warnings/` 写 warning，复用 NHC warnings 原语）。德彪 r1→r2 GO | n/a |
-| C1.5 | `MonthlySnapshot.recompileAllRooms` | **小孙 2026-06-14 拍「先放着，下一轮专门做」**（收尾修2）。实测确认审计属实（recompiled===current → drift 恒 0）。设计 fork（下轮必读）：createViewfinderCompileFn 是增量编译+写 room_decisions 账本（铁律雷），出真 drift 信号需建 side-effect-free 探针（① 全量重编只读探针[推荐] / ② 轻量再渲染），auto-replace 默认 OFF 只出 dry-run 体检报告，backup 落 .runtime/snapshots，pushAudit 新 hook。MonthlySnapshot 类本身已全，只缺探针+4 hook 接线 | 1.5d |
+| ~~C1.5~~ | ~~`MonthlySnapshot.recompileAllRooms`~~ | **已完成** — 2026-07-03 收尾修2（squash `7471da7`，小孙 07-03 拍口径，德彪 r1 NO-GO→r2 GO）：按 06-14 设计 fork 走「① 全量重编只读探针」路线 — `createMonthlySnapshotRecompiler` + `createProbeDecisionLedger` overlay 视图（append 内存虚拟行/读真表∪overlay 合并/fencing 同语义 sweep/白名单外默认拒绝，零落库）；近 90 天活跃 + 30/月滚动窗口（`.runtime/monthly-snapshot-state.json`）；auto-replace 默认 OFF（dry-run 体检报告 + `scheduler.monthly_snapshot` ws），`MULTI_AGENT_MONTHLY_SNAPSHOT_REPLACE=1` 武装 backup（`.runtime/monthly-snapshot-backups/`）+ replace（wiki_events 留痕） | n/a |
 | ~~C1.6~~ | ~~`ArchiveYearlySessions.scanSessions`~~ | **已完成** — v3 G2 接通（scheduler-bootstrap.ts:31 头注释 ~~不接~~ 已划销） | n/a |
 | ~~C1.7~~ | ~~`WikiCompilerDebounce.recompileDerivedViews`~~ | **主体已完成** — B2/B1-c 接两件：① reindexWiki（wiki_entity_index FTS 增量重建 → search_wiki）② compileWiki 全局 markdown 索引（→ KB tab）。markdown 派生视图（index/sources/log 程序编）重生成仍 follow-up（独立 F-id，见 scheduler-bootstrap.ts:32-34） | n/a |
 

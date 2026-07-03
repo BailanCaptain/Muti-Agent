@@ -156,14 +156,14 @@ V16.5 plan 整套实施（V16.5 chap 21 列的 22+ phase / 9 个模块边界）�
 - [x] **AC-P1-7 · 唯一注入合约**：扩展 F004 `assemblePrompt` 加 7 字段 + 5 注入区段；runtime 内 grep "Iron Laws" = 1（B022 防回归）；harness 端 grep ≤ 2（接受 CLI 边界）
 - [x] **AC-P1-8 · agent-sessions ledger**：per-agent S-XXXX.md 写入 + sharding（按 R-XXX 分目录 path: `agent-sessions/R-042/S-001-黄仁勋.md`）+ yearly pack 1/1 03:00 触发；fixture 模拟 100k session 文件归档后 active < 1k
 - [x] **AC-P1-9 · 6 类记忆桶物理表**：wiki_memories 5 type + messages 表 1 类 = 6 类全覆盖；canonical_owner 防漂桶 lint 红绿测试（fixture: `tests/fixtures/canonical-owner/red-drift.md` vs `green.md`）
-- [x] **AC-P1-10 · viewfinder anti-drift**（**漂移度阈值锁定**）— ⚠️ **月度纠错触发器待武装（残债 C1.5，小孙 2026-06-14 拍下轮专做）**：Phase 1 范围（ledger CRUD + drift jaccard 算法 + fixture）达标；但「挂 Phase 2 P19」的 MonthlySnapshot full-recompile → auto-replace 闭环**生产空转**（2026-06-14 审计实测：`scanRoomViewfindersForSnapshot` MVP 透传 `recompiled===current` → drift 恒 0；未注入 `replaceViewfinder/pushAudit/backup`；活库 room_decisions 247 条全 active / tombstone=0 / superseded=0，纠错一次没跑过）。设计 fork（下轮必读：side-effect-free 探针不能碰 room_decisions 账本）见 `F027/evidence/phase4/F027-RESIDUAL-DEBT.md` C1.5。
-  - room_decisions append-only + tombstone 字段 + revoke 纠错（写新行 + UPDATE 旧行 superseded_by）— ledger 原语 ✅；月度自动纠错触发器 ⏸️待武装
-  - MonthlySnapshot full recompile 触发 → 漂移度 = `1 - jaccard(old.decisions_summary, new.decisions_summary)` — drift 算法 ✅；真重编探针 ⏸️待武装（现 recompiled===current 恒 0）
-  - 漂移度 > 30% 自动 replace + 推审计通知到指定 room — ⏸️待武装（replaceViewfinder/pushAudit 未注入；auto-replace 默认 OFF 设计）
+- [x] **AC-P1-10 · viewfinder anti-drift**（**漂移度阈值锁定**）— ✅ **月度纠错触发器已武装（残债 C1.5 收口，2026-07-03 squash `7471da7`，德彪 r1 NO-GO→r2 GO）**：`createMonthlySnapshotRecompiler`（orchestrator/monthly-snapshot-recompiler.ts）无副作用重编探针真接线 —— 复用 createViewfinderCompileFn + `createProbeDecisionLedger` overlay 视图（append 写内存虚拟行、读返真表∪overlay 合并、markCompleted 生产 fencing 同语义，零落库；plain object 组合白名单外方法默认拒绝）；选房 = 近 90 天活跃 + 30/月上限 + 滚动窗口（`.runtime/monthly-snapshot-state.json`，查询失败不记 probedAt 下次优先重试）；判官复用 RoomCompiler 同 judgeRunner（drift apples-to-apples）。**auto-replace 默认 OFF（06-14 fork 遵守）**：月度 cron 出 dry-run 体检报告（scheduler.monthly_snapshot ws + job trace）；看过首月报告后 `.env` 设 `MULTI_AGENT_MONTHLY_SNAPSHOT_REPLACE=1` 武装 backup（全量备份 `.runtime/monthly-snapshot-backups/<label>/`）+ drift>30% 自动 replace（wiki_events 三阶段留痕 alias=system-monthly-snapshot）。
+  - room_decisions append-only + tombstone 字段 + revoke 纠错（写新行 + UPDATE 旧行 superseded_by）— ledger 原语 ✅；月度自动纠错触发器 ✅ 已武装（dry-run 默认）
+  - MonthlySnapshot full recompile 触发 → 漂移度 = `1 - jaccard(old.decisions_summary, new.decisions_summary)` — drift 算法 ✅；真重编探针 ✅（overlay ledger 无副作用全量重编）
+  - 漂移度 > 30% 自动 replace + 推审计通知 — ✅ 机器全接线；replace 需 env 武装（auto-replace 默认 OFF 设计，首月先看 dry-run 报告）
   - fixture: `tests/fixtures/viewfinder-drift/100-iter-telephone-game.json` 模拟 100 次总结迭代，**有 anti-drift 干预条件下**（每 10 iter MonthlySnapshot 检测，drift > 30% auto-replace） 最终 jaccard ≥ 0.7（drift ≤ 30%）；同 fixture 含 raw 100 iter（无干预）drift ≈ 0.6 对照组，证明 anti-drift 必需
   - **验收边界**（小孙 2026-05-13 拍 + 范-r3 CONDITIONAL 修后）：
     - **P12 Phase 1 范围**：决策 ledger CRUD（append/revoke/tombstone/queries）+ 关键词宽召 + HaikuRunner yes/no 精筛 + Coverage Check 三集合（broad/resolved/unresolved）+ viewfinder 6 段 rule-based 模板（small fans 拍：不上 LLM 编 viewfinder）+ jaccard drift 算法纯函数 + AC fixture
-    - **挂 Phase 2 P19 调度** — ⏸️ **待武装（残债 C1.5）**：`runMonthlySnapshot(roomId)` 闭环触发（NightlyJob cron 1 号 03:00）+ auto-replace IO（写旧 viewfinder 到 audit + replace 新文件） + 审计通知 push —— cron 已注册但 `recompileAllRooms` 透传 current（drift 恒 0）、未注入 replaceViewfinder/pushAudit/backup，闭环未通；2026-06-14 小孙拍下轮独立做（side-effect-free 探针 + auto-replace 默认 OFF）
+    - **挂 Phase 2 P19 调度** — ✅ **已武装（2026-07-03 `7471da7` 收口 C1.5）**：cron（1 号 03:00）真跑无副作用重编 probe → drift 体检报告 + pushSnapshotReport ws；backup + auto-replace 由 `MULTI_AGENT_MONTHLY_SNAPSHOT_REPLACE=1` 武装（默认 dry-run，06-14 fork 语义）
     - **挂 Phase 3 P20 前端**：manual confirm decision API (POST /api/rooms/:id/decisions) + Inspector 显示 Coverage warning unresolved 列表入口
     - **Phase 1 fixture 语义**：fixture `with_anti_drift_intervention` 段含 10 个 block intervention_log 模拟 MonthlySnapshot 检测+ reset 闭环；P19 完成后 fixture 应升级为接真 cron 跑（非模拟）
 - [x] **AC-P1-11 · memory_preflight 自动召回**（北极星兑现 AC）★：
@@ -464,11 +464,11 @@ wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md �
 
 | 项 | 状态 | 去向 |
 |---|---|---|
-| AC-P1-10 月度纠错触发器（MonthlySnapshot 真探针 + auto-replace）| ⏸️ 待武装 | 残债 C1.5，小孙 2026-06-14 拍下轮专做（side-effect-free 探针设计 fork 已落 RESIDUAL-DEBT C1.5）|
-| AC-P2-6~9 · P12.b viewfinder 6 段语义打磨 | ⏸️ 未实施 | 内容质量打磨（非防漂基础设施），随 C1.5 下轮一并评估 |
+| AC-P1-10 月度纠错触发器（MonthlySnapshot 真探针 + auto-replace）| ✅ 已武装 | **2026-07-03 `7471da7` 收口（C1.5 销账，德彪 r1 NO-GO→r2 GO）**：overlay ledger 无副作用探针 + 90 天/30 月滚动 + dry-run 默认；replace 需 `.env` `MULTI_AGENT_MONTHLY_SNAPSHOT_REPLACE=1` 武装 |
+| AC-P2-6~9 · P12.b viewfinder 6 段语义打磨 | ⏸️ 未实施 | 内容质量打磨（非防漂基础设施），另立项评估 |
 | AC-P4-3 命令面板 4 写命令（/promote /demote /series /rollback）| ⏸️ 未启用 | 残债 B6；同功能已由 KB tab 按钮 + PromoteModal/DemoteModal 全覆盖，仅命令入口缺 |
 | AC-P4-6 正式三场景 walkthrough | 被事实取代 | 小孙自 2026-05 底起连续活体使用核心链路（审批 21+ 篇 / 批量 promote / 收录 / 模型热切换），正式脚本不再补走 |
-| 残债 B/C 长尾 | 开放 | 见 [`F027-RESIDUAL-DEBT.md`](F027/evidence/phase4/F027-RESIDUAL-DEBT.md)（2026-06-15 刷新：C1 调度 noop 仅剩 C1.5，其余已全部接通）|
+| 残债 B/C 长尾 | 开放 | 见 [`F027-RESIDUAL-DEBT.md`](F027/evidence/phase4/F027-RESIDUAL-DEBT.md)（2026-07-03 刷新：**C1 调度 noop 七项全接通**（C1.5 `7471da7` 收口）；余 B 类划走项 + C2/C4/C5 长尾）|
 
 **收口整合动作**（本 commit）：① ROADMAP 补 F027 进「已完成」表（立项期漏登记，活跃/已完成两表此前均无 F027）；② 顶部新增「文档地图」作唯一导航入口；③ 删 9 篇过时过程文档（Phase4 在飞快照 / Phase3 升 PASS 映射矩阵 / P13 评审往来 r1-r3 / P18 派工清单 / Phase2·3 evidence 收稿快照 / Phase3 walkthrough 脚本）+ 1 篇未跟踪 backfill dry-run 报告，git 历史可查；④ RESIDUAL-DEBT 按 `scheduler-bootstrap.ts` 现状刷新。
 
@@ -490,5 +490,6 @@ wiring 收尾实测发现 `wiki_memories` 表是**冗余第二存储**——md �
 | 2026-06-15 | dev `3eb787d` | done 后补丁·promote 归桶三件（小孙拍选项 A + F007 误伤修复）：suggestedDestPath 按 LLM canonical_owner_suggestion 四桶预填（单篇/批量）+ promote 落盘刷 canonical_owner_path（单行标量守卫/CRLF 保真）+ sanitize 裸 "system prompt" 红线改攻击语态共现判定（30+ exfil 动词双向 80 字窗 + 问句 + 折叠文本防跨行拆词，裸模板同口径收口既有缺口）。德彪 r1(1P1+2P2)→r2→r3→r4 GO，PoC 全部逐字入测。**生效需主库重启**。 |
 | 2026-07-03 | dev `bb2de55` | done 后补丁·promote 后台化（小孙「promote 把整个网占住」拍方案 1 + 8 篇失败诊断 7 偶发/1 dest_exists）：promote-jobs-store 单/批提交进 store 关弹窗不断 + 行徽标 ⏳/❌/✅ + 批量横幅 + ok 自动 refetch 消行 + 同 src 双路护栏（挡 running\|ok/对账式 GC/hasLoaded 门三轮收口）+ 判官 parse_failed 自动重试一次 + lease TTL 300s。德彪 r1(1P1+2P2+2P3)→r2→r3→r4 GO。**生效需主库重启**。 |
 | 2026-07-03 | dev `b63d0a2` | done 后补丁·dest_exists 对比+替换（小孙「失败了都不知道该不该丢弃」）：撞已存在页时弹窗并排对比+标「哪份新」+一键替换（旧页归档 _rejected/ 可恢复）；CAS 闸全链（expectedDestHash 必带/写盘前重验 lease+哈希/存在性双分支）+ 内核级 create-if-absent（linkSync EEXIST）+ 归档事件延迟 commit + ACL 死接线修（新增 methods 规则/rules 小孙 promote）。德彪 r1(2P1+2P2+1P3)→r2→r3→r4→r5 GO，PoC 全逐字入测。**生效需主库重启**。 |
+| 2026-07-03 | dev `7471da7` | done 后补丁·修2 月度纠错真接线（残债 C1.5 销账，小孙 07-03 拍口径）：无副作用重编探针（createProbeDecisionLedger overlay 视图 — append 内存虚拟行/读真表∪overlay 合并/fencing 同语义 sweep/白名单外默认拒绝）+ 近 90 天活跃 30/月滚动窗口（查询失败不记 probedAt）+ 判官同 judgeRunner；**auto-replace 默认 OFF（06-14 fork）**，`MULTI_AGENT_MONTHLY_SNAPSHOT_REPLACE=1` 武装 backup+replace（wiki_events 留痕）。德彪 r1 NO-GO(1P1+2P2+1P3)→全修→r2 GO。**生效需主库重启**。 |
 
 **合并后运维步**：① B3 backfill 55 篇 docs 全量真编译 — ✅ 2026-06-11 完成 ② 存量 session 摘要导出 — ✅ 2026-06-11 完成（#285 深迁移）③ `DROP TABLE wiki_memories` / session_memories 读路径切文件 = 小孙手动，仍 pending（不阻塞收口，Iron Law 1 runtime 不擅自 drop）。
