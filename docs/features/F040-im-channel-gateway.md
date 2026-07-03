@@ -23,6 +23,7 @@ created: 2026-07-03
 - 消息进入绑定的 room，走与 web 输入框**完全相同**的入站链路（村长身份、@提及照常路由到黄仁勋/范德彪/桂芬）
 - 房间里每个 agent 的最终回复逐条推回飞书私聊（长文本分片）
 - 未配置凭证时 connector 静默不启动，绝不影响主服务
+- **多人参与（Phase 2）**：建飞书群拉朋友进来，群里 @机器人 说话 = 多人在同一个 room 里聊，每条消息带发送者昵称归因（详见「多人参与」节）
 
 **「iOS 应用」的解法 = 三阶段路线**（原生 App 需 Apple 开发者账号 $99/年 + Mac 构建链 + 签名分发，收益对单用户场景增量很小，clowder-ai 也没做原生）：
 
@@ -103,25 +104,41 @@ busy/archived 状态回执：connector 消费 status 事件（如「会话已归
 3. **同绑定 FIFO 持久排队**（P1-3）：忙时排队不丢、保序、重启恢复、可审计；不依赖调用方重试。
 4. **出站账本 + startup reconcile**（P2-1）：pending/attempted/sent/failed_terminal 状态机，防「final 已落库但发送前后崩溃」的漏推/重复推。
 5. **SafeHttpClient 合同全量上测试面**（P2-2）：redirect 逐跳校验 / DNS rebinding / IANA special-use 精确段 / userinfo / 非常规端口 / 流式 body 上限 / timeout+abort；**SDK 仅承担 WS 长连接，REST 全走 SafeHttpClient**（SDK REST 绕不过合同就不用 SDK 发 REST）。
-6. **p2p 硬门**（P2-3）：Phase 1 拒绝一切非私聊事件（含白名单用户在群里发言）。
+6. **p2p 硬门**（P2-3）：Phase 1 拒绝一切非私聊事件（含白名单用户在群里发言）；Phase 2 升级为 `p2p ∪ 白名单群且 @bot`。
 7. **绑定配置语义统一**（P2-4）：env 仅作首次启动 bootstrap 播种；SQLite binding 行是运行时真相源；默认 provider 启动时校验（无效 → connector 不启动）；session group archived/deleted → 消费 sendable 门 status 并回执用户。
+
+## 多人参与（2026-07-03 小孙新需求）
+
+小孙原话：
+
+> 我可以把 ios 这个 PWA 安装到别人手机上 他们可以在房间里聊天 看看我们当前方案是否能实现
+
+**结论：诉求能实现，但正确载体是「飞书群桥接」，不是「多人 PWA」。**
+
+- **多人 PWA 为什么不行（as-is）**：PWA 只是现有 web UI 的壳，而本系统目前**零用户体系** —— 无登录/鉴权，任何能打开页面的人就是村长（timeline 对 user 角色硬编码村长 `session-service.ts:689`；`send_message` 的 `alias` 字段服务端从未消费，实测 message-service 全文件无 `payload.alias` 引用）。且别人手机要够得着这台机器：要么公网暴露（HTTPS + 真鉴权 + 攻击面，F029 级课题），要么人人装 Tailscale（非技术朋友装不动）。把 PWA 发给别人 = 把无锁的完整控制台交出去。**多人 PWA 需要先立「用户身份/鉴权/归因」底座 feature，远期按需另立项。**
+- **飞书群桥接为什么顺**：身份/账号/推送/iOS+Android 客户端全部由飞书代劳。建一个飞书群拉朋友进来 → 群成员 @机器人 说话 → 消息带发送者昵称进绑定 room → agent 回复回群。仍然**免公网**（同一条 WS 长连接）、**fail-closed**（群 chat_id 白名单：只有小孙拉白的群能说话，成员策略默认白名单群内全员可发）。朋友手机装的是飞书 App，跟「装 PWA」同级操作。
+- **发送者归因两级**（群模式必做，Phase 2 内）：
+  1. MVP：user 消息内容前缀 `[飞书·<昵称>]` —— 零 schema 改动，agent 与 UI 立即可辨识谁在说话
+  2. 正式：user 消息持久化 sender 展示名 + timeline 映射取真名（替换 :689 硬编码），schema 加列 + migration
+- **边界如实说**：群成员只能「对话」，看不到 web UI 面板（时间线/审批/交互卡片）——「在房间里聊天」这个诉求群桥接完全覆盖；哪天要给别人全 UI，再立用户体系 feature。
 
 ## Design Decisions
 
 | # | 决策 | 选项 | 结论 | 原因 |
 |---|------|------|------|------|
-| D1 | 首发渠道 | 飞书 / 微信个人号 / 企微 | **推荐飞书，待小孙拍板** | 官方 API 完整、长连接免公网、多端 App 体验好；个人微信无官方 bot 接口（iLink 属非常规渠道，封号险）；企微要企业主体 |
+| D1 | 首发渠道 | 飞书 / 微信个人号 / 企微 | **飞书（拍死，小孙 2026-07-03「按你推荐的来」）** | 官方 API 完整、长连接免公网、多端 App 体验好；个人微信无官方 bot 接口（iLink 属非常规渠道，封号险）；企微要企业主体 |
 | D2 | 飞书接入模式 | webhook / WS 长连接 | **WS 长连接（拍死）** | 免公网 IP/域名/隧道，本机 Windows 直接跑；官方 SDK 原生支持 |
-| D3 | 会话绑定 | env-only / SQLite 真相源 | **env bootstrap 播种 + SQLite binding 行为真相源（拍死）；绑哪个 room 待小孙拍板** | r1 P2-4：默认 provider 启动校验、archived fail-closed 回执；@提及在消息内容里照常路由 |
+| D3 | 会话绑定 | env-only / SQLite 真相源 | **拍死（小孙 2026-07-03）：专用移动房间**（bootstrap 播种自动建/可换绑）+ SQLite binding 真相源 | r1 P2-4：默认 provider 启动校验、archived fail-closed 回执；@提及在消息内容里照常路由 |
 | D4 | 出站范围 | 逐 final / 全房间旁听 | **绑定 room 内逐 final 投递（invocation.finished 粒度，拍死）** | r1 P1-2 重定义后拍死：四类 final 独立投递；progress/delta 不投（流式占位 Phase 2 再议）|
 | D5 | 入站安全 | 全放行 / open_id 白名单 | **白名单 fail-closed + p2p 硬门（拍死）** | 修正 clowder 弱点；未配白名单 = connector 不启动；拒绝记审计 |
-| D6 | 手机端路线 | 原生 App / PWA / 飞书即客户端 | **三阶段（见 What），待小孙拍板期待值** | 阶段 1 零前端开发即可手机对话；原生壳投入产出比最差放最后（r1 P3-2 认可无硬伤）|
-| D7 | 微信生态 | 个人微信 / 企微机器人 / 不做 | **MVP 不做，二渠道推荐企微智能机器人，待小孙拍板** | 企微 WS 长连接同样免公网；个人微信风险不可控 |
+| D6 | 手机端路线 | 原生 App / PWA / 飞书即客户端 | **三阶段（拍死，小孙 2026-07-03）** | 阶段 1 零前端开发即可手机对话；原生壳投入产出比最差放最后（r1 P3-2 认可无硬伤）|
+| D7 | 微信生态 | 个人微信 / 企微机器人 / 不做 | **MVP 不做（拍死，小孙 2026-07-03）；二渠道候选=企微智能机器人** | 企微 WS 长连接同样免公网；个人微信风险不可控 |
 | D8 | 绑定存储 | Redis / SQLite | **SQLite + drizzle（拍死）** | 本仓无 Redis，不为此引基础设施 |
 | D9 | 出站安全 | 裸 fetch / SDK REST / SafeHttpClient | **SafeHttpClient 合同全量 + 域名 pin；SDK 仅 WS（拍死）** | r1 P2-2；F037 合同共享，谁先落地谁抽 |
 | D10 | 入站幂等 | 内存 LRU / durable 账本 | **durable 入站账本 UNIQUE 三元组（拍死）** | r1 P1-1：clientMessageId 无服务端约束；LRU 重启失忆 |
 | D11 | 出站可靠性 | 尽力而为 / 账本+reconcile | **出站账本状态机 + startup reconcile，at-least-once（拍死）** | r1 P2-1：偶重复优于静默漏推，对齐 F037 D10/D11 |
 | D12 | 同绑定并发 | 拒绝丢弃 / FIFO 持久排队 | **FIFO 持久排队 + settle 后 drain（拍死）** | r1 P1-3：现有入口 busy 即丢；飞书已 ACK 不会重试 |
+| D13 | 多人参与模式 | 多人 PWA / 飞书群桥接 | **飞书群桥接提级 Phase 2（推荐已报小孙）；多人 PWA 挂起待用户体系另立项** | 零用户体系（人人皆村长 :689）+ 网络可达双硬伤 vs 群桥接身份/客户端/推送全由飞书代劳且免公网、fail-closed 群白名单 |
 
 ## Acceptance Criteria
 
@@ -137,13 +154,20 @@ busy/archived 状态回执：connector 消费 status 事件（如「会话已归
 - [ ] AC8: 出站可靠：final 落库后 connector 崩溃 / 飞书 API 失败 → 重启 reconcile 补投不漏；attempted 结果未知补投一次并标记；账本状态机可审计
 - [ ] AC9: 小孙手机真机全链路验收：派活 → 收到各 agent 回复
 
-### Phase 2 — 体验强化（拍板后细化）
+### Phase 2 — 飞书群桥接·多人参与（2026-07-03 新需求提级）
 
-- [ ] AC10: PWA：manifest + 图标 + apple meta，iPhone Safari 可添加到主屏（LAN/Tailscale 访问 + 安全说明落 docs）
-- [ ] AC11: 流式占位卡（发送中→编辑成终稿）或等效体验
-- [ ] AC12: 图片/文件收发（复用 ContentBlock）
+- [ ] AC10: 群 chat_id 白名单 fail-closed：仅白名单群内 @机器人 的消息进 room；非白名单群 / 白名单群未 @ 一律拒 + 审计（入站门升级为 `p2p ∪ 白名单群且@bot`）
+- [ ] AC11: 发送者归因：群内不同成员发言在 room 与 agent 视角可区分（MVP `[飞书·昵称]` 前缀起步；正式=sender 展示名持久化 + 替换 session-service.ts:689 硬编码，schema migration）
+- [ ] AC12: 群内多人快速连发 → 复用 D12 FIFO（binding 粒度=群）保序全入库零丢失
+- [ ] AC13: agent finals 回推群聊（分片同私聊）；私聊/群聊双绑定并存互不串扰
 
-### Phase 3 — 二渠道/部署扩展（按需）
+### Phase 3 — 体验强化
+
+- [ ] AC14: PWA（小孙自用移动全 UI）：manifest + 图标 + apple meta，iPhone Safari 可添加到主屏（LAN/Tailscale 访问 + 安全说明落 docs；**不对外分发** — D13）
+- [ ] AC15: 流式占位卡（发送中→编辑成终稿）或等效体验
+- [ ] AC16: 图片/文件收发（复用 ContentBlock）
+
+### Phase 4 — 二渠道/部署扩展（按需）
 
 - [ ] 企微智能机器人 或 飞书 webhook 模式（公网部署时）
 
@@ -169,7 +193,9 @@ busy/archived 状态回执：connector 消费 status 事件（如「会话已归
 |------|------|
 | 2026-07-03 | Kickoff：clowder-ai 对照调研 + 本仓挂载点实测 + 架构草案 v1 + D1-D9（黄仁勋，夜间自主批；落库搭 F038 kickoff commit —— 并行 session 暂存竞态，原 `5cd2b68` 经 rebase 换号 `2bdf0ce`） |
 | 2026-07-03 | 范德彪设计审 r1（codex exec）：**NEEDS-WORK 3P1+4P2+3P3** —— 幂等假设不存在 / per-turn emit 无 final 语义 / busy 即丢，全部 message-service.ts 逐条核实属实 |
-| 2026-07-03 | 设计合同 v2 落盘：入站账本 / invocation.finished 出站边界 / FIFO 持久排队 / 出站账本+reconcile / SafeHttpClient 全量 / p2p 硬门 / 绑定语义统一；D10-D12 新增。待小孙拍 D1/D3(room)/D6/D7 → 德彪 r2 |
+| 2026-07-03 | 设计合同 v2 落盘（`36eba7e`）：入站账本 / invocation.finished 出站边界 / FIFO 持久排队 / 出站账本+reconcile / SafeHttpClient 全量 / p2p 硬门 / 绑定语义统一；D10-D12 新增 |
+| 2026-07-03 | 小孙拍板：D1=飞书 / D3=专用移动房间 / D6=三阶段 / D7=不做微信（「按你推荐的来」）|
+| 2026-07-03 | 新需求「别人手机进房间聊天」→ 评估：多人 PWA 不可行（零用户体系 + 网络可达双硬伤），改**飞书群桥接**提级 Phase 2（D13 + AC10-13 + 归因两级），PWA 降 Phase 3 小孙自用 → v3 落盘派德彪 r2 |
 
 ## Links
 
