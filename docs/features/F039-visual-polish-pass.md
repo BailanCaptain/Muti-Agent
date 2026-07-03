@@ -55,19 +55,26 @@ F036 restyle 立住了暖色底座（OKLCH 4 档表面 + 暖金 accent + 4 档�
 
 ## Acceptance Criteria
 
-- [ ] AC0: repo 根 `DESIGN.md` 落库，符合 design.md spec 结构（YAML frontmatter tokens + 八章 prose），
-      token 值与 globals.css / tailwind.config 实值一致（抽查 accent-500/surface/radius/字阶）。
-- [ ] AC1: tailwind.config 状态色重映射后，全站无股票默认冷色残留（视觉抽查 KB tab/警告/审批面板）；
-      `emerald-*` 与 `green-*` 渲染一致；PROVIDER_ACCENT 同步；现有 vitest 类名断言零破坏。
-- [ ] AC2: fontSize 语义字阶 token 落 tailwind.config；组件目录 `text-[Npx]`（N≤16）任意值清零；
-      8px/9px 全部 ≥10px。
-- [ ] AC3: 全局 focus-visible ring 生效（Tab 遍历主界面可见焦点）；裸 `outline-none` 清零
-      （替换为 focus-visible 方案）。
-- [ ] AC4: 14 个文件的结构 emoji 图标替换为 lucide（统一 size/stroke）；身份/内容 emoji 保留。
-- [ ] AC5: timeline 首载 + KB 列表 loading 有 skeleton；主按钮有按压反馈；
-      breathe/approval-pulse 在 prefers-reduced-motion 下静止。
-- [ ] AC6: 空房间显示欢迎空态（三 agent 介绍 + @ 提示），非一行"尚无消息。"。
-- [ ] AC7: `tsc --noEmit` 绿 + 前端 vitest 全绿 + `next build` 过；worktree preview 起给小孙验收。
+- [x] AC0: repo 根 `DESIGN.md` 落库，符合 design.md spec 结构（YAML frontmatter tokens + 八章 prose），
+      token 值与 globals.css / tailwind.config 实值一致（guardian 抽查 accent/surface 4 档/radius 4 档/字阶 3 档
+      + neutral/semantic/identity 全对上）。
+- [x] AC1: tailwind.config 状态色重映射后，全站无股票默认冷色残留（guardian 活体抽查 KB/警告/审批面板）；
+      `emerald-*` 与 `green-*` 同一 const 对象引用；PROVIDER_ACCENT 同步调和 hex；前端 vitest 零破坏。
+- [x] AC2: fontSize 语义字阶 micro/caption/compact 落 tailwind.config；`text-[Npx]`（N≤16）任意值清零
+      （299→0，8/9px 升 10px 底线；22-64px display 级豁免已在 DESIGN.md 登记）。
+- [x] AC3: 全局 :focus-visible 2px accent 环生效（guardian Tab 实测 computed style = accent-400）；
+      全库 23 处 `outline-none` 均有 focus:/focus-visible: 替代（2 处为邻元素 affordance：
+      composer 外壳 focus-within / resize grip group-focus-visible，guardian 逐处亲证）。
+- [x] AC4: runtime-log 系 14 文件 60+ 结构 emoji → lucide（残留仅注释豁免区）+ guardian 点名的
+      全站 5 处散装 emoji 扫尾（Mail/Lock/Globe/Timer/AlertTriangle）；身份/内容 emoji 保留。
+- [x] AC5: KB 派生视图列表 + a2a 调用树 loading 换 SkeletonLines 骨架；主 CTA 按压反馈；
+      reduced-motion 降级。**修订**：原文「timeline 首载 skeleton」改判 N/A——thread-store 无
+      loading 语义，加旗标属行为改动越 Redesign-Preserve scope，空态行为与改前等价（留后续）。
+- [x] AC6: 空房间欢迎空态（AGENT_PROFILES 数据驱动名册卡：角色/擅长/@所有人 提示），TDD 3 用例 +
+      guardian 活体截图确认。
+- [x] AC7: `pnpm typecheck` 0 + 前端 vitest 818/818 + `pnpm test:api` 0 + `pnpm build` 0
+      （rebase 到最新 origin/dev 后全量复跑，吃进 F038 Playwright 基建 + F027 promote 补丁零冲突）；
+      preview :3103 / API :8803 活体待小孙验收。
 
 ## Dependencies
 
@@ -90,6 +97,7 @@ F036 restyle 立住了暖色底座（OKLCH 4 档表面 + 暖金 accent + 4 档�
 | 日期 | 事件 |
 |------|------|
 | 2026-07-03 | Kickoff（小孙 /goal 夜间授权）；三参考库审计 + 前端 grep 量化审计完成 |
+| 2026-07-03 夜 | 实现完成（4 commit：底座层/图标+骨架/lint 收尾/emoji 扫尾）；quality-gate 全绿；零上下文 guardian **PASS**（AC0-AC7 全过 0 FAIL，报告+6 截图在 worktree `.agents/acceptance/F039/`）；范德彪 codex r1 **GO**（0 P1/P2/P3）；按其 residual risk 提示 rebase 最新 origin/dev（吃 F038/F027 补丁零冲突）+ 全量复门禁绿（typecheck 0 / vitest 818 / api 0 / build 0）；分支已推 origin。**待小孙 :3103 活体验收 → merge-gate** |
 
 ## Links
 
