@@ -13,6 +13,9 @@
 | F032 | SOP 谓词执行器·审计模式：规则谓词化 + 违规审计报告，只报不拦（借鉴批次 3/6） | spec | 黄仁勋 | internal | [F032](features/F032-sop-predicate-audit.md) |
 | F034 | SOP 谓词硬拦截·确定性边界：WorkflowSop 流转/merge gate/MCP 操作（借鉴批次 5/6，Blocked by F032） | spec | 黄仁勋 | internal | [F034](features/F034-sop-predicate-enforcement.md) |
 | F037 | 日报邮件推送系统（DailyBrief）：每日 07:30 五板块中文 HTML 日报（AI 推理/训练加权 + 热点 + 篮球/电竞 + 股票）+ 周一 GitHub 周榜 + LLM 速览摘要 + 单源失败隔离 + 出站白名单/外发账本 | spec | 黄仁勋 | internal | [F037](features/F037-daily-news-digest.md) |
+| F038 | 前端 E2E 自动化测试基建：Playwright 真点击验证前后端交互（@playwright/test + 隔离 harness 临时 SQLite/专用端口 + 全链路种子用例）+ webapp-testing skill（agent 浏览器验证 SOP）+ quality-gate/acceptance-guardian 流程接线（F025 YAGNI 项到期补齐；参考 testdino playwright-skill + anthropics webapp-testing） | spec | 黄仁勋 | internal | [F038](features/F038-frontend-e2e-testing-infra.md) |
+| F039 | 前端视觉打磨 pass：三参考规范对标（google design.md / taste-skill / ui-ux-pro-max）——状态色暖调和 config 重映射（642 处裸冷色零改名收编）+ 字阶 token 全库 snap + focus-visible 焦点环 + emoji→lucide 图标纪律 + skeleton/按压反馈/reduced-motion + 空房间欢迎空态 + DESIGN.md 设计真相源 | spec | 黄仁勋 | internal | [F039](features/F039-visual-polish-pass.md) |
+| F040 | 外部 IM 渠道网关（飞书先行·WS 长连接免公网）+ 手机端三阶段路线（飞书 App → PWA → 按需原生壳）：connector 复用 send_message 同一入口 + open_id 白名单 fail-closed + SQLite 绑定 + SafeHttpClient 合同对齐（参考 clowder-ai connectors） | spec | 黄仁勋 | internal | [F040](features/F040-im-channel-gateway.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features
