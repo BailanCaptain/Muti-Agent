@@ -275,3 +275,73 @@ describe("promote-jobs-store · 德彪 r1 修复", () => {
     )
   })
 })
+
+describe("dest_exists 替换补丁 · store 契约", () => {
+  it("失败记录 errorCode；替换成功记录 replacedArchivePath", async () => {
+    mockFetchOnce(409, { ok: false, code: "DEST_EXISTS", error: "exists" })
+    await usePromoteJobsStore.getState().startPromote({
+      srcDraftPath: "wiki/concepts/draft/_auto/a.md",
+      destWikiPath: "wiki/concepts/a.md",
+      callerAlias: "黄仁勋",
+      reason: "r",
+    })
+    const failed = usePromoteJobsStore.getState().jobs["wiki/concepts/draft/_auto/a.md"]
+    expect(failed?.status).toBe("failed")
+    expect(failed?.errorCode).toBe("DEST_EXISTS")
+
+    mockFetchOnce(200, {
+      ok: true,
+      finalPath: "/abs/a.md",
+      eventId: 1,
+      replacedArchivePath: "wiki/_rejected/concepts--a--replaced-9.md",
+    })
+    await usePromoteJobsStore.getState().startPromote({
+      srcDraftPath: "wiki/concepts/draft/_auto/a.md",
+      destWikiPath: "wiki/concepts/a.md",
+      callerAlias: "黄仁勋",
+      reason: "r",
+      allowReplace: true,
+    })
+    const okJob = usePromoteJobsStore.getState().jobs["wiki/concepts/draft/_auto/a.md"]
+    expect(okJob?.status).toBe("ok")
+    expect(okJob?.replacedArchivePath).toBe("wiki/_rejected/concepts--a--replaced-9.md")
+  })
+})
+
+describe("dest_exists 替换补丁 · batch errorCode 映射（德彪 replace-r1 P2）", () => {
+  it("batch 撞 dest_exists 的失败项要带 errorCode=DEST_EXISTS（单篇弹窗才进对比替换流）", async () => {
+    mockFetchOnce(200, {
+      ok: true,
+      total: 2,
+      success: [],
+      failed: [
+        {
+          srcDraftPath: "wiki/concepts/draft/_auto/hit.md",
+          destWikiPath: "wiki/concepts/hit.md",
+          status: "dest_exists",
+          error: "dest exists",
+        },
+        {
+          srcDraftPath: "wiki/concepts/draft/_auto/other.md",
+          destWikiPath: "wiki/concepts/other.md",
+          status: "denied_acl",
+          error: "acl",
+        },
+      ],
+    })
+    await usePromoteJobsStore.getState().startBatch({
+      items: [
+        { srcDraftPath: "wiki/concepts/draft/_auto/hit.md", destWikiPath: "wiki/concepts/hit.md" },
+        {
+          srcDraftPath: "wiki/concepts/draft/_auto/other.md",
+          destWikiPath: "wiki/concepts/other.md",
+        },
+      ],
+      callerAlias: "小孙",
+      reason: "r",
+    } as never)
+    const jobs = usePromoteJobsStore.getState().jobs
+    expect(jobs["wiki/concepts/draft/_auto/hit.md"]?.errorCode).toBe("DEST_EXISTS")
+    expect(jobs["wiki/concepts/draft/_auto/other.md"]?.errorCode).toBeUndefined()
+  })
+})

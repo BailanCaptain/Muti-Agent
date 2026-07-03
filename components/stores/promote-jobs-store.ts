@@ -39,6 +39,10 @@ export interface PromoteJob {
   rejectReason?: V14RejectReason
   /** 网络/4xx/5xx 文案。 */
   error?: string
+  /** 后端错误码（如 DEST_EXISTS → 弹窗给「对比+替换」面板）。 */
+  errorCode?: string
+  /** 替换成功时：旧页归档到的 _rejected/ 相对路径（成功面板展示）。 */
+  replacedArchivePath?: string
   fromBatch?: boolean
 }
 
@@ -98,7 +102,13 @@ export const usePromoteJobsStore = create<PromoteJobsStore>((set, get) => ({
       })
       const raw = (await resp.json()) as PromoteCommitResponse
       if (raw.ok) {
-        setJob(set, { ...base, status: "ok", finalPath: raw.finalPath, eventId: raw.eventId })
+        setJob(set, {
+          ...base,
+          status: "ok",
+          finalPath: raw.finalPath,
+          eventId: raw.eventId,
+          replacedArchivePath: raw.replacedArchivePath,
+        })
         set({ settledUnconsumed: true })
         return
       }
@@ -109,6 +119,7 @@ export const usePromoteJobsStore = create<PromoteJobsStore>((set, get) => ({
       setJob(set, {
         ...base,
         status: "failed",
+        errorCode: raw.code,
         error: `${raw.code}: ${(raw as PromoteCommitGenericError).error ?? "promote failed"}`,
       })
     } catch (err) {
@@ -188,6 +199,9 @@ export const usePromoteJobsStore = create<PromoteJobsStore>((set, get) => ({
             status: "failed",
             rejectReason: f.auditReject,
             error: f.auditReject ? undefined : `${f.status}: ${f.error}`,
+            // 德彪 replace-r1 P2：batch 撞 dest_exists 也要映射 errorCode——用户重开该行的
+            // 单篇 PromoteModal 才能进「对比+替换」流（batch 本身不支持 replace，by design）。
+            errorCode: f.status === "dest_exists" ? "DEST_EXISTS" : undefined,
             fromBatch: true,
           })
         }

@@ -498,3 +498,161 @@ describe("PromoteModal · 成功面板本地快照（德彪后台化 r1 P2）", 
     )
   })
 })
+
+describe("PromoteModal · dest_exists 对比+替换（小孙「失败了都不知道该不该丢弃」）", () => {
+  /** URL 路由式 mock：替换面板并发拉两侧内容 + promote 两次提交，顺序 mock 不够用。 */
+  function mockByUrl() {
+    let promoteCalls = 0
+    const promoteBodies: unknown[] = []
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const respond = (status: number, json: unknown) =>
+        Promise.resolve({
+          ok: status >= 200 && status < 300,
+          status,
+          json: () => Promise.resolve(json),
+        }) as unknown as Promise<Response>
+      if (url.includes("/promote/preview")) {
+        return respond(200, { ok: true, audit: { passed: true } })
+      }
+      if (url.includes("/api/wiki/drafts/promote")) {
+        promoteCalls++
+        promoteBodies.push(JSON.parse(String(init?.body ?? "{}")))
+        if (promoteCalls === 1) {
+          return respond(409, {
+            ok: false,
+            code: "DEST_EXISTS",
+            error: "dest wiki path already exists: wiki/concepts/existing.md",
+          })
+        }
+        return respond(200, {
+          ok: true,
+          finalPath: "/abs/wiki/concepts/existing.md",
+          eventId: 42,
+          replacedArchivePath: "wiki/_rejected/concepts--existing--replaced-123.md",
+        })
+      }
+      if (url.includes("/api/wiki/page/content")) {
+        return respond(200, {
+          content: "# 旧的正式页内容",
+          mtime: "2026-06-13T10:00:00.000Z",
+          contentHash: "cafe".repeat(16),
+        })
+      }
+      if (url.includes("/api/wiki/drafts/content")) {
+        return respond(200, { content: "# 新的 draft 内容", mtime: "2026-07-02T18:00:00.000Z" })
+      }
+      return respond(404, { ok: false })
+    }) as unknown as typeof fetch
+    return { promoteBodies: () => promoteBodies }
+  }
+
+  it("DEST_EXISTS 失败 → 对比面板（两侧内容 + draft 较新徽标）；点替换 → allowReplace=true 重提 → 成功面板带归档路径", async () => {
+    const calls = mockByUrl()
+    render(
+      <PromoteModal
+        open={true}
+        srcDraftPath="wiki/concepts/draft/_auto/existing.md"
+        callerAlias="黄仁勋"
+        onClose={() => {}}
+      />,
+    )
+    await waitFor(() => expect(screen.getByText(/结构检查通过/)).toBeTruthy())
+
+    fireEvent.change(screen.getByLabelText("Target wiki path"), {
+      target: { value: "wiki/concepts/existing.md" },
+    })
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "draft 更新" } })
+    fireEvent.click(screen.getByRole("button", { name: "Promote" }))
+
+    // 撞 dest_exists → 对比面板出现（不再是通用红框）
+    await waitFor(() => expect(screen.getByTestId("replace-compare-panel")).toBeTruthy())
+    expect(screen.queryByText("Promote error")).toBeNull()
+    await waitFor(() => {
+      expect(screen.getByText("# 旧的正式页内容")).toBeTruthy()
+      expect(screen.getByText("# 新的 draft 内容")).toBeTruthy()
+    })
+    // draft (07-02) 比现有页 (06-13) 新 → 「本 draft 较新」结论 + 较新徽标在 draft 侧
+    expect(screen.getByText(/本 draft 较新/)).toBeTruthy()
+
+    // 点「替换现有页」→ 第二次 promote 提交带 allowReplace=true + dest=冲突路径
+    fireEvent.click(screen.getByTestId("replace-confirm-button"))
+    await waitFor(() => expect(screen.getByTestId("promote-success")).toBeTruthy())
+    const bodies = calls.promoteBodies() as Array<Record<string, unknown>>
+    expect(bodies).toHaveLength(2)
+    expect(bodies[0].allowReplace).toBeUndefined()
+    expect(bodies[1].allowReplace).toBe(true)
+    expect(bodies[1].expectedDestHash).toBe("cafe".repeat(16))
+    expect(bodies[1].destWikiPath).toBe("wiki/concepts/existing.md")
+    // 成功面板显示旧页归档去向
+    expect(screen.getByText(/旧页已归档/)).toBeTruthy()
+    expect(screen.getByText("wiki/_rejected/concepts--existing--replaced-123.md")).toBeTruthy()
+  })
+
+  it("非 DEST_EXISTS 的失败 → 仍走通用红框，不出替换面板", async () => {
+    mockSequence([
+      { ok: true, status: 200, json: { ok: true, audit: { passed: true } } },
+      { ok: false, status: 409, json: { ok: false, code: "LEASE_HELD", error: "lease held" } },
+    ])
+    render(
+      <PromoteModal
+        open={true}
+        srcDraftPath="wiki/concepts/draft/_auto/x.md"
+        callerAlias="黄仁勋"
+        onClose={() => {}}
+      />,
+    )
+    await waitFor(() => expect(screen.getByText(/结构检查通过/)).toBeTruthy())
+    fireEvent.change(screen.getByLabelText("Target wiki path"), {
+      target: { value: "wiki/concepts/x.md" },
+    })
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "r" } })
+    fireEvent.click(screen.getByRole("button", { name: "Promote" }))
+    await waitFor(() => expect(screen.getByText("Promote error")).toBeTruthy())
+    expect(screen.queryByTestId("replace-compare-panel")).toBeNull()
+  })
+
+  it("德彪 replace-r1 P2：对比内容未加载完（page/content pending）→ 替换按钮禁用（fail-closed 防盲替换）", async () => {
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      const respond = (status: number, json: unknown) =>
+        Promise.resolve({
+          ok: status < 300,
+          status,
+          json: () => Promise.resolve(json),
+        }) as unknown as Promise<Response>
+      if (url.includes("/promote/preview"))
+        return respond(200, { ok: true, audit: { passed: true } })
+      if (url.includes("/api/wiki/drafts/promote")) {
+        return respond(409, { ok: false, code: "DEST_EXISTS", error: "exists" })
+      }
+      if (url.includes("/api/wiki/page/content")) {
+        return new Promise(() => {}) as Promise<Response> // 永不 resolve —— 加载中
+      }
+      if (url.includes("/api/wiki/drafts/content")) {
+        return respond(200, { content: "# draft", mtime: "2026-07-02T18:00:00.000Z" })
+      }
+      return respond(404, { ok: false })
+    }) as unknown as typeof fetch
+
+    render(
+      <PromoteModal
+        open={true}
+        srcDraftPath="wiki/concepts/draft/_auto/pending.md"
+        callerAlias="黄仁勋"
+        onClose={() => {}}
+      />,
+    )
+    await waitFor(() => expect(screen.getByText(/结构检查通过/)).toBeTruthy())
+    fireEvent.change(screen.getByLabelText("Target wiki path"), {
+      target: { value: "wiki/concepts/pending.md" },
+    })
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "r" } })
+    fireEvent.click(screen.getByRole("button", { name: "Promote" }))
+
+    await waitFor(() => expect(screen.getByTestId("replace-compare-panel")).toBeTruthy())
+    const btn = screen.getByTestId("replace-confirm-button") as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+    expect(screen.getByText(/对比内容加载中/)).toBeTruthy()
+  })
+})

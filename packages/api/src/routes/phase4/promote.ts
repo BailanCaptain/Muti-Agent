@@ -30,9 +30,11 @@
 
 import type { FastifyInstance } from "fastify"
 
+import crypto from "node:crypto"
 import fs from "node:fs"
+import path from "node:path"
 import type { WikiLeasesRepository } from "../../db/repositories/wiki-leases-repository"
-import { WikiPathInvalidError, safeWikiPath } from "../../wiki/path-containment"
+import { WikiPathInvalidError, readContainedFile, safeWikiPath } from "../../wiki/path-containment"
 import { checkExemptionSanitizeBlocked } from "../../wiki/promote-audit/exemption-tainted-fields"
 import type { PromoteWikiService } from "../../wiki/promote-audit/promote-wiki-service"
 import {
@@ -71,7 +73,25 @@ type PostPromoteBody = {
   reason?: string
   taintedSourceFields?: readonly string[]
   sourceMessageIds?: string[]
+  /** dest_exists 替换补丁：true = dest 已存在时归档旧页后覆盖（见 PromoteRequest.allowReplace）。 */
+  allowReplace?: boolean
+  /** 德彪 replace-r1 P1 · CAS 闸：allowReplace 时必填——对比面板看到的现有页 contentHash。 */
+  expectedDestHash?: string
 }
+
+/**
+ * dest_exists 替换补丁 · GET /api/wiki/page/content 的读取围栏：只读正式区四桶 +
+ * feedback/work（与 PromoteModal ALLOWED_DEST_PREFIXES 同口径），draft/_rejected/
+ * _superseded/warnings/index 一律不经此端点（各有专用端点或不该被 UI 裸读）。
+ */
+const FORMAL_PAGE_PREFIXES = [
+  "wiki/concepts/",
+  "wiki/rules/",
+  "wiki/methods/",
+  "wiki/people/",
+  "wiki/feedback/",
+  "wiki/work/",
+] as const
 
 export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesDeps): void {
   const ttl = deps.promoteLeaseTtlSeconds ?? DEFAULT_PROMOTE_LEASE_TTL_SECONDS
@@ -193,6 +213,8 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
         fencingToken: acquired.fencingToken,
         taintedSourceFields: validation.body.taintedSourceFields,
         sourceMessageIds: validation.body.sourceMessageIds,
+        allowReplace: validation.body.allowReplace,
+        expectedDestHash: validation.body.expectedDestHash,
       })
 
       switch (result.status) {
@@ -201,6 +223,7 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
             ok: true,
             finalPath: result.finalPath,
             eventId: result.eventId,
+            replacedArchivePath: result.replacedArchivePath,
           }
         case "audit_rejected":
           reply.code(422)
@@ -221,6 +244,9 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
         case "dest_exists":
           reply.code(409)
           return { ok: false, code: "DEST_EXISTS", error: result.error }
+        case "dest_conflict":
+          reply.code(409)
+          return { ok: false, code: "DEST_CONFLICT", error: result.error }
         case "path_invalid":
           reply.code(400)
           return { ok: false, code: "PATH_INVALID", error: result.error }
@@ -237,6 +263,87 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
       })
     }
   })
+
+  // dest_exists 替换补丁 · GET /api/wiki/page/content?path=<正式区路径> —— 替换前对比现有页。
+  // 围栏与 drafts/content 同款三道（家规 list/read 同 containment）：
+  //   ① safeWikiPath（防 ../ 逃逸 / NUL / 绝对路径）② 收窄到正式区白名单前缀 + 拒 draft/ADS/非 .md
+  //   ③ readContainedFile 真实路径 containment（防 symlink/junction/hardlink 跟随逃逸）
+  app.get("/api/wiki/page/content", async (request, reply) => {
+    const { path: pagePath } = request.query as { path?: string }
+    if (typeof pagePath !== "string" || pagePath.length === 0) {
+      reply.code(400)
+      return { ok: false, error: "VALIDATION_FAILED", message: "query param 'path' is required" }
+    }
+    try {
+      let abs: string
+      try {
+        abs = safeWikiPath(deps.wikiRoot, pagePath)
+      } catch (err) {
+        if (err instanceof WikiPathInvalidError) {
+          reply.code(400)
+          return { ok: false, error: "PATH_INVALID", message: err.message }
+        }
+        throw err
+      }
+      // NTFS ADS（`x.md:stream.md`）+ 非 .md + draft/归档区拒（与 drafts readContent 同口径）
+      if (pagePath.includes(":")) {
+        reply.code(400)
+        return {
+          ok: false,
+          error: "PATH_INVALID",
+          message: `path must not contain ':': ${pagePath}`,
+        }
+      }
+      if (!abs.toLowerCase().endsWith(".md")) {
+        reply.code(400)
+        return { ok: false, error: "PATH_INVALID", message: `only .md is readable: ${pagePath}` }
+      }
+      const normalized = path.posix.normalize(pagePath.replace(/\\/g, "/")).toLowerCase()
+      const inFormalBucket = FORMAL_PAGE_PREFIXES.some((p) => normalized.startsWith(p))
+      // 德彪 replace-r1 P3：拒**任意路径段**的归档区（wiki/concepts/_rejected/x.md 会过
+      // formal 前缀检查）——对齐 demote 的 isInRejectedBin 语义，_superseded 同口径。
+      const inArchiveBin =
+        normalized.includes("/_rejected/") || normalized.includes("/_superseded/")
+      if (!inFormalBucket || inArchiveBin || isDraftRelativePath(normalized)) {
+        reply.code(400)
+        return {
+          ok: false,
+          error: "PATH_INVALID",
+          message: `path must be a formal wiki page under ${FORMAL_PAGE_PREFIXES.join("/")} (non-draft/non-archive): ${pagePath}`,
+        }
+      }
+      // 词法子树快速失败 + 真实路径 containment（防 symlink 逃逸），root = <wikiRoot>/wiki
+      const formalRoot = path.resolve(deps.wikiRoot, "wiki")
+      const formalRootSep = formalRoot.endsWith(path.sep) ? formalRoot : formalRoot + path.sep
+      if (!abs.startsWith(formalRootSep)) {
+        reply.code(400)
+        return {
+          ok: false,
+          error: "PATH_INVALID",
+          message: `path not under wiki root: ${pagePath}`,
+        }
+      }
+      const result = await readContainedFile(abs, formalRoot)
+      if (!result) {
+        reply.code(404)
+        return { ok: false, error: "NOT_FOUND", message: "wiki page not found" }
+      }
+      // 德彪 replace-r1 P1 · contentHash 给对比面板做 CAS：替换请求带回 expectedDestHash，
+      // 服务端校验「替换的就是用户看过的这一版」。
+      return {
+        ...result,
+        contentHash: crypto.createHash("sha256").update(result.content, "utf-8").digest("hex"),
+      }
+    } catch (err) {
+      if (err instanceof WikiPathInvalidError) {
+        reply.code(400)
+        return { ok: false, error: "PATH_INVALID", message: err.message }
+      }
+      request.log.error({ err }, "GET /api/wiki/page/content threw")
+      reply.code(500)
+      return { ok: false, error: "INTERNAL_ERROR", message: (err as Error).message }
+    }
+  })
 }
 
 type ValidatedPromote =
@@ -249,6 +356,8 @@ type ValidatedPromote =
         reason: string
         taintedSourceFields?: readonly string[]
         sourceMessageIds?: string[]
+        allowReplace?: boolean
+        expectedDestHash?: string
       }
     }
   | { ok: false; error: string }
@@ -271,6 +380,23 @@ function validatePromoteBody(body: PostPromoteBody): ValidatedPromote {
   if (tainted === INVALID_TAINTED) {
     return { ok: false, error: "taintedSourceFields 必须是字符串数组" }
   }
+  // 替换是破坏性升级动作：只接受严格 boolean，truthy 字符串/数字一律拒（防误触发归档覆盖）。
+  if (body.allowReplace !== undefined && typeof body.allowReplace !== "boolean") {
+    return { ok: false, error: "allowReplace 必须是 boolean" }
+  }
+  // 德彪 replace-r1 P1 · CAS 闸在 API 面就闭合：allowReplace 必带对比面板的现有页哈希
+  // （sha256 hex），没对过 diff 的调用方拿不到 → 无盲替换入口。
+  if (body.allowReplace === true) {
+    if (
+      typeof body.expectedDestHash !== "string" ||
+      !/^[0-9a-f]{64}$/.test(body.expectedDestHash)
+    ) {
+      return {
+        ok: false,
+        error: "allowReplace 需要 expectedDestHash（sha256 hex，来自 page/content 对比）",
+      }
+    }
+  }
   return {
     ok: true,
     body: {
@@ -280,6 +406,8 @@ function validatePromoteBody(body: PostPromoteBody): ValidatedPromote {
       reason: body.reason,
       taintedSourceFields: tainted,
       sourceMessageIds: body.sourceMessageIds,
+      allowReplace: body.allowReplace,
+      expectedDestHash: body.expectedDestHash,
     },
   }
 }

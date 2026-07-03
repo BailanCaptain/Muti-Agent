@@ -76,6 +76,118 @@ export function writeFileAtomic(targetPath: string, content: string): void {
 }
 
 /**
+ * F027 replace 补丁（德彪 replace-r3 P1）· 原子 create-if-absent：target 已存在则**内核级**
+ * 拒绝，绝不覆盖——关掉 existsSync→rename 的 TOCTOU（rename 会替换既存文件，check 后的
+ * 并发创建会被盲覆盖）。
+ *
+ * 原理：tmp 写全 + fsync 后 `fs.linkSync(tmp, target)`——硬链接创建在 POSIX/NTFS 都是
+ * 原子的 create-if-absent（target 已存在 → EEXIST，一个字节不动）。成功后 unlink tmp，
+ * target 回到 nlink=1（瞬时 nlink=2 窗口无害；containment 读原语的 hardlink 检查在
+ * 稳态看到的是 1）。
+ *
+ * 返回 "created" | "exists"（exists = 并发已占位，caller 按 dest_exists 语义处理）。
+ */
+export function writeFileAtomicIfAbsent(targetPath: string, content: string): "created" | "exists" {
+  const dir = path.dirname(targetPath)
+  fs.mkdirSync(dir, { recursive: true })
+
+  const tmpPath = generateAtomicTmpPath(targetPath)
+  const fd = fs.openSync(tmpPath, "w")
+  try {
+    fs.writeSync(fd, content)
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
+
+  try {
+    linkWithRetry(tmpPath, targetPath)
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmpPath)
+    } catch {
+      // tmp 清理 best-effort（orphan 由 cleanupAtomicOrphans 兜底）
+    }
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return "exists"
+    throw err
+  }
+  // 德彪 replace-r4 P2：tmp unlink 失败不能吞——留下 nlink=2 会被 containment 读原语
+  // （path-containment 拒 nlink>1）当 hardlink 攻击拒读，「写成功但页面打不开」。
+  // 微 retry 后仍失败 → 回滚 target（同 inode，AV 握着句柄时大概率同败，则如实抛错，
+  // 状态=target 在盘但事件将被 caller abort，tmp orphan 由 cleanupAtomicOrphans 兜底，
+  // AV 释放后 nlink 自然回 1）。
+  try {
+    unlinkWithRetry(tmpPath)
+  } catch (unlinkErr) {
+    let rolledBack = false
+    try {
+      fs.unlinkSync(targetPath)
+      rolledBack = true
+    } catch {
+      // 同 inode 句柄被握，回滚同败
+    }
+    const targetState = rolledBack ? "已回滚（可重试）" : "留盘待 reconcile（orphan 清理后 nlink 回 1）"
+    throw new Error(
+      `atomic-if-absent: tmp unlink failed (nlink=2 会被 containment 拒读，不能静默成功)；target ${targetState}: ${(unlinkErr as Error).message}`,
+    )
+  }
+  if (process.platform !== "win32") {
+    try {
+      const dirFd = fs.openSync(dir, "r")
+      try {
+        fs.fsyncSync(dirFd)
+      } finally {
+        fs.closeSync(dirFd)
+      }
+    } catch {
+      // POSIX edge — 跳过
+    }
+  }
+  return "created"
+}
+
+/** unlink 版微 retry（德彪 replace-r4 P2）：AV/indexer 短暂握句柄时重试，与 rename/link 同故障模型。 */
+function unlinkWithRetry(p: string): void {
+  let lastErr: NodeJS.ErrnoException | null = null
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      fs.unlinkSync(p)
+      return
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException
+      if (e.code === "ENOENT") return // 已不在（并发清理）→ 目标达成
+      if (e.code !== "EPERM" && e.code !== "EBUSY" && e.code !== "EACCES") throw err
+      lastErr = e
+      const until = Date.now() + 10
+      while (Date.now() < until) {
+        // spin
+      }
+    }
+  }
+  throw lastErr ?? new Error(`unlink failed after retries: ${p}`)
+}
+
+/** link 版微 retry：EEXIST 必须**立即**上抛（它是语义结果不是瞬时故障）；只 retry AV/indexer 类。 */
+function linkWithRetry(src: string, dest: string): void {
+  let lastErr: NodeJS.ErrnoException | null = null
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      fs.linkSync(src, dest)
+      return
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException
+      if (e.code !== "EPERM" && e.code !== "EBUSY" && e.code !== "EACCES") throw err
+      lastErr = e
+      const until = Date.now() + 10
+      while (Date.now() < until) {
+        // spin
+      }
+    }
+  }
+  throw lastErr ?? new Error(`link failed after retries: ${src} → ${dest}`)
+}
+
+/**
  * Windows-friendly rename with微 retry —— EPERM/EBUSY 通常是 antivirus / indexer
  * 在刚 close 的 tmp / target 上短暂 hold handle。POSIX 上几乎不触发，但同样 retry
  * 一遍是 free 的。最大 5 次 × 10ms = 50ms 阻塞上限，超过仍失败 → 真错误抛出。

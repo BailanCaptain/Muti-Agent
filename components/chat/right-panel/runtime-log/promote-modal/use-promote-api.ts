@@ -70,12 +70,18 @@ export interface PromoteCommitBody {
   reason: string
   taintedSourceFields?: readonly string[]
   sourceMessageIds?: string[]
+  /** dest_exists 替换补丁：true = dest 已存在时归档旧页（_rejected/ 可恢复）后覆盖。 */
+  allowReplace?: boolean
+  /** allowReplace 必带：对比面板看到的现有页 contentHash（服务端 CAS 校验，防盲替换）。 */
+  expectedDestHash?: string
 }
 
 export interface PromoteCommitSuccess {
   ok: true
   finalPath: string
   eventId: number
+  /** 替换发生时：旧页归档到的 _rejected/ 相对路径。 */
+  replacedArchivePath?: string
 }
 
 export interface PromoteCommitAuditRejected {

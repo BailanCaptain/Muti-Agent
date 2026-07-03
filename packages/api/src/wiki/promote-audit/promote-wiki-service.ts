@@ -39,7 +39,7 @@ import type { CompiledACL } from "../acl-engine"
 import { decide } from "../acl-engine"
 import type { ACLContext } from "../acl-types"
 import { isServiceAlias } from "../acl-types"
-import { writeFileAtomic } from "../atomic-write"
+import { writeFileAtomic, writeFileAtomicIfAbsent } from "../atomic-write"
 import { WikiPathInvalidError, safeWikiPath } from "../path-containment"
 import { checkExemptionSanitizeBlocked } from "./exemption-tainted-fields"
 import {
@@ -55,6 +55,8 @@ export type PromoteStatus =
   | "lease_expired"
   | "src_not_found"
   | "dest_exists"
+  /** 替换 CAS 失配（德彪 replace-r1 P1）：现有页与用户对比时看到的版本不一致 → 刷新对比后重试。 */
+  | "dest_conflict"
   | "path_invalid"
   | "internal"
 
@@ -73,6 +75,19 @@ export interface PromoteRequest {
   taintedSourceFields?: readonly string[]
   /** sourceMessageIds: 关联 audit trail (V16.5 chap 5)。可选。 */
   sourceMessageIds?: string[]
+  /**
+   * dest_exists 替换补丁（小孙「失败了都不知道该不该丢弃」）：dest 已存在时不拒绝，
+   * 而是把现有页归档进 wiki/_rejected/（带时间戳，move not delete 可恢复）后落新页。
+   * 归档发生在审计/ACL/lease 全部通过**之后**——被拒的 promote 绝不动现有页。
+   * 默认 false 保持 dest_exists 语义。
+   */
+  allowReplace?: boolean
+  /**
+   * 德彪 replace-r1 P1 · CAS 闸：allowReplace 时**必填**——用户在对比面板看到的现有页
+   * contentHash（page/content 端点返回）。归档前/写盘前双点校验，现有页已被并发改动
+   * → dest_conflict 拒绝（绝不盲替换用户没看过的版本）。
+   */
+  expectedDestHash?: string
 }
 
 export interface PromoteResponse {
@@ -81,6 +96,8 @@ export interface PromoteResponse {
   eventId?: number
   /** ok 时落地的 dest absolute path */
   finalPath?: string
+  /** allowReplace 替换发生时：旧页归档到的 _rejected/ 相对路径（可恢复）。 */
+  replacedArchivePath?: string
   /** audit_rejected 时填 V14 reject reason (AC-P4-2 PromoteModal UI 显示) */
   auditReject?: V14RejectReason
   /** 拒因 / error 说明 */
@@ -143,10 +160,11 @@ export class PromoteWikiService {
     if (!fs.existsSync(srcAbsolute)) {
       return { status: "src_not_found", error: `src draft not found: ${req.srcDraftPath}` }
     }
-    if (fs.existsSync(destAbsolute)) {
+    const destExists = fs.existsSync(destAbsolute)
+    if (destExists && !req.allowReplace) {
       return {
         status: "dest_exists",
-        error: `dest wiki path already exists (use update_wiki to overwrite): ${req.destWikiPath}`,
+        error: `dest wiki path already exists (前端可对比后选「替换」——旧页归档到 _rejected/ 可恢复): ${req.destWikiPath}`,
       }
     }
 
@@ -204,6 +222,27 @@ export class PromoteWikiService {
       }
     }
 
+    // ─── 4.5 替换归档（allowReplace && dest 已存在）───────────────────────────
+    // 位置关键：审计/ACL/lease 全过之后才动现有页——被拒的 promote 绝不归档；归档失败
+    // 则整个 promote 失败，dest 原样（归档是 copy，dest 由 step 6 原子覆盖，全程无空窗）。
+    let replacedArchivePath: string | undefined
+    let replacedOldHash: string | null = null
+    // 德彪 replace-r2 P2：归档事件保持 pending，promote 真正落盘 commit 后才 commit——
+    // 终检 abort 的 replace 不能留下 committed demote 假象（副本文件无害留 _rejected/）。
+    let archiveEventId: number | undefined
+    if (destExists && req.allowReplace) {
+      const archived = this.archiveExistingDest(req, destAbsolute)
+      if (archived.failure) return archived.failure
+      replacedArchivePath = archived.archiveRelative
+      replacedOldHash = archived.oldHash
+      archiveEventId = archived.archiveEventId
+    }
+    const abortArchive = (reason: string): void => {
+      if (archiveEventId !== undefined) {
+        this.cfg.events.abort(archiveEventId, { error: reason })
+      }
+    }
+
     // ─── 5. PREPARE: wiki_events appendPending ────────────────────────────
     const ts = new Date().toISOString()
     const contentHash = sha256(destContent)
@@ -214,7 +253,8 @@ export class PromoteWikiService {
         alias: req.callerAlias,
         action: "promote",
         path: req.destWikiPath,
-        baseHash: null, // promote 是新建 dest path，无 baseHash
+        // 替换时 baseHash = 被覆盖旧页的内容哈希（审计可追「覆盖了什么」）；新建仍 null。
+        baseHash: replacedOldHash,
         attemptedHash: contentHash,
         diffSummary: `promote ${req.srcDraftPath} → ${req.destWikiPath}`,
         sourceMessageIds: req.sourceMessageIds,
@@ -226,20 +266,90 @@ export class PromoteWikiService {
       })
       eventId = event.id
     } catch (err) {
+      abortArchive("promote appendPending failed")
       return {
         status: "internal",
         error: `wiki_events appendPending failed: ${(err as Error).message}`,
       }
     }
 
+    // ─── 5.5 终检 fencing + CAS（德彪 replace-r1 P1 + r2 存在性分支）─────────────
+    // lease 在 step 4 验过，但 LLM 判官/归档之后已过去很久——写盘前重验（对齐
+    // UpdateWikiService final-check 思路）。失租 → abort 事件，dest 一个字节不动。
+    if (!this.cfg.leases.isCurrent(req.destWikiPath, req.fencingToken)) {
+      this.cfg.events.abort(eventId, { error: "lease lost before final write" })
+      abortArchive("lease lost before final write")
+      return {
+        status: "lease_expired",
+        error: "写盘前 lease 已失效（判官/归档窗口被并发抢占），promote 未落盘",
+      }
+    }
+    if (replacedArchivePath && replacedOldHash) {
+      // replace 终检 CAS：归档与写盘的窄窗里 dest 被并发改动/删除都算「用户看过的版本
+      // 已变化」→ 不写（德彪 r2 P1-2：删除同样是变化，stale replace 不许复活已删页）。
+      // 归档副本已落 _rejected/ 无害多留一份；dest 保留并发 writer 的状态。
+      let destNowHash: string | null = null
+      try {
+        destNowHash = sha256(fs.readFileSync(destAbsolute, "utf-8"))
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          this.cfg.events.abort(eventId, { error: "pre-write dest re-read failed" })
+          abortArchive("pre-write dest re-read failed")
+          return {
+            status: "internal",
+            error: `pre-write dest re-read failed: ${(err as Error).message}`,
+          }
+        }
+      }
+      if (destNowHash !== replacedOldHash) {
+        const what = destNowHash === null ? "被并发删除" : "被并发修改"
+        this.cfg.events.abort(eventId, { error: `dest ${what} between archive and write (CAS)` })
+        abortArchive(`dest ${what} between archive and write (CAS)`)
+        return {
+          status: "dest_conflict",
+          error: `现有页在归档与写盘之间${what}，本次替换已中止——请刷新对比后重试`,
+        }
+      }
+    } else if (fs.existsSync(destAbsolute)) {
+      // 德彪 r2 P1-1 · 存在性「无→有」：开头判定 dest 不存在（普通 promote / 归档前
+      // 消失的 replace），判官/PREPARE 窗口里被并发创建 → 绝不盲覆盖，按 dest_exists 拒。
+      this.cfg.events.abort(eventId, { error: "dest appeared before final write" })
+      abortArchive("dest appeared before final write")
+      return {
+        status: "dest_exists",
+        error: `dest 在写盘前被并发创建（判官窗口竞态）——请刷新列表对比后再决定是否替换: ${req.destWikiPath}`,
+      }
+    }
+
     // ─── 6. atomic write: src content → dest path ─────────────────────────
+    // 德彪 replace-r3 P1 · 两种写法按语义分流：
+    //   - 新建（非替换）：writeFileAtomicIfAbsent（linkSync 内核级 create-if-absent）——
+    //     5.5 的 existsSync 只是提前失败的礼貌检查，真正闭合「无→有」竞态的是这里：
+    //     并发在 check 与写之间创建 dest → EEXIST → dest_exists，一个字节不覆盖。
+    //   - 替换：writeFileAtomic（rename 覆盖）。哈希重验(5.5)与 rename 之间的极窄窗口
+    //     属协作锁模型既定接受：lease 是全体生产 writer（update/promote/demote/ingest）
+    //     的协议锁，绕过 lease 的写入方本身违反 wiki 写协议（与 warnings 端点
+    //     realpath→open TOCTOU 同类，纯 userland 无 OS 级 CAS 关不死）。
     try {
-      writeFileAtomic(destAbsolute, destContent)
+      if (replacedArchivePath) {
+        writeFileAtomic(destAbsolute, destContent)
+      } else {
+        const created = writeFileAtomicIfAbsent(destAbsolute, destContent)
+        if (created === "exists") {
+          this.cfg.events.abort(eventId, { error: "dest appeared at atomic link (EEXIST)" })
+          abortArchive("dest appeared at atomic link (EEXIST)")
+          return {
+            status: "dest_exists",
+            error: `dest 在写盘瞬间被并发创建（内核级 EEXIST 拒绝，未覆盖）——请刷新列表对比后再决定: ${req.destWikiPath}`,
+          }
+        }
+      }
     } catch (err) {
       // PREPARE 已落，但 atomic write fail → abort wiki_events
       this.cfg.events.abort(eventId, {
         error: `atomic write failed: ${(err as Error).message}`,
       })
+      abortArchive("promote atomic write failed")
       return {
         status: "internal",
         error: `atomic write to dest failed: ${(err as Error).message}`,
@@ -251,10 +361,15 @@ export class PromoteWikiService {
     if (!committed) {
       // 罕见: 已被并行 abort (不应在 promote 路径发生)，但防御
       // 此时 dest 文件已写，回滚 src/dest 都不安全 — 留状态供 reconciler
+      abortArchive("promote commit returned false")
       return {
         status: "internal",
         error: "wiki_events commit returned false (row already settled)",
       }
+    }
+    // 替换真正生效（新页已落盘）→ 此刻才 commit 归档 demote 事件（德彪 r2 P2）
+    if (archiveEventId !== undefined && replacedOldHash) {
+      this.cfg.events.commit(archiveEventId, { contentHash: replacedOldHash })
     }
 
     // ─── 8. unlink src draft (promote 成功后清理) ─────────────────────────
@@ -269,7 +384,140 @@ export class PromoteWikiService {
       status: "ok",
       eventId,
       finalPath: destAbsolute,
+      replacedArchivePath,
     }
+  }
+
+  /**
+   * dest_exists 替换补丁 · 把现有 dest 页归档进 wiki/_rejected/（带时间戳后缀防与历史
+   * demote 撞名）。归档是安全副本（move not delete、wiki_events action='demote' 留痕、
+   * 小孙可从 _rejected/ 恢复），走 replace 专用路径命名以免覆盖既有归档。
+   *
+   * 德彪 replace-r1 P1-2 · 授权口径：replace **不要求 demote ACL**——它不是独立的治理
+   * demote（那个继续全员收紧），而是「promote 授权 + 用户对过 diff 的 CAS 确认」的覆盖：
+   * expectedDestHash 必填且必须等于现有页当前哈希，看没看过的版本一律拒（fail-closed）。
+   */
+  private archiveExistingDest(
+    req: PromoteRequest,
+    destAbsolute: string,
+  ): {
+    failure?: PromoteResponse
+    archiveRelative?: string
+    oldHash: string | null
+    /** 归档 demote 事件保持 pending——promote 真落盘后 caller 才 commit（德彪 r2 P2）。 */
+    archiveEventId?: number
+  } {
+    if (!req.expectedDestHash) {
+      return {
+        oldHash: null,
+        failure: {
+          status: "dest_conflict",
+          error:
+            "allowReplace 需要 expectedDestHash（对比面板提供的现有页 contentHash）——不允许盲替换",
+        },
+      }
+    }
+
+    let oldContent: string
+    try {
+      oldContent = fs.readFileSync(destAbsolute, "utf-8")
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        // 德彪 r2 P1-2 同口径：删除也是「用户看过的版本已变化」——CAS 语义下 stale replace
+        // 不许复活已删页，一律 conflict 让用户刷新对比再决定。
+        return {
+          oldHash: null,
+          failure: {
+            status: "dest_conflict",
+            error: "现有页在你确认替换前已被删除——请刷新对比后再决定（可能只需普通 Promote）",
+          },
+        }
+      }
+      return {
+        oldHash: null,
+        failure: {
+          status: "internal",
+          error: `read existing dest for archive failed: ${(err as Error).message}`,
+        },
+      }
+    }
+    const oldHash = sha256(oldContent)
+    // CAS 第一点（归档前）：现有页 ≠ 用户对比时看到的版本 → 拒（第二点在写盘前，见 5.5）
+    if (oldHash !== req.expectedDestHash) {
+      return {
+        oldHash,
+        failure: {
+          status: "dest_conflict",
+          error: "现有页内容已与你对比时的版本不同（可能被并发修改）——请刷新对比后重试",
+        },
+      }
+    }
+
+    const archiveRelative = buildReplacedArchivePath(req.destWikiPath, Date.now())
+    let archiveAbsolute: string
+    try {
+      archiveAbsolute = safeWikiPath(this.cfg.wikiRoot, archiveRelative)
+    } catch (err) {
+      return {
+        oldHash,
+        failure: { status: "internal", error: `archive path invalid: ${(err as Error).message}` },
+      }
+    }
+    if (fs.existsSync(archiveAbsolute)) {
+      return {
+        oldHash,
+        failure: {
+          status: "internal",
+          error: `archive path collision (retry promote): ${archiveRelative}`,
+        },
+      }
+    }
+
+    // 归档留痕：wiki_events action='demote'（PREPARE→写归档→COMMIT，与 DemoteWikiService 同构）
+    let archiveEventId = 0
+    try {
+      const event = this.cfg.events.appendPending({
+        ts: new Date().toISOString(),
+        alias: req.callerAlias,
+        action: "demote",
+        path: req.destWikiPath,
+        baseHash: oldHash,
+        attemptedHash: oldHash,
+        diffSummary: `replace-archive ${req.destWikiPath} → ${archiveRelative}`,
+        sourceMessageIds: req.sourceMessageIds,
+        promotionTarget: null,
+        reason: `replaced by promote of ${req.srcDraftPath}: ${req.reason}`,
+        fencingToken: req.fencingToken,
+        leaderTerm: this.cfg.currentLeaderTerm(),
+        result: "ok",
+      })
+      archiveEventId = event.id
+    } catch (err) {
+      return {
+        oldHash,
+        failure: {
+          status: "internal",
+          error: `wiki_events appendPending (replace-archive) failed: ${(err as Error).message}`,
+        },
+      }
+    }
+    try {
+      writeFileAtomic(archiveAbsolute, oldContent)
+    } catch (err) {
+      this.cfg.events.abort(archiveEventId, {
+        error: `replace-archive atomic write failed: ${(err as Error).message}`,
+      })
+      return {
+        oldHash,
+        failure: {
+          status: "internal",
+          error: `replace-archive write failed (dest 未动): ${(err as Error).message}`,
+        },
+      }
+    }
+    // 注意：此处**不 commit**——归档事件保持 pending，promote 写盘 commit 成功后由 caller
+    // commit（德彪 r2 P2：终检 abort 的 replace 不能留 committed demote 假象）。
+    return { archiveRelative, oldHash, archiveEventId }
   }
 
   private isDraftPath(p: string): boolean {
@@ -326,6 +574,21 @@ export function rewriteCanonicalOwnerPath(content: string, destWikiPath: string)
   )
   if (rewritten === fmRegion) return content
   return rewritten + content.slice(fmEnd)
+}
+
+/**
+ * dest_exists 替换补丁 · replace 归档路径：demote 的 flatten 规则 + `--replaced-<epoch>` 后缀。
+ * 'wiki/concepts/foo.md' → 'wiki/_rejected/concepts--foo--replaced-1782988170125.md'
+ * 时间戳后缀防与既有 demote 归档（无后缀版）及历史 replace 撞名——归档只增不覆盖。
+ */
+export function buildReplacedArchivePath(destRelative: string, epochMs: number): string {
+  const normalized = destRelative.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")
+  const withoutWikiPrefix = normalized.startsWith("wiki/")
+    ? normalized.substring("wiki/".length)
+    : normalized
+  const flat = withoutWikiPrefix.replace(/\//g, "--")
+  const stem = flat.endsWith(".md") ? flat.slice(0, -3) : flat
+  return `wiki/_rejected/${stem}--replaced-${epochMs}.md`
 }
 
 function sha256(content: string): string {

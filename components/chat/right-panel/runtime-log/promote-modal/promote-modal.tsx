@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import { usePromoteJobsStore } from "@/components/stores/promote-jobs-store"
+import { ReplaceComparePanel } from "./replace-compare-panel"
 import {
   type PromoteCommitSuccess,
   RETRYABLE_AUDIT_LAYERS,
@@ -129,7 +130,10 @@ export function PromoteModal({
 
   // 德彪后台化 r1 P2：成功面板用本地快照——job ok 触发 refetch 后 store 会 pruneOkJobs，
   // 若直接读 store 条目，面板会在展示中途被 GC 打回表单视图。
-  const [successInfo, setSuccessInfo] = useState<{ finalPath: string } | null>(null)
+  const [successInfo, setSuccessInfo] = useState<{
+    finalPath: string
+    replacedArchivePath?: string
+  } | null>(null)
 
   // codex end-r3 P1 修（改 store 后语义不变）：同一 src 的 ok 只 notify 一次，防
   // onPromoteSuccess identity 不稳（parent refetch 每次 render 新 identity）触发 refetch loop。
@@ -138,7 +142,7 @@ export function PromoteModal({
     if (!jobOk || !srcDraftPath || !job?.finalPath) return
     if (notifiedOkSrcRef.current === srcDraftPath) return
     notifiedOkSrcRef.current = srcDraftPath
-    setSuccessInfo({ finalPath: job.finalPath })
+    setSuccessInfo({ finalPath: job.finalPath, replacedArchivePath: job.replacedArchivePath })
     const payload: PromoteCommitSuccess = {
       ok: true,
       finalPath: job.finalPath,
@@ -186,6 +190,25 @@ export function PromoteModal({
     })
   }
 
+  // dest_exists 替换（小孙「失败了都不知道该不该丢弃」）：dest 用失败 job 记录的冲突路径
+  // （非表单当前值——用户可能已改输入框），reason 用当前表单（必填校验同普通 promote）。
+  // DEST_CONFLICT（CAS 拒绝）同样进对比面板——key 换掉强制 remount 重拉最新内容+新哈希。
+  const isDestExistsFailure =
+    job?.status === "failed" &&
+    (job.errorCode === "DEST_EXISTS" || job.errorCode === "DEST_CONFLICT")
+  const handleReplace = (expectedDestHash: string) => {
+    if (!srcDraftPath || !job || !reasonValid) return
+    void startPromote({
+      srcDraftPath,
+      destWikiPath: job.destWikiPath,
+      callerAlias,
+      reason,
+      sourceMessageIds,
+      allowReplace: true,
+      expectedDestHash,
+    })
+  }
+
   if (!open) return null
 
   return (
@@ -202,7 +225,11 @@ export function PromoteModal({
 
         {/* 补丁#3（小孙「好了没好看不懂」）：成功 → 显式成功面板，不再静默关弹窗 */}
         {successInfo ? (
-          <PromoteSuccessView finalPath={successInfo.finalPath} onClose={handleSuccessClose} />
+          <PromoteSuccessView
+            finalPath={successInfo.finalPath}
+            replacedArchivePath={successInfo.replacedArchivePath}
+            onClose={handleSuccessClose}
+          />
         ) : (
           <>
             {/* §1 Draft info */}
@@ -262,7 +289,17 @@ export function PromoteModal({
               />
             ) : null}
 
-            {job?.status === "failed" && job.error ? (
+            {/* dest_exists → 对比 + 一键替换（其余错误保持通用红框） */}
+            {isDestExistsFailure && srcDraftPath ? (
+              <ReplaceComparePanel
+                key={`${job.errorCode}:${job.error ?? ""}`}
+                srcDraftPath={srcDraftPath}
+                destWikiPath={job.destWikiPath}
+                onReplace={handleReplace}
+                replaceDisabled={!reasonValid || jobRunning}
+                conflictNotice={job.errorCode === "DEST_CONFLICT"}
+              />
+            ) : job?.status === "failed" && job.error ? (
               <div className="mb-4 p-3 border border-red-300 rounded bg-red-50 text-sm text-red-700">
                 <div className="font-medium">Promote error</div>
                 <div className="text-xs mt-1 font-mono">{job.error}</div>
@@ -328,7 +365,15 @@ function Spinner() {
   )
 }
 
-function PromoteSuccessView({ finalPath, onClose }: { finalPath: string; onClose: () => void }) {
+function PromoteSuccessView({
+  finalPath,
+  replacedArchivePath,
+  onClose,
+}: {
+  finalPath: string
+  replacedArchivePath?: string
+  onClose: () => void
+}) {
   return (
     <div data-testid="promote-success">
       <div className="mb-4 rounded border border-green-300 bg-green-50 p-4">
@@ -337,6 +382,12 @@ function PromoteSuccessView({ finalPath, onClose }: { finalPath: string; onClose
           落地路径：
           <span className="font-mono break-all">{finalPath}</span>
         </div>
+        {replacedArchivePath ? (
+          <div className="mt-1 text-xs text-green-700">
+            旧页已归档（可恢复）：
+            <span className="font-mono break-all">{replacedArchivePath}</span>
+          </div>
+        ) : null}
         <div className="mt-1 text-xs text-green-600">该 draft 已从审批列表移除。</div>
       </div>
       <div className="flex justify-end">

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import crypto from "node:crypto"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -51,7 +52,12 @@ const ACL_OPEN = {
 }
 
 async function setupApp(
-  opts: { useDefaultAcl?: boolean; judgeVerdict?: "safe" | "injection" } = {},
+  opts: {
+    useDefaultAcl?: boolean
+    judgeVerdict?: "safe" | "injection"
+    /** 替换补丁测试用：自定义 ACL（如带 demote 权限）。 */
+    aclConfig?: ACLConfig
+  } = {},
 ): Promise<{
   app: ReturnType<typeof Fastify>
   wikiRoot: string
@@ -63,9 +69,11 @@ async function setupApp(
   const { db, close } = createDrizzleDb(dbPath)
   const events = new WikiEventsRepository(db)
   const leases = new WikiLeasesRepository(db)
-  const compiled = opts.useDefaultAcl
-    ? compileACL(loadACLConfig(DEFAULT_ACL_YAML))
-    : compileACL(ACL_OPEN)
+  const compiled = opts.aclConfig
+    ? compileACL(opts.aclConfig)
+    : opts.useDefaultAcl
+      ? compileACL(loadACLConfig(DEFAULT_ACL_YAML))
+      : compileACL(ACL_OPEN)
   const wikiRoot = path.join(tempDir, "wiki-root")
   fs.mkdirSync(wikiRoot, { recursive: true })
 
@@ -465,5 +473,319 @@ describe("promote routes (AC-P4-1)", () => {
         await t.cleanup()
       }
     })
+  })
+})
+
+/**
+ * dest_exists 替换补丁 · route 层:
+ *   (RR1) allowReplace 非 boolean → 400 VALIDATION_ERROR（truthy 字符串不触发破坏性替换）
+ *   (RR2) allowReplace=true 透传 → 200 + replacedArchivePath（service 层语义已单测，此处验接线）
+ *   (RR3) GET page/content: 正式页 → 200 {content,mtime}
+ *   (RR4) GET page/content: 不存在 → 404；draft 路径 → 400；_rejected → 400；.. 逃逸 → 400；缺 path → 400
+ */
+const ACL_WITH_DEMOTE_ROUTE: ACLConfig = {
+  acl: [
+    {
+      pathPattern: "wiki/**",
+      allowedAliases: ["<any-agent>"],
+      allowedActions: ["write", "promote", "demote", "patch"],
+    },
+  ],
+}
+
+describe("promote routes · allowReplace + page/content（dest_exists 替换补丁）", () => {
+  it("(RR1) allowReplace 非 boolean → 400", async () => {
+    const t = await setupApp()
+    try {
+      const resp = await t.app.inject({
+        method: "POST",
+        url: "/api/wiki/drafts/promote",
+        payload: {
+          srcDraftPath: "wiki/concepts/draft/_auto/x.md",
+          destWikiPath: "wiki/concepts/x.md",
+          callerAlias: "黄仁勋",
+          reason: "r",
+          allowReplace: "true",
+        },
+      })
+      assert.equal(resp.statusCode, 400)
+      assert.equal(resp.json().code, "VALIDATION_ERROR")
+      assert.match(resp.json().error, /allowReplace/)
+    } finally {
+      await t.cleanup()
+    }
+  })
+
+  it("(RR2) allowReplace=true 透传 → 200 + replacedArchivePath", async () => {
+    const t = await setupApp({ aclConfig: ACL_WITH_DEMOTE_ROUTE })
+    try {
+      const src = "wiki/concepts/draft/_auto/route-replace.md"
+      const dest = "wiki/concepts/route-replace.md"
+      writeDraft(t.wikiRoot, src, "new content for replace")
+      writeDraft(t.wikiRoot, dest, "old content to archive")
+
+      const resp = await t.app.inject({
+        method: "POST",
+        url: "/api/wiki/drafts/promote",
+        payload: {
+          srcDraftPath: src,
+          destWikiPath: dest,
+          callerAlias: "黄仁勋",
+          reason: "replace via route",
+          allowReplace: true,
+          expectedDestHash: crypto
+            .createHash("sha256")
+            .update("old content to archive", "utf-8")
+            .digest("hex"),
+        },
+      })
+      assert.equal(resp.statusCode, 200)
+      const body = resp.json()
+      assert.equal(body.ok, true)
+      assert.match(
+        body.replacedArchivePath,
+        /^wiki\/_rejected\/concepts--route-replace--replaced-\d+\.md$/,
+      )
+      assert.equal(
+        fs.readFileSync(path.join(t.wikiRoot, body.replacedArchivePath), "utf-8"),
+        "old content to archive",
+      )
+    } finally {
+      await t.cleanup()
+    }
+  })
+
+  it("(RR3) GET page/content 正式页 → 200 content+mtime", async () => {
+    const t = await setupApp()
+    try {
+      writeDraft(t.wikiRoot, "wiki/concepts/existing.md", "# 正式页内容")
+      const resp = await t.app.inject({
+        method: "GET",
+        url: "/api/wiki/page/content?path=" + encodeURIComponent("wiki/concepts/existing.md"),
+      })
+      assert.equal(resp.statusCode, 200)
+      const body = resp.json()
+      assert.equal(body.content, "# 正式页内容")
+      assert.ok(body.mtime)
+    } finally {
+      await t.cleanup()
+    }
+  })
+
+  it("(RR4) page/content 围栏: 404 缺页 / 400 draft / 400 _rejected / 400 逃逸 / 400 缺 path", async () => {
+    const t = await setupApp()
+    try {
+      writeDraft(t.wikiRoot, "wiki/concepts/draft/_auto/d.md", "draft")
+      writeDraft(t.wikiRoot, "wiki/_rejected/concepts--gone.md", "archived")
+
+      const missing = await t.app.inject({
+        method: "GET",
+        url: "/api/wiki/page/content?path=" + encodeURIComponent("wiki/concepts/nope.md"),
+      })
+      assert.equal(missing.statusCode, 404)
+
+      const draft = await t.app.inject({
+        method: "GET",
+        url: "/api/wiki/page/content?path=" + encodeURIComponent("wiki/concepts/draft/_auto/d.md"),
+      })
+      assert.equal(draft.statusCode, 400, "draft 路径必须走 drafts/content 端点")
+
+      const rejected = await t.app.inject({
+        method: "GET",
+        url:
+          "/api/wiki/page/content?path=" + encodeURIComponent("wiki/_rejected/concepts--gone.md"),
+      })
+      assert.equal(rejected.statusCode, 400, "_rejected 不在正式区白名单")
+
+      const traversal = await t.app.inject({
+        method: "GET",
+        url: "/api/wiki/page/content?path=" + encodeURIComponent("wiki/concepts/../../secret.md"),
+      })
+      assert.equal(traversal.statusCode, 400)
+
+      const noPath = await t.app.inject({ method: "GET", url: "/api/wiki/page/content" })
+      assert.equal(noPath.statusCode, 400)
+    } finally {
+      await t.cleanup()
+    }
+  })
+})
+
+/**
+ * ACL 接线修复（替换补丁随修）· Red→Green：生产 DEFAULT_ACL 此前
+ *   ① wiki/concepts/** 无 demote → 正式页 demote / allowReplace 替换全员 DENIED_ACL
+ *   ② 无 wiki/methods/** 规则 → 归桶补丁建议的 methods/ 目标 promote no_match 拒绝
+ *   ③ wiki/rules/** 无 promote → rules/ 目标连小孙都转不进去
+ * 本组用 useDefaultAcl（真生产 ACL）验证三个动作打通。
+ */
+describe("promote routes · DEFAULT_ACL 接线（替换补丁随修）", () => {
+  it("默认 ACL + allowReplace 替换 concepts 正式页 → 200（replace=promote 授权+CAS，不要求 demote）", async () => {
+    const t = await setupApp({ useDefaultAcl: true })
+    try {
+      const src = "wiki/concepts/draft/_auto/acl-replace.md"
+      const dest = "wiki/concepts/acl-replace.md"
+      writeDraft(t.wikiRoot, src, "new body")
+      writeDraft(t.wikiRoot, dest, "old body")
+      const resp = await t.app.inject({
+        method: "POST",
+        url: "/api/wiki/drafts/promote",
+        payload: {
+          srcDraftPath: src,
+          destWikiPath: dest,
+          callerAlias: "黄仁勋",
+          reason: "replace under default acl",
+          allowReplace: true,
+          expectedDestHash: crypto.createHash("sha256").update("old body", "utf-8").digest("hex"),
+        },
+      })
+      assert.equal(resp.statusCode, 200, JSON.stringify(resp.json()))
+      assert.match(resp.json().replacedArchivePath, /_rejected/)
+    } finally {
+      await t.cleanup()
+    }
+  })
+
+  it("默认 ACL + promote 到 wiki/methods/ → 200（修前 no_match 拒绝，归桶建议落不了地）", async () => {
+    const t = await setupApp({ useDefaultAcl: true })
+    try {
+      const src = "wiki/concepts/draft/_auto/to-methods.md"
+      writeDraft(t.wikiRoot, src, "a method doc")
+      const resp = await t.app.inject({
+        method: "POST",
+        url: "/api/wiki/drafts/promote",
+        payload: {
+          srcDraftPath: src,
+          destWikiPath: "wiki/methods/to-methods.md",
+          callerAlias: "黄仁勋",
+          reason: "bucket routing to methods",
+        },
+      })
+      assert.equal(resp.statusCode, 200, JSON.stringify(resp.json()))
+    } finally {
+      await t.cleanup()
+    }
+  })
+
+  it("默认 ACL + 小孙 promote 到 wiki/rules/ → 200；agent 仍拒（rules 归小孙）", async () => {
+    const t = await setupApp({ useDefaultAcl: true })
+    try {
+      const src1 = "wiki/concepts/draft/_auto/to-rules-a.md"
+      const src2 = "wiki/concepts/draft/_auto/to-rules-b.md"
+      writeDraft(t.wikiRoot, src1, "a rule doc")
+      writeDraft(t.wikiRoot, src2, "another rule doc")
+      const bySun = await t.app.inject({
+        method: "POST",
+        url: "/api/wiki/drafts/promote",
+        payload: {
+          srcDraftPath: src1,
+          destWikiPath: "wiki/rules/to-rules-a.md",
+          callerAlias: "小孙",
+          reason: "rules by owner",
+        },
+      })
+      assert.equal(bySun.statusCode, 200, JSON.stringify(bySun.json()))
+      const byAgent = await t.app.inject({
+        method: "POST",
+        url: "/api/wiki/drafts/promote",
+        payload: {
+          srcDraftPath: src2,
+          destWikiPath: "wiki/rules/to-rules-b.md",
+          callerAlias: "黄仁勋",
+          reason: "rules by agent should deny",
+        },
+      })
+      assert.equal(byAgent.statusCode, 403, "rules/** 仍是小孙专属")
+    } finally {
+      await t.cleanup()
+    }
+  })
+})
+
+describe("promote routes · replace-r1 receive（CAS 必填 + _rejected 段拒 + contentHash）", () => {
+  it("(N1) allowReplace 不带/坏格式 expectedDestHash → 400", async () => {
+    const t = await setupApp()
+    try {
+      for (const bad of [undefined, "abc", "Z".repeat(64)]) {
+        const resp = await t.app.inject({
+          method: "POST",
+          url: "/api/wiki/drafts/promote",
+          payload: {
+            srcDraftPath: "wiki/concepts/draft/_auto/x.md",
+            destWikiPath: "wiki/concepts/x.md",
+            callerAlias: "黄仁勋",
+            reason: "r",
+            allowReplace: true,
+            ...(bad === undefined ? {} : { expectedDestHash: bad }),
+          },
+        })
+        assert.equal(resp.statusCode, 400, `expectedDestHash=${String(bad)} 应 400`)
+        assert.match(resp.json().error, /expectedDestHash/)
+      }
+    } finally {
+      await t.cleanup()
+    }
+  })
+
+  it("(N2) page/content 返回 contentHash（sha256 hex），且拒任意段的 _rejected/_superseded", async () => {
+    const t = await setupApp()
+    try {
+      writeDraft(t.wikiRoot, "wiki/concepts/hash-me.md", "# body")
+      const ok = await t.app.inject({
+        method: "GET",
+        url: "/api/wiki/page/content?path=" + encodeURIComponent("wiki/concepts/hash-me.md"),
+      })
+      assert.equal(ok.statusCode, 200)
+      assert.equal(
+        ok.json().contentHash,
+        crypto.createHash("sha256").update("# body", "utf-8").digest("hex"),
+      )
+
+      // 德彪 P3 PoC：concepts/_rejected/hidden.md 过 formal 前缀但必须被段规则拒
+      writeDraft(t.wikiRoot, "wiki/concepts/_rejected/hidden.md", "archived-in-bucket")
+      const hidden = await t.app.inject({
+        method: "GET",
+        url:
+          "/api/wiki/page/content?path=" + encodeURIComponent("wiki/concepts/_rejected/hidden.md"),
+      })
+      assert.equal(hidden.statusCode, 400)
+
+      writeDraft(t.wikiRoot, "wiki/concepts/_superseded/old.md", "superseded")
+      const sup = await t.app.inject({
+        method: "GET",
+        url:
+          "/api/wiki/page/content?path=" + encodeURIComponent("wiki/concepts/_superseded/old.md"),
+      })
+      assert.equal(sup.statusCode, 400)
+    } finally {
+      await t.cleanup()
+    }
+  })
+
+  it("(N3) CAS 失配经 route → 409 DEST_CONFLICT", async () => {
+    const t = await setupApp({ aclConfig: ACL_WITH_DEMOTE_ROUTE })
+    try {
+      writeDraft(t.wikiRoot, "wiki/concepts/draft/_auto/n3.md", "new")
+      writeDraft(t.wikiRoot, "wiki/concepts/n3.md", "current")
+      const resp = await t.app.inject({
+        method: "POST",
+        url: "/api/wiki/drafts/promote",
+        payload: {
+          srcDraftPath: "wiki/concepts/draft/_auto/n3.md",
+          destWikiPath: "wiki/concepts/n3.md",
+          callerAlias: "黄仁勋",
+          reason: "r",
+          allowReplace: true,
+          expectedDestHash: crypto.createHash("sha256").update("stale-view", "utf-8").digest("hex"),
+        },
+      })
+      assert.equal(resp.statusCode, 409)
+      assert.equal(resp.json().code, "DEST_CONFLICT")
+      assert.equal(
+        fs.readFileSync(path.join(t.wikiRoot, "wiki/concepts/n3.md"), "utf-8"),
+        "current",
+      )
+    } finally {
+      await t.cleanup()
+    }
   })
 })

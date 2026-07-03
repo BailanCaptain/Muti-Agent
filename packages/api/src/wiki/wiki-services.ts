@@ -33,7 +33,7 @@ export const DEFAULT_ACL_YAML = `
 acl:
   - path_pattern: 'wiki/rules/**'
     allowed_aliases: ['小孙']
-    allowed_actions: [write, patch]
+    allowed_actions: [write, patch, promote]
 
   - path_pattern: 'wiki/people/<self>.md'
     allowed_aliases: ['<self>']
@@ -52,6 +52,10 @@ acl:
     allowed_actions: [write, patch, demote]
 
   - path_pattern: 'wiki/concepts/**'
+    allowed_aliases: ['<any-agent>']
+    allowed_actions: [write, patch, promote]
+
+  - path_pattern: 'wiki/methods/**'
     allowed_aliases: ['<any-agent>']
     allowed_actions: [write, patch, promote]
 
