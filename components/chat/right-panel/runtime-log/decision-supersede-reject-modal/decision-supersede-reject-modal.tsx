@@ -141,14 +141,14 @@ export function DecisionSupersedeRejectModal({
               <div>
                 <span className="font-medium">id:</span>{" "}
                 <span className="font-mono">{target.decisionId}</span>{" "}
-                <span className="ml-2 inline-flex rounded border border-amber-300 bg-amber-100 px-1 font-mono text-[10px] text-amber-700">
+                <span className="ml-2 inline-flex rounded border border-amber-300 bg-amber-100 px-1 font-mono text-micro text-amber-700">
                   {target.decisionType}
                 </span>
               </div>
               <div className="mt-1">
                 <span className="font-medium">summary:</span> {target.summary}
               </div>
-              <div className="mt-1 text-[10px] text-gray-500">
+              <div className="mt-1 text-micro text-gray-500">
                 by <span className="font-mono">{target.decidedBy}</span> @{" "}
                 <span className="font-mono">{target.decidedAt}</span>
               </div>
@@ -264,7 +264,7 @@ export function DecisionSupersedeRejectModal({
             onClick={handleSubmit}
             disabled={!canSubmit}
             data-testid="decision-supersede-reject-submit"
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+            className="px-4 py-2 text-sm bg-accent-500 text-white rounded hover:bg-accent-600 active:scale-[0.97] disabled:bg-gray-300 disabled:cursor-not-allowed"
           >
             {api.isLoading ? "提交中..." : "确认"}
           </button>

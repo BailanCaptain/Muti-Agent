@@ -1,12 +1,14 @@
 import type { Provider } from "@multi-agent/shared"
 
+// F039: 身份 hex 对齐 tailwind.config 调和阶（violet/amber/teal 500 档），
+// 去股票 Tailwind 默认色；DEFAULT 用暖灰 slate-500。
 export const PROVIDER_ACCENT: Record<Provider, string> = {
-  claude: "#7C3AED",
-  codex: "#D97706",
-  gemini: "#0D9488",
+  claude: "#7763ab",
+  codex: "#966800",
+  gemini: "#008479",
 }
 
-export const DEFAULT_ACCENT = "#64748B"
+export const DEFAULT_ACCENT = "#75726e"
 
 export const providerTheme: Record<
   Provider,

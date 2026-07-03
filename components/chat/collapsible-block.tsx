@@ -16,7 +16,7 @@ interface CollapsibleBlockProps {
 export function CollapsibleBlock({
   title,
   icon,
-  accentColor = "#94A3B8",
+  accentColor = "#aaa6a1",
   defaultOpen = false,
   isStreaming = false,
   badge,

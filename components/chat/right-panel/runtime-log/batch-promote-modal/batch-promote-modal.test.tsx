@@ -183,8 +183,8 @@ describe("BatchPromoteModal", () => {
       expect(screen.getByTestId("batch-promote-report")).toBeTruthy()
     })
     expect(screen.getByText(/批量审批结果 · 3 成功 \/ 0 失败/)).toBeTruthy()
-    expect(screen.getByText("✅ Success: 3 份")).toBeTruthy()
-    expect(screen.getByText("❌ Failed: 0 份")).toBeTruthy()
+    expect(screen.getByText("Success: 3 份")).toBeTruthy()
+    expect(screen.getByText("Failed: 0 份")).toBeTruthy()
   })
 
   it("(7) 部分失败 2 成功 + 1 audit_rejected → failed row 含 layer/matched/hint", async () => {
@@ -233,8 +233,8 @@ describe("BatchPromoteModal", () => {
     await waitFor(() => {
       expect(screen.getByTestId("batch-promote-report")).toBeTruthy()
     })
-    expect(screen.getByText("✅ Success: 2 份")).toBeTruthy()
-    expect(screen.getByText("❌ Failed: 1 份")).toBeTruthy()
+    expect(screen.getByText("Success: 2 份")).toBeTruthy()
+    expect(screen.getByText("Failed: 1 份")).toBeTruthy()
     // failed row 内含 status badge 中文 + auditReject layer/matched/hint
     expect(
       screen.getByTestId("batch-promote-failed-status-wiki/concepts/draft/_auto/b.md").textContent,

@@ -4,6 +4,19 @@ import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { useWakeTriggerStore } from "@/components/stores/wake-trigger-store"
+import {
+  AlertTriangle,
+  BarChart3,
+  Bell,
+  Bot,
+  Check,
+  CheckCircle2,
+  Handshake,
+  Hourglass,
+  Search,
+  Shield,
+  XCircle,
+} from "lucide-react"
 import { useEffect, useState } from "react"
 import { DecisionSupersedeRejectModal } from "../decision-supersede-reject-modal/decision-supersede-reject-modal"
 import {
@@ -157,23 +170,34 @@ function HeaderRow({
       className="rounded border border-slate-200 bg-slate-50 px-3 py-2"
       data-testid="prompt-inspector-header"
     >
-      <div className="text-[11px] font-semibold text-slate-700">
+      <div className="text-caption font-semibold text-slate-700">
         {roomId ?? "—"} · prompt-inspector
       </div>
-      <div className="mt-1 flex gap-3 text-[10px] text-slate-500">
-        <span>📊 总计 {totalTokens} tok</span>
+      <div className="mt-1 flex gap-3 text-micro text-slate-500">
+        <span className="inline-flex items-center gap-1">
+          <BarChart3 className="h-3 w-3 shrink-0" aria-hidden="true" />
+          总计 {totalTokens} tok
+        </span>
         <span>cap {cap > 0 ? cap : "—"}</span>
         {cap > 0 && <span>({pct}%)</span>}
         <span>parts {data.injectedParts.length}</span>
       </div>
       {isLoading && (
-        <div className="mt-1 text-[10px] text-slate-400" data-testid="prompt-inspector-loading">
-          ⏳ 加载中…
+        <div
+          className="mt-1 flex items-center gap-1 text-micro text-slate-400"
+          data-testid="prompt-inspector-loading"
+        >
+          <Hourglass className="h-3 w-3 shrink-0" aria-hidden="true" />
+          加载中…
         </div>
       )}
       {error && (
-        <div className="mt-1 text-[10px] text-red-500" data-testid="prompt-inspector-error">
-          ⚠ 加载失败：{error}
+        <div
+          className="mt-1 flex items-center gap-1 text-micro text-red-500"
+          data-testid="prompt-inspector-error"
+        >
+          <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+          加载失败：{error}
         </div>
       )}
     </div>
@@ -195,32 +219,37 @@ function AliasFilterRow({
   if (availableAliases.length === 0) {
     return (
       <div
-        className="rounded border border-dashed border-slate-200 px-3 py-1.5 text-[10px] text-slate-400"
+        className="flex items-center gap-1 rounded border border-dashed border-slate-200 px-3 py-1.5 text-micro text-slate-400"
         data-testid="prompt-inspector-alias-filter-empty"
       >
-        🤖 Agent: — (room 内无 audit row)
+        <Bot className="h-3 w-3 shrink-0" aria-hidden="true" />
+        Agent: — (room 内无 audit row)
       </div>
     )
   }
   if (availableAliases.length === 1) {
     return (
       <div
-        className="rounded border border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] text-slate-600"
+        className="flex items-center gap-1 rounded border border-slate-200 bg-slate-50 px-3 py-1.5 text-micro text-slate-600"
         data-testid="prompt-inspector-alias-filter-single"
       >
-        🤖 Agent: <span className="font-mono font-semibold">{availableAliases[0]}</span>
-        <span className="ml-1 text-slate-400">(room 内仅 1 个 agent，无需切)</span>
+        <Bot className="h-3 w-3 shrink-0" aria-hidden="true" />
+        Agent: <span className="font-mono font-semibold">{availableAliases[0]}</span>
+        <span className="text-slate-400">(room 内仅 1 个 agent，无需切)</span>
       </div>
     )
   }
   return (
     <div
-      className="flex items-center gap-2 rounded border border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] text-slate-600"
+      className="flex items-center gap-2 rounded border border-slate-200 bg-slate-50 px-3 py-1.5 text-micro text-slate-600"
       data-testid="prompt-inspector-alias-filter"
     >
-      <span>🤖 Agent:</span>
+      <span className="inline-flex items-center gap-1">
+        <Bot className="h-3 w-3 shrink-0" aria-hidden="true" />
+        Agent:
+      </span>
       <select
-        className="rounded border border-slate-300 bg-white px-1.5 py-0.5 font-mono text-[10px]"
+        className="rounded border border-slate-300 bg-white px-1.5 py-0.5 font-mono text-micro"
         data-testid="prompt-inspector-alias-select"
         value={selectedAlias ?? ""}
         onChange={(e) => onChange(e.target.value || null)}
@@ -264,7 +293,10 @@ function InjectedPartsTable({
   }
   return (
     <section data-testid="prompt-inspector-injected">
-      <div className="mb-1 text-xs uppercase tracking-wider text-slate-500">✅ 注入的 part</div>
+      <div className="mb-1 flex items-center gap-1 text-xs uppercase tracking-wider text-slate-500">
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        注入的 part
+      </div>
       {parts.length === 0 ? (
         <div className="rounded border border-dashed border-slate-300 p-2 text-xs text-slate-400">
           暂无 part 数据（prompt_audit 表为空）
@@ -299,9 +331,10 @@ function InjectedPartsTable({
                         onClick={() => setTracePart(p.name)}
                         className="rounded border border-blue-300 bg-blue-50 px-1.5 py-0.5 text-xs text-blue-700 transition-colors hover:bg-blue-100"
                         title="查看本 part 对应的 wiki_events 写入历史"
+                        aria-label="追溯 wiki_events"
                         data-testid={`trace-btn-${p.name}`}
                       >
-                        🔍
+                        <Search className="h-3.5 w-3.5" aria-hidden="true" />
                       </button>
                     ) : (
                       <span
@@ -420,7 +453,10 @@ function WikiEventsTraceModal({
           </div>
         )}
         {!error && events === null && (
-          <div className="p-2 text-xs text-slate-400">⏳ 加载中…</div>
+          <div className="flex items-center gap-1 p-2 text-xs text-slate-400">
+            <Hourglass className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            加载中…
+          </div>
         )}
         {!error && events && events.length === 0 && (
           <div className="rounded border border-dashed border-slate-300 p-3 text-xs text-slate-500">
@@ -484,11 +520,13 @@ function NotInjectedSection({ notInjectedParts }: { notInjectedParts: NotInjecte
   if (notInjectedParts.length === 0) {
     return (
       <section data-testid="prompt-inspector-not-injected">
-        <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
-          ❌ 未注入预期 part
+        <div className="mb-1 flex items-center gap-1 text-micro uppercase tracking-wider text-slate-500">
+          <XCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
+          未注入预期 part
         </div>
-        <div className="rounded border border-dashed border-slate-200 p-2 text-[10px] text-slate-400">
-          ✅ 全部注入成功（无 cap 溢出 drop）
+        <div className="flex items-center gap-1 rounded border border-dashed border-slate-200 p-2 text-micro text-slate-400">
+          <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden="true" />
+          全部注入成功（无 cap 溢出 drop）
         </div>
       </section>
     )
@@ -496,8 +534,11 @@ function NotInjectedSection({ notInjectedParts }: { notInjectedParts: NotInjecte
   const totalDropped = notInjectedParts.reduce((s, p) => s + p.tokens, 0)
   return (
     <section data-testid="prompt-inspector-not-injected">
-      <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-500">
-        <span>❌ 未注入预期 part</span>
+      <div className="mb-1 flex items-center justify-between text-micro uppercase tracking-wider text-slate-500">
+        <span className="inline-flex items-center gap-1">
+          <XCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
+          未注入预期 part
+        </span>
         <span
           className="font-mono text-red-500"
           data-testid="prompt-inspector-not-injected-total"
@@ -505,7 +546,7 @@ function NotInjectedSection({ notInjectedParts }: { notInjectedParts: NotInjecte
           {notInjectedParts.length} 个 / -{totalDropped} tok
         </span>
       </div>
-      <ul className="space-y-0.5 rounded border border-red-200 bg-red-50 p-2 text-[10px]">
+      <ul className="space-y-0.5 rounded border border-red-200 bg-red-50 p-2 text-micro">
         {notInjectedParts.map((p) => (
           <li
             key={p.name}
@@ -530,8 +571,11 @@ function RecallSection({ queries }: { queries: GetPromptInspectorResponse["recal
   const low = queries.filter((q) => q.gate === "low").length
   return (
     <section data-testid="prompt-inspector-recall">
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">🤖 自动召回</div>
-      <div className="mb-1 flex gap-2 text-[10px]">
+      <div className="mb-1 flex items-center gap-1 text-micro uppercase tracking-wider text-slate-500">
+        <Bot className="h-3 w-3 shrink-0" aria-hidden="true" />
+        自动召回
+      </div>
+      <div className="mb-1 flex gap-2 text-micro">
         <Badge color="green" testid="recall-gate-high">
           高 {high}
         </Badge>
@@ -543,11 +587,11 @@ function RecallSection({ queries }: { queries: GetPromptInspectorResponse["recal
         </Badge>
       </div>
       {queries.length === 0 ? (
-        <div className="rounded border border-dashed border-slate-300 p-2 text-[10px] text-slate-400">
+        <div className="rounded border border-dashed border-slate-300 p-2 text-micro text-slate-400">
           暂无召回 query（memory_preflight 未触发或 prompt_audit 表为空）
         </div>
       ) : (
-        <ul className="list-disc space-y-0.5 pl-4 text-[10px]">
+        <ul className="list-disc space-y-0.5 pl-4 text-micro">
           {queries.map((q, i) => (
             <li
               key={`${q.query}-${i}`}
@@ -587,19 +631,27 @@ function AdaptiveRecallPolicy({ state }: { state: GetPromptInspectorResponse["re
   // 真相源 V16.5 chap 10 + 12 — 5 级 fallback + Quality Gate
   return (
     <section data-testid="prompt-inspector-policy">
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
-        📊 Adaptive Recall Policy
-        <span className="ml-1 normal-case text-slate-400">
+      <div className="mb-1 flex items-center gap-1 text-micro uppercase tracking-wider text-slate-500">
+        <BarChart3 className="h-3 w-3 shrink-0" aria-hidden="true" />
+        Adaptive Recall Policy
+        <span className="normal-case text-slate-400">
           (V16.5 chap 10 · 5 级召回 + Quality Gate)
         </span>
       </div>
-      <div className="space-y-0.5 rounded border border-slate-200 bg-slate-50 p-2 text-[10px]">
+      <div className="space-y-0.5 rounded border border-slate-200 bg-slate-50 p-2 text-micro">
         <div title="本次提问是否触发记忆召回 (短句通常 false; 长句/含关键词 true)">
           <span className="font-mono text-slate-600">recallRequired</span>
           <span className="ml-1 text-slate-400">· 本轮是否启动召回</span>
           <span className="ml-1">:</span>{" "}
           <span className={state.recallRequired ? "text-green-700" : "text-slate-400"}>
-            {state.recallRequired ? "✅ true" : "false"}
+            {state.recallRequired ? (
+              <span className="inline-flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden="true" />
+                true
+              </span>
+            ) : (
+              "false"
+            )}
           </span>
         </div>
         <div title="走到第几级召回 (1 = 直接命中, 5 = Haiku rerank 升级兜底)">
@@ -617,7 +669,14 @@ function AdaptiveRecallPolicy({ state }: { state: GetPromptInspectorResponse["re
           <span className="ml-1 text-slate-400">· 召回质量是否过关</span>
           <span className="ml-1">:</span>{" "}
           <span className={state.recallSatisfied ? "text-green-700" : "text-slate-400"}>
-            {state.recallSatisfied ? "✅ true" : "false"}
+            {state.recallSatisfied ? (
+              <span className="inline-flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden="true" />
+                true
+              </span>
+            ) : (
+              "false"
+            )}
           </span>
         </div>
         {state.escalateReason && (
@@ -647,12 +706,16 @@ function AdaptiveRecallPolicy({ state }: { state: GetPromptInspectorResponse["re
 function AgentSessionSection({ roomId }: { roomId: string | null }) {
   return (
     <section data-testid="prompt-inspector-agent-session">
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
-        🤝 当前 agent session
+      <div className="mb-1 flex items-center gap-1 text-micro uppercase tracking-wider text-slate-500">
+        <Handshake className="h-3 w-3 shrink-0" aria-hidden="true" />
+        当前 agent session
       </div>
-      <div className="rounded border border-dashed border-slate-300 p-2 text-[10px] text-slate-400">
-        ⏳ sessions ledger 未来 feature：room={roomId ?? "—"} · Session #N · open_threads 列表
-        （从 agent-sessions/&lt;alias&gt;/current.md 读，归 RESIDUAL-DEBT B2）
+      <div className="flex items-start gap-1 rounded border border-dashed border-slate-300 p-2 text-micro text-slate-400">
+        <Hourglass className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+        <span>
+          sessions ledger 未来 feature：room={roomId ?? "—"} · Session #N · open_threads 列表
+          （从 agent-sessions/&lt;alias&gt;/current.md 读，归 RESIDUAL-DEBT B2）
+        </span>
       </div>
     </section>
   )
@@ -679,12 +742,13 @@ function WakeTriggerSection({
       : null
   return (
     <section data-testid="prompt-inspector-wake-trigger">
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
-        🔔 wake-up 触发因
+      <div className="mb-1 flex items-center gap-1 text-micro uppercase tracking-wider text-slate-500">
+        <Bell className="h-3 w-3 shrink-0" aria-hidden="true" />
+        wake-up 触发因
       </div>
       {wsLatest ? (
         <div
-          className="rounded border border-amber-300 bg-amber-50 p-2 text-[10px] text-amber-900"
+          className="rounded border border-amber-300 bg-amber-50 p-2 text-micro text-amber-900"
           data-testid="wake-trigger-ws"
         >
           <div>
@@ -703,7 +767,7 @@ function WakeTriggerSection({
         </div>
       ) : apiTrigger.kind ? (
         <div
-          className="rounded border border-slate-300 bg-slate-50 p-2 text-[10px] text-slate-600"
+          className="rounded border border-slate-300 bg-slate-50 p-2 text-micro text-slate-600"
           data-testid="wake-trigger-api"
         >
           (snapshot from prompt_audit) kind: {apiTrigger.kind}
@@ -719,7 +783,7 @@ function WakeTriggerSection({
           )}
         </div>
       ) : (
-        <div className="rounded border border-dashed border-slate-300 p-2 text-[10px] text-slate-400">
+        <div className="rounded border border-dashed border-slate-300 p-2 text-micro text-slate-400">
           暂无 trigger（WS 未推送 / prompt_audit 表为空）
         </div>
       )}
@@ -735,7 +799,7 @@ function WakeTriggerA2APill({ callId }: { callId: string }) {
     <button
       type="button"
       onClick={() => openDrawer(callId, "prompt-inspector")}
-      className="inline-flex items-center rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] text-amber-800 hover:brightness-95"
+      className="inline-flex items-center rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 font-mono text-micro text-amber-800 hover:brightness-95"
       title="click 打开 a2a 调用树"
       data-testid={`wake-trigger-a2a-pill-${callId.slice(0, 13)}`}
       data-call-id={callId}
@@ -774,29 +838,34 @@ function CoverageSection({
 
   return (
     <section data-testid="prompt-inspector-coverage">
-      <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500">
-        <span>🛡️ Decision Coverage</span>
+      <div className="mb-1 flex items-center gap-2 text-micro uppercase tracking-wider text-slate-500">
+        <span className="inline-flex items-center gap-1">
+          <Shield className="h-3 w-3 shrink-0" aria-hidden="true" />
+          Decision Coverage
+        </span>
         <span className={`rounded border px-1.5 py-0.5 font-semibold ${statusColor}`}>
           {status.toUpperCase()}
         </span>
       </div>
       {isLoading ? (
         <div
-          className="rounded border border-dashed border-slate-300 p-2 text-[10px] text-slate-400"
+          className="flex items-center gap-1 rounded border border-dashed border-slate-300 p-2 text-micro text-slate-400"
           data-testid="coverage-loading"
         >
-          ⏳ 加载 coverage…
+          <Hourglass className="h-3 w-3 shrink-0" aria-hidden="true" />
+          加载 coverage…
         </div>
       ) : error ? (
         <div
-          className="rounded border border-red-300 bg-red-50 p-2 text-[10px] text-red-700"
+          className="flex items-start gap-1 rounded border border-red-300 bg-red-50 p-2 text-micro text-red-700"
           data-testid="coverage-error"
         >
-          ⚠ coverage 加载失败：{error}
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>coverage 加载失败：{error}</span>
         </div>
       ) : (
         <>
-          <div className="mb-1 rounded border border-slate-200 bg-slate-50 p-2 text-[10px] text-slate-600">
+          <div className="mb-1 rounded border border-slate-200 bg-slate-50 p-2 text-micro text-slate-600">
             <span className="font-mono">{pct !== null ? `${pct}%` : "—"}</span>
             <span className="ml-2 text-slate-500">
               ({resolved.length} resolved / {broad.length} broad, {unresolved.length} unresolved)
@@ -804,7 +873,7 @@ function CoverageSection({
           </div>
           {unresolved.length === 0 ? (
             <div
-              className="rounded border border-dashed border-slate-300 p-2 text-[10px] text-slate-400"
+              className="rounded border border-dashed border-slate-300 p-2 text-micro text-slate-400"
               data-testid="coverage-empty"
             >
               暂无 unresolved decision (coverage check pass 或 broad=0)
@@ -832,31 +901,31 @@ function UnresolvedRow({
   // final-vision P1-1 (2026-05-27): click → DecisionSupersedeRejectModal (替换原 window.alert)
   return (
     <li
-      className="rounded border border-amber-200 bg-amber-50 p-1.5 text-[10px]"
+      className="rounded border border-amber-200 bg-amber-50 p-1.5 text-micro"
       data-testid={`coverage-unresolved-${decision.decisionId}`}
       data-decision-id={decision.decisionId}
     >
       <div className="flex items-center justify-between gap-2">
         <span
-          className="inline-flex shrink-0 items-center rounded border border-amber-300 bg-amber-100 px-1 py-0.5 font-mono text-[9px] text-amber-700"
+          className="inline-flex shrink-0 items-center rounded border border-amber-300 bg-amber-100 px-1 py-0.5 font-mono text-micro text-amber-700"
           data-testid={`coverage-decision-type-${decision.decisionId}`}
         >
           {decision.decisionType}
         </span>
-        <span className="truncate text-[10px] text-slate-700 flex-1" title={decision.summary}>
+        <span className="truncate text-micro text-slate-700 flex-1" title={decision.summary}>
           {decision.summary}
         </span>
         <button
           type="button"
           onClick={() => onClick(decision)}
-          className="shrink-0 rounded bg-blue-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-blue-700"
+          className="shrink-0 rounded bg-accent-500 px-2 py-0.5 text-micro font-medium text-white hover:bg-accent-600"
           data-testid={`coverage-confirm-button-${decision.decisionId}`}
           title="manual confirm (open supersede/reject modal)"
         >
           Confirm
         </button>
       </div>
-      <div className="mt-0.5 text-[9px] text-slate-500">
+      <div className="mt-0.5 text-micro text-slate-500">
         by <span className="font-mono">{decision.decidedBy}</span> @{" "}
         <span className="font-mono">{decision.decidedAt}</span>
       </div>
@@ -912,10 +981,19 @@ function BottomButtonsBar({
           type="button"
           onClick={handleCopy}
           disabled={!hasData}
-          className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
           title={hasData ? "复制完整 prompt 原文到剪贴板" : "本房间还无 prompt 审计记录"}
         >
-          {copyState === "copied" ? "已复制 ✓" : copyState === "failed" ? "复制失败" : "复制全文"}
+          {copyState === "copied" ? (
+            <>
+              已复制
+              <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            </>
+          ) : copyState === "failed" ? (
+            "复制失败"
+          ) : (
+            "复制全文"
+          )}
         </button>
         <button
           type="button"
@@ -934,7 +1012,7 @@ function BottomButtonsBar({
           type="button"
           disabled
           className="cursor-not-allowed rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-400"
-          title="按 part 追溯（每行右侧 🔍 按钮）— 此 prompt 由多 part 拼装，无全局 wiki 源"
+          title="按 part 追溯（每行右侧放大镜按钮）；此 prompt 由多 part 拼装，无全局 wiki 源"
         >
           追溯 wiki 事件
         </button>

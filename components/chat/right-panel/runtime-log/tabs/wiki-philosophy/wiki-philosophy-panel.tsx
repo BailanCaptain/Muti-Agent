@@ -1,6 +1,22 @@
 "use client"
 
-import { useState } from "react"
+import {
+  AlertTriangle,
+  Brain,
+  ChevronDown,
+  ChevronRight,
+  ClipboardList,
+  Home,
+  Hourglass,
+  Library,
+  MessageCircle,
+  MessageSquare,
+  Package,
+  TrendingUp,
+  User,
+  Wrench,
+} from "lucide-react"
+import { type ComponentType, useState } from "react"
 import { type WikiBucketStat, useWikiStoryData } from "./use-wiki-story-data"
 
 /**
@@ -23,13 +39,15 @@ import { type WikiBucketStat, useWikiStoryData } from "./use-wiki-story-data"
  *   - drift history timeline (room_decisions tombstone + supersede 时序)
  */
 
-const BUCKET_LABELS: Record<string, { zh: string; emoji: string }> = {
-  room: { zh: "房间记忆 (room)", emoji: "🏠" },
-  project: { zh: "项目记忆 (project)", emoji: "📋" },
-  user: { zh: "用户记忆 (user)", emoji: "👤" },
-  feedback: { zh: "反馈记忆 (feedback)", emoji: "💬" },
-  work: { zh: "工作记忆 (work)", emoji: "🔧" },
-  conversation: { zh: "对话记忆 (conversation)", emoji: "💭" },
+type BucketIcon = ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>
+
+const BUCKET_LABELS: Record<string, { zh: string; icon: BucketIcon }> = {
+  room: { zh: "房间记忆 (room)", icon: Home },
+  project: { zh: "项目记忆 (project)", icon: ClipboardList },
+  user: { zh: "用户记忆 (user)", icon: User },
+  feedback: { zh: "反馈记忆 (feedback)", icon: MessageSquare },
+  work: { zh: "工作记忆 (work)", icon: Wrench },
+  conversation: { zh: "对话记忆 (conversation)", icon: MessageCircle },
 }
 
 export function WikiPhilosophyPanel({ enabled }: { enabled: boolean }) {
@@ -42,33 +60,51 @@ export function WikiPhilosophyPanel({ enabled }: { enabled: boolean }) {
     >
       {/* 1. Banner */}
       <div className="mb-2">
-        <div className="font-semibold text-violet-900">🧠 Wiki 是 LLM 第一公民</div>
-        <div className="mt-0.5 text-[10px] leading-snug text-slate-600">
+        <div className="flex items-center gap-1 font-semibold text-violet-900">
+          <Brain className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          Wiki 是 LLM 第一公民
+        </div>
+        <div className="mt-0.5 text-micro leading-snug text-slate-600">
           不是文档库 · 6 类记忆桶 + canonical_owner 唯一所属 + 越用越聪明 (V16.5 chap 1-3)
         </div>
       </div>
 
       {/* Loading / error */}
       {isLoading && (
-        <div className="text-[10px] text-slate-400" data-testid="wiki-philosophy-loading">
-          ⏳ 加载中…
+        <div
+          className="flex items-center gap-1 text-micro text-slate-400"
+          data-testid="wiki-philosophy-loading"
+        >
+          <Hourglass className="h-3 w-3 shrink-0" aria-hidden="true" />
+          加载中…
         </div>
       )}
       {error && (
-        <div className="text-[10px] text-red-500" data-testid="wiki-philosophy-error">
-          ⚠ 加载失败：{error}
+        <div
+          className="flex items-start gap-1 text-micro text-red-500"
+          data-testid="wiki-philosophy-error"
+        >
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>加载失败：{error}</span>
         </div>
       )}
 
       {/* 2. 总览 stats */}
       {!isLoading && !error && (
         <>
-          <div className="mb-2 flex flex-wrap gap-3 text-[10px] text-slate-700">
-            <span data-testid="wiki-philosophy-total-entities">
-              📚 总 entity: <span className="font-mono font-semibold">{data.totalEntities}</span>
+          <div className="mb-2 flex flex-wrap gap-3 text-micro text-slate-700">
+            <span
+              className="inline-flex items-center gap-1"
+              data-testid="wiki-philosophy-total-entities"
+            >
+              <Library className="h-3 w-3 shrink-0" aria-hidden="true" />总 entity:{" "}
+              <span className="font-mono font-semibold">{data.totalEntities}</span>
             </span>
-            <span data-testid="wiki-philosophy-total-decisions">
-              📋 总 decision:{" "}
+            <span
+              className="inline-flex items-center gap-1"
+              data-testid="wiki-philosophy-total-decisions"
+            >
+              <ClipboardList className="h-3 w-3 shrink-0" aria-hidden="true" />总 decision:{" "}
               <span className="font-mono font-semibold">{data.totalDecisions}</span>
             </span>
           </div>
@@ -92,23 +128,24 @@ export function WikiPhilosophyPanel({ enabled }: { enabled: boolean }) {
 
 function BucketCard({ bucket }: { bucket: WikiBucketStat }) {
   const [expanded, setExpanded] = useState(false)
-  const label = BUCKET_LABELS[bucket.type] ?? { zh: bucket.type, emoji: "📦" }
+  const label = BUCKET_LABELS[bucket.type] ?? { zh: bucket.type, icon: Package }
+  const BucketTypeIcon = label.icon
   const canExpand = bucket.topEntities.length > 0
 
   return (
     <div
-      className="rounded border border-slate-200 bg-white p-2 text-[10px]"
+      className="rounded border border-slate-200 bg-white p-2 text-micro"
       data-testid={`wiki-bucket-${bucket.type}`}
     >
       <div
         className={`flex items-center justify-between ${canExpand ? "cursor-pointer hover:bg-slate-50" : ""}`}
         onClick={canExpand ? () => setExpanded((v) => !v) : undefined}
       >
-        <div className="font-semibold text-slate-700">
-          <span className="mr-1">{label.emoji}</span>
+        <div className="flex items-center font-semibold text-slate-700">
+          <BucketTypeIcon className="mr-1 h-3 w-3 shrink-0" aria-hidden="true" />
           {label.zh}
         </div>
-        <div className="font-mono text-slate-500">
+        <div className="flex items-center font-mono text-slate-500">
           <span className="text-green-600">{bucket.canonicalCount}</span>
           {bucket.draftCount > 0 && (
             <>
@@ -118,7 +155,13 @@ function BucketCard({ bucket }: { bucket: WikiBucketStat }) {
           )}
           <span className="ml-1 text-slate-400">({bucket.totalCount})</span>
           {canExpand && (
-            <span className="ml-1 text-slate-400">{expanded ? "▾" : "▸"}</span>
+            <span className="ml-1 text-slate-400">
+              {expanded ? (
+                <ChevronDown className="h-3 w-3" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="h-3 w-3" aria-hidden="true" />
+              )}
+            </span>
           )}
         </div>
       </div>
@@ -127,7 +170,7 @@ function BucketCard({ bucket }: { bucket: WikiBucketStat }) {
           {bucket.topEntities.map((e) => (
             <li
               key={e.id}
-              className="text-[10px]"
+              className="text-micro"
               data-testid={`wiki-entity-${bucket.type}-${e.id}`}
             >
               <div className="font-mono text-slate-700">
@@ -146,7 +189,7 @@ function BucketCard({ bucket }: { bucket: WikiBucketStat }) {
                   <span className="text-violet-600">↳ supersedes ({e.supersedes.length}):</span>
                   <ul className="ml-3 list-disc">
                     {e.supersedes.map((s) => (
-                      <li key={s} className="font-mono text-[9px] text-slate-400">
+                      <li key={s} className="font-mono text-micro text-slate-400">
                         {s}
                       </li>
                     ))}
@@ -173,8 +216,9 @@ function GrowthSparkline({ points }: { points: ReadonlyArray<{ day: string; enti
   )
   return (
     <div className="rounded border border-slate-200 bg-white p-2" data-testid="wiki-growth-sparkline">
-      <div className="mb-1 text-[10px] font-semibold text-slate-700">
-        📈 近 7 天增长 (entity / decision)
+      <div className="mb-1 flex items-center gap-1 text-micro font-semibold text-slate-700">
+        <TrendingUp className="h-3 w-3 shrink-0" aria-hidden="true" />近 7 天增长 (entity /
+        decision)
       </div>
       <div className="flex items-end gap-1.5">
         {points.map((p) => {
@@ -199,12 +243,12 @@ function GrowthSparkline({ points }: { points: ReadonlyArray<{ day: string; enti
                   title={`decision: ${p.decisionNew}`}
                 />
               </div>
-              <div className="mt-0.5 font-mono text-[9px] text-slate-400">{dayLabel}</div>
+              <div className="mt-0.5 font-mono text-micro text-slate-400">{dayLabel}</div>
             </div>
           )
         })}
       </div>
-      <div className="mt-1 flex gap-2 text-[9px] text-slate-500">
+      <div className="mt-1 flex gap-2 text-micro text-slate-500">
         <span>
           <span className="inline-block h-1.5 w-2 bg-blue-400 align-middle" /> entity
         </span>

@@ -144,7 +144,7 @@ export function InlineDecisionBoard() {
             type="button"
             onClick={() => submit(false)}
             disabled={submitting}
-            className="rounded-lg bg-blue-500 px-5 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-blue-600 disabled:opacity-40"
+            className="rounded-lg bg-accent-500 px-5 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-accent-600 active:scale-[0.97] disabled:opacity-40"
           >
             {submitting ? "提交中…" : "提交决定"}
           </button>
@@ -266,7 +266,7 @@ function DivergentItemCard({ item }: { item: DecisionBoardItem }) {
             value={choice?.kind === "custom" ? choice.text : ""}
             onChange={(e) => setCustomText(item.id, e.target.value)}
             placeholder="输入你的决定……"
-            className="mt-1.5 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none placeholder:text-slate-400 focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+            className="mt-1.5 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none placeholder:text-slate-400 focus:border-accent-300 focus:ring-2 focus:ring-accent-100"
             rows={2}
           />
         )}

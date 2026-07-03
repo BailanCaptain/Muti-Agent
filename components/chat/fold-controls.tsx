@@ -23,7 +23,7 @@ export function FoldControls() {
           <h3 className="text-sm font-semibold text-slate-800">消息折叠</h3>
         </div>
         <button
-          className="flex items-center gap-1 rounded-full border border-slate-200/80 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-800"
+          className="flex items-center gap-1 rounded-full border border-slate-200/80 bg-slate-50 px-2.5 py-1 text-micro font-semibold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-800"
           onClick={() => (allFolded ? unfoldAll() : foldAll())}
           title={allFolded ? "展开所有 agent 消息" : "折叠所有 agent 消息"}
           type="button"
@@ -43,7 +43,7 @@ export function FoldControls() {
           const theme = providerChipTheme[provider]
           return (
             <button
-              className={`flex flex-col items-center gap-1 rounded-2xl border px-2 py-2 text-[11px] font-semibold transition-colors ${folded ? theme.folded : theme.open}`}
+              className={`flex flex-col items-center gap-1 rounded-2xl border px-2 py-2 text-caption font-semibold transition-colors ${folded ? theme.folded : theme.open}`}
               key={provider}
               onClick={() => toggleProvider(provider)}
               title={
@@ -52,7 +52,7 @@ export function FoldControls() {
               type="button"
             >
               <span>{PROVIDER_ALIASES[provider]}</span>
-              <span className="text-[9px] font-normal opacity-70">
+              <span className="text-micro font-normal opacity-70">
                 {folded ? "已折叠" : "展开中"}
               </span>
             </button>

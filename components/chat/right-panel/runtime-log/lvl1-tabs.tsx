@@ -80,7 +80,7 @@ export function Lvl1Tabs() {
             tabIndex={isActive && item.enabled ? 0 : -1}
             onClick={() => setActiveLvl1(item.key)}
             onKeyDown={handleKeyDown}
-            className={`rounded px-2 py-1 text-[11px] transition-colors focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+            className={`rounded px-2 py-1 text-caption transition-colors focus:outline-none focus:ring-1 focus:ring-accent-400 ${
               isActive
                 ? "bg-slate-800 text-white"
                 : item.enabled
@@ -90,7 +90,7 @@ export function Lvl1Tabs() {
             data-testid={`runtime-log-lvl1-${item.key}`}
           >
             {item.label}
-            {item.futureTag && <span className="ml-1 text-[9px] text-slate-400">· 未来</span>}
+            {item.futureTag && <span className="ml-1 text-micro text-slate-400">· 未来</span>}
           </button>
         )
       })}

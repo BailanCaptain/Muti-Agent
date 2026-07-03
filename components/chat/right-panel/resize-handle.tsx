@@ -141,8 +141,8 @@ export function ResizeHandle() {
       tabIndex={0}
       onMouseDown={handleMouseDown}
       onKeyDown={handleKeyDown}
-      className={`absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize transition-colors focus:outline-none focus:bg-blue-500 ${
-        isDragging ? "bg-blue-400" : "bg-transparent hover:bg-blue-300/60"
+      className={`absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize transition-colors focus:outline-none focus-visible:bg-accent-400 ${
+        isDragging ? "bg-accent-400" : "bg-transparent hover:bg-slate-300/60"
       }`}
       data-testid="status-panel-resize-handle"
     />

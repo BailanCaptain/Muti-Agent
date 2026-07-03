@@ -1,7 +1,7 @@
 "use client"
 
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
-import { ChevronsDown, ChevronsUp } from "lucide-react"
+import { ChevronsDown, ChevronsUp, Star } from "lucide-react"
 
 /**
  * F027 Phase 3 Week 3 Day 12-13 (AC-P3-2) · RuntimeLog 容器 header
@@ -16,7 +16,10 @@ export function RuntimeLogHeader() {
       className="flex items-center justify-between border-t border-slate-200/60 px-3 py-1.5"
       data-testid="runtime-log-header"
     >
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">★ 运行日志</div>
+      <div className="flex items-center gap-1 text-micro uppercase tracking-wider text-slate-500">
+        <Star className="h-3 w-3 shrink-0" aria-hidden="true" />
+        运行日志
+      </div>
       <button
         type="button"
         onClick={toggleCollapsed}

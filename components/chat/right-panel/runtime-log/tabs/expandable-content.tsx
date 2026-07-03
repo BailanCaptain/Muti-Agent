@@ -1,5 +1,6 @@
 "use client"
 
+import { AlertTriangle, ChevronDown, ChevronRight, Hourglass } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 /**
@@ -72,34 +73,46 @@ export function ExpandableContent({
       <button
         type="button"
         onClick={toggle}
-        className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline"
+        className="inline-flex items-center gap-1 text-micro text-blue-600 hover:text-blue-800 hover:underline"
         data-testid={`expand-toggle-${contentPath}`}
         aria-expanded={open}
       >
-        {open ? "▾ 收起全文" : "▸ 展开看全文"}
+        {open ? (
+          <>
+            <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
+            收起全文
+          </>
+        ) : (
+          <>
+            <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
+            展开看全文
+          </>
+        )}
       </button>
       {open && (
         <div className="mt-1" data-testid={`expand-panel-${contentPath}`}>
           {isLoading && (
             <span
-              className="text-[10px] text-slate-400"
+              className="inline-flex items-center gap-1 text-micro text-slate-400"
               data-testid={`expand-loading-${contentPath}`}
             >
-              ⏳ 加载全文…
+              <Hourglass className="h-3 w-3 shrink-0" aria-hidden="true" />
+              加载全文…
             </span>
           )}
           {error && (
             <span
-              className="text-[10px] text-red-500"
+              className="inline-flex items-start gap-1 text-micro text-red-500"
               data-testid={`expand-error-${contentPath}`}
               title={error}
             >
-              ⚠ 加载失败：{error}
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+              <span>加载失败：{error}</span>
             </span>
           )}
           {content !== null && !isLoading && !error && (
             <pre
-              className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded border border-slate-200 bg-slate-50 p-2 text-[10px] leading-relaxed text-slate-700"
+              className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded border border-slate-200 bg-slate-50 p-2 text-micro leading-relaxed text-slate-700"
               data-testid={`expand-content-${contentPath}`}
             >
               {content}

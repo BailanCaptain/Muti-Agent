@@ -103,7 +103,7 @@ function CodeBlock({ children }: { children: ReactNode }) {
     <div className="group/code relative overflow-hidden rounded-xl border border-slate-200/80 bg-slate-900">
       {language && (
         <div className="flex items-center justify-between border-b border-white/10 bg-slate-800 px-4 py-1.5">
-          <span className="text-[11px] font-medium uppercase tracking-[0.15em] text-white/50">
+          <span className="text-caption font-medium uppercase tracking-[0.15em] text-white/50">
             {language}
           </span>
         </div>
@@ -111,13 +111,13 @@ function CodeBlock({ children }: { children: ReactNode }) {
       <button
         onClick={handleCopy}
         type="button"
-        className="absolute right-2 top-2 z-10 rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-slate-300 opacity-0 transition-opacity hover:bg-slate-600 group-hover/code:opacity-100"
+        className="absolute right-2 top-2 z-10 rounded-md bg-slate-700 px-2 py-1 text-micro font-medium text-slate-300 opacity-0 transition-opacity hover:bg-slate-600 group-hover/code:opacity-100"
       >
         {copied ? "已复制 ✓" : "复制"}
       </button>
       <pre
         ref={preRef}
-        className="overflow-x-auto px-4 py-3 font-mono text-[13px] leading-6 text-white [&>code]:bg-transparent [&>code]:p-0 [&>code]:text-inherit"
+        className="overflow-x-auto px-4 py-3 font-mono text-compact leading-6 text-white [&>code]:bg-transparent [&>code]:p-0 [&>code]:text-inherit"
       >
         {children}
       </pre>
@@ -184,7 +184,7 @@ const mdComponents: Components = {
     <h2 className="text-base font-bold text-slate-800">{withMentions(children)}</h2>
   ),
   h3: ({ children }) => (
-    <h3 className="text-[15px] font-semibold text-slate-700">{withMentions(children)}</h3>
+    <h3 className="text-sm font-semibold text-slate-700">{withMentions(children)}</h3>
   ),
   h4: ({ children }) => (
     <h4 className="text-sm font-semibold text-slate-700">{withMentions(children)}</h4>
@@ -262,7 +262,7 @@ const mdComponents: Components = {
 
   table: ({ children }) => (
     <div className="overflow-x-auto">
-      <table className="min-w-full border-collapse overflow-hidden rounded-xl border border-slate-200/80 text-left text-[13px]">
+      <table className="min-w-full border-collapse overflow-hidden rounded-xl border border-slate-200/80 text-left text-compact">
         {children}
       </table>
     </div>
@@ -375,14 +375,14 @@ export function MarkdownMessage({
   return (
     <div
       className={[
-        "grid gap-2.5 break-words text-[14px] leading-[1.75]",
+        "grid gap-2.5 break-words text-sm leading-[1.75]",
         "[&_a]:break-all",
         "[&_blockquote]:italic",
         "[&_code]:font-mono",
         "[&_del]:opacity-70",
         "[&_input]:accent-emerald-500",
         "[&_ol]:list-decimal",
-        "[&_table]:text-[13px]",
+        "[&_table]:text-compact",
         "[&_ul]:list-disc",
         inverted
           ? "text-white [&_code]:bg-white/15 [&_hr]:border-white/15 [&_thead]:bg-white/10"

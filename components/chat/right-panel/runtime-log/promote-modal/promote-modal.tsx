@@ -1,5 +1,6 @@
 "use client"
 
+import { CheckCircle2 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import { usePromoteJobsStore } from "@/components/stores/promote-jobs-store"
@@ -341,7 +342,7 @@ export function PromoteModal({
                   type="button"
                   onClick={handlePromote}
                   disabled={!canPromote}
-                  className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  className="px-4 py-2 text-sm bg-accent-500 text-white rounded hover:bg-accent-600 active:scale-[0.97] disabled:bg-gray-300 disabled:cursor-not-allowed"
                 >
                   Promote
                 </button>
@@ -377,7 +378,9 @@ function PromoteSuccessView({
   return (
     <div data-testid="promote-success">
       <div className="mb-4 rounded border border-green-300 bg-green-50 p-4">
-        <div className="font-medium text-green-800">✅ 已 promote 到正式 wiki</div>
+        <div className="flex items-center gap-1 font-medium text-green-800">
+          <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />已 promote 到正式 wiki
+        </div>
         <div className="mt-2 text-xs text-green-700">
           落地路径：
           <span className="font-mono break-all">{finalPath}</span>

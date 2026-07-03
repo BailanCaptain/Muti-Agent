@@ -99,7 +99,7 @@ export function SettingsModal() {
             >
               {t.label}
               {tab === t.key && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-amber-500" />
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-accent-500" />
               )}
             </button>
           ))}
@@ -128,7 +128,7 @@ export function SettingsModal() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span
-                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${
+                            className={`rounded-full px-2 py-0.5 text-micro font-semibold ring-1 ${
                               rule.decision === "allow"
                                 ? "bg-emerald-50 text-emerald-700 ring-emerald-200/80"
                                 : "bg-rose-50 text-rose-700 ring-rose-200/80"
@@ -136,10 +136,10 @@ export function SettingsModal() {
                           >
                             {rule.decision === "allow" ? "允许" : "拒绝"}
                           </span>
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200/80">
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-micro font-semibold text-slate-600 ring-1 ring-slate-200/80">
                             {rule.provider}
                           </span>
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200/80">
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-micro font-semibold text-slate-600 ring-1 ring-slate-200/80">
                             {rule.scope}
                           </span>
                         </div>
@@ -147,7 +147,7 @@ export function SettingsModal() {
                           {rule.action}
                         </div>
                         {rule.reason && (
-                          <div className="mt-0.5 truncate text-[11px] text-slate-400">
+                          <div className="mt-0.5 truncate text-caption text-slate-400">
                             {rule.reason}
                           </div>
                         )}

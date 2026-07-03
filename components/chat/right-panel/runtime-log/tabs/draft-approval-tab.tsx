@@ -1,5 +1,6 @@
 "use client"
 
+import { AlertTriangle, Hourglass, Settings } from "lucide-react"
 import { useCallback, useMemo, useState } from "react"
 
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
@@ -227,7 +228,7 @@ function Header({
       className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-2 py-1.5"
       data-testid="draft-approval-header"
     >
-      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-slate-500">
+      <div className="flex items-center gap-1.5 text-micro uppercase tracking-wider text-slate-500">
         {visibleCount > 0 && (
           <input
             type="checkbox"
@@ -250,7 +251,7 @@ function Header({
         <button
           type="button"
           onClick={onToggleSettings}
-          className={`rounded px-1.5 py-0.5 text-[10px] transition ${
+          className={`rounded px-1.5 py-0.5 text-micro transition ${
             settingsOpen
               ? "bg-slate-700 text-white"
               : "text-slate-400 hover:bg-slate-200 hover:text-slate-600"
@@ -259,13 +260,13 @@ function Header({
           aria-label="收录设置"
           data-testid="draft-approval-settings-toggle"
         >
-          ⚙
+          <Settings className="h-3 w-3" aria-hidden="true" />
         </button>
         {selectedCount > 0 && (
           <button
             type="button"
             onClick={onOpenBatch}
-            className="rounded bg-purple-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-purple-700"
+            className="rounded bg-purple-600 px-2 py-0.5 text-micro font-medium text-white hover:bg-purple-700"
             data-testid="draft-approval-batch-button"
             title="对已选中的 draft 批量 promote (共用 reason，部分失败留原位)"
           >
@@ -273,17 +274,22 @@ function Header({
           </button>
         )}
         {isLoading && (
-          <span className="text-[10px] text-slate-400" data-testid="draft-approval-loading">
-            ⏳
+          <span
+            className="text-micro text-slate-400"
+            data-testid="draft-approval-loading"
+            aria-label="加载中"
+          >
+            <Hourglass className="h-3 w-3" aria-hidden="true" />
           </span>
         )}
         {error && (
           <span
-            className="text-[10px] text-red-500"
+            className="inline-flex items-center gap-1 text-micro text-red-500"
             data-testid="draft-approval-error"
             title={error}
           >
-            ⚠ 加载失败
+            <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+            加载失败
           </span>
         )}
       </div>
@@ -307,7 +313,7 @@ function DraftList({
   if (drafts.length === 0) {
     return (
       <div
-        className="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-[10px] text-slate-400"
+        className="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-micro text-slate-400"
         data-testid="draft-approval-empty"
       >
         无 draft（wiki/concepts/draft/ 空 或 endpoint fail）
@@ -363,11 +369,11 @@ function DraftRow({
             aria-label={`select ${draft.path}`}
             data-testid={`draft-approval-checkbox-${draft.path}`}
           />
-          <span className="truncate font-medium text-[11px] text-slate-700" title={draft.path}>
+          <span className="truncate font-medium text-caption text-slate-700" title={draft.path}>
             {draft.title}
           </span>
         </label>
-        <span className="shrink-0 text-[9px] text-slate-400" title={draft.mtime}>
+        <span className="shrink-0 text-micro text-slate-400" title={draft.mtime}>
           {formatRelative(draft.mtime)}
         </span>
       </div>
@@ -380,7 +386,7 @@ function DraftRow({
           <button
             type="button"
             onClick={() => onDemote(draft)}
-            className="rounded bg-orange-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-orange-700"
+            className="rounded bg-orange-600 px-2 py-0.5 text-micro font-medium text-white hover:bg-orange-700"
             data-testid={`draft-approval-demote-${draft.path}`}
             title="拒绝此 draft (mv 到 wiki/_rejected/ + 写 wiki_events action='demote')"
           >
@@ -389,7 +395,7 @@ function DraftRow({
         </div>
       </div>
       {draft.summary && (
-        <div className="mt-1 text-[10px] text-slate-500" title={draft.summary}>
+        <div className="mt-1 text-micro text-slate-500" title={draft.summary}>
           {truncate(draft.summary, 100)}
         </div>
       )}
@@ -411,7 +417,7 @@ function Badge({
     kind === "type" ? typeColorClass(value as DraftType) : originColorClass(value as DraftOrigin)
   return (
     <span
-      className={`inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[9px] ${colorClass}`}
+      className={`inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-micro ${colorClass}`}
       data-testid={`draft-approval-badge-${kind}-${value}`}
     >
       {label}

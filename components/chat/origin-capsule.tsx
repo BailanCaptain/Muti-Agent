@@ -1,6 +1,7 @@
 "use client"
 
 import type { TimelineMessage } from "@multi-agent/shared"
+import { Mail } from "lucide-react"
 
 /**
  * F026 P5 F2 · 溯源胶囊
@@ -35,10 +36,11 @@ export function OriginCapsule({ message }: { message: TimelineMessage }) {
 
   return (
     <div
-      className="border-b border-purple-100 bg-purple-50/50 px-4 py-1.5 text-[11px] text-purple-700"
+      className="border-b border-purple-100 bg-purple-50/50 px-4 py-1.5 text-caption text-purple-700"
       data-testid="origin-capsule"
     >
-      📨 <span className="font-semibold">{convener}</span> 正在征询{" "}
+      <Mail className="mr-1 inline-block h-3 w-3 align-[-0.125em]" aria-hidden="true" />
+      <span className="font-semibold">{convener}</span> 正在征询{" "}
       <span className="font-semibold">{target}</span>（为{" "}
       <span className="font-semibold">{onBehalf}</span>）
     </div>

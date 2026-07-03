@@ -67,9 +67,10 @@ describe("ResizeHandle 渲染 + ARIA", () => {
     renderInAside()
     const handle = screen.getByTestId("status-panel-resize-handle")
     expect(handle.className).toMatch(/cursor-ew-resize/)
-    expect(handle.className).not.toMatch(/bg-blue-400/)
-    expect(handle.className).toMatch(/hover:bg-blue-300/)
-    expect(handle.className).toMatch(/focus:bg-blue-500/) // r2 P3 keyboard focus 视觉
+    expect(handle.className).not.toMatch(/(?<!:)bg-accent-400/) // 非拖动态不常亮（排除 focus-visible: 前缀）
+    expect(handle.className).toMatch(/hover:bg-slate-300/)
+    // F039: keyboard focus 视觉从 focus:bg-blue-500 收敛到 focus-visible + accent（r2 P3 语义不变）
+    expect(handle.className).toMatch(/focus-visible:bg-accent-400/)
   })
 })
 

@@ -1,5 +1,6 @@
 "use client"
 
+import { Check, X } from "lucide-react"
 import { useCallback, useState } from "react"
 
 import { useLayoutStore } from "@/components/stores/layout-store"
@@ -99,7 +100,7 @@ export function WorktreesTab() {
           </span>
           <button
             type="button"
-            className="ml-auto shrink-0 rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-700 transition-colors hover:bg-slate-100"
+            className="ml-auto shrink-0 rounded border border-slate-300 px-2 py-0.5 text-caption text-slate-700 transition-colors hover:bg-slate-100"
             data-testid="wt-embed-close"
             onClick={() => setEmbedded(null)}
           >
@@ -200,7 +201,7 @@ export function WorktreesTab() {
 
       {logTail && (
         <pre
-          className="max-h-48 overflow-auto rounded bg-slate-900 p-2 font-mono text-[10px] text-slate-200"
+          className="max-h-48 overflow-auto rounded bg-slate-900 p-2 font-mono text-micro text-slate-200"
           data-testid="wt-log-tail"
         >
           {logTail.join("\n") || "(日志为空)"}
@@ -276,7 +277,7 @@ function MergeStatusLine({ row }: { row: WorktreeRow }) {
   const hasCounts = ms.ahead !== null || ms.behind !== null
   if (!hasCounts && ms.mergedHint !== true) return null
   return (
-    <div className="mt-1 flex items-center gap-2 text-[10px]">
+    <div className="mt-1 flex items-center gap-2 text-micro">
       {hasCounts && (
         <span className="text-slate-400" data-testid={`wt-aheadbehind-${row.name}`}>
           ↑{ms.ahead ?? "?"} ↓{ms.behind ?? "?"}
@@ -296,8 +297,15 @@ function MergeStatusLine({ row }: { row: WorktreeRow }) {
 
 function AliveBadge({ label, alive }: { label: string; alive: boolean }) {
   return (
-    <span className={`rounded px-1 ${alive ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"}`}>
-      {alive ? "●" : "○"} {label}
+    <span
+      className={`inline-flex items-center gap-1 rounded px-1 ${alive ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"}`}
+    >
+      {alive ? (
+        <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+      ) : (
+        <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full border border-slate-400" />
+      )}
+      {label}
     </span>
   )
 }
@@ -329,7 +337,7 @@ function CleanupControl({
   onConfirm: () => void
 }) {
   const btn =
-    "rounded border px-2 py-1 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+    "rounded border px-2 py-1 text-caption transition-colors disabled:cursor-not-allowed disabled:opacity-50"
   if (state.phase === "pending") {
     return (
       <div className="text-slate-500" data-testid="wt-cleanup-status">
@@ -388,9 +396,16 @@ function CleanupResultView({ result }: { result: CleanupResult }) {
       <div className="font-semibold">{result.ok ? "清理完成" : "清理未完成"}</div>
       <ul className="mt-1 flex flex-col gap-0.5">
         {(result.steps ?? []).map((s) => (
-          <li key={s.name}>
-            {s.ok ? "✓" : "✗"} {s.name}
-            {s.message ? ` — ${s.message}` : ""}
+          <li key={s.name} className="flex items-start gap-1">
+            {s.ok ? (
+              <Check className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+            ) : (
+              <X className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+            )}
+            <span>
+              {s.name}
+              {s.message ? `：${s.message}` : ""}
+            </span>
           </li>
         ))}
       </ul>
@@ -419,7 +434,7 @@ function ActionBar({
   const disabled = busy || !control || cleanupBusy
 
   const btn =
-    "rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+    "rounded border border-slate-300 px-2 py-1 text-caption text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
 
   return (
     <div className="flex items-center gap-2">

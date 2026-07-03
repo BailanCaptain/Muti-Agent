@@ -1,6 +1,8 @@
 "use client"
 
+import { AlertTriangle, Hourglass } from "lucide-react"
 import { useCallback, useMemo, useRef, useState } from "react"
+import { SkeletonLines } from "@/components/chat/skeleton"
 
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { BatchPromoteModal } from "../batch-promote-modal/batch-promote-modal"
@@ -185,13 +187,13 @@ export function KnowledgeBaseTab() {
         data-testid="knowledge-base-tab"
       >
         <div className="flex items-center justify-between">
-          <div className="text-[10px] uppercase tracking-wider text-slate-400">
+          <div className="text-micro uppercase tracking-wider text-slate-400">
             知识库 · Day 19b-1 [+ Drop] 启用 · 列表 Phase 4 接入
           </div>
           <button
             type="button"
             onClick={handleDropClick}
-            className="rounded bg-violet-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-violet-700"
+            className="rounded bg-violet-600 px-2 py-1 text-micro font-medium text-white hover:bg-violet-700"
             title="选择文件 (.md / .markdown / .json / .txt, ≤ 1MB) 打开 IngestModal"
             data-testid="kb-drop-button"
           >
@@ -208,10 +210,11 @@ export function KnowledgeBaseTab() {
         </div>
         {pickerError && (
           <div
-            className="rounded border border-red-200 bg-red-50 px-2 py-1 text-[10px] text-red-600"
+            className="flex items-start gap-1 rounded border border-red-200 bg-red-50 px-2 py-1 text-micro text-red-600"
             data-testid="kb-picker-error"
           >
-            ⚠ {pickerError}
+            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+            <span>{pickerError}</span>
           </div>
         )}
         {/* F027 v3 G6 · Wiki 哲学 panel (顶部 narrative + 6 桶 stats + 7d growth + supersede 链) */}
@@ -289,7 +292,7 @@ function KbDraftsSection({
     <div className="flex flex-col gap-2" data-testid="kb-drafts-section">
       <BatchPromoteBanner />
       <div className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-2 py-1.5">
-        <div className="text-[10px] uppercase tracking-wider text-slate-500">
+        <div className="text-micro uppercase tracking-wider text-slate-500">
           Drafts · {total}{" "}
           {selectedPaths.size > 0 ? `（已选 ${selectedPaths.size}）` : "（勾选多份后可批量审批）"}
         </div>
@@ -298,7 +301,7 @@ function KbDraftsSection({
             <button
               type="button"
               onClick={onOpenBatch}
-              className="rounded bg-purple-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-purple-700"
+              className="rounded bg-purple-600 px-2 py-0.5 text-micro font-medium text-white hover:bg-purple-700"
               data-testid="kb-batch-button"
               title="对已选 draft 批量 promote (共用 reason, 部分失败留原位)"
             >
@@ -306,20 +309,29 @@ function KbDraftsSection({
             </button>
           )}
           {isLoading && (
-            <span className="text-[10px] text-slate-400" data-testid="kb-drafts-loading">
-              ⏳
+            <span
+              className="text-micro text-slate-400"
+              data-testid="kb-drafts-loading"
+              aria-label="加载中"
+            >
+              <Hourglass className="h-3 w-3" aria-hidden="true" />
             </span>
           )}
           {error && (
-            <span className="text-[10px] text-red-500" data-testid="kb-drafts-error" title={error}>
-              ⚠ 加载失败
+            <span
+              className="inline-flex items-center gap-1 text-micro text-red-500"
+              data-testid="kb-drafts-error"
+              title={error}
+            >
+              <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+              加载失败
             </span>
           )}
         </div>
       </div>
       {drafts.length === 0 ? (
         <div
-          className="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-[10px] text-slate-400"
+          className="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-micro text-slate-400"
           data-testid="kb-drafts-empty"
         >
           无 draft (wiki/concepts/draft/ 空)
@@ -373,7 +385,7 @@ function KbDraftRow({
             aria-label={`select ${draft.path}`}
             data-testid={`kb-draft-checkbox-${draft.path}`}
           />
-          <span className="truncate font-medium text-[11px] text-slate-700" title={draft.path}>
+          <span className="truncate font-medium text-caption text-slate-700" title={draft.path}>
             {draft.title}
           </span>
         </label>
@@ -383,7 +395,7 @@ function KbDraftRow({
           <button
             type="button"
             onClick={() => onDemote(draft)}
-            className="rounded bg-orange-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-orange-700"
+            className="rounded bg-orange-600 px-2 py-0.5 text-micro font-medium text-white hover:bg-orange-700"
             data-testid={`kb-draft-demote-${draft.path}`}
             title="拒绝此 draft (mv 到 wiki/_rejected/)"
           >
@@ -405,29 +417,28 @@ function IndexList({
   error: string | null
 }) {
   if (isLoading) {
+    // F039 AC5: 列表形加载给形状贴布局的 skeleton（pro-max progressive-loading）
     return (
-      <div
-        className="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-[10px] text-slate-400"
-        data-testid="kb-loading"
-      >
-        ⏳ 加载派生视图…
+      <div className="rounded border border-slate-200 bg-surface-canvas p-3" data-testid="kb-loading">
+        <SkeletonLines lines={4} />
       </div>
     )
   }
   if (error) {
     return (
       <div
-        className="rounded border border-red-300 bg-red-50 p-3 text-[10px] text-red-700"
+        className="flex items-start gap-1 rounded border border-red-300 bg-red-50 p-3 text-micro text-red-700"
         data-testid="kb-error"
       >
-        ⚠ 加载失败：{error}
+        <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+        <span>加载失败：{error}</span>
       </div>
     )
   }
   if (data.total === 0) {
     return (
       <div
-        className="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-[10px] text-slate-400"
+        className="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-micro text-slate-400"
         data-testid="kb-empty"
       >
         暂无派生视图 (wiki/index/ 空; worktree-preview fixture 应自动 seed)
@@ -453,15 +464,15 @@ function IndexRow({ view }: { view: IndexViewSummary }) {
       data-bucket={view.bucket}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="inline-flex items-center rounded border border-violet-300 bg-violet-50 px-1.5 py-0.5 font-mono text-[9px] font-medium text-violet-700">
+        <span className="inline-flex items-center rounded border border-violet-300 bg-violet-50 px-1.5 py-0.5 font-mono text-micro font-medium text-violet-700">
           {view.bucket}
         </span>
-        <span className="shrink-0 text-[9px] text-slate-400" title={view.generatedAt ?? ""}>
+        <span className="shrink-0 text-micro text-slate-400" title={view.generatedAt ?? ""}>
           {view.generatedAt ? formatRelative(view.generatedAt) : "—"}
         </span>
       </div>
       {view.summary && (
-        <div className="mt-1 text-[10px] text-slate-500" title={view.summary}>
+        <div className="mt-1 text-micro text-slate-500" title={view.summary}>
           {view.summary.length > 100 ? `${view.summary.slice(0, 100)}…` : view.summary}
         </div>
       )}

@@ -50,7 +50,7 @@ export function ImageBlockComponent({ block }: { block: ImageBlock }) {
           <figcaption className="mt-1 text-xs text-slate-500">{block.alt}</figcaption>
         )}
         {block.meta?.viewport && (
-          <span className="text-[10px] text-slate-600">
+          <span className="text-micro text-slate-600">
             {block.meta.viewport.width}&times;{block.meta.viewport.height}
           </span>
         )}

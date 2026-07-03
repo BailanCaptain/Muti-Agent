@@ -3,7 +3,9 @@
 import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
 import { A2ATreeView } from "@/components/debug/a2a-tree-view"
 import type { DebugA2ACallRow, DebugA2ASessionTree } from "@/components/debug/a2a-types"
+import { AlertTriangle, Link2, X } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
+import { SkeletonLines } from "@/components/chat/skeleton"
 
 /**
  * F027 Phase 3 Week 4 Day 20 (AC-P3-5 + AC-P3-4) · a2a in-place drawer
@@ -113,9 +115,12 @@ export function A2ACallDrawer() {
         aria-labelledby="a2a-drawer-title"
       >
         <header className="flex items-center justify-between border-slate-200 border-b px-4 py-2.5">
-          <h2 id="a2a-drawer-title" className="font-semibold text-slate-800 text-sm">
-            🔗 a2a call tree:{" "}
-            <span className="font-mono text-[11px]">{callId}</span>
+          <h2
+            id="a2a-drawer-title"
+            className="flex items-center gap-1 font-semibold text-slate-800 text-sm"
+          >
+            <Link2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+            a2a call tree: <span className="font-mono text-caption">{callId}</span>
           </h2>
           <button
             type="button"
@@ -124,21 +129,23 @@ export function A2ACallDrawer() {
             className="rounded p-1 text-slate-500 hover:bg-slate-100"
             aria-label="关闭"
           >
-            ✕
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </header>
         <div className="flex-1 overflow-y-auto px-3 py-2 text-xs">
           {isLoading && (
-            <div className="text-[11px] text-slate-400" data-testid="a2a-drawer-loading">
-              ⏳ 加载 a2a 调用树…
+            // F039 AC5: 树形内容加载给 skeleton 占位
+            <div data-testid="a2a-drawer-loading">
+              <SkeletonLines lines={5} />
             </div>
           )}
           {error && (
             <div
-              className="rounded border border-red-200 bg-red-50 p-2 text-[11px] text-red-600"
+              className="flex items-start gap-1 rounded border border-red-200 bg-red-50 p-2 text-caption text-red-600"
               data-testid="a2a-drawer-error"
             >
-              ⚠ 加载失败：{error}
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+              <span>加载失败：{error}</span>
             </div>
           )}
           {!isLoading && !error && tree && tree.calls.length > 0 && (
@@ -148,14 +155,14 @@ export function A2ACallDrawer() {
           )}
           {!isLoading && !error && tree && tree.calls.length === 0 && (
             <div
-              className="rounded border border-dashed border-slate-300 p-3 text-[10px] text-slate-400"
+              className="rounded border border-dashed border-slate-300 p-3 text-micro text-slate-400"
               data-testid="a2a-drawer-empty"
             >
               call tree 为空（callRegistry 内无此 root 或已过期）
             </div>
           )}
         </div>
-        <footer className="border-slate-200 border-t bg-slate-50 px-4 py-2 text-[10px] text-slate-500">
+        <footer className="border-slate-200 border-t bg-slate-50 px-4 py-2 text-micro text-slate-500">
           {source && (
             <span>
               from: <span className="font-mono">{source}</span>

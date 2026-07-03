@@ -92,7 +92,7 @@ export function AtPill({
     <span
       data-testid="at-pill"
       data-status={status}
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${meta.bg} ${meta.text} ${meta.border}`}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-caption ${meta.bg} ${meta.text} ${meta.border}`}
     >
       <Icon className={`h-3 w-3 ${meta.spin ? "animate-spin" : ""}`} aria-hidden="true" />
       {targetAlias ? <span className="font-medium">@{targetAlias}</span> : null}
@@ -106,7 +106,7 @@ export function AtPill({
             e.stopPropagation()
             onRetry?.()
           }}
-          className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-surface-canvas px-1.5 py-0.5 text-[10px] font-medium text-rose-700 transition hover:bg-surface-elevated"
+          className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-surface-canvas px-1.5 py-0.5 text-micro font-medium text-rose-700 transition hover:bg-surface-elevated"
         >
           <RotateCcw className="h-2.5 w-2.5" aria-hidden="true" />
           重发

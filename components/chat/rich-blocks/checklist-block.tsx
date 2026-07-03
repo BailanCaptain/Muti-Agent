@@ -22,7 +22,7 @@ export function ChecklistBlockComponent({ block }: { block: ChecklistBlock }) {
         {block.title && (
           <span className="text-sm font-semibold text-slate-800">{block.title}</span>
         )}
-        <span className="ml-auto shrink-0 rounded-full border border-slate-200 bg-surface-canvas px-2 py-0.5 font-mono text-[11px] font-semibold text-slate-500">
+        <span className="ml-auto shrink-0 rounded-full border border-slate-200 bg-surface-canvas px-2 py-0.5 font-mono text-caption font-semibold text-slate-500">
           {checkedCount}/{total}
         </span>
       </div>

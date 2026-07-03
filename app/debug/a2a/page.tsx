@@ -8,6 +8,7 @@ import type {
   DebugA2AStatusResponse,
 } from "@/components/debug/a2a-types"
 import { useThreadStore } from "@/components/stores/thread-store"
+import { AlertTriangle } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 
 /**
@@ -109,7 +110,7 @@ export default function DebugA2APage() {
         <header className="mb-4 flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold text-slate-800">A2A 派发对账</h1>
-            <p className="text-[12px] text-slate-500">
+            <p className="text-xs text-slate-500">
               call-registry 实时窗口（F026 P5 F10）· 不订阅 WS，手动刷新
             </p>
           </div>
@@ -118,7 +119,7 @@ export default function DebugA2APage() {
             onClick={() => void refetch()}
             disabled={loading}
             data-testid="a2a-refresh-button"
-            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-[12px] font-medium text-slate-700 shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading ? "Loading..." : "刷新"}
           </button>
@@ -136,7 +137,7 @@ export default function DebugA2APage() {
                 type="button"
                 onClick={() => setActiveTab(t.id)}
                 data-testid={`a2a-tab-${t.id}`}
-                className={`px-3 py-2 text-[13px] font-medium transition ${
+                className={`px-3 py-2 text-compact font-medium transition ${
                   active
                     ? "border-b-2 border-slate-800 text-slate-900"
                     : "border-b-2 border-transparent text-slate-500 hover:text-slate-700"
@@ -150,7 +151,7 @@ export default function DebugA2APage() {
 
         {activeTab === "tree" ? (
           <div className="mb-4 flex items-center gap-2">
-            <label htmlFor="session-select" className="text-[12px] text-slate-600">
+            <label htmlFor="session-select" className="text-xs text-slate-600">
               Session:
             </label>
             <select
@@ -158,7 +159,7 @@ export default function DebugA2APage() {
               data-testid="a2a-session-select"
               value={selectedSessionId}
               onChange={(e) => setSelectedSessionId(e.target.value)}
-              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[12px]"
+              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs"
             >
               {sessionGroups.length === 0 ? (
                 <option value="">（无 session）</option>
@@ -176,9 +177,10 @@ export default function DebugA2APage() {
         {error ? (
           <div
             data-testid="a2a-error"
-            className="mb-4 rounded-md border border-rose-200 bg-rose-50 p-3 text-[12px] text-rose-700"
+            className="mb-4 rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"
           >
-            ⚠️ {error}
+            <AlertTriangle className="mr-1 inline-block h-3.5 w-3.5 align-[-0.2em]" aria-hidden="true" />
+            {error}
           </div>
         ) : null}
 
@@ -193,7 +195,7 @@ export default function DebugA2APage() {
             ) : (
               <div
                 data-testid="a2a-empty-trees"
-                className="rounded border border-dashed border-slate-200 bg-white/50 p-6 text-center text-[12px] text-slate-400"
+                className="rounded border border-dashed border-slate-200 bg-white/50 p-6 text-center text-xs text-slate-400"
               >
                 {selectedSessionId ? "该 session 暂无 a2a 调用。" : "请选择一个 session。"}
               </div>
@@ -204,7 +206,7 @@ export default function DebugA2APage() {
         </main>
 
         {lastFetchedAt ? (
-          <footer className="mt-3 text-right text-[10px] text-slate-400">
+          <footer className="mt-3 text-right text-micro text-slate-400">
             最后刷新：{lastFetchedAt}
           </footer>
         ) : null}

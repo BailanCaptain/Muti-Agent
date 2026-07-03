@@ -1,6 +1,6 @@
 "use client"
 
-import { Camera, ChevronLeft, ChevronRight, ExternalLink, RefreshCw, Terminal, X } from "lucide-react"
+import { Camera, ChevronLeft, ChevronRight, ExternalLink, Globe, RefreshCw, Terminal, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { type ConsoleEntry, usePreviewBridge } from "./use-preview-bridge"
 
@@ -192,7 +192,7 @@ export function BrowserPanel({ initialPort, initialPath, onClose }: BrowserPanel
       ) : (
         <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">
           <div className="text-center">
-            <p className="text-2xl mb-2 opacity-30">🌐</p>
+            <Globe className="mx-auto mb-2 h-8 w-8 opacity-30" aria-hidden="true" />
             <p>Enter a localhost URL to preview</p>
           </div>
         </div>
@@ -202,12 +202,12 @@ export function BrowserPanel({ initialPort, initialPath, onClose }: BrowserPanel
       {consoleOpen && (
         <div className="border-t border-slate-200 bg-slate-900 max-h-48 overflow-y-auto">
           <div className="flex items-center justify-between px-2 py-1 border-b border-slate-700">
-            <span className="text-[10px] font-medium text-slate-400">Console</span>
-            <button type="button" className="text-[10px] text-slate-500 hover:text-slate-300" onClick={clearConsole}>
+            <span className="text-micro font-medium text-slate-400">Console</span>
+            <button type="button" className="text-micro text-slate-500 hover:text-slate-300" onClick={clearConsole}>
               Clear
             </button>
           </div>
-          <div className="px-2 py-1 space-y-0.5 font-mono text-[11px]">
+          <div className="px-2 py-1 space-y-0.5 font-mono text-caption">
             {consoleEntries.map((entry, i) => (
               <div
                 key={`${entry.timestamp}-${i}`}
@@ -225,7 +225,7 @@ export function BrowserPanel({ initialPort, initialPath, onClose }: BrowserPanel
       )}
 
       {/* Status bar */}
-      <div className="flex items-center px-2 py-0.5 border-t border-slate-200 text-[10px] text-slate-400">
+      <div className="flex items-center px-2 py-0.5 border-t border-slate-200 text-micro text-slate-400">
         {targetPort && gatewayPort ? (
           <span className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />

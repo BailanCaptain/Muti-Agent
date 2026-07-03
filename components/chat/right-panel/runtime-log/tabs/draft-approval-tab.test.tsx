@@ -586,7 +586,7 @@ describe("DraftApprovalTab AC-P4-4 multi-select 批量审批 (Day 12)", () => {
 
     // 关键: submit 成功后 report view 应仍可见，不被立即关闭/重置
     await waitFor(() => expect(screen.getByTestId("batch-promote-report")).toBeTruthy())
-    expect(screen.getByText("✅ Success: 2 份")).toBeTruthy()
+    expect(screen.getByText("Success: 2 份")).toBeTruthy()
     // 关闭按钮仍可点
     expect(screen.getByTestId("batch-promote-close")).toBeTruthy()
   })

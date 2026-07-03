@@ -107,7 +107,7 @@ function A2aConnectorBubble({ message }: ConnectorBubbleProps) {
         <TimeoutTombstone message={message} />
 
         {/* a2a connector header — 紧凑「派发占位」标识 + F1 AtPill 状态机 */}
-        <div className="flex items-center gap-2 border-b border-slate-200/60 px-4 py-2 text-[11px] text-slate-500">
+        <div className="flex items-center gap-2 border-b border-slate-200/60 px-4 py-2 text-caption text-slate-500">
           <Plug className="h-3 w-3 text-slate-400" aria-hidden="true" />
           <ProviderAvatar identity={message.provider} size="xs" />
           <span className="font-semibold text-slate-700">{label}</span>
@@ -118,7 +118,7 @@ function A2aConnectorBubble({ message }: ConnectorBubbleProps) {
           ) : null}
           {/* F1 · @ pill 六态状态机：sending / ack / working / done / timeout / error */}
           <AtPill targetAlias={toAlias} status={liveStatus} />
-          <span className="ml-auto shrink-0 text-[10px] text-slate-400">
+          <span className="ml-auto shrink-0 text-micro text-slate-400">
             {formatClock(message.createdAt)}
           </span>
         </div>
@@ -184,26 +184,26 @@ function MultiMentionConnectorBubble({ message }: ConnectorBubbleProps) {
             </span>
           )}
           <div className="flex flex-col">
-            <span className="text-[13px] font-semibold tracking-wide text-slate-800">
+            <span className="text-compact font-semibold tracking-wide text-slate-800">
               {label}
               {collapsible && !expanded ? (
-                <span className="ml-2 text-[11px] font-normal text-slate-500">
+                <span className="ml-2 text-caption font-normal text-slate-500">
                   （点击展开）
                 </span>
               ) : null}
             </span>
-            <span className="text-[10px] text-slate-500">{formatClock(message.createdAt)}</span>
+            <span className="text-micro text-slate-500">{formatClock(message.createdAt)}</span>
           </div>
 
           {targets.length > 0 ? (
             <div className="ml-auto flex items-center gap-2">
               {initiator ? (
                 <div className="flex items-center gap-1.5 border-r border-slate-200 pr-2">
-                  <span className="text-[10px] text-slate-500">发起：</span>
+                  <span className="text-micro text-slate-500">发起：</span>
                   <ProviderAvatar identity={initiator} size="xs" />
                 </div>
               ) : null}
-              <span className="text-[10px] text-slate-500">参与：</span>
+              <span className="text-micro text-slate-500">参与：</span>
               <div className="flex -space-x-1.5">
                 {targets.map((provider) => (
                   <ProviderAvatar key={provider} identity={provider} size="xs" />

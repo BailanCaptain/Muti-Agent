@@ -47,7 +47,7 @@ export function GlobalDefaultsTab({ provider }: Props) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-start gap-1.5 px-0.5 text-[11px] leading-relaxed text-slate-500">
+      <div className="flex items-start gap-1.5 px-0.5 text-caption leading-relaxed text-slate-500">
         影响所有<b className="font-semibold text-slate-700">未来新建的</b>房间/会话 · 不改动任何当前运行中的会话
       </div>
 
@@ -59,7 +59,7 @@ export function GlobalDefaultsTab({ provider }: Props) {
           value={model}
           onChange={(e) => setModel(e.target.value)}
           placeholder="使用系统默认"
-          className="w-full rounded-field border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] text-slate-900 outline-none transition focus:border-indigo-400"
+          className="w-full rounded-field border border-slate-200 bg-white px-3 py-2 font-mono text-compact text-slate-900 outline-none transition focus:border-accent-400"
         />
         <datalist id={modelListId}>
           {providerCatalog?.models.map((m) => (
@@ -77,7 +77,7 @@ export function GlobalDefaultsTab({ provider }: Props) {
           value={effort}
           onChange={(e) => setEffort(e.target.value)}
           disabled={!providerCatalog?.efforts.length}
-          className="w-full rounded-field border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-900 outline-none transition focus:border-indigo-400 disabled:bg-slate-50 disabled:text-slate-400"
+          className="w-full rounded-field border border-slate-200 bg-white px-3 py-2 text-compact text-slate-900 outline-none transition focus:border-accent-400 disabled:bg-slate-50 disabled:text-slate-400"
         >
           <option value="">默认</option>
           {providerCatalog?.efforts.map((e) => (
@@ -98,7 +98,7 @@ export function GlobalDefaultsTab({ provider }: Props) {
           value={contextWindow}
           onChange={(e) => setContextWindow(e.target.value)}
           placeholder="使用模型默认"
-          className="w-full rounded-field border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] text-slate-900 outline-none transition focus:border-indigo-400"
+          className="w-full rounded-field border border-slate-200 bg-white px-3 py-2 font-mono text-compact text-slate-900 outline-none transition focus:border-accent-400"
         />
       </Field>
 
@@ -114,11 +114,11 @@ export function GlobalDefaultsTab({ provider }: Props) {
             value={sealPctPercent}
             onChange={(e) => setSealPctPercent(e.target.value)}
             placeholder="使用代码默认"
-            className="w-full rounded-field border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] text-slate-900 outline-none transition focus:border-indigo-400"
+            className="w-full rounded-field border border-slate-200 bg-white px-3 py-2 font-mono text-compact text-slate-900 outline-none transition focus:border-accent-400"
           />
-          <span className="text-[12px] text-slate-500">%</span>
+          <span className="text-xs text-slate-500">%</span>
         </div>
-        <p className="mt-1 px-0.5 text-[11px] leading-relaxed text-slate-500">
+        <p className="mt-1 px-0.5 text-caption leading-relaxed text-slate-500">
           上下文用量达此比例时，本轮结束自动封存当前 session，下一轮开新 native session（保留摘要接力）。留空
           = provider 默认（claude 90% / codex 85% / gemini 80%）。
         </p>
@@ -143,7 +143,7 @@ export function GlobalDefaultsTab({ provider }: Props) {
               }),
             )
           }
-          className={`flex-1 rounded-field px-3 py-2.5 text-[12px] font-semibold transition disabled:cursor-not-allowed ${
+          className={`flex-1 rounded-field px-3 py-2.5 text-xs font-semibold transition disabled:cursor-not-allowed ${
             save.status === "saved"
               ? "bg-emerald-600 text-white disabled:bg-emerald-600 disabled:text-white"
               : "bg-slate-900 text-white hover:bg-slate-800 disabled:bg-slate-300 disabled:text-slate-500"
@@ -153,7 +153,7 @@ export function GlobalDefaultsTab({ provider }: Props) {
         </button>
       </div>
 
-      <div className="mt-3 rounded-field border border-dashed border-amber-300 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-slate-500">
+      <div className="mt-3 rounded-field border border-dashed border-amber-300 bg-amber-50 px-3 py-2.5 text-caption leading-relaxed text-slate-500">
         <b className="font-semibold text-amber-700">保守原则</b> · 全局默认保存后，当前正在跑的会话不会被动态改写。
         想改当前会话？切到「会话专属」Tab。
       </div>
@@ -164,7 +164,7 @@ export function GlobalDefaultsTab({ provider }: Props) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="mb-1.5 flex items-center justify-between px-0.5 text-[12px] font-medium tracking-[0.02em] text-slate-600">
+      <div className="mb-1.5 flex items-center justify-between px-0.5 text-xs font-medium tracking-[0.02em] text-slate-600">
         <span>{label}</span>
       </div>
       {children}

@@ -44,7 +44,7 @@ export function ConfirmDialog({
       role="dialog"
     >
       <div
-        className="mx-4 w-full max-w-sm rounded-xl border border-amber-200/40 bg-[#fcf9f4] p-5 shadow-xl ring-1 ring-black/5"
+        className="mx-4 w-full max-w-sm rounded-panel border border-amber-200/40 bg-surface-canvas p-5 shadow-xl ring-1 ring-black/5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start gap-3">
@@ -64,17 +64,17 @@ export function ConfirmDialog({
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button
-            className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+            className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 active:scale-[0.97]"
             onClick={onCancel}
             type="button"
           >
             {cancelLabel}
           </button>
           <button
-            className={`rounded-md px-3 py-1.5 text-xs font-medium text-white transition ${
+            className={`rounded-md px-3 py-1.5 text-xs font-medium text-white transition active:scale-[0.97] ${
               danger
                 ? "bg-rose-500 hover:bg-rose-600"
-                : "bg-amber-500 hover:bg-amber-600"
+                : "bg-accent-500 hover:bg-accent-600"
             }`}
             onClick={() => void onConfirm()}
             type="button"

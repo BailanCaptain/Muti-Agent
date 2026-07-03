@@ -38,16 +38,16 @@ function CallNode({
 
   return (
     <li className="my-1" data-testid={`a2a-tree-node-${call.callId}`}>
-      <div className={`flex items-center gap-2 text-[12px] ${tone.text}`}>
+      <div className={`flex items-center gap-2 text-xs ${tone.text}`}>
         <span className={`inline-block h-1.5 w-1.5 rounded-full ${tone.dot}`} aria-hidden="true" />
         <span className="font-semibold">{call.issuerId}</span>
         <span className="opacity-60">→</span>
         <span className="font-semibold">{call.convenerId}</span>
-        <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px] font-mono opacity-80">
+        <span className="rounded bg-white/70 px-1.5 py-0.5 text-micro font-mono opacity-80">
           {shortId(call.callId)}
         </span>
-        <span className="text-[10px] opacity-70">{tone.label}</span>
-        <span className="text-[10px] opacity-50">deadline {call.deadlineAt}</span>
+        <span className="text-micro opacity-70">{tone.label}</span>
+        <span className="text-micro opacity-50">deadline {call.deadlineAt}</span>
       </div>
       {children.length > 0 ? (
         <ul className="ml-4 border-l border-slate-200 pl-3">
@@ -69,7 +69,7 @@ export function A2ATreeView({ tree }: { tree: DebugA2ASessionTree }) {
   const root = tree.calls.find((c) => c.callId === tree.rootCallId)
   if (!root) {
     return (
-      <div className="rounded border border-amber-200 bg-amber-50 p-2 text-[12px] text-amber-700">
+      <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">
         Root call <code>{tree.rootCallId}</code> 不在 calls 列表中（数据异常）。
       </div>
     )
@@ -90,7 +90,7 @@ export function A2ATreeView({ tree }: { tree: DebugA2ASessionTree }) {
       data-testid={`a2a-tree-${tree.rootCallId}`}
       className="rounded-lg border border-slate-200 bg-white/70 p-3"
     >
-      <div className="mb-2 text-[11px] font-mono text-slate-500">
+      <div className="mb-2 text-caption font-mono text-slate-500">
         root: {shortId(tree.rootCallId)}
       </div>
       <ul className="list-none">
@@ -103,7 +103,7 @@ export function A2ATreeView({ tree }: { tree: DebugA2ASessionTree }) {
 export function A2ACallList({ calls }: { calls: DebugA2ACallRow[] }) {
   if (calls.length === 0) {
     return (
-      <div className="rounded border border-dashed border-slate-200 bg-white/50 p-6 text-center text-[12px] text-slate-400">
+      <div className="rounded border border-dashed border-slate-200 bg-white/50 p-6 text-center text-xs text-slate-400">
         当前没有匹配的 call。
       </div>
     )
@@ -119,7 +119,7 @@ export function A2ACallList({ calls }: { calls: DebugA2ACallRow[] }) {
           <li
             key={c.callId}
             data-testid={`a2a-call-row-${c.callId}`}
-            className={`flex items-center gap-2 border-b border-slate-100 py-1 text-[12px] last:border-b-0 ${tone.text}`}
+            className={`flex items-center gap-2 border-b border-slate-100 py-1 text-xs last:border-b-0 ${tone.text}`}
           >
             <span
               className={`inline-block h-1.5 w-1.5 rounded-full ${tone.dot}`}
@@ -128,11 +128,11 @@ export function A2ACallList({ calls }: { calls: DebugA2ACallRow[] }) {
             <span className="font-semibold">{c.issuerId}</span>
             <span className="opacity-60">→</span>
             <span className="font-semibold">{c.convenerId}</span>
-            <span className="rounded bg-white/80 px-1.5 py-0.5 text-[10px] font-mono opacity-80">
+            <span className="rounded bg-white/80 px-1.5 py-0.5 text-micro font-mono opacity-80">
               {shortId(c.callId)}
             </span>
-            <span className="text-[10px] opacity-70">{tone.label}</span>
-            <span className="ml-auto text-[10px] opacity-50">{c.createdAt}</span>
+            <span className="text-micro opacity-70">{tone.label}</span>
+            <span className="ml-auto text-micro opacity-50">{c.createdAt}</span>
           </li>
         )
       })}

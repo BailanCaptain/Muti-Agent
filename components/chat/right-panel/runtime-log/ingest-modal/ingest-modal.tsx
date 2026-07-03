@@ -1,5 +1,21 @@
 "use client"
 
+import {
+  AlertTriangle,
+  Ban,
+  Bot,
+  CheckCircle2,
+  FilePen,
+  FileText,
+  Hourglass,
+  Link2,
+  Package,
+  Paperclip,
+  Scissors,
+  Tag,
+  Type,
+  X,
+} from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import {
   type DraftType,
@@ -227,8 +243,12 @@ export function IngestModal({
 function Header({ fileName, onClose }: { fileName: string; onClose: () => void }) {
   return (
     <div className="flex items-center justify-between border-slate-200 border-b px-4 py-2.5">
-      <h2 id="ingest-modal-title" className="font-semibold text-slate-800 text-sm">
-        📎 /ingest: <span className="font-mono">{fileName}</span>
+      <h2
+        id="ingest-modal-title"
+        className="flex items-center gap-1 font-semibold text-slate-800 text-sm"
+      >
+        <Paperclip className="h-4 w-4 shrink-0" aria-hidden="true" />
+        /ingest: <span className="font-mono">{fileName}</span>
       </h2>
       <button
         type="button"
@@ -237,7 +257,7 @@ function Header({ fileName, onClose }: { fileName: string; onClose: () => void }
         className="rounded p-1 text-slate-500 hover:bg-slate-100"
         aria-label="关闭"
       >
-        ✕
+        <X className="h-4 w-4" aria-hidden="true" />
       </button>
     </div>
   )
@@ -246,10 +266,13 @@ function Header({ fileName, onClose }: { fileName: string; onClose: () => void }
 function FileSection({ file }: { file: IngestModalFile }) {
   return (
     <section className="mb-3" data-testid="ingest-section-file">
-      <h3 className="font-semibold text-[10px] uppercase tracking-wider text-slate-500">📄 文件</h3>
+      <h3 className="flex items-center gap-1 font-semibold text-micro uppercase tracking-wider text-slate-500">
+        <FileText className="h-3 w-3 shrink-0" aria-hidden="true" />
+        文件
+      </h3>
       <div className="mt-1 text-slate-700">
         <div className="font-mono">{file.name}</div>
-        <div className="text-[10px] text-slate-500">{formatBytes(file.sizeBytes)}</div>
+        <div className="text-micro text-slate-500">{formatBytes(file.sizeBytes)}</div>
       </div>
     </section>
   )
@@ -264,14 +287,15 @@ function TypeSection({
 }) {
   return (
     <section className="mb-3" data-testid="ingest-section-type">
-      <h3 className="font-semibold text-[10px] uppercase tracking-wider text-slate-500">
-        🏷 类型 (preview 用 stub LLM, type 推断 Phase 4 接真 LLM)
+      <h3 className="flex items-center gap-1 font-semibold text-micro uppercase tracking-wider text-slate-500">
+        <Tag className="h-3 w-3 shrink-0" aria-hidden="true" />
+        类型 (preview 用 stub LLM, type 推断 Phase 4 接真 LLM)
       </h3>
       <div className="mt-1 flex flex-wrap gap-2">
         {DRAFT_TYPE_OPTIONS.map((t) => (
           <label
             key={t}
-            className="flex items-center gap-1 text-slate-700 text-[11px]"
+            className="flex items-center gap-1 text-slate-700 text-caption"
             data-testid={`ingest-type-radio-${t}`}
           >
             <input
@@ -298,14 +322,15 @@ function ReasonSection({
 }) {
   return (
     <section className="mb-3" data-testid="ingest-section-reason">
-      <h3 className="font-semibold text-[10px] uppercase tracking-wider text-slate-500">
-        📝 备注 (Day 19a UI only — backend contract Phase 4 才接受)
+      <h3 className="flex items-center gap-1 font-semibold text-micro uppercase tracking-wider text-slate-500">
+        <FilePen className="h-3 w-3 shrink-0" aria-hidden="true" />
+        备注 (Day 19a UI only · backend contract Phase 4 才接受)
       </h3>
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder="给未来的自己 / LLM 编译时的预期 ..."
-        className="mt-1 w-full rounded border border-slate-200 px-2 py-1 text-[11px] text-slate-700"
+        className="mt-1 w-full rounded border border-slate-200 px-2 py-1 text-caption text-slate-700"
         rows={2}
         data-testid="ingest-reason-textarea"
       />
@@ -343,26 +368,27 @@ function SeriesSection({
   const hasError = tooLong || invalidChars
   return (
     <section className="mb-3" data-testid="ingest-section-series">
-      <h3 className="font-semibold text-[10px] uppercase tracking-wider text-slate-500">
-        🔗 系列 (可选 · 防 chained 误检)
+      <h3 className="flex items-center gap-1 font-semibold text-micro uppercase tracking-wider text-slate-500">
+        <Link2 className="h-3 w-3 shrink-0" aria-hidden="true" />
+        系列 (可选 · 防 chained 误检)
       </h3>
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder="如 'rag-paper-v1' — 分多次 drop 同 paper 章节时填同 id"
-        className={`mt-1 w-full rounded border px-2 py-1 text-[11px] font-mono ${
+        className={`mt-1 w-full rounded border px-2 py-1 text-caption font-mono ${
           hasError ? "border-red-300 text-red-700" : "border-slate-200 text-slate-700"
         }`}
         data-testid="ingest-series-input"
       />
       {tooLong && (
-        <div className="mt-0.5 text-[10px] text-red-600" data-testid="ingest-series-error-toolong">
+        <div className="mt-0.5 text-micro text-red-600" data-testid="ingest-series-error-toolong">
           系列 id 最多 64 字符（当前 {value.length}）
         </div>
       )}
       {invalidChars && !tooLong && (
-        <div className="mt-0.5 text-[10px] text-red-600" data-testid="ingest-series-error-chars">
+        <div className="mt-0.5 text-micro text-red-600" data-testid="ingest-series-error-chars">
           系列 id 只允许字母 / 数字 / _ / -（不可含空格或特殊字符）
         </div>
       )}
@@ -381,18 +407,31 @@ function SanitizeSection({
 }) {
   return (
     <section className="mb-3" data-testid="ingest-section-sanitize">
-      <h3 className="font-semibold text-[10px] uppercase tracking-wider text-slate-500">
-        ⚠️ 5 层 Sanitize 预扫结果
+      <h3 className="flex items-center gap-1 font-semibold text-micro uppercase tracking-wider text-slate-500">
+        <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />5 层 Sanitize 预扫结果
       </h3>
-      {isLoading && <div className="mt-1 text-[11px] text-slate-400">⏳ 编译中… (Opus 4.7 提取 facts·cross_refs·去重，约 5–30 秒)</div>}
+      {isLoading && (
+        <div className="mt-1 flex items-center gap-1 text-caption text-slate-400">
+          <Hourglass className="h-3 w-3 shrink-0" aria-hidden="true" />
+          编译中… (Opus 4.7 提取 facts·cross_refs·去重，约 5–30 秒)
+        </div>
+      )}
       {error && (
-        <div className="mt-1 text-[11px] text-red-500" data-testid="ingest-sanitize-error">
-          ⚠ 预扫失败：{error}
+        <div
+          className="mt-1 flex items-start gap-1 text-caption text-red-500"
+          data-testid="ingest-sanitize-error"
+        >
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>预扫失败：{error}</span>
         </div>
       )}
       {!isLoading && !error && warnings && warnings.length === 0 && (
-        <div className="mt-1 text-[11px] text-green-600" data-testid="ingest-sanitize-clean">
-          ✅ 5 层全部通过 — 无 sanitize warning
+        <div
+          className="mt-1 flex items-center gap-1 text-caption text-green-600"
+          data-testid="ingest-sanitize-clean"
+        >
+          <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden="true" />5 层全部通过 · 无
+          sanitize warning
         </div>
       )}
       {warnings && warnings.length > 0 && (
@@ -400,11 +439,12 @@ function SanitizeSection({
           {warnings.map((w, i) => (
             <li
               key={`${w.kind}-${i}`}
-              className={`rounded px-2 py-1 text-[11px] ${warningColorClass(w.kind)}`}
+              className={`flex items-start gap-1 rounded px-2 py-1 text-caption ${warningColorClass(w.kind)}`}
               data-testid={`ingest-sanitize-warning-${w.kind}`}
               data-subkind={w.subkind ?? ""}
             >
-              {warningIcon(w.kind)} {w.message}
+              {warningIcon(w.kind)}
+              <span>{w.message}</span>
             </li>
           ))}
         </ul>
@@ -428,18 +468,19 @@ function warningColorClass(kind: PreviewWarning["kind"]): string {
   }
 }
 
-function warningIcon(kind: PreviewWarning["kind"]): string {
+function warningIcon(kind: PreviewWarning["kind"]) {
+  const iconClass = "mt-0.5 h-3 w-3 shrink-0"
   switch (kind) {
     case "sensitive_token":
-      return "🚫"
+      return <Ban className={iconClass} aria-hidden="true" />
     case "size_truncated":
-      return "✂️"
+      return <Scissors className={iconClass} aria-hidden="true" />
     case "encoding":
-      return "🔤"
+      return <Type className={iconClass} aria-hidden="true" />
     case "binary_skipped":
-      return "📦"
+      return <Package className={iconClass} aria-hidden="true" />
     default:
-      return "⚠️"
+      return <AlertTriangle className={iconClass} aria-hidden="true" />
   }
 }
 
@@ -452,13 +493,19 @@ function CompilePreviewSection({
 }) {
   return (
     <section className="mb-3" data-testid="ingest-section-compile-preview">
-      <h3 className="font-semibold text-[10px] uppercase tracking-wider text-slate-500">
-        🤖 LLM 编译预览 (Day 5 stub · Phase 4 接真 LLM)
+      <h3 className="flex items-center gap-1 font-semibold text-micro uppercase tracking-wider text-slate-500">
+        <Bot className="h-3 w-3 shrink-0" aria-hidden="true" />
+        LLM 编译预览 (Day 5 stub · Phase 4 接真 LLM)
       </h3>
-      {isLoading && <div className="mt-1 text-[11px] text-slate-400">⏳ 编译中…</div>}
+      {isLoading && (
+        <div className="mt-1 flex items-center gap-1 text-caption text-slate-400">
+          <Hourglass className="h-3 w-3 shrink-0" aria-hidden="true" />
+          编译中…
+        </div>
+      )}
       {llmCompiledPreview !== null && (
         <pre
-          className="mt-1 max-h-48 overflow-y-auto rounded border border-slate-200 bg-slate-50 p-2 font-mono text-[10px] text-slate-700"
+          className="mt-1 max-h-48 overflow-y-auto rounded border border-slate-200 bg-slate-50 p-2 font-mono text-micro text-slate-700"
           data-testid="ingest-compile-preview-content"
         >
           {llmCompiledPreview || "(empty)"}
@@ -478,8 +525,11 @@ function CommitSuccessSection({
       className="mb-3 rounded border border-green-200 bg-green-50 p-2"
       data-testid="ingest-section-commit-success"
     >
-      <div className="font-semibold text-green-700 text-[11px]">✅ Commit 成功</div>
-      <div className="mt-1 text-[10px] text-slate-700">
+      <div className="flex items-center gap-1 font-semibold text-green-700 text-caption">
+        <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden="true" />
+        Commit 成功
+      </div>
+      <div className="mt-1 text-micro text-slate-700">
         <div>
           落盘路径: <span className="font-mono">{data.finalPath}</span>
         </div>
@@ -496,8 +546,11 @@ function CommitErrorSection({ error }: { error: string }) {
       className="mb-3 rounded border border-red-200 bg-red-50 p-2"
       data-testid="ingest-section-commit-error"
     >
-      <div className="font-semibold text-[11px] text-red-700">⚠ Commit 失败</div>
-      <div className="mt-1 text-[10px] text-red-600">{error}</div>
+      <div className="flex items-center gap-1 font-semibold text-caption text-red-700">
+        <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+        Commit 失败
+      </div>
+      <div className="mt-1 text-micro text-red-600">{error}</div>
     </section>
   )
 }
@@ -520,14 +573,18 @@ function Footer({
   return (
     <div className="flex items-center justify-end gap-2 border-slate-200 border-t bg-slate-50 px-4 py-2.5">
       {blocked && (
-        <span className="mr-auto text-[10px] text-red-600" data-testid="ingest-footer-blocked">
-          🚫 Sanitize 红线触发 — commit 已禁
+        <span
+          className="mr-auto inline-flex items-center gap-1 text-micro text-red-600"
+          data-testid="ingest-footer-blocked"
+        >
+          <Ban className="h-3 w-3 shrink-0" aria-hidden="true" />
+          Sanitize 红线触发，commit 已禁
         </span>
       )}
       <button
         type="button"
         onClick={onCancel}
-        className="rounded border border-slate-300 bg-white px-3 py-1 text-[11px] text-slate-700 hover:bg-slate-100"
+        className="rounded border border-slate-300 bg-white px-3 py-1 text-caption text-slate-700 hover:bg-slate-100"
         data-testid="ingest-modal-cancel"
       >
         {isCommitted ? "关闭" : "取消"}
@@ -536,7 +593,7 @@ function Footer({
         type="button"
         onClick={onCommit}
         disabled={!canCommit}
-        className="rounded bg-violet-600 px-3 py-1 text-[11px] text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+        className="rounded bg-violet-600 px-3 py-1 text-caption text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-slate-300"
         data-testid="ingest-modal-commit"
       >
         {isCommitting ? "提交中…" : "/ingest 编译"}

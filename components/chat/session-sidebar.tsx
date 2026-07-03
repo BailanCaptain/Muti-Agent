@@ -8,6 +8,7 @@ import {
   ArchiveRestore,
   ChevronDown,
   ChevronRight,
+  Lock,
   Plus,
   Search,
   Pin,
@@ -427,7 +428,7 @@ export function SessionSidebar() {
           会话
         </h2>
         <button
-          className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-amber-600"
+          className="inline-flex items-center gap-1 rounded-md bg-accent-500 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-accent-600 active:scale-[0.97]"
           onClick={() => void createGroup()}
           type="button"
         >
@@ -462,10 +463,10 @@ export function SessionSidebar() {
           <div className="mb-2">
             <div className="mb-1 flex items-center gap-1.5 px-2 py-1">
               <Pin className="h-3 w-3 text-amber-500" />
-              <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+              <span className="text-micro font-semibold uppercase tracking-widest text-slate-500">
                 已置顶
               </span>
-              <span className="ml-auto rounded-full bg-amber-100 px-1.5 text-[10px] font-mono text-amber-600">
+              <span className="ml-auto rounded-full bg-amber-100 px-1.5 text-micro font-mono text-amber-600">
                 {pinnedItems.length}
               </span>
             </div>
@@ -511,10 +512,10 @@ export function SessionSidebar() {
               ) : (
                 <ChevronDown className="h-3 w-3 text-slate-400" />
               )}
-              <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+              <span className="text-micro font-semibold uppercase tracking-widest text-slate-500">
                 {tg.label}
               </span>
-              <span className="ml-auto rounded-full bg-slate-100 px-1.5 text-[10px] font-mono text-slate-500">
+              <span className="ml-auto rounded-full bg-slate-100 px-1.5 text-micro font-mono text-slate-500">
                 {tg.items.length}
               </span>
             </button>
@@ -562,11 +563,11 @@ export function SessionSidebar() {
               <ChevronRight className="h-3 w-3 text-slate-400" />
             )}
             <Archive className="h-3 w-3 text-slate-400" />
-            <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+            <span className="text-micro font-semibold uppercase tracking-widest text-slate-500">
               归档列表
             </span>
             {archivedOpen && archivedItems.length > 0 && (
-              <span className="ml-auto rounded-full bg-slate-100 px-1.5 text-[10px] font-mono text-slate-500">
+              <span className="ml-auto rounded-full bg-slate-100 px-1.5 text-micro font-mono text-slate-500">
                 {archivedItems.length}
               </span>
             )}
@@ -623,13 +624,13 @@ function ArchivedRow({
   return (
     <div className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-slate-500 hover:bg-slate-50/60">
       {item.roomId && (
-        <span className="shrink-0 font-mono text-[10px] font-semibold text-amber-600/70">
+        <span className="shrink-0 font-mono text-micro font-semibold text-amber-600/70">
           {item.roomId}
         </span>
       )}
       <span className="min-w-0 flex-1 truncate">{item.title}</span>
       <span
-        className={`shrink-0 rounded px-1 text-[9px] font-semibold ${
+        className={`shrink-0 rounded px-1 text-micro font-semibold ${
           item.deletedAt ? "bg-red-100 text-red-500" : "bg-slate-100 text-slate-500"
         }`}
       >
@@ -722,9 +723,9 @@ const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedA
       <div className="flex min-w-0 items-center gap-1">
         {roomId && (
           <span
-            className={`shrink-0 rounded px-1 py-0 font-mono text-[10px] font-semibold leading-4 ring-1 ${
+            className={`shrink-0 rounded px-1 py-0 font-mono text-micro font-semibold leading-4 ring-1 ${
               active
-                ? "bg-amber-500 text-white ring-amber-500/60"
+                ? "bg-accent-500 text-white ring-accent-300"
                 : "bg-amber-100 text-amber-700 ring-amber-200/60"
             }`}
           >
@@ -734,16 +735,16 @@ const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedA
         {titleLockedAt && (
           <span
             aria-label="手动命名（已锁定）"
-            className="shrink-0 text-sm leading-none"
+            className="shrink-0 leading-none text-slate-400"
             title="手动命名（已锁定，不会被自动重命名覆盖）"
           >
-            🔒
+            <Lock className="h-3 w-3" aria-hidden="true" />
           </span>
         )}
         {isRenaming ? (
           <input
             ref={inputRef}
-            className="min-w-0 flex-1 rounded border border-amber-500/40 bg-surface-canvas px-1.5 py-0.5 text-sm font-medium text-slate-800 outline-none focus:border-amber-500"
+            className="min-w-0 flex-1 rounded border border-amber-500/40 bg-surface-canvas px-1.5 py-0.5 text-sm font-medium text-slate-800 outline-none focus:border-accent-400"
             maxLength={40}
             onChange={(e) => setDraft(e.target.value)}
             onClick={(e) => e.stopPropagation()}
@@ -760,9 +761,9 @@ const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedA
             {title}
           </h3>
         )}
-        <span className="shrink-0 text-[10px] leading-none text-slate-400">{updatedAtLabel}</span>
+        <span className="shrink-0 text-micro leading-none text-slate-400">{updatedAtLabel}</span>
         {unreadCount > 0 && (
-          <span className="shrink-0 min-w-[18px] rounded-full bg-amber-500 px-1.5 text-center text-[10px] font-medium leading-[18px] text-white">
+          <span className="shrink-0 min-w-[18px] rounded-full bg-accent-500 px-1.5 text-center text-micro font-medium leading-[18px] text-white">
             {unreadCount > 99 ? "99+" : unreadCount}
           </span>
         )}
@@ -797,7 +798,7 @@ const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedA
         </div>
         <p className="min-w-0 flex-1 truncate text-xs text-slate-500">{previewText}</p>
         {projectTag && (
-          <span className="shrink-0 rounded bg-amber-100/80 px-1.5 text-[10px] font-medium leading-4 text-amber-700 ring-1 ring-amber-200/60">
+          <span className="shrink-0 rounded bg-amber-100/80 px-1.5 text-micro font-medium leading-4 text-amber-700 ring-1 ring-amber-200/60">
             {projectTag}
           </span>
         )}

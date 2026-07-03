@@ -3,6 +3,7 @@
 import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { useThreadStore } from "@/components/stores/thread-store"
+import { AlertTriangle, ClipboardList, Hourglass } from "lucide-react"
 import { useState } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkBreaks from "remark-breaks"
@@ -98,13 +99,16 @@ function ViewfinderFrontmatterPanel({ markdown }: { markdown: string | null }) {
       className="rounded border border-slate-200 bg-slate-50 p-2 text-xs"
       data-testid="viewfinder-frontmatter-panel"
     >
-      <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-500">
-        <span>📋 取景器 frontmatter 字段说明</span>
+      <div className="mb-1 flex items-center justify-between text-micro uppercase tracking-wider text-slate-500">
+        <span className="inline-flex items-center gap-1">
+          <ClipboardList className="h-3 w-3 shrink-0" aria-hidden="true" />
+          取景器 frontmatter 字段说明
+        </span>
         <span className="normal-case text-slate-400">
           (V16.5 chap 11 · hover 字段名看说明)
         </span>
       </div>
-      <ul className="space-y-0.5 text-[10px]">
+      <ul className="space-y-0.5 text-micro">
         {fields.map((f) => (
           <li key={f.key} className="flex gap-2" data-testid={`viewfinder-fm-${f.key}`}>
             <span
@@ -239,13 +243,21 @@ function Header({
         <span className="text-slate-400">编于 {formatTime(lastCompiledAt)}</span>
       </div>
       {isLoading && (
-        <div className="mt-1 text-xs text-slate-400" data-testid="viewfinder-loading">
-          ⏳ 加载中…
+        <div
+          className="mt-1 flex items-center gap-1 text-xs text-slate-400"
+          data-testid="viewfinder-loading"
+        >
+          <Hourglass className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          加载中…
         </div>
       )}
       {error && (
-        <div className="mt-1 text-xs text-red-500" data-testid="viewfinder-error">
-          ⚠ 加载失败：{error}
+        <div
+          className="mt-1 flex items-start gap-1 text-xs text-red-500"
+          data-testid="viewfinder-error"
+        >
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>加载失败：{error}</span>
         </div>
       )}
       {recompileMsg && (

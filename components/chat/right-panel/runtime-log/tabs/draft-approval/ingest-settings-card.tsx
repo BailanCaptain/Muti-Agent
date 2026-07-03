@@ -1,5 +1,6 @@
 "use client"
 
+import { AlertTriangle } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import {
@@ -74,13 +75,13 @@ export function IngestSettingsCard() {
       className="rounded border border-slate-200 bg-white p-2.5 text-xs"
       data-testid="ingest-settings-card"
     >
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+      <div className="mb-2 text-micro font-semibold uppercase tracking-wider text-slate-500">
         收录设置 · 文档编译引擎
       </div>
 
       <div className="mb-2 flex items-center gap-3" role="radiogroup" aria-label="编译引擎">
         {PROVIDERS.map((p) => (
-          <label key={p.id} className="flex cursor-pointer items-center gap-1 text-[11px]">
+          <label key={p.id} className="flex cursor-pointer items-center gap-1 text-caption">
             <input
               type="radio"
               name="ingest-provider"
@@ -115,7 +116,7 @@ export function IngestSettingsCard() {
           placeholder={modelPlaceholder}
           aria-label="编译模型"
           data-testid="ingest-settings-model-input"
-          className="flex-1 rounded border border-slate-200 bg-white px-2 py-1 font-mono text-[11px] text-slate-900 outline-none transition focus:border-indigo-400"
+          className="flex-1 rounded border border-slate-200 bg-white px-2 py-1 font-mono text-caption text-slate-900 outline-none transition focus:border-accent-400"
         />
         <datalist id="ingest-settings-model-suggestions">
           {(provider === "claude" ? CLAUDE_MODEL_SUGGESTIONS : []).map((id) => (
@@ -133,7 +134,7 @@ export function IngestSettingsCard() {
             }}
             aria-label="推理强度"
             data-testid="ingest-settings-effort"
-            className="shrink-0 rounded border border-slate-200 bg-white px-1.5 py-1 text-[11px] text-slate-900 outline-none transition focus:border-indigo-400"
+            className="shrink-0 rounded border border-slate-200 bg-white px-1.5 py-1 text-caption text-slate-900 outline-none transition focus:border-accent-400"
           >
             <option value="">强度：默认</option>
             {efforts.map((e) => (
@@ -166,7 +167,7 @@ export function IngestSettingsCard() {
               return setWikiCompile(payload).then(() => setDirty(false))
             })
           }
-          className={`shrink-0 rounded px-2.5 py-1 text-[10px] font-semibold text-white transition disabled:cursor-not-allowed ${
+          className={`shrink-0 rounded px-2.5 py-1 text-micro font-semibold text-white transition disabled:cursor-not-allowed ${
             save.status === "saved"
               ? "bg-emerald-600"
               : "bg-slate-900 hover:bg-slate-700 disabled:bg-slate-300"
@@ -178,8 +179,11 @@ export function IngestSettingsCard() {
       </div>
 
       {loadFailed && (
-        <div className="mb-1 flex items-center gap-2 text-[10px] text-amber-600">
-          ⚠ 配置未拉到（保存已禁用，防覆盖服务端既有设置）
+        <div className="mb-1 flex items-center gap-2 text-micro text-amber-600">
+          <span className="inline-flex items-center gap-1">
+            <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+            配置未拉到（保存已禁用，防覆盖服务端既有设置）
+          </span>
           <button
             type="button"
             onClick={() => void load()}
@@ -190,7 +194,7 @@ export function IngestSettingsCard() {
           </button>
         </div>
       )}
-      <div className="text-[10px] leading-relaxed text-slate-400">
+      <div className="text-micro leading-relaxed text-slate-400">
         模型可自由填写（新模型直接敲 id）· 走订阅 CLI 不计费 · 保存即热生效 ·
         失败自动降级 Haiku 4.5（log 可查）
       </div>

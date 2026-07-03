@@ -3,7 +3,7 @@
 import { useChatStore } from "@/components/stores/chat-store"
 import { selectIsBusyForActiveGroup, useThreadStore } from "@/components/stores/thread-store"
 import { AGENT_PROFILES, PROVIDERS, PROVIDER_ALIASES, type Provider } from "@multi-agent/shared"
-import { Clock3, ImagePlus, ListPlus, Send, Square, Users, X, Zap } from "lucide-react"
+import { AlertTriangle, Clock3, ImagePlus, ListPlus, Paperclip, Send, Square, Users, X, Zap } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { mentionTheme, EVERYONE_THEME as everyoneTheme } from "../theme"
 import { planQueueFlush, resolveLatchAfterSend } from "./queue-flush"
@@ -23,7 +23,7 @@ import {
 const PROVIDER_ACCENT_TEXT: Record<Provider, string> = {
   claude: "text-violet-700",
   codex: "text-amber-700",
-  gemini: "text-sky-700",
+  gemini: "text-teal-700", // F039: gemini 身份归队 teal（曾误用 sky）
 }
 
 type QueuedMention =
@@ -584,7 +584,7 @@ export function Composer() {
       className={`flex flex-col gap-3 rounded-panel border bg-surface-sunken p-4 transition-colors ${
         dragOver
           ? "border-accent-400 bg-accent-50 ring-2 ring-accent-200"
-          : "border-slate-200 focus-within:border-slate-300"
+          : "border-slate-200 focus-within:border-accent-300"
       }`}
       data-testid="composer-form"
       data-drag-over={dragOver ? "true" : "false"}
@@ -599,18 +599,20 @@ export function Composer() {
     >
       {dragOver && (
         <div
-          className="rounded-2xl border-2 border-accent-300 border-dashed bg-accent-50 px-4 py-2 text-center text-[11px] text-accent-700"
+          className="flex items-center justify-center gap-1.5 rounded-2xl border-2 border-accent-300 border-dashed bg-accent-50 px-4 py-2 text-caption text-accent-700"
           data-testid="composer-drag-hint"
         >
-          📎 拖入 .md / .markdown / .json / .txt → IngestModal；图片 → 附件
+          <Paperclip className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>拖入 .md / .markdown / .json / .txt 收录进知识库；图片作为附件发送</span>
         </div>
       )}
       {ingestDropError && (
         <div
-          className="rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] text-red-600"
+          className="rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-caption text-red-600"
           data-testid="composer-ingest-drop-error"
         >
-          ⚠ {ingestDropError}
+          <AlertTriangle className="mr-1 inline-block h-3.5 w-3.5 align-[-0.2em]" aria-hidden="true" />
+          {ingestDropError}
           <button
             type="button"
             onClick={() => setIngestDropError(null)}
@@ -624,12 +626,12 @@ export function Composer() {
       {hasRunningProvider && (
         <div className="flex items-center gap-2 px-2 pt-1">
           <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
-          <span className="text-[11px] font-medium text-amber-600">智能体正在回复中...</span>
+          <span className="text-caption font-medium text-amber-600">智能体正在回复中...</span>
           {sendMode === "immediate" && (
-            <span className="text-[11px] text-slate-400">立即模式：新消息会立刻发出。</span>
+            <span className="text-caption text-slate-400">立即模式：新消息会立刻发出。</span>
           )}
           {sendMode === "queue" && queuedMessages.length === 0 && (
-            <span className="text-[11px] text-slate-400">
+            <span className="text-caption text-slate-400">
               排队模式：下一条会等当前回复结束后发出。
             </span>
           )}
@@ -639,7 +641,7 @@ export function Composer() {
       {queuedMessages.length > 0 && (
         <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-1.5 shadow-inner">
           <div className="flex items-center justify-between px-2 py-1">
-            <div className="flex items-center gap-1.5 text-[11px]">
+            <div className="flex items-center gap-1.5 text-caption">
               <Clock3 className="h-3 w-3 text-slate-400" />
               <span className="font-semibold text-slate-700">
                 排队中 · {queuedMessages.length} 条
@@ -662,11 +664,11 @@ export function Composer() {
                   }`}
                 >
                   {isNext ? (
-                    <span className="shrink-0 rounded-md bg-slate-900 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white">
+                    <span className="shrink-0 rounded-md bg-slate-900 px-1.5 py-0.5 text-micro font-semibold uppercase tracking-wide text-white">
                       下一条
                     </span>
                   ) : (
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-slate-200 text-[10px] font-semibold text-slate-600">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-slate-200 text-micro font-semibold text-slate-600">
                       {i + 1}
                     </span>
                   )}
@@ -680,7 +682,7 @@ export function Composer() {
                   )}
                   {mention && (
                     <span
-                      className={`shrink-0 text-[11px] font-medium ${
+                      className={`shrink-0 text-caption font-medium ${
                         mention.kind === "provider"
                           ? PROVIDER_ACCENT_TEXT[mention.provider]
                           : "text-slate-700"
@@ -690,7 +692,7 @@ export function Composer() {
                     </span>
                   )}
                   <span
-                    className="min-w-0 flex-1 truncate text-[12px] text-slate-600"
+                    className="min-w-0 flex-1 truncate text-xs text-slate-600"
                     title={m.text}
                   >
                     {body}
@@ -811,11 +813,11 @@ export function Composer() {
                   type="button"
                 >
                   <span
-                    className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${theme}`}
+                    className={`rounded-full border px-2 py-0.5 text-micro font-semibold ${theme}`}
                   >
                     @{item.label}
                   </span>
-                  <span className="text-[11px] text-slate-500">{item.role}</span>
+                  <span className="text-caption text-slate-500">{item.role}</span>
                 </button>
               )
             })}
@@ -845,7 +847,7 @@ export function Composer() {
           </button>
         )}
         <button
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500 text-white shadow-lg shadow-amber-500/20 transition-all hover:bg-amber-600 active:scale-95 disabled:bg-slate-200 disabled:shadow-none"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent-500 text-white shadow-glow transition-all hover:bg-accent-600 active:scale-95 disabled:bg-slate-200 disabled:shadow-none"
           disabled={!value.trim() && pendingImages.length === 0}
           type="submit"
           title={
@@ -858,7 +860,7 @@ export function Composer() {
         </button>
       </div>
 
-      <div className="flex items-center justify-between gap-2 px-2 text-[11px]">
+      <div className="flex items-center justify-between gap-2 px-2 text-caption">
         <span className="text-slate-400">
           {status || "就绪，等待下一次多智能体协作。"}
         </span>
@@ -868,7 +870,7 @@ export function Composer() {
             onClick={() => setSendMode("immediate")}
             className={`flex items-center gap-1 rounded-full px-2 py-0.5 font-medium transition-colors ${
               sendMode === "immediate"
-                ? "bg-amber-500 text-white"
+                ? "bg-accent-500 text-white"
                 : "text-slate-500 hover:text-slate-700"
             }`}
             title="立即模式：新消息会立刻发出，进 dispatch queue 自然处理"

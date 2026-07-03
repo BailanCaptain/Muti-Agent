@@ -45,12 +45,13 @@
   --surface-elevated: oklch(0.99 0.005 var(--surface-hue)); /* #FCFAF8 聊天主区（最亮·近白） */
   --surface-canvas: oklch(0.995 0.003 var(--surface-hue)); /* #FFFDFB 浮起卡片/输入框 */
 
-  /* --- Semantic 5 色 --- */
-  --semantic-critical: oklch(0.57 0.12 38);
-  --semantic-success: oklch(0.57 0.12 135);
-  --semantic-warning: oklch(0.57 0.12 46);
-  --semantic-info: oklch(0.57 0.12 209);
-  --semantic-spotlight: oklch(0.67 0.12 46);
+  /* --- Semantic 5 色（F039 对齐调和家族 hue；操作性 token 在 tailwind.config 的
+     red/amber/green/blue 家族 hex 阶——此处是语义锚点声明，供 DESIGN.md/非 Tailwind 场景引用） --- */
+  --semantic-critical: oklch(0.55 0.13 30);
+  --semantic-success: oklch(0.55 0.11 145);
+  --semantic-warning: oklch(0.55 0.13 78);
+  --semantic-info: oklch(0.55 0.1 235);
+  --semantic-spotlight: oklch(0.65 0.12 50);
 
   /* --- 文本 / 边框 语义 alias --- */
   --text-primary: var(--neutral-900);
@@ -76,6 +77,25 @@ body {
 
 * {
   box-sizing: border-box;
+}
+
+/* ============================================================
+ * F039 focus-visible 焦点环基线（pro-max §1 CRITICAL focus-states）：
+ * 键盘 Tab 走到哪，哪里有 2px accent 环；鼠标点击不触发（:focus-visible 启发式）。
+ * 组件局部可用 focus-visible:ring-* 覆盖，但禁止裸 outline-none 杀环。
+ * ============================================================ */
+:focus-visible {
+  outline: 2px solid var(--accent-400);
+  outline-offset: 2px;
+}
+
+/* F039 reduced-motion 降级（taste-skill §6.B mandatory）：
+ * 装饰性循环动画静止；skeleton/spinner 属加载反馈，保留。 */
+@media (prefers-reduced-motion: reduce) {
+  .animate-breathe,
+  .approval-pulse {
+    animation: none;
+  }
 }
 
 code,

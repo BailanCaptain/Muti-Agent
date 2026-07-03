@@ -6,6 +6,7 @@
  */
 "use client"
 
+import { CheckCircle2, XCircle } from "lucide-react"
 import { useEffect } from "react"
 
 import { usePromoteJobsStore } from "@/components/stores/promote-jobs-store"
@@ -16,7 +17,7 @@ export function PromoteJobBadge({ path }: { path: string }) {
   if (job.status === "running") {
     return (
       <span
-        className="inline-flex items-center gap-1 rounded bg-blue-50 px-1.5 py-0.5 text-[9px] font-medium text-blue-700 border border-blue-200"
+        className="inline-flex items-center gap-1 rounded bg-blue-50 px-1.5 py-0.5 text-micro font-medium text-blue-700 border border-blue-200"
         data-testid={`promote-job-badge-${path}`}
         title={`后台审核中 → ${job.destWikiPath}`}
       >
@@ -31,21 +32,23 @@ export function PromoteJobBadge({ path }: { path: string }) {
       : (job.error ?? "promote failed")
     return (
       <span
-        className="inline-flex items-center rounded bg-red-50 px-1.5 py-0.5 text-[9px] font-medium text-red-700 border border-red-200"
+        className="inline-flex items-center gap-1 rounded bg-red-50 px-1.5 py-0.5 text-micro font-medium text-red-700 border border-red-200"
         data-testid={`promote-job-badge-${path}`}
         title={detail}
       >
-        ❌ 失败（悬停看原因）
+        <XCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
+        失败（悬停看原因）
       </span>
     )
   }
   return (
     <span
-      className="inline-flex items-center rounded bg-green-50 px-1.5 py-0.5 text-[9px] font-medium text-green-700 border border-green-200"
+      className="inline-flex items-center gap-1 rounded bg-green-50 px-1.5 py-0.5 text-micro font-medium text-green-700 border border-green-200"
       data-testid={`promote-job-badge-${path}`}
       title={job.finalPath}
     >
-      ✅ 已转正
+      <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden="true" />
+      已转正
     </span>
   )
 }
@@ -71,7 +74,7 @@ export function PromoteRowButton<T extends { path: string }>({
       type="button"
       onClick={() => onPromote(draft)}
       disabled={blocked}
-      className="rounded bg-blue-600 px-2 py-0.5 text-[9px] font-medium text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+      className="rounded bg-accent-500 px-2 py-0.5 text-micro font-medium text-white hover:bg-accent-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
       data-testid={`${testIdPrefix}-promote-${draft.path}`}
       title={
         status === "running"
@@ -94,7 +97,7 @@ export function BatchPromoteBanner() {
     const pct = batch.progress.total > 0 ? (batch.progress.done / batch.progress.total) * 100 : 0
     return (
       <div
-        className="rounded border border-purple-200 bg-purple-50 p-2 text-[10px] text-purple-800"
+        className="rounded border border-purple-200 bg-purple-50 p-2 text-micro text-purple-800"
         data-testid="batch-promote-banner"
         role="status"
         aria-live="polite"
@@ -116,14 +119,14 @@ export function BatchPromoteBanner() {
   }
   return (
     <div
-      className="flex items-center justify-between gap-2 rounded border border-slate-200 bg-slate-50 p-2 text-[10px] text-slate-700"
+      className="flex items-center justify-between gap-2 rounded border border-slate-200 bg-slate-50 p-2 text-micro text-slate-700"
       data-testid="batch-promote-banner"
     >
       <span>
         批量审批完成：{batch.summary?.success.length ?? 0} 成功 /{" "}
         {batch.summary?.failed.length ?? 0} 失败
         {batch.error ? `（部分未提交：${batch.error}）` : ""}
-        {batch.summary?.failed.length ? " — 失败行悬停 ❌ 徽标看原因" : ""}
+        {batch.summary?.failed.length ? "，失败行悬停「失败」徽标看原因" : ""}
       </span>
       <button
         type="button"

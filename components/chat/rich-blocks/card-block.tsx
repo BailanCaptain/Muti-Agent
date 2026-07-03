@@ -75,7 +75,7 @@ export function CardBlockComponent({ block }: { block: CardBlock }) {
               key={i}
               className="flex items-baseline gap-1.5 rounded-lg border border-slate-200 bg-surface-canvas px-2 py-1"
             >
-              <span className="text-[10px] uppercase tracking-wide text-slate-400">{f.label}</span>
+              <span className="text-micro uppercase tracking-wide text-slate-400">{f.label}</span>
               <span className="font-mono text-xs font-semibold text-slate-700">{f.value}</span>
             </div>
           ))}

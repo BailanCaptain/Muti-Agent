@@ -130,7 +130,7 @@ export function SessionContextMenu({
             <Tag className="h-3.5 w-3.5 shrink-0 text-amber-500" />
             <input
               autoFocus
-              className="min-w-0 flex-1 rounded border border-amber-300 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-400/40"
+              className="min-w-0 flex-1 rounded border border-amber-300 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400 outline-none focus:border-accent-400 focus:ring-1 focus:ring-accent-200"
               onChange={(e) => setTagValue(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void handleSetTag()
@@ -141,7 +141,7 @@ export function SessionContextMenu({
             />
             <button
               aria-label="保存标签"
-              className="shrink-0 inline-flex h-6 w-6 items-center justify-center rounded bg-amber-500 text-white transition hover:bg-amber-600"
+              className="shrink-0 inline-flex h-6 w-6 items-center justify-center rounded bg-accent-500 text-white transition hover:bg-accent-600 active:scale-[0.97]"
               onClick={() => void handleSetTag()}
               type="button"
             >

@@ -78,7 +78,7 @@ export function Lvl2Tabs() {
             tabIndex={isActive ? 0 : -1}
             onClick={() => setActiveLvl2(item.key)}
             onKeyDown={handleKeyDown}
-            className={`-mb-px rounded-t border border-transparent px-2 py-1 text-[10px] transition-colors focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+            className={`-mb-px rounded-t border border-transparent px-2 py-1 text-micro transition-colors focus:outline-none focus:ring-1 focus:ring-accent-400 ${
               isActive
                 ? "border-slate-200 border-b-white bg-white font-semibold text-slate-800"
                 : "text-slate-500 hover:bg-slate-100/60"

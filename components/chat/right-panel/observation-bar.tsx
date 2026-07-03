@@ -7,7 +7,7 @@ type Props = {
 export function ObservationBar({ messages, evidence, followUp }: Props) {
   return (
     <div className="flex flex-col gap-2">
-      <div className="px-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+      <div className="px-0.5 text-micro font-semibold uppercase tracking-[0.18em] text-slate-400">
         观测
       </div>
       <div className="rounded-card border border-slate-200 bg-surface-canvas px-2 py-3 shadow-sm">
@@ -27,7 +27,7 @@ function Metric({ label, value }: { label: string; value: number }) {
       <div className="font-mono text-[22px] font-semibold leading-none tabular-nums text-slate-900">
         {value}
       </div>
-      <div className="text-[10px] uppercase tracking-[0.16em] text-slate-400">{label}</div>
+      <div className="text-micro uppercase tracking-[0.16em] text-slate-400">{label}</div>
     </div>
   )
 }

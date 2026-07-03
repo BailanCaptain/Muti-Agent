@@ -14,22 +14,22 @@ export function RoomBadge({ title, roomId, globalRoomId }: Props) {
   const shortHash = formatShortHash(roomId)
   return (
     <div
-      className="flex flex-1 items-center gap-2 rounded-field bg-accent-50 px-3 py-2 text-[11px] ring-1 ring-accent-200"
+      className="flex flex-1 items-center gap-2 rounded-field bg-accent-50 px-3 py-2 text-caption ring-1 ring-accent-200"
       role="status"
       aria-label="房间归属徽章"
     >
-      <span className="rounded-full bg-surface-canvas px-1.5 py-0.5 text-[9px] font-bold tracking-[0.18em] text-accent-700 ring-1 ring-accent-200">
+      <span className="rounded-full bg-surface-canvas px-1.5 py-0.5 text-micro font-bold tracking-[0.18em] text-accent-700 ring-1 ring-accent-200">
         ROOM
       </span>
-      <span className="flex-1 truncate text-[12px] font-semibold text-slate-900">
+      <span className="flex-1 truncate text-xs font-semibold text-slate-900">
         {displayTitle}
       </span>
       {hasGlobalId ? (
-        <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-4 text-amber-700 ring-1 ring-amber-200/60">
+        <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 font-mono text-micro font-semibold leading-4 text-amber-700 ring-1 ring-amber-200/60">
           {globalRoomId}
         </span>
       ) : (
-        <span className="font-mono text-[10px] text-accent-500">#{shortHash}</span>
+        <span className="font-mono text-micro text-accent-500">#{shortHash}</span>
       )}
     </div>
   )

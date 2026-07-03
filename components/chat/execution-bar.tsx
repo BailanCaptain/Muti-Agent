@@ -16,7 +16,7 @@ function FillBar({ ratio }: { ratio: number }) {
 
 function SOPBreadcrumb({ skill, phase, next }: { skill: string; phase?: string | null; next?: string | null }) {
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center gap-1 text-micro text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5">
       <span className="font-semibold">{skill.toUpperCase()}</span>
       {phase && <><span className="text-indigo-300">&gt;</span><span>{phase}</span></>}
       {next && <><span className="text-indigo-300">&gt;</span><span className="text-indigo-400 truncate max-w-[100px]">{next}</span></>}

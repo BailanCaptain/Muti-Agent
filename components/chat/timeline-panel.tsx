@@ -11,6 +11,7 @@ import { splitDecisionsForTimeline } from "./decision-timeline"
 import { MessageBubble, buildFoldedPreview } from "./message-bubble"
 import { SystemNoticeBubble } from "./system-notice-bubble"
 import { TimelineMinimap, buildMinimapMarkers } from "./timeline-minimap"
+import { TimelineWelcome } from "./timeline-welcome"
 
 export function TimelinePanel() {
   const timeline = useThreadStore((state) => state.timeline)
@@ -103,15 +104,15 @@ export function TimelinePanel() {
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
     <div
-      className="flex flex-1 flex-col overflow-y-auto bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),transparent_26%),linear-gradient(180deg,rgba(248,250,252,0.96),rgba(247,249,252,0.72))] px-6 py-8"
+      // F039: 原 rgba(248,250,252) 渐变是 F036 前的股票 slate-50 冷蓝残留，整个聊天区蒙冷膜；
+      // 回归 clowder 模型——聊天主区 = surface-elevated（4 档中最亮的暖近白）。
+      className="flex flex-1 flex-col overflow-y-auto bg-surface-elevated px-6 py-8"
       ref={scrollRef}
     >
       <div className="mx-auto w-full max-w-[980px]">
         {renderItems.length === 0 ? (
-          <div className="flex min-h-[40vh] items-center justify-center text-slate-400">
-            <div className="rounded-floating border border-dashed border-slate-300 bg-surface-canvas px-8 py-6 text-center shadow-sm">
-              <p className="text-sm italic">尚无消息。</p>
-            </div>
+          <div className="flex min-h-[40vh] items-center justify-center">
+            <TimelineWelcome />
           </div>
         ) : (
           <div

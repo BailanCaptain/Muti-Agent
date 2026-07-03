@@ -49,11 +49,11 @@ describe("SystemNoticeBubble (AC-32)", () => {
     expect(card?.className).not.toMatch(/violet|sky/)
   })
 
-  it("gemini provider uses sky accent", () => {
+  it("gemini provider uses teal accent (F039 归队身份色，曾误用 sky)", () => {
     const { container } = render(<SystemNoticeBubble message={makeNotice("x", "gemini")} />)
     const card = container.querySelector('[data-testid="system-notice-card"]')
     expect(card?.getAttribute("data-provider")).toBe("gemini")
-    expect(card?.className).toMatch(/sky/)
-    expect(card?.className).not.toMatch(/violet|amber/)
+    expect(card?.className).toMatch(/teal/)
+    expect(card?.className).not.toMatch(/violet|amber|sky/)
   })
 })

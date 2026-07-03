@@ -1,5 +1,6 @@
 "use client"
 
+import { ChevronDown, ChevronRight } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
@@ -152,7 +153,7 @@ export function ProjectTreeTab() {
                   文件超 512KB，已截断显示
                 </div>
               )}
-              <pre className="min-h-0 flex-1 overflow-auto p-2 font-mono text-[11px] leading-relaxed" data-testid="pt-content">
+              <pre className="min-h-0 flex-1 overflow-auto p-2 font-mono text-caption leading-relaxed" data-testid="pt-content">
                 {file.content}
               </pre>
             </>
@@ -195,7 +196,13 @@ function DirNodes({
                 data-testid={`pt-entry-${childPath}`}
                 onClick={() => onToggleDir(childPath)}
               >
-                <span className="text-slate-400">{open ? "▾" : "▸"}</span>
+                <span className="text-slate-400">
+                  {open ? (
+                    <ChevronDown className="h-3 w-3" aria-hidden="true" />
+                  ) : (
+                    <ChevronRight className="h-3 w-3" aria-hidden="true" />
+                  )}
+                </span>
                 {entry.name}/
               </button>
               {open && (

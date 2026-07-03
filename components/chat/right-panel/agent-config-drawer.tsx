@@ -44,7 +44,7 @@ export function AgentConfigDrawer({
 
   const alias = providerAlias[provider] ?? provider
   const tabClass = (active: boolean) =>
-    `flex-1 rounded-lg px-3 py-1.5 text-[12px] font-medium transition ${
+    `flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
       active
         ? "bg-surface-canvas text-slate-900 font-semibold shadow-sm"
         : "bg-transparent text-slate-500 hover:text-slate-700"
@@ -70,8 +70,8 @@ export function AgentConfigDrawer({
         <header className="flex items-center gap-3 px-5 pb-3 pt-5">
           <ProviderAvatar identity={provider} size="md" />
           <div className="flex-1">
-            <h3 className="text-[15px] font-semibold text-slate-900">{alias} · 配置</h3>
-            <div className="mt-0.5 font-mono text-[11px] text-slate-500">{provider}</div>
+            <h3 className="text-sm font-semibold text-slate-900">{alias} · 配置</h3>
+            <div className="mt-0.5 font-mono text-caption text-slate-500">{provider}</div>
           </div>
           <button
             type="button"

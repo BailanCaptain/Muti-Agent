@@ -1,6 +1,7 @@
 "use client"
 
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
+import { AlertTriangle, Hourglass } from "lucide-react"
 import { ExpandableContent } from "./expandable-content"
 import {
   type WarningSeverity,
@@ -53,17 +54,26 @@ function Header({
       className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-2 py-1.5"
       data-testid="warnings-header"
     >
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">
+      <div className="text-micro uppercase tracking-wider text-slate-500">
         警告 · {total} 条
       </div>
       {isLoading && (
-        <span className="text-[10px] text-slate-400" data-testid="warnings-loading">
-          ⏳
+        <span
+          className="text-micro text-slate-400"
+          data-testid="warnings-loading"
+          aria-label="加载中"
+        >
+          <Hourglass className="h-3 w-3" aria-hidden="true" />
         </span>
       )}
       {error && (
-        <span className="text-[10px] text-red-500" data-testid="warnings-error" title={error}>
-          ⚠ 加载失败
+        <span
+          className="inline-flex items-center gap-1 text-micro text-red-500"
+          data-testid="warnings-error"
+          title={error}
+        >
+          <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+          加载失败
         </span>
       )}
     </div>
@@ -74,7 +84,7 @@ function WarningList({ warnings }: { warnings: WarningSummary[] }) {
   if (warnings.length === 0) {
     return (
       <div
-        className="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-[10px] text-slate-400"
+        className="rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-micro text-slate-400"
         data-testid="warnings-empty"
       >
         暂无警告 (wiki/warnings/ 空)
@@ -103,18 +113,18 @@ function WarningRow({ warning }: { warning: WarningSummary }) {
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 truncate">
           <SeverityBadge severity={warning.severity} />
-          <span className="font-mono text-[10px] text-slate-700">{warning.subtype}</span>
+          <span className="font-mono text-micro text-slate-700">{warning.subtype}</span>
         </div>
-        <span className="shrink-0 text-[9px] text-slate-400" title={warning.detectedAt ?? ""}>
+        <span className="shrink-0 text-micro text-slate-400" title={warning.detectedAt ?? ""}>
           {warning.detectedAt ? formatRelative(warning.detectedAt) : "—"}
         </span>
       </div>
-      <div className="mt-0.5 flex items-center gap-2 text-[9px] text-slate-500">
+      <div className="mt-0.5 flex items-center gap-2 text-micro text-slate-500">
         {warning.source && <span>source: {warning.source}</span>}
         {warning.raisedBy && <span>by {warning.raisedBy}</span>}
       </div>
       {warning.summary && (
-        <div className="mt-1 text-[10px] text-slate-600" title={warning.summary}>
+        <div className="mt-1 text-micro text-slate-600" title={warning.summary}>
           {truncate(warning.summary, 120)}
         </div>
       )}
@@ -142,7 +152,7 @@ function SeverityBadge({ severity }: { severity: WarningSeverity | null }) {
             : "bg-slate-100 text-slate-600 border-slate-300"
   return (
     <span
-      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[9px] font-semibold ${cls}`}
+      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-micro font-semibold ${cls}`}
       data-testid={`warnings-severity-${label}`}
     >
       {label.toUpperCase()}

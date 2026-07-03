@@ -1,5 +1,6 @@
 "use client"
 
+import { AlertTriangle, CheckCircle2, X, XCircle } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import { usePromoteJobsStore } from "@/components/stores/promote-jobs-store"
@@ -282,11 +283,14 @@ export function BatchPromoteModal({
           <>
             {batchError && (
               <div
-                className="mb-3 p-2 border border-amber-300 rounded bg-amber-50 text-xs text-amber-800"
+                className="mb-3 flex items-start gap-1 p-2 border border-amber-300 rounded bg-amber-50 text-xs text-amber-800"
                 data-testid="batch-promote-partial-error"
               >
-                ⚠ 后续批次未提交：{batchError}
-                （以下为已完成部分的结果；剩余 draft 留在列表中，可重新全选发起）
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span>
+                  后续批次未提交：{batchError}
+                  （以下为已完成部分的结果；剩余 draft 留在列表中，可重新全选发起）
+                </span>
               </div>
             )}
             <ReportView summary={batchData} />
@@ -309,7 +313,7 @@ export function BatchPromoteModal({
                 type="button"
                 onClick={handleSubmit}
                 disabled={!canSubmit}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                className="px-4 py-2 text-sm bg-accent-500 text-white rounded hover:bg-accent-600 active:scale-[0.97] disabled:bg-gray-300 disabled:cursor-not-allowed"
                 data-testid="batch-promote-submit"
               >
                 批量审批 {editableRows.length} 份
@@ -320,7 +324,7 @@ export function BatchPromoteModal({
             <button
               type="button"
               onClick={handleClose}
-              className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+              className="px-4 py-2 text-sm bg-accent-500 text-white rounded hover:bg-accent-600 active:scale-[0.97]"
               data-testid="batch-promote-close"
             >
               关闭
@@ -387,11 +391,11 @@ function ComposeView(props: {
                       aria-label={`remove ${r.srcDraftPath}`}
                       data-testid={`batch-promote-remove-${r.srcDraftPath}`}
                     >
-                      ✕
+                      <X className="h-3.5 w-3.5" aria-hidden="true" />
                     </button>
                   </div>
                   {!destValid && (
-                    <div className="mt-1 text-[10px] text-red-600">
+                    <div className="mt-1 text-micro text-red-600">
                       路径需以 {ALLOWED_DEST_PREFIXES.join(" / ")} 之一开头且以 .md 结尾
                     </div>
                   )}
@@ -439,8 +443,9 @@ function ReportView({ summary }: { summary: BatchPromoteSummary }) {
     <div data-testid="batch-promote-report">
       {/* §4 Success */}
       <div className="mb-4">
-        <div className="text-sm font-medium text-green-800 mb-2">
-          ✅ Success: {summary.success.length} 份
+        <div className="flex items-center gap-1 text-sm font-medium text-green-800 mb-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+          Success: {summary.success.length} 份
         </div>
         {summary.success.length === 0 ? (
           <div className="text-xs text-gray-500 italic">（无成功）</div>
@@ -455,8 +460,9 @@ function ReportView({ summary }: { summary: BatchPromoteSummary }) {
 
       {/* §5 Failed */}
       <div className="mb-4">
-        <div className="text-sm font-medium text-red-800 mb-2">
-          ❌ Failed: {summary.failed.length} 份
+        <div className="flex items-center gap-1 text-sm font-medium text-red-800 mb-2">
+          <XCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+          Failed: {summary.failed.length} 份
         </div>
         {summary.failed.length === 0 ? (
           <div className="text-xs text-gray-500 italic">（无失败）</div>
@@ -487,7 +493,7 @@ function SuccessRow({ entry }: { entry: BatchPromoteSuccessEntry }) {
     >
       <div className="font-mono text-green-700 break-all">{entry.srcDraftPath}</div>
       <div className="font-mono text-green-600 break-all">→ {entry.destWikiPath}</div>
-      <div className="text-[10px] text-gray-500 mt-1">eventId: {entry.eventId}</div>
+      <div className="text-micro text-gray-500 mt-1">eventId: {entry.eventId}</div>
     </li>
   )
 }
@@ -502,7 +508,7 @@ function FailedRow({ entry }: { entry: BatchPromoteFailureEntry }) {
       <div className="flex items-center justify-between gap-2 mb-1">
         <div className="font-mono text-red-700 break-all flex-1">{entry.srcDraftPath}</div>
         <span
-          className="shrink-0 inline-flex items-center rounded border border-red-300 px-1.5 py-0.5 text-[10px] font-medium text-red-700 bg-red-100"
+          className="shrink-0 inline-flex items-center rounded border border-red-300 px-1.5 py-0.5 text-micro font-medium text-red-700 bg-red-100"
           data-testid={`batch-promote-failed-status-${entry.srcDraftPath}`}
         >
           {statusLabel}
@@ -512,7 +518,7 @@ function FailedRow({ entry }: { entry: BatchPromoteFailureEntry }) {
       {entry.auditReject ? (
         <AuditRejectDetail reject={entry.auditReject} />
       ) : (
-        <div className="text-[10px] text-red-600 mt-1 font-mono">{entry.error}</div>
+        <div className="text-micro text-red-600 mt-1 font-mono">{entry.error}</div>
       )}
     </li>
   )
@@ -520,7 +526,7 @@ function FailedRow({ entry }: { entry: BatchPromoteFailureEntry }) {
 
 function AuditRejectDetail({ reject }: { reject: V14RejectReason }) {
   return (
-    <div className="mt-1 text-[10px] text-red-700 space-y-0.5">
+    <div className="mt-1 text-micro text-red-700 space-y-0.5">
       <div>
         <span className="font-medium">Layer:</span> {LAYER_LABEL_CN[reject.layer]} (
         <span className="font-mono">{reject.layer}</span>)

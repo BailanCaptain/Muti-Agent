@@ -84,7 +84,7 @@ export function TimelineMinimap({
               className={`group pointer-events-auto absolute right-0.5 h-2.5 w-2.5 -translate-y-1/2 rounded-full border-2 border-surface-elevated shadow-sm transition-transform hover:scale-150 hover:ring-2 ${style.dot} ${style.ring}`}
               style={{ top: `${Math.min(100, Math.max(0, mk.topPct * 100))}%` }}
             >
-              <span className="pointer-events-none absolute right-full top-1/2 mr-2 hidden max-w-[260px] -translate-y-1/2 truncate rounded-field border border-slate-200 bg-surface-canvas px-2 py-1 text-[11px] text-slate-700 shadow-md group-hover:block">
+              <span className="pointer-events-none absolute right-full top-1/2 mr-2 hidden max-w-[260px] -translate-y-1/2 truncate rounded-field border border-slate-200 bg-surface-canvas px-2 py-1 text-caption text-slate-700 shadow-md group-hover:block">
                 {mk.label}
               </span>
             </button>

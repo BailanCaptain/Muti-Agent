@@ -23,7 +23,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <h2 className="text-lg font-semibold mb-2">页面出了点问题</h2>
             <p className="text-sm text-gray-500 mb-4">{this.state.error?.message}</p>
             <button type="button" onClick={() => this.setState({ hasError: false })}
-              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+              className="px-4 py-2 bg-accent-500 text-white rounded hover:bg-accent-600 active:scale-[0.97]">
               重试
             </button>
           </div>

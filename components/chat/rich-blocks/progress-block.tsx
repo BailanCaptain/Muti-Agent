@@ -34,7 +34,7 @@ export function ProgressBlockComponent({ block }: { block: ProgressBlock }) {
             <li key={i} data-tone={item.tone ?? "info"}>
               <div className="mb-1 flex items-baseline justify-between gap-2 text-xs">
                 <span className="truncate text-slate-700">{item.label}</span>
-                <span className="shrink-0 font-mono text-[11px] font-semibold text-slate-500">
+                <span className="shrink-0 font-mono text-caption font-semibold text-slate-500">
                   {item.caption ?? `${Math.round(pct)}%`}
                 </span>
               </div>

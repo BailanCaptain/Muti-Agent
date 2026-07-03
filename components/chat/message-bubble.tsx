@@ -174,7 +174,7 @@ function ToolEventsSummary({
               <span className="font-medium">{displayName}</span>
               {e.toolInput && <span className="truncate text-slate-400">{e.toolInput}</span>}
               <span
-                className={`ml-auto shrink-0 text-[10px] font-medium ${isError ? "text-red-500" : "text-emerald-500"}`}
+                className={`ml-auto shrink-0 text-micro font-medium ${isError ? "text-red-500" : "text-emerald-500"}`}
               >
                 {result ? (isError ? "失败" : "完成") : "运行中..."}
               </span>
@@ -182,7 +182,7 @@ function ToolEventsSummary({
           )
         })}
       {errors.length > 0 && (
-        <div className="mt-1 text-[10px] text-red-500">{errors.length} 个工具调用失败</div>
+        <div className="mt-1 text-micro text-red-500">{errors.length} 个工具调用失败</div>
       )}
     </div>
   )
@@ -199,7 +199,7 @@ function MessageMeta({ message }: { message: TimelineMessage }) {
   if (totalTokens === 0) return null
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-slate-400">
+    <div className="flex flex-wrap items-center gap-1.5 font-mono text-micro text-slate-400">
       <span className="rounded-full bg-slate-100/90 px-2 py-0.5">{message.provider}</span>
       {message.model && (
         <span className="rounded-full bg-slate-100/70 px-2 py-0.5">{message.model}</span>
@@ -241,7 +241,7 @@ function DispatchRetryBadge({
     <button
       type="button"
       onClick={() => setExpanded((v) => !v)}
-      className="rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 transition hover:bg-amber-100"
+      className="rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-micro font-medium text-amber-700 transition hover:bg-amber-100"
       title={`派发协议自动重写 ${retryCount} 次`}
     >
       <AlertTriangle className="mr-0.5 inline-block h-2.5 w-2.5" />
@@ -265,7 +265,7 @@ function DispatchRetryExhaustedBanner({
       ? retryReasons.map((r) => DISPATCH_RETRY_REASON_LABEL[r] ?? r).join(" / ")
       : "派发协议反复写错"
   return (
-    <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-[12px] text-rose-700">
+    <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-700">
       <AlertCircle className="mr-1 inline-block h-3.5 w-3.5" />
       派发协议反复写错（已重试 {retryCount} 次） — 派发未触发，请手动 @ 触发 ·
       <span className="ml-1 text-rose-600/80">原因：{reasonText}</span>
@@ -307,7 +307,7 @@ export const MessageBubble = memo(function MessageBubble({
   const hasToolEvents = regularToolEvents.length > 0
   const hasMcpEvents = mcpEvents.length > 0
   const hasSkillEvents = skillToolEvents.length > 0
-  const accent = PROVIDER_ACCENT[message.provider] ?? "#94A3B8"
+  const accent = PROVIDER_ACCENT[message.provider] ?? "#aaa6a1"
   const theme = !isUser ? thinkingTheme[message.provider] : null
 
   const toolCount = regularToolEvents.filter((e) => e.type === "tool_use").length
@@ -318,7 +318,7 @@ export const MessageBubble = memo(function MessageBubble({
     return (
       <div className="mb-4">
         <div className="rounded-2xl border border-accent-200 bg-accent-50 px-5 py-4">
-          <div className="mb-2 flex items-center gap-2 text-[11px] text-slate-400">
+          <div className="mb-2 flex items-center gap-2 text-caption text-slate-400">
             <ProviderAvatar identity="user" size="sm" />
             <span className="font-semibold text-slate-700">{displayAlias}</span>
             <span>{formatClock(message.createdAt)}</span>
@@ -343,15 +343,15 @@ export const MessageBubble = memo(function MessageBubble({
         <div className="flex items-center gap-2.5 border-b border-slate-200/60 px-4 py-3">
           <ProviderAvatar identity={avatarIdentity} size="sm" />
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-[11px]">
+            <div className="flex items-center gap-2 text-caption">
               <span className="font-semibold text-slate-700">{displayAlias}</span>
               {message.model && (
-                <span className="rounded-full bg-slate-100/90 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
+                <span className="rounded-full bg-slate-100/90 px-1.5 py-0.5 font-mono text-micro text-slate-500">
                   {message.model}
                 </span>
               )}
               {isStreaming && (
-                <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600">
+                <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-micro font-medium text-emerald-600">
                   输出中...
                 </span>
               )}
@@ -364,7 +364,7 @@ export const MessageBubble = memo(function MessageBubble({
               )}
             </div>
           </div>
-          <span className="text-[10px] text-slate-400">{formatClock(message.createdAt)}</span>
+          <span className="text-micro text-slate-400">{formatClock(message.createdAt)}</span>
           {foldable && (
             <button
               className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
@@ -448,7 +448,7 @@ export const MessageBubble = memo(function MessageBubble({
                   >
                     <div className="max-h-60 overflow-y-auto pr-1">
                       <MarkdownMessage
-                        className={`text-[12px] leading-relaxed ${theme.content}`}
+                        className={`text-xs leading-relaxed ${theme.content}`}
                         content={cleanedThinking}
                       />
                     </div>

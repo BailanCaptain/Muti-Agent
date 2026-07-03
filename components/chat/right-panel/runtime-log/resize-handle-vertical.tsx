@@ -146,7 +146,7 @@ export function ResizeHandleVertical() {
       <span
         aria-hidden="true"
         className={`absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 transition-colors ${
-          isDragging ? "bg-blue-400" : "bg-slate-200 group-hover:bg-blue-300 group-focus:bg-blue-400"
+          isDragging ? "bg-accent-400" : "bg-slate-200 group-hover:bg-accent-300 group-focus-visible:bg-accent-400"
         }`}
       />
       {/* 居中 grip 提示可拖 */}
@@ -154,8 +154,8 @@ export function ResizeHandleVertical() {
         aria-hidden="true"
         className={`relative h-1 w-8 rounded-full transition-colors ${
           isDragging
-            ? "bg-blue-400"
-            : "bg-slate-300 group-hover:bg-blue-400 group-focus:bg-blue-500"
+            ? "bg-accent-400"
+            : "bg-slate-300 group-hover:bg-accent-400 group-focus-visible:bg-accent-400"
         }`}
       />
     </div>

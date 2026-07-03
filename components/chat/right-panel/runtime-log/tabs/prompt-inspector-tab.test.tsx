@@ -87,7 +87,6 @@ function resetStores() {
   useWakeTriggerStore.setState({ latestByKey: new Map() })
   // 设 activeGroup roomId 让 PromptInspectorTab 能拿
   useThreadStore.setState({
-    // biome-ignore lint/suspicious/noExplicitAny: stub minimum activeGroup
     activeGroup: { roomId: "R-201" } as any,
   })
 }
@@ -314,9 +313,10 @@ describe("PromptInspectorTab Adaptive Recall Policy", () => {
     render(<PromptInspectorTab />)
     await waitFor(() => expect(screen.queryByText(/Level 2/)).toBeTruthy())
     const policy = screen.getByTestId("prompt-inspector-policy")
-    // G8 改 DOM 加 inline 字段说明 (recallRequired· 本轮... : ✅) — regex 适配
-    expect(policy.textContent).toMatch(/recallRequired.*✅/)
-    expect(policy.textContent).toMatch(/recallSatisfied.*✅/)
+    // G8 改 DOM 加 inline 字段说明 (recallRequired· 本轮... : true) — regex 适配
+    // F039 AC4: ✅ emoji → lucide CheckCircle2 图标（不进 textContent），断言落在 "true" 文案
+    expect(policy.textContent).toMatch(/recallRequired.*true/)
+    expect(policy.textContent).toMatch(/recallSatisfied.*true/)
     expect(policy.textContent).toMatch(/budget.*180 \/ 4000/)
   })
 

@@ -181,7 +181,7 @@ export function SlashCommandMenu({
             }`}
           >
             <span
-              className={`shrink-0 rounded-md border px-2 py-0.5 font-mono text-[10px] ${
+              className={`shrink-0 rounded-md border px-2 py-0.5 font-mono text-micro ${
                 disabled
                   ? "border-slate-200 text-slate-400"
                   : "border-violet-300 bg-violet-50 text-violet-700"
@@ -189,8 +189,8 @@ export function SlashCommandMenu({
             >
               {cmd.label}
             </span>
-            <span className="flex-1 text-[11px] text-slate-600">{cmd.description}</span>
-            {disabled && <span className="text-[9px] text-slate-400">Phase 4</span>}
+            <span className="flex-1 text-caption text-slate-600">{cmd.description}</span>
+            {disabled && <span className="text-micro text-slate-400">Phase 4</span>}
           </button>
         )
       })}

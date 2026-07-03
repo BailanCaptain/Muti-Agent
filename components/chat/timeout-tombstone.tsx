@@ -35,7 +35,7 @@ export function TimeoutTombstone({ message }: { message: TimelineMessage }) {
 
   return (
     <div
-      className="border-b border-stone-300 bg-stone-100/80 px-4 py-1.5 text-[11px] font-medium text-stone-600"
+      className="border-b border-stone-300 bg-stone-100/80 px-4 py-1.5 text-caption font-medium text-stone-600"
       data-testid="timeout-tombstone"
     >
       🪦 <span className="font-semibold">@{target}</span> 响应超时，

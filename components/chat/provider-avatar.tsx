@@ -67,26 +67,26 @@ const sizeMap: Record<
 > = {
   "2xs": {
     shell: "h-5 w-5 rounded-lg",
-    mainSize: "text-[12px]",
-    subSize: "text-[8px]",
+    mainSize: "text-xs",
+    subSize: "text-micro",
     subPosition: "-bottom-0 -right-0",
   },
   xs: {
     shell: "h-7 w-7 rounded-[10px]",
-    mainSize: "text-[16px]",
-    subSize: "text-[10px]",
+    mainSize: "text-base",
+    subSize: "text-micro",
     subPosition: "-bottom-0.5 -right-0.5",
   },
   sm: {
     shell: "h-9 w-9 rounded-xl",
     mainSize: "text-[22px]",
-    subSize: "text-[14px]",
+    subSize: "text-sm",
     subPosition: "-bottom-1 -right-1",
   },
   md: {
     shell: "h-11 w-11 rounded-2xl",
     mainSize: "text-[28px]",
-    subSize: "text-[16px]",
+    subSize: "text-base",
     subPosition: "-bottom-1 -right-1",
   },
   lg: {
