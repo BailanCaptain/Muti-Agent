@@ -3,7 +3,7 @@
 <EXTREMELY_IMPORTANT>
 你已加载 Multi-Agent Skills。路由规则的**单一真相源**是 `multi-agent-skills/manifest.yaml`；这份文档是压缩目录，帮你快速选对 skill 后再按需 Read 对应 `SKILL.md` 全文。
 
-## Skills 列表（16 个）
+## Skills 列表（17 个）
 
 ### 开发流程链（主干）
 
@@ -33,6 +33,7 @@ feat-lifecycle → Design Gate → writing-plans → worktree → tdd
 | `self-evolution` | Scope Guard / 流程改进 / 知识沉淀 | `/evolve` | — |
 | `writing-skills` | 创建或修改 Multi-Agent skill 的元技能 | `/write-skill` | `quality-gate` |
 | `rich-messaging` | 用 cc_rich 围栏 JSON 发只读卡片/清单（review 结论、AC 清单、状态汇报） | — | — |
+| `webapp-testing` | Playwright 真浏览器验证前后端交互（E2E 回归 / feature 点击流专项） | `/e2e` | `quality-gate` |
 
 ### 参考文件（`refs/`，按需读取）
 

@@ -312,6 +312,30 @@ skills:
       - name: "/merge"
         description: "合入门禁检查"
 
+  # ── 浏览器自动化验证 ──
+  webapp-testing:
+    description: 用 Playwright 真浏览器自动化验证前端/前后端交互（真点击+真 API+真落库），E2E 回归与 feature 专项验证（F038）
+    triggers:
+      - "E2E"
+      - "e2e"
+      - "浏览器测试"
+      - "自动点击"
+      - "点击验证"
+      - "点击流验证"
+      - "playwright"
+      - "前后端交互验证"
+    not_for:
+      - "纯组件渲染测试"
+      - "纯后端逻辑测试"
+      - "视觉美学判断"
+    agents: [claude, codex, gemini]
+    requires_mcp: []
+    next: ["quality-gate"]
+    sop_step: null
+    slashCommands:
+      - name: "/e2e"
+        description: "浏览器自动化验证"
+
   # ── 富媒体消息 ──
   rich-messaging:
     description: 在回复正文用 cc_rich 围栏 JSON 发只读卡片（card/checklist），review 结论、AC 清单、状态汇报渲染成结构化卡片（F030）

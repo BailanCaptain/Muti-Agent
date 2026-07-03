@@ -56,6 +56,33 @@ jobs:
           DOCS_WATCHER_FS_IT: "1"
         run: pnpm exec tsx --test packages/api/src/services/scheduler/docs-watcher.test.ts
 
+  # F038 · Playwright E2E（真浏览器点击流全链路）。
+  # 起步为非阻塞（continue-on-error）——新 E2E 直接进硬门禁易假红拖垮全队（docs-watcher flaky 教训）。
+  # 升级条件（TD-F038-1，owner 黄仁勋）：主干连续 20 次运行全绿（或 2026-08-01 前无 flake 记录）
+  # → 删掉 continue-on-error 升为硬门禁；到期未达标则回 F038 doc 记录原因再续期。
+  e2e:
+    name: E2E (Playwright, non-blocking rollout)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Playwright chromium
+        run: pnpm exec playwright install chromium --with-deps
+      - run: pnpm test:e2e
+      - name: Upload traces/screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: test-results/
+          retention-days: 7
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

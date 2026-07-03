@@ -710,6 +710,9 @@ const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedA
           ? "border-l-[3px] border-amber-500 bg-surface-canvas shadow-sm"
           : "border-l-[3px] border-transparent hover:bg-amber-50/60"
       }`}
+      // F038: E2E 稳定锚点 — title/文案是 UI 层可变文本，不做定位契约（德彪设计审 r1 P2-3）
+      data-session-group-id={groupId}
+      data-testid="session-card"
       onClick={handleClick}
       onContextMenu={handleCtxMenu}
       title={`创建 ${createdAtLabel} · 最后活动 ${updatedAtLabel} · ${messageCount} 条消息`}

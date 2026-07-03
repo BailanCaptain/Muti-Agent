@@ -45,3 +45,7 @@ docs/features/*/evidence/**/db_dump.sql
 docs/features/*/evidence/**/wiki_state.tar.gz
 docs/features/*/evidence/**/config.hash
 docs/features/*/evidence/**/prod_config_diff.txt
+
+# F038 · Playwright E2E 证物（trace/截图/报告不进 git — AC4）
+test-results/
+playwright-report/

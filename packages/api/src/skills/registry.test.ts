@@ -14,9 +14,9 @@ function loadedRegistry(): SkillRegistry {
 
 // ── loadManifest ─────────────────────────────────────────────────────
 
-test("loadManifest loads all 16 skills", () => {
+test("loadManifest loads all 17 skills", () => {
   const registry = loadedRegistry()
-  assert.equal(registry.allSkills().length, 16)
+  assert.equal(registry.allSkills().length, 17)
 })
 
 test("loadManifest loads sop_navigation stages", () => {
