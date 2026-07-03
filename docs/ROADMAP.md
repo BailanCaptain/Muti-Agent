@@ -11,7 +11,6 @@
 | F020 | 决策卡片挂载矩阵：按场景分流（单 agent 消息内嵌 / 链级 Footer / 多人讨论收敛后弹）+ 折叠徽章 + 吸收 B007 | spec | 黄仁勋 | internal | [F020](features/F020-decision-card-mounting-matrix.md) |
 | F029 | 调研与核查管道：fact-check + deep-research 双模式（统一检索层 + 异质 agent 两阶段独立验证 + 证据账本 + 四字段裁决 + 引用溯源 + 搜索条入口） | spec | 黄仁勋 | internal | [F029](features/F029-research-verification-pipeline.md) |
 | F032 | SOP 谓词执行器·审计模式：规则谓词化 + 违规审计报告，只报不拦（借鉴批次 3/6） | spec | 黄仁勋 | internal | [F032](features/F032-sop-predicate-audit.md) |
-| F033 | 交互卡片：select/confirm 选择块，结构化响应保留（借鉴批次 4/6，F030 已解锁，Related F020） | in-progress | 黄仁勋 | internal | [F033](features/F033-interactive-cards.md) |
 | F034 | SOP 谓词硬拦截·确定性边界：WorkflowSop 流转/merge gate/MCP 操作（借鉴批次 5/6，Blocked by F032） | spec | 黄仁勋 | internal | [F034](features/F034-sop-predicate-enforcement.md) |
 | F037 | 日报邮件推送系统（DailyBrief）：每日 07:30 五板块中文 HTML 日报（AI 推理/训练加权 + 热点 + 篮球/电竞 + 股票）+ 周一 GitHub 周榜 + LLM 速览摘要 + 单源失败隔离 + 出站白名单/外发账本 | spec | 黄仁勋 | internal | [F037](features/F037-daily-news-digest.md) |
 <!-- 新 Feature 在此行上方添加 -->
@@ -47,4 +46,5 @@
 | F036 | 前端 Notion/clowder 风 restyle（OKLCH token + 4 档表面高度 + 暖中性/暖金 accent）+ 前端审计收口 11 项（删死链/进度条对齐封存阈值/封存阈值改名/圆角 token 统一/xhigh+effort 白名单/删死代码/cli-output 删孤儿/三「下一轮」语义/长会话导航 D 标记轨/rich 卡型 table+progress/restyle 测试债）。范德彪 r1→r2 GO + 小孙活体验收通过 | 2026-07-02 | [F036](features/F036-notion-restyle.md) |
 | F035 | 前端加载性能：bundle 基线实测（首屏 313.8 KiB gzip / 底座 147 不可分割）+ 400 KiB 预算门脚本（measure-first-load.mjs 零依赖 + 假绿 fail-fast）+ AC4 合法提前 close（localhost 分割收益 7-19% 体感为零，三条重开触发器）。D0 ignoreBuildErrors 独立先合。德彪 r1→r2 CONFIRMED-GO | 2026-07-03 | [F035](features/F035-frontend-load-performance.md) |
 | F031 | WS 消息可靠性：per-sessionGroup seq + 进程 epoch（仅 broadcast 咽喉注入）+ 快照水位线（read-before-build）+ delta offset 幂等（三 emit 源 + segment 队列 flush 时刻判定）+ StreamMonitor gap 检测/catch-up（debounce/降级/`[F031:ws-gap]` 结构化日志）+ subscribe-before-fetch + pending 对账。丢事件从玄学变一行日志+自愈。德彪设计审 r1→r3 + 代码审 r4→r6 GO（5 真洞全在双路径交错窗口），43 新用例。小孙拍板收口 | 2026-07-03 | [F031](features/F031-ws-message-reliability-seq-epoch.md) |
+| F033 | 交互卡片（C2）：select/multi_select/confirm 三 kind（request_decision 轨升级，非 cc_rich 新 kind）+ decision_records 生命周期持久化（幂等门/boot orphan/已决卡 disabled 留痕渲染，刷新重启不丢）+ confirm 超时 fail-closed + respond 运行时校验 + 审计留痕带上下文 + 中文 IME isComposing 守卫（含 composer 同族缺陷）+ anchorMessageId 断线修复。德彪 r1→r2 GO + guardian PASS + 小孙活体验收（squash 77274c1） | 2026-07-03 | [F033](features/F033-interactive-cards.md) |
 <!-- 完成的 Feature 从活跃表移到此处 -->

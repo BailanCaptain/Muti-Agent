@@ -1,10 +1,11 @@
 ---
 id: F033
 title: 交互卡片：select/confirm 选择块（C2）
-status: in-progress
+status: done
 owner: 黄仁勋
 created: 2026-06-13
 started: 2026-07-02
+completed: 2026-07-03
 ---
 
 # F033 — 交互卡片：select/confirm 选择块（C2）
@@ -61,6 +62,7 @@ agent 要小孙做选择目前只能纯文字问答，决策散在 thread 里事
 | 修复 | `6265662`：validateDecisions fail-closed + persistAndAudit 隔离 + timeout 整体兜底 + fetchRecords 本房过滤（12 新测试 Red→Green） |
 | 范德彪 r2 | **GO**（三项全 RESOLVED，无新阻断） |
 | 小孙活体验收 | 通过，拍板合入（2026-07-03） |
+| merge | rebase origin/dev（0 冲突，F031/F035 已在）+ 新基线全量绿（api 3536/组件 807/双包 build 0）→ squash `77274c1` 合 dev + push（2026-07-03） |
 
 Commit 链：`47e9d62`(docs) → `6460cb6` → `fc40245` → `edc0386` → `c82b613` → `1208f04` → `81d5954` → `f8df58f` → `9293ae9` → `b458662` → `70d8419` → `6265662`。
 
