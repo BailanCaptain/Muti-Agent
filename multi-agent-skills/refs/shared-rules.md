@@ -103,6 +103,7 @@ Bug 先写失败测试再修（先红后绿）。
 | 开 worktree / 隔离开发 | `worktree` |
 | 写代码 / TDD / 实现 | `tdd` |
 | 开发完了 / 自检 | `quality-gate` |
+| E2E / 浏览器点击验证 / 前后端交互验证 | `webapp-testing` |
 | 独立验收 / feature AC / bug 修复验收 | `acceptance-guardian` |
 | 做 code review / 审查 diff | `code-review` |
 | 请求 review | `requesting-review` |
