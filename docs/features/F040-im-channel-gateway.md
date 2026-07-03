@@ -27,11 +27,11 @@ created: 2026-07-03
 
 **「iOS 应用」的解法 = 三阶段路线**（原生 App 需 Apple 开发者账号 $99/年 + Mac 构建链 + 签名分发，收益对单用户场景增量很小，clowder-ai 也没做原生）：
 
-| 阶段 | 载体 | 开发量 | 得到什么 |
+| 路线 | 载体 | 开发量 | 得到什么 |
 |------|------|--------|---------|
-| 1（本 feature Phase 1） | 飞书 App 即客户端 | 仅后端 connector | 手机对话、推送、语音输入（飞书自带）|
-| 2（本 feature Phase 2+） | PWA：现有 web UI 加 manifest/图标/apple meta | 前端小改 | Safari「添加到主屏幕」，全功能 UI（LAN/Tailscale 访问）|
-| 3（按需另立项） | Capacitor 原生壳 | 中 | App Store 分发（仅当 1+2 不满足再议）|
+| A（Phase 1 私聊 / Phase 2 群） | 飞书 App 即客户端 | 仅后端 connector | 手机对话、推送、语音输入（飞书自带）；群 = 多人参与 |
+| B（Phase 3，小孙自用不外发） | PWA：现有 web UI 加 manifest/图标/apple meta | 前端小改 | Safari「添加到主屏幕」，全功能 UI（LAN/Tailscale 访问）|
+| C（按需另立项） | Capacitor 原生壳 | 中 | App Store 分发（仅当 A+B 不满足再议）|
 
 ## 调研结论（2026-07-03，clowder-ai 对照 + 本仓链路实测；已按德彪 r1 修正两处误判）
 
@@ -107,6 +107,13 @@ busy/archived 状态回执：connector 消费 status 事件（如「会话已归
 6. **p2p 硬门**（P2-3）：Phase 1 拒绝一切非私聊事件（含白名单用户在群里发言）；Phase 2 升级为 `p2p ∪ 白名单群且 @bot`。
 7. **绑定配置语义统一**（P2-4）：env 仅作首次启动 bootstrap 播种；SQLite binding 行是运行时真相源；默认 provider 启动时校验（无效 → connector 不启动）；session group archived/deleted → 消费 sendable 门 status 并回执用户。
 
+### v3 增补（吸收范德彪 r2：3 新 P1 + 2 P2 全接，r1 七条核验全 ✅）
+
+8. **归因不进派发解析文本**（r2 P1-1）：前缀独立成行 + 昵称剥 `@`/`[Call:` 字面量 + `@bot` 剥离保行首；依据=classifyMention 行首 walk-left 判 gray（mention-router.ts:255-260）而 user 路径 content 原样进 enqueuePublicMentions（message-service.ts:1339-1346, matchMode anywhere）。
+9. **成员级 fail-closed + 角色分级**（r2 P1-2）：chat AND sender 双白名单；owner/participant 角色；特权命令面 owner-only。
+10. **出站按 binding provenance 路由**（r2 P1-3）：rootMessageId → channel_binding_id 溯源投递；无外部来源 final 不投 IM。
+11. **`invocation.finished` payload 扩展**（r2 P2-4）：现 payload 仅 invocationId/threadId/agentId/exitCode（event-types.ts:27-34），额外补 `assistantMessageId` + `rootMessageId`（加法扩展）；**禁止**实现时用「查 thread 最新 assistant message」兜底。
+
 ## 多人参与（2026-07-03 小孙新需求）
 
 小孙原话：
@@ -117,9 +124,13 @@ busy/archived 状态回执：connector 消费 status 事件（如「会话已归
 
 - **多人 PWA 为什么不行（as-is）**：PWA 只是现有 web UI 的壳，而本系统目前**零用户体系** —— 无登录/鉴权，任何能打开页面的人就是村长（timeline 对 user 角色硬编码村长 `session-service.ts:689`；`send_message` 的 `alias` 字段服务端从未消费，实测 message-service 全文件无 `payload.alias` 引用）。且别人手机要够得着这台机器：要么公网暴露（HTTPS + 真鉴权 + 攻击面，F029 级课题），要么人人装 Tailscale（非技术朋友装不动）。把 PWA 发给别人 = 把无锁的完整控制台交出去。**多人 PWA 需要先立「用户身份/鉴权/归因」底座 feature，远期按需另立项。**
 - **飞书群桥接为什么顺**：身份/账号/推送/iOS+Android 客户端全部由飞书代劳。建一个飞书群拉朋友进来 → 群成员 @机器人 说话 → 消息带发送者昵称进绑定 room → agent 回复回群。仍然**免公网**（同一条 WS 长连接）、**fail-closed**（群 chat_id 白名单：只有小孙拉白的群能说话，成员策略默认白名单群内全员可发）。朋友手机装的是飞书 App，跟「装 PWA」同级操作。
-- **发送者归因两级**（群模式必做，Phase 2 内）：
-  1. MVP：user 消息内容前缀 `[飞书·<昵称>]` —— 零 schema 改动，agent 与 UI 立即可辨识谁在说话
+- **发送者归因两级**（群模式必做，Phase 2 内；合同按德彪 r2 P1-1 加固）：
+  1. MVP：归因前缀**独立成行**（`[飞书·<昵称>]\n<原文>`）——`classifyMention` 行首判定 walk-left 遇非空白即降 gray（mention-router.ts:255-260 实锤），同行前缀会杀死 `@范德彪` 派发；昵称必须转义/剥除 `@`、`[Call:` 等派发关键字面量（昵称是不可信输入，不得成为解析器输入）；`@bot` 提及剥离时保留用户命令行首
   2. 正式：user 消息持久化 sender 展示名 + timeline 映射取真名（替换 :689 硬编码），schema 加列 + migration
+  - 回归样例（AC11）：昵称含 `@` / 正文行首 `@范德彪` / 群内 `@bot @范德彪 …` 混排，三组均正确路由
+- **成员级权限（r2 P1-2）**：群白名单 ≠ 授权全群 —— 入站门 = `chat_id ∈ 群白名单 AND sender_open_id ∈ 成员白名单`（fail-closed，防新成员入群即获派活权）；成员带角色：**owner**（小孙）全权，**participant** 可对话可 @ agent，特权命令面（/bind、审批类、未来 IM 命令）owner-only；非白名单成员 → 拒 + 审计 + 群内回执
+- **出站溯源（r2 P1-3）**：入站账本/FIFO 记 `channel_binding_id` → 注入后建 `rootMessageId → channel_binding_id` 映射 → final 沿 root/call chain 溯源，只投递到**来源 binding**（群触发回群、私聊触发回私聊）；**无外部来源的 final（room 内后台/定时产物）不投任何 IM 绑定**（防噪；「旁听模式」按 binding 开关留远期）
+- **排队回执 UX**：群内多人连发时，queued ack 带原 sender 昵称 + 队列位置（否则不知道谁的任务在跑）
 - **边界如实说**：群成员只能「对话」，看不到 web UI 面板（时间线/审批/交互卡片）——「在房间里聊天」这个诉求群桥接完全覆盖；哪天要给别人全 UI，再立用户体系 feature。
 
 ## Design Decisions
@@ -138,7 +149,10 @@ busy/archived 状态回执：connector 消费 status 事件（如「会话已归
 | D10 | 入站幂等 | 内存 LRU / durable 账本 | **durable 入站账本 UNIQUE 三元组（拍死）** | r1 P1-1：clientMessageId 无服务端约束；LRU 重启失忆 |
 | D11 | 出站可靠性 | 尽力而为 / 账本+reconcile | **出站账本状态机 + startup reconcile，at-least-once（拍死）** | r1 P2-1：偶重复优于静默漏推，对齐 F037 D10/D11 |
 | D12 | 同绑定并发 | 拒绝丢弃 / FIFO 持久排队 | **FIFO 持久排队 + settle 后 drain（拍死）** | r1 P1-3：现有入口 busy 即丢；飞书已 ACK 不会重试 |
-| D13 | 多人参与模式 | 多人 PWA / 飞书群桥接 | **飞书群桥接提级 Phase 2（推荐已报小孙）；多人 PWA 挂起待用户体系另立项** | 零用户体系（人人皆村长 :689）+ 网络可达双硬伤 vs 群桥接身份/客户端/推送全由飞书代劳且免公网、fail-closed 群白名单 |
+| D13 | 多人参与模式 | 多人 PWA / 飞书群桥接 | **飞书群桥接提级 Phase 2（小孙 2026-07-03 go）；多人 PWA 挂起待用户体系另立项** | 零用户体系（人人皆村长 :689）+ 网络可达双硬伤 vs 群桥接身份/客户端/推送全由飞书代劳且免公网、fail-closed 群白名单 |
+| D14 | 群成员权限 | 群白名单即放行 / 成员级白名单+角色 | **chat AND sender 双白名单 + owner/participant 角色（拍死）** | r2 P1-2：仅群白名单=新成员入群即获完整派活权；participant 可对话可 @，特权命令面 owner-only |
+| D15 | 出站路由依据 | 按 sessionGroup 过滤 / binding provenance 溯源 | **rootMessageId→channel_binding_id 溯源投递（拍死）；无外部来源 final 不投 IM** | r2 P1-3：仅 sessionGroup 过滤会私聊/群聊互串；后台 final 乱投 = 噪音 |
+| D16 | final 标识来源 | 查最新 assistant message / 扩展事件 payload | **`invocation.finished` 加法扩展 assistantMessageId+rootMessageId（拍死）** | r2 P2-4：现 payload 无 messageId（event-types.ts:27-34）；「查最新」在并发下是错误答案 |
 
 ## Acceptance Criteria
 
@@ -146,7 +160,7 @@ busy/archived 状态回执：connector 消费 status 事件（如「会话已归
 
 - [ ] AC1: 配齐 env 后 WS 长连接建立，断线自动重连；缺任一必需 env → connector 不启动、主服务零影响、启动日志明示
 - [ ] AC2: 小孙飞书私聊发文本 → 绑定 room 出现村长消息 → 正常触发派发（与 web 输入等价）
-- [ ] AC3: 逐 final 回推：direct final / 消息内 @范德彪 的 A2A finals / worklist continuation final / 错误终态回执，各自独立到达飞书；无空消息、无半截消息（终稿=overwriteMessage 后的内容）
+- [ ] AC3: 逐 final 回推：direct final / 消息内 @范德彪 的 A2A finals / worklist continuation final / 错误终态回执，各自独立到达飞书；无空消息、无半截消息（终稿=overwriteMessage 后的内容；依赖 D16 `invocation.finished` payload 扩展）
 - [ ] AC4: 非白名单 open_id 来信被拒 + 审计留痕不入 room；**非 p2p（群/话题）事件一律拒**（含白名单用户在群里发言）
 - [ ] AC5: 幂等：同一 external_message_id 平台重投 + connector 重启重放，均不重复入库、不重复唤醒 agent（入站账本 UNIQUE 生效的正/负例）
 - [ ] AC6: 出站安全测试面 = SafeHttpClient 合同全量（host pin 负例 / redirect 逐跳 / DNS rebinding / IANA 精确段 / userinfo / 非常规端口 / 流式 body 上限 / timeout+abort）+ 证明 REST 全走 SafeHttpClient、SDK 仅承担 WS；tenant_access_token 过期前自动刷新
@@ -156,10 +170,10 @@ busy/archived 状态回执：connector 消费 status 事件（如「会话已归
 
 ### Phase 2 — 飞书群桥接·多人参与（2026-07-03 新需求提级）
 
-- [ ] AC10: 群 chat_id 白名单 fail-closed：仅白名单群内 @机器人 的消息进 room；非白名单群 / 白名单群未 @ 一律拒 + 审计（入站门升级为 `p2p ∪ 白名单群且@bot`）
-- [ ] AC11: 发送者归因：群内不同成员发言在 room 与 agent 视角可区分（MVP `[飞书·昵称]` 前缀起步；正式=sender 展示名持久化 + 替换 session-service.ts:689 硬编码，schema migration）
-- [ ] AC12: 群内多人快速连发 → 复用 D12 FIFO（binding 粒度=群）保序全入库零丢失
-- [ ] AC13: agent finals 回推群聊（分片同私聊）；私聊/群聊双绑定并存互不串扰
+- [ ] AC10: 群入站门 fail-closed：`chat_id ∈ 群白名单 AND sender_open_id ∈ 成员白名单` 且 @bot 才进 room；非白名单群 / 非白名单成员 / 未 @ 一律拒 + 审计 + 群内回执；participant 角色触发特权命令面被拒（owner-only）
+- [ ] AC11: 发送者归因合同：归因文本不进派发解析行（前缀独立成行）+ 昵称剥 `@`/`[Call:` + `@bot` 剥离保行首；回归三样例全过：昵称含 `@` / 正文行首 `@范德彪` / `@bot @范德彪 …` 混排；正式路径=sender 持久化 + 替换 session-service.ts:689 硬编码（schema migration）
+- [ ] AC12: 群内多人快速连发 → 复用 D12 FIFO（binding 粒度=群）保序全入库零丢失；queued ack 带原 sender 昵称 + 队列位置
+- [ ] AC13: 出站溯源：群触发的 finals 只回群、私聊触发的只回私聊（rootMessageId→binding 正反例）；无外部来源的 room 内 final 不投任何 IM 绑定
 
 ### Phase 3 — 体验强化
 
@@ -167,9 +181,9 @@ busy/archived 状态回执：connector 消费 status 事件（如「会话已归
 - [ ] AC15: 流式占位卡（发送中→编辑成终稿）或等效体验
 - [ ] AC16: 图片/文件收发（复用 ContentBlock）
 
-### Phase 4 — 二渠道/部署扩展（按需）
+### Phase 4 — 二渠道/部署扩展（候选，不在 F040 交付范围）
 
-- [ ] 企微智能机器人 或 飞书 webhook 模式（公网部署时）
+- 企微智能机器人 或 飞书 webhook 模式（公网部署时）—— 触发时**另立项 + 另过设计审**，不占本 feature AC
 
 ## 需小孙人工操作（铁律 3：我不碰 .env）
 
@@ -195,7 +209,8 @@ busy/archived 状态回执：connector 消费 status 事件（如「会话已归
 | 2026-07-03 | 范德彪设计审 r1（codex exec）：**NEEDS-WORK 3P1+4P2+3P3** —— 幂等假设不存在 / per-turn emit 无 final 语义 / busy 即丢，全部 message-service.ts 逐条核实属实 |
 | 2026-07-03 | 设计合同 v2 落盘（`36eba7e`）：入站账本 / invocation.finished 出站边界 / FIFO 持久排队 / 出站账本+reconcile / SafeHttpClient 全量 / p2p 硬门 / 绑定语义统一；D10-D12 新增 |
 | 2026-07-03 | 小孙拍板：D1=飞书 / D3=专用移动房间 / D6=三阶段 / D7=不做微信（「按你推荐的来」）|
-| 2026-07-03 | 新需求「别人手机进房间聊天」→ 评估：多人 PWA 不可行（零用户体系 + 网络可达双硬伤），改**飞书群桥接**提级 Phase 2（D13 + AC10-13 + 归因两级），PWA 降 Phase 3 小孙自用 → v3 落盘派德彪 r2 |
+| 2026-07-03 | 新需求「别人手机进房间聊天」→ 评估：多人 PWA 不可行（零用户体系 + 网络可达双硬伤），改**飞书群桥接**提级 Phase 2（D13 + AC10-13 + 归因两级），PWA 降 Phase 3 小孙自用 → v3 落盘（`8a9ad42`）派德彪 r2 |
+| 2026-07-03 | 德彪 r2：**NEEDS-WORK** —— r1 七条吸收核验全 ✅；群桥接抓 3 新 P1（同行前缀杀 @ 派发=classifyMention 行首 gray 实锤 / 群白名单≠成员授权 / 双绑定无溯源互串）+ 2 P2（finished payload 缺 messageId / phase 表矛盾）。v4 全接：合同 8-11 + D14-D16 + AC3/10-13 重写 + Phase 4 划出交付范围 → 派 r3 收口 |
 
 ## Links
 
