@@ -389,11 +389,10 @@ function loadProcessedDriftKeys(db: DrizzleDb, logger?: FastifyBaseLogger): Set<
  * 读 `<wikiRoot>/rooms/<roomId>/viewfinder.md` current 内容，
  * 返 RoomSnapshot[] 让 MonthlySnapshot 算 drift 决定 replace。
  *
- * **MVP 限制**: recompiledViewfinder = currentViewfinder（无 drift） — 真"从原始
- * transcript 全量重编"需 RoomCompiler.compileFromScratch 路径 (LLM 重活)，独立 F-id 接。
- * 当前实现仍比 noop 强: backup 保护 + replace 决策路径全活，drift threshold 调用真触发。
- *
- * 等 LLM-from-scratch 接进来后只改本函数 recompiledViewfinder 取值。
+ * **MVP 限制**: recompiledViewfinder = currentViewfinder（无 drift）。
+ * F027 修2 (C1.5) 起本函数只是 fallback（CI / 单测 / 未注入 monthlySnapshotDeps 时）；
+ * 生产真重编走 orchestrator/monthly-snapshot-recompiler.ts（无副作用 probe：只读
+ * ledger + prevCheckpoint=null 内存编译 + 90 天活跃 / 30 每月滚动窗口）。
  */
 export function scanRoomViewfindersForSnapshot(
   db: DrizzleDb,

@@ -27,7 +27,8 @@
  *   - ~~不接 NightlyHealthCheck.scanEntities 真扫描~~ → 已接
  *   - ~~不接 WeeklyDraftDigest.scanDrafts / pushDigest~~ → 已接
  *   - ~~不接 DriftDetector.scanTriggers / openUpdateDraft~~ → 已接
- *   - ~~不接 MonthlySnapshot.recompileAllRooms~~ → 已接（MVP recompiled===current）
+ *   - ~~不接 MonthlySnapshot.recompileAllRooms~~ → 已接；修2 (C1.5) 起 monthlySnapshotDeps
+ *     注入时走真无副作用重编 probe + backup + replace（缺 deps 时 MVP recompiled===current fallback）
  *   - ~~不接 ArchiveYearlySessions.scanSessions~~ → 已接
  *   - WikiCompilerDebounce.recompileDerivedViews：F027 wiring 接真 reindex（opts.reindexWiki →
  *     wiki_entity_index 增量重建，search_wiki / adaptive-recall Level 2 的索引 producer）；
@@ -68,7 +69,11 @@ import type { JobTrace } from "../services/scheduler/job-trace"
 import type { WikiLeasesRepository } from "../db/repositories/wiki-leases-repository"
 import type { UpdateWikiService } from "../wiki/update-wiki-service"
 import { createDriftDraftOpener } from "./drift-draft-opener"
-import { MonthlySnapshot } from "../services/scheduler/monthly-snapshot"
+import {
+  MonthlySnapshot,
+  type RoomSnapshot,
+  type SnapshotReport,
+} from "../services/scheduler/monthly-snapshot"
 import { NightlyHealthCheck } from "../services/scheduler/nightly-health-check"
 import { NightlyVacuum } from "../services/scheduler/nightly-vacuum"
 import { RoomCompilerTick } from "../services/scheduler/room-compiler-tick"
@@ -240,6 +245,30 @@ export interface SchedulerBootOptions {
    * debounce 落地、断言 reindex 被触发；生产用默认。
    */
   debounceMs?: number
+  /**
+   * F027 修2 (C1.5) · MonthlySnapshot 真业务依赖（server.ts 用
+   * orchestrator/monthly-snapshot-recompiler.ts 构造）。
+   *
+   * 缺 → MVP fallback（scanner recompiled===current，drift 恒 0 — CI/单测/preview 旧行为）。
+   * 传入 → 月度 cron 真跑：无副作用全量重编 probe（近 90 天活跃 + 30/月滚动）→
+   *        drift 记入体检报告；仅当 backup+replaceViewfinder 同时注入才自动 replace。
+   *
+   * auto-replace 默认 OFF（小孙 2026-06-14 C1.5 设计 fork：先 dry-run 体检报告）——
+   * server.ts 只在 MULTI_AGENT_MONTHLY_SNAPSHOT_REPLACE=1 时注入 backup+replace 两件；
+   * 未武装时只传 recompileAllRooms（MonthlySnapshot 壳原生 dry-run：记 drift 不 replace）。
+   * backup 与 replaceViewfinder 必须成对：壳强制 replaceViewfinder 有则 backup 必填
+   * （backup-before-replace fail-safe），拆开传 run 时抛错。
+   */
+  monthlySnapshotDeps?: {
+    recompileAllRooms: () => Promise<RoomSnapshot[]>
+    backup?: (label: string) => Promise<string>
+    replaceViewfinder?: (roomId: string, newContent: string) => Promise<void>
+  }
+  /**
+   * F027 修2 · 月度快照审计报告推送 hook（server.ts 包 broadcaster.broadcast；
+   * 同 pushDriftAlert 档 — ws 无 UI consumer 前真信号是 replace 落盘 + wiki_events row）。
+   */
+  pushSnapshotReport?: (report: SnapshotReport) => void | Promise<void>
   /**
    * F027 wiring · 周期性增量 reindex 间隔 ms（默认 5min）。安全网（codex review A Finding 1）：
    * debounce 只接住 `update_wiki` 的 onCommit；RoomCompiler / promote / demote 等直接写盘 + 写
@@ -415,14 +444,27 @@ export async function bootSchedulerRuntime(
     logger: opts.log,
   })
 
-  // MonthlySnapshot MVP: scanner 读 current viewfinder.md，recompiled === current
-  // 等价于 drift=0 不触发 replace；真 LLM-from-scratch 重编留独立 F-id（noop fallback OK）。
-  const snapshot = new MonthlySnapshot({
-    recompileAllRooms: opts.wikiRoot
-      ? scanRoomViewfindersForSnapshot(opts.db, opts.wikiRoot, opts.log)
-      : noopRecompile,
-    logger: opts.log,
-  })
+  // F027 修2 (C1.5) · MonthlySnapshot 真业务：monthlySnapshotDeps 注入时接无副作用
+  // 重编 probe（+ 可选 backup/replace，见 opts docstring — auto-replace 默认 OFF）。
+  // 缺 deps → 保留 MVP fallback（scanner recompiled===current，drift 恒 0 — CI/单测/preview 旧行为）。
+  const snapshot = opts.monthlySnapshotDeps
+    ? new MonthlySnapshot({
+        recompileAllRooms: opts.monthlySnapshotDeps.recompileAllRooms,
+        backup: opts.monthlySnapshotDeps.backup,
+        replaceViewfinder: opts.monthlySnapshotDeps.replaceViewfinder,
+        pushAudit: opts.pushSnapshotReport
+          ? async (report) => {
+              await opts.pushSnapshotReport?.(report)
+            }
+          : undefined,
+        logger: opts.log,
+      })
+    : new MonthlySnapshot({
+        recompileAllRooms: opts.wikiRoot
+          ? scanRoomViewfindersForSnapshot(opts.db, opts.wikiRoot, opts.log)
+          : noopRecompile,
+        logger: opts.log,
+      })
 
   const archive = new ArchiveYearlySessions({
     scanSessions: opts.wikiRoot

@@ -1087,6 +1087,46 @@ export async function createApiServer(options: {
     }
   }
 
+  // F027 修2 (C1.5) · MonthlySnapshot 真业务：无副作用重编 probe（近 90 天活跃
+  // + 30/月滚动窗口，判官复用 RoomCompiler 同一个 judgeRunner —— drift 必须
+  // apples-to-apples，换模型重编测出的是模型差异不是内容漂移；小孙 2026-07-03 拍板口径）。
+  //
+  // auto-replace 默认 OFF（小孙 2026-06-14 C1.5 设计 fork：先 dry-run 体检报告）：
+  // 未武装时月度 cron 只算 drift 出报告（scheduler.monthly_snapshot ws + job trace），
+  // 不动任何 viewfinder 文件。看过首月报告后设 MULTI_AGENT_MONTHLY_SNAPSHOT_REPLACE=1
+  // （.env，人工操作）武装 backup + 自动 replace（drift>30% → 备份后替换 + wiki_events 留痕）。
+  const {
+    createMonthlySnapshotRecompiler,
+    createSnapshotBackup,
+    createSnapshotViewfinderReplacer,
+  } = await import("./orchestrator/monthly-snapshot-recompiler")
+  const monthlySnapshotReplaceArmed = process.env.MULTI_AGENT_MONTHLY_SNAPSHOT_REPLACE === "1"
+  const monthlySnapshotDeps = {
+    recompileAllRooms: createMonthlySnapshotRecompiler({
+      db: drizzleDb,
+      wikiRoot: roomCompileWikiRoot,
+      judgeRunner,
+      statePath: path.join(process.cwd(), ".runtime", "monthly-snapshot-state.json"),
+      logger: app.log,
+      rootDir: process.cwd(),
+    }),
+    ...(monthlySnapshotReplaceArmed
+      ? {
+          backup: createSnapshotBackup({
+            wikiRoot: roomCompileWikiRoot,
+            backupRoot: path.join(process.cwd(), ".runtime", "monthly-snapshot-backups"),
+            logger: app.log,
+          }),
+          replaceViewfinder: createSnapshotViewfinderReplacer({
+            wikiRoot: roomCompileWikiRoot,
+            wikiEventsSink: roomCompileWikiEventsSink,
+            leaderContext: roomCompileSharedOpts.leaderContext,
+            logger: app.log,
+          }),
+        }
+      : {}),
+  }
+
   const schedulerRuntime = await bootSchedulerRuntime({
     db: drizzleDb,
     log: app.log,
@@ -1105,6 +1145,10 @@ export async function createApiServer(options: {
     },
     pushDriftAlert: (alert) =>
       broadcaster.broadcast({ type: "scheduler.drift_alert", payload: alert } as never),
+    // F027 修2 · MonthlySnapshot 真业务（上方构造）+ 体检报告 ws 推送（同 drift_alert 档）。
+    monthlySnapshotDeps,
+    pushSnapshotReport: (report) =>
+      broadcaster.broadcast({ type: "scheduler.monthly_snapshot", payload: report } as never),
     rootDir: process.cwd(),
     skipBoot: process.env.MULTI_AGENT_SKIP_SCHEDULER === "1",
     roomCompileExecutor,
