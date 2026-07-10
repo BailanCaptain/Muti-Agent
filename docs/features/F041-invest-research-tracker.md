@@ -90,7 +90,7 @@ created: 2026-07-10
 
 ## Dependencies
 
-- **F037 先合并（硬依赖，代码动工门槛）**：合并后第一步=**纯移动零行为 commit** 从 daily-digest 抽共享零件（SafeHttpTransport / BoundedTaskRunner / EmailSender（窄接口已在 email-sender.ts）/ CAS+attempted-sent 账本原语），再增量改造（结构化响应 `{status,headers,body,finalUrl}`、每源 UA（SEC 要产品名+邮箱；现 fetchText 写死浏览器 UA 拿不到 Set-Cookie）、cookie jar seam；重试熔断留在 source runner）。**禁 copy-first**（D11）；**F041 永不 import daily-digest/**\*；F037 长期卡住 → 从 F037 HEAD 显式 stacked branch，绝不在 .worktrees/F037 里叠开发。
+- **F037 先合并（Phase B 硬依赖——抽零件与 HTTP/邮件/账本接线门槛）**：Phase A（建表/实体归一/四源解析 fixture/交易日历/投影/隔离测试，与 F037 零交集）已解耦先行施工（小孙 2026-07-10 拍「先推进」，worktree `.worktrees/F041`，德彪中间审收敛中）。F037 合并后 Phase B 第一步=**纯移动零行为 commit** 从 daily-digest 抽共享零件（SafeHttpTransport / BoundedTaskRunner / EmailSender（窄接口已在 email-sender.ts）/ CAS+attempted-sent 账本原语），再增量改造（结构化响应 `{status,headers,body,finalUrl}`、每源 UA（SEC 要产品名+邮箱；现 fetchText 写死浏览器 UA 拿不到 Set-Cookie）、cookie jar seam；重试熔断留在 source runner）。**禁 copy-first**（D11）；**F041 永不 import daily-digest/**\*；F037 长期卡住 → 从 F037 HEAD 显式 stacked branch，绝不在 .worktrees/F037 里叠开发。
 - F040（软，切片 2 IM 推送入口）。
 - F029（零编译期依赖，切片 3 适配器）。
 
