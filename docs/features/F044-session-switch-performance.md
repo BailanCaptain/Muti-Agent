@@ -1,14 +1,16 @@
 ---
 id: F044
 title: 会话切换即时反馈 + 长会话按需加载
-status: in-progress
+status: done
 owner: 范德彪
 created: 2026-07-10
+completed: 2026-07-11
 ---
 
 # F044 — 会话切换即时反馈 + 长会话按需加载
 
 **Created**: 2026-07-10
+**Completed**: 2026-07-11
 
 ## Why
 
@@ -75,8 +77,8 @@ Design Gate：小孙在诊断与上述修复优先级后回复 “go 往下推�
 - `pnpm build`：通过；Next、shared 与 API TypeScript 构建完成。
 - `pnpm typecheck`：通过。
 - `pnpm lint`：0 error；73 条仓库既有 warning。
-- `pnpm test`（rebase 到 `origin/dev` 后，Git Bash 置于 PATH 首位）：整体退出码 0；API/脚本 4046 tests（4044 pass / 0 fail / 1 skipped / 1 todo），组件 842/842 通过；10 万 session 分片与 8 条 `mount-skills` 外围脚本均通过。
-- `pnpm test:components`：82 files / 842 tests 全通过。
+- `pnpm test`（最终候选 rebase 到 `origin/dev` 后，Git Bash 置于 PATH 首位）：整体退出码 0；API/脚本 4046 tests（4044 pass / 0 fail / 1 skipped / 1 todo），组件 845/845 通过；10 万 session 分片与 8 条 `mount-skills` 外围脚本均通过。
+- `pnpm test:components`：82 files / 845 tests 全通过。
 - F044 后端专项（repository/service/routes/watermark）：72/72 通过。
 - `pnpm exec playwright test tests/e2e/session-switch-performance.spec.ts`：3/3 通过（桌面即时反馈与重复点击、手机抽屉即时关闭、真实临时 SQLite 205 条消息分页耗尽与阅读锚点）；分页前后 minimap marker 索引从 `70 → 170 → 175` 重算，并真点击跳转第 25、175、0 条消息。使用隔离端口与临时 SQLite，不调用真实 LLM。
 - `pnpm check:docs`：通过。
@@ -88,7 +90,9 @@ Design Gate：小孙在诊断与上述修复优先级后回复 “go 往下推�
 - 零上下文 Acceptance Guardian：AC1–AC7 全部 ✅，判定 `PASS`；独立补跑 98 条前端专项、88 条后端专项与 205 条消息真实分页链路。
 - Reviewer：Claude Code 2.1.206。r1 发现 2 个 P1 + 1 个 P2，修复后 r2 继续发现同房刷新零重叠窗口缺口；补 Red→Green 回归后 r3 判定 `GO — 可进入 merge-gate`。
 - 小孙在隔离 preview `3105/8805` 体验会话切换、加载更早消息与右侧快速跳转后确认“应该没问题，继续往下推进”。
-- merge-gate 增量验收补出 A→B→A 后旧历史页 `catch/finally` 污染新 A 状态：正式迁入 2 条 Red（旧错误污染、旧 finally 提前清 loading），以 `switchGeneration + groupId + cursor` 三元组守卫修复；专项 13/13、组件 842/842、Playwright 3/3 与全量 `pnpm test` 重新通过，等待最终独立复验签字。
+- merge-gate 增量验收补出 A→B→A 后旧历史页 `catch/finally` 污染新 A 状态：正式迁入 2 条 Red（旧错误污染、旧 finally 提前清 loading），以 `switchGeneration + groupId + cursor` 三元组守卫修复。
+- Claude 增量复审继续发现“generation 已失效但旧 loading 无出口”的 P1；达到 `receiving-review` TAKEOVER 门槛后由独立接管 agent 增补 pending-cancel、switch-failure、same-cursor 与“不得误清新分页”边界，最终正式专项 16/16、focused 106/106、组件 845/845、Playwright 3/3 通过。
+- 最终 Acceptance Guardian 对 squash commit `ba3fb84` 给出 `PASS`（manifest `F044 / ba3fb84 / e8c96ad`）；Claude 对 TAKEOVER 增量明确 `GO — 可进 merge-gate`，仅保留两个可接受 P3 tradeoff（取消回 A 清旧错误横幅、丢弃一次在途 fetch）。
 
 ## Timeline
 
@@ -101,6 +105,8 @@ Design Gate：小孙在诊断与上述修复优先级后回复 “go 往下推�
 | 2026-07-11 | Claude Code r1/r2 提出并复验竞态与连续窗口问题；修复后 r3 GO，0 个阻断 finding |
 | 2026-07-11 | 小孙完成隔离 preview 体验并确认继续；补充分页后 minimap 真点击 E2E，红测命中、绿测 3/3 |
 | 2026-07-11 | merge-gate 增量验收发现旧分页 catch/finally 竞态并 BLOCKED；两条反例正式 Red→Green，三元组守卫修复后全量回归通过，进入最终复验 |
+| 2026-07-11 | Claude 增量复审发现 loading 卡死 P1；触发 TAKEOVER，接管 agent 再补一条误清新分页 Red，以 ownership-aware failure 收口修复；Guardian PASS + Claude GO |
+| 2026-07-11 | 12 个开发提交 squash 为单 commit `ba3fb84`（tree 与已验收 `8201abf` 完全一致）；因环境无 `gh`，按 merge-gate 本地 fallback fast-forward 合入并 push `origin/dev` |
 
 ## Links
 
