@@ -45,6 +45,16 @@ if exist ".next\dev\lock" (
 echo [Multi-Agent] Mounting skills...
 bash scripts/mount-skills.sh >nul 2>nul
 
+:: Rebuild API dist so the MCP tool server (.mcp.json -> node packages\api\dist\mcp\server.js)
+:: matches current source. The API runtime itself runs from source via tsx and doesn't need
+:: this, which is why the step was historically absent -- but that left dist frozen at the last
+:: manual `pnpm build`, so agents ran month-old MCP tools (F040 send_file missing = the tell).
+:: Non-fatal: tsc emits JS even on type errors (noEmit:false), and a stale-but-present dist still
+:: runs, so a build hiccup must not block startup.
+echo [Multi-Agent] Building API dist (MCP tool server)...
+call node_modules\.bin\tsc.CMD -p packages\shared\tsconfig.json
+call node_modules\.bin\tsc.CMD -p packages\api\tsconfig.json
+
 echo [Multi-Agent] Starting API + Web in parallel (direct bin)...
 start "multi-agent-api" /B /MIN cmd /c "node_modules\.bin\tsx.CMD packages\api\src\index.ts > .runtime\api.log 2>&1"
 start "multi-agent-web" /B /MIN cmd /c "node_modules\.bin\next.CMD dev > .runtime\web.log 2>&1"
