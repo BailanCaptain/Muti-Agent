@@ -688,6 +688,36 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
     name: "F040-P2-messages-add-sender-display-name",
     sql: "ALTER TABLE messages ADD COLUMN sender_display_name TEXT;",
   },
+  // F043 AC5 · turn 聚合 token 明细（NULL=无数据 ≠ 0，MessageMeta 据此渲染）
+  {
+    name: "F043-messages-add-input-tokens",
+    sql: "ALTER TABLE messages ADD COLUMN input_tokens INTEGER;",
+  },
+  {
+    name: "F043-messages-add-output-tokens",
+    sql: "ALTER TABLE messages ADD COLUMN output_tokens INTEGER;",
+  },
+  {
+    name: "F043-messages-add-cache-read-tokens",
+    sql: "ALTER TABLE messages ADD COLUMN cache_read_tokens INTEGER;",
+  },
+  {
+    name: "F043-messages-add-cache-creation-tokens",
+    sql: "ALTER TABLE messages ADD COLUMN cache_creation_tokens INTEGER;",
+  },
+  // F043 AC5/AC7 · threads 面板真值三列（与 last_fill_ratio 同点写入/封存同点复位）
+  {
+    name: "F043-threads-add-last-used-tokens",
+    sql: "ALTER TABLE threads ADD COLUMN last_used_tokens INTEGER;",
+  },
+  {
+    name: "F043-threads-add-last-window-tokens",
+    sql: "ALTER TABLE threads ADD COLUMN last_window_tokens INTEGER;",
+  },
+  {
+    name: "F043-threads-add-last-usage-source",
+    sql: "ALTER TABLE threads ADD COLUMN last_usage_source TEXT;",
+  },
 ]
 
 function runMigrations(adapter: ReturnType<typeof createNodeSqliteAdapter>): void {

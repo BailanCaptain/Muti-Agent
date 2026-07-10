@@ -72,15 +72,19 @@ describe("AgentList", () => {
     expect(screen.getByText("待运行")).toBeTruthy()
   })
 
-  it("AC-31: shows inline detail used/total (剩余 X%) next to bar — always visible, not hover", () => {
+  it("AC-31/F043 AC7: shows inline detail used/total (剩余 X%) from backend true values", () => {
+    // F043 翻正：detail 的 token 数来自落库真值（usedTokens/windowTokens），
+    // 不再 ratio×前端自算窗口反推（旧口径 = 面板失真根源之一）
     const agents = [
       {
         provider: "claude" as const,
         alias: "黄仁勋",
-        model: "claude-opus-4-7",
+        model: "claude-opus-4-8",
         running: false,
         fillRatio: 0.42,
-        window: 200_000,
+        usedTokens: 84_000,
+        windowTokens: 200_000,
+        usageSource: "exact" as const,
         actionPct: 0.9,
       },
     ]
@@ -88,8 +92,9 @@ describe("AgentList", () => {
     const detail = screen.getByTestId("agent-context-detail")
     expect(detail).toBeTruthy()
     expect(detail.getAttribute("data-provider")).toBe("claude")
-    // used = round(0.42 * 200000) = 84000 → 84k；window = 200k
     expect(detail.textContent).toMatch(/84k\s*\/\s*200k/)
+    // exact 来源无「约」前缀
+    expect(detail.textContent).not.toMatch(/约/)
     // AC-31 review fix: 显示距 seal 阈值的剩余空间 = round(actionPct*100 - fillRatio*100) = 48
     expect(detail.textContent).toMatch(/\(剩余\s*48%\)/)
     // Regression guard: must NOT be hover-only (no opacity-0 / group-hover classes)
@@ -104,10 +109,12 @@ describe("AgentList", () => {
       {
         provider: "claude" as const,
         alias: "黄仁勋",
-        model: "claude-opus-4-7",
+        model: "claude-opus-4-8",
         running: false,
         fillRatio: 0.95,
-        window: 200_000,
+        usedTokens: 190_000,
+        windowTokens: 200_000,
+        usageSource: "exact" as const,
         actionPct: 0.9,
       },
     ]
@@ -116,15 +123,55 @@ describe("AgentList", () => {
     expect(detail.textContent).toMatch(/\(剩余\s*0%\)/)
   })
 
+  it("F043 AC7: approx source prefixes 约 (codex 退化/兜底表窗口)", () => {
+    const agents = [
+      {
+        provider: "codex" as const,
+        alias: "范德彪",
+        model: "gpt-5.6-sol",
+        running: false,
+        fillRatio: 0.11,
+        usedTokens: 39_727,
+        windowTokens: 353_400,
+        usageSource: "approx" as const,
+        actionPct: 0.85,
+      },
+    ]
+    render(<AgentList agents={agents} />)
+    const detail = screen.getByTestId("agent-context-detail")
+    expect(detail.textContent).toMatch(/约\s*40k\s*\/\s*353k/)
+  })
+
+  it("F043 AC7: fillRatio present but no true tokens → percentage only, never fabricated counts", () => {
+    // 旧行（F043 前落库）只有 fill 没有真值三列 → 只显示百分比，不显示编造的 token 数
+    const agents = [
+      {
+        provider: "claude" as const,
+        alias: "黄仁勋",
+        model: "claude-opus-4-8",
+        running: false,
+        fillRatio: 0.42,
+        usedTokens: null,
+        windowTokens: null,
+        actionPct: 0.9,
+      },
+    ]
+    render(<AgentList agents={agents} />)
+    expect(screen.queryByTestId("agent-context-detail")).toBeNull()
+    expect(screen.getByText("42%")).toBeTruthy()
+  })
+
   it("F036 #2: context bar color follows real seal thresholds (warn=action-0.1), not hardcoded 0.5/0.7", () => {
     const mk = (fillRatio: number) => [
       {
         provider: "claude" as const,
         alias: "黄仁勋",
-        model: "claude-opus-4-7",
+        model: "claude-opus-4-8",
         running: false,
         fillRatio,
-        window: 200_000,
+        usedTokens: Math.round(fillRatio * 200_000),
+        windowTokens: 200_000,
+        usageSource: "exact" as const,
         actionPct: 0.9,
       },
     ]

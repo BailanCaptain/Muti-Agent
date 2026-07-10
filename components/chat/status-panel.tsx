@@ -7,7 +7,7 @@ import { useSettingsModalStore } from "@/components/stores/settings-modal-store"
 import { useSettingsStore } from "@/components/stores/settings-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import type { Provider } from "@multi-agent/shared"
-import { SEAL_THRESHOLDS_BY_PROVIDER, getContextWindowForModel } from "@multi-agent/shared"
+import { SEAL_THRESHOLDS_BY_PROVIDER } from "@multi-agent/shared"
 import { Settings } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { FoldControls } from "./fold-controls"
@@ -70,10 +70,6 @@ export function StatusPanel() {
         const globalPct = globalConfig[provider]?.sealPct
         const fallback = SEAL_THRESHOLDS_BY_PROVIDER[provider]
         const actionPct = sessionPct ?? globalPct ?? fallback.action
-        const window =
-          sessionConfig[provider]?.contextWindow ??
-          globalConfig[provider]?.contextWindow ??
-          getContextWindowForModel(card.currentModel)
         return {
           provider,
           alias: card.alias,
@@ -81,7 +77,11 @@ export function StatusPanel() {
           running: card.running,
           hasSessionOverride: Boolean(sessionConfig[provider]),
           fillRatio: card.fillRatio ?? null,
-          window: window ?? null,
+          // F043 AC7 · 真值直传：token 数不再由 ratio×前端自算窗口反推（分母不同源=面板失真根源之一）。
+          // 用户 override 窗口已在后端汇入快照（contextWindowOverride 优先级），无需前端再算。
+          usedTokens: card.usedTokens ?? null,
+          windowTokens: card.windowTokens ?? null,
+          usageSource: card.usageSource ?? null,
           actionPct,
           sealed: card.sealed ?? false,
         }

@@ -31,6 +31,11 @@ type MessageRow = {
   retryCount: number | null
   retryReasons: string | null
   senderDisplayName: string | null
+  // F043 AC5 · turn 聚合 token 明细（NULL=无数据）
+  inputTokens: number | null
+  outputTokens: number | null
+  cacheReadTokens: number | null
+  cacheCreationTokens: number | null
   // F026 P5 T0 · LEFT JOIN a2a_calls 出来的协议字段
   a2aCallId: string | null
   a2aParentCallId: string | null
@@ -55,6 +60,11 @@ function hydrateMessage(row: MessageRow): MessageRecord {
     model: row.model ?? null,
     retryCount: row.retryCount ?? 0,
     retryReasons: row.retryReasons ?? "[]",
+    // F043 AC5 · NULL 原样透传（≠0，MessageMeta 据此决定渲染）
+    inputTokens: row.inputTokens ?? null,
+    outputTokens: row.outputTokens ?? null,
+    cacheReadTokens: row.cacheReadTokens ?? null,
+    cacheCreationTokens: row.cacheCreationTokens ?? null,
     // F026 P5 T0 · A2A 关联字段保持 null fallback（老消息 / 非 a2a 派发）
     a2aCallId: row.a2aCallId ?? null,
     a2aParentCallId: row.a2aParentCallId ?? null,
@@ -303,7 +313,7 @@ export class SessionRepository {
       .prepare(
         `SELECT id, session_group_id as sessionGroupId, provider, alias, current_model as currentModel,
                 native_session_id as nativeSessionId, sop_bookmark as sopBookmark,
-                last_fill_ratio as lastFillRatio, backlog_item_id as backlogItemId, updated_at as updatedAt
+                last_fill_ratio as lastFillRatio, last_used_tokens as lastUsedTokens, last_window_tokens as lastWindowTokens, last_usage_source as lastUsageSource, backlog_item_id as backlogItemId, updated_at as updatedAt
          FROM threads
          WHERE session_group_id = ?
          ORDER BY provider ASC`,
@@ -316,7 +326,7 @@ export class SessionRepository {
       .prepare(
         `SELECT id, session_group_id as sessionGroupId, provider, alias, current_model as currentModel,
                 native_session_id as nativeSessionId, sop_bookmark as sopBookmark,
-                last_fill_ratio as lastFillRatio, backlog_item_id as backlogItemId, updated_at as updatedAt
+                last_fill_ratio as lastFillRatio, last_used_tokens as lastUsedTokens, last_window_tokens as lastWindowTokens, last_usage_source as lastUsageSource, backlog_item_id as backlogItemId, updated_at as updatedAt
          FROM threads
          WHERE id = ?
          LIMIT 1`,
@@ -366,7 +376,7 @@ export class SessionRepository {
     const t0 = performance.now()
     const rows = this.store.db
       .prepare(
-        `SELECT m.id, m.thread_id as threadId, m.role, m.content, m.thinking, m.message_type as messageType, m.connector_source as connectorSource, m.group_id as groupId, m.group_role as groupRole, m.tool_events as toolEvents, m.content_blocks as contentBlocks, m.created_at as createdAt, m.model, m.retry_count as retryCount, m.retry_reasons as retryReasons,
+        `SELECT m.id, m.thread_id as threadId, m.role, m.content, m.thinking, m.message_type as messageType, m.connector_source as connectorSource, m.group_id as groupId, m.group_role as groupRole, m.tool_events as toolEvents, m.content_blocks as contentBlocks, m.created_at as createdAt, m.model, m.retry_count as retryCount, m.retry_reasons as retryReasons, m.input_tokens as inputTokens, m.output_tokens as outputTokens, m.cache_read_tokens as cacheReadTokens, m.cache_creation_tokens as cacheCreationTokens,
                 m.sender_display_name as senderDisplayName,
                 m.a2a_call_id as a2aCallId,
                 c.parent_call_id as a2aParentCallId,
@@ -394,7 +404,7 @@ export class SessionRepository {
     return (
       this.store.db
         .prepare(
-          `SELECT m.id, m.thread_id as threadId, m.role, m.content, m.thinking, m.message_type as messageType, m.connector_source as connectorSource, m.group_id as groupId, m.group_role as groupRole, m.tool_events as toolEvents, m.content_blocks as contentBlocks, m.created_at as createdAt, m.model, m.retry_count as retryCount, m.retry_reasons as retryReasons,
+          `SELECT m.id, m.thread_id as threadId, m.role, m.content, m.thinking, m.message_type as messageType, m.connector_source as connectorSource, m.group_id as groupId, m.group_role as groupRole, m.tool_events as toolEvents, m.content_blocks as contentBlocks, m.created_at as createdAt, m.model, m.retry_count as retryCount, m.retry_reasons as retryReasons, m.input_tokens as inputTokens, m.output_tokens as outputTokens, m.cache_read_tokens as cacheReadTokens, m.cache_creation_tokens as cacheCreationTokens,
                 m.sender_display_name as senderDisplayName,
                 m.a2a_call_id as a2aCallId,
                 c.parent_call_id as a2aParentCallId,
@@ -415,7 +425,7 @@ export class SessionRepository {
   listRecentMessages(threadId: string, limit: number) {
     const rows = this.store.db
       .prepare(
-        `SELECT m.id, m.thread_id as threadId, m.role, m.content, m.thinking, m.message_type as messageType, m.connector_source as connectorSource, m.group_id as groupId, m.group_role as groupRole, m.tool_events as toolEvents, m.content_blocks as contentBlocks, m.created_at as createdAt, m.model, m.retry_count as retryCount, m.retry_reasons as retryReasons,
+        `SELECT m.id, m.thread_id as threadId, m.role, m.content, m.thinking, m.message_type as messageType, m.connector_source as connectorSource, m.group_id as groupId, m.group_role as groupRole, m.tool_events as toolEvents, m.content_blocks as contentBlocks, m.created_at as createdAt, m.model, m.retry_count as retryCount, m.retry_reasons as retryReasons, m.input_tokens as inputTokens, m.output_tokens as outputTokens, m.cache_read_tokens as cacheReadTokens, m.cache_creation_tokens as cacheCreationTokens,
                 m.sender_display_name as senderDisplayName,
                 m.a2a_call_id as a2aCallId,
                 c.parent_call_id as a2aParentCallId,
@@ -466,6 +476,11 @@ export class SessionRepository {
       model,
       retryCount: 0,
       retryReasons: "[]",
+      // F043 AC5 · append 时无 token 数据（turn 收尾 overwriteMessage 回填）
+      inputTokens: null,
+      outputTokens: null,
+      cacheReadTokens: null,
+      cacheCreationTokens: null,
       a2aCallId,
       // 以下 7 个字段在 listMessages LEFT JOIN 时填充；INSERT 时仅写 a2a_call_id 一列
       a2aParentCallId: null,
@@ -527,11 +542,16 @@ export class SessionRepository {
       contentBlocks?: string
       retryCount?: number
       retryReasons?: string
+      // F043 AC5 · turn 聚合 token 明细（未提供时保持原值，NULL=无数据）
+      inputTokens?: number | null
+      outputTokens?: number | null
+      cacheReadTokens?: number | null
+      cacheCreationTokens?: number | null
     },
   ) {
     const current = this.store.db
       .prepare(
-        "SELECT content, thinking, tool_events as toolEvents, content_blocks as contentBlocks, retry_count as retryCount, retry_reasons as retryReasons FROM messages WHERE id = ? LIMIT 1",
+        "SELECT content, thinking, tool_events as toolEvents, content_blocks as contentBlocks, retry_count as retryCount, retry_reasons as retryReasons, input_tokens as inputTokens, output_tokens as outputTokens, cache_read_tokens as cacheReadTokens, cache_creation_tokens as cacheCreationTokens FROM messages WHERE id = ? LIMIT 1",
       )
       .get(messageId) as
       | {
@@ -541,6 +561,10 @@ export class SessionRepository {
           contentBlocks: string
           retryCount: number
           retryReasons: string
+          inputTokens: number | null
+          outputTokens: number | null
+          cacheReadTokens: number | null
+          cacheCreationTokens: number | null
         }
       | undefined
 
@@ -550,7 +574,7 @@ export class SessionRepository {
 
     this.store.db
       .prepare(
-        "UPDATE messages SET content = ?, thinking = ?, tool_events = ?, content_blocks = ?, retry_count = ?, retry_reasons = ? WHERE id = ?",
+        "UPDATE messages SET content = ?, thinking = ?, tool_events = ?, content_blocks = ?, retry_count = ?, retry_reasons = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cache_creation_tokens = ? WHERE id = ?",
       )
       .run(
         updates.content ?? current.content,
@@ -559,6 +583,13 @@ export class SessionRepository {
         updates.contentBlocks ?? current.contentBlocks,
         updates.retryCount ?? current.retryCount,
         updates.retryReasons ?? current.retryReasons,
+        // "in updates" 判定：显式 null 可清列，未提供保持原值（与 updateThread 三态一致）
+        "inputTokens" in updates ? (updates.inputTokens ?? null) : current.inputTokens,
+        "outputTokens" in updates ? (updates.outputTokens ?? null) : current.outputTokens,
+        "cacheReadTokens" in updates ? (updates.cacheReadTokens ?? null) : current.cacheReadTokens,
+        "cacheCreationTokens" in updates
+          ? (updates.cacheCreationTokens ?? null)
+          : current.cacheCreationTokens,
         messageId,
       )
   }
@@ -703,6 +734,10 @@ export class SessionRepository {
       nativeSessionId?: string | null
       sopBookmark?: string | null
       lastFillRatio?: number | null
+      // F043 AC5/AC7 · 面板真值三列（三态：值/null 清列/缺省不动）
+      lastUsedTokens?: number | null
+      lastWindowTokens?: number | null
+      lastUsageSource?: "exact" | "approx" | null
     },
   ) {
     const setClauses: string[] = []
@@ -723,6 +758,18 @@ export class SessionRepository {
     if ("lastFillRatio" in updates) {
       setClauses.push("last_fill_ratio = ?")
       params.push(updates.lastFillRatio ?? null)
+    }
+    if ("lastUsedTokens" in updates) {
+      setClauses.push("last_used_tokens = ?")
+      params.push(updates.lastUsedTokens ?? null)
+    }
+    if ("lastWindowTokens" in updates) {
+      setClauses.push("last_window_tokens = ?")
+      params.push(updates.lastWindowTokens ?? null)
+    }
+    if ("lastUsageSource" in updates) {
+      setClauses.push("last_usage_source = ?")
+      params.push(updates.lastUsageSource ?? null)
     }
 
     if (setClauses.length === 0) return

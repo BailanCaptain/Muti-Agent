@@ -33,6 +33,10 @@ type ProviderCardState = {
   sopNext?: string | null
   fillRatio?: number | null
   sealed?: boolean
+  // F043 AC7 · 后端真值直传（threads 真值三列）
+  usedTokens?: number | null
+  windowTokens?: number | null
+  usageSource?: "exact" | "approx" | null
 }
 
 type ActiveGroupPayload = {
@@ -164,6 +168,19 @@ type ThreadStore = {
   applyContentBlock: (messageId: string, block: ContentBlock) => void
   appendTimelineMessage: (message: TimelineMessage) => void
   applySnapshotDelta: (delta: ThreadSnapshotDelta) => void
+  /**
+   * F043 P1-1（德彪 r1）· message.updated（turn 收尾终稿全量重推）→ 按 id 就地替换，
+   * token 胶囊不刷新点亮；id 不在（catch-up 竞态）→ 追加，不丢终稿。
+   */
+  applyMessageUpdate: (message: TimelineMessage) => void
+  // F043 AC8 · 轮中 usage 快照 → 运行中面板上下文条实时更新
+  applyUsageSnapshot: (payload: {
+    provider: Provider
+    usedTokens: number
+    windowTokens: number
+    fillRatio: number
+    source: "exact" | "approx"
+  }) => void
   reconcileOptimisticMessage: (clientMessageId: string, serverMessage: TimelineMessage) => void
   recordMessageInGroup: (groupId: string, message: TimelineMessage) => void
   buildSendPayload: (input: string, contentBlocks?: ContentBlock[]) => SendPayload | null
@@ -713,6 +730,34 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         ? newTimeline.filter((m) => !removed.has(m.id))
         : newTimeline
       return { timeline: filtered, providers: delta.providers }
+    })
+  },
+  applyMessageUpdate: (message) => {
+    set((state) => {
+      const exists = state.timeline.some((m) => m.id === message.id)
+      return {
+        timeline: exists
+          ? state.timeline.map((m) => (m.id === message.id ? message : m))
+          : [...state.timeline, message],
+      }
+    })
+  },
+  applyUsageSnapshot: (payload) => {
+    set((state) => {
+      const card = state.providers[payload.provider]
+      if (!card) return state
+      return {
+        providers: {
+          ...state.providers,
+          [payload.provider]: {
+            ...card,
+            fillRatio: payload.fillRatio,
+            usedTokens: payload.usedTokens,
+            windowTokens: payload.windowTokens,
+            usageSource: payload.source,
+          },
+        },
+      }
     })
   },
   reconcileOptimisticMessage: (clientMessageId, serverMessage) => {

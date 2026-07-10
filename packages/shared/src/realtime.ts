@@ -185,6 +185,11 @@ export type ProviderThreadView = {
   // F021 Phase 6 (AC-32): seal 触发后置 true，直到该 thread 收到下一条 user 消息复位。
   // 派生于消息流——最新 system_notice 之后是否还有 user 消息。
   sealed?: boolean
+  // F043 AC7 · 面板真值直传（threads 真值三列）——前端停止 ratio×自算窗口反推。
+  // null=无数据（旧行/无快照轮）；usageSource=approx 时前端加「约」标注。
+  usedTokens?: number | null
+  windowTokens?: number | null
+  usageSource?: "exact" | "approx" | null
 }
 
 export type ThreadSnapshotDelta = {
@@ -401,6 +406,19 @@ export type RealtimeServerEvent =
       }
     }
   | {
+      /**
+       * F043 P1-1（德彪 r1）· turn 收尾把落库终稿（含 token 明细列）全量重推。
+       * 占位 message.created 无 token；catch-up 只查 created_at > since 漏更新行 ——
+       * 没有本事件，开着的页面刷新前永远看不到胶囊。前端按 id upsert。
+       */
+      type: "message.updated"
+      payload: {
+        threadId: string
+        sessionGroupId?: string
+        message: TimelineMessage
+      }
+    }
+  | {
       type: "thread_snapshot"
       payload: {
         sessionGroupId: string
@@ -416,6 +434,20 @@ export type RealtimeServerEvent =
       payload: {
         sessionGroupId?: string
         message: string
+      }
+    }
+  // F043 AC8 · 轮中 usage 快照（节流后）——运行中面板上下文条实时更新。
+  // payload 带 sessionGroupId → extractSessionGroupId direct 路径自动路由。
+  | {
+      type: "usage.snapshot"
+      payload: {
+        sessionGroupId: string
+        threadId: string
+        provider: Provider
+        usedTokens: number
+        windowTokens: number
+        fillRatio: number
+        source: "exact" | "approx"
       }
     }
   | {

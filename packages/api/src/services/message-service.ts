@@ -54,7 +54,8 @@ import type {
   EnqueueMentionsResult,
   QueueEntry,
 } from "../orchestrator/dispatch"
-import { detectFBloat } from "../orchestrator/fbloat-detector"
+import { resolveEffectiveTurnResult, sealedThisTurn, settleTurnUsage } from "./turn-usage-settlement"
+import { createUsageSnapshotThrottle } from "./usage-snapshot-throttle"
 import { planForcedDispatch } from "../orchestrator/forced-dispatch"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
 import { deriveAuditPatch, loadTaskMemoryPack } from "../wiki/memory-preflight/memory-preflight"
@@ -459,6 +460,8 @@ export class MessageService {
   private memoryPreflightSearch: WikiSearchProvider | null = null
   // F027 #286 FU-1 · runTurn runtime adapter 测试缝（默认 null = 生产按 provider 选单例）。
   private cliRuntimeOverride: BaseCliRuntime | null = null
+  // F043 AC8 · 轮中 usage 快照节流（per-thread leading-edge 2s）
+  private readonly usageSnapshotThrottle = createUsageSnapshotThrottle()
   // F027 Phase 3 P20 Day 8 b · prompt_audit writer wiring (AC-P3-9 b).
   // 默认 noop —— wire 没接通时不写 audit row（单测 / 老路径无副作用）。
   // server.ts boot 注入真 PromptAuditWriter（即使 Coordinator 是 noop，每次
@@ -1886,6 +1889,23 @@ export class MessageService {
             })
           }
         },
+        // F043 AC8 · 轮中 usage 快照（节流 2s leading-edge）→ 运行中面板实时更新。
+        // 末值不依赖此路径：turn 收尾 emitThreadSnapshot 带落库真值权威兜底。
+        onUsageSnapshot: (snapshot) => {
+          if (!this.usageSnapshotThrottle.shouldEmit(thread.id)) return
+          options.emit({
+            type: "usage.snapshot",
+            payload: {
+              sessionGroupId: thread.sessionGroupId,
+              threadId: thread.id,
+              provider: thread.provider,
+              usedTokens: snapshot.usedTokens,
+              windowTokens: snapshot.windowTokens,
+              fillRatio: Math.min(snapshot.usedTokens / snapshot.windowTokens, 1),
+              source: snapshot.source,
+            },
+          })
+        },
         onSession: (sid: string) => {
           // F018 P4 (fix Codex HIGH #1): Track the live session id so first-ever
           // sessions (where thread.nativeSessionId starts null) still attribute
@@ -2064,7 +2084,9 @@ export class MessageService {
           }
         },
       })
-      const result = loopResult.lastResult
+      // P1-3（德彪 r1）：let —— 派发协议 retry 成功后整体换成最终生效的 RunTurnResult，
+      // 下游 seal 事件/settlement/updateThread/token 落库全部消费 retry 后的真实状态。
+      let result = loopResult.lastResult
       // F026 P3.1: 派发协议 retry 路径会用 retry 后的 content 覆盖原 accumulatedContent
       let accumulatedContent = loopResult.accumulatedContent
 
@@ -2323,6 +2345,11 @@ export class MessageService {
           if (retryResult.nativeSessionId) {
             liveSessionId = retryResult.nativeSessionId
           }
+          // P1-3（德彪 r1）：retry 产生了新的完整 RunTurnResult。足迹/seal/session 取
+          // 本次尝试（当前上下文真实状态——旧代码丢弃 retry 的 sealDecision，retry 把
+          // 上下文推过阈值时漏封存）；turnTotals 计费聚合所有实际尝试（失败尝试的
+          // token 真实花掉了）。逐次折叠，多轮 retry 语义同样成立。
+          result = resolveEffectiveTurnResult(result, [retryResult])
           attemptIndex = decision.nextAttemptIndex
         }
 
@@ -2496,21 +2523,21 @@ export class MessageService {
         }
       }
 
-      if (result.usage) {
-        const prevTokens = this.prevUsedTokens.get(thread.id) ?? 0
-        const bloat = detectFBloat(prevTokens, result.usage.usedTokens)
-        if (bloat.detected) {
-          result.fBloatDetected = true
-          options.emit({
-            type: "status",
-            payload: {
-              sessionGroupId: thread.sessionGroupId,
-              message: `${thread.alias} CLI 内部压缩检测到（token 突降 ${Math.round(bloat.dropRatio * 100)}%），下轮将强制重注入 system prompt。`,
-            },
-          })
-          this.memoryService?.invalidateSummary(thread.sessionGroupId)
-        }
-        this.prevUsedTokens.set(thread.id, result.usage.usedTokens)
+      // F043 AC4：fill / F-BLOAT 基线记账提取为 settleTurnUsage（同位替换）。
+      // 封存轮 → lastFillRatio=null（复位，不许 95% 挂新 session）+ 基线清零（防新
+      // session 首轮误报 CLI 自压缩）；非封存轮行为与提取前 1:1。
+      const usageSettlement = settleTurnUsage({
+        threadId: thread.id,
+        alias: thread.alias,
+        sessionGroupId: thread.sessionGroupId,
+        usage: result.usage,
+        sealDecision: result.sealDecision,
+        prevUsedTokens: this.prevUsedTokens,
+        emit: (event) => options.emit(event),
+        invalidateSummary: () => this.memoryService?.invalidateSummary(thread.sessionGroupId),
+      })
+      if (usageSettlement.fBloatDetected) {
+        result.fBloatDetected = true
       }
 
       if (stderrLineBuf.trim()) {
@@ -2523,13 +2550,13 @@ export class MessageService {
       }
 
       this.streamingFlushers.delete(flushKey)
-      const lastFillRatio = result.sealDecision?.fillRatio
       this.sessions.updateThread(
         thread.id,
         result.currentModel,
         effectiveSessionId,
         undefined,
-        lastFillRatio,
+        usageSettlement.lastFillRatio,
+        usageSettlement.threadUsage,
       )
       if (!promptRequestedByCli) {
         // F026 P11 · 派生 content_blocks（thinking + text）merge 现存独立块（image）
@@ -2539,12 +2566,37 @@ export class MessageService {
           thinking: thinkingAcc.current,
         })
         const mergedBlocks = mergeDerivedWithExistingBlocks(existingBlocksJson, derivedBlocks)
+        // F043 AC5 · turn 聚合 token 明细随 assistant 消息落库：claude 用 turnTotals
+        // （result 整轮计费），codex 用 usage.detail（rollout 末请求足迹），gemini 无 → 不写
+        const tokenDetail = result.turnTotals?.detail ?? result.usage?.detail ?? null
         this.sessions.overwriteMessage(assistant.id, {
           content: accumulatedContent || "[empty response]",
           thinking: thinkingAcc.current,
           toolEvents: toolEventsJson,
           contentBlocks: JSON.stringify(mergedBlocks),
+          ...(tokenDetail
+            ? {
+                inputTokens: tokenDetail.inputTokens,
+                outputTokens: tokenDetail.outputTokens,
+                cacheReadTokens: tokenDetail.cacheReadTokens,
+                cacheCreationTokens: tokenDetail.cacheCreationTokens,
+              }
+            : {}),
         })
+        // P1-1（德彪 r1）· AC6 活页闭环：占位 message.created 无 token，收尾终稿原来
+        // 只写 DB —— catch-up 只查 created_at > since 漏更新行、store 按 id 去重不替换，
+        // 开着的页面刷新前永远看不到胶囊。这里把落库终稿全量重推，前端按 id upsert。
+        const finalTimeline = this.sessions.toTimelineMessage(thread.id, assistant.id)
+        if (finalTimeline) {
+          options.emit({
+            type: "message.updated",
+            payload: {
+              threadId: thread.id,
+              sessionGroupId: thread.sessionGroupId,
+              message: finalTimeline,
+            },
+          })
+        }
       }
 
       // F002: route [拍板] / [撤销拍板] markers into the Decision Board
@@ -2662,7 +2714,8 @@ export class MessageService {
           result.currentModel,
           effectiveSessionId,
           bookmarkJson,
-          lastFillRatio,
+          usageSettlement.lastFillRatio,
+          usageSettlement.threadUsage,
         )
       }
 
@@ -2679,7 +2732,9 @@ export class MessageService {
       // 没有 digest 持久化、ThreadMemory 不滚动、sessionChainIndex 不递增。
       // 现改为"真 seal 就持久化，bookmark 只 gate auto-resume"。
       const sessionForSeal = sealedSessionId ?? effectiveSessionId
-      if (loopResult.stoppedReason === "sealed" && this.transcriptWriter && sessionForSeal) {
+      // 修2（德彪 r2）：loopResult.stoppedReason 定格在 retry 前，retry 越阈时钩子被跳过
+      // 而 seal 事件/session 清空照发（脑裂）。统一吃最终生效结果（非 retry 路径 1:1）。
+      if (sealedThisTurn(result) && this.transcriptWriter && sessionForSeal) {
         try {
           await this.transcriptWriter.flush(sessionForSeal)
           const digest = await this.transcriptWriter.readDigest(sessionForSeal, thread.id)
@@ -2704,7 +2759,7 @@ export class MessageService {
         }
       }
 
-      if (loopResult.stoppedReason === "sealed" && bookmarkJson) {
+      if (sealedThisTurn(result) && bookmarkJson) {
         const parsedBookmark: SOPBookmark = JSON.parse(bookmarkJson)
         const resumeCount = options.autoResumeCount ?? 0
         // B015: 传入 seal 那轮的 stopReason，"complete" (Claude end_turn) 时短路，

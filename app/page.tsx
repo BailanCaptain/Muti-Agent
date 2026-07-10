@@ -57,6 +57,8 @@ export default function HomePage() {
   const appendTimelineMessage = useThreadStore((state) => state.appendTimelineMessage)
   const replaceActiveGroup = useThreadStore((state) => state.replaceActiveGroup)
   const applySnapshotDelta = useThreadStore((state) => state.applySnapshotDelta)
+  const applyMessageUpdate = useThreadStore((state) => state.applyMessageUpdate)
+  const applyUsageSnapshot = useThreadStore((state) => state.applyUsageSnapshot)
   const reconcileOptimisticMessage = useThreadStore((state) => state.reconcileOptimisticMessage)
   const recordMessageInGroup = useThreadStore((state) => state.recordMessageInGroup)
   const applyTitleUpdate = useThreadStore((state) => state.applyTitleUpdate)
@@ -185,6 +187,16 @@ export default function HomePage() {
           return
         }
 
+        if (event.type === "message.updated") {
+          // F043 P1-1（德彪 r1）· turn 收尾终稿全量重推 → 当前会话按 id upsert，
+          // token 胶囊不刷新点亮。跨房间不动 timeline（切回时 HTTP 快照自带真值）。
+          if (!event.payload.sessionGroupId || !isCurrentSession(event.payload.sessionGroupId)) {
+            return
+          }
+          applyMessageUpdate(event.payload.message)
+          return
+        }
+
         if (event.type === "dispatch.validation_retry") {
           if (!isCurrentSession(event.payload.sessionGroupId)) return
           useDispatchRetryStore.getState().recordRetry(event.payload)
@@ -229,6 +241,13 @@ export default function HomePage() {
         if (event.type === "thread_snapshot_delta") {
           if (!isCurrentSession(event.payload.sessionGroupId)) return
           applySnapshotDelta(event.payload)
+          return
+        }
+
+        if (event.type === "usage.snapshot") {
+          // F043 AC8 · 轮中 usage 快照（节流后）→ 面板上下文条实时刷新
+          if (!isCurrentSession(event.payload.sessionGroupId)) return
+          applyUsageSnapshot(event.payload)
           return
         }
 

@@ -100,13 +100,19 @@ export const SEAL_THRESHOLDS_BY_PROVIDER: Record<Provider, { warn: number; actio
 const CONTEXT_WINDOW_FALLBACKS: ReadonlyArray<{ match: RegExp; window: number }> = [
   // Gemini 3.x 家族：1M tokens
   { match: /^gemini-3/i, window: 1_048_576 },
-  // Claude Opus 4.7 家族默认 1M 窗口（含 [1m] 显式变体），必须排在通用 Claude 4 之前
-  { match: /^claude-opus-4-7/i, window: 1_000_000 },
+  // F043 AC0（07-10 实测）：gemini-2.5 家族 1M。此前无条目 → snapshot 永不生成
+  { match: /^gemini-2\.5/i, window: 1_048_576 },
+  // F043 AC0（07-10 实测）：opus-4-8 账户生效窗口 1M（modelUsage.contextWindow 探针实证），
+  // 与 4-7 沿革值并入一条；必须排在通用 Claude 4 之前
+  { match: /^claude-opus-4-[78]/i, window: 1_000_000 },
   // 其他 Claude 4.x（Opus 4.6-、Sonnet 4.x、Haiku 4.x）：200k
   { match: /^claude-(opus|sonnet|haiku)-4/i, window: 200_000 },
   { match: /^claude-/i, window: 200_000 },
-  // OpenAI reasoning 家族
-  { match: /^gpt-5\.5/i, window: 1_000_000 },
+  // OpenAI reasoning 家族。F043 AC0：codex 窗口随 CLI 换代漂移（07-06 gpt-5.5 rollout
+  // 自报 258,400 / 07-10 gpt-5.6-sol 自报 353,400），本表只是 rollout 回读失败时的
+  // 实测快照 —— 主路径是 CodexRuntime.resolveUsage 读 rollout model_context_window。
+  { match: /^gpt-5\.6/i, window: 353_400 },
+  { match: /^gpt-5\.5/i, window: 258_400 },
   { match: /^gpt-5/i, window: 400_000 },
   { match: /^gpt-4/i, window: 128_000 },
   { match: /^o3/i, window: 200_000 },
@@ -125,13 +131,32 @@ export function getContextWindowForModel(model: string | null | undefined): numb
 }
 
 /**
+ * 单轮 token 明细（F043 P1 展示 + 落库用）。统一契约（P1-2 德彪 r1）：
+ * inputTokens = 非缓存输入 —— 三列互斥不重叠，展示层可安全求和为输入侧全量。
+ * claude 原生即此语义（input / cache_read / cache_creation 互斥）；
+ * codex 原生 input_tokens 含 cached（cached ⊆ input），由 adapter 归一化拆开，
+ * 否则 input+cacheRead 求和会把缓存双计。
+ */
+export type UsageDetail = {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+}
+
+/**
  * 单轮结束时汇总的 token 使用情况，用于决定是否 seal session。
- * usedTokens 是 CLI 报告的已用上下文（通常是 input_tokens + cached + ...）；
- * windowTokens 是上下文窗口大小；
- * source=exact 表示 windowTokens 来自 CLI 自己的事件，approx 表示来自 model 兜底表。
+ * F043 口径翻正：usedTokens = 当前上下文真实足迹，不再是累计计费值 ——
+ * claude = 末次 message_start 的 input+cache_read+cache_creation；
+ * codex  = rollout 末条 last_token_usage.total_tokens（流内退化 = input_tokens 单值）；
+ * gemini = CLI 累计值（未修净，恒 approx，seal 判定 fail-open 只 warn）。
+ * windowTokens 是上下文窗口大小。
+ * source 语义升级为整体快照质量：exact 仅当分子为真足迹且窗口来自 CLI 自报；
+ * 任一来自兜底/估计 → approx（前端据此标注）。
  */
 export type TokenUsageSnapshot = {
   usedTokens: number
   windowTokens: number
   source: "exact" | "approx"
+  detail?: UsageDetail
 }

@@ -1,11 +1,14 @@
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync } from "node:fs"
+import os from "node:os"
 import path from "node:path"
 import type { ToolEvent } from "@multi-agent/shared"
 import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts"
 import {
   type AgentRunInput,
   BaseCliRuntime,
+  type ParsedUsage,
   type RuntimeCommand,
+  type RuntimeDependencies,
   type StopReason,
   resolveNpmRoot,
   wrapPromptWithInstructions,
@@ -27,6 +30,17 @@ function resolveCodexCommand() {
 export class CodexRuntime extends BaseCliRuntime {
   readonly agentId = "codex"
   private hadPriorTextTurn = false
+
+  /**
+   * F043 AC2：rollout 目录可注入（测试用 temp dir）。生产默认 ~/.codex/sessions，
+   * 结构 YYYY/MM/DD/rollout-<ts>-<sessionId>.jsonl。
+   */
+  constructor(
+    dependencies: RuntimeDependencies = {},
+    private readonly sessionsDir = path.join(os.homedir(), ".codex", "sessions"),
+  ) {
+    super(dependencies)
+  }
 
   protected buildCommand(input: AgentRunInput): RuntimeCommand {
     const runtime = resolveCodexCommand()
@@ -216,13 +230,13 @@ export class CodexRuntime extends BaseCliRuntime {
     }
   }
 
-  parseUsage(
-    event: Record<string, unknown>,
-  ): { totalTokens: number; contextWindow: number | null } | null {
-    // Codex exec --json emits `{ type: "turn.completed", usage: {...} }` per turn.
-    // Total context fill ≈ input_tokens + cached_input_tokens (Codex's `input_tokens` is
-    // the *new* input only; cached inputs are billed separately but still occupy the window).
-    // No context_window field is emitted — orchestrator will fall back to the model lookup.
+  // F043 AC2（AC0 实测翻正，探针 codex-0.144.1-multicall.ndjson + rollout 对账）：
+  // turn.completed.usage 就是 total_token_usage —— session 级累计值，且
+  // cached_input_tokens ⊆ input_tokens（旧注释断言「input 是新增量、cached 另计」
+  // 实测为假，相加 = 双计缓存，9.35× 虚高实锤）。
+  // 流内只能拿到这个退化估计：input_tokens 单值、exact:false，仍作 context 喂 seal
+  // （否则 rollout 回读失败时 codex 无任何封存保护）。真足迹走 resolveUsage 回读。
+  parseUsage(event: Record<string, unknown>): ParsedUsage | null {
     if (event.type !== "turn.completed") {
       return null
     }
@@ -231,12 +245,112 @@ export class CodexRuntime extends BaseCliRuntime {
       return null
     }
     const input = typeof usage.input_tokens === "number" ? usage.input_tokens : 0
-    const cached = typeof usage.cached_input_tokens === "number" ? usage.cached_input_tokens : 0
-    const total = input + cached
-    if (total <= 0) {
+    if (input <= 0) {
       return null
     }
-    return { totalTokens: total, contextWindow: null }
+    return { scope: "context", totalTokens: input, contextWindow: null, exact: false }
+  }
+
+  /**
+   * F043 AC2：turn 结束后回读 rollout 文件末条 token_count ——
+   * `info.last_token_usage` = 末次请求真实上下文足迹（vs total_token_usage 累计），
+   * `info.model_context_window` = CLI 自报真窗口（随换代漂移，绝不写死）。
+   * 行结构（AC0 实测）：{"type":"event_msg","payload":{"type":"token_count","info":{...}}}。
+   * 任何失败 → null（保留流内退化值），绝不 fail turn。
+   */
+  override async resolveUsage(ctx: { sessionId: string | null }): Promise<ParsedUsage | null> {
+    if (!ctx.sessionId) return null
+    try {
+      const file = this.findRolloutFile(ctx.sessionId)
+      if (!file) return null
+      const info = this.lastTokenCountInfo(file)
+      if (!info) return null
+      const last = info.last_token_usage as Record<string, unknown> | undefined
+      if (!last) return null
+      const num = (v: unknown) => (typeof v === "number" ? v : 0)
+      const inputTokens = num(last.input_tokens)
+      const outputTokens = num(last.output_tokens)
+      const cachedInput = num(last.cached_input_tokens)
+      const totalTokens =
+        typeof last.total_tokens === "number" ? last.total_tokens : inputTokens + outputTokens
+      if (totalTokens <= 0) return null
+      const window = info.model_context_window
+      return {
+        scope: "context",
+        totalTokens,
+        contextWindow: typeof window === "number" && window > 0 ? window : null,
+        exact: true,
+        detail: {
+          // UsageDetail 统一契约（P1-2 德彪 r1）：inputTokens = 非缓存输入。
+          // codex 原生 input_tokens 含 cached（cached ⊆ input），这里拆开归一化；
+          // 不拆则展示层按三列互斥语义求和 → 缓存双计（13,384+13,056=26,440 假高）。
+          inputTokens: Math.max(0, inputTokens - cachedInput),
+          outputTokens,
+          cacheReadTokens: cachedInput,
+          cacheCreationTokens: 0,
+        },
+      }
+    } catch {
+      return null
+    }
+  }
+
+  /** 定位 rollout 文件：日期目录倒序扫（turn 刚结束，文件几乎必在最近日期），文件名含 sessionId。 */
+  private findRolloutFile(sessionId: string): string | null {
+    const listDirs = (dir: string) => {
+      try {
+        return readdirSync(dir, { withFileTypes: true })
+      } catch {
+        return []
+      }
+    }
+    const years = listDirs(this.sessionsDir)
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort()
+      .reverse()
+    for (const year of years) {
+      const months = listDirs(path.join(this.sessionsDir, year))
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name)
+        .sort()
+        .reverse()
+      for (const month of months) {
+        const days = listDirs(path.join(this.sessionsDir, year, month))
+          .filter((e) => e.isDirectory())
+          .map((e) => e.name)
+          .sort()
+          .reverse()
+        for (const day of days) {
+          const dayDir = path.join(this.sessionsDir, year, month, day)
+          const hit = listDirs(dayDir).find(
+            (e) => e.isFile() && e.name.includes(sessionId) && e.name.endsWith(".jsonl"),
+          )
+          if (hit) return path.join(dayDir, hit.name)
+        }
+      }
+    }
+    return null
+  }
+
+  /** 倒序扫行找最后一条 token_count（真实 rollout 尾行是 task_complete，半行损坏也要容忍）。 */
+  private lastTokenCountInfo(file: string): Record<string, unknown> | null {
+    const lines = readFileSync(file, "utf-8").split("\n")
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim()
+      if (!line) continue
+      try {
+        const parsed = JSON.parse(line) as {
+          payload?: { type?: string; info?: Record<string, unknown> }
+        }
+        if (parsed.payload?.type === "token_count" && parsed.payload.info) {
+          return parsed.payload.info
+        }
+      } catch {
+        // 半行/损坏行跳过，继续向上找
+      }
+    }
+    return null
   }
 
   parseStopReason(event: Record<string, unknown>): StopReason | null {

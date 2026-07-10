@@ -27,6 +27,10 @@ type ProviderView = {
   sopNext?: string | null
   fillRatio?: number | null
   sealed?: boolean
+  // F043 AC7 · 面板真值直传（与 shared ProviderThreadView 对齐）
+  usedTokens?: number | null
+  windowTokens?: number | null
+  usageSource?: "exact" | "approx" | null
 }
 
 type DispatchState = {
@@ -206,6 +210,10 @@ export class SessionService {
             sopNext,
             fillRatio: thread.lastFillRatio ?? null,
             sealed: this.deriveSealed(thread.id),
+            // F043 AC7 · 面板真值直传（threads 真值三列，null=无数据）
+            usedTokens: thread.lastUsedTokens ?? null,
+            windowTokens: thread.lastWindowTokens ?? null,
+            usageSource: thread.lastUsageSource ?? null,
           },
         ]
       }),
@@ -242,6 +250,13 @@ export class SessionService {
               a2aCallStatus: message.a2aCallStatus,
               a2aDeadlineAt: message.a2aDeadlineAt,
               senderDisplayName: message.senderDisplayName,
+            },
+            // F043 AC6 · token 列透传（NULL → undefined → 胶囊不渲染）
+            {
+              inputTokens: message.inputTokens,
+              outputTokens: message.outputTokens,
+              cacheReadTokens: message.cacheReadTokens,
+              cacheCreationTokens: message.cacheCreationTokens,
             },
           )
         }),
@@ -319,6 +334,10 @@ export class SessionService {
             sopNext,
             fillRatio: thread.lastFillRatio ?? null,
             sealed: this.deriveSealed(thread.id),
+            // F043 AC7 · 面板真值直传（threads 真值三列，null=无数据）
+            usedTokens: thread.lastUsedTokens ?? null,
+            windowTokens: thread.lastWindowTokens ?? null,
+            usageSource: thread.lastUsageSource ?? null,
           },
         ]
       }),
@@ -357,6 +376,13 @@ export class SessionService {
               a2aCallStatus: message.a2aCallStatus,
               a2aDeadlineAt: message.a2aDeadlineAt,
               senderDisplayName: message.senderDisplayName,
+            },
+            // F043 AC6 · token 列透传（NULL → undefined → 胶囊不渲染）
+            {
+              inputTokens: message.inputTokens,
+              outputTokens: message.outputTokens,
+              cacheReadTokens: message.cacheReadTokens,
+              cacheCreationTokens: message.cacheCreationTokens,
             },
           )
         })
@@ -501,6 +527,11 @@ export class SessionService {
       contentBlocks?: string
       retryCount?: number
       retryReasons?: string
+      // F043 AC5 · turn 聚合 token 明细回填
+      inputTokens?: number | null
+      outputTokens?: number | null
+      cacheReadTokens?: number | null
+      cacheCreationTokens?: number | null
     },
   ) {
     this.repository.overwriteMessage(messageId, updates)
@@ -572,6 +603,13 @@ export class SessionService {
         a2aCallStatus: message.a2aCallStatus,
         a2aDeadlineAt: message.a2aDeadlineAt,
         senderDisplayName: message.senderDisplayName,
+      },
+      // F043 AC6 · token 列透传（NULL → undefined → 胶囊不渲染）
+      {
+        inputTokens: message.inputTokens,
+        outputTokens: message.outputTokens,
+        cacheReadTokens: message.cacheReadTokens,
+        cacheCreationTokens: message.cacheCreationTokens,
       },
     )
   }
@@ -653,12 +691,21 @@ export class SessionService {
     nativeSessionId: string | null,
     sopBookmark?: string | null,
     lastFillRatio?: number | null,
+    // F043 AC5/AC7 · 面板真值三列，与 lastFillRatio 同三态（值/null 清列/undefined 不动）
+    lastUsage?: { usedTokens: number; windowTokens: number; source: "exact" | "approx" } | null,
   ) {
     this.repository.updateThread(threadId, {
       currentModel: model,
       nativeSessionId,
       ...(sopBookmark !== undefined ? { sopBookmark } : {}),
       ...(lastFillRatio !== undefined ? { lastFillRatio } : {}),
+      ...(lastUsage !== undefined
+        ? {
+            lastUsedTokens: lastUsage?.usedTokens ?? null,
+            lastWindowTokens: lastUsage?.windowTokens ?? null,
+            lastUsageSource: lastUsage?.source ?? null,
+          }
+        : {}),
     })
   }
 
@@ -695,8 +742,28 @@ export class SessionService {
       /** F040 P2 T11 · 群桥接归因真名；NULL/缺省 = 村长（web/历史消息零回归） */
       senderDisplayName?: string | null
     } = {},
+    // F043 AC6 · messages token 列 → MessageMeta 胶囊（wire 字段 realtime.ts 早已存在，从未点亮）
+    tokenMeta: {
+      inputTokens?: number | null
+      outputTokens?: number | null
+      cacheReadTokens?: number | null
+      cacheCreationTokens?: number | null
+    } = {},
   ): TimelineMessage {
     const isConnector = messageType === "connector"
+    // F043 AC6 · wire 语义：inputTokens = 输入侧全量（input+cache_read+cache_creation，
+    // 用户感知的「本次调用消耗」）；cachedPercent = 缓存命中占输入侧比例。
+    // 全 null（旧行/gemini 不写）→ 三字段 undefined → MessageMeta 返 null 不渲染。
+    const inputSide =
+      (tokenMeta.inputTokens ?? 0) +
+      (tokenMeta.cacheReadTokens ?? 0) +
+      (tokenMeta.cacheCreationTokens ?? 0)
+    const hasTokens =
+      role === "assistant" &&
+      (tokenMeta.inputTokens != null ||
+        tokenMeta.outputTokens != null ||
+        tokenMeta.cacheReadTokens != null ||
+        tokenMeta.cacheCreationTokens != null)
     return {
       id,
       provider: thread.provider,
@@ -747,6 +814,13 @@ export class SessionService {
           ? "nested"
           : "inline"
         : undefined,
+      // F043 AC6 · token 胶囊三字段（MessageMeta 渲染 total = inputTokens + outputTokens）
+      inputTokens: hasTokens ? inputSide : undefined,
+      outputTokens: hasTokens ? (tokenMeta.outputTokens ?? 0) : undefined,
+      cachedPercent:
+        hasTokens && inputSide > 0
+          ? Math.round(((tokenMeta.cacheReadTokens ?? 0) / inputSide) * 100)
+          : undefined,
       createdAt,
     }
   }

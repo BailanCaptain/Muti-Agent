@@ -309,6 +309,25 @@ describe("ClaudeRuntime stream_event handling", () => {
     })
 
     it("extracts usage from stream_event message_delta", () => {
+      // F043 AC9 翻正：真实 CLI 的 message_delta 带全量字段（AC0 探针 line39），
+      // 足迹 = in+cache_read+cache_creation（output 不占调用起点窗口）
+      const result = runtime.parseUsage({
+        type: "stream_event",
+        event: {
+          type: "message_delta",
+          usage: {
+            input_tokens: 10,
+            cache_read_input_tokens: 21_256,
+            cache_creation_input_tokens: 7_302,
+            output_tokens: 301,
+          },
+        },
+      })
+      assert.equal(result?.scope, "context")
+      assert.equal(result?.totalTokens, 28_568)
+    })
+
+    it("F043: output-only delta carries no footprint → null (no bogus context snapshot)", () => {
       const result = runtime.parseUsage({
         type: "stream_event",
         event: {
@@ -316,7 +335,7 @@ describe("ClaudeRuntime stream_event handling", () => {
           usage: { input_tokens: 0, output_tokens: 200 },
         },
       })
-      assert.ok(result)
+      assert.equal(result, null)
     })
 
     it("still handles top-level result usage", () => {

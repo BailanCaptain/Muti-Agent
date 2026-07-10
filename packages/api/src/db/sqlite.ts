@@ -13,6 +13,10 @@ export type ProviderThreadRecord = {
   nativeSessionId: string | null
   sopBookmark: string | null
   lastFillRatio: number | null
+  // F043 AC5/AC7 · 面板真值三列（NULL=无数据；封存时与 lastFillRatio 同点复位）
+  lastUsedTokens: number | null
+  lastWindowTokens: number | null
+  lastUsageSource: "exact" | "approx" | null
   // F019: nullable feature binding used by WorkflowSop state machine.
   backlogItemId: string | null
   updatedAt: string
@@ -58,6 +62,11 @@ export type MessageRecord = {
   retryReasons: string
   // F040 P2 T11 · 群桥接归因真名（user 消息持久化发送者展示名；历史/web NULL → timeline 村长）
   senderDisplayName: string | null
+  // F043 AC5 · turn 聚合 token 明细（NULL=无数据 ≠ 0；旧行/gemini 为 null）
+  inputTokens: number | null
+  outputTokens: number | null
+  cacheReadTokens: number | null
+  cacheCreationTokens: number | null
   // F026 P5 T0 · A2A 关联键（仅 a2a 派发产生的 connector message 写入）
   a2aCallId: string | null
   // F026 P5 T0 · LEFT JOIN a2a_calls 取协议字段（hydrateMessage 填充）
@@ -670,6 +679,36 @@ export class SqliteStore {
       {
         name: "F040-P3-inbound-add-attachments",
         sql: "ALTER TABLE channel_inbound_ledger ADD COLUMN attachments TEXT",
+      },
+      // F043 AC5 · turn 聚合 token 明细（NULL=无数据 ≠ 0，MessageMeta 据此渲染）
+      {
+        name: "F043-messages-add-input-tokens",
+        sql: "ALTER TABLE messages ADD COLUMN input_tokens INTEGER",
+      },
+      {
+        name: "F043-messages-add-output-tokens",
+        sql: "ALTER TABLE messages ADD COLUMN output_tokens INTEGER",
+      },
+      {
+        name: "F043-messages-add-cache-read-tokens",
+        sql: "ALTER TABLE messages ADD COLUMN cache_read_tokens INTEGER",
+      },
+      {
+        name: "F043-messages-add-cache-creation-tokens",
+        sql: "ALTER TABLE messages ADD COLUMN cache_creation_tokens INTEGER",
+      },
+      // F043 AC5/AC7 · threads 面板真值三列（与 last_fill_ratio 同点写入/封存同点复位）
+      {
+        name: "F043-threads-add-last-used-tokens",
+        sql: "ALTER TABLE threads ADD COLUMN last_used_tokens INTEGER",
+      },
+      {
+        name: "F043-threads-add-last-window-tokens",
+        sql: "ALTER TABLE threads ADD COLUMN last_window_tokens INTEGER",
+      },
+      {
+        name: "F043-threads-add-last-usage-source",
+        sql: "ALTER TABLE threads ADD COLUMN last_usage_source TEXT",
       },
     ]
     for (const m of alters) {

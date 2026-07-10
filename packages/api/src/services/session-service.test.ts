@@ -625,3 +625,106 @@ test("F040 T11: user 消息带 senderDisplayName → alias 真名；缺省/NULL 
   assert.equal(byId.get("u2")?.alias, "村长", "无名 user 消息回落村长（历史/web 零回归）")
   assert.equal(byId.get("a1")?.alias, "Reviewer", "assistant alias 不受影响")
 })
+
+// --- F043 AC6/AC7 · token 真值直传 + MessageMeta 点亮 ---
+
+test("F043 AC7: provider view passes through thread usage true values", () => {
+  const thread = {
+    ...makeThread("claude"),
+    lastFillRatio: 0.14,
+    lastUsedTokens: 28_904,
+    lastWindowTokens: 200_000,
+    lastUsageSource: "exact" as const,
+  }
+  const repo = createMockRepository([thread], [])
+  const service = new SessionService(repo as never, [])
+  const delta = service.getActiveGroupDelta("group-1", new Set(), undefined)
+  assert.equal(delta.providers.claude?.usedTokens, 28_904)
+  assert.equal(delta.providers.claude?.windowTokens, 200_000)
+  assert.equal(delta.providers.claude?.usageSource, "exact")
+})
+
+test("F043 AC7: legacy thread without usage columns → null passthrough (前端显示占位不编造)", () => {
+  const repo = createMockRepository([makeThread("gemini")], [])
+  const service = new SessionService(repo as never, [])
+  const delta = service.getActiveGroupDelta("group-1", new Set(), undefined)
+  assert.equal(delta.providers.gemini?.usedTokens, null)
+  assert.equal(delta.providers.gemini?.windowTokens, null)
+  assert.equal(delta.providers.gemini?.usageSource, null)
+})
+
+test("F043 AC6: timeline message lights token capsule fields from message columns", () => {
+  const threads = [makeThread("claude")]
+  // 探针实测数值（claude-multicall result）：in 18 / out 348 / cr 49,814 / cc 7,640
+  const messages = [
+    {
+      ...makeMessage("thread-claude", "m1", "done", "2026-01-01T00:00:01Z"),
+      inputTokens: 18,
+      outputTokens: 348,
+      cacheReadTokens: 49_814,
+      cacheCreationTokens: 7_640,
+    },
+  ]
+  const repo = createMockRepository(threads, messages)
+  const service = new SessionService(repo as never, [])
+  const delta = service.getActiveGroupDelta("group-1", new Set(), undefined)
+  const tl = delta.newMessages.find((m) => m.id === "m1")
+  // wire 语义：inputTokens = 输入侧全量 18+49,814+7,640 = 57,472（用户感知的本次消耗）
+  assert.equal(tl?.inputTokens, 57_472)
+  assert.equal(tl?.outputTokens, 348)
+  // cachedPercent = round(49,814 / 57,472 × 100) = 87
+  assert.equal(tl?.cachedPercent, 87)
+})
+
+test("F043 AC6: legacy message without token columns → fields undefined (MessageMeta 不渲染)", () => {
+  const threads = [makeThread("claude")]
+  const messages = [makeMessage("thread-claude", "m1", "old row", "2026-01-01T00:00:01Z")]
+  const repo = createMockRepository(threads, messages)
+  const service = new SessionService(repo as never, [])
+  const delta = service.getActiveGroupDelta("group-1", new Set(), undefined)
+  const tl = delta.newMessages.find((m) => m.id === "m1")
+  assert.equal(tl?.inputTokens, undefined)
+  assert.equal(tl?.outputTokens, undefined)
+  assert.equal(tl?.cachedPercent, undefined)
+})
+
+test("F043 AC6: user messages never carry token capsule (只有 assistant 轮有聚合值)", () => {
+  const threads = [makeThread("claude")]
+  const messages = [
+    {
+      ...makeMessage("thread-claude", "m1", "hi", "2026-01-01T00:00:01Z", "user"),
+      inputTokens: 999, // 防御：即便列被误写，user 轮也不点亮
+      outputTokens: 1,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    },
+  ]
+  const repo = createMockRepository(threads, messages)
+  const service = new SessionService(repo as never, [])
+  const delta = service.getActiveGroupDelta("group-1", new Set(), undefined)
+  const tl = delta.newMessages.find((m) => m.id === "m1")
+  assert.equal(tl?.inputTokens, undefined)
+})
+
+test("F043 P1-2 回归锁: codex 归一化明细 → 胶囊不双计缓存（真值 13,384 / 98%）", () => {
+  const threads = [makeThread("codex")]
+  // codex rollout 探针末条经 adapter 归一化后的落库形态：
+  // inputTokens=328（13,384−13,056 非缓存输入）/ cacheRead=13,056 / cc=0 / out=16。
+  // 归一化前旧列（in=13,384 原值）会让映射层 input+cacheRead 求和 = 26,440 双计。
+  const messages = [
+    {
+      ...makeMessage("thread-codex", "m1", "done", "2026-01-01T00:00:01Z"),
+      inputTokens: 328,
+      outputTokens: 16,
+      cacheReadTokens: 13_056,
+      cacheCreationTokens: 0,
+    },
+  ]
+  const repo = createMockRepository(threads, messages)
+  const service = new SessionService(repo as never, [])
+  const delta = service.getActiveGroupDelta("group-1", new Set(), undefined)
+  const tl = delta.newMessages.find((m) => m.id === "m1")
+  assert.equal(tl?.inputTokens, 13_384, "输入侧 = 328+13,056 = 原生 input_tokens，无双计")
+  // cachedPercent = round(13,056 / 13,384 × 100) = 98（德彪 r1 P1-2 期望值）
+  assert.equal(tl?.cachedPercent, 98)
+})

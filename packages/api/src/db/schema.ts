@@ -40,6 +40,11 @@ export const threads = sqliteTable(
     nativeSessionId: text("native_session_id"),
     sopBookmark: text("sop_bookmark"),
     lastFillRatio: real("last_fill_ratio"),
+    // F043 AC5/AC7 · 面板真值直传的落库源（与 last_fill_ratio 同点写入/同点复位）：
+    // NULL=无数据（gemini 无快照/封存复位），source ∈ exact|approx（快照整体质量）
+    lastUsedTokens: integer("last_used_tokens"),
+    lastWindowTokens: integer("last_window_tokens"),
+    lastUsageSource: text("last_usage_source"),
     // F018: ThreadMemory rolling summary + session chain index
     threadMemory: text("thread_memory"),
     sessionChainIndex: integer("session_chain_index").notNull().default(1),
@@ -95,6 +100,12 @@ export const messages = sqliteTable(
     // F040 P2 T10 · 群桥接归因真名（AC11 正式级）：user 消息的发送者展示名；
     // 历史消息/本地 web 消息 NULL（timeline 回落村长）。
     senderDisplayName: text("sender_display_name"),
+    // F043 AC5 · turn 聚合 token 明细（claude=result 计费口径 / codex=rollout 末请求足迹）。
+    // 全 NULL=无数据（旧行/gemini），与 0 语义区分 —— MessageMeta 据此决定渲不渲染胶囊。
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    cacheReadTokens: integer("cache_read_tokens"),
+    cacheCreationTokens: integer("cache_creation_tokens"),
   },
   (table) => [
     index("idx_messages_thread_id").on(table.threadId),

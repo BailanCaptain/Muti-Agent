@@ -1,11 +1,12 @@
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import type { ToolEvent } from "@multi-agent/shared"
+import type { ToolEvent, UsageDetail } from "@multi-agent/shared"
 import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts"
 import {
   type AgentRunInput,
   BaseCliRuntime,
+  type ParsedUsage,
   type RuntimeCommand,
   type StopReason,
 } from "./base-runtime"
@@ -232,22 +233,37 @@ export class ClaudeRuntime extends BaseCliRuntime {
     }
   }
 
-  parseUsage(
-    event: Record<string, unknown>,
-  ): { totalTokens: number; contextWindow: number | null } | null {
-    const readUsage = (raw: unknown) => {
+  // F043 AC1 口径分离（AC0 实测契约见 .agents/acceptance/F043/probes/PROBE-NOTES.md）：
+  // - message_start.usage = 该次 API 调用起点的真实上下文足迹（input+cache_read+
+  //   cache_creation；output 不占起点窗口，前轮 output 已折进本次 input/cache_read）
+  //   → scope="context"，每次调用刷新，域内 latest-wins = 轮末真实占用。
+  // - message_delta.usage = 同调用收尾快照（全量字段非 output-only）→ context fallback。
+  // - result.usage = 整轮所有调用精确求和（cache_read 每调用重复计）→ scope="turn_total"，
+  //   仅供计费统计；喂 seal 判定就是 989k/200k=100% 假封存的病根。
+  // - result.modelUsage[完整模型名].contextWindow = 账户生效窗口（camelCase）→ modelWindows。
+  parseUsage(event: Record<string, unknown>): ParsedUsage | null {
+    const readDetail = (raw: unknown): UsageDetail | null => {
       if (!raw || typeof raw !== "object") return null
       const usage = raw as Record<string, unknown>
-      const input = typeof usage.input_tokens === "number" ? usage.input_tokens : 0
-      const output = typeof usage.output_tokens === "number" ? usage.output_tokens : 0
-      const cacheRead =
-        typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0
-      const cacheCreate =
-        typeof usage.cache_creation_input_tokens === "number"
-          ? usage.cache_creation_input_tokens
-          : 0
-      const total = input + output + cacheRead + cacheCreate
-      return total > 0 ? total : null
+      const num = (v: unknown) => (typeof v === "number" ? v : 0)
+      const detail: UsageDetail = {
+        inputTokens: num(usage.input_tokens),
+        outputTokens: num(usage.output_tokens),
+        cacheReadTokens: num(usage.cache_read_input_tokens),
+        cacheCreationTokens: num(usage.cache_creation_input_tokens),
+      }
+      const any =
+        detail.inputTokens + detail.outputTokens + detail.cacheReadTokens + detail.cacheCreationTokens
+      return any > 0 ? detail : null
+    }
+    const footprintOf = (d: UsageDetail) => d.inputTokens + d.cacheReadTokens + d.cacheCreationTokens
+
+    const contextUsage = (raw: unknown): ParsedUsage | null => {
+      const detail = readDetail(raw)
+      if (!detail) return null
+      const footprint = footprintOf(detail)
+      if (footprint <= 0) return null
+      return { scope: "context", totalTokens: footprint, contextWindow: null, exact: true, detail }
     }
 
     const inner = this.unwrapStreamEvent(event)
@@ -255,30 +271,47 @@ export class ClaudeRuntime extends BaseCliRuntime {
       if (inner.type === "message_start") {
         const msg = inner.message as Record<string, unknown> | undefined
         this.currentMessageId = msg?.id as string | undefined
-        const total = readUsage((msg as { usage?: unknown } | undefined)?.usage)
-        return total != null ? { totalTokens: total, contextWindow: null } : null
+        return contextUsage((msg as { usage?: unknown } | undefined)?.usage)
       }
       if (inner.type === "message_delta") {
-        const total = readUsage((inner as { usage?: unknown }).usage)
-        return total != null ? { totalTokens: total, contextWindow: null } : null
+        return contextUsage((inner as { usage?: unknown }).usage)
       }
       return null
     }
 
     if (event.type === "message_start") {
       const message = event.message as { usage?: unknown } | undefined
-      const total = readUsage(message?.usage)
-      return total != null ? { totalTokens: total, contextWindow: null } : null
+      return contextUsage(message?.usage)
     }
     if (event.type === "message_delta") {
-      const total = readUsage((event as { usage?: unknown }).usage)
-      return total != null ? { totalTokens: total, contextWindow: null } : null
+      return contextUsage((event as { usage?: unknown }).usage)
     }
     if (event.type === "result") {
-      const total = readUsage((event as { usage?: unknown }).usage)
-      return total != null ? { totalTokens: total, contextWindow: null } : null
+      const detail = readDetail((event as { usage?: unknown }).usage)
+      if (!detail) return null
+      const modelWindows = this.readModelWindows(event.modelUsage)
+      return {
+        scope: "turn_total",
+        totalTokens: footprintOf(detail) + detail.outputTokens,
+        contextWindow: null,
+        exact: true,
+        detail,
+        ...(modelWindows ? { modelWindows } : {}),
+      }
     }
     return null
+  }
+
+  /** F043 AC3：提炼 result.modelUsage 的账户生效窗口。key = 完整模型名，遍历不索引。 */
+  private readModelWindows(raw: unknown): Record<string, number> | null {
+    if (!raw || typeof raw !== "object") return null
+    const out: Record<string, number> = {}
+    for (const [model, entry] of Object.entries(raw as Record<string, unknown>)) {
+      if (!entry || typeof entry !== "object") continue
+      const window = (entry as { contextWindow?: unknown }).contextWindow
+      if (typeof window === "number" && window > 0) out[model] = window
+    }
+    return Object.keys(out).length > 0 ? out : null
   }
 
   parseStopReason(event: Record<string, unknown>): StopReason | null {

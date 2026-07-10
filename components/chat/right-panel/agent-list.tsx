@@ -11,7 +11,11 @@ export type AgentListItem = {
   running: boolean
   hasSessionOverride?: boolean
   fillRatio?: number | null
-  window?: number | null
+  // F043 AC7 · 后端真值直传：token 数只显示落库真值，绝不 ratio×窗口反推。
+  // usageSource=approx（分子退化估计/窗口兜底表）→ 数字前加「约」。
+  usedTokens?: number | null
+  windowTokens?: number | null
+  usageSource?: "exact" | "approx" | null
   actionPct?: number | null
   sealed?: boolean
 }
@@ -146,14 +150,15 @@ export function AgentList({ agents, onConfigClick, onStopClick }: Props) {
                         style={{ width: `${Math.round(ratio * 100)}%` }}
                       />
                     </div>
-                    {agent.window != null && agent.window > 0 ? (
+                    {agent.usedTokens != null && agent.windowTokens != null ? (
                       <span
                         data-testid="agent-context-detail"
                         data-provider={agent.provider}
                         className="w-[120px] shrink-0 text-left font-mono text-micro font-medium tabular-nums text-slate-900"
                       >
-                        {fmtTokens(Math.round(ratio * agent.window))}/
-                        {fmtTokens(agent.window)}{" "}
+                        {/* F043 AC7 · 落库真值直显（不再 ratio×窗口反推）；approx 加「约」 */}
+                        {agent.usageSource === "approx" ? "约 " : ""}
+                        {fmtTokens(agent.usedTokens)}/{fmtTokens(agent.windowTokens)}{" "}
                         <span className={`font-bold ${tone.text}`}>
                           (剩余{" "}
                           {agent.actionPct != null
@@ -166,6 +171,7 @@ export function AgentList({ agents, onConfigClick, onStopClick }: Props) {
                       <span
                         className={`w-[120px] shrink-0 text-left font-mono text-micro font-bold tabular-nums ${tone.text}`}
                       >
+                        {/* 无落库真值（旧行）→ 只显示百分比，不编造 token 数 */}
                         {Math.round(ratio * 100)}%
                       </span>
                     )}

@@ -45,6 +45,11 @@ type MessageRowWithA2a = {
   retryCount: number
   retryReasons: string
   senderDisplayName: string | null
+  // F043 AC5 · turn 聚合 token 明细（NULL=无数据）
+  inputTokens: number | null
+  outputTokens: number | null
+  cacheReadTokens: number | null
+  cacheCreationTokens: number | null
   a2aCallId: string | null
   a2aParentCallId: string | null
   a2aRootCallId: string | null
@@ -74,6 +79,11 @@ function hydrateMessage(row: MessageRowWithA2a): MessageRecord {
     retryCount: row.retryCount ?? 0,
     retryReasons: row.retryReasons ?? "[]",
     senderDisplayName: row.senderDisplayName ?? null,
+    // F043 AC5 · NULL 原样透传（≠0，MessageMeta 据此决定渲染）
+    inputTokens: row.inputTokens ?? null,
+    outputTokens: row.outputTokens ?? null,
+    cacheReadTokens: row.cacheReadTokens ?? null,
+    cacheCreationTokens: row.cacheCreationTokens ?? null,
     a2aCallId: row.a2aCallId ?? null,
     a2aParentCallId: row.a2aParentCallId ?? null,
     a2aRootCallId: row.a2aRootCallId ?? null,
@@ -102,6 +112,10 @@ const MESSAGE_WITH_A2A_SELECT = {
   retryReasons: messages.retryReasons,
   // F040 P2 T11 · 群桥接归因真名（user 消息；历史/web 消息 NULL → timeline 回落村长）
   senderDisplayName: messages.senderDisplayName,
+  inputTokens: messages.inputTokens,
+  outputTokens: messages.outputTokens,
+  cacheReadTokens: messages.cacheReadTokens,
+  cacheCreationTokens: messages.cacheCreationTokens,
   a2aCallId: messages.a2aCallId,
   a2aParentCallId: a2aCalls.parentCallId,
   a2aRootCallId: a2aCalls.rootCallId,
@@ -625,6 +639,11 @@ export class DrizzleSessionRepository {
       retryCount: 0,
       retryReasons: "[]",
       senderDisplayName,
+      // F043 AC5 · append 时无 token 数据（turn 收尾 overwriteMessage 回填）
+      inputTokens: null,
+      outputTokens: null,
+      cacheReadTokens: null,
+      cacheCreationTokens: null,
       a2aCallId,
       a2aParentCallId: null,
       a2aRootCallId: null,
@@ -668,6 +687,11 @@ export class DrizzleSessionRepository {
       contentBlocks?: string
       retryCount?: number
       retryReasons?: string
+      // F043 AC5 · turn 聚合 token 明细（"in updates" 三态：值/null 清列/缺省保持）
+      inputTokens?: number | null
+      outputTokens?: number | null
+      cacheReadTokens?: number | null
+      cacheCreationTokens?: number | null
     },
   ) {
     this.db.transaction((tx) => {
@@ -679,6 +703,10 @@ export class DrizzleSessionRepository {
           contentBlocks: messages.contentBlocks,
           retryCount: messages.retryCount,
           retryReasons: messages.retryReasons,
+          inputTokens: messages.inputTokens,
+          outputTokens: messages.outputTokens,
+          cacheReadTokens: messages.cacheReadTokens,
+          cacheCreationTokens: messages.cacheCreationTokens,
         })
         .from(messages)
         .where(eq(messages.id, messageId))
@@ -695,6 +723,14 @@ export class DrizzleSessionRepository {
           contentBlocks: updates.contentBlocks ?? current[0].contentBlocks,
           retryCount: updates.retryCount ?? current[0].retryCount,
           retryReasons: updates.retryReasons ?? current[0].retryReasons,
+          inputTokens: "inputTokens" in updates ? updates.inputTokens : current[0].inputTokens,
+          outputTokens: "outputTokens" in updates ? updates.outputTokens : current[0].outputTokens,
+          cacheReadTokens:
+            "cacheReadTokens" in updates ? updates.cacheReadTokens : current[0].cacheReadTokens,
+          cacheCreationTokens:
+            "cacheCreationTokens" in updates
+              ? updates.cacheCreationTokens
+              : current[0].cacheCreationTokens,
         })
         .where(eq(messages.id, messageId))
         .run()
@@ -877,6 +913,10 @@ export class DrizzleSessionRepository {
       nativeSessionId?: string | null
       sopBookmark?: string | null
       lastFillRatio?: number | null
+      // F043 AC5/AC7 · 面板真值三列（三态：值/null 清列/缺省不动）
+      lastUsedTokens?: number | null
+      lastWindowTokens?: number | null
+      lastUsageSource?: "exact" | "approx" | null
     },
   ) {
     const updatedAt = new Date().toISOString()
@@ -886,6 +926,9 @@ export class DrizzleSessionRepository {
     if ("nativeSessionId" in updates) setValues.nativeSessionId = updates.nativeSessionId ?? null
     if ("sopBookmark" in updates) setValues.sopBookmark = updates.sopBookmark ?? null
     if ("lastFillRatio" in updates) setValues.lastFillRatio = updates.lastFillRatio ?? null
+    if ("lastUsedTokens" in updates) setValues.lastUsedTokens = updates.lastUsedTokens ?? null
+    if ("lastWindowTokens" in updates) setValues.lastWindowTokens = updates.lastWindowTokens ?? null
+    if ("lastUsageSource" in updates) setValues.lastUsageSource = updates.lastUsageSource ?? null
 
     this.db.update(threads).set(setValues).where(eq(threads.id, threadId)).run()
     this.touchThread(threadId, updatedAt)

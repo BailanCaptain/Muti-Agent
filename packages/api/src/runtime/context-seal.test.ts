@@ -15,19 +15,33 @@ const codex = new CodexRuntime()
 const claude = new ClaudeRuntime()
 
 // ── parseUsage: Gemini ─────────────────────────────────────────────────────
+// F043 AC0 实测（v0.49.0 bundle 源码分析，未活测——地区墙）：stats.total_tokens 是
+// SessionMetrics 累计值非当前足迹，且 stream stats 无 context_window 输出字段。
+// 因此 gemini 快照恒 exact:false，seal 判定另有 provider fail-open 硬闸（见下方
+// computeSealDecision 段）。context_window 解析保留作前向兼容。
 
-test("gemini parseUsage extracts totalTokens + contextWindow from result.success", () => {
+test("gemini parseUsage yields approx context scope (cumulative total_tokens, AC0 未活测)", () => {
   const usage = gemini.parseUsage({
     type: "result",
     status: "success",
-    stats: {
-      total_tokens: 650_000,
-      input_tokens: 600_000,
-      output_tokens: 50_000,
-      context_window: 1_048_576,
-    },
+    stats: { total_tokens: 100_000 },
   })
-  assert.deepEqual(usage, { totalTokens: 650_000, contextWindow: 1_048_576 })
+  assert.deepEqual(usage, {
+    scope: "context",
+    totalTokens: 100_000,
+    contextWindow: null,
+    exact: false,
+  })
+})
+
+test("gemini parseUsage forward-compat: context_window used verbatim when CLI ever emits it", () => {
+  const usage = gemini.parseUsage({
+    type: "result",
+    status: "success",
+    stats: { total_tokens: 650_000, context_window: 1_048_576 },
+  })
+  assert.equal(usage?.contextWindow, 1_048_576)
+  assert.equal(usage?.exact, false)
 })
 
 test("gemini parseUsage returns null for non-result events", () => {
@@ -36,23 +50,24 @@ test("gemini parseUsage returns null for non-result events", () => {
   assert.equal(gemini.parseUsage({ type: "result", status: "success" }), null)
 })
 
-test("gemini parseUsage falls back to null contextWindow when CLI omits it", () => {
-  const usage = gemini.parseUsage({
-    type: "result",
-    status: "success",
-    stats: { total_tokens: 100_000 },
-  })
-  assert.deepEqual(usage, { totalTokens: 100_000, contextWindow: null })
-})
-
 // ── parseUsage: Codex ──────────────────────────────────────────────────────
+// F043 AC0 实测（0.144.1 探针 + rollout 对账）：turn.completed.usage 就是
+// total_token_usage（session 级累计），且 cached_input_tokens ⊆ input_tokens ——
+// 二者相加 = 双计缓存（旧实现 9.35× 虚高实锤）。流内只能拿到这个退化估计：
+// input_tokens 单值、exact:false，仍喂 seal（否则 rollout 回读失败时 codex 裸奔）。
+// 真足迹走 resolveUsage rollout 回读（见 codex-rollout-usage.test.ts）。
 
-test("codex parseUsage sums input + cached from turn.completed", () => {
+test("codex parseUsage: input_tokens only, no cached double-count, approx context", () => {
   const usage = codex.parseUsage({
     type: "turn.completed",
-    usage: { input_tokens: 120_000, cached_input_tokens: 30_000, output_tokens: 8_000 },
+    usage: { input_tokens: 39_727, cached_input_tokens: 37_120, output_tokens: 213 },
   })
-  assert.deepEqual(usage, { totalTokens: 150_000, contextWindow: null })
+  assert.deepEqual(usage, {
+    scope: "context",
+    totalTokens: 39_727,
+    contextWindow: null,
+    exact: false,
+  })
 })
 
 test("codex parseUsage ignores non-turn.completed events", () => {
@@ -61,33 +76,92 @@ test("codex parseUsage ignores non-turn.completed events", () => {
   assert.equal(
     codex.parseUsage({ type: "turn.completed", usage: { output_tokens: 10 } }),
     null,
-    "zero input+cached → null (no context-fill info)",
+    "zero input → null (no context-fill info)",
   )
 })
 
 // ── parseUsage: Claude ─────────────────────────────────────────────────────
+// F043 AC0 实测（2.1.206 探针 claude-multicall.ndjson）：message_start.usage 是该次
+// API 调用的真实上下文足迹（input+cache_read+cache_creation，output 不占调用起点窗口）；
+// result.usage 是整轮所有调用的累计求和（cache_read 每调用重复计），只配当计费统计。
+// 旧实现三处同一口径 + result 恒最后 latest-wins → 989k/200k=100% 假封存的病根。
 
-test("claude parseUsage sums input + cache_read + cache_creation from message_start", () => {
+test("claude message_start yields context-scope footprint (in+cache_read+cache_creation)", () => {
   const usage = claude.parseUsage({
     type: "message_start",
     message: {
+      model: "claude-haiku-4-5-20251001",
       usage: {
         input_tokens: 1_000,
         cache_read_input_tokens: 150_000,
         cache_creation_input_tokens: 20_000,
-        output_tokens: 0,
+        output_tokens: 500,
       },
     },
   })
-  assert.deepEqual(usage, { totalTokens: 171_000, contextWindow: null })
+  assert.deepEqual(usage, {
+    scope: "context",
+    totalTokens: 171_000,
+    contextWindow: null,
+    exact: true,
+    detail: {
+      inputTokens: 1_000,
+      outputTokens: 500,
+      cacheReadTokens: 150_000,
+      cacheCreationTokens: 20_000,
+    },
+  })
 })
 
-test("claude parseUsage reads usage from message_delta too", () => {
+test("claude message_delta is context-scope fallback with same footprint semantics", () => {
   const usage = claude.parseUsage({
     type: "message_delta",
-    usage: { input_tokens: 5_000, cache_read_input_tokens: 100_000 },
+    usage: { input_tokens: 5_000, cache_read_input_tokens: 100_000, output_tokens: 300 },
   })
-  assert.deepEqual(usage, { totalTokens: 105_000, contextWindow: null })
+  assert.equal(usage?.scope, "context")
+  assert.equal(usage?.totalTokens, 105_000, "output 不计入足迹")
+  assert.equal(usage?.exact, true)
+})
+
+test("claude result yields turn_total scope (cumulative billing) + modelWindows, never context", () => {
+  const usage = claude.parseUsage({
+    type: "result",
+    usage: {
+      input_tokens: 18,
+      cache_creation_input_tokens: 7_640,
+      cache_read_input_tokens: 49_814,
+      output_tokens: 348,
+    },
+    modelUsage: {
+      "claude-haiku-4-5-20251001": {
+        inputTokens: 18,
+        outputTokens: 348,
+        cacheReadInputTokens: 49_814,
+        cacheCreationInputTokens: 7_640,
+        costUSD: 0.022,
+        contextWindow: 200_000,
+        maxOutputTokens: 32_000,
+      },
+    },
+  })
+  assert.equal(usage?.scope, "turn_total")
+  assert.equal(usage?.totalTokens, 57_820, "turn_total 含 output（整轮计费口径）")
+  assert.deepEqual(usage?.modelWindows, { "claude-haiku-4-5-20251001": 200_000 })
+  assert.deepEqual(usage?.detail, {
+    inputTokens: 18,
+    outputTokens: 348,
+    cacheReadTokens: 49_814,
+    cacheCreationTokens: 7_640,
+  })
+})
+
+test("claude result without modelUsage still parses (older CLI tolerance)", () => {
+  const usage = claude.parseUsage({
+    type: "result",
+    usage: { input_tokens: 100, output_tokens: 50 },
+  })
+  assert.equal(usage?.scope, "turn_total")
+  assert.equal(usage?.modelWindows, undefined)
 })
 
 test("claude parseUsage ignores assistant deltas and tool results", () => {
@@ -102,9 +176,23 @@ test("getContextWindowForModel matches known model prefixes", () => {
   assert.equal(getContextWindowForModel("gemini-3-flash-preview"), 1_048_576)
   assert.equal(getContextWindowForModel("claude-opus-4-6"), 200_000)
   assert.equal(getContextWindowForModel("claude-sonnet-4-5-20250929"), 200_000)
-  assert.equal(getContextWindowForModel("gpt-5.5"), 1_000_000)
+  // F043 AC0 翻正：旧表 gpt-5.5→1M 是脑补值；Codex CLI rollout 自报 258,400（07-06 实测）
+  assert.equal(getContextWindowForModel("gpt-5.5"), 258_400)
   assert.equal(getContextWindowForModel("gpt-5-codex"), 400_000)
   assert.equal(getContextWindowForModel("o3-mini"), 200_000)
+})
+
+// F043 AC0/AC3：新增映射全部来自实测（.agents/acceptance/F043/probes/PROBE-NOTES.md）。
+// codex 窗口随 CLI 换代漂移（两测两值），兜底表只是 rollout 回读失败时的快照。
+test("getContextWindowForModel: F043 measured additions", () => {
+  // opus-4-8 账户生效窗口 = 1M（claude-opus48.ndjson modelUsage.contextWindow 实证）
+  assert.equal(getContextWindowForModel("claude-opus-4-8"), 1_000_000)
+  assert.equal(getContextWindowForModel("claude-opus-4-8-20260115"), 1_000_000)
+  // gemini-2.5 家族此前无条目 → snapshot 永不生成（桂芬既无封存保护也无显示）
+  assert.equal(getContextWindowForModel("gemini-2.5-pro"), 1_048_576)
+  assert.equal(getContextWindowForModel("gemini-2.5-flash"), 1_048_576)
+  // gpt-5.6-sol = 07-10 rollout model_context_window 自报 353,400
+  assert.equal(getContextWindowForModel("gpt-5.6-sol"), 353_400)
 })
 
 test("getContextWindowForModel returns null for unknown models", () => {
@@ -138,13 +226,24 @@ test("computeSealDecision returns null when usage is absent", () => {
   assert.equal(computeSealDecision("gemini", null), null)
 })
 
-test("computeSealDecision: gemini seals at action threshold (F004: 80%)", () => {
+test("F043 AC3: gemini action threshold downgrades to warn — fail-open, never auto-seals", () => {
   const { action } = SEAL_THRESHOLDS_BY_PROVIDER.gemini
-  // 850k / 1M = 0.85 > 0.80 action threshold → seal
+  // 850k / 1M = 0.85 > 0.80 action 阈值。gemini usedTokens 仍是 CLI 累计口径（未修净）
+  // 且地区墙无活测 → approx 数据不触发硬动作（对标 clowder F062）。解封条件 = 活测口径。
   const decision = computeSealDecision("gemini", snapshot(850_000, 1_000_000))
-  assert.equal(decision?.shouldSeal, true)
-  assert.equal(decision?.reason, "threshold")
-  assert.ok((decision?.fillRatio ?? 0) >= action)
+  assert.equal(decision?.shouldSeal, false)
+  assert.equal(decision?.reason, "warn")
+  assert.ok((decision?.fillRatio ?? 0) >= action, "fillRatio 照实上报，只是不封")
+})
+
+test("F043 AC3: gemini fail-open holds even with user-resolved custom thresholds", () => {
+  // 数据质量问题与阈值来源无关：自定义阈值也不该让累计口径触发封存
+  const decision = computeSealDecision("gemini", snapshot(600_000, 1_000_000), {
+    warn: 0.4,
+    action: 0.5,
+  })
+  assert.equal(decision?.shouldSeal, false)
+  assert.equal(decision?.reason, "warn")
 })
 
 test("computeSealDecision: gemini warns between warn/action (F004: 70-80%)", () => {
@@ -185,7 +284,8 @@ test("computeSealDecision: codex uses 75/85 thresholds", () => {
 
 test("computeSealDecision: fillRatio is clamped at 1.0 even when used exceeds window", () => {
   // Over-budget reporting shouldn't blow up — just clamp and seal.
-  const decision = computeSealDecision("gemini", snapshot(2_000_000, 1_000_000))
+  // F043: provider 换 claude（gemini 已 fail-open 不再走 seal 路径）
+  const decision = computeSealDecision("claude", snapshot(400_000, 200_000))
   assert.equal(decision?.fillRatio, 1.0)
   assert.equal(decision?.shouldSeal, true)
 })

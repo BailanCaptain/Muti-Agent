@@ -2,13 +2,32 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import path from "node:path"
 import readline from "node:readline"
-import type { ToolEvent } from "@multi-agent/shared"
+import type { ToolEvent, UsageDetail } from "@multi-agent/shared"
 import {
   type LivenessProbeConfig,
   type LivenessWarning,
   ProcessLivenessProbe,
   type ProcessLivenessProbeDependencies,
 } from "./liveness-probe"
+
+/**
+ * F043：parseUsage / resolveUsage 统一返回形。
+ * scope 区分两种不可混装的语义（口径分离是封存假阳性修复的核心）：
+ * - "context"    当前上下文真实足迹 → 进 seal 判定，域内 latest-wins 语义正确
+ * - "turn_total" 整轮累计计费值（cache_read 每调用重复计）→ 仅供统计展示
+ * exact 标注分子质量：true = 真足迹（claude message_start / codex rollout 回读）；
+ * false = 退化估计（codex 流内 input_tokens / gemini 累计值）。
+ * modelWindows：claude result.modelUsage 提炼的「完整模型名 → 账户生效 contextWindow」，
+ * 消费方按 currentModel 匹配（禁短名索引 —— key 形如 claude-haiku-4-5-20251001）。
+ */
+export type ParsedUsage = {
+  scope: "context" | "turn_total"
+  totalTokens: number
+  contextWindow: number | null
+  exact: boolean
+  detail?: UsageDetail
+  modelWindows?: Record<string, number>
+}
 
 export type RuntimeLifecycleConfig = {
   heartbeatIntervalMs: number
@@ -587,17 +606,29 @@ export abstract class BaseCliRuntime implements AgentRuntime {
 
   /**
    * Extract token usage from a single stream-json event.
-   * Return `{ totalTokens, contextWindow }` whenever this event carries a usage summary.
+   * Return a `ParsedUsage` whenever this event carries a usage summary.
    * Return null when the event is unrelated — the orchestrator will keep the last known
    * snapshot until a new one arrives.
+   *
+   * F043 双语义契约：scope="context"（当前上下文足迹，进 seal 判定，域内 latest-wins）
+   * vs scope="turn_total"（整轮累计计费值，仅供统计展示，绝不进 seal）。旧实现把两种
+   * 语义混进同一 latest-wins 域（claude result 恒最后 → 覆盖真足迹）是封存假阳性病根。
    *
    * `contextWindow` is optional: when the CLI echoes it (Gemini's `stats.context_window`),
    * use it verbatim; when it doesn't (Codex/Claude typically don't), return null and let
    * the orchestrator fall back to the model-keyed lookup table.
    */
-  parseUsage(
-    _event: Record<string, unknown>,
-  ): { totalTokens: number; contextWindow: number | null } | null {
+  parseUsage(_event: Record<string, unknown>): ParsedUsage | null {
+    return null
+  }
+
+  /**
+   * F043：post-run usage 回读 hook（同族 afterRun 模式）。CLI 流内拿不到真足迹的
+   * runtime 覆写此方法 —— codex 的每请求真足迹只存在于 rollout 文件的 token_count
+   * 行里。orchestrator 在 CLI 退出后调用；返回非空则覆盖流内快照。默认 no-op。
+   * 回读失败必须返回 null（保留流内退化值），绝不允许 fail turn。
+   */
+  async resolveUsage(_ctx: { sessionId: string | null }): Promise<ParsedUsage | null> {
     return null
   }
 

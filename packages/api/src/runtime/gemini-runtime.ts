@@ -4,6 +4,7 @@ import { AGENT_SYSTEM_PROMPTS } from "./agent-prompts"
 import {
   type AgentRunInput,
   BaseCliRuntime,
+  type ParsedUsage,
   type RuntimeCommand,
   type StopReason,
   resolveNodeScript,
@@ -197,13 +198,11 @@ export class GeminiRuntime extends BaseCliRuntime {
     }
   }
 
-  parseUsage(
-    event: Record<string, unknown>,
-  ): { totalTokens: number; contextWindow: number | null } | null {
-    // Gemini CLI emits a final `{ type: "result", status: "success", stats: {...} }` event
-    // at turn close. `stats.total_tokens` is the cumulative usage; `stats.context_window`
-    // (when present) is the model's window — use it verbatim because it reflects the
-    // exact model variant the CLI routed to, not our guess.
+  // F043 AC0（v0.49.0 bundle 源码分析 convertToStreamStats，地区墙未活测）：
+  // stats.total_tokens = SessionMetrics 累计值（非当前足迹），stream stats 实际
+  // 无 context_window 输出字段（解析保留作前向兼容）。因此恒 exact:false，且
+  // computeSealDecision 对 gemini fail-open 只 warn 不封存（解封条件 = 活测口径）。
+  parseUsage(event: Record<string, unknown>): ParsedUsage | null {
     if (event.type !== "result" || event.status !== "success") {
       return null
     }
@@ -219,7 +218,7 @@ export class GeminiRuntime extends BaseCliRuntime {
       (typeof stats.context_window === "number" ? stats.context_window : undefined) ??
       (typeof stats.contextWindow === "number" ? stats.contextWindow : undefined)
     const contextWindow = typeof windowRaw === "number" && windowRaw > 0 ? windowRaw : null
-    return { totalTokens: total, contextWindow }
+    return { scope: "context", totalTokens: total, contextWindow, exact: false }
   }
 
   parseStopReason(event: Record<string, unknown>): StopReason | null {
