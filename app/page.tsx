@@ -59,6 +59,7 @@ export default function HomePage() {
   const applySnapshotDelta = useThreadStore((state) => state.applySnapshotDelta)
   const applyMessageUpdate = useThreadStore((state) => state.applyMessageUpdate)
   const applyUsageSnapshot = useThreadStore((state) => state.applyUsageSnapshot)
+  const markAwaitingFirstOutput = useThreadStore((state) => state.markAwaitingFirstOutput)
   const reconcileOptimisticMessage = useThreadStore((state) => state.reconcileOptimisticMessage)
   const recordMessageInGroup = useThreadStore((state) => state.recordMessageInGroup)
   const applyTitleUpdate = useThreadStore((state) => state.applyTitleUpdate)
@@ -183,6 +184,15 @@ export default function HomePage() {
           // status="exhausted" 已由 store 自身清掉）
           if (event.payload.message.role === "assistant") {
             useDispatchRetryStore.getState().clearRetry(event.payload.message.id)
+          }
+          // B026 · 空占位 = 轮已起跑但 CLI 尚未产出（running 要等 spawn 完成 +23.4s
+          // 才 true，盖不住死区）——当前会话内立刻标记，气泡骨架即刻点亮
+          if (
+            event.payload.message.role === "assistant" &&
+            !event.payload.message.content &&
+            (!event.payload.sessionGroupId || isCurrentSession(event.payload.sessionGroupId))
+          ) {
+            markAwaitingFirstOutput(event.payload.message.id, event.payload.message.provider)
           }
           return
         }

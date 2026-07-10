@@ -2,6 +2,7 @@
 
 import { useFoldStore, useIsMessageFolded } from "@/components/stores/fold-store"
 import { useSettingsStore } from "@/components/stores/settings-store"
+import { useThreadStore } from "@/components/stores/thread-store"
 import { normalizeMessageToBlocks } from "@/lib/blocks"
 import { formatTokenCount } from "@/lib/format"
 import type {
@@ -36,6 +37,7 @@ import {
 } from "./dispatch-retry-progress-card"
 import { MarkdownMessage } from "./markdown-message"
 import { ProviderAvatar } from "./provider-avatar"
+import { SkeletonLines } from "./skeleton"
 
 interface MessageBubbleProps {
   message: TimelineMessage
@@ -296,8 +298,28 @@ export const MessageBubble = memo(function MessageBubble({
   const isStreaming = message.messageType === "progress"
   // F026 P3.1 · AC-22: retry 期间锁住 content 渲染，避免用户看到"从头流"诡异感
   const retryLock = useDispatchRetryStreamingLock(message.id)
+  // B026 · 等待首输出骨架：占位 message.created（content=""）到首个 delta 之间实测
+  // 23~33s 死区，壳卡片让用户以为"没发出去"。触发源是 awaitingFirstOutput（占位事件
+  // 即 mark，+0.04s 生效），不能绑 providers[].running——那要等 CLI spawn 完成（+23.4s）。
+  // 载荷判空是双保险：任何一种真实输出（正文/推理/工具/富块）到达即让位。
+  const isAwaitingMarked = useThreadStore((state) => Boolean(state.awaitingFirstOutput[message.id]))
+  // 阶段化文案的真实信号：running=true ⟺ CLI spawn 完成（attachRun 后的 snapshot delta）。
+  // spawn 前=「正在启动智能体」，spawn 后首 token 前=「正在思考」——不用假定时器。
+  const providerRunning = useThreadStore(
+    (state) => state.providers[message.provider]?.running ?? false,
+  )
   const cleanedThinking = !isUser && message.thinking ? cleanThinking(message.thinking) : ""
   const hasThinking = !isUser && cleanedThinking && showThinking
+  // 德彪 r1 P3：thinking 判空用「用户真的能看到的」hasThinking（cleanThinking 后非空
+  // 且 showThinking 开），raw thinking 非空但不可见（关心里话/纯噪声）时骨架不让位，
+  // 否则 body 又回空壳。
+  const showAwaitingSkeleton =
+    !isUser &&
+    isAwaitingMarked &&
+    !message.content &&
+    !hasThinking &&
+    (message.toolEvents ?? []).length === 0 &&
+    (message.contentBlocks ?? []).length === 0
   const allToolEvents = (!isUser && message.toolEvents) || []
   const {
     mcp: mcpEvents,
@@ -464,6 +486,13 @@ export const MessageBubble = memo(function MessageBubble({
                   attemptIndex={retryLock.attemptIndex}
                   maxAttempts={retryLock.maxAttempts}
                 />
+              ) : showAwaitingSkeleton ? (
+                <div data-testid="awaiting-first-output">
+                  <SkeletonLines lines={2} />
+                  <span className="mt-1.5 inline-flex animate-pulse items-center gap-1.5 text-caption text-slate-400">
+                    {providerRunning ? "正在思考…" : "正在启动智能体…"}
+                  </span>
+                </div>
               ) : (
                 <BlockRenderer
                   blocks={normalizeMessageToBlocks(message).filter((b) => b.kind !== "thinking")}

@@ -85,6 +85,11 @@ function createSessionsStub(threads: ThreadRecord[], opts: { sendable?: Sendable
     }),
     overwriteMessage: () => {},
     updateThread: () => {},
+    // B026 P2-2 · catch 路径走 getContentBlocksJson（错误终态派生 content_blocks）
+    getContentBlocksJson: (_messageId: string) => "[]",
+    // B026 P2-2 · runThreadTurn try 前的 direct_turn 记忆装配段
+    getThreadMemory: (_threadId: string) => null,
+    getSessionChainIndex: (_threadId: string) => 0,
     getActiveGroup: (
       groupId: string,
       runningThreadIds: Set<string>,
@@ -930,8 +935,20 @@ test("G1 deriveWakeTriggerScenario: dispatchedCallId=null 不算 A2A (null vs st
 
 // ─── G1 r2 P3: runThreadTurn 入口 broadcast spy 集成测试（范-r1 finding） ─
 
+// B026 起 sessions stub 补齐（getThreadMemory 等），runThreadTurn 能一路走进 try——
+// 不注入 fake runtime 会真 spawn 本机 CLI（慢且脏）。统一注入 runStream 即抛的 fake，
+// 恢复"内部依赖确定性抛错"的原测试前提（抛点从 try 前移到 try 内 createRun）。
+function injectFailingRuntime(messageService: MessageService) {
+  messageService.setCliRuntimeOverride({
+    runStream: () => {
+      throw new Error("fixture: fake spawn failure")
+    },
+  } as never)
+}
+
 test("G1 r2 P3: runThreadTurn 入口 broadcast wake.trigger event（显式 scenario 优先）", async () => {
   const { messageService } = createMessageService()
+  injectFailingRuntime(messageService)
   const broadcastEvents: RealtimeServerEvent[] = []
   messageService.setBroadcaster((event) => broadcastEvents.push(event))
 
@@ -970,6 +987,7 @@ test("G1 r2 P3: runThreadTurn 入口 broadcast wake.trigger event（显式 scena
 
 test("G1 r2 P3: runThreadTurn 不传 scenario → fallback deriveWakeTriggerScenario 推断", async () => {
   const { messageService } = createMessageService()
+  injectFailingRuntime(messageService)
   const broadcastEvents: RealtimeServerEvent[] = []
   messageService.setBroadcaster((event) => broadcastEvents.push(event))
 
@@ -995,22 +1013,18 @@ test("G1 r2 P3: runThreadTurn 不传 scenario → fallback deriveWakeTriggerScen
 
 test("G1 r2 P3: broadcaster 未注入 → wake.trigger 静默 skip，不挂主流程", async () => {
   const { messageService } = createMessageService()
+  injectFailingRuntime(messageService)
   // 不调 setBroadcaster — broadcaster=null
-  let didThrow = false
-  try {
-    // biome-ignore lint/suspicious/noExplicitAny: private method test
-    await (messageService as any).runThreadTurn({
-      threadId: "thread-codex",
-      content: "hi",
-      emit: () => {},
-      rootMessageId: "root-1",
-    })
-  } catch {
-    didThrow = true
-  }
-  // broadcaster 未注入：runThreadTurn 内部 if (!wakeBroadcast) skip — 不抛
-  // 后续 fixture 依赖仍会抛（runTurn / loadRuntimeConfig），但 broadcast 路径不挂
-  assert.ok(didThrow, "fixture 不全后续依赖会抛，但跟 broadcaster 缺失无关")
+  // B026 起 stub 补齐：turn 走进 try、runStream 抛错由 catch 吞掉 return null——
+  // "不挂主流程"从"抛错与 broadcaster 无关"升级为"完整走到 catch 收尾不 reject"。
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const result = await (messageService as any).runThreadTurn({
+    threadId: "thread-codex",
+    content: "hi",
+    emit: () => {},
+    rootMessageId: "root-1",
+  })
+  assert.equal(result, null, "broadcaster 缺失不挂主流程：turn 走完 catch 收尾返回 null")
 })
 
 test("G1 r2 P3: thread 不存在 → 入口 broadcast 不触发（return null 早返）", async () => {
@@ -1196,4 +1210,31 @@ test("F027 P4-A3: receiverAlias 空 / taskSummary 空 → 返 null（caller 不�
   assert.equal(svc.buildA2AHandoffContext({ receiverAlias: "桂芬", taskSummary: "", isGuardianMode: false }), null)
   assert.equal(svc.buildA2AHandoffContext({ receiverAlias: null, taskSummary: "x", isGuardianMode: false }), null)
   assert.equal(svc.buildA2AHandoffContext({ receiverAlias: "桂芬", taskSummary: undefined, isGuardianMode: false }), null)
+})
+
+// ─── B026 德彪 r1 P2-2: spawn 前失败的骨架收口信号 ───
+
+test("B026 P2-2: turn 在 spawn 前抛错（catch 路径）→ emit message.updated 终态收口", async () => {
+  const { messageService } = createMessageService()
+  injectFailingRuntime(messageService)
+  const events: RealtimeServerEvent[] = []
+
+  // fake runtime runStream 即抛（spawn 前失败）→ 进 catch。
+  // catch 会 overwriteMessage 写终态，但前端 applySnapshotDelta 只 append 不 replace、
+  // running 从未 true 也无下降沿——必须靠 message.updated 精确 ID 收口，否则骨架悬挂。
+  // biome-ignore lint/suspicious/noExplicitAny: private method test
+  const result = await (messageService as any).runThreadTurn({
+    threadId: "thread-claude",
+    content: "hi",
+    emit: (event: RealtimeServerEvent) => events.push(event),
+    rootMessageId: "root-b026",
+  })
+
+  assert.equal(result, null, "catch 路径应吞错返回 null（走到了 catch 而非中途 reject）")
+  const updated = events.find((e) => e.type === "message.updated")
+  assert.ok(updated, "catch 路径必须 emit message.updated（前端骨架精确 ID 收口信号）")
+  if (updated?.type !== "message.updated") throw new Error("type narrowing")
+  assert.equal(updated.payload.threadId, "thread-claude")
+  assert.equal(updated.payload.sessionGroupId, "group-1")
+  assert.ok(updated.payload.message, "payload 带终态 timeline message")
 })

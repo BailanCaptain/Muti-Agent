@@ -199,6 +199,16 @@ type ThreadStore = {
    * 空 pendingSet 时删除 key（避免空状态 banner 抖动）。
    */
   applyPendingChange: (payload: PendingChangePayload) => void
+  /**
+   * B026 · 等待首输出集合（messageId → provider）。占位 assistant message.created
+   * （content=""）到达即 mark，MessageBubble 据此渲染骨架。不能绑 providers[].running
+   * ——running=true 要等 CLI spawn 完成（attachRun，实测 +23.4s），盖不住死区。
+   * 清除收口：首个 assistant_delta / message.updated 终稿 / snapshot delta 中该
+   * provider running=false（异常轮兜底）/ 切换房间。
+   */
+  awaitingFirstOutput: Record<string, Provider>
+  markAwaitingFirstOutput: (messageId: string, provider: Provider) => void
+  clearAwaitingFirstOutput: (messageId: string) => void
 }
 
 const emptyProviders = Object.fromEntries(
@@ -523,6 +533,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   unreadCounts: {},
   pendingByRoot: {},
   settledByRoot: {},
+  awaitingFirstOutput: {},
   archiveStateVersion: 0,
   bumpArchiveStateVersion: () => {
     set((state) => ({ archiveStateVersion: state.archiveStateVersion + 1 }))
@@ -663,6 +674,11 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           providers: group.providers,
           pendingByRoot: {},
           settledByRoot: {},
+          // B026 德彪 r1 P2-1 · awaiting 只在真切房时清：本函数被 WS 重连/catch-up
+          // 以 force 同房重进（page.tsx），快照没有 message.created 重放，无条件清
+          // 会把死区中的活 marker 洗掉（气泡回壳）。同房 resync 保留——过期 marker
+          // 由渲染条件（content/thinking 非空不显示）+ 终稿 upsert / 下降沿收口。
+          awaitingFirstOutput: refreshingCurrentGroup ? state.awaitingFirstOutput : {},
         }
       })
       get().resetUnread(groupId)
@@ -856,6 +872,11 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     }))
   },
   applyAssistantDelta: (messageId, delta, offset) => {
+    // B026 · 首个流式字到达 = 骨架退场。条件化 set：delta 是热路径，
+    // 只在条目存在时才换 awaitingFirstOutput 引用，避免每个 delta 都触发订阅。
+    if (get().awaitingFirstOutput[messageId]) {
+      get().clearAwaitingFirstOutput(messageId)
+    }
     const existing = pendingDeltas.get(messageId) ?? { content: [], thinking: [] }
     existing.content.push({ offset, text: delta })
     pendingDeltas.set(messageId, existing)
@@ -927,16 +948,37 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       const removed = new Set(delta.removedMessageIds ?? [])
       const filtered =
         removed.size > 0 ? newTimeline.filter((m) => !removed.has(m.id)) : newTimeline
-      return { timeline: filtered, providers: delta.providers }
+      // B026 · 异常轮兜底：running 下降沿（true→false = 轮真的结束）后 content 仍空
+      // = 真空消息，骨架收口，否则崩溃/超时的轮留下永转骨架。不能只看 next=false——
+      // 轮开始 emit 的 delta 里 running 就是 false（CLI spawn 完成才翻 true，冷启 ~23s），
+      // 误清会让骨架只活到第一个 delta 事件（probe4 实测 ~0.3s 后骨架消失回壳卡片）。
+      let awaiting = state.awaitingFirstOutput
+      const stale = Object.entries(awaiting).filter(([, provider]) => {
+        const wasRunning = state.providers[provider]?.running === true
+        const nowRunning = delta.providers[provider]?.running === true
+        return wasRunning && !nowRunning
+      })
+      if (stale.length > 0) {
+        awaiting = { ...awaiting }
+        for (const [messageId] of stale) delete awaiting[messageId]
+      }
+      return { timeline: filtered, providers: delta.providers, awaitingFirstOutput: awaiting }
     })
   },
   applyMessageUpdate: (message) => {
     set((state) => {
       const exists = state.timeline.some((m) => m.id === message.id)
+      // B026 · 收尾终稿到达 = 该消息不再等待首输出
+      let awaiting = state.awaitingFirstOutput
+      if (awaiting[message.id]) {
+        const { [message.id]: _, ...rest } = awaiting
+        awaiting = rest
+      }
       return {
         timeline: exists
           ? state.timeline.map((m) => (m.id === message.id ? message : m))
           : [...state.timeline, message],
+        awaitingFirstOutput: awaiting,
       }
     })
   },
@@ -976,6 +1018,19 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       if (!(groupId in state.unreadCounts)) return state
       const { [groupId]: _, ...rest } = state.unreadCounts
       return { unreadCounts: rest }
+    })
+  },
+  markAwaitingFirstOutput: (messageId, provider) => {
+    set((state) => {
+      if (state.awaitingFirstOutput[messageId] === provider) return state
+      return { awaitingFirstOutput: { ...state.awaitingFirstOutput, [messageId]: provider } }
+    })
+  },
+  clearAwaitingFirstOutput: (messageId) => {
+    set((state) => {
+      if (!state.awaitingFirstOutput[messageId]) return state
+      const { [messageId]: _, ...rest } = state.awaitingFirstOutput
+      return { awaitingFirstOutput: rest }
     })
   },
   applyPendingChange: (payload) => {

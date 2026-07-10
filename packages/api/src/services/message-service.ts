@@ -2844,6 +2844,20 @@ export class MessageService {
         toolEvents: toolEventsJson,
         contentBlocks: JSON.stringify(mergedErrorBlocks),
       })
+      // B026 德彪 r1 P2-2 · 错误终态也广播 message.updated：spawn 前失败时 running
+      // 从未 true、无下降沿，snapshot delta 又只 append 不 replace——前端占位气泡的
+      // 等待骨架只能靠本事件按消息 ID 精确收口（同时把错误终稿上屏，免得刷新才可见）。
+      const errorTimeline = this.sessions.toTimelineMessage(thread.id, assistant.id)
+      if (errorTimeline) {
+        options.emit({
+          type: "message.updated",
+          payload: {
+            threadId: thread.id,
+            sessionGroupId: thread.sessionGroupId,
+            message: errorTimeline,
+          },
+        })
+      }
       // Reactive self-heal: match the error message against known failure signatures so
       // we clear session only when doing so actually helps, and give the user a concrete
       // hint (wait/retry/re-auth) instead of just dumping the raw exception.
