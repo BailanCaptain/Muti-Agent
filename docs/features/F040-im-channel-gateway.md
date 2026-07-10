@@ -4,6 +4,7 @@ title: 外部 IM 渠道网关（飞书先行）+ 手机端接入路线
 status: done
 owner: 黄仁勋
 created: 2026-07-03
+completed: 2026-07-10
 ---
 
 # F040 — 外部 IM 渠道网关（飞书先行）+ 手机端接入路线
