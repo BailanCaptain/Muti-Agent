@@ -16,6 +16,7 @@
 | F040 | 外部 IM 渠道网关（飞书先行·WS 长连接免公网）+ 手机端三阶段路线（飞书 App → PWA → 按需原生壳）：connector 复用 send_message 同一入口 + open_id 白名单 fail-closed + SQLite 绑定 + SafeHttpClient 合同对齐（参考 clowder-ai connectors） | spec | 黄仁勋 | internal | [F040](features/F040-im-channel-gateway.md) |
 | F041 | 投研跟踪台（invest-tracker）：watchlist 实体层（A股新易盛/中际旭创/天孚通信/亨通光电/东山精密 + 美股康宁/英伟达/美光 + 光模块/CPO/光纤板块）+ 公告/研报/评级动作 source-of-record（巨潮+东财+EDGAR，Yahoo 评级个人用途启用）+ 双管线（invest-ingest 小时抓 / invest-delivery 08:00 简报）+ SQLite 真相源+Obsidian 投影 + 与 F027/F037 全隔离（合同五条+三层测试）。德彪 r1+r2 双轮对抗审收敛蓝图 v2；代码动工等 F037 合并（纯移动抽零件→增量） | spec | 黄仁勋 | internal | [F041](features/F041-invest-research-tracker.md) |
 | F042 | 记忆消费闭环一期：direct_turn shadow 召回（三态开关默认影子）+ 采纳度量（prompt_audit 扩列 + 统计接口）+ canonical 生命周期（同源强制 supersede + 旧版退召回面 + NHC 排 _superseded 噪音）+ 编译候选喂料（pre-compile 接 wiki_entity_index + sources.path 进 prompt）+ 外部守活探针。源自 F027 灵魂层审计 + 黄×范对谈 D 路线共识，小孙拍手机+网页双入口；F040 先合（软依赖）；rerank 攒 30-50 标注后另立项 | spec | 黄仁勋 | internal | [F042](features/F042-memory-consumption-loop.md) |
+| F043 | Token 用量口径修复 + 上下文可观测：封存假阳性根治（claude result 累计误当足迹 + codex 双计 + 窗口表 opus-4-8 落 200k → 三症状同根）P0 止血四刀 + P1 per-call token 可见（MessageMeta 点亮/面板真值直传/轮中实时）+ 测试口径翻正。对标 clowder-ai（字段以本机 CLI 实测为准，小孙提醒 CLI 可能已变） | spec | 黄仁勋 | internal | [F043](features/F043-token-accounting-fix.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features
