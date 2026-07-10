@@ -55,9 +55,32 @@ echo [Multi-Agent] Building API dist (MCP tool server)...
 call node_modules\.bin\tsc.CMD -p packages\shared\tsconfig.json
 call node_modules\.bin\tsc.CMD -p packages\api\tsconfig.json
 
+:: Web runs as a PRODUCTION build (next start), not dev. Dev ships ~6MB of uncompressed JS per
+:: first paint, which times out over a slow Tailscale relay on the phone; the production bundle
+:: is minified + gzipped (~300KB) and loads in seconds. Trade-off: frontend edits need a rebuild
+:: to show -- so we only run `next build` when frontend source changed since the last build
+:: (web-prod-build-check.ps1 vs .runtime\web-prod-build.stamp). Backend-only / no-op restarts
+:: skip straight to next start. If a build fails, fall back to dev so the app still comes up.
+set "WEB_MODE=start"
+echo [Multi-Agent] Checking web production bundle freshness...
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\web-prod-build-check.ps1"
+if errorlevel 1 (
+  echo [Multi-Agent] Frontend changed -- building production web bundle ^(1-3 min, first run only^)...
+  call node_modules\.bin\next.CMD build
+  if not errorlevel 1 (
+    echo built > ".runtime\web-prod-build.stamp"
+    echo [Multi-Agent] Web production build ready.
+  ) else (
+    echo [Multi-Agent] WARNING: production build failed -- falling back to dev mode ^(phone will be slow^).
+    set "WEB_MODE=dev"
+  )
+) else (
+  echo [Multi-Agent] Web production bundle current -- skipping rebuild.
+)
+
 echo [Multi-Agent] Starting API + Web in parallel (direct bin)...
 start "multi-agent-api" /B /MIN cmd /c "node_modules\.bin\tsx.CMD packages\api\src\index.ts > .runtime\api.log 2>&1"
-start "multi-agent-web" /B /MIN cmd /c "node_modules\.bin\next.CMD dev > .runtime\web.log 2>&1"
+start "multi-agent-web" /B /MIN cmd /c "node_modules\.bin\next.CMD %WEB_MODE% > .runtime\web.log 2>&1"
 
 echo [Multi-Agent] Waiting for services...
 call :wait_for "http://localhost:8787/health" 60
