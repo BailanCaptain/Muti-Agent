@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   Lock,
+  LoaderCircle,
   Plus,
   Search,
   Pin,
@@ -95,7 +96,10 @@ function computeBucketBoundaries(now: Date) {
   return { todayStart, weekStart, monthStart }
 }
 
-function bucketOf(isoTime: string, boundaries: ReturnType<typeof computeBucketBoundaries>): TimeBucket {
+function bucketOf(
+  isoTime: string,
+  boundaries: ReturnType<typeof computeBucketBoundaries>,
+): TimeBucket {
   const t = new Date(isoTime).getTime()
   if (t >= boundaries.todayStart) return "today"
   if (t >= boundaries.weekStart) return "thisWeek"
@@ -113,21 +117,39 @@ function matchRoomId(query: string): string | null {
 
 /* ── Component ── */
 
+export async function selectSessionGroupFromCard(
+  groupId: string,
+  selectGroup: (groupId: string) => Promise<void>,
+  viewport: {
+    isMobile: () => boolean
+    isSidebarCollapsed: () => boolean
+    toggleSidebar: () => void
+  },
+) {
+  if (viewport.isMobile() && !viewport.isSidebarCollapsed()) {
+    viewport.toggleSidebar()
+  }
+  await selectGroup(groupId)
+}
+
 export function SessionSidebar() {
   const sessionGroups = useThreadStore((state) => state.sessionGroups)
   const activeGroupId = useThreadStore((state) => state.activeGroupId)
+  const pendingGroupId = useThreadStore((state) => state.pendingGroupId)
   const createGroup = useThreadStore((state) => state.createSessionGroup)
   const selectGroup = useThreadStore((state) => state.selectSessionGroup)
   // F040 T7 手机抽屉：<md 侧栏是覆盖层，点卡片选完房间自动收起。只挂卡片点击——
   // 搜索命中的自动选中（下方 useEffect）不收，避免打字打一半抽屉关掉。
   const selectGroupFromCard = useCallback(
     async (groupId: string) => {
-      await selectGroup(groupId)
-      if (
-        window.matchMedia("(max-width: 767px)").matches &&
-        !useLayoutStore.getState().sidebarCollapsed
-      ) {
-        useLayoutStore.getState().toggleSidebar()
+      try {
+        await selectSessionGroupFromCard(groupId, selectGroup, {
+          isMobile: () => window.matchMedia("(max-width: 767px)").matches,
+          isSidebarCollapsed: () => useLayoutStore.getState().sidebarCollapsed,
+          toggleSidebar: () => useLayoutStore.getState().toggleSidebar(),
+        })
+      } catch {
+        // The store keeps the old room visible and exposes a retryable error state.
       }
     },
     [selectGroup],
@@ -139,7 +161,7 @@ export function SessionSidebar() {
   // 已连接客户端也能看到状态变化，不再靠手动刷新。
   const archiveStateVersion = useThreadStore((state) => state.archiveStateVersion)
   const anyProviderRunning = useThreadStore((state) =>
-    Object.values(state.providers).some((p) => p.running)
+    Object.values(state.providers).some((p) => p.running),
   )
 
   const [search, setSearch] = useState("")
@@ -327,28 +349,20 @@ export function SessionSidebar() {
   // F022 Phase 3.5 (review 4th round P2 闭环): 订阅 + reload 效果抽到
   // useArchiveStateReloader hook（components/stores/archive-event-handler.ts），
   // 由 archive-event-handler.test.ts 覆盖初始跳过 / 主列表刷 / 归档列表条件刷三条分支。
-  useArchiveStateReloader(
-    archiveStateVersion,
-    reloadSessionGroups,
-    reloadArchived,
-    archivedOpen,
-  )
+  useArchiveStateReloader(archiveStateVersion, reloadSessionGroups, reloadArchived, archivedOpen)
 
-  const togglePin = useCallback(
-    (groupId: string) => {
-      setPinned((prev) => {
-        const next = new Set(prev)
-        if (next.has(groupId)) {
-          next.delete(groupId)
-        } else {
-          next.add(groupId)
-        }
-        savePinned(next)
-        return next
-      })
-    },
-    [],
-  )
+  const togglePin = useCallback((groupId: string) => {
+    setPinned((prev) => {
+      const next = new Set(prev)
+      if (next.has(groupId)) {
+        next.delete(groupId)
+      } else {
+        next.add(groupId)
+      }
+      savePinned(next)
+      return next
+    })
+  }, [])
 
   const toggleCollapse = useCallback((tag: string) => {
     setCollapsedTags((prev) => {
@@ -439,9 +453,7 @@ export function SessionSidebar() {
     <aside className="flex h-dvh w-[280px] shrink-0 flex-col border-r border-slate-200 bg-surface px-3 py-4">
       {/* Header */}
       <div className="mb-4 flex items-center justify-between px-1">
-        <h2 className="text-sm font-semibold tracking-wide text-slate-800">
-          会话
-        </h2>
+        <h2 className="text-sm font-semibold tracking-wide text-slate-800">会话</h2>
         <button
           className="inline-flex items-center gap-1 rounded-md bg-accent-500 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-accent-600 active:scale-[0.97]"
           onClick={() => void createGroup()}
@@ -468,9 +480,7 @@ export function SessionSidebar() {
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 && search.trim() !== "" && (
           <div className="px-2 py-4 text-center text-xs text-slate-400">
-            {matchRoomId(search)
-              ? `未找到房间 ${matchRoomId(search)}`
-              : "无匹配会话"}
+            {matchRoomId(search) ? `未找到房间 ${matchRoomId(search)}` : "无匹配会话"}
           </div>
         )}
         {/* Pinned section */}
@@ -501,6 +511,7 @@ export function SessionSidebar() {
                   projectTag={group.projectTag}
                   titleLockedAt={group.titleLockedAt}
                   active={activeGroupId === group.id}
+                  pending={pendingGroupId === group.id}
                   running={runningGroupIds.has(group.id)}
                   isPinned={true}
                   isRenaming={renamingGroupId === group.id}
@@ -551,6 +562,7 @@ export function SessionSidebar() {
                     projectTag={group.projectTag}
                     titleLockedAt={group.titleLockedAt}
                     active={activeGroupId === group.id}
+                    pending={pendingGroupId === group.id}
                     running={runningGroupIds.has(group.id)}
                     isPinned={pinned.has(group.id)}
                     isRenaming={renamingGroupId === group.id}
@@ -593,11 +605,7 @@ export function SessionSidebar() {
                 <div className="px-2 py-2 text-center text-xs text-slate-400">归档列表为空</div>
               ) : (
                 archivedItems.map((item) => (
-                  <ArchivedRow
-                    key={item.id}
-                    item={item}
-                    onRestore={handleRestore}
-                  />
+                  <ArchivedRow key={item.id} item={item} onRestore={handleRestore} />
                 ))
               )}
             </div>
@@ -678,6 +686,7 @@ type SessionCardProps = {
   projectTag?: string
   titleLockedAt?: string | null
   active: boolean
+  pending: boolean
   running: boolean
   isPinned: boolean
   isRenaming: boolean
@@ -692,15 +701,39 @@ type SessionCardProps = {
   onRenameCancel: () => void
 }
 
-const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedAtLabel, createdAtLabel, messageCount, unreadCount, participants, previews, projectTag, titleLockedAt, active, running, isPinned, isRenaming, onSelect, onCtxMenu, onRenameCommit, onRenameCancel }: SessionCardProps) {
+const SessionCard = memo(function SessionCard({
+  groupId,
+  roomId,
+  title,
+  updatedAtLabel,
+  createdAtLabel,
+  messageCount,
+  unreadCount,
+  participants,
+  previews,
+  projectTag,
+  titleLockedAt,
+  active,
+  pending,
+  running,
+  isPinned,
+  isRenaming,
+  onSelect,
+  onCtxMenu,
+  onRenameCommit,
+  onRenameCancel,
+}: SessionCardProps) {
   const handleClick = useCallback(() => {
     if (isRenaming) return
     void onSelect(groupId)
   }, [onSelect, groupId, isRenaming])
 
-  const handleCtxMenu = useCallback((e: React.MouseEvent) => {
-    onCtxMenu(e, groupId, isPinned, Boolean(projectTag))
-  }, [onCtxMenu, groupId, isPinned, projectTag])
+  const handleCtxMenu = useCallback(
+    (e: React.MouseEvent) => {
+      onCtxMenu(e, groupId, isPinned, Boolean(projectTag))
+    },
+    [onCtxMenu, groupId, isPinned, projectTag],
+  )
 
   // F022 Phase 3.5 (AC-14g): 行内重命名输入
   const [draft, setDraft] = useState(title)
@@ -721,14 +754,18 @@ const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedA
 
   return (
     <button
-      className={`group relative w-full rounded-md px-2.5 py-2 text-left transition ${
+      className={`group relative w-full rounded-md px-2.5 py-2 text-left transition-transform duration-150 active:scale-[0.99] motion-reduce:transition-none ${
         active
           ? "border-l-[3px] border-amber-500 bg-surface-canvas shadow-sm"
-          : "border-l-[3px] border-transparent hover:bg-amber-50/60"
+          : pending
+            ? "border-l-[3px] border-transparent bg-amber-50/60"
+            : "border-l-[3px] border-transparent hover:bg-amber-50/60"
       }`}
       // F038: E2E 稳定锚点 — title/文案是 UI 层可变文本，不做定位契约（德彪设计审 r1 P2-3）
       data-session-group-id={groupId}
+      data-pending={pending ? "true" : undefined}
       data-testid="session-card"
+      aria-busy={pending}
       onClick={handleClick}
       onContextMenu={handleCtxMenu}
       title={`创建 ${createdAtLabel} · 最后活动 ${updatedAtLabel} · ${messageCount} 条消息`}
@@ -772,9 +809,13 @@ const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedA
             value={draft}
           />
         ) : (
-          <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
-            {title}
-          </h3>
+          <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">{title}</h3>
+        )}
+        {pending && (
+          <LoaderCircle
+            aria-label="正在切换会话"
+            className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-600 motion-reduce:animate-none"
+          />
         )}
         <span className="shrink-0 text-micro leading-none text-slate-400">{updatedAtLabel}</span>
         {unreadCount > 0 && (
@@ -792,20 +833,12 @@ const SessionCard = memo(function SessionCard({ groupId, roomId, title, updatedA
               <span className="h-5 w-5 rounded-full bg-slate-100 ring-1 ring-white/80" />
             ) : (
               participants.map((p) => (
-                <ProviderAvatar
-                  className="ring-1 ring-white/80"
-                  identity={p}
-                  key={p}
-                  size="2xs"
-                />
+                <ProviderAvatar className="ring-1 ring-white/80" identity={p} key={p} size="2xs" />
               ))
             )}
           </div>
           {running && (
-            <span
-              aria-label="运行中"
-              className="absolute -bottom-0.5 -right-0.5 flex h-2 w-2"
-            >
+            <span aria-label="运行中" className="absolute -bottom-0.5 -right-0.5 flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
               <span className="relative inline-flex h-2 w-2 rounded-full border border-white bg-green-500" />
             </span>

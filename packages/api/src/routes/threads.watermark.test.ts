@@ -26,6 +26,10 @@ function setupRoutes(overrides: { flushActiveStreaming?: (groupId: string) => vo
   const sequencer = new GroupSequencer()
   const sessions = {
     getActiveGroup: (groupId: string) => ({ id: groupId, timeline: [] }),
+    getActiveGroupPage: (groupId: string) => ({
+      activeGroup: { id: groupId, timeline: [] },
+      timelinePage: { hasMore: false, nextCursor: null, limit: 100 },
+    }),
     listSessionGroups: () => [],
   } as unknown as SessionService
   registerThreadRoutes(app as never, {

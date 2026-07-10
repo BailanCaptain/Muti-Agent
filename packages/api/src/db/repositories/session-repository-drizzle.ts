@@ -1,7 +1,7 @@
 import crypto from "node:crypto"
 import type { Provider } from "@multi-agent/shared"
 import { PROVIDERS, PROVIDER_ALIASES, stripRichFencesForPreview } from "@multi-agent/shared"
-import { and, asc, desc, eq, like, or, sql } from "drizzle-orm"
+import { and, asc, desc, eq, like, lt, or, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import {
   a2aCalls,
@@ -24,6 +24,17 @@ import type {
 import { mergeRuntimeConfigFieldwise } from "./runtime-config-merge"
 
 type DrizzleDb = BetterSQLite3Database<typeof import("../schema")>
+
+export type GroupMessageCursor = {
+  createdAt: string
+  rowid: number
+}
+
+export type GroupMessagesPage = {
+  messages: MessageRecord[]
+  hasMore: boolean
+  nextCursor: GroupMessageCursor | null
+}
 
 // F026 P5 in-flight · drizzle 路径补 LEFT JOIN a2a_calls 后的合并行类型。
 // 4 个 list* 方法显式 select 同一份字段集（messages 全列 + a2a_calls 6 个协议列），
@@ -579,6 +590,48 @@ export class DrizzleSessionRepository {
       .orderBy(asc(messages.createdAt), sql`messages.rowid ASC`)
     const rows = limit !== undefined ? query.limit(limit).all() : query.all()
     return rows.map(hydrateMessage)
+  }
+
+  listGroupMessagesPage(
+    sessionGroupId: string,
+    options: { limit: number; before?: GroupMessageCursor | null },
+  ): GroupMessagesPage {
+    const limit = Math.max(1, Math.floor(options.limit))
+    const before = options.before ?? null
+    const cursorWhere = before
+      ? or(
+          lt(messages.createdAt, before.createdAt),
+          and(
+            eq(messages.createdAt, before.createdAt),
+            sql`messages.rowid < ${before.rowid}`,
+          ),
+        )
+      : undefined
+    const rows = this.db
+      .select({
+        ...MESSAGE_WITH_A2A_SELECT,
+        rowid: sql<number>`messages.rowid`,
+      })
+      .from(messages)
+      .innerJoin(threads, eq(threads.id, messages.threadId))
+      .leftJoin(a2aCalls, eq(a2aCalls.callId, messages.a2aCallId))
+      .where(and(eq(threads.sessionGroupId, sessionGroupId), cursorWhere))
+      .orderBy(desc(messages.createdAt), sql`messages.rowid DESC`)
+      .limit(limit + 1)
+      .all()
+
+    const hasMore = rows.length > limit
+    const selectedRows = rows.slice(0, limit)
+    const oldestSelected = selectedRows.at(-1)
+
+    return {
+      messages: selectedRows.reverse().map(hydrateMessage),
+      hasMore,
+      nextCursor:
+        hasMore && oldestSelected
+          ? { createdAt: oldestSelected.createdAt, rowid: oldestSelected.rowid }
+          : null,
+    }
   }
 
   listMessagesSince(threadId: string, sinceTimestamp: string): MessageRecord[] {

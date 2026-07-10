@@ -334,6 +334,90 @@ test("F021-P6 AC-32 (review fix): getActiveGroup sealed=false when no system_not
   assert.equal(view.providers.claude?.sealed, false)
 })
 
+test("F044 getActiveGroupPage exposes an opaque cursor and restores it for older timeline pages", () => {
+  const threads = [makeThread("codex"), makeThread("claude")]
+  const pageMessages = [
+    makeMessage("thread-codex", "m1", "first", "2026-07-10T00:00:01Z"),
+    makeMessage("thread-claude", "m2", "second", "2026-07-10T00:00:02Z"),
+  ]
+  const rawCursor = { createdAt: "2026-07-10T00:00:01Z", rowid: 17 }
+  const receivedBefore: Array<typeof rawCursor | null | undefined> = []
+  const repo = {
+    ...createMockRepository(threads, pageMessages),
+    listGroupMessagesPage: (
+      _groupId: string,
+      options: { limit: number; before?: typeof rawCursor | null },
+    ) => {
+      receivedBefore.push(options.before)
+      return {
+        messages: pageMessages,
+        hasMore: true,
+        nextCursor: rawCursor,
+      }
+    },
+  }
+  const service = new SessionService(repo as never, [])
+
+  const initial = service.getActiveGroupPage("group-1", new Set(), undefined, 100)
+  assert.deepEqual(
+    initial.activeGroup.timeline.map((message) => message.id),
+    ["m1", "m2"],
+  )
+  assert.equal(initial.timelinePage.hasMore, true)
+  assert.equal(initial.timelinePage.limit, 100)
+  assert.ok(initial.timelinePage.nextCursor)
+  assert.equal(initial.timelinePage.nextCursor.includes("createdAt"), false)
+  assert.deepEqual(receivedBefore, [null])
+  assert.equal(
+    service.isFirstSnapshot("group-1"),
+    false,
+    "HTTP page snapshot should seed the WS delta baseline instead of triggering a full replay",
+  )
+
+  const older = service.getActiveGroupTimelinePage("group-1", initial.timelinePage.nextCursor, 100)
+  assert.deepEqual(
+    older.timeline.map((message) => message.id),
+    ["m1", "m2"],
+  )
+  assert.deepEqual(receivedBefore, [null, rawCursor])
+})
+
+test("F044 review P1: page snapshot must not advance delta beyond an in-flight assistant row", () => {
+  const threads = [makeThread("codex")]
+  const messages = [
+    makeMessage("thread-codex", "u1", "question", "2026-07-10T00:00:02Z", "user"),
+    makeMessage("thread-codex", "a1", "partial", "2026-07-10T00:00:02Z", "assistant"),
+  ]
+  const repo = {
+    ...createMockRepository(threads, messages),
+    listGroupMessagesPage: () => ({
+      messages,
+      hasMore: false,
+      nextCursor: null,
+    }),
+  }
+  const service = new SessionService(repo as never, [])
+
+  service.getActiveGroupPage("group-1", new Set(["thread-codex"]), undefined, 100)
+  messages[1] = { ...messages[1], content: "final answer" }
+
+  const finalDelta = service.getActiveGroupDelta("group-1", new Set(), undefined)
+  assert.deepEqual(
+    finalDelta.newMessages.find((message) => message.id === "a1")?.content,
+    "final answer",
+  )
+})
+
+test("F044 getActiveGroupTimelinePage rejects malformed opaque cursors", () => {
+  const repo = createMockRepository([makeThread("codex")], [])
+  const service = new SessionService(repo as never, [])
+
+  assert.throws(
+    () => service.getActiveGroupTimelinePage("group-1", "not-a-valid-cursor", 100),
+    /invalid timeline cursor/i,
+  )
+})
+
 test("getActiveGroupDelta with empty thread returns empty newMessages and empty preview", () => {
   const threads = [makeThread("codex")]
   const messages: MessageRow[] = []

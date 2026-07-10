@@ -53,6 +53,24 @@ function thinkingOf(id: string): string | undefined {
   return useThreadStore.getState().timeline.find((m) => m.id === id)?.thinking
 }
 
+it("F044 same-room refresh keeps older pages outside the newest snapshot window", () => {
+  useThreadStore.setState({
+    activeGroup: {
+      id: "g1",
+      roomId: null,
+      title: "t",
+      meta: "",
+      hasPendingDispatches: false,
+      dispatchBarrierActive: false,
+    },
+    timeline: [makeMessage("older", "old"), makeMessage("m1", "new")],
+  })
+
+  useThreadStore.getState().replaceActiveGroup(snapshotWith(makeMessage("m1", "newer")))
+
+  expect(useThreadStore.getState().timeline.map((message) => message.id)).toEqual(["older", "m1"])
+})
+
 describe("thread-store · delta offset 幂等化 (F031 AC4)", () => {
   beforeEach(() => {
     useThreadStore.setState({ timeline: [makeMessage("m1")] })

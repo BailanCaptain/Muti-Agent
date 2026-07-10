@@ -1,25 +1,26 @@
 "use client"
 
+import { subscribeToRoom } from "@/components/ws/client"
+// 循环仅存在于类型层（stream-monitor 只 type-import 本模块的 DeltaHoleInfo），运行时无环
+import { streamMonitor } from "@/components/ws/stream-monitor"
 import {
-  applyMessageToSessionGroups,
   type ContentBlock,
   type DispatchValidationRetryReason,
   type InvocationStats,
-  type PendingChangePayload,
   PROVIDERS,
   PROVIDER_ALIASES,
+  type PendingChangePayload,
   type Provider,
   type ProviderCatalog,
   type SessionGroupSummary,
   type ThreadSnapshotDelta,
   type TimelineMessage,
+  type TimelinePageMeta,
   type ToolEvent,
   type WsWatermark,
+  applyMessageToSessionGroups,
 } from "@multi-agent/shared"
 import { create } from "zustand"
-import { subscribeToRoom } from "@/components/ws/client"
-// 循环仅存在于类型层（stream-monitor 只 type-import 本模块的 DeltaHoleInfo），运行时无环
-import { streamMonitor } from "@/components/ws/stream-monitor"
 
 type ProviderCardState = {
   threadId: string
@@ -81,6 +82,9 @@ type ThreadStore = {
   catalogs: Record<Provider, ProviderCatalog>
   sessionGroups: SessionListItem[]
   activeGroupId: string | null
+  pendingGroupId: string | null
+  switchError: string | null
+  switchErrorGroupId: string | null
   activeGroup: {
     id: string
     roomId: string | null
@@ -90,6 +94,9 @@ type ThreadStore = {
     dispatchBarrierActive: boolean
   } | null
   timeline: TimelineMessage[]
+  timelinePage: TimelinePageMeta | null
+  isLoadingOlder: boolean
+  olderTimelineError: string | null
   invocationStats: InvocationStats[]
   unreadCounts: Record<string, number>
   /**
@@ -130,7 +137,8 @@ type ThreadStore = {
   clearActiveGroupIfMatches: (groupId: string) => void
   bootstrap: () => Promise<void>
   createSessionGroup: () => Promise<void>
-  selectSessionGroup: (groupId: string) => Promise<void>
+  selectSessionGroup: (groupId: string, options?: { force?: boolean }) => Promise<void>
+  loadOlderTimeline: () => Promise<number>
   updateModel: (provider: Provider, model: string) => Promise<void>
   stopThread: (provider: Provider) => Promise<void>
   stopAgent: (provider: Provider) => Promise<void>
@@ -333,38 +341,44 @@ function normalizeContentForBackend(input: string, tokens: MentionToken[]): stri
 
 function mergeTimeline(existing: TimelineMessage[], incoming: TimelineMessage[]) {
   const existingById = new Map(existing.map((message) => [message.id, message]))
+  const incomingIds = new Set(incoming.map((message) => message.id))
 
-  const merged = incoming.map((message) => {
-    const current = existingById.get(message.id)
-    if (!current) {
-      return message
-    }
+  const merged = [
+    ...existing.filter((message) => !incomingIds.has(message.id)),
+    ...incoming.map((message) => {
+      const current = existingById.get(message.id)
+      if (!current) {
+        return message
+      }
 
-    const content =
-      current.role === message.role &&
-      current.provider === message.provider &&
-      current.content.length > message.content.length
-        ? current.content
-        : message.content
+      const content =
+        current.role === message.role &&
+        current.provider === message.provider &&
+        current.content.length > message.content.length
+          ? current.content
+          : message.content
 
-    const currentThinkingVal = current.thinking ?? ""
-    const incomingThinkingVal = message.thinking ?? ""
-    const thinking =
-      current.role === message.role &&
-      current.provider === message.provider &&
-      currentThinkingVal.length > incomingThinkingVal.length
-        ? current.thinking
-        : message.thinking
+      const currentThinkingVal = current.thinking ?? ""
+      const incomingThinkingVal = message.thinking ?? ""
+      const thinking =
+        current.role === message.role &&
+        current.provider === message.provider &&
+        currentThinkingVal.length > incomingThinkingVal.length
+          ? current.thinking
+          : message.thinking
 
-    const currentEvents = current.toolEvents ?? []
-    const incomingEvents = message.toolEvents ?? []
-    const toolEvents =
-      currentEvents.length > incomingEvents.length ? current.toolEvents : message.toolEvents
+      const currentEvents = current.toolEvents ?? []
+      const incomingEvents = message.toolEvents ?? []
+      const toolEvents =
+        currentEvents.length > incomingEvents.length ? current.toolEvents : message.toolEvents
 
-    return { ...message, content, thinking, toolEvents }
-  })
+      return { ...message, content, thinking, toolEvents }
+    }),
+  ]
 
-  const alreadySorted = merged.every((msg, i) => i === 0 || msg.createdAt >= merged[i - 1].createdAt)
+  const alreadySorted = merged.every(
+    (msg, i) => i === 0 || msg.createdAt >= merged[i - 1].createdAt,
+  )
   return alreadySorted ? merged : merged.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 }
 
@@ -378,6 +392,20 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 
   return (await response.json()) as T
 }
+
+function prependOlderTimeline(existing: TimelineMessage[], older: TimelineMessage[]) {
+  const existingIds = new Set(existing.map((message) => message.id))
+  const seenOlder = new Set<string>()
+  const uniqueOlder = older.filter((message) => {
+    if (existingIds.has(message.id) || seenOlder.has(message.id)) return false
+    seenOlder.add(message.id)
+    return true
+  })
+  return { timeline: [...uniqueOlder, ...existing], added: uniqueOlder.length }
+}
+
+let switchGeneration = 0
+let switchController: AbortController | null = null
 
 // F031 AC4 · pendingDeltas 改 offset segment 队列（德彪 r2 P1）：
 // apply* 只入队 {offset, text}，幂等判定延迟到 flush 时刻以当时 timeline 长度为准——
@@ -483,8 +511,14 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   catalogs: emptyCatalogs,
   sessionGroups: [],
   activeGroupId: null,
+  pendingGroupId: null,
+  switchError: null,
+  switchErrorGroupId: null,
   activeGroup: null,
   timeline: [],
+  timelinePage: null,
+  isLoadingOlder: false,
+  olderTimelineError: null,
   invocationStats: [],
   unreadCounts: {},
   pendingByRoot: {},
@@ -498,8 +532,12 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       if (state.activeGroupId !== groupId) return state
       return {
         activeGroupId: null,
+        pendingGroupId: state.pendingGroupId === groupId ? null : state.pendingGroupId,
         activeGroup: null,
         timeline: [],
+        timelinePage: null,
+        isLoadingOlder: false,
+        olderTimelineError: null,
         providers: emptyProviders,
         invocationStats: [],
       }
@@ -536,7 +574,40 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     get().replaceSessionGroups(groupsPayload.sessionGroups)
     await get().selectSessionGroup(payload.groupId)
   },
-  selectSessionGroup: async (groupId) => {
+  selectSessionGroup: async (groupId, options) => {
+    const currentState = get()
+    const refreshingCurrentGroup = currentState.activeGroupId === groupId
+    if (refreshingCurrentGroup && !options?.force) {
+      if (currentState.pendingGroupId) {
+        switchGeneration += 1
+        switchController?.abort()
+        switchController = null
+        set({
+          pendingGroupId: null,
+          switchError: null,
+          switchErrorGroupId: null,
+          isLoadingOlder: false,
+          olderTimelineError: null,
+        })
+        // Review P1: pending B 时点回仍 active 的 A，socket 已排他订阅到 B；
+        // 早退前必须把 monitor + socket 一起恢复到 A，否则 UI 看着在 A 却收不到 A 事件。
+        streamMonitor.beginSwitch(groupId)
+        subscribeToRoom(groupId)
+      }
+      return
+    }
+
+    const invalidatedOlderLoading = currentState.isLoadingOlder
+    switchGeneration += 1
+    const generation = switchGeneration
+    switchController?.abort()
+    const controller = new AbortController()
+    switchController = controller
+    set({
+      pendingGroupId: refreshingCurrentGroup ? null : groupId,
+      switchError: null,
+      switchErrorGroupId: null,
+    })
     // F031 · subscribe-before-fetch（德彪 r1 P2）：先订阅再拉快照，缩窄
     // "fetch 与 subscribe 生效之间的新组事件被 shouldDeliver 过滤掉"的丢失窗口；
     // 残余 race（订阅生效前广播的事件）靠 gap → catch-up 自愈。
@@ -544,27 +615,158 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     // monitor 记账最高 seq，setBaseline 对账 > 水位线即补拉——终版事件不丢。
     streamMonitor.beginSwitch(groupId)
     subscribeToRoom(groupId)
-    const payload = await fetchJson<{ activeGroup: ActiveGroupPayload; wsWatermark?: WsWatermark }>(
-      `/api/session-groups/${groupId}`,
-    )
-    // F026 review#4 fix · 切房间清 pendingByRoot + settledByRoot（避免跨房间状态泄漏；
-    // 新 snapshot 自带最新 a2aCallStatus，不需要 terminal cache 兜底）
-    set({ activeGroupId: groupId, pendingByRoot: {}, settledByRoot: {} })
-    // F031 · 快照水位线换基线：seq ≤ 水位线的流事件此后按"快照已覆盖"丢弃
-    if (payload.wsWatermark) {
-      streamMonitor.setBaseline(groupId, payload.wsWatermark)
-    }
-    get().replaceActiveGroup(payload.activeGroup)
-    get().resetUnread(groupId)
+    try {
+      const payload = await fetchJson<{
+        activeGroup: ActiveGroupPayload
+        timelinePage: TimelinePageMeta
+        wsWatermark?: WsWatermark
+      }>(`/api/session-groups/${groupId}`, { signal: controller.signal })
 
-    const { fetchPending: fetchDecisions, fetchRecords: fetchDecisionRecords } = await import(
-      "./decision-store"
-    ).then((m) => m.useDecisionStore.getState())
-    const { fetchPendingFlush } = await import("./decision-board-store").then((m) => m.useDecisionBoardStore.getState())
-    void fetchDecisions(groupId)
-    // F033: 已决卡片（records）随房间切换同步拉取，刷新不丢
-    void fetchDecisionRecords(groupId)
-    void fetchPendingFlush(groupId)
+      if (generation !== switchGeneration || controller.signal.aborted) return
+      if (payload.activeGroup.id !== groupId) {
+        throw new Error("Session snapshot did not match the requested group")
+      }
+      // F026 review#4 fix · 切房间清 pendingByRoot + settledByRoot（避免跨房间状态泄漏；
+      // 新 snapshot 自带最新 a2aCallStatus，不需要 terminal cache 兜底）
+      // F031 · 快照水位线换基线：seq ≤ 水位线的流事件此后按"快照已覆盖"丢弃
+      if (payload.wsWatermark) {
+        streamMonitor.setBaseline(groupId, payload.wsWatermark)
+      }
+      const group = payload.activeGroup
+      set((state) => {
+        const incomingIds = new Set(group.timeline.map((message) => message.id))
+        const hasWindowOverlap = state.timeline.some((message) => incomingIds.has(message.id))
+        // Review r2 P2: 只有新旧窗口重叠时，才证明中间连续，允许保留已加载历史与旧 cursor。
+        // 零重叠说明离线期可能新增 >=100 条；此时保留两个断裂窗口会制造不可分页的黏性空洞，
+        // 因此回到服务端最新连续窗口，用户可沿新 cursor 完整向前加载。
+        const preserveLoadedHistory = refreshingCurrentGroup && hasWindowOverlap
+        return {
+          activeGroupId: groupId,
+          pendingGroupId: null,
+          switchError: null,
+          switchErrorGroupId: null,
+          activeGroup: {
+            id: group.id,
+            roomId: group.roomId,
+            title: group.title,
+            meta: group.meta,
+            hasPendingDispatches: group.hasPendingDispatches,
+            dispatchBarrierActive: group.dispatchBarrierActive,
+          },
+          timeline: preserveLoadedHistory
+            ? mergeTimeline(state.timeline, group.timeline)
+            : group.timeline,
+          timelinePage:
+            preserveLoadedHistory && state.timelinePage ? state.timelinePage : payload.timelinePage,
+          isLoadingOlder: false,
+          olderTimelineError: null,
+          providers: group.providers,
+          pendingByRoot: {},
+          settledByRoot: {},
+        }
+      })
+      get().resetUnread(groupId)
+
+      const { fetchPending: fetchDecisions, fetchRecords: fetchDecisionRecords } = await import(
+        "./decision-store"
+      ).then((m) => m.useDecisionStore.getState())
+      const { fetchPendingFlush } = await import("./decision-board-store").then((m) =>
+        m.useDecisionBoardStore.getState(),
+      )
+      if (generation !== switchGeneration) return
+      void fetchDecisions(groupId)
+      // F033: 已决卡片（records）随房间切换同步拉取，刷新不丢
+      void fetchDecisionRecords(groupId)
+      void fetchPendingFlush(groupId)
+    } catch (error) {
+      if (generation !== switchGeneration || controller.signal.aborted) return
+      const failure = error instanceof Error ? error : new Error("会话切换失败")
+      const activeGroupId = get().activeGroupId
+      if (activeGroupId && activeGroupId !== groupId) {
+        // 请求失败时 UI 继续展示旧 active；socket 订阅也必须与之恢复一致。
+        streamMonitor.beginSwitch(activeGroupId)
+        subscribeToRoom(activeGroupId)
+      }
+      set((state) => ({
+        pendingGroupId: null,
+        switchError: failure.message,
+        switchErrorGroupId: groupId,
+        // 仅清理由本次 generation bump 作废的旧分页。切换请求发出后，用户仍可能
+        // 在旧 active 上新发起同 generation 的有效分页；失败回退不得提前释放它。
+        isLoadingOlder: invalidatedOlderLoading ? false : state.isLoadingOlder,
+        olderTimelineError: invalidatedOlderLoading ? null : state.olderTimelineError,
+      }))
+      throw failure
+    } finally {
+      if (generation === switchGeneration && switchController === controller) {
+        switchController = null
+      }
+    }
+  },
+  loadOlderTimeline: async () => {
+    const state = get()
+    const groupId = state.activeGroupId
+    const cursor = state.timelinePage?.nextCursor
+    if (!groupId || !state.timelinePage?.hasMore || !cursor || state.isLoadingOlder) return 0
+    const generation = switchGeneration
+
+    set({ isLoadingOlder: true, olderTimelineError: null })
+    try {
+      const payload = await fetchJson<{
+        timeline: TimelineMessage[]
+        timelinePage: TimelinePageMeta
+      }>(`/api/session-groups/${groupId}/timeline?before=${encodeURIComponent(cursor)}`)
+      if (
+        switchGeneration !== generation ||
+        get().activeGroupId !== groupId ||
+        get().timelinePage?.nextCursor !== cursor
+      ) {
+        return 0
+      }
+
+      let added = 0
+      set((current) => {
+        if (
+          switchGeneration !== generation ||
+          current.activeGroupId !== groupId ||
+          current.timelinePage?.nextCursor !== cursor
+        ) {
+          return current
+        }
+        const prepended = prependOlderTimeline(current.timeline, payload.timeline)
+        added = prepended.added
+        return {
+          timeline: prepended.timeline,
+          timelinePage: payload.timelinePage,
+          isLoadingOlder: false,
+          olderTimelineError: null,
+        }
+      })
+      return added
+    } catch (error) {
+      const current = get()
+      if (
+        switchGeneration === generation &&
+        current.activeGroupId === groupId &&
+        current.timelinePage?.nextCursor === cursor
+      ) {
+        set({
+          isLoadingOlder: false,
+          olderTimelineError: error instanceof Error ? error.message : "加载更早消息失败",
+        })
+      }
+      return 0
+    } finally {
+      const current = get()
+      if (
+        switchGeneration === generation &&
+        current.activeGroupId === groupId &&
+        current.timelinePage?.nextCursor === cursor &&
+        current.isLoadingOlder
+      ) {
+        set({ isLoadingOlder: false })
+      }
+    }
   },
   updateModel: async (provider, model) => {
     const thread = get().providers[provider]
@@ -628,7 +830,10 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         dispatchBarrierActive: group.dispatchBarrierActive,
       },
       // Snapshots come from the database and can momentarily lag behind local deltas, so merge instead of replacing.
-      timeline: mergeTimeline(state.timeline, group.timeline),
+      timeline:
+        state.activeGroup?.id === group.id
+          ? mergeTimeline(state.timeline, group.timeline)
+          : group.timeline,
       providers: group.providers,
     }))
   },
@@ -662,9 +867,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     // 而不是 "旧不合规 + 新合规" 的拼接污染。
     pendingDeltas.delete(messageId)
     set((state) => ({
-      timeline: state.timeline.map((msg) =>
-        msg.id === messageId ? { ...msg, content: "" } : msg,
-      ),
+      timeline: state.timeline.map((msg) => (msg.id === messageId ? { ...msg, content: "" } : msg)),
     }))
   },
   restoreAssistantContent: (messageId, content) => {
@@ -675,9 +878,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     set((state) => {
       if (!state.timeline.some((msg) => msg.id === messageId)) return state
       return {
-        timeline: state.timeline.map((msg) =>
-          msg.id === messageId ? { ...msg, content } : msg,
-        ),
+        timeline: state.timeline.map((msg) => (msg.id === messageId ? { ...msg, content } : msg)),
       }
     })
   },
@@ -686,9 +887,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       if (!state.timeline.some((msg) => msg.id === messageId)) return state
       return {
         timeline: state.timeline.map((msg) =>
-          msg.id === messageId
-            ? { ...msg, retryCount, retryReasons: [...retryReasons] }
-            : msg,
+          msg.id === messageId ? { ...msg, retryCount, retryReasons: [...retryReasons] } : msg,
         ),
       }
     })
@@ -726,9 +925,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         }
       }
       const removed = new Set(delta.removedMessageIds ?? [])
-      const filtered = removed.size > 0
-        ? newTimeline.filter((m) => !removed.has(m.id))
-        : newTimeline
+      const filtered =
+        removed.size > 0 ? newTimeline.filter((m) => !removed.has(m.id)) : newTimeline
       return { timeline: filtered, providers: delta.providers }
     })
   },
@@ -762,9 +960,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
   reconcileOptimisticMessage: (clientMessageId, serverMessage) => {
     set((state) => ({
-      timeline: state.timeline.map((msg) =>
-        msg.id === clientMessageId ? serverMessage : msg,
-      ),
+      timeline: state.timeline.map((msg) => (msg.id === clientMessageId ? serverMessage : msg)),
     }))
   },
   incrementUnread: (groupId) => {

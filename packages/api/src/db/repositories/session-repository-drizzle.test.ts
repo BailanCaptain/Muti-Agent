@@ -151,6 +151,64 @@ test("listMessages without limit returns ALL messages even when count > 1000", a
   }
 })
 
+test("F044 listGroupMessagesPage paginates newest-first windows without gaps at equal timestamps", async () => {
+  const { createDrizzleDb } = await import("../drizzle-instance")
+  const { messages } = await import("../schema")
+  const { DrizzleSessionRepository } = await import("./session-repository-drizzle")
+  const { dbPath, tempDir } = createTestDb()
+
+  const { db, close } = createDrizzleDb(dbPath)
+  const repo = new DrizzleSessionRepository(db)
+
+  try {
+    const groupId = repo.createSessionGroup("F044 cursor room")
+    repo.ensureDefaultThreads(groupId, { codex: null, claude: null, gemini: null })
+    const roomThreads = repo.listThreadsByGroup(groupId)
+    assert.equal(roomThreads.length, 3)
+
+    const insertedIds: string[] = []
+    for (let index = 0; index < 205; index += 1) {
+      const thread = roomThreads[index % roomThreads.length]
+      const message = repo.appendMessage(thread.id, "user", `msg-${index}`)
+      insertedIds.push(message.id)
+    }
+
+    // Force the worst-case cursor boundary: every row shares the same timestamp,
+    // so rowid must be the deterministic tiebreaker across all provider threads.
+    db.update(messages).set({ createdAt: "2026-07-10T00:00:00.000Z" }).run()
+
+    const newest = repo.listGroupMessagesPage(groupId, { limit: 100 })
+    assert.equal(newest.messages.length, 100)
+    assert.equal(newest.hasMore, true)
+    assert.ok(newest.nextCursor)
+
+    const middle = repo.listGroupMessagesPage(groupId, {
+      limit: 100,
+      before: newest.nextCursor,
+    })
+    assert.equal(middle.messages.length, 100)
+    assert.equal(middle.hasMore, true)
+    assert.ok(middle.nextCursor)
+
+    const oldest = repo.listGroupMessagesPage(groupId, {
+      limit: 100,
+      before: middle.nextCursor,
+    })
+    assert.equal(oldest.messages.length, 5)
+    assert.equal(oldest.hasMore, false)
+    assert.equal(oldest.nextCursor, null)
+
+    const restoredIds = [...oldest.messages, ...middle.messages, ...newest.messages].map(
+      (message) => message.id,
+    )
+    assert.deepEqual(restoredIds, insertedIds, "all pages should restore insertion order exactly once")
+    assert.equal(new Set(restoredIds).size, 205, "cursor pages must not overlap")
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
 test("connector messages round-trip with connectorSource JSON", async () => {
   const { createDrizzleDb } = await import("../drizzle-instance")
   const { DrizzleSessionRepository } = await import("./session-repository-drizzle")

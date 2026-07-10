@@ -211,6 +211,12 @@ export type ActiveGroupView = {
   providers: Record<Provider, ProviderThreadView>
 }
 
+export type TimelinePageMeta = {
+  hasMore: boolean
+  nextCursor: string | null
+  limit: number
+}
+
 export type ApprovalFingerprint = {
   tool: string
   target?: string

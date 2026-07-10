@@ -33,17 +33,48 @@ const KIND_STYLE: Record<MinimapMarkerKind, { dot: string; ring: string }> = {
 // 🔵你的提问（role=user）/ 🔴封存（messageType=system_notice）。已答决策的导航经其 user 响应消息
 // （user 标记）达成；assistant 普通消息不打标。
 export type MinimapItem =
-  | { kind: "message"; role: "user" | "assistant"; messageType: string; alias: string; content: string }
+  | {
+      kind: "message"
+      role: "user" | "assistant"
+      messageType: string
+      alias: string
+      content: string
+    }
   | { kind: "decision" }
+
+export const MAX_MINIMAP_MARKERS = 120
+
+function sampleEvenly<T>(items: T[], limit: number): T[] {
+  if (limit <= 0) return []
+  if (items.length <= limit) return items
+  if (limit === 1) return [items.at(-1)!]
+  return Array.from({ length: limit }, (_, index) => {
+    const sourceIndex = Math.round((index * (items.length - 1)) / (limit - 1))
+    return items[sourceIndex]
+  })
+}
 
 export function buildMinimapMarkers(
   items: MinimapItem[],
   summarize: (content: string) => string,
 ): MinimapMarker[] {
   const denom = Math.max(1, items.length - 1)
+  const sealIndexes: number[] = []
+  const userIndexes: number[] = []
+  items.forEach((item, index) => {
+    if (item.kind !== "message") return
+    if (item.messageType === "system_notice") sealIndexes.push(index)
+    else if (item.role === "user") userIndexes.push(index)
+  })
+  const retainedSeals = sampleEvenly(sealIndexes, MAX_MINIMAP_MARKERS)
+  const retainedIndexes = new Set([
+    ...retainedSeals,
+    ...sampleEvenly(userIndexes, MAX_MINIMAP_MARKERS - retainedSeals.length),
+  ])
   const out: MinimapMarker[] = []
   items.forEach((item, index) => {
     if (item.kind !== "message") return
+    if (!retainedIndexes.has(index)) return
     const topPct = index / denom
     if (item.messageType === "system_notice") {
       out.push({ index, kind: "seal", label: `封存 · ${item.alias}`, topPct })

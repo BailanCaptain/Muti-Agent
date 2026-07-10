@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
+import { InvalidTimelineCursorError } from "../services/session-service"
 import type { SessionService } from "../services/session-service"
 import type { GroupSequencer } from "./ws-sequencer"
 
@@ -98,6 +99,28 @@ export function registerThreadRoutes(
     sessionGroups: options.sessions.listArchivedSessionGroups(),
   }))
 
+  app.get(
+    "/api/session-groups/:groupId/timeline",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const params = request.params as { groupId: string }
+      const query = request.query as { before?: unknown }
+      if (typeof query.before !== "string" || query.before.length === 0) {
+        reply.code(400)
+        return { error: "Invalid timeline cursor" }
+      }
+
+      try {
+        return options.sessions.getActiveGroupTimelinePage(params.groupId, query.before, 100)
+      } catch (error) {
+        if (error instanceof InvalidTimelineCursorError) {
+          reply.code(400)
+          return { error: error.message }
+        }
+        throw error
+      }
+    },
+  )
+
   app.get("/api/session-groups/:groupId", async (request) => {
     const params = request.params as { groupId: string }
     // F031 · read-before-build：水位线必须在快照组装（含 flushActiveStreaming）之前读。
@@ -108,12 +131,14 @@ export function registerThreadRoutes(
       seq: options.sequencer.current(params.groupId),
     }
     options.flushActiveStreaming?.(params.groupId)
+    const snapshot = options.sessions.getActiveGroupPage(
+      params.groupId,
+      options.getRunningThreadIds(),
+      options.getDispatchState?.(params.groupId),
+      100,
+    )
     return {
-      activeGroup: options.sessions.getActiveGroup(
-        params.groupId,
-        options.getRunningThreadIds(),
-        options.getDispatchState?.(params.groupId),
-      ),
+      ...snapshot,
       wsWatermark,
     }
   })

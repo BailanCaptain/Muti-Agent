@@ -8,6 +8,7 @@ import type {
   SessionGroupSummary,
   ThreadSnapshotDelta,
   TimelineMessage,
+  TimelinePageMeta,
   ToolEvent,
 } from "@multi-agent/shared"
 import { stripRichFencesForPreview } from "@multi-agent/shared"
@@ -36,6 +37,19 @@ type ProviderView = {
 type DispatchState = {
   hasPendingDispatches: boolean
   dispatchBarrierActive: boolean
+}
+
+type TimelineCursorPayload = {
+  v: 1
+  createdAt: string
+  rowid: number
+}
+
+export class InvalidTimelineCursorError extends Error {
+  constructor() {
+    super("Invalid timeline cursor")
+    this.name = "InvalidTimelineCursorError"
+  }
 }
 
 export class SessionService {
@@ -283,6 +297,125 @@ export class SessionService {
       hasPendingDispatches: dispatchState?.hasPendingDispatches ?? false,
       dispatchBarrierActive: dispatchState?.dispatchBarrierActive ?? false,
       providers,
+    }
+  }
+
+  getActiveGroupPage(
+    groupId: string,
+    runningThreadIds: Set<string>,
+    dispatchState?: DispatchState,
+    requestedLimit = 100,
+  ): { activeGroup: ActiveGroupView; timelinePage: TimelinePageMeta } {
+    const limit = this.normalizeTimelineLimit(requestedLimit)
+    const group = this.repository.getSessionGroupById(groupId)
+    const threads = this.repository.listThreadsByGroup(groupId)
+    const page = this.repository.listGroupMessagesPage(groupId, { limit, before: null })
+    // Review P1: HTTP 读可以建立首个 delta baseline，避免下一次广播重放全部历史；
+    // 但不能越过 running thread 当前正在被 overwrite 的 assistant 行，否则终稿沿用原
+    // createdAt 时会被 listMessagesSince(>) 永久排除。多线程并跑时停在最早的在途行之前，
+    // 宁可让下一次 delta 幂等重带少量安全消息，也不能漏掉任一终稿。
+    let earliestInFlightAssistantAt: string | null = null
+    for (const threadId of runningThreadIds) {
+      for (let index = page.messages.length - 1; index >= 0; index -= 1) {
+        const message = page.messages[index]
+        if (message.threadId !== threadId || message.role !== "assistant") continue
+        if (!earliestInFlightAssistantAt || message.createdAt < earliestInFlightAssistantAt) {
+          earliestInFlightAssistantAt = message.createdAt
+        }
+        break
+      }
+    }
+    let pageWatermark = "1970-01-01T00:00:00.000Z"
+    for (let index = page.messages.length - 1; index >= 0; index -= 1) {
+      const message = page.messages[index]
+      if (earliestInFlightAssistantAt && message.createdAt >= earliestInFlightAssistantAt) continue
+      pageWatermark = message.createdAt
+      break
+    }
+    const previousWatermark = this.lastSentTimestamps.get(groupId)
+    if (!previousWatermark || pageWatermark > previousWatermark) {
+      this.lastSentTimestamps.set(groupId, pageWatermark)
+    }
+    const recentByThread = new Map(
+      threads.map((thread) => [thread.id, this.repository.listRecentMessages(thread.id, 10)]),
+    )
+
+    const providers = Object.fromEntries(
+      threads.map((thread) => {
+        let sopSkill: string | null = null
+        let sopPhase: string | null = null
+        let sopNext: string | null = null
+        if (thread.sopBookmark) {
+          try {
+            const bookmark = JSON.parse(thread.sopBookmark) as {
+              skill?: string
+              phase?: string
+              nextExpectedAction?: string
+            }
+            sopSkill = bookmark.skill ?? null
+            sopPhase = bookmark.phase ?? null
+            sopNext = bookmark.nextExpectedAction ?? null
+          } catch {
+            /* ignore malformed JSON */
+          }
+        }
+        const recentMessages = recentByThread.get(thread.id) ?? []
+        const lastMessage = recentMessages[0]
+        const lastSystemNotice = recentMessages.find(
+          (message) => message.messageType === "system_notice",
+        )
+        const lastUserMessage = recentMessages.find((message) => message.role === "user")
+
+        return [
+          thread.provider,
+          {
+            threadId: thread.id,
+            alias: thread.alias,
+            currentModel: thread.currentModel,
+            quotaSummary: "额度信息待接入",
+            preview: stripRichFencesForPreview(lastMessage?.content ?? "").slice(0, 80),
+            running: runningThreadIds.has(thread.id),
+            sopSkill,
+            sopPhase,
+            sopNext,
+            fillRatio: thread.lastFillRatio ?? null,
+            sealed: Boolean(
+              lastSystemNotice &&
+                (!lastUserMessage || lastSystemNotice.createdAt > lastUserMessage.createdAt),
+            ),
+          },
+        ]
+      }),
+    ) as Record<Provider, ProviderView>
+
+    return {
+      activeGroup: {
+        id: groupId,
+        roomId: group?.roomId ?? null,
+        title: group?.title ?? "新会话",
+        meta: `最近更新时间：${group ? new Date(group.updatedAt).toLocaleString("zh-CN") : "--"}，消息会按统一时间线展示。`,
+        timeline: this.mapStoredMessages(threads, page.messages),
+        hasPendingDispatches: dispatchState?.hasPendingDispatches ?? false,
+        dispatchBarrierActive: dispatchState?.dispatchBarrierActive ?? false,
+        providers,
+      },
+      timelinePage: this.toTimelinePageMeta(page, limit),
+    }
+  }
+
+  getActiveGroupTimelinePage(
+    groupId: string,
+    before: string | null,
+    requestedLimit = 100,
+  ): { timeline: TimelineMessage[]; timelinePage: TimelinePageMeta } {
+    const limit = this.normalizeTimelineLimit(requestedLimit)
+    const cursor = before ? this.decodeTimelineCursor(before) : null
+    const page = this.repository.listGroupMessagesPage(groupId, { limit, before: cursor })
+    const threads = this.repository.listThreadsByGroup(groupId)
+
+    return {
+      timeline: this.mapStoredMessages(threads, page.messages),
+      timelinePage: this.toTimelinePageMeta(page, limit),
     }
   }
 
@@ -707,6 +840,95 @@ export class SessionService {
           }
         : {}),
     })
+  }
+
+  private normalizeTimelineLimit(requestedLimit: number): number {
+    if (!Number.isFinite(requestedLimit)) return 100
+    return Math.min(100, Math.max(1, Math.floor(requestedLimit)))
+  }
+
+  private encodeTimelineCursor(cursor: { createdAt: string; rowid: number }): string {
+    const payload: TimelineCursorPayload = { v: 1, ...cursor }
+    return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")
+  }
+
+  private decodeTimelineCursor(cursor: string): Omit<TimelineCursorPayload, "v"> {
+    try {
+      if (!/^[A-Za-z0-9_-]+$/.test(cursor)) throw new InvalidTimelineCursorError()
+      const parsed = JSON.parse(
+        Buffer.from(cursor, "base64url").toString("utf8"),
+      ) as Partial<TimelineCursorPayload>
+      if (
+        parsed.v !== 1 ||
+        typeof parsed.createdAt !== "string" ||
+        !Number.isFinite(Date.parse(parsed.createdAt)) ||
+        !Number.isSafeInteger(parsed.rowid) ||
+        (parsed.rowid ?? 0) <= 0
+      ) {
+        throw new InvalidTimelineCursorError()
+      }
+      return { createdAt: parsed.createdAt, rowid: parsed.rowid } as Omit<
+        TimelineCursorPayload,
+        "v"
+      >
+    } catch (error) {
+      if (error instanceof InvalidTimelineCursorError) throw error
+      throw new InvalidTimelineCursorError()
+    }
+  }
+
+  private toTimelinePageMeta(
+    page: ReturnType<SessionRepository["listGroupMessagesPage"]>,
+    limit: number,
+  ): TimelinePageMeta {
+    return {
+      hasMore: page.hasMore,
+      nextCursor: page.nextCursor ? this.encodeTimelineCursor(page.nextCursor) : null,
+      limit,
+    }
+  }
+
+  private mapStoredMessages(
+    threads: ReturnType<SessionRepository["listThreadsByGroup"]>,
+    storedMessages: ReturnType<SessionRepository["listGroupMessagesPage"]>["messages"],
+  ): TimelineMessage[] {
+    const threadsById = new Map(threads.map((thread) => [thread.id, thread]))
+    return storedMessages
+      .flatMap((message) => {
+        const thread = threadsById.get(message.threadId)
+        if (!thread) return []
+        const contentBlocks = JSON.parse(message.contentBlocks || "[]") as ContentBlock[]
+        return [
+          this.mapTimelineMessage(
+            thread,
+            message.id,
+            message.role,
+            message.content,
+            message.thinking,
+            message.createdAt,
+            message.messageType,
+            message.connectorSource ?? undefined,
+            message.groupId,
+            message.groupRole,
+            JSON.parse(message.toolEvents || "[]") as ToolEvent[],
+            contentBlocks.length ? contentBlocks : undefined,
+            message.model,
+            message.retryCount,
+            message.retryReasons,
+            {
+              a2aCallId: message.a2aCallId,
+              a2aParentCallId: message.a2aParentCallId,
+              a2aRootCallId: message.a2aRootCallId,
+              a2aOnBehalfOf: message.a2aOnBehalfOf,
+              a2aConvenerId: message.a2aConvenerId,
+              a2aCallStatus: message.a2aCallStatus,
+              a2aDeadlineAt: message.a2aDeadlineAt,
+              senderDisplayName: message.senderDisplayName,
+            },
+          ),
+        ]
+      })
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
   }
 
   private mapTimelineMessage(

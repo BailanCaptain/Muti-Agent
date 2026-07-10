@@ -9,6 +9,7 @@ import { InlineDecisionBoard } from "./decision-board-modal"
 import { DecisionCard, DecisionRecordCard } from "./decision-card"
 import { splitDecisionsForTimeline } from "./decision-timeline"
 import { MessageBubble, buildFoldedPreview } from "./message-bubble"
+import { SkeletonLines } from "./skeleton"
 import { SystemNoticeBubble } from "./system-notice-bubble"
 import { TimelineMinimap, buildMinimapMarkers } from "./timeline-minimap"
 import { TimelineWelcome } from "./timeline-welcome"
@@ -16,6 +17,14 @@ import { TimelineWelcome } from "./timeline-welcome"
 export function TimelinePanel() {
   const timeline = useThreadStore((state) => state.timeline)
   const activeGroupId = useThreadStore((state) => state.activeGroupId)
+  const pendingGroupId = useThreadStore((state) => state.pendingGroupId)
+  const switchError = useThreadStore((state) => state.switchError)
+  const switchErrorGroupId = useThreadStore((state) => state.switchErrorGroupId)
+  const selectSessionGroup = useThreadStore((state) => state.selectSessionGroup)
+  const timelinePage = useThreadStore((state) => state.timelinePage)
+  const isLoadingOlder = useThreadStore((state) => state.isLoadingOlder)
+  const olderTimelineError = useThreadStore((state) => state.olderTimelineError)
+  const loadOlderTimeline = useThreadStore((state) => state.loadOlderTimeline)
   const allPendingDecisions = useDecisionStore((state) => state.pending)
   const allDecisionRecords = useDecisionStore((state) => state.records)
   const respondDecision = useDecisionStore((state) => state.respond)
@@ -23,15 +32,11 @@ export function TimelinePanel() {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // F033: pending（活卡）与 records（已决 disabled 卡）分轨拆解，纯函数已单测
-  const {
-    inlineDecisionsByMsgId,
-    standAloneDecisions,
-    inlineRecordsByMsgId,
-    standaloneRecords,
-  } = useMemo(
-    () => splitDecisionsForTimeline(allPendingDecisions, allDecisionRecords, activeGroupId),
-    [allPendingDecisions, allDecisionRecords, activeGroupId],
-  )
+  const { inlineDecisionsByMsgId, standAloneDecisions, inlineRecordsByMsgId, standaloneRecords } =
+    useMemo(
+      () => splitDecisionsForTimeline(allPendingDecisions, allDecisionRecords, activeGroupId),
+      [allPendingDecisions, allDecisionRecords, activeGroupId],
+    )
 
   type RenderItem =
     | { kind: "message"; data: (typeof timeline)[number] }
@@ -72,6 +77,16 @@ export function TimelinePanel() {
     navigator.clipboard.writeText(content)
   }, [])
 
+  const handleLoadOlder = useCallback(async () => {
+    const scrollElement = scrollRef.current
+    const previousScrollHeight = scrollElement?.scrollHeight ?? 0
+    const added = await loadOlderTimeline()
+    if (added === 0 || !scrollElement) return
+    requestAnimationFrame(() => {
+      scrollElement.scrollTop += scrollElement.scrollHeight - previousScrollHeight
+    })
+  }, [loadOlderTimeline])
+
   // F036 #9 导航标记锚点：序位投影（见 timeline-minimap.tsx）。把 renderItems 降维成纯
   // MinimapItem 交 buildMinimapMarkers（纯函数·已单测）。决策不打标（pending-only，见该函数注释）。
   const minimapMarkers = useMemo(
@@ -103,68 +118,106 @@ export function TimelinePanel() {
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-    <div
-      // F039: 原 rgba(248,250,252) 渐变是 F036 前的股票 slate-50 冷蓝残留，整个聊天区蒙冷膜；
-      // 回归 clowder 模型——聊天主区 = surface-elevated（4 档中最亮的暖近白）。
-      className="flex flex-1 flex-col overflow-y-auto bg-surface-elevated px-3 py-4 md:px-6 md:py-8"
-      ref={scrollRef}
-    >
-      <div className="mx-auto w-full max-w-[980px]">
-        {renderItems.length === 0 ? (
-          <div className="flex min-h-[40vh] items-center justify-center">
-            <TimelineWelcome />
-          </div>
-        ) : (
-          <div
-            style={{
-              height: `${virtualizer.getTotalSize()}px`,
-              width: "100%",
-              position: "relative",
-            }}
-          >
-            {virtualizer.getVirtualItems().map((virtualRow) => {
-              const item = renderItems[virtualRow.index]
-              return (
-                <div
-                  key={virtualRow.key}
-                  data-index={virtualRow.index}
-                  ref={virtualizer.measureElement}
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    width: "100%",
-                    transform: `translateY(${virtualRow.start}px)`,
-                  }}
-                >
-                  {item.kind === "decision" ? (
-                    <DecisionCard
-                      request={item.data}
-                      onRespond={respondDecision}
-                    />
-                  ) : item.kind === "record" ? (
-                    <DecisionRecordCard record={item.data} />
-                  ) : item.data.messageType === "connector" ? (
-                    <ConnectorBubble message={item.data} />
-                  ) : item.data.messageType === "system_notice" ? (
-                    <SystemNoticeBubble message={item.data} />
-                  ) : (
-                    <MessageBubble
-                      message={item.data}
-                      inlineDecisions={inlineDecisionsByMsgId.get(item.data.id)}
-                      inlineRecords={inlineRecordsByMsgId.get(item.data.id)}
-                      onDecisionRespond={respondDecision}
-                      onCopy={handleCopy}
-                    />
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
-        <InlineDecisionBoard />
+      <div
+        // F039: 原 rgba(248,250,252) 渐变是 F036 前的股票 slate-50 冷蓝残留，整个聊天区蒙冷膜；
+        // 回归 clowder 模型——聊天主区 = surface-elevated（4 档中最亮的暖近白）。
+        className="flex flex-1 flex-col overflow-y-auto bg-surface-elevated px-3 py-4 md:px-6 md:py-8"
+        data-testid="timeline-scroll"
+        ref={scrollRef}
+      >
+        <div className="mx-auto w-full max-w-[980px]">
+          {pendingGroupId && (
+            <div className="mb-4 rounded-md border border-slate-200 bg-surface px-4 py-3 shadow-sm">
+              <SkeletonLines lines={2} />
+              <span className="sr-only">正在切换会话</span>
+            </div>
+          )}
+          {switchError && switchErrorGroupId && (
+            <div
+              className="mb-4 flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700"
+              role="alert"
+            >
+              <span className="min-w-0 truncate">切换失败：{switchError}</span>
+              <button
+                className="shrink-0 rounded-md border border-red-200 bg-surface px-2 py-1 font-medium transition-transform active:scale-[0.97] motion-reduce:transition-none"
+                onClick={() => void selectSessionGroup(switchErrorGroupId).catch(() => {})}
+                type="button"
+              >
+                重试
+              </button>
+            </div>
+          )}
+          {timelinePage?.hasMore && (
+            <div className="mb-4 flex justify-center">
+              <button
+                aria-busy={isLoadingOlder}
+                data-testid="load-older-timeline"
+                className="rounded-md border border-slate-200 bg-surface px-3 py-1.5 text-xs font-medium text-slate-600 transition-transform active:scale-[0.97] disabled:cursor-wait disabled:opacity-60 motion-reduce:transition-none"
+                disabled={isLoadingOlder}
+                onClick={() => void handleLoadOlder()}
+                type="button"
+              >
+                {isLoadingOlder ? "正在加载…" : "加载更早消息"}
+              </button>
+            </div>
+          )}
+          {olderTimelineError && (
+            <p className="mb-3 text-center text-xs text-red-600" role="alert">
+              加载更早消息失败：{olderTimelineError}
+            </p>
+          )}
+          {renderItems.length === 0 ? (
+            <div className="flex min-h-[40vh] items-center justify-center">
+              <TimelineWelcome />
+            </div>
+          ) : (
+            <div
+              style={{
+                height: `${virtualizer.getTotalSize()}px`,
+                width: "100%",
+                position: "relative",
+              }}
+            >
+              {virtualizer.getVirtualItems().map((virtualRow) => {
+                const item = renderItems[virtualRow.index]
+                return (
+                  <div
+                    key={virtualRow.key}
+                    data-index={virtualRow.index}
+                    ref={virtualizer.measureElement}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                  >
+                    {item.kind === "decision" ? (
+                      <DecisionCard request={item.data} onRespond={respondDecision} />
+                    ) : item.kind === "record" ? (
+                      <DecisionRecordCard record={item.data} />
+                    ) : item.data.messageType === "connector" ? (
+                      <ConnectorBubble message={item.data} />
+                    ) : item.data.messageType === "system_notice" ? (
+                      <SystemNoticeBubble message={item.data} />
+                    ) : (
+                      <MessageBubble
+                        message={item.data}
+                        inlineDecisions={inlineDecisionsByMsgId.get(item.data.id)}
+                        inlineRecords={inlineRecordsByMsgId.get(item.data.id)}
+                        onDecisionRespond={respondDecision}
+                        onCopy={handleCopy}
+                      />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          <InlineDecisionBoard />
+        </div>
       </div>
-    </div>
       <TimelineMinimap markers={minimapMarkers} onJump={handleJump} />
     </div>
   )

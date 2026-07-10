@@ -93,7 +93,7 @@ export default function HomePage() {
     // 成功路径 selectSessionGroup 内部 setBaseline 已复位护栏；失败计数达上限降级。
     streamMonitor.onCatchUp(() => {
       const groupId = useThreadStore.getState().activeGroupId
-      const resync = groupId ? selectSessionGroup(groupId) : bootstrap()
+      const resync = groupId ? selectSessionGroup(groupId, { force: true }) : bootstrap()
       void resync
         .then(() => streamMonitor.catchUpDone(true))
         .catch((error) => {
@@ -121,7 +121,7 @@ export default function HomePage() {
       onReconnect: () => {
         // B001 Fix 2: frames may have been lost while the socket was down — re-sync from server.
         const groupId = useThreadStore.getState().activeGroupId
-        const resync = groupId ? selectSessionGroup(groupId) : bootstrap()
+        const resync = groupId ? selectSessionGroup(groupId, { force: true }) : bootstrap()
         void resync.catch((error) => {
           setStatus(error instanceof Error ? `重连恢复失败：${error.message}` : "重连恢复失败")
         })
@@ -394,11 +394,13 @@ export default function HomePage() {
           {/* F040 T7 手机（<md）：侧栏是覆盖式抽屉，点遮罩收起；md+ 恢复静态列 */}
           <button
             aria-label="关闭会话列表"
+            data-testid="mobile-sidebar-overlay"
             className={`fixed inset-0 z-30 bg-slate-900/40 md:hidden ${hydrated ? "" : "max-md:hidden"}`}
             onClick={toggleSidebar}
             type="button"
           />
           <div
+            data-testid="session-sidebar-drawer"
             className={`fixed inset-y-0 left-0 z-40 shadow-2xl md:static md:z-auto md:shrink-0 md:shadow-none ${hydrated ? "" : "max-md:hidden"}`}
           >
             <SessionSidebar />
@@ -409,6 +411,7 @@ export default function HomePage() {
         <ChatHeader>
           {sidebarCollapsed && (
             <button
+              data-testid="mobile-sidebar-open"
               className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 md:hidden"
               onClick={toggleSidebar}
               title="展开侧边栏"

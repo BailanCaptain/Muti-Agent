@@ -67,7 +67,13 @@ describe("buildMinimapMarkers (F036 #9 锚点构建)", () => {
       { kind: "message", role: "user", messageType: "final", alias: "你", content: "Q1" },
       { kind: "message", role: "assistant", messageType: "final", alias: "黄仁勋", content: "A1" },
       { kind: "message", role: "user", messageType: "final", alias: "你", content: "Q2" },
-      { kind: "message", role: "assistant", messageType: "system_notice", alias: "黄仁勋", content: "封存" },
+      {
+        kind: "message",
+        role: "assistant",
+        messageType: "system_notice",
+        alias: "黄仁勋",
+        content: "封存",
+      },
       { kind: "message", role: "user", messageType: "final", alias: "你", content: "Q3" },
     ]
     const out = buildMinimapMarkers(items, id)
@@ -100,5 +106,36 @@ describe("buildMinimapMarkers (F036 #9 锚点构建)", () => {
 
   it("returns empty for an empty timeline (no divide-by-zero)", () => {
     expect(buildMinimapMarkers([], id)).toEqual([])
+  })
+
+  it("F044 caps long timelines, keeps every seal, and summarizes only retained users", () => {
+    const items: MinimapItem[] = Array.from({ length: 400 }, (_, index) =>
+      index % 50 === 0
+        ? {
+            kind: "message" as const,
+            role: "assistant" as const,
+            messageType: "system_notice",
+            alias: "Reviewer",
+            content: `seal-${index}`,
+          }
+        : {
+            kind: "message" as const,
+            role: "user" as const,
+            messageType: "final",
+            alias: "You",
+            content: `question-${index}`,
+          },
+    )
+    const summarize = vi.fn((content: string) => content)
+
+    const first = buildMinimapMarkers(items, summarize)
+    const second = buildMinimapMarkers(items, (content) => content)
+
+    expect(first.length).toBeLessThanOrEqual(120)
+    expect(first.filter((marker) => marker.kind === "seal").map((marker) => marker.index)).toEqual([
+      0, 50, 100, 150, 200, 250, 300, 350,
+    ])
+    expect(summarize).toHaveBeenCalledTimes(first.filter((marker) => marker.kind === "user").length)
+    expect(first.map((marker) => marker.index)).toEqual(second.map((marker) => marker.index))
   })
 })

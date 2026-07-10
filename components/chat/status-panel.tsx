@@ -24,6 +24,7 @@ import { RuntimeLog } from "./right-panel/runtime-log"
 // F027 P3-1 扩展（小孙 2026-06-02 · 方案一 split）· 上下两区之间的拖动分隔线
 import { ResizeHandleVertical } from "./right-panel/runtime-log/resize-handle-vertical"
 import { SessionOverridesTab } from "./right-panel/session-overrides-tab"
+import { summarizeTimelineStats } from "./timeline-stats"
 
 export function StatusPanel() {
   const activeGroup = useThreadStore((state) => state.activeGroup)
@@ -89,14 +90,7 @@ export function StatusPanel() {
     [providerEntries, sessionConfig, globalConfig],
   )
 
-  const stats = useMemo(() => {
-    const messages = timeline.length
-    const evidence = timeline.filter((message) =>
-      /(https?:\/\/|```|^\s*>|\|.+\|)/m.test(`${message.content}\n${message.thinking ?? ""}`),
-    ).length
-    const followUp = timeline.filter((message) => message.role === "user").length
-    return { messages, evidence, followUp }
-  }, [timeline])
+  const stats = useMemo(() => summarizeTimelineStats(timeline), [timeline])
 
   const drawerIsRunning = drawerProvider ? (providers[drawerProvider]?.running ?? false) : false
 
