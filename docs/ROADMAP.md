@@ -14,6 +14,7 @@
 | F034 | SOP 谓词硬拦截·确定性边界：WorkflowSop 流转/merge gate/MCP 操作（借鉴批次 5/6，Blocked by F032） | spec | 黄仁勋 | internal | [F034](features/F034-sop-predicate-enforcement.md) |
 | F037 | 日报邮件推送系统（DailyBrief）：每日 07:30 五板块中文 HTML 日报（AI 推理/训练加权 + 热点 + 篮球/电竞 + 股票）+ 周一 GitHub 周榜 + LLM 速览摘要 + 单源失败隔离 + 出站白名单/外发账本 | spec | 黄仁勋 | internal | [F037](features/F037-daily-news-digest.md) |
 | F040 | 外部 IM 渠道网关（飞书先行·WS 长连接免公网）+ 手机端三阶段路线（飞书 App → PWA → 按需原生壳）：connector 复用 send_message 同一入口 + open_id 白名单 fail-closed + SQLite 绑定 + SafeHttpClient 合同对齐（参考 clowder-ai connectors） | spec | 黄仁勋 | internal | [F040](features/F040-im-channel-gateway.md) |
+| F042 | 记忆消费闭环一期：direct_turn shadow 召回（三态开关默认影子）+ 采纳度量（prompt_audit 扩列 + 统计接口）+ canonical 生命周期（同源强制 supersede + 旧版退召回面 + NHC 排 _superseded 噪音）+ 编译候选喂料（pre-compile 接 wiki_entity_index + sources.path 进 prompt）+ 外部守活探针。源自 F027 灵魂层审计 + 黄×范对谈 D 路线共识，小孙拍手机+网页双入口；F040 先合（软依赖）；rerank 攒 30-50 标注后另立项 | spec | 黄仁勋 | internal | [F042](features/F042-memory-consumption-loop.md) |
 <!-- 新 Feature 在此行上方添加 -->
 
 ## 已完成 Features
