@@ -31,7 +31,7 @@ created: 2026-07-10
 ## Acceptance Criteria
 
 - [ ] **AC1 · direct_turn shadow 召回**：coordinator 触发白名单扩 direct_turn，三态配置 `off|shadow|inject`（默认 shadow）；shadow = 全召回链真跑 + 写 prompt_audit，但不注入 prompt。验收：网页发普通消息 → prompt_audit 新增行（recall_trigger=direct_turn，含 queries/results），该轮 parts 无 recall-pack；开关三态各自生效。
-- [ ] **AC2 · 采纳度量**：prompt_audit 扩 injected/candidate paths + 采纳判定（回复文本对召回条目的引用启发式）+ 统计接口（窗口内：召回次数 / 命中率 / Top 命中条目 / 采纳率）。schema 变更走 migration。验收：真实消息跑批后统计接口返回非零数字，抽 3 条人工核对采纳判定方向正确。
+- [ ] **AC2 · 采纳度量**：prompt_audit 扩 injected/candidate paths + 采纳判定（回复文本对召回条目的引用启发式）+ 统计接口（窗口内：召回次数 / 命中率 / Top 命中条目 / 采纳率）。schema 变更走 migration。**主动提示两时机（小孙 07-10 追问定）**：①影子观察窗跑满（50 次 direct_turn 召回或 14 天先到为准）→ 主动发一次性小结（命中率/采纳率/Top 条目 + 放开注入与否的建议），走房间消息卡，F040 合并后可推 IM；②攒满 30-50 条标注 → 提示可拍 rerank 立项。无常态推送。验收：真实消息跑批后统计接口返回非零数字，抽 3 条人工核对采纳判定方向正确；模拟窗口满 → 小结消息真发出。
 - [ ] **AC3 · canonical 生命周期**：promote 时 sources.path 同源精确匹配正式区已有条目 → 强制显式 supersede/merge 选择（复用 dest_exists 对比弹窗模式）；被替代条目退出召回面（entity_index 除名/标记，search_wiki + preflight + adaptive-recall Level 2 同步过滤）；NHC 死链扫描排除 `_superseded`。验收：F031 双胞胎场景重放 —— 收录新版后旧版被显式 supersede 且 search_wiki 搜不到；NHC 报告 0 条 _superseded 噪音。
 - [ ] **AC4 · 编译候选喂料**：pre-compile 相似检索改接 wiki_entity_index（top-5 真实 score，替代 message_embeddings 误用）；sources[0].path 精确身份进 compile prompt（dedup 确定性信号）。验收：正式区已有同源条目时重放收录 → dedup verdict ≠ new_entity 且给出正确 target；相关条目场景 cross_refs 非空。
 - [ ] **AC5 · 外部守活（轻）**：进程外健康探针脚本（15-30min 探 /health，失败通知，可标记「手动停用」不误报）+ 安装说明，重启主仓时装。验收：杀 API 后一个周期内报警；维护模式静默。
