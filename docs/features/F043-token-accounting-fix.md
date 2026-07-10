@@ -1,9 +1,10 @@
 ---
 id: F043
 title: Token 用量口径修复 + 上下文可观测：封存假阳性根治（P0 止血）+ per-call token 可见（P1）
-status: spec
+status: done
 owner: 黄仁勋
 created: 2026-07-10
+completed: 2026-07-11
 ---
 
 # F043 — Token 用量口径修复 + 上下文可观测
@@ -86,6 +87,8 @@ created: 2026-07-10
 | 2026-07-10 | quality-gate PASS（worktree preview 真 claude 轮四层同位对账 57,053）→ acceptance-guardian 零上下文 PASS（自跑 95/95+19/19、fixture 逐字节对账、自发两探针轮中真收 usage.snapshot）→ 真德彪 r1 **NO-GO**（0 P0/3 P1，档 `.runtime/reviews/F043-debiao-r1-raw.md`）。三 P1 逐条独立坐实后修复：**修1-P1-1** 新增 `message.updated` 事件（收尾终稿全量重推 + store 按 id upsert）——占位 created 无 token、catch-up 只查 created_at>since、store 去重不替换，开着的页面刷新前看不到胶囊（gate/guardian 均新开页取证致漏）；**修1-P1-2** codex resolveUsage 归一化 inputTokens=input−cached（UsageDetail 统一契约=非缓存输入，活体实锤旧值双计 32,721/31% vs 真值 22,737/44%）；**修1-P1-3** `resolveEffectiveTurnResult`：retry 后足迹/seal/session=末次尝试、turnTotals 跨尝试聚合（旧代码 retry 越阈漏封存）。修1=`b752975`（gate 全绿 824/824）。 |
 | 2026-07-10 | 德彪 r2 复核（档 `.runtime/reviews/F043-debiao-r2-raw.md`）：P1-1/P1-2 确认修复；**P1-3 残留一处**——seal 生命周期钩子（digest/ThreadMemory/sessionChain/auto-resume，message-service :2707/:2732）仍判 retry 前的 `loopResult.stoppedReason`，retry 越阈时钩子被跳过而 seal 事件/session 清空照发（脑裂）。**修2**：提取 `sealedThisTurn(result)` 唯一谓词（continuation-loop.ts:52 证明非 retry 路径与旧谓词严格 1:1），两站点统一吃最终生效结果；全文件 `loopResult.` 消费点全扫仅 4 处无第三漏网；settlement 测试 14/14（+2 双向收敛测）。修2=`26caffd`。 |
 | 2026-07-10 | **德彪 r3 = GO**（档 `.runtime/reviews/F043-debiao-r3-raw.md`）："确认修复，未发现明确 bug 或回归风险"，自跑定向 43/43（settlement 14 + continuation/auto-resume 回归 29）+ api typecheck + git diff --check。审查链收束：r1 NO-GO(3 P1)→修1 `b752975`→r2 NO-GO(1 残留)→修2 `26caffd`→GO。AC6/7/8 活体证据链齐勾框（quality-gate 四层对账 + guardian 独立复核 + page-as-sender 帧抓取/DOM 解剖 + codex 归一化前后对照）。待小孙 preview 活体验收（:3103）→ merge-gate。 |
+| 2026-07-10 | **小孙活体验收通过**：足迹五连增 44,616→48,960 累加实锤（cache_read 逐轮扩大=历史真续接），三症状全过。随验收发现「发消息后 ~13.7s 无可见进度死区」（计时探针：0.34s running 已推 ↔ 14.03s 首字），归因非 F043 引入（diff 全在收尾侧）——小孙拍板为**独立 BUG，F043 合并后立即修**。 |
+| 2026-07-11 | **MERGED**：squash `4282172` push origin/dev（先 squash 后 rebase 单遍解 12 文件双侧追加冲突；倒灌核查=diff 恰 37 F043 面文件 + F040 内容抽查全存活；rebased 树全量 gate 重验绿——中途修一处冲突合并括号漏损 + 补装 F040 新依赖；F027 fuzz 满载抖红一次，隔离双跑绿后重试过门）。Status → done。 |
 
 ## Links
 
