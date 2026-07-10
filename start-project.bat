@@ -35,6 +35,19 @@ if errorlevel 1 (
 
 if not exist ".runtime" mkdir ".runtime"
 
+:: Load .env into this shell's environment so child processes (tsx API, next start) inherit it.
+:: The API reads ONLY process env (packages/api/src/config.ts, by design -- worktree previews
+:: inject their own env and must not have repo .env leak in). Nothing ever loaded .env for the
+:: MAIN runtime though, so its values silently no-oped for years -- they just happened to match
+:: code defaults, until CORS_ORIGIN needed the phone origin (F040) and the mismatch surfaced.
+:: `if not defined` keeps explicitly-set process env winning over the file, same precedence as
+:: resolveFeishuEnv. eol=# skips comments; tokens=1,* keeps values containing '=' intact.
+if exist ".env" (
+  for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
+    if not defined %%a set "%%a=%%b"
+  )
+)
+
 echo [Multi-Agent] Stopping stale processes...
 call "%~dp0stop-project.bat" >nul 2>nul
 

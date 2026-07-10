@@ -64,6 +64,15 @@ test("B018 parseCorsOrigin: empty string defaults to localhost-any RegExp", () =
   assert.equal(result.test("http://localhost:3200"), true)
 })
 
+test("F040 parseCorsOrigin: 逗号列表里的 localhost-any 令牌展开成正则（手机组网 origin + 开发通配共存）", () => {
+  const result = parseCorsOrigin("localhost-any,http://100.120.213.33:3000")
+  assert.ok(Array.isArray(result))
+  assert.equal(result.length, 2)
+  assert.ok(result[0] instanceof RegExp)
+  assert.equal((result[0] as RegExp).test("http://localhost:3001"), true)
+  assert.equal(result[1], "http://100.120.213.33:3000")
+})
+
 test("B018 config: corsOrigin defaults to localhost-any RegExp", () => {
   const cfg = buildApiConfig({} as NodeJS.ProcessEnv)
   assert.ok(cfg.corsOrigin instanceof RegExp, "corsOrigin should default to RegExp")

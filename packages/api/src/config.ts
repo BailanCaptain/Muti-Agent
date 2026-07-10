@@ -15,6 +15,8 @@ export type ApiConfig = {
 
 // B018: dev 默认通配 localhost 任意端口，避免每新起一个 worktree preview 端口都要扩 CORS 白名单。
 // 生产部署用 CORS_ORIGIN 显式设成严格 origin（单 string）或逗号分隔列表。
+// F040: 逗号列表里的 "localhost-any" 令牌展开成同一把正则——手机走私有组网要加组网 origin，
+// 但不能因此丢掉 localhost 任意端口（next 3000 被占回落 3001 之类的开发场景）。
 const LOCALHOST_ANY_REGEX = /^http:\/\/localhost:\d+$/
 
 export function parseCorsOrigin(raw: string | undefined): CorsOrigin {
@@ -25,6 +27,7 @@ export function parseCorsOrigin(raw: string | undefined): CorsOrigin {
       .split(",")
       .map((s) => s.trim())
       .filter((s) => s.length > 0)
+      .map((s) => (s === "localhost-any" ? LOCALHOST_ANY_REGEX : s))
   }
   return trimmed
 }
