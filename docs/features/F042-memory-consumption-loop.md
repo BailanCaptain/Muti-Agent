@@ -63,6 +63,7 @@ created: 2026-07-10
 
 ## Links
 
+- Plan: [F042 实施计划](../plans/F042-memory-consumption-loop-plan.md)（锚点四路核查 @ dev `480d568`，13 tasks TDD）
 - Discussion: 对谈纪要与两份审计存 `.runtime/reviews/F027-{vision,soul}-audit-2026-07-10.md` + `F027-soul-discussion-minutes-2026-07-10.md`（scratch 不入库，结论已沉淀本文件）；codex session `019f49e3-3835-7472-9d5d-53bd7244d32c`
 - Related: F040（IM 入口）、F027（资产来源）
 
