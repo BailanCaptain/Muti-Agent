@@ -243,10 +243,14 @@ describe("IngestModal commit", () => {
     fireEvent.click(screen.getByTestId("ingest-modal-commit"))
     await waitFor(() => expect(screen.queryByTestId("ingest-section-commit-success")).toBeTruthy())
     expect(screen.getByText(/concepts\/draft\/_auto/)).toBeTruthy()
-    expect(onSuccess).toHaveBeenCalledWith({
-      finalPath: "concepts/draft/_auto/2026-05-23-foo.md",
-      ingestEventId: "evt-42",
-    })
+    // onCommitSuccess 在 useEffect（ingest-modal.tsx:118）晚渲染一拍发；高负载下
+    // DOM 断言会跑赢 effect flush（门禁 api 套后串跑 2/3 复现）—— 回调断言同样要等
+    await waitFor(() =>
+      expect(onSuccess).toHaveBeenCalledWith({
+        finalPath: "concepts/draft/_auto/2026-05-23-foo.md",
+        ingestEventId: "evt-42",
+      }),
+    )
   })
 
   it("commit 失败 (409 LEASE_FENCING_FAILED) → CommitError 显示", async () => {

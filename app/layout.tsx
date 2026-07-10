@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { ErrorBoundary } from "@/components/error-boundary";
 import "./globals.css";
@@ -12,7 +12,16 @@ const titlePrefix = process.env.NEXT_PUBLIC_APP_TITLE_PREFIX ?? "";
 
 export const metadata: Metadata = {
   title: `${titlePrefix}Multi-Agent`,
-  description: "本地多 CLI 会话控制台"
+  description: "本地多 CLI 会话控制台",
+  // F040 AC14：iOS 添加到主屏后以独立 app 形态打开（配 app/manifest.ts + apple-icon）
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "Multi-Agent" }
+};
+
+// F040 AC14：主题色进系统 UI（状态栏/安装启动屏底），取 F036 --surface 终值
+export const viewport: Viewport = {
+  themeColor: "#F6EFE7",
+  width: "device-width",
+  initialScale: 1
 };
 
 type RootLayoutProps = {

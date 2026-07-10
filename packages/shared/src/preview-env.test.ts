@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { buildPreviewEnv, type PreviewEnv } from "./preview-env"
+import { type PreviewEnv, buildPreviewEnv } from "./preview-env"
 
 /**
  * F028 Task 0 · buildPreviewEnv 单一真相源迁移（scripts → shared）
@@ -30,7 +30,10 @@ test("F028 Task0 · buildPreviewEnv wires ports, urls, cors and title prefix", (
 
 test("F028 Task0 · buildPreviewEnv isolates sqlite/uploads/runtime-events under worktree root", () => {
   const env = buildPreviewEnv(INPUT)
-  assert.equal(env.SQLITE_PATH, "C:/repo/.worktrees/F028/.runtime/worktree-preview/data/multi-agent.sqlite")
+  assert.equal(
+    env.SQLITE_PATH,
+    "C:/repo/.worktrees/F028/.runtime/worktree-preview/data/multi-agent.sqlite",
+  )
   assert.equal(env.UPLOADS_DIR, "C:/repo/.worktrees/F028/.agents/acceptance/uploads")
   assert.equal(env.RUNTIME_EVENTS_DIR, "C:/repo/.worktrees/F028/.agents/acceptance/runtime-events")
 })
@@ -38,4 +41,25 @@ test("F028 Task0 · buildPreviewEnv isolates sqlite/uploads/runtime-events under
 test("F028 Task0 · buildPreviewEnv keeps WORKTREE_PREVIEW=1 primary gate", () => {
   const env = buildPreviewEnv(INPUT)
   assert.equal(env.WORKTREE_PREVIEW, "1")
+})
+
+test("F040 T7 · publicHost（私有组网真机）替换 NEXT_PUBLIC 四址 + CORS 双白名单", () => {
+  const env = buildPreviewEnv({ ...INPUT, publicHost: "100.64.0.7" })
+  assert.equal(env.NEXT_PUBLIC_API_HTTP_URL, "http://100.64.0.7:8801")
+  assert.equal(env.NEXT_PUBLIC_API_WS_URL, "ws://100.64.0.7:8801/ws")
+  assert.equal(env.NEXT_PUBLIC_API_URL, "http://100.64.0.7:8801")
+  assert.equal(env.NEXT_PUBLIC_API_BASE_URL, "http://100.64.0.7:8801")
+  assert.equal(env.CORS_ORIGIN, "http://localhost:3101,http://100.64.0.7:3101")
+  // 本地路径 / 端口 / gate 与 localhost 形态完全一致（只换可达形态，不换隔离面）
+  assert.equal(env.API_PORT, "8801")
+  assert.equal(
+    env.SQLITE_PATH,
+    "C:/repo/.worktrees/F028/.runtime/worktree-preview/data/multi-agent.sqlite",
+  )
+  assert.equal(env.WORKTREE_PREVIEW, "1")
+})
+
+test("F040 T7 · publicHost 空串/空白 → 与未设完全一致（回退 localhost）", () => {
+  assert.deepEqual(buildPreviewEnv({ ...INPUT, publicHost: "  " }), buildPreviewEnv(INPUT))
+  assert.deepEqual(buildPreviewEnv({ ...INPUT, publicHost: undefined }), buildPreviewEnv(INPUT))
 })

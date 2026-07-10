@@ -442,7 +442,11 @@ export function getTools() {
       inputSchema: {
         type: "object",
         properties: {
-          targetAgentId: { type: "string", description: "目标 agent 别名" },
+          targetAgentId: {
+            type: "string",
+            description:
+              "目标 agent 花名（范德彪 / 黄仁勋 / 桂芬），也接受 provider id（codex / claude / gemini，自动归一化）。不要带 @ 前缀。",
+          },
           taskSnippet: { type: "string", description: "要求目标 agent 完成的任务" },
         },
         required: ["targetAgentId", "taskSnippet"],
@@ -511,6 +515,19 @@ export function getTools() {
           url: { type: "string", description: "要截图的 URL，默认 http://localhost:3000" },
           alt: { type: "string", description: "图片描述（alt text）" },
         },
+      },
+    },
+    {
+      name: "send_file",
+      description:
+        "把一个文本文件挂到当前消息上：写入服务端 uploads 并嵌入 file 块，web 端可下载查看，飞书渠道会在回复卡后跟发文件消息。只支持 UTF-8 文本（txt/md/json/csv/log/yaml/xml；html 等其余扩展名回落 .txt），文件名 ≤255 字符，内容 ≤1MB；二进制不支持。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          filename: { type: "string", description: "文件名（含扩展名，如 report.md）" },
+          content: { type: "string", description: "文件全文（UTF-8 文本）" },
+        },
+        required: ["filename", "content"],
       },
     },
     {
@@ -828,6 +845,42 @@ async function callTakeScreenshot(params: { url?: string; alt?: string }): Promi
   }
 }
 
+async function callSendFile(params: { filename?: string; content?: string }): Promise<ToolResult> {
+  if (typeof params?.content !== "string" || params.content.length === 0) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: "send_file failed: content is required (non-empty string)" }],
+    }
+  }
+  const identity = getCallbackIdentity()
+  const response = await requestJson(`${identity.apiUrl}/api/callbacks/send-file`, {
+    method: "POST",
+    body: {
+      invocationId: identity.invocationId,
+      callbackToken: identity.callbackToken,
+      filename: params.filename,
+      content: params.content,
+    },
+  })
+
+  if (response.statusCode >= 400) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `send_file failed: ${JSON.stringify(response.json)}` }],
+    }
+  }
+
+  const result = response.json as { ok: boolean; fileUrl: string; name: string }
+  return {
+    content: [
+      {
+        type: "text",
+        text: `File "${result.name}" attached to message. URL: ${result.fileUrl}`,
+      },
+    ],
+  }
+}
+
 async function callRequestPermission(params: {
   action: string
   reason: string
@@ -997,6 +1050,8 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
       return callRequestPermission(args as { action: string; reason: string; context?: string })
     case "take_screenshot":
       return callTakeScreenshot(args as { url?: string; alt?: string })
+    case "send_file":
+      return callSendFile(args as { filename?: string; content?: string })
     case "update_workflow_sop": {
       const backlogItemId = typeof args?.backlogItemId === "string" ? args.backlogItemId.trim() : ""
       if (!backlogItemId) {

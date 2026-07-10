@@ -144,7 +144,8 @@ const INIT_SQL = `
     model TEXT,
     retry_count INTEGER NOT NULL DEFAULT 0,
     retry_reasons TEXT NOT NULL DEFAULT '[]',
-    a2a_call_id TEXT
+    a2a_call_id TEXT,
+    sender_display_name TEXT
   );
 
   CREATE TABLE IF NOT EXISTS invocations (
@@ -679,6 +680,13 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   {
     name: "F026-P5-T0-messages-idx-a2a-call-id",
     sql: "CREATE INDEX IF NOT EXISTS idx_messages_a2a_call_id ON messages(a2a_call_id);",
+  },
+  // F040 P2 T11 · IM 渠道归因真名（timeline alias 替换）。德彪 P2 审 P2-1：
+  // 新库 CREATE 已带此列，旧库只经 createDrizzleDb 打开也必须能升级——
+  // 与 SqliteStore.runAlterMigrations 同名迁移互为镜像（duplicate 容错）
+  {
+    name: "F040-P2-messages-add-sender-display-name",
+    sql: "ALTER TABLE messages ADD COLUMN sender_display_name TEXT;",
   },
 ]
 

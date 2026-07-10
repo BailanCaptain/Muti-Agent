@@ -131,8 +131,9 @@ export class SessionService {
     }))
   }
 
-  createSessionGroup() {
-    const groupId = this.repository.createSessionGroup()
+  /** title 透传（P2.6 /newroom 用；POST /api/session-groups 不传 = 原默认标题行为） */
+  createSessionGroup(title?: string) {
+    const groupId = this.repository.createSessionGroup(title)
     this.repository.ensureDefaultThreads(
       groupId,
       Object.fromEntries(
@@ -240,6 +241,7 @@ export class SessionService {
               a2aConvenerId: message.a2aConvenerId,
               a2aCallStatus: message.a2aCallStatus,
               a2aDeadlineAt: message.a2aDeadlineAt,
+              senderDisplayName: message.senderDisplayName,
             },
           )
         }),
@@ -354,6 +356,7 @@ export class SessionService {
               a2aConvenerId: message.a2aConvenerId,
               a2aCallStatus: message.a2aCallStatus,
               a2aDeadlineAt: message.a2aDeadlineAt,
+              senderDisplayName: message.senderDisplayName,
             },
           )
         })
@@ -393,7 +396,12 @@ export class SessionService {
     return this.repository.listMessages(threadId)
   }
 
-  appendUserMessage(threadId: string, content: string, contentBlocks = "[]") {
+  appendUserMessage(
+    threadId: string,
+    content: string,
+    contentBlocks = "[]",
+    senderDisplayName: string | null = null,
+  ) {
     return this.repository.appendMessage(
       threadId,
       "user",
@@ -405,6 +413,9 @@ export class SessionService {
       null,
       "[]",
       contentBlocks,
+      null,
+      null,
+      senderDisplayName,
     )
   }
 
@@ -560,6 +571,7 @@ export class SessionService {
         a2aConvenerId: message.a2aConvenerId,
         a2aCallStatus: message.a2aCallStatus,
         a2aDeadlineAt: message.a2aDeadlineAt,
+        senderDisplayName: message.senderDisplayName,
       },
     )
   }
@@ -680,13 +692,16 @@ export class SessionService {
       a2aConvenerId?: string | null
       a2aCallStatus?: string | null
       a2aDeadlineAt?: string | null
+      /** F040 P2 T11 · 群桥接归因真名；NULL/缺省 = 村长（web/历史消息零回归） */
+      senderDisplayName?: string | null
     } = {},
   ): TimelineMessage {
     const isConnector = messageType === "connector"
     return {
       id,
       provider: thread.provider,
-      alias: role === "user" ? "村长" : thread.alias,
+      // F040 P2 T11：user 消息优先持久化的发送者真名（群成员）；无则村长（:689 硬编码替换）
+      alias: role === "user" ? (a2aMeta.senderDisplayName ?? "村长") : thread.alias,
       role,
       content:
         role === "user"

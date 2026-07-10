@@ -5,6 +5,7 @@ import type { Provider } from "@multi-agent/shared"
 import { CardBlockComponent } from "./rich-blocks/card-block"
 import { ChecklistBlockComponent } from "./rich-blocks/checklist-block"
 import { DiffBlockComponent } from "./rich-blocks/diff-block"
+import { FileBlockComponent } from "./rich-blocks/file-block"
 import { ImageBlockComponent } from "./rich-blocks/image-block"
 import { ProgressBlockComponent } from "./rich-blocks/progress-block"
 import { TableBlockComponent } from "./rich-blocks/table-block"
@@ -34,6 +35,8 @@ export function BlockRenderer({ blocks, provider }: BlockRendererProps) {
             return <DiffBlockComponent key={index} block={block} />
           case "image":
             return <ImageBlockComponent key={index} block={block} />
+          case "file":
+            return <FileBlockComponent key={index} block={block} />
           case "table":
             return <TableBlockComponent key={index} block={block} />
           case "progress":

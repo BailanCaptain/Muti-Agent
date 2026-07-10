@@ -146,6 +146,12 @@ export class InvocationRegistry<T extends ActiveInvocation> {
     return invocation.finalEmittedAt !== undefined
   }
 
+  // F040 P2 T14（AC13.5 Leg B）：invocation 身份是否仍在册（revoke/TTL 后为 false）。
+  // 与 isFinalEmitted 组合出「在飞」谓词：hasIdentity && !isFinalEmitted。
+  hasIdentity(invocationId: string): boolean {
+    return this.identities.has(invocationId)
+  }
+
   invalidateInvocation(invocationId: string) {
     const invocation = this.identities.get(invocationId)
     if (!invocation) {

@@ -6,12 +6,12 @@ import { encodeMessage, getTools, handleToolCall, parseFrame } from "./server.js
 // getTools tests
 // ---------------------------------------------------------------------------
 
-test("getTools returns 15 tools (F027 B1-a 退役旧 3 session_memories 工具)", () => {
+test("getTools returns 16 tools (F040 修7 +send_file；F027 B1-a 退役旧 3 session_memories 工具)", () => {
   // F027 B1-a（小孙 2026-06-06 拍方案一）：get_memory / get_room_summary / search_room_memories
   // 三个旧 session_memories 工具从广播列表移除（agent 不再发现/使用，收敛到 4 件套）。
   // session_memories 表 + 自动注入（POLICY_FULL）+ dispatch/HTTP 后端不动（legacy 直呼仍优雅可达）。
   const tools = getTools()
-  assert.equal(tools.length, 15, `Expected 15 tools, got ${tools.length}`)
+  assert.equal(tools.length, 16, `Expected 16 tools, got ${tools.length}`)
   const names = tools.map((t) => t.name).sort()
   assert.deepEqual(names, [
     "acquire_wiki_lease",
@@ -25,6 +25,7 @@ test("getTools returns 15 tools (F027 B1-a 退役旧 3 session_memories 工具)"
     "request_decision",
     "request_permission",
     "search_wiki",
+    "send_file",
     "take_screenshot",
     "trigger_mention",
     "update_wiki",
@@ -252,7 +253,6 @@ test("handleToolCall dispatches get_room_context", async () => {
   )
 })
 
-
 test("handleToolCall dispatches take_screenshot", async () => {
   await assert.rejects(
     () => handleToolCall("take_screenshot", { url: "http://localhost:3000" }),
@@ -261,6 +261,22 @@ test("handleToolCall dispatches take_screenshot", async () => {
       return true
     },
   )
+})
+
+test("handleToolCall dispatches send_file（F040 T7 修7）", async () => {
+  await assert.rejects(
+    () => handleToolCall("send_file", { filename: "hello.txt", content: "hi" }),
+    (err: Error) => {
+      assert.ok(err.message.includes("ECONNREFUSED"), `Expected ECONNREFUSED, got: ${err.message}`)
+      return true
+    },
+  )
+})
+
+test("send_file 空 content 本地即拒（不打 API）", async () => {
+  const result = await handleToolCall("send_file", { filename: "x.txt", content: "" })
+  assert.equal(result.isError, true)
+  assert.match(result.content[0].text, /content is required/)
 })
 
 // ---------------------------------------------------------------------------

@@ -67,6 +67,9 @@ export type ImageMeta = {
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; url: string; alt?: string; meta?: ImageMeta }
+  // F040 P3 AC16：文件一等公民（飞书文件入房间/agent 产物回飞书）。
+  // url=/uploads/<uuid>.<ext> 磁盘约定同 image；name=原始文件名（仅展示，落盘名恒 UUID——路径穿越面）
+  | { type: "file"; url: string; name: string; size?: number; mime?: string }
 
 export type SkillEvent = {
   skillName: string
@@ -319,6 +322,8 @@ export type RealtimeClientEvent =
         alias: string
         contentBlocks?: ContentBlock[]
         clientMessageId?: string
+        /** F040 P2 T11 · 外部渠道注入的发送者展示名（群成员真名）；web 端不传 → timeline 村长 */
+        senderDisplayName?: string
       }
     }
   | {

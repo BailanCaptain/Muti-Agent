@@ -5,7 +5,7 @@ import type { ReactNode } from "react"
 
 export function ChatHeader({ children }: { children?: ReactNode }) {
   return (
-    <header className="flex items-center justify-between border-b border-slate-200 bg-surface-elevated px-6 py-4">
+    <header className="flex items-center justify-between border-b border-slate-200 bg-surface-elevated px-3 py-3 md:px-6 md:py-4">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 animate-breathe items-center justify-center rounded-2xl bg-accent-100 text-accent-600">

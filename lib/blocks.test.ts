@@ -71,3 +71,37 @@ describe("normalizeMessageToBlocks × cc_rich (F030 AC3/AC4)", () => {
     expect(b.find((x) => x.kind === "card")).toMatchObject({ title: "另一条" })
   })
 })
+
+describe("normalizeMessageToBlocks × file contentBlocks (F040 P3 AC16)", () => {
+  it("file contentBlock → FileBlock（name/size/mime 透传）", () => {
+    const blocks = normalizeMessageToBlocks(
+      msg({
+        content: "带附件",
+        contentBlocks: [
+          { type: "file", url: "/uploads/ab.pdf", name: "周报.pdf", size: 20480, mime: "application/pdf" },
+        ],
+      }),
+    )
+    expect(blocks.map((b) => b.kind)).toEqual(["markdown", "file"])
+    expect(blocks[1]).toEqual({
+      kind: "file",
+      url: "/uploads/ab.pdf",
+      name: "周报.pdf",
+      size: 20480,
+      mime: "application/pdf",
+    })
+  })
+
+  it("image + file 混合按声明序输出", () => {
+    const blocks = normalizeMessageToBlocks(
+      msg({
+        content: "",
+        contentBlocks: [
+          { type: "image", url: "/uploads/a.png" },
+          { type: "file", url: "/uploads/b.zip", name: "包.zip" },
+        ],
+      }),
+    )
+    expect(blocks.map((b) => b.kind)).toEqual(["image", "file"])
+  })
+})

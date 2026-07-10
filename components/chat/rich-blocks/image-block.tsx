@@ -1,8 +1,8 @@
 "use client"
 
-import { useState, useCallback, useEffect } from "react"
-import { createPortal } from "react-dom"
 import type { ImageBlock } from "@/lib/blocks"
+import { useCallback, useEffect, useState } from "react"
+import { createPortal } from "react-dom"
 
 function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
   useEffect(() => {
@@ -43,12 +43,10 @@ export function ImageBlockComponent({ block }: { block: ImageBlock }) {
           <img
             src={block.url}
             alt={block.alt ?? ""}
-            className="max-h-64 rounded-lg border border-slate-200 object-contain transition hover:border-slate-400 hover:shadow-md"
+            className="max-h-64 max-w-full rounded-lg border border-slate-200 object-contain transition hover:border-slate-400 hover:shadow-md"
           />
         </button>
-        {block.alt && (
-          <figcaption className="mt-1 text-xs text-slate-500">{block.alt}</figcaption>
-        )}
+        {block.alt && <figcaption className="mt-1 text-xs text-slate-500">{block.alt}</figcaption>}
         {block.meta?.viewport && (
           <span className="text-micro text-slate-600">
             {block.meta.viewport.width}&times;{block.meta.viewport.height}
@@ -56,9 +54,7 @@ export function ImageBlockComponent({ block }: { block: ImageBlock }) {
         )}
       </figure>
 
-      {expanded && (
-        <ImageLightbox src={block.url} alt={block.alt ?? ""} onClose={close} />
-      )}
+      {expanded && <ImageLightbox src={block.url} alt={block.alt ?? ""} onClose={close} />}
     </>
   )
 }

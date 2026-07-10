@@ -44,6 +44,7 @@ type MessageRowWithA2a = {
   model: string | null
   retryCount: number
   retryReasons: string
+  senderDisplayName: string | null
   a2aCallId: string | null
   a2aParentCallId: string | null
   a2aRootCallId: string | null
@@ -72,6 +73,7 @@ function hydrateMessage(row: MessageRowWithA2a): MessageRecord {
     model: row.model ?? null,
     retryCount: row.retryCount ?? 0,
     retryReasons: row.retryReasons ?? "[]",
+    senderDisplayName: row.senderDisplayName ?? null,
     a2aCallId: row.a2aCallId ?? null,
     a2aParentCallId: row.a2aParentCallId ?? null,
     a2aRootCallId: row.a2aRootCallId ?? null,
@@ -98,6 +100,8 @@ const MESSAGE_WITH_A2A_SELECT = {
   model: messages.model,
   retryCount: messages.retryCount,
   retryReasons: messages.retryReasons,
+  // F040 P2 T11 · 群桥接归因真名（user 消息；历史/web 消息 NULL → timeline 回落村长）
+  senderDisplayName: messages.senderDisplayName,
   a2aCallId: messages.a2aCallId,
   a2aParentCallId: a2aCalls.parentCallId,
   a2aRootCallId: a2aCalls.rootCallId,
@@ -599,6 +603,7 @@ export class DrizzleSessionRepository {
     contentBlocks = "[]",
     model: string | null = null,
     a2aCallId: string | null = null,
+    senderDisplayName: string | null = null,
   ): MessageRecord {
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
@@ -619,6 +624,7 @@ export class DrizzleSessionRepository {
       model,
       retryCount: 0,
       retryReasons: "[]",
+      senderDisplayName,
       a2aCallId,
       a2aParentCallId: null,
       a2aRootCallId: null,
@@ -645,6 +651,7 @@ export class DrizzleSessionRepository {
         createdAt: now,
         model,
         a2aCallId,
+        senderDisplayName,
       })
       .run()
 

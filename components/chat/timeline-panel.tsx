@@ -106,7 +106,7 @@ export function TimelinePanel() {
     <div
       // F039: 原 rgba(248,250,252) 渐变是 F036 前的股票 slate-50 冷蓝残留，整个聊天区蒙冷膜；
       // 回归 clowder 模型——聊天主区 = surface-elevated（4 档中最亮的暖近白）。
-      className="flex flex-1 flex-col overflow-y-auto bg-surface-elevated px-6 py-8"
+      className="flex flex-1 flex-col overflow-y-auto bg-surface-elevated px-3 py-4 md:px-6 md:py-8"
       ref={scrollRef}
     >
       <div className="mx-auto w-full max-w-[980px]">

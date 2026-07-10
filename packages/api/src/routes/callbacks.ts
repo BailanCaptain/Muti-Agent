@@ -1,12 +1,12 @@
-import type { RealtimeServerEvent } from "@multi-agent/shared"
+import { PROVIDER_ALIASES, type RealtimeServerEvent } from "@multi-agent/shared"
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import type { SessionRepository } from "../db/repositories"
 import {
   FeatureIdMismatchError,
   OptimisticLockError,
 } from "../db/repositories/workflow-sop-repository"
+import { AGENT_FILE_MAX_BYTES } from "../lib/agent-file"
 import type { InvocationRegistry } from "../orchestrator/invocation-registry"
-import { resolveDecisionParams } from "./decision-callback-mapping"
 import type { SessionService } from "../services/session-service"
 import type { WorkflowSopService } from "../services/workflow-sop-service"
 import { WorkflowSopValidationError, validateUpdateSopBody } from "../services/workflow-sop-service"
@@ -14,12 +14,40 @@ import type { UpdateSopInput } from "../services/workflow-sop-types"
 import type { WikiAction } from "../wiki/acl-types"
 import { WikiPathInvalidError, safeWikiPath } from "../wiki/path-containment"
 import type { WikiServices } from "../wiki/wiki-services"
+import { resolveDecisionParams } from "./decision-callback-mapping"
 import type { RealtimeBroadcaster } from "./ws"
 
 type CallbackBody = {
   invocationId?: string
   callbackToken?: string
   content?: string
+}
+
+/**
+ * B025 · trigger_mention 目标归一化（fail-closed）。
+ *
+ * 历史契约歧义：参数名 `targetAgentId` 暗示 provider id，描述要"别名"——agent 传
+ * `codex` / `@范德彪` 都会被原样拼进 `[Call: @codex ...]` / `[Call: @@范德彪 ...]`，
+ * A2A 网关按花名表解析不出 → 派发静默死亡，而工具已返回 ok:true（假成功，真机
+ * 三连击实锤，haiku/opus 都踩）。这里统一：剥 @ 前缀 → 花名精确命中 or provider id
+ * （大小写不敏感）映射花名 → 未知目标显式报错（走 F026 ok:false 冒泡通道让 agent 自纠）。
+ */
+export function resolveMentionTarget(
+  raw: string,
+): { ok: true; alias: string } | { ok: false; error: string } {
+  let t = raw.trim()
+  while (t.startsWith("@")) t = t.slice(1).trim()
+  if (!t) return { ok: false, error: "targetAgentId 为空。" }
+  const aliases = Object.values(PROVIDER_ALIASES)
+  if (aliases.includes(t)) return { ok: true, alias: t }
+  const lower = t.toLowerCase()
+  for (const [provider, alias] of Object.entries(PROVIDER_ALIASES)) {
+    if (provider === lower) return { ok: true, alias }
+  }
+  return {
+    ok: false,
+    error: `未知目标 "${raw}"。可用花名：${aliases.join("、")}；或 provider id：${Object.keys(PROVIDER_ALIASES).join("、")}`,
+  }
 }
 
 // F026 P1 Wiring · T4 dedup constants. Tuned from R-205 evidence: LLM resends
@@ -181,6 +209,13 @@ export function registerCallbackRoutes(
       url?: string
       alt?: string
     }) => Promise<{ ok: true; imageUrl: string }>
+    /** F040 T7 修7：send_file —— agent 出站文件（写 uploads + file 块挂当前回复）。 */
+    sendFile?: (params: {
+      threadId: string
+      sessionGroupId: string
+      filename?: string
+      content: string
+    }) => Promise<{ ok: true; fileUrl: string; name: string }>
     /** F019 P3: WorkflowSop 告示牌引擎. Used by /api/callbacks/update-workflow-sop. */
     workflowSopService?: WorkflowSopService
     /** F027 P3: chap 6 update_wiki MCP — ACL/CAS/lease/fencing 全套。 */
@@ -472,7 +507,11 @@ export function registerCallbackRoutes(
       topK?: string
       scope?: string
     }
-    const invocation = assertInvocation(options.invocations, query.invocationId, query.callbackToken)
+    const invocation = assertInvocation(
+      options.invocations,
+      query.invocationId,
+      query.callbackToken,
+    )
     if (!invocation) {
       reply.code(401)
       return { error: "Invalid invocation identity." }
@@ -589,10 +628,24 @@ export function registerCallbackRoutes(
         return { error: "Thread not found." }
       }
 
+      // B025：目标归一化在派发前把关——未知目标不落 [Call:] 消息，直接 ok:false
+      // 冒泡（与下方 catch 同通道），agent 拿到可用名单可自纠重试。
+      const resolved = resolveMentionTarget(body.targetAgentId)
+      if (!resolved.ok) {
+        options.broadcaster.broadcast({
+          type: "status",
+          payload: {
+            sessionGroupId: thread.sessionGroupId,
+            message: `trigger_mention 失败：${resolved.error}`,
+          },
+        })
+        return { ok: false as const, error: resolved.error }
+      }
+
       if (options.triggerMention) {
         try {
           await options.triggerMention(thread.sessionGroupId, {
-            targetAlias: body.targetAgentId.trim(),
+            targetAlias: resolved.alias,
             taskSnippet: body.taskSnippet.trim(),
             sourceProvider: thread.provider,
             invocationId: invocation.invocationId,
@@ -674,7 +727,10 @@ export function registerCallbackRoutes(
         return { ok: true, selectedIds: result.selectedIds }
       }
 
-      return { ok: true, selectedIds: resolved.value.options.length > 0 ? [resolved.value.options[0].id] : [] }
+      return {
+        ok: true,
+        selectedIds: resolved.value.options.length > 0 ? [resolved.value.options[0].id] : [],
+      }
     },
   )
 
@@ -764,6 +820,66 @@ export function registerCallbackRoutes(
       } catch (err) {
         reply.code(500)
         return { error: err instanceof Error ? err.message : "Screenshot failed" }
+      }
+    },
+  )
+
+  // F040 T7 修7：agent 出站文件（take_screenshot 的 file 对等物）。auth 同上；
+  // content 必填 ≤1MB（对齐 ingest 上限，超限 413）；能力未装配 501。
+  // 修11（德彪 r7 P2）：Fastify 默认 bodyLimit 1MiB 会在 JSON 解析层抢跑 413——
+  // 1MiB content 合法编码（控制字符 \uXXXX 最坏 6×）可达 ~6.3MB 请求体，路由自己的
+  // 字节契约根本执行不到。独立 bodyLimit 放行信封（content 最坏 6× + filename ≤255
+  // 转义后 ≤1530 + 结构字段富余），真实 1MB 契约由下方 Buffer.byteLength 执行。
+  const SEND_FILE_BODY_LIMIT = AGENT_FILE_MAX_BYTES * 6 + 16_384
+  app.post(
+    "/api/callbacks/send-file",
+    { bodyLimit: SEND_FILE_BODY_LIMIT },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const body = request.body as CallbackBody & { filename?: unknown; content?: unknown }
+      const invocation = assertInvocation(
+        options.invocations,
+        body.invocationId,
+        body.callbackToken,
+      )
+      if (!invocation) {
+        reply.code(401)
+        return { error: "Invalid invocation identity." }
+      }
+      if (typeof body.content !== "string" || body.content.length === 0) {
+        reply.code(400)
+        return { error: "content (non-empty string) is required." }
+      }
+      // 修11：filename 有界（255 字符 = 常见文件系统/飞书 file_name 上限），信封数学的前提
+      if (
+        body.filename !== undefined &&
+        (typeof body.filename !== "string" || body.filename.length > 255)
+      ) {
+        reply.code(400)
+        return { error: "filename must be a string of at most 255 chars." }
+      }
+      if (Buffer.byteLength(body.content, "utf8") > AGENT_FILE_MAX_BYTES) {
+        reply.code(413)
+        return { error: "content exceeds 1MB text limit." }
+      }
+      const thread = options.repository.getThreadById(invocation.threadId)
+      if (!thread) {
+        reply.code(404)
+        return { error: "Thread not found." }
+      }
+      if (!options.sendFile) {
+        reply.code(501)
+        return { error: "File attach capability not configured." }
+      }
+      try {
+        return await options.sendFile({
+          threadId: thread.id,
+          sessionGroupId: thread.sessionGroupId,
+          filename: typeof body.filename === "string" ? body.filename : undefined,
+          content: body.content,
+        })
+      } catch (err) {
+        reply.code(500)
+        return { error: err instanceof Error ? err.message : "send_file failed" }
       }
     },
   )

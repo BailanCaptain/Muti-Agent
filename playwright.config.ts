@@ -30,6 +30,11 @@ const apiPort = Number(process.env.E2E_API_PORT ?? 8999)
 // WAL 锁，清理失败不应把测试判红（best-effort，见德彪 r1 P2-1）。
 const runRoot = fs.mkdtempSync(path.join(os.tmpdir(), "multi-agent-e2e-"))
 const env = buildE2eEnv({ apiPort, webPort, runRoot })
+// F040 P2.5：spec 侧种子注入用（channel-admin 放行流要预置审计行——生产里它只由
+// 网关拒绝路径写入，E2E 无飞书连接）。worker 子进程会**重新求值本 config**（见上：
+// 每次求值各建 temp 目录），无守卫会把继承来的真路径覆盖成 worker 自己的空目录——
+// 只有第一次（主进程，webServer 用的那份）算数。
+if (!process.env.E2E_SQLITE_PATH) process.env.E2E_SQLITE_PATH = env.SQLITE_PATH
 
 export default defineConfig({
   testDir: "./tests/e2e",

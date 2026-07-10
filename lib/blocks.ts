@@ -37,6 +37,15 @@ export type ImageBlock = {
   meta?: { source?: string; timestamp?: string; viewport?: { width: number; height: number } }
 }
 
+// F040 P3 AC16：文件块（与 @multi-agent/shared ContentBlock file 变体同构）
+export type FileBlock = {
+  kind: "file"
+  url: string
+  name: string
+  size?: number
+  mime?: string
+}
+
 export type ChecklistBlock = {
   kind: "checklist"
   id: string
@@ -72,6 +81,7 @@ export type Block =
   | CardBlock
   | DiffBlock
   | ImageBlock
+  | FileBlock
   | ChecklistBlock
   | TableBlock
   | ProgressBlock
@@ -116,6 +126,15 @@ export function normalizeMessageToBlocks(message: TimelineMessage): Block[] {
           url: cb.url,
           alt: cb.alt,
           meta: cb.meta,
+        })
+      } else if (cb.type === "file") {
+        // F040 P3 AC16：文件块（飞书文件入房间/agent 产物）
+        blocks.push({
+          kind: "file",
+          url: cb.url,
+          name: cb.name,
+          size: cb.size,
+          mime: cb.mime,
         })
       }
     }

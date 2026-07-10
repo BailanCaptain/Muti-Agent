@@ -113,7 +113,7 @@ export function StatusPanel() {
         minWidth: `${360}px`,
         maxWidth: `${1200}px`,
       }}
-      className="relative flex h-screen shrink-0 flex-col gap-3 overflow-hidden border-l border-slate-200 bg-surface px-4 py-4"
+      className="relative flex h-dvh shrink-0 flex-col gap-3 overflow-hidden border-l border-slate-200 bg-surface px-4 py-4 max-md:!min-w-0 max-md:!w-full"
     >
       <ResizeHandle />
       {/* F027 P3-1 扩展（小孙 2026-06-02）：上方 5 段包成可收缩+可滚动区（flex-1 min-h-0），

@@ -603,3 +603,25 @@ test("r2 P1 · SessionService · getRoomId group 不存在 → null", () => {
   const service = new SessionService(repo as never, [])
   assert.equal(service.getRoomId("nonexistent"), null)
 })
+
+// --- F040 P2 T11: 群桥接归因真名（sender_display_name → timeline alias，:689 硬编码替换）---
+
+test("F040 T11: user 消息带 senderDisplayName → alias 真名；缺省/NULL → 村长（零回归）", () => {
+  const threads = [makeThread("claude")]
+  const messages = [
+    {
+      ...makeMessage("thread-claude", "u1", "群成员的话", "2026-01-01T00:00:01Z", "user"),
+      senderDisplayName: "小李",
+    },
+    makeMessage("thread-claude", "u2", "web 村长的话", "2026-01-01T00:00:02Z", "user"),
+    makeMessage("thread-claude", "a1", "agent 的话", "2026-01-01T00:00:03Z", "assistant"),
+  ]
+  const repo = createMockRepository(threads, messages as never)
+  const service = new SessionService(repo as never, [])
+
+  const delta = service.getActiveGroupDelta("group-1", new Set(), undefined)
+  const byId = new Map(delta.newMessages.map((m) => [m.id, m]))
+  assert.equal(byId.get("u1")?.alias, "小李", "持久化真名进 timeline")
+  assert.equal(byId.get("u2")?.alias, "村长", "无名 user 消息回落村长（历史/web 零回归）")
+  assert.equal(byId.get("a1")?.alias, "Reviewer", "assistant alias 不受影响")
+})

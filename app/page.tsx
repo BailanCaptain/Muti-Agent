@@ -343,10 +343,24 @@ export default function HomePage() {
   const toggleSidebar = useLayoutStore((state) => state.toggleSidebar)
   const toggleStatusPanel = useLayoutStore((state) => state.toggleStatusPanel)
 
+  // F040 T7 手机适配：<md 三列布局会把主区挤没，挂载时默认收起两侧栏（都以抽屉形态用）；
+  // 之后开合交给用户（persist 记忆），桌面不受影响。hydrated 门（T7 真机第五轮）：
+  // dev 分片在手机/组网上下载慢，hydration 前这段窗口 store 还是持久化的桌面态
+  // （两抽屉全开+数据全空压在屏上）——hydration 完成前手机上不渲染抽屉层。
+  const [hydrated, setHydrated] = useState(false)
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      const layout = useLayoutStore.getState()
+      if (!layout.sidebarCollapsed) layout.toggleSidebar()
+      if (!layout.statusPanelCollapsed) layout.toggleStatusPanel()
+    }
+    setHydrated(true)
+  }, [])
+
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-surface">
+    <div className="flex h-dvh w-full overflow-hidden bg-surface">
       {sidebarCollapsed ? (
-        <div className="flex h-screen w-12 shrink-0 flex-col items-center border-r border-slate-200 bg-surface py-4">
+        <div className="hidden h-dvh w-12 shrink-0 flex-col items-center border-r border-slate-200 bg-surface py-4 md:flex">
           <button
             className="rounded-lg p-2 text-slate-400 transition hover:bg-white/70 hover:text-slate-600"
             onClick={toggleSidebar}
@@ -357,13 +371,36 @@ export default function HomePage() {
           </button>
         </div>
       ) : (
-        <SessionSidebar />
+        <>
+          {/* F040 T7 手机（<md）：侧栏是覆盖式抽屉，点遮罩收起；md+ 恢复静态列 */}
+          <button
+            aria-label="关闭会话列表"
+            className={`fixed inset-0 z-30 bg-slate-900/40 md:hidden ${hydrated ? "" : "max-md:hidden"}`}
+            onClick={toggleSidebar}
+            type="button"
+          />
+          <div
+            className={`fixed inset-y-0 left-0 z-40 shadow-2xl md:static md:z-auto md:shrink-0 md:shadow-none ${hydrated ? "" : "max-md:hidden"}`}
+          >
+            <SessionSidebar />
+          </div>
+        </>
       )}
       <main className="flex flex-1 flex-col overflow-hidden">
         <ChatHeader>
+          {sidebarCollapsed && (
+            <button
+              className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 md:hidden"
+              onClick={toggleSidebar}
+              title="展开侧边栏"
+              type="button"
+            >
+              <PanelLeft className="h-4 w-4" />
+            </button>
+          )}
           {!sidebarCollapsed && (
             <button
-              className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+              className="hidden rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 md:block"
               onClick={toggleSidebar}
               title="折叠侧边栏"
               type="button"
@@ -373,7 +410,7 @@ export default function HomePage() {
           )}
           {!statusPanelCollapsed && (
             <button
-              className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+              className="hidden rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 md:block"
               onClick={toggleStatusPanel}
               title="折叠状态面板"
               type="button"
@@ -381,10 +418,20 @@ export default function HomePage() {
               <PanelRightClose className="h-4 w-4" />
             </button>
           )}
+          {statusPanelCollapsed && (
+            <button
+              className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 md:hidden"
+              onClick={toggleStatusPanel}
+              title="展开状态面板"
+              type="button"
+            >
+              <PanelRight className="h-4 w-4" />
+            </button>
+          )}
         </ChatHeader>
         <div className="flex flex-1 flex-col overflow-hidden bg-surface-elevated">
           <TimelinePanel />
-          <div className="p-6">
+          <div className="px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 md:p-6">
             <div className="mx-auto max-w-4xl">
               <Composer />
             </div>
@@ -392,7 +439,7 @@ export default function HomePage() {
         </div>
       </main>
       {previewOpen && (
-        <div className="w-[480px] shrink-0">
+        <div className="hidden w-[480px] shrink-0 md:block">
           <BrowserPanel
             initialPort={previewPort}
             initialPath={previewPath}
@@ -401,7 +448,7 @@ export default function HomePage() {
         </div>
       )}
       {statusPanelCollapsed ? (
-        <div className="flex h-screen w-12 shrink-0 flex-col items-center border-l border-slate-200 bg-surface py-4">
+        <div className="hidden h-dvh w-12 shrink-0 flex-col items-center border-l border-slate-200 bg-surface py-4 md:flex">
           <button
             className="rounded-lg p-2 text-slate-400 transition hover:bg-white/70 hover:text-slate-600"
             onClick={toggleStatusPanel}
@@ -412,7 +459,20 @@ export default function HomePage() {
           </button>
         </div>
       ) : (
-        <StatusPanel />
+        <>
+          {/* F040 T7 手机（<md）：状态面板是右侧抽屉，点遮罩收起；md+ 恢复静态列 */}
+          <button
+            aria-label="关闭状态面板"
+            className={`fixed inset-0 z-30 bg-slate-900/40 md:hidden ${hydrated ? "" : "max-md:hidden"}`}
+            onClick={toggleStatusPanel}
+            type="button"
+          />
+          <div
+            className={`fixed inset-y-0 right-0 z-40 w-screen max-w-[min(85vw,400px)] shadow-2xl md:static md:z-auto md:w-auto md:max-w-none md:shrink-0 md:shadow-none ${hydrated ? "" : "max-md:hidden"}`}
+          >
+            <StatusPanel />
+          </div>
+        </>
       )}
       <SettingsModal />
     </div>

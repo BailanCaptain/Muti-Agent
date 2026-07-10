@@ -31,14 +31,27 @@ export function buildPreviewEnv(input: {
   worktreeName: string
   apiPort: number
   webPort: number
+  /**
+   * F040 T7：私有组网（Tailscale/LAN）真机联调 — 手机上 localhost 指向手机自己，
+   * NEXT_PUBLIC 四址必须烤成本机组网 IP。设置后 CORS 变双白名单（本机 localhost
+   * 调试 + 手机组网 origin 同时放行，parseCorsOrigin 原生支持逗号列表）。
+   * 注意 spawn 用 { ...process.env, ...env } 生成值优先——外层直接传 NEXT_PUBLIC_*
+   * 会被本函数产物覆盖（T7 真机实证），必须走这个参数。
+   */
+  publicHost?: string
 }): PreviewEnv {
-  const apiBase = `http://localhost:${input.apiPort}`
+  const host = input.publicHost?.trim() || "localhost"
+  const apiBase = `http://${host}:${input.apiPort}`
+  const corsOrigin =
+    host === "localhost"
+      ? `http://localhost:${input.webPort}`
+      : `http://localhost:${input.webPort},http://${host}:${input.webPort}`
   return {
     API_PORT: String(input.apiPort),
     PORT: String(input.webPort),
-    CORS_ORIGIN: `http://localhost:${input.webPort}`,
+    CORS_ORIGIN: corsOrigin,
     NEXT_PUBLIC_API_HTTP_URL: apiBase,
-    NEXT_PUBLIC_API_WS_URL: `ws://localhost:${input.apiPort}/ws`,
+    NEXT_PUBLIC_API_WS_URL: `ws://${host}:${input.apiPort}/ws`,
     NEXT_PUBLIC_API_URL: apiBase,
     NEXT_PUBLIC_API_BASE_URL: apiBase,
     NEXT_PUBLIC_APP_TITLE_PREFIX: `[${input.worktreeName}] `,

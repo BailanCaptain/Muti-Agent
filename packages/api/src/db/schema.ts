@@ -1,4 +1,13 @@
-import { blob, index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core"
+import {
+  blob,
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core"
 
 export const sessionGroups = sqliteTable("session_groups", {
   id: text("id").primaryKey(),
@@ -83,6 +92,9 @@ export const messages = sqliteTable(
     // F026 P5 T0 · 关联到 a2a_calls 表的协议字段（onBehalfOf / parentCallId / displayMode 等）。
     // 仅 a2a 派发产生的 connector message 写入；普通 message 为 null。前端 LEFT JOIN 取协议字段。
     a2aCallId: text("a2a_call_id"),
+    // F040 P2 T10 · 群桥接归因真名（AC11 正式级）：user 消息的发送者展示名；
+    // 历史消息/本地 web 消息 NULL（timeline 回落村长）。
+    senderDisplayName: text("sender_display_name"),
   },
   (table) => [
     index("idx_messages_thread_id").on(table.threadId),
@@ -559,5 +571,156 @@ export const roomAgentSessions = sqliteTable(
     index("idx_room_agent_sessions").on(table.roomId, table.alias, table.sessionSeq),
     // archived='N' 过滤 + room/alias 维度（current.md 派生 + 100k sharding active 查询）
     index("idx_room_agent_sessions_active").on(table.archived, table.roomId, table.alias),
+  ],
+)
+
+// ── F040 渠道网关三表（DDL 真相源在 sqlite.ts migrate()，此处为 drizzle 类型镜像）──
+
+export const channelBindings = sqliteTable(
+  "channel_bindings",
+  {
+    id: text("id").primaryKey(),
+    connectorId: text("connector_id").notNull(),
+    externalChatId: text("external_chat_id").notNull(),
+    chatKind: text("chat_kind").notNull(), // 'p2p' | 'group'
+    sessionGroupId: text("session_group_id").notNull(),
+    defaultProvider: text("default_provider").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [uniqueIndex("ux_channel_binding_ext").on(table.connectorId, table.externalChatId)],
+)
+
+export const channelInboundLedger = sqliteTable(
+  "channel_inbound_ledger",
+  {
+    id: text("id").primaryKey(),
+    connectorId: text("connector_id").notNull(),
+    externalChatId: text("external_chat_id").notNull(),
+    externalMessageId: text("external_message_id").notNull(),
+    bindingId: text("binding_id").notNull(),
+    senderOpenId: text("sender_open_id").notNull(),
+    content: text("content").notNull(),
+    seq: integer("seq").notNull(),
+    state: text("state").notNull(), // 'queued' | 'injected' | 'rejected'
+    rootMessageId: text("root_message_id"),
+    error: text("error"),
+    placeholderMessageId: text("placeholder_message_id"), // F040 P3 AC15：飞书占位卡 id
+    placeholderState: text("placeholder_state"), // 'sent' | 'replaced' | 'failed' | 'expired'
+    attachments: text("attachments"), // F040 P3 AC16：入站媒体 JSON [{kind,url,name}]
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("ux_channel_inbound_ext").on(
+      table.connectorId,
+      table.externalChatId,
+      table.externalMessageId,
+    ),
+    index("idx_channel_inbound_queue").on(table.bindingId, table.state, table.seq),
+    index("idx_channel_inbound_root").on(table.rootMessageId),
+  ],
+)
+
+export const channelOutboundLedger = sqliteTable(
+  "channel_outbound_ledger",
+  {
+    id: text("id").primaryKey(),
+    bindingId: text("binding_id").notNull(),
+    internalMessageId: text("internal_message_id").notNull(),
+    state: text("state").notNull(), // 'pending' | 'attempted' | 'sent' | 'failed_terminal' | 'held_order'(AC13.5)
+    attempts: integer("attempts").notNull().default(0),
+    possibleDuplicate: integer("possible_duplicate").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    // F040 P2 T14（AC13.5 顺序投递）：root 链锚 + 房间起笔时刻（Leg A durable 判序）+ hold 计时基准
+    rootMessageId: text("root_message_id"),
+    messageCreatedAt: text("message_created_at"),
+    // 德彪 P2 审 P2-2：同毫秒 tie-breaker（messages.rowid 快照，与房间列表同序键）
+    messageOrderSeq: integer("message_order_seq"),
+    holdSince: text("hold_since"),
+  },
+  (table) => [
+    uniqueIndex("ux_channel_outbound_msg").on(table.bindingId, table.internalMessageId),
+    index("idx_channel_outbound_state").on(table.state),
+  ],
+)
+
+// F040 Phase 2.5（D17 AC-M1）：渠道授权配置 DB 真相源。语义合同见 db/sqlite.ts 同名 DDL 注释。
+export const channelAdminMembers = sqliteTable(
+  "channel_admin_members",
+  {
+    channel: text("channel").notNull(),
+    openId: text("open_id").notNull(),
+    displayName: text("display_name").notNull(),
+    role: text("role").notNull(), // 'owner'（p2p+群全权）| 'participant'（仅群）
+    // P2.6 AC-N3：0 = 禁用（按非白名单拒，保留行以便一键恢复；替代「只能删」）
+    enabled: integer("enabled").notNull().default(1),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.channel, table.openId] })],
+)
+
+export const channelAdminGroups = sqliteTable(
+  "channel_admin_groups",
+  {
+    channel: text("channel").notNull(),
+    chatId: text("chat_id").notNull(),
+    displayName: text("display_name").notNull().default(""),
+    sessionGroupId: text("session_group_id"), // 绑定种子；运行时真相源仍 channel_bindings（D3）
+    enabled: integer("enabled").notNull().default(1),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.channel, table.chatId] })],
+)
+
+export const channelInboundAudit = sqliteTable(
+  "channel_inbound_audit",
+  {
+    id: text("id").primaryKey(),
+    channel: text("channel").notNull(),
+    chatId: text("chat_id").notNull(),
+    chatKind: text("chat_kind").notNull(), // 'p2p' | 'group'
+    openId: text("open_id").notNull(),
+    reason: text("reason").notNull(), // allowlist | group-not-allowed | member-not-allowed | unbound
+    count: integer("count").notNull().default(1),
+    firstAt: text("first_at").notNull(),
+    lastAt: text("last_at").notNull(),
+    status: text("status").notNull().default("pending"), // pending | allowed | dismissed
+  },
+  (table) => [
+    uniqueIndex("ux_channel_inbound_audit_agg").on(
+      table.channel,
+      table.chatKind,
+      table.chatId,
+      table.openId,
+      table.reason,
+    ),
+  ],
+)
+
+// P2.6（AC-N1）命令面幂等 + 特权审计（UNIQUE 三元组 = WS 补推去重；先登记后执行）
+export const channelCommandAudit = sqliteTable(
+  "channel_command_audit",
+  {
+    id: text("id").primaryKey(),
+    channel: text("channel").notNull(),
+    externalChatId: text("external_chat_id").notNull(),
+    externalMessageId: text("external_message_id").notNull(),
+    openId: text("open_id").notNull(),
+    chatKind: text("chat_kind").notNull(), // 'p2p' | 'group'
+    rawText: text("raw_text").notNull(),
+    result: text("result").notNull().default("received"), // received | done | denied | error:<截断>
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("ux_channel_command_msg").on(
+      table.channel,
+      table.externalChatId,
+      table.externalMessageId,
+    ),
   ],
 )

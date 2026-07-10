@@ -10,7 +10,7 @@ import { PROVIDER_ALIASES, getContextWindowForModel } from "@multi-agent/shared"
 import type { AppEventBus } from "../events/event-bus"
 import { createLogger } from "../lib/logger"
 import { perfCollector } from "../lib/perf-collector"
-import { A2AChainRegistry } from "../orchestrator/a2a-chain"
+import { A2AChainRegistry, hasEarlierAliveEntry } from "../orchestrator/a2a-chain"
 import { DEFAULT_A2A_CALL_DEADLINE_MS } from "../orchestrator/a2a-gateway"
 import {
   type AdaptiveRecallCoordinator,
@@ -922,6 +922,29 @@ export class MessageService {
    * No-op when the board has no pending entries (idempotent re-entry from
    * stacked settle events is safe).
    */
+  /**
+   * F040 P2 T14（AC13.5 Leg B）：同 root 链上是否存在起笔不晚于 beforeCreatedAt 的在飞 turn。
+   * 在飞 = chainRegistry 有条目（带 rootMessageId）且 invocation 身份在册未 finalEmitted
+   * （revoke/TTL/失败注销后自然放空——死 invocation 永不产 final，不该阻塞）。
+   * createdAt 用登记时刻(ms)做起笔近似（登记与 assistant 行插入同步相邻，误差 ms 级）；
+   * 同毫秒平局保守阻塞 + excludeInvocationId 自排除（判定核见 hasEarlierAliveEntry，
+   * 德彪 P2 审 P2-2）。飞书出站顺序门（Leg B）消费。
+   */
+  hasEarlierRunningTurn(
+    rootMessageId: string,
+    beforeCreatedAtIso: string,
+    excludeInvocationId?: string,
+  ): boolean {
+    const beforeMs = Date.parse(beforeCreatedAtIso)
+    if (!Number.isFinite(beforeMs)) return false
+    return hasEarlierAliveEntry(
+      this.chainRegistry.listByRoot(rootMessageId),
+      beforeMs,
+      (id) => this.invocations.hasIdentity(id) && !this.invocations.isFinalEmitted(id),
+      excludeInvocationId,
+    )
+  }
+
   flushDecisionBoard(sessionGroupId: string): void {
     const board = this.decisionBoard
     if (!board) return
@@ -1308,6 +1331,8 @@ export class MessageService {
       thread.id,
       event.payload.content,
       contentBlocksJson,
+      // F040 P2 T11 · 外部渠道注入的发送者真名（群成员）；web 端不传 → NULL → timeline 村长
+      event.payload.senderDisplayName ?? null,
     )
     const rootMessageId = this.dispatch.registerUserRoot(userMessage.id, thread.sessionGroupId)
     // F026 P2 Step 1A.2 · 建 user-root call —— call tree 的源点。R-080 实证 user 入口
@@ -2536,6 +2561,9 @@ export class MessageService {
         agentId: thread.alias,
         status: "idle",
         exitCode: result.exitCode,
+        // F040 D16：终稿 id + call tree root，供渠道出站账本 key 与 D15 溯源
+        assistantMessageId: assistant.id,
+        rootMessageId: options.rootMessageId,
         createdAt: new Date().toISOString(),
       })
 
@@ -2777,6 +2805,9 @@ export class MessageService {
         status: "error",
         error: message,
         exitCode: null,
+        // F040 D16：错误终态也带终稿+root，供渠道回执溯源投递
+        assistantMessageId: assistant.id,
+        rootMessageId: options.rootMessageId,
         createdAt: new Date().toISOString(),
       })
 
@@ -3215,7 +3246,9 @@ export class MessageService {
     ]
   }
 
-  private getBusyStatus(threadId: string, sessionGroupId: string) {
+  // F040：渠道网关 headless 注入前需查 group 是否忙（busy 时排队不注入）。
+  // 从 private 放宽为 public 供 MessageInjector 缝合面消费，行为不变。
+  getBusyStatus(threadId: string, sessionGroupId: string) {
     const thread = this.dispatch.resolveThread(threadId)
     if (!thread) return null
 

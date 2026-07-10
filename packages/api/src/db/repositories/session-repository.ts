@@ -30,6 +30,7 @@ type MessageRow = {
   createdAt: string
   retryCount: number | null
   retryReasons: string | null
+  senderDisplayName: string | null
   // F026 P5 T0 · LEFT JOIN a2a_calls 出来的协议字段
   a2aCallId: string | null
   a2aParentCallId: string | null
@@ -46,6 +47,7 @@ function hydrateMessage(row: MessageRow): MessageRecord {
     connectorSource: row.connectorSource
       ? (JSON.parse(row.connectorSource) as ConnectorSourceRecord)
       : null,
+    senderDisplayName: row.senderDisplayName ?? null,
     groupId: row.groupId ?? null,
     groupRole: (row.groupRole as MessageRecord["groupRole"]) ?? null,
     toolEvents: row.toolEvents ?? "[]",
@@ -365,6 +367,7 @@ export class SessionRepository {
     const rows = this.store.db
       .prepare(
         `SELECT m.id, m.thread_id as threadId, m.role, m.content, m.thinking, m.message_type as messageType, m.connector_source as connectorSource, m.group_id as groupId, m.group_role as groupRole, m.tool_events as toolEvents, m.content_blocks as contentBlocks, m.created_at as createdAt, m.model, m.retry_count as retryCount, m.retry_reasons as retryReasons,
+                m.sender_display_name as senderDisplayName,
                 m.a2a_call_id as a2aCallId,
                 c.parent_call_id as a2aParentCallId,
                 c.root_call_id as a2aRootCallId,
@@ -392,6 +395,7 @@ export class SessionRepository {
       this.store.db
         .prepare(
           `SELECT m.id, m.thread_id as threadId, m.role, m.content, m.thinking, m.message_type as messageType, m.connector_source as connectorSource, m.group_id as groupId, m.group_role as groupRole, m.tool_events as toolEvents, m.content_blocks as contentBlocks, m.created_at as createdAt, m.model, m.retry_count as retryCount, m.retry_reasons as retryReasons,
+                m.sender_display_name as senderDisplayName,
                 m.a2a_call_id as a2aCallId,
                 c.parent_call_id as a2aParentCallId,
                 c.root_call_id as a2aRootCallId,
@@ -412,6 +416,7 @@ export class SessionRepository {
     const rows = this.store.db
       .prepare(
         `SELECT m.id, m.thread_id as threadId, m.role, m.content, m.thinking, m.message_type as messageType, m.connector_source as connectorSource, m.group_id as groupId, m.group_role as groupRole, m.tool_events as toolEvents, m.content_blocks as contentBlocks, m.created_at as createdAt, m.model, m.retry_count as retryCount, m.retry_reasons as retryReasons,
+                m.sender_display_name as senderDisplayName,
                 m.a2a_call_id as a2aCallId,
                 c.parent_call_id as a2aParentCallId,
                 c.root_call_id as a2aRootCallId,
@@ -442,6 +447,7 @@ export class SessionRepository {
     contentBlocks = "[]",
     model: string | null = null,
     a2aCallId: string | null = null,
+    senderDisplayName: string | null = null,
   ) {
     const message: MessageRecord = {
       id: crypto.randomUUID(),
@@ -450,6 +456,7 @@ export class SessionRepository {
       content,
       thinking,
       messageType,
+      senderDisplayName,
       connectorSource,
       groupId,
       groupRole,
@@ -476,8 +483,8 @@ export class SessionRepository {
     // 让 INSERT messages 不受影响 (生产路径表存在 → INSERT 正常; 测试路径表缺 → noop).
     this.store.db
       .prepare(
-        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, group_id, group_role, tool_events, content_blocks, created_at, model, a2a_call_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, thread_id, role, content, thinking, message_type, connector_source, group_id, group_role, tool_events, content_blocks, created_at, model, a2a_call_id, sender_display_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -494,6 +501,7 @@ export class SessionRepository {
         message.createdAt,
         message.model,
         a2aCallId,
+        senderDisplayName,
       )
     try {
       this.store.db

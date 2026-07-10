@@ -9,7 +9,7 @@ import { claimPorts, releasePorts } from "./worktree-port-registry"
 // worktree-preview.test.ts 零改动保持绿。
 export { buildPreviewEnv } from "../packages/shared/src/preview-env"
 export type { PreviewEnv } from "../packages/shared/src/preview-env"
-import { buildPreviewEnv, type PreviewEnv } from "../packages/shared/src/preview-env"
+import { type PreviewEnv, buildPreviewEnv } from "../packages/shared/src/preview-env"
 
 export function buildDotenvContent(env: PreviewEnv): string {
   const keys: (keyof PreviewEnv)[] = [
@@ -115,12 +115,7 @@ export function formatPreviewBanner(input: {
   }
 
   const title = `worktree ${input.worktreeName} preview`
-  const lines = [
-    title,
-    `  web: ${webUrl}`,
-    `  api: ${apiUrl}`,
-    keyLine,
-  ]
+  const lines = [title, `  web: ${webUrl}`, `  api: ${apiUrl}`, keyLine]
   const width = Math.max(...lines.map((l) => l.length)) + 2
   const border = "+".padEnd(width + 2, "-") + "+"
   const padded = lines.map((l) => `| ${l.padEnd(width - 1)}|`).join("\n")
@@ -158,6 +153,8 @@ async function main(): Promise<void> {
     worktreeName,
     apiPort: entry.apiPort,
     webPort: entry.webPort,
+    // F040 T7：手机走 Tailscale/局域网真机联调时设本机组网 IP（见 preview-env.ts publicHost 注释）
+    publicHost: process.env.WORKTREE_PREVIEW_PUBLIC_HOST,
   })
 
   fs.mkdirSync(path.dirname(env.SQLITE_PATH), { recursive: true })

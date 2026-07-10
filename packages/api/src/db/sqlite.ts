@@ -56,6 +56,8 @@ export type MessageRecord = {
   retryCount: number
   /** JSON 数组字符串，按 attempt 顺序追加 dispatch validation reason */
   retryReasons: string
+  // F040 P2 T11 · 群桥接归因真名（user 消息持久化发送者展示名；历史/web NULL → timeline 村长）
+  senderDisplayName: string | null
   // F026 P5 T0 · A2A 关联键（仅 a2a 派发产生的 connector message 写入）
   a2aCallId: string | null
   // F026 P5 T0 · LEFT JOIN a2a_calls 取协议字段（hydrateMessage 填充）
@@ -173,7 +175,8 @@ export class SqliteStore {
         created_at TEXT NOT NULL,
         model TEXT,
         retry_count INTEGER NOT NULL DEFAULT 0,
-        retry_reasons TEXT NOT NULL DEFAULT '[]'
+        retry_reasons TEXT NOT NULL DEFAULT '[]',
+        sender_display_name TEXT
       );
 
       CREATE TABLE IF NOT EXISTS invocations (
@@ -312,6 +315,121 @@ export class SqliteStore {
     // 创建 parallel_groups 表。老 DB 已有该表保留为死表，drizzle 不读，
     // 后续 cleanup migration 单独操作（不在本步范围）。
 
+    // F040 渠道网关三表：绑定（D3/D8）/ 入站账本兼 FIFO（D10/D12，UNIQUE 三元组
+    // 先登记后注入）/ 出站账本（D11 at-least-once 状态机 + reconcile）。
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS channel_bindings (
+        id TEXT PRIMARY KEY,
+        connector_id TEXT NOT NULL,
+        external_chat_id TEXT NOT NULL,
+        chat_kind TEXT NOT NULL CHECK(chat_kind IN ('p2p','group')),
+        session_group_id TEXT NOT NULL,
+        default_provider TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS channel_inbound_ledger (
+        id TEXT PRIMARY KEY,
+        connector_id TEXT NOT NULL,
+        external_chat_id TEXT NOT NULL,
+        external_message_id TEXT NOT NULL,
+        binding_id TEXT NOT NULL,
+        sender_open_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('queued','injected','rejected')),
+        root_message_id TEXT,
+        error TEXT,
+        placeholder_message_id TEXT,
+        placeholder_state TEXT CHECK(placeholder_state IN ('sent','replaced','failed','expired')),
+        attachments TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS channel_outbound_ledger (
+        id TEXT PRIMARY KEY,
+        binding_id TEXT NOT NULL,
+        internal_message_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('pending','attempted','sent','failed_terminal','held_order')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        possible_duplicate INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        root_message_id TEXT,
+        message_created_at TEXT,
+        message_order_seq INTEGER,
+        hold_since TEXT
+      );
+    `)
+
+    // F040 Phase 2.5（D17 AC-M1）：渠道授权配置 DB 真相源三表。members 一张表吃掉
+    // ALLOWED_OPEN_IDS（role='owner' ⇒ p2p+群全权）与 GROUP_MEMBERS（participant ⇒ 仅群）
+    // 两个 env 域；groups.enabled=0 = 从白名单摘除（陌生群语义静默拒）、session_group_id
+    // 仅是绑定种子（运行时真相源仍 channel_bindings，D3）；audit 按聚合键 UNIQUE upsert，
+    // 重复拒绝只涨 count 不回退 status（dismissed 保持 dismissed）。
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS channel_admin_members (
+        channel TEXT NOT NULL,
+        open_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN ('owner','participant')),
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (channel, open_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS channel_admin_groups (
+        channel TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        display_name TEXT NOT NULL DEFAULT '',
+        session_group_id TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (channel, chat_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS channel_inbound_audit (
+        id TEXT PRIMARY KEY,
+        channel TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        chat_kind TEXT NOT NULL CHECK(chat_kind IN ('p2p','group')),
+        open_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        count INTEGER NOT NULL DEFAULT 1,
+        first_at TEXT NOT NULL,
+        last_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','allowed','dismissed')),
+        UNIQUE (channel, chat_kind, chat_id, open_id, reason)
+      );
+
+      -- P2.6（AC-N1）命令面：幂等 + 特权审计双职能。UNIQUE 三元组 = WS 断线补推去重
+      -- （T4 真机观察过补推，/newroom 重放 = 重复建房）；不进 inbound_ledger（state CHECK
+      -- 闭集 + binding_id NOT NULL，而未绑群恰恰要能跑 /newroom）。先登记后执行：
+      -- 进程半途死 → 重放被去重（宁丢一次命令让人重敲，不重复执行特权动作）。
+      CREATE TABLE IF NOT EXISTS channel_command_audit (
+        id TEXT PRIMARY KEY,
+        channel TEXT NOT NULL,
+        external_chat_id TEXT NOT NULL,
+        external_message_id TEXT NOT NULL,
+        open_id TEXT NOT NULL,
+        chat_kind TEXT NOT NULL CHECK(chat_kind IN ('p2p','group')),
+        raw_text TEXT NOT NULL,
+        result TEXT NOT NULL DEFAULT 'received',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (channel, external_chat_id, external_message_id)
+      );
+    `)
+
+    // F040 P2 T14（AC13.5）：老库（仅 F040 分支预览库，feature 未发版）state CHECK
+    // 不含 held_order 且缺三列 —— SQLite 不能 ALTER CHECK，走表重建（数据全量拷贝，
+    // server 启动前有 ensurePreMigrationBackup 兜底）。幂等守卫=DDL 文本含 held_order 即跳过。
+    this.rebuildOutboundLedgerForHeldOrder()
+
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_messages_thread_id ON messages(thread_id);
       CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
@@ -333,6 +451,13 @@ export class SqliteStore {
       -- 不存在时，在此 INIT_SQL 阶段建该索引会炸 "no such column" SQL logic error.
       CREATE INDEX IF NOT EXISTS idx_a2a_worklists_parent_call_active ON a2a_worklists(parent_call_id, status);
       CREATE INDEX IF NOT EXISTS idx_a2a_worklists_root_status ON a2a_worklists(root_call_id, status);
+      -- F040 渠道表约束/索引：UNIQUE 是幂等与投递去重的正确性基础（不是优化）
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_channel_binding_ext ON channel_bindings(connector_id, external_chat_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_channel_inbound_ext ON channel_inbound_ledger(connector_id, external_chat_id, external_message_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_channel_outbound_msg ON channel_outbound_ledger(binding_id, internal_message_id);
+      CREATE INDEX IF NOT EXISTS idx_channel_inbound_queue ON channel_inbound_ledger(binding_id, state, seq);
+      CREATE INDEX IF NOT EXISTS idx_channel_inbound_root ON channel_inbound_ledger(root_message_id);
+      CREATE INDEX IF NOT EXISTS idx_channel_outbound_state ON channel_outbound_ledger(state);
     `)
 
     // Idempotent ALTER TABLE for pre-existing databases. CREATE TABLE IF NOT
@@ -388,6 +513,50 @@ export class SqliteStore {
     }>
     const row = rows.find((r) => r.name === column)
     return row ? row.notnull === 1 : false
+  }
+
+  /**
+   * F040 P2 T14：channel_outbound_ledger CHECK 扩容（+held_order）+ 三列
+   * （root_message_id / message_created_at / hold_since，AC13.5 顺序投递）。
+   * SQLite 无法 ALTER CHECK → 标准表重建：建 v2 → 全量拷 → drop 旧 → rename →
+   * 重建 UNIQUE 索引（随旧表一起被 drop）。守卫：现表 DDL 已含 held_order 则跳过。
+   */
+  private rebuildOutboundLedgerForHeldOrder(): void {
+    const row = this.db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='channel_outbound_ledger'",
+      )
+      .get() as { sql?: string } | undefined
+    if (!row?.sql || row.sql.includes("held_order")) return
+    this.db.exec(`
+      BEGIN;
+      CREATE TABLE channel_outbound_ledger_v2 (
+        id TEXT PRIMARY KEY,
+        binding_id TEXT NOT NULL,
+        internal_message_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('pending','attempted','sent','failed_terminal','held_order')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        possible_duplicate INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        root_message_id TEXT,
+        message_created_at TEXT,
+        message_order_seq INTEGER,
+        hold_since TEXT
+      );
+      INSERT INTO channel_outbound_ledger_v2
+        (id, binding_id, internal_message_id, state, attempts, possible_duplicate, last_error, created_at, updated_at)
+        SELECT id, binding_id, internal_message_id, state, attempts, possible_duplicate, last_error, created_at, updated_at
+        FROM channel_outbound_ledger;
+      DROP TABLE channel_outbound_ledger;
+      ALTER TABLE channel_outbound_ledger_v2 RENAME TO channel_outbound_ledger;
+      COMMIT;
+    `)
+    // UNIQUE 索引随旧表被 drop，立即重建（与 INIT 同名幂等；UNIQUE 是投递去重正确性基础）
+    this.db.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS ux_channel_outbound_msg ON channel_outbound_ledger(binding_id, internal_message_id);",
+    )
   }
 
   private runAlterMigrations(): void {
@@ -462,6 +631,45 @@ export class SqliteStore {
       {
         name: "F026-P5-T0-messages-idx-a2a-call-id",
         sql: "CREATE INDEX IF NOT EXISTS idx_messages_a2a_call_id ON messages(a2a_call_id)",
+      },
+      // F040 P2 T10 · 群桥接归因真名持久化（AC11 正式级）：注入时回填，
+      // timeline 读取替换 session-service :689 村长硬编码；历史消息 NULL 兼容
+      {
+        name: "F040-P2-messages-add-sender-display-name",
+        sql: "ALTER TABLE messages ADD COLUMN sender_display_name TEXT",
+      },
+      // F040 P2 德彪审 P2-2 · AC13.5 同毫秒 tie-breaker（messages.rowid 快照）。
+      // 覆盖「已过 held_order 重建但缺此列」的中间态库（重建 DDL 现已内联该列，
+      // 新建/重建路径直接有；此 ALTER 兜剩余路径，duplicate 容错）
+      {
+        name: "F040-P2-outbound-add-message-order-seq",
+        sql: "ALTER TABLE channel_outbound_ledger ADD COLUMN message_order_seq INTEGER",
+      },
+      // F040 P2.6 T1（AC-N3）· 成员禁用开关：enabled=0 按非白名单拒（p2p allowlist /
+      // 群 member-not-allowed 两路），替代「只能删」。存量 2.5 库补列，默认全可用。
+      {
+        name: "F040-P2.6-admin-members-add-enabled",
+        sql: "ALTER TABLE channel_admin_members ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
+      },
+      // F040 P3 T2（AC15）· 占位卡：注入成功随手发「思考中」卡，终稿 PATCH 原地变身。
+      // message_id=飞书卡 id（NULL=没发过/渠道不支持）；state 状态机 sent→replaced|failed|expired。
+      // ALTER 无法带 CHECK——状态闭集由 CREATE 路径（新库）+ 写入方（setPlaceholderState 闭集参数）双保
+      {
+        name: "F040-P3-inbound-add-placeholder-message-id",
+        sql: "ALTER TABLE channel_inbound_ledger ADD COLUMN placeholder_message_id TEXT",
+      },
+      {
+        name: "F040-P3-inbound-add-placeholder-state",
+        // guardian P3 发现3：ALTER 面同带 CHECK（SQLite 允许 ADD COLUMN 携约束，对新写入
+        // 生效）——未来才迁移的存量库（主库）与 CREATE 面同闭集；已迁移库（预览）保持
+        // 无 CHECK 由写入方闭集兜（不做表重建）
+        sql: "ALTER TABLE channel_inbound_ledger ADD COLUMN placeholder_state TEXT CHECK(placeholder_state IN ('sent','replaced','failed','expired'))",
+      },
+      // F040 P3 T5（AC16）· 入站媒体附件（JSON: [{kind,url,name}]，本地 /uploads URL）
+      // 随账本持久化——queued 行重启后附件不丢；注入时转 send_message.contentBlocks
+      {
+        name: "F040-P3-inbound-add-attachments",
+        sql: "ALTER TABLE channel_inbound_ledger ADD COLUMN attachments TEXT",
       },
     ]
     for (const m of alters) {

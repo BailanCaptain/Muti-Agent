@@ -1,11 +1,12 @@
 import crypto from "node:crypto"
-import { mkdirSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import cors from "@fastify/cors"
 import multipart from "@fastify/multipart"
 import fastifyStatic from "@fastify/static"
 import websocket from "@fastify/websocket"
 import { PROVIDER_ALIASES } from "@multi-agent/shared"
+import type { Provider } from "@multi-agent/shared"
 import Fastify from "fastify"
 import type { CorsOrigin } from "./config"
 import { ensurePreMigrationBackup } from "./db/backup"
@@ -14,7 +15,9 @@ import { AuthorizationRuleRepository, SessionRepository } from "./db/repositorie
 import { DecisionRecordRepository } from "./db/repositories/decision-record-repository"
 import { DrizzleWorkflowSopRepository } from "./db/repositories/workflow-sop-repository"
 import { AppEventBus } from "./events/event-bus"
+import { prepareAgentFile } from "./lib/agent-file"
 import { createLogger, setRootLogger } from "./lib/logger"
+import { setUploadResponseHeaders } from "./lib/upload-static"
 import { registerMcpServer } from "./mcp/server"
 import { installA2AGateway } from "./orchestrator/a2a-gateway-bootstrap"
 import { ApprovalManager } from "./orchestrator/approval-manager"
@@ -38,12 +41,11 @@ import { registerPhase3Routes } from "./routes/phase3"
 import { registerPhase4Routes } from "./routes/phase4"
 import { registerPreviewRoutes } from "./routes/preview"
 import { registerProjectTreeRoutes } from "./routes/project-tree"
-import { registerWorktreeRoutes } from "./routes/worktrees"
-import { buildWorktreeRoutesOpts } from "./worktrees/preview-runtime"
 import { registerRuntimeConfigRoutes } from "./routes/runtime-config"
 import { registerSessionRuntimeConfigRoutes } from "./routes/session-runtime-config"
 import { registerThreadRoutes } from "./routes/threads"
 import { registerUploadRoutes } from "./routes/uploads"
+import { registerWorktreeRoutes } from "./routes/worktrees"
 import { type RealtimeBroadcaster, registerWsRoute } from "./routes/ws"
 import { GroupSequencer } from "./routes/ws-sequencer"
 import { createHaikuRunner, createSonnetRunner } from "./runtime/haiku-runner"
@@ -61,18 +63,19 @@ import { WorkflowSopService } from "./services/workflow-sop-service"
 import { SkillRegistry } from "./skills/registry"
 import { SopTracker } from "./skills/sop-tracker"
 import {
+  EmbeddedWikiRecordsLoader,
+  createSerializedRefresher,
+} from "./wiki/memory-preflight/embedded-records-loader"
+import type { HybridSearchProvider } from "./wiki/memory-preflight/hybrid-search-provider"
+import { resolveWikiRootBase } from "./wiki/resolve-wiki-root"
+import {
   MessagesFtsRepository,
   SearchWikiProvider,
   WikiEntityFtsProvider,
   reindexWikiEntities,
 } from "./wiki/wiki-search"
-import {
-  EmbeddedWikiRecordsLoader,
-  createSerializedRefresher,
-} from "./wiki/memory-preflight/embedded-records-loader"
-import { resolveWikiRootBase } from "./wiki/resolve-wiki-root"
-import type { HybridSearchProvider } from "./wiki/memory-preflight/hybrid-search-provider"
 import { createWikiServices } from "./wiki/wiki-services"
+import { buildWorktreeRoutesOpts } from "./worktrees/preview-runtime"
 
 /**
  * F026 R-073 · MCP `trigger_mention` 派发 payload 构造器。
@@ -177,10 +180,12 @@ export async function createApiServer(options: {
   if (seedReport.inserted) {
     console.log(
       `[worktree-preview-seed] inserted: room_decisions=${seedReport.inserted.room_decisions}, ` +
-      `wiki_events=${seedReport.inserted.wiki_events}, wiki_leases=${seedReport.inserted.wiki_leases}`,
+        `wiki_events=${seedReport.inserted.wiki_events}, wiki_leases=${seedReport.inserted.wiki_leases}`,
     )
   } else if (seedReport.failed) {
-    console.error(`[worktree-preview-seed] FAILED stage=${seedReport.failed.stage}: ${seedReport.failed.error}`)
+    console.error(
+      `[worktree-preview-seed] FAILED stage=${seedReport.failed.stage}: ${seedReport.failed.error}`,
+    )
   }
   // F027 P4 AC-P4-9 a/b · worktree-preview wiki/{warnings,index}/*.md fixture copier.
   // 同 gate 模式 (WORKTREE_PREVIEW=1 + .runtime/worktree-preview/ path check)。
@@ -197,7 +202,9 @@ export async function createApiServer(options: {
       if ("copied" in status) {
         console.log(`[worktree-preview-wiki-fixtures] ${bucket}: copied ${status.copied} files`)
       } else if ("skipped" in status) {
-        console.log(`[worktree-preview-wiki-fixtures] ${bucket}: skipped (${status.existingFiles} existing)`)
+        console.log(
+          `[worktree-preview-wiki-fixtures] ${bucket}: skipped (${status.existingFiles} existing)`,
+        )
       } else if ("failed" in status) {
         console.error(`[worktree-preview-wiki-fixtures] ${bucket}: FAILED ${status.failed}`)
       }
@@ -328,9 +335,7 @@ export async function createApiServer(options: {
   // EmbeddedWikiRecordsLoader 要对它热替换 embedded records（语义召回转正）。
   let hybridWikiSearch: HybridSearchProvider | undefined
   {
-    const { AdaptiveRecallCoordinator } = await import(
-      "./orchestrator/adaptive-recall-coordinator"
-    )
+    const { AdaptiveRecallCoordinator } = await import("./orchestrator/adaptive-recall-coordinator")
     const {
       createHybridWikiSearchProvider,
       createProductionRecallExecutorDeps,
@@ -405,55 +410,53 @@ export async function createApiServer(options: {
       return r?.viewfinder ? { body: r.viewfinder } : null
     })
   }
-    // F027 P4-A1 + fallback j2 P2 修 · CapabilityRegistry boot wiring (V16.5 §13 + §4 fail-closed)。
-    // V16.5 §4 强契约: "wiki 缺失行为: fail-closed 拒启 agent"。
-    // 默认 fail-closed (boot 抛错让 process 退出)；ENV `MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1`
-    // 显式 opt-in degraded mode（worktree-preview / 单测 fixture 不全 wiki 时用）。
-    const wikiLoaderFailSoft = process.env.MULTI_AGENT_WIKI_LOADER_FAIL_SOFT === "1"
-    try {
-      const { loadCapabilityRegistryFromRoot } = await import(
-        "./wiki/capability-registry/loader"
-      )
-      const capRoot = process.env.CAPABILITY_REGISTRY_ROOT || process.cwd()
-      const registry = loadCapabilityRegistryFromRoot(capRoot)
-      messages.setCapabilityRegistry(registry)
+  // F027 P4-A1 + fallback j2 P2 修 · CapabilityRegistry boot wiring (V16.5 §13 + §4 fail-closed)。
+  // V16.5 §4 强契约: "wiki 缺失行为: fail-closed 拒启 agent"。
+  // 默认 fail-closed (boot 抛错让 process 退出)；ENV `MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1`
+  // 显式 opt-in degraded mode（worktree-preview / 单测 fixture 不全 wiki 时用）。
+  const wikiLoaderFailSoft = process.env.MULTI_AGENT_WIKI_LOADER_FAIL_SOFT === "1"
+  try {
+    const { loadCapabilityRegistryFromRoot } = await import("./wiki/capability-registry/loader")
+    const capRoot = process.env.CAPABILITY_REGISTRY_ROOT || process.cwd()
+    const registry = loadCapabilityRegistryFromRoot(capRoot)
+    messages.setCapabilityRegistry(registry)
+    // eslint-disable-next-line no-console
+    console.log(
+      `[F027-P4-A1] CapabilityRegistry loaded: ${registry.agents.size} agents (sourcePath=${registry.sourcePath})`,
+    )
+  } catch (err) {
+    const msg = `[F027-P4-A1] CapabilityRegistry load failed: ${(err as Error).message}`
+    if (wikiLoaderFailSoft) {
       // eslint-disable-next-line no-console
-      console.log(
-        `[F027-P4-A1] CapabilityRegistry loaded: ${registry.agents.size} agents (sourcePath=${registry.sourcePath})`,
+      console.warn(`${msg} — degraded mode (MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1)`)
+    } else {
+      // V16.5 §4 fail-closed: 拒启 agent，避免 silent capability_digest 缺失污染 prompt
+      throw new Error(
+        `${msg}\n  → V16.5 §4 fail-closed: process abort. Set MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1 to opt-in degraded mode (dev only).`,
       )
-    } catch (err) {
-      const msg = `[F027-P4-A1] CapabilityRegistry load failed: ${(err as Error).message}`
-      if (wikiLoaderFailSoft) {
-        // eslint-disable-next-line no-console
-        console.warn(`${msg} — degraded mode (MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1)`)
-      } else {
-        // V16.5 §4 fail-closed: 拒启 agent，避免 silent capability_digest 缺失污染 prompt
-        throw new Error(
-          `${msg}\n  → V16.5 §4 fail-closed: process abort. Set MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1 to opt-in degraded mode (dev only).`,
-        )
-      }
     }
-    try {
-      const { loadHandbookSlices } = await import("./wiki/handbook-slicer")
-      const handbookRoot = process.env.WIKI_HANDBOOK_ROOT || process.cwd()
-      const slices = await loadHandbookSlices(handbookRoot)
-      messages.setHandbookSlices({ agentActions: slices.agentActions })
+  }
+  try {
+    const { loadHandbookSlices } = await import("./wiki/handbook-slicer")
+    const handbookRoot = process.env.WIKI_HANDBOOK_ROOT || process.cwd()
+    const slices = await loadHandbookSlices(handbookRoot)
+    messages.setHandbookSlices({ agentActions: slices.agentActions })
+    // eslint-disable-next-line no-console
+    console.log(
+      `[F027-P4-A2] Handbook agentActions slice loaded: ${slices.agentActions.length} chars (handbookRoot=${handbookRoot})`,
+    )
+  } catch (err) {
+    const msg = `[F027-P4-A2] Handbook slice load failed: ${(err as Error).message}`
+    if (wikiLoaderFailSoft) {
       // eslint-disable-next-line no-console
-      console.log(
-        `[F027-P4-A2] Handbook agentActions slice loaded: ${slices.agentActions.length} chars (handbookRoot=${handbookRoot})`,
+      console.warn(`${msg} — degraded mode (MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1)`)
+    } else {
+      // V16.5 §4 fail-closed (同上)
+      throw new Error(
+        `${msg}\n  → V16.5 §4 fail-closed: process abort. Set MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1 to opt-in degraded mode (dev only).`,
       )
-    } catch (err) {
-      const msg = `[F027-P4-A2] Handbook slice load failed: ${(err as Error).message}`
-      if (wikiLoaderFailSoft) {
-        // eslint-disable-next-line no-console
-        console.warn(`${msg} — degraded mode (MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1)`)
-      } else {
-        // V16.5 §4 fail-closed (同上)
-        throw new Error(
-          `${msg}\n  → V16.5 §4 fail-closed: process abort. Set MULTI_AGENT_WIKI_LOADER_FAIL_SOFT=1 to opt-in degraded mode (dev only).`,
-        )
-      }
     }
+  }
 
   // F002: Decision Board + settle → flush → single dispatch pipeline.
   // The board holds [拍板] items across raisers (dedupe by normalized
@@ -616,6 +619,10 @@ export async function createApiServer(options: {
     root: uploadsDir,
     prefix: "/uploads/",
     decorateReply: false,
+    // T7 修8（德彪 r7 P1）：uploads 字节不可信（agent 产物/web 上传含 svg/飞书下载），
+    // 跨源 <a download> 不生效 → 导航打开 html/svg 会在 API origin 执行脚本。
+    // 三头强制下载+禁嗅探+文档沙箱；<img> 子资源加载不受影响，内联图零回归。
+    setHeaders: setUploadResponseHeaders,
   })
 
   app.addHook("onClose", async () => {
@@ -798,6 +805,45 @@ export async function createApiServer(options: {
 
       return { ok: true as const, imageUrl: absoluteUrl }
     },
+    // F040 T7 修7：send_file —— take_screenshot 的 file 对等物（agent 出站文件）。
+    // 写 uploadsDir（/uploads 静态服务）→ file 块挂当前回复 → 广播；飞书渠道由
+    // 出站媒体管道（AC16d sendMediaSafe 的 file 分支）跟卡发文件消息。
+    sendFile: async (params) => {
+      const { storedName, displayName } = prepareAgentFile(
+        params.filename,
+        () => crypto.randomUUID(),
+        () => Date.now(),
+      )
+      mkdirSync(uploadsDir, { recursive: true })
+      writeFileSync(path.join(uploadsDir, storedName), params.content, "utf8")
+      const apiBase =
+        process.env.NEXT_PUBLIC_API_HTTP_URL ??
+        process.env.NEXT_PUBLIC_API_BASE_URL ??
+        process.env.NEXT_PUBLIC_API_URL
+      const absoluteUrl = resolveUploadUrl(`/uploads/${storedName}`, apiBase)
+      const block = {
+        type: "file" as const,
+        url: absoluteUrl,
+        name: displayName,
+        size: Buffer.byteLength(params.content, "utf8"),
+      }
+
+      const threadMessages = repository.listMessages(params.threadId)
+      const lastAssistant = [...threadMessages].reverse().find((m) => m.role === "assistant")
+      if (lastAssistant) {
+        sessions.appendContentBlock(lastAssistant.id, block)
+        broadcaster.broadcast({
+          type: "assistant_content_block",
+          payload: {
+            sessionGroupId: params.sessionGroupId,
+            messageId: lastAssistant.id,
+            block,
+          },
+        })
+      }
+
+      return { ok: true as const, fileUrl: absoluteUrl, name: displayName }
+    },
     // F019 P3: expose the bulletin board service to /api/callbacks/update-workflow-sop
     workflowSopService,
     // F027 P3 chap 6: expose wiki services to /api/callbacks/update-wiki + acquire-wiki-lease + read-wiki
@@ -823,6 +869,107 @@ export async function createApiServer(options: {
   })
   registerMcpServer(app)
 
+  // F040 · 飞书渠道网关接线。config disabled（小孙未填 .env）时完全不构建任何对象、
+  // 只打一行日志 —— 主服务零影响（AC1）。enabled 时复用 send_message 同一入口（messages）
+  // + 订阅 invocation.finished/failed 做出站溯源投递。
+  {
+    const { loadFeishuChannelConfig, resolveFeishuEnv } = await import(
+      "./connectors/channel-config"
+    )
+    // API 进程不自动 load .env（只 next dev 会）；窄读 .env 的 FEISHU_ 变量补进 env。
+    const { default: nodePath } = await import("node:path")
+    const feishuConfig = loadFeishuChannelConfig(
+      resolveFeishuEnv(process.env, nodePath.join(process.cwd(), ".env")),
+    )
+    // Phase 2.5（AC-M1/M2）：渠道连接 + 管理 store **无条件**构建 —— connector disabled
+    // （未填凭证）时管理页照常可配。🔴 路由与网关共享同一实例：双 SQLite 连接下
+    // 缓存失效必须在实例内闭环，各建一个 = 路由写 A、网关读 B 的死缓存（AC-M2 破功）。
+    const { SqliteStore: ChannelSqliteStore } = await import("./db/sqlite")
+    const { ChannelAdminStore } = await import("./connectors/channel-admin-store")
+    const { randomUUID: channelUUID } = await import("node:crypto")
+    const channelStore = new ChannelSqliteStore(options.sqlitePath)
+    const channelAdminStore = new ChannelAdminStore({
+      db: channelStore,
+      channel: "feishu",
+      genId: () => channelUUID(),
+      now: () => new Date().toISOString(),
+    })
+    const { registerChannelAdminRoutes } = await import("./routes/channel-admin")
+    registerChannelAdminRoutes(app, {
+      adminStore: channelAdminStore,
+      db: channelStore,
+      // AC-N5：overview 默认应答人生效值的渠道级兜底（binding 未单独设过时）
+      channelDefaultProvider: feishuConfig.enabled ? feishuConfig.defaultProvider : "claude",
+    })
+    let feishuHandle: { stop(): Promise<void> } | null = null
+    if (feishuConfig.enabled) {
+      const { wireFeishuConnector } = await import("./connectors/feishu/feishu-connector")
+      const { readFinalMessageFromDb } = await import("./connectors/final-message-reader")
+      // P2.6（AC-N1/N2）命令面 executor 装配：绑定原语走 channelAdminStore（管理页同一套）、
+      // 建房走 sessionService（真 R-号 + 默认三线程）、/model 走 session-runtime-config
+      // 四件套（与 PUT /api/sessions/:id/runtime-config 同一存储与校验）。
+      const { ChannelCommandExecutor } = await import("./connectors/channel-commands")
+      const { loadRuntimeConfig } = await import("./runtime/runtime-config")
+      const commandExecutor = new ChannelCommandExecutor({
+        adminStore: channelAdminStore,
+        rooms: {
+          // 活房间口径 = 管理路由 /rooms 端点（同一 channelStore 连接读，与 binding 写同源）
+          list: () =>
+            (
+              channelStore.db
+                .prepare(
+                  "SELECT id, room_id, title FROM session_groups WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY created_at ASC",
+                )
+                .all() as Array<{ id: string; room_id: string | null; title: string }>
+            ).map((r) => ({ id: r.id, roomId: r.room_id, title: r.title })),
+          create: (title: string) => {
+            const id = sessions.createSessionGroup(title)
+            const g = repository.getSessionGroupById(id)
+            return { id, roomId: g?.roomId ?? null, title: g?.title ?? title }
+          },
+        },
+        runtimeConfig: {
+          getGlobal: () => loadRuntimeConfig(),
+          getSession: (g) => repository.getSessionRuntimeConfig(g),
+          setSession: (g, c) => repository.setSessionRuntimeConfig(g, c),
+          getPending: (g) => repository.getSessionPendingConfig(g),
+          setPending: (g, c) => repository.setSessionPendingConfig(g, c),
+        },
+        findThread: (g, p) => {
+          const t = sessions.findThreadByGroupAndProvider(g, p as Provider)
+          return t ? { id: t.id, currentModel: t.currentModel ?? null } : null
+        },
+        // /model busy→pending 归档语义：A2A slot 判定（feishu direct turn 的窗口
+        // 只影响写哪层，configSnapshot 派发冻结保证正确性，plan §6 记录的取舍）
+        isBusy: (g, p) => {
+          const t = sessions.findThreadByGroupAndProvider(g, p as Provider)
+          return t ? messages.getBusyStatus(t.id, g) !== null : false
+        },
+      })
+      feishuHandle = await wireFeishuConnector({
+        config: feishuConfig,
+        db: channelStore,
+        adminStore: channelAdminStore,
+        injector: messages,
+        findThread: (sg, p) => sessions.findThreadByGroupAndProvider(sg, p as Provider),
+        readFinalContent: (id) => readFinalMessageFromDb(channelStore, id),
+        // AC13.5 Leg B：在飞 turn 判定接 message-service（chainRegistry×invocation registry）
+        hasEarlierRunningTurn: (root, before, excludeInvocationId) =>
+          messages.hasEarlierRunningTurn(root, before, excludeInvocationId),
+        eventBus,
+        commands: commandExecutor,
+        // P3 AC16：入站媒体落盘到 uploadsDir（/uploads 静态服务同目录，web 端直接可看可下）
+        mediaDir: uploadsDir,
+      })
+    } else {
+      app.log.info(`[F040] Feishu connector disabled: ${feishuConfig.reason}`)
+    }
+    app.addHook("onClose", async () => {
+      await feishuHandle?.stop()
+      channelStore.db.close()
+    })
+  }
+
   // F027 Phase 3 P20 · Phase 3 endpoint 集中注册（Week 1 Day 3+ / Week 2 Day 6+）
   // 已 wire：
   //   - GET /api/rooms/:id/viewfinder + GET /api/wiki/drafts (Week 1 Day 3)
@@ -831,8 +978,11 @@ export async function createApiServer(options: {
   //   - POST /api/rooms/:id/decisions + GET /api/rooms/:id/decisions/coverage (Week 2 Day 6 AC-P3-8)
   //   - POST /api/wiki/ingest/commit (Week 2 Day 9-10 AC-P3-10) — 需 wikiServices 注入
   // F027 final-vision P1-2 · 共享 ingest services（routes 和 docs-watcher 同一 PreviewStore）
-  const { PreviewStore: PreviewStoreCls, IngestPreviewService: IngestPreviewServiceCls, IngestCommitService: IngestCommitServiceCls } =
-    await import("./routes/phase3")
+  const {
+    PreviewStore: PreviewStoreCls,
+    IngestPreviewService: IngestPreviewServiceCls,
+    IngestCommitService: IngestCommitServiceCls,
+  } = await import("./routes/phase3")
   const sharedPreviewStore = new PreviewStoreCls()
 
   // F027 AC-P1-5 · multi-drop 历史语料库 repository（commit 写 / preview 查 7 天窗口）
@@ -845,22 +995,15 @@ export async function createApiServer(options: {
   //   - compileRules 单独从 handbook 取（line 380 只取了 agentActions）；load 失败退空串（fail-soft）。
   //   - llmClient = 动态 runner（F027 收尾补丁 AC-W1）：primary 每次调用读 runtime config
   //     （前端全局默认 tab 可改，热生效，默认 Opus 4.7），fallback 恒 Haiku 4.5（AC-P4-8 语义不变）。
-  const { createDynamicWikiCompileRunner } = await import(
-    "./runtime/wiki-compile-runner"
-  )
+  const { createDynamicWikiCompileRunner } = await import("./runtime/wiki-compile-runner")
   const { createProductionCompileLLMClient } = await import(
     "./wiki/llm-compile/production-compile-llm-client"
   )
-  const { createProductionIndexLiteLoader } = await import(
-    "./wiki/llm-compile/index-lite-loader"
-  )
+  const { createProductionIndexLiteLoader } = await import("./wiki/llm-compile/index-lite-loader")
   const { createProductionEntityExistenceChecker } = await import(
     "./wiki/llm-compile/entity-existence-checker"
   )
-  const ingestCompileWikiRoot = path.join(
-    wikiRootBase,
-    "wiki",
-  )
+  const ingestCompileWikiRoot = path.join(wikiRootBase, "wiki")
   let ingestCompileRules = ""
   try {
     const { loadHandbookSlices } = await import("./wiki/handbook-slicer")
@@ -961,8 +1104,7 @@ export async function createApiServer(options: {
   // 写 `<wikiRoot>/rooms/<id>/viewfinder.md`. 让 RoomCompileExecutor 用
   // `<wikiServicesRoot>/wiki/` 作 wikiRoot — 写 `<wikiServicesRoot>/wiki/rooms/...`
   // 跟 ViewfinderService 期望对齐.
-  const roomCompileWikiServicesRoot =
-    wikiRootBase
+  const roomCompileWikiServicesRoot = wikiRootBase
   const roomCompileWikiRoot = path.join(roomCompileWikiServicesRoot, "wiki")
   // F027 P4 hotfix · WikiEventsSink wrap — 让 RoomCompiler 写 viewfinder.md 时留 wiki_events row
   // (V16.5 §5 line 452 "所有 wiki 写操作走 append-only event log")。
@@ -971,16 +1113,15 @@ export async function createApiServer(options: {
     "./db/repositories/wiki-events-repository"
   )
   const wikiEventsRepoForCompiler = new WikiEventsRepoCls(drizzleDb)
-  const roomCompileWikiEventsSink: import(
-    "./wiki/room-compiler/room-compiler"
-  ).WikiEventsSinkLike = {
-    appendPending: (input) => {
-      const evt = wikiEventsRepoForCompiler.appendPending(input)
-      return { id: evt.id }
-    },
-    commit: (id, input) => wikiEventsRepoForCompiler.commit(id, input),
-    abort: (id, input) => wikiEventsRepoForCompiler.abort(id, input),
-  }
+  const roomCompileWikiEventsSink: import("./wiki/room-compiler/room-compiler").WikiEventsSinkLike =
+    {
+      appendPending: (input) => {
+        const evt = wikiEventsRepoForCompiler.appendPending(input)
+        return { id: evt.id }
+      },
+      commit: (id, input) => wikiEventsRepoForCompiler.commit(id, input),
+      abort: (id, input) => wikiEventsRepoForCompiler.abort(id, input),
+    }
   const roomCompileSharedOpts = {
     db: drizzleDb,
     wikiRoot: roomCompileWikiRoot,

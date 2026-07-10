@@ -774,7 +774,7 @@ export function Composer() {
         </button>
 
         <textarea
-          className="max-h-48 w-full resize-none bg-transparent py-2 text-sm text-slate-700 outline-none placeholder:text-slate-300"
+          className="max-h-48 w-full resize-none bg-transparent py-2 text-base text-slate-700 outline-none placeholder:text-slate-300 md:text-sm"
           onChange={(event) => {
             setDraft(event.target.value)
             setCursor(event.target.selectionStart ?? event.target.value.length)

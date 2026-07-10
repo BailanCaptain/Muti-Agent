@@ -1,6 +1,7 @@
 "use client"
 
 import { useArchiveStateReloader } from "@/components/stores/archive-event-handler"
+import { useLayoutStore } from "@/components/stores/layout-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import type { Provider } from "@multi-agent/shared"
 import {
@@ -117,6 +118,20 @@ export function SessionSidebar() {
   const activeGroupId = useThreadStore((state) => state.activeGroupId)
   const createGroup = useThreadStore((state) => state.createSessionGroup)
   const selectGroup = useThreadStore((state) => state.selectSessionGroup)
+  // F040 T7 手机抽屉：<md 侧栏是覆盖层，点卡片选完房间自动收起。只挂卡片点击——
+  // 搜索命中的自动选中（下方 useEffect）不收，避免打字打一半抽屉关掉。
+  const selectGroupFromCard = useCallback(
+    async (groupId: string) => {
+      await selectGroup(groupId)
+      if (
+        window.matchMedia("(max-width: 767px)").matches &&
+        !useLayoutStore.getState().sidebarCollapsed
+      ) {
+        useLayoutStore.getState().toggleSidebar()
+      }
+    },
+    [selectGroup],
+  )
   const replaceSessionGroups = useThreadStore((state) => state.replaceSessionGroups)
   const unreadCounts = useThreadStore((state) => state.unreadCounts)
   // F022 Phase 3.5 (review P2 follow-up): 服务端归档/软删/恢复事件到达时 bump。
@@ -421,7 +436,7 @@ export function SessionSidebar() {
   const closeContextMenu = useCallback(() => setContextMenu(null), [])
 
   return (
-    <aside className="flex h-screen w-[280px] shrink-0 flex-col border-r border-slate-200 bg-surface px-3 py-4">
+    <aside className="flex h-dvh w-[280px] shrink-0 flex-col border-r border-slate-200 bg-surface px-3 py-4">
       {/* Header */}
       <div className="mb-4 flex items-center justify-between px-1">
         <h2 className="text-sm font-semibold tracking-wide text-slate-800">
@@ -489,7 +504,7 @@ export function SessionSidebar() {
                   running={runningGroupIds.has(group.id)}
                   isPinned={true}
                   isRenaming={renamingGroupId === group.id}
-                  onSelect={selectGroup}
+                  onSelect={selectGroupFromCard}
                   onCtxMenu={handleContextMenu}
                   onRenameCommit={handleCommitRename}
                   onRenameCancel={handleCancelRename}
@@ -539,7 +554,7 @@ export function SessionSidebar() {
                     running={runningGroupIds.has(group.id)}
                     isPinned={pinned.has(group.id)}
                     isRenaming={renamingGroupId === group.id}
-                    onSelect={selectGroup}
+                    onSelect={selectGroupFromCard}
                     onCtxMenu={handleContextMenu}
                     onRenameCommit={handleCommitRename}
                     onRenameCancel={handleCancelRename}

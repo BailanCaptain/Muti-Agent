@@ -1,11 +1,12 @@
 "use client"
 
+import { ChannelAdminTab } from "@/components/chat/channel-admin/channel-admin-tab"
 import { useSettingsModalStore } from "@/components/stores/settings-modal-store"
 import type { AuthorizationRule } from "@multi-agent/shared"
 import { RotateCcw, Shield, Settings, Trash2, X } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 
-type SettingsTab = "rules" | "general"
+type SettingsTab = "rules" | "channels" | "general"
 
 const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
 
@@ -58,6 +59,7 @@ export function SettingsModal() {
 
   const tabs: { key: SettingsTab; label: string }[] = [
     { key: "rules", label: "权限规则" },
+    { key: "channels", label: "渠道" },
     { key: "general", label: "通用" },
   ]
 
@@ -177,6 +179,8 @@ export function SettingsModal() {
               )}
             </div>
           )}
+
+          {tab === "channels" && <ChannelAdminTab active={tab === "channels"} />}
 
           {tab === "general" && (
             <div className="flex flex-col items-center justify-center py-12 text-sm text-slate-400">

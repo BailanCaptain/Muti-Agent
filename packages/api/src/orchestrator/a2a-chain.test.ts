@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { type A2AChainEntry, A2AChainRegistry } from "./a2a-chain"
+import { type A2AChainEntry, A2AChainRegistry, hasEarlierAliveEntry } from "./a2a-chain"
 
 const entry = (overrides: Partial<A2AChainEntry> = {}): A2AChainEntry => ({
   invocationId: "inv-1",
@@ -95,5 +95,68 @@ describe("A2AChainRegistry", () => {
     assert.ok(got, "entry must exist")
     assert.equal(got!.senderAlias, undefined)
     assert.equal(got!.triggerMessageId, undefined)
+  })
+
+  it("F040 T14 listByRoot：按 root 过滤，release 后消失（AC13.5 Leg B 数据面）", () => {
+    const reg = new A2AChainRegistry()
+    reg.register(entry({ invocationId: "inv-a", rootMessageId: "root-1", createdAt: 10 }))
+    reg.register(entry({ invocationId: "inv-b", rootMessageId: "root-1", createdAt: 20 }))
+    reg.register(entry({ invocationId: "inv-c", rootMessageId: "root-2" }))
+    assert.deepEqual(
+      reg
+        .listByRoot("root-1")
+        .map((e) => e.invocationId)
+        .sort(),
+      ["inv-a", "inv-b"],
+    )
+    assert.deepEqual(reg.listByRoot("root-nope"), [])
+    reg.release("inv-a")
+    assert.deepEqual(
+      reg.listByRoot("root-1").map((e) => e.invocationId),
+      ["inv-b"],
+    )
+  })
+})
+
+describe("hasEarlierAliveEntry（F040 AC13.5 Leg B 判定核 · 德彪 P2 审 P2-2）", () => {
+  const alive =
+    (aliveIds: string[]) =>
+    (id: string): boolean =>
+      aliveIds.includes(id)
+
+  it("更早 ms 的在飞条目 → true（基线语义不变）", () => {
+    const entries = [entry({ invocationId: "inv-a", createdAt: 1000 })]
+    assert.equal(hasEarlierAliveEntry(entries, 2000, alive(["inv-a"])), true)
+  })
+
+  it("同毫秒平局 → true（保守阻塞：ms 粒度无 rowid 可比，宁等勿乱序）", () => {
+    const entries = [entry({ invocationId: "inv-a", createdAt: 2000 })]
+    assert.equal(hasEarlierAliveEntry(entries, 2000, alive(["inv-a"])), true)
+  })
+
+  it("同毫秒但是自己（excludeInvocationId）→ false（自排除防自锁 60s）", () => {
+    const entries = [entry({ invocationId: "inv-self", createdAt: 2000 })]
+    assert.equal(hasEarlierAliveEntry(entries, 2000, alive(["inv-self"]), "inv-self"), false)
+  })
+
+  it("同毫秒平局 + 自己与别人并存 → 只算别人（true）", () => {
+    const entries = [
+      entry({ invocationId: "inv-self", createdAt: 2000 }),
+      entry({ invocationId: "inv-peer", createdAt: 2000 }),
+    ]
+    assert.equal(
+      hasEarlierAliveEntry(entries, 2000, alive(["inv-self", "inv-peer"]), "inv-self"),
+      true,
+    )
+  })
+
+  it("更早但已死（isAlive=false，final 已出/注销）→ false", () => {
+    const entries = [entry({ invocationId: "inv-dead", createdAt: 1000 })]
+    assert.equal(hasEarlierAliveEntry(entries, 2000, alive([])), false)
+  })
+
+  it("更晚 ms 的在飞条目 → false（不反向等）", () => {
+    const entries = [entry({ invocationId: "inv-later", createdAt: 3000 })]
+    assert.equal(hasEarlierAliveEntry(entries, 2000, alive(["inv-later"])), false)
   })
 })
