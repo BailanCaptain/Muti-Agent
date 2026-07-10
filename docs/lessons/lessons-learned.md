@@ -700,3 +700,63 @@
   - 本次实测：黄仁勋 2026-04-25 query message_embeddings 表得 0 行
 - 原理：feature 立项动机本身已经在告诉你"上一代是怎么烂的"，但流程没把这个"反面教材"自动转成"本代的硬验收门"。结果就是同型病变换载体复发——F007 是"代码 wiring 没接"，F018 是"代码 wiring 接了但模型加载层挂"，外观不同、本质都是"AC 全 ✅ but 外部观测 0"。LL-004（同层第三次打补丁上抛架构）覆盖了"反复修同一根因"的横向递归，本 LL 覆盖"修虚标的 feature 自己虚标"的纵向递归——根因不在哪一层代码，在**验证链没延伸到外部可观测**。
 - 关联：LL-004（同层第三次打补丁）、LL-018（源码 vs 产物）、LL-020（汇报 vs 验证）、LL-022（测试金字塔在 UI 呈现倒置 — 本 LL 是 backend wiring 版）、`docs/evolution-proposals/EP-001-post-merge-evidence-7d-deadline.md`、`memory/feedback_measure_before_assert.md`
+
+### LL-031: 定时任务的存活监控禁止放在自身进程内
+- 状态：validated
+- 更新时间：2026-07-10
+
+- 坑：F041 蓝图 v1 把信源健康监控设计在 SchedulerRuntime 同进程内（watchdog job 监控 ingest job）；德彪 r1 抓出：进程死，监控一起死——恰好是最需要报警的场景报不出来。
+- 根因：监控与被监控对象共享故障域。进程内 watchdog 只能覆盖「进程活着但 job 异常」，覆盖不了「进程没了」这个最大故障面。
+- 触发条件：任何「定时任务自我报告健康」的设计；单进程应用给自己加监控时。佐证：主仓 runtime 07-04 起停机（小孙澄清为故意未启用），期间系统无任何进程外可察觉途径——即使是故意停机，「外部不可察觉」本身成立。
+- 修复：F041 把「进程外探针 + 故障演练（kill API → 一个探测周期内外部可察觉）」提为上线 AC（AC13/D13）；/health route 现不存在需新建；F042 AC5 同步落外部守活探针。
+- 防护：设计审查检查项——监控的故障域必须与被监控对象分离；每日简报本身兼作人肉心跳（08:00 没收到=出事）。
+- 来源锚点：
+  - `docs/features/F041-invest-research-tracker.md`（AC13 / D13）
+  - `docs/features/F042-memory-consumption-loop.md`（AC5 外部守活）
+- 原理：监控的第一性要求是独立故障域；「自己报告自己死了」在逻辑上不可能。
+- 关联：LL-014（修复路径必须端到端可达——报警路径同理）
+
+### LL-032: 接口可达 ≠ 自动化授权——技术 spike 成功会强化合规错觉
+- 状态：validated
+- 更新时间：2026-07-10
+
+- 坑：Yahoo quoteSummary（评级/目标价数据）本机实测直连可达、返回真数据，F041 蓝图 v1 顺手把它当正式 MVP 信源；德彪 r2 抓出这是最重阻塞：Yahoo ToS 禁止未授权自动化采集，而 SEC EDGAR 明文欢迎程序化访问（要求申报 UA=产品名+邮箱、≤10 req/s）——两个「实测都通」的源，授权地位完全相反。
+- 根因：把「技术可达性」当「使用授权」；spike 实测成功产生的多巴胺强化了错觉。可达性是技术事实，授权是法律事实，两者独立。
+- 触发条件：接入任何第三方数据源时只做技术 spike、不查 ToS/robots/开发者政策就写进方案。
+- 修复：F041 信源分三级 record/aggregator/supplemental（担保语义与授权状态挂钩）；Yahoo 降为 supplemental + 默认关闭，由小孙显式做个人用途风险决策后才启用（D3/D4，决策留痕）。
+- 防护：新信源接入 checklist 第一项=授权评估（ToS / API 政策 / rate 要求），结论必须写进 feature doc 决策表；授权状态与技术可达性分开记录，不许用「实测通了」代替授权结论。
+- 来源锚点：
+  - `docs/features/F041-invest-research-tracker.md`（D3 / D4 / 信源三级表）
+  - SEC 开发者政策（申报 UA + 10 req/s）vs Yahoo ToS 自动化条款
+- 原理：合规风险不随请求成功率下降；「能拿到数据」和「被允许拿数据」是两个正交维度，混同意味着把法律风险当工程问题处理。
+- 关联：LL-023（对齐外部项目先验前置条件）
+
+### LL-033: 美股收盘 ≠ EDGAR 封盘——跨市场日切必须按「数据源收件窗口」而非「交易时段」设计
+- 状态：validated
+- 更新时间：2026-07-10
+
+- 坑：F041 蓝图 v1 用单一 businessDate 做日切（北京 08:00 发简报=覆盖「昨个交易日」）；德彪 r2 抓出：EDGAR 收件到 22:00 ET（8-K 大量在盘后申报），北京 08:00 = 前日 19/20:00 ET，晚间申报必然被截断到「昨天的事后天才见报」。
+- 根因：用「交易时段」心智模型套「申报收件」时间线。事件产生时间 / 源收录时间 / 简报投递时间是三条独立时间线，用投递时间线去切事件时间线必然截断。
+- 触发条件：任何跨市场/跨时区聚合产品定义「今日」时；定时投递 + 滚动收件源组合。
+- 修复：拆双管线——invest-ingest（小时抓，不受交易日历门控，休市日公告照进）+ invest-delivery（08:00 组 issue，按 coverage cutoff + issueId 取「尚未进任何 issue」的事件）；周六 issue 覆盖美股周五 session（F041 D5/AC7）。
+- 防护：日切设计必须逐源核实收件窗口（不是收盘时间）；漏报口径=07:55 对照快照，cutoff 后才可见的单独计延迟不算漏报（否则监控自己制造假漏报）。
+- 来源锚点：
+  - `docs/features/F041-invest-research-tracker.md`（D5 / AC7 / AC14 dogfood 口径）
+- 原理：「一天」不是自然量，是每条时间线各自的人为切分；聚合系统里有几条时间线就有几种「今天」，必须显式选择用哪条切，并对被切掉的尾巴给出去处（下期 issue），而不是丢弃。
+- 关联：LL-008（改组件前端到端走完信号链——时间线也是信号链）
+
+### LL-034: 关掉 watcher 的 E2E harness 证不了 watcher 隔离——「副作用不存在」类断言必须在副作用通道开启时验
+- 状态：validated
+- 更新时间：2026-07-10
+
+- 坑：F041 蓝图 v1 想用 Playwright E2E 验「invest-tracker 不污染 wiki/不触发 docs-watcher」；德彪 r2 抓出：F038 E2E harness 设计上就把 scheduler/docs-watcher 全关（隔离出于测试稳定性），在关着 watcher 的环境里断言「watcher 没被触发」= 永真式假绿。
+- 根因：测试环境的 kill-switch 与测试目标正面冲突；「E2E 覆盖面广」的印象掩盖了 harness 对环境的裁剪。
+- 触发条件：复用现成 E2E harness 去验证「X 不影响 Y / X 不触发 Y / X 不写入 Y」类断言，而 harness 恰好为了稳定性把 Y 关了。
+- 修复：F041 隔离证据改三层专项测试——AST 静态扫描（import 边界，扫描集非空断言）+ capability narrowing（领域层只拿 InvestRepository 窄接口）+ 临时根集成不变量（sentinel 预种 → 跑全链 → wiki_events 行集/树 hash 逐字节不变）；Playwright 只验 UI（D9/AC11）。
+- 防护：写「X 不影响 Y」类测试前，先 grep harness 的 kill-switch env，确认 Y 在该环境里真的开着；关着=换测试层，不是换断言写法。
+- 来源锚点：
+  - `playwright.config.ts#L15`（scheduler / docs-watcher 全关的设计注释）
+  - `packages/shared/src/e2e-env.ts#L66-L68`（MULTI_AGENT_SKIP_SCHEDULER=1 + DOCS_WATCHER=0 + 临时 WIKI_ROOT 注入）
+  - `docs/features/F041-invest-research-tracker.md`（D9 / AC11）
+- 原理：「没观察到副作用」只有在副作用通道开启时才构成证据；通道关闭时观察不到是必然事件，信息量为零。测试的有效性前提（环境里被测机制真的在运行）本身需要被断言。
+- 关联：LL-022（测试金字塔在 UI 呈现倒置）、LL-030（验证链必须延伸到外部可观测）
