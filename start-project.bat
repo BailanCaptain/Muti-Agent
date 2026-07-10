@@ -81,7 +81,7 @@ if errorlevel 1 (
   echo [Multi-Agent] Frontend changed -- building production web bundle ^(1-3 min, first run only^)...
   call node_modules\.bin\next.CMD build
   if not errorlevel 1 (
-    echo built > ".runtime\web-prod-build.stamp"
+    git rev-parse HEAD > ".runtime\web-prod-build.stamp" 2>nul
     echo [Multi-Agent] Web production build ready.
   ) else (
     echo [Multi-Agent] WARNING: production build failed -- falling back to dev mode ^(phone will be slow^).

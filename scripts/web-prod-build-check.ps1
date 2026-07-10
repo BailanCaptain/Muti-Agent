@@ -2,33 +2,33 @@
 #
 # Exit 1 = rebuild needed, exit 0 = current. Called by start-project.bat.
 #
-# We serve web as a production build (minified + gzipped, ~300KB first paint) instead of dev
-# (~6MB uncompressed), so the phone can load it over a slow Tailscale relay. To keep normal
-# restarts fast, we only run `next build` when frontend source changed since the last build --
-# tracked by the mtime of .runtime\web-prod-build.stamp (written by start-project after a
-# successful build). Backend-only changes don't touch these dirs, so they skip the rebuild.
+# GIT-BASED, not a filesystem walk. PowerShell 5.1's `Get-ChildItem -Recurse` can hang while
+# enumerating certain trees (it stalled startup on 2026-07-10 -- a recursion trap even with no
+# visible reparse points), so we never walk files. The stamp holds the git commit the bundle was
+# built from; we rebuild only when FRONTEND paths differ between that commit and HEAD. Backend-only
+# commits move HEAD but don't touch these paths, so they skip the rebuild. Uncommitted frontend
+# edits are NOT detected (the main runtime's frontend changes arrive via git pull/merge); delete
+# .runtime\web-prod-build.stamp to force a rebuild if you ever hand-edit frontend here.
 $ErrorActionPreference = 'SilentlyContinue'
 
 $stamp = '.runtime\web-prod-build.stamp'
 
 # No production build present (fresh checkout, or .next is a leftover dev build) -> must build.
 if (-not (Test-Path '.next\BUILD_ID')) { exit 1 }
-# Never built in prod mode by us (stamp is our own marker) -> build so the stamp becomes truthful.
+# Never built by us / empty stamp -> build so the stamp becomes truthful.
 if (-not (Test-Path $stamp)) { exit 1 }
+$built = (Get-Content $stamp -Raw).Trim()
+if (-not $built) { exit 1 }
 
-$stampTime = (Get-Item $stamp).LastWriteTime
+# git should be on PATH (start-project.bat prepends Git\bin). If it isn't, don't loop-build every
+# start -- trust the existing bundle.
+$head = (& git rev-parse HEAD 2>$null | Out-String).Trim()
+if (-not $head) { exit 0 }
+if ($built -eq $head) { exit 0 }
 
-# A `next dev` run since our last prod build contaminates .next (BUILD_ID stays but artifacts are
-# dev), and `next start` would then fail. .next\dev's mtime tracks the last dev run; if it is newer
-# than our stamp, dev ran after we built -> rebuild for a clean production .next. (If it's older,
-# it's a harmless leftover and next start ignores it.)
-if (Test-Path '.next\dev') {
-  if ((Get-Item '.next\dev').LastWriteTime -gt $stampTime) { exit 1 }
-}
-
-$newest = Get-ChildItem -Recurse -File app, components, lib, packages\shared\src, next.config.ts, package.json |
-  Where-Object { $_.Extension -in '.ts', '.tsx', '.css', '.js', '.mjs', '.json' } |
-  Sort-Object LastWriteTime -Descending | Select-Object -First 1
-
-if ($newest -and $newest.LastWriteTime -gt $stampTime) { exit 1 }
-exit 0
+# Rebuild only when a frontend input changed between the built commit and HEAD. A non-existent
+# pathspec entry is silently ignored by git; a bad/rebased $built makes `git diff` error (non-zero)
+# -> we rebuild, the safe default.
+& git diff --quiet $built $head -- app components lib packages/shared/src next.config.ts postcss.config.mjs tailwind.config.ts package.json 2>$null
+if ($LASTEXITCODE -eq 0) { exit 0 }
+exit 1
