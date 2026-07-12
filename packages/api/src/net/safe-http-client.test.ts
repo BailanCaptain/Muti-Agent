@@ -317,6 +317,74 @@ describe("request() 扩展（F040）", () => {
     const headers = spy.calls[0].init.headers as Record<string, string>
     assert.equal(headers["content-type"], undefined)
   })
+
+  // ── F041 W7 增量：结构化响应（headers/setCookies/finalUrl）+ GET followRedirects ──
+
+  it("结构化响应：headers 键小写、set-cookie 走多值 setCookies 不进 headers、finalUrl=请求 URL", async () => {
+    const resp = new Response('{"code":0}', { status: 200 })
+    resp.headers.set("X-RateLimit", "10")
+    resp.headers.append("set-cookie", "A=1; Path=/")
+    resp.headers.append("set-cookie", "B=2; HttpOnly")
+    const c = client({ fetchImpl: fakeFetchSeq([resp]) })
+    const r = await c.request("https://allowed.com/x")
+    assert.equal(r.headers?.["x-ratelimit"], "10")
+    assert.equal(r.headers?.["set-cookie"], undefined, "set-cookie 禁入单值 headers（逗号合并损坏语义）")
+    assert.deepEqual(r.setCookies, ["A=1; Path=/", "B=2; HttpOnly"])
+    assert.equal(r.finalUrl, "https://allowed.com/x")
+  })
+
+  it("结构化响应 buffer 路径同暴露 headers/finalUrl", async () => {
+    const resp = new Response(new Uint8Array([1, 2]), { status: 200, headers: { "x-k": "v" } })
+    const c = client({ fetchImpl: fakeFetchSeq([resp]) })
+    const r = await c.request("https://allowed.com/b", { responseAs: "buffer" })
+    assert.equal(r.headers?.["x-k"], "v")
+    assert.equal(r.finalUrl, "https://allowed.com/b")
+    assert.ok(r.bytes instanceof Uint8Array)
+  })
+
+  it("followRedirects GET：跟随后 finalUrl=终点（逐跳校验同链）", async () => {
+    const c = client({
+      fetchImpl: fakeFetchSeq([
+        redirectTo("https://other.com/final"),
+        new Response("done", { status: 200 }),
+      ]),
+    })
+    const r = await c.request("https://allowed.com/start", { followRedirects: true })
+    assert.equal(r.status, 200)
+    assert.equal(r.text, "done")
+    assert.equal(r.finalUrl, "https://other.com/final")
+  })
+
+  it("followRedirects：redirect 到白名单外 host 拒（校验链逐跳活着）", async () => {
+    const c = client({ fetchImpl: fakeFetchSeq([redirectTo("https://evil.com/x")]) })
+    await expectKind(
+      c.request("https://allowed.com/start", { followRedirects: true }),
+      "host_not_allowed",
+    )
+  })
+
+  it("followRedirects：超 3 跳 → redirect_limit", async () => {
+    const c = client({
+      fetchImpl: fakeFetchSeq([
+        redirectTo("https://allowed.com/1"),
+        redirectTo("https://allowed.com/2"),
+        redirectTo("https://allowed.com/3"),
+        redirectTo("https://allowed.com/4"),
+      ]),
+    })
+    await expectKind(
+      c.request("https://allowed.com/0", { followRedirects: true }),
+      "redirect_limit",
+    )
+  })
+
+  it("followRedirects 非 GET → TypeError fail-fast（非 GET 重放是 footgun）", async () => {
+    const c = client()
+    await assert.rejects(
+      c.request("https://allowed.com/x", { method: "POST", jsonBody: {}, followRedirects: true }),
+      TypeError,
+    )
+  })
 })
 
 describe("F040 P3 AC16：rawBody / responseAs buffer / multipart 构造", () => {

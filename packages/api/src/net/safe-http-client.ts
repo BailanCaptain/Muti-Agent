@@ -55,6 +55,12 @@ export interface SafeHttpRequestOptions extends Omit<SafeHttpFetchOptions, "meth
   rawBody?: { contentType: string; body: Uint8Array }
   /** 响应读法：默认 "text"；"buffer" 走同一 maxBytes 闸后返回 bytes（text 为空串） */
   responseAs?: "text" | "buffer"
+  /**
+   * F041 W7 增量：仅 GET 允许跟随 3xx（≤3 跳，逐跳重做全套校验——与 fetchText 同链）。
+   * 默认 false（F040 行为不变：3xx 一律 redirect_invalid）。非 GET + follow = TypeError
+   * （非 GET 重放 body 是 footgun，fail-fast）。
+   */
+  followRedirects?: boolean
 }
 
 export interface SafeHttpResponse {
@@ -62,6 +68,16 @@ export interface SafeHttpResponse {
   text: string
   /** responseAs:"buffer" 时填充；text 路径缺省 */
   bytes?: Uint8Array
+  /**
+   * F041 W7 增量三件（真实实现恒填充；类型可选只为让窄面测试 fixture 不陪跑）：
+   * headers=响应头（键小写；set-cookie 不在此——Headers 单值 API 逗号合并会损坏语义，
+   * 见 setCookies）；setCookies=set-cookie 多值原样——cookie jar seam（W8 Yahoo crumb
+   * 握手在调用方组 jar，transport 只负责暴露）；finalUrl=终点 URL（followRedirects
+   * 跟随后的最后一跳；不跟随时=请求 URL）。
+   */
+  headers?: Record<string, string>
+  setCookies?: string[]
+  finalUrl?: string
 }
 
 /**
@@ -371,7 +387,9 @@ export function createSafeHttpClient(options: SafeHttpClientOptions): SafeHttpCl
     if (opts.jsonBody !== undefined && opts.rawBody !== undefined) {
       throw new TypeError("SafeHttp request(): jsonBody and rawBody are mutually exclusive")
     }
-    const u = await validateHop(url, 0)
+    if (opts.followRedirects && method !== "GET") {
+      throw new TypeError("SafeHttp request(): followRedirects is GET-only（非 GET 重放是 footgun）")
+    }
     const headers: Record<string, string> = { ...opts.headers }
     let body: string | Uint8Array | undefined
     if (opts.jsonBody !== undefined) {
@@ -382,16 +400,35 @@ export function createSafeHttpClient(options: SafeHttpClientOptions): SafeHttpCl
       body = opts.rawBody.body
       headers["content-type"] = opts.rawBody.contentType
     }
-    const res = await doFetch(u, { method, body, headers, redirect: "manual", signal }, url)
-    if (res.status >= 300 && res.status < 400) {
-      throw new SafeHttpError("redirect_invalid", url, `request() does not follow ${res.status}`)
+    let current = url
+    for (let hop = 0; ; hop += 1) {
+      const u = await validateHop(current, hop)
+      const res = await doFetch(u, { method, body, headers, redirect: "manual", signal }, current)
+      if (res.status >= 300 && res.status < 400) {
+        if (!opts.followRedirects) {
+          throw new SafeHttpError("redirect_invalid", current, `request() does not follow ${res.status}`)
+        }
+        if (hop >= maxRedirects) throw new SafeHttpError("redirect_limit", current)
+        const loc = res.headers.get("location")
+        if (!loc) throw new SafeHttpError("redirect_invalid", current, "3xx without location")
+        current = new URL(loc, u).toString()
+        continue
+      }
+      // 结构化响应（F041 W7）：headers 单值面排除 set-cookie（强制走多值 setCookies）；
+      // getSetCookie 守卫只护手造 headers 的测试 fixture——真实 fetch Headers 恒有
+      const outHeaders: Record<string, string> = {}
+      res.headers.forEach((v, k) => {
+        if (k.toLowerCase() !== "set-cookie") outHeaders[k.toLowerCase()] = v
+      })
+      const hdrs = res.headers as Headers & { getSetCookie?: () => string[] }
+      const setCookies = typeof hdrs.getSetCookie === "function" ? hdrs.getSetCookie() : []
+      if (opts.responseAs === "buffer") {
+        const bytes = await readBytesCapped(res, maxBytes, current)
+        return { status: res.status, text: "", bytes, headers: outHeaders, setCookies, finalUrl: current }
+      }
+      const text = await readBodyCapped(res, maxBytes, current)
+      return { status: res.status, text, headers: outHeaders, setCookies, finalUrl: current }
     }
-    if (opts.responseAs === "buffer") {
-      const bytes = await readBytesCapped(res, maxBytes, url)
-      return { status: res.status, text: "", bytes }
-    }
-    const text = await readBodyCapped(res, maxBytes, url)
-    return { status: res.status, text }
   }
 
   return { fetchText, request }
