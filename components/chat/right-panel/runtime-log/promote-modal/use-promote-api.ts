@@ -74,6 +74,14 @@ export interface PromoteCommitBody {
   allowReplace?: boolean
   /** allowReplace 必带：对比面板看到的现有页 contentHash（服务端 CAS 校验，防盲替换）。 */
   expectedDestHash?: string
+  /** F042 AC3 · 同源撞车显式取代：SAME_SOURCE_EXISTS conflicts 全量路径（服务端要求全覆盖）。 */
+  supersedePaths?: string[]
+}
+
+/** F042 AC3 · 同源冲突条目（SAME_SOURCE_EXISTS 载荷 / SameSourcePanel 数据源）。 */
+export interface SameSourceConflictItem {
+  path: string
+  title: string
 }
 
 export interface PromoteCommitSuccess {
@@ -82,12 +90,24 @@ export interface PromoteCommitSuccess {
   eventId: number
   /** 替换发生时：旧页归档到的 _rejected/ 相对路径。 */
   replacedArchivePath?: string
+  /** F042 AC3 · 取代发生时：旧同源条目归档到的 _superseded/ 相对路径。 */
+  supersededPaths?: string[]
+  /** F042 AC3 · 个别取代失败（promote 本体已成功）：人工善后清单。 */
+  supersedeFailures?: Array<{ path: string; error: string; eventId?: number }>
 }
 
 export interface PromoteCommitAuditRejected {
   ok: false
   code: "AUDIT_REJECTED"
   audit: V14RejectReason
+}
+
+/** F042 AC3 · 同源撞车 409（前端弹 SameSourcePanel：取代 / 去合并二选一）。 */
+export interface PromoteCommitSameSourceExists {
+  ok: false
+  code: "SAME_SOURCE_EXISTS"
+  conflicts: SameSourceConflictItem[]
+  error?: string
 }
 
 export interface PromoteCommitGenericError {
@@ -99,6 +119,7 @@ export interface PromoteCommitGenericError {
 export type PromoteCommitResponse =
   | PromoteCommitSuccess
   | PromoteCommitAuditRejected
+  | PromoteCommitSameSourceExists
   | PromoteCommitGenericError
 
 // ── usePromoteAudit (preview) ────────────────────────────────────────────────

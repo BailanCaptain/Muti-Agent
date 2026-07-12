@@ -57,11 +57,14 @@ async function setupApp(
     judgeVerdict?: "safe" | "injection"
     /** 替换补丁测试用：自定义 ACL（如带 demote 权限）。 */
     aclConfig?: ACLConfig
+    /** 德彪 r1 P1-4 · 索引收敛通知（成功落盘后被调）。 */
+    onWikiMutated?: () => void
   } = {},
 ): Promise<{
   app: ReturnType<typeof Fastify>
   wikiRoot: string
   leases: WikiLeasesRepository
+  events: WikiEventsRepository
   cleanup: () => Promise<void>
 }> {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "promote-route-test-"))
@@ -92,14 +95,17 @@ async function setupApp(
     promote,
     audit,
     leases,
+    events,
     wikiRoot,
     leaderTerm: () => "999",
+    onWikiMutated: opts.onWikiMutated,
   })
 
   return {
     app,
     wikiRoot,
     leases,
+    events,
     cleanup: async () => {
       await app.close()
       close()
@@ -111,6 +117,57 @@ async function setupApp(
     },
   }
 }
+
+describe("F042 r3 F1 · supersede 半态事件账本", () => {
+  it("GET 重建 unresolved failure；POST dismiss 写对账后不再返回", async () => {
+    const t = await setupApp()
+    try {
+      const oldPath = "wiki/concepts/old.md"
+      writeDraft(t.wikiRoot, oldPath, "# old\n")
+      const failed = t.events.appendPending({
+        ts: "2026-07-11T00:00:00.000Z",
+        alias: "黄仁勋",
+        action: "supersede",
+        path: oldPath,
+        attemptedHash: "failed-hash",
+        promotionTarget: "wiki/concepts/new.md",
+        reason: "superseded by promote",
+        fencingToken: "1",
+        leaderTerm: "999",
+      })
+      t.events.abort(failed.id, { error: "EPERM" })
+
+      const before = await t.app.inject({
+        method: "GET",
+        url: "/api/wiki/drafts/partial-supersedes",
+      })
+      assert.equal(before.statusCode, 200)
+      assert.deepEqual(before.json().failures, [
+        {
+          eventId: failed.id,
+          path: oldPath,
+          promotionTarget: "wiki/concepts/new.md",
+          error: "EPERM",
+        },
+      ])
+
+      const dismiss = await t.app.inject({
+        method: "POST",
+        url: "/api/wiki/drafts/partial-supersedes/resolve",
+        payload: { failureEventId: failed.id, callerAlias: "黄仁勋", resolution: "dismissed" },
+      })
+      assert.equal(dismiss.statusCode, 200)
+
+      const after = await t.app.inject({
+        method: "GET",
+        url: "/api/wiki/drafts/partial-supersedes",
+      })
+      assert.deepEqual(after.json().failures, [])
+    } finally {
+      await t.cleanup()
+    }
+  })
+})
 
 function writeDraft(wikiRoot: string, relPath: string, content: string): void {
   const abs = path.join(wikiRoot, relPath)
@@ -784,6 +841,57 @@ describe("promote routes · replace-r1 receive（CAS 必填 + _rejected 段拒 +
         fs.readFileSync(path.join(t.wikiRoot, "wiki/concepts/n3.md"), "utf-8"),
         "current",
       )
+    } finally {
+      await t.cleanup()
+    }
+  })
+})
+
+// ── 德彪 r1 P1-4 · 索引收敛通知 ──────────────────────────────────────────
+
+describe("德彪 r1 P1-4 · onWikiMutated 索引收敛通知", () => {
+  it("promote 成功 → onWikiMutated 被调一次（召回面不再等 5min 周期）", async () => {
+    let kicks = 0
+    const t = await setupApp({ onWikiMutated: () => kicks++ })
+    try {
+      const src = "wiki/concepts/draft/_auto/kick.md"
+      writeDraft(t.wikiRoot, src, "clean knowledge body for reindex kick test")
+      const resp = await t.app.inject({
+        method: "POST",
+        url: "/api/wiki/drafts/promote",
+        payload: {
+          srcDraftPath: src,
+          destWikiPath: "wiki/concepts/kick.md",
+          callerAlias: "tester",
+          reason: "P1-4 kick test",
+        },
+      })
+      assert.equal(resp.statusCode, 200)
+      assert.equal(resp.json().ok, true)
+      assert.equal(kicks, 1, "落盘成功必须踢一次索引收敛")
+    } finally {
+      await t.cleanup()
+    }
+  })
+
+  it("promote 被审计拒绝（无落盘）→ onWikiMutated 不被调", async () => {
+    let kicks = 0
+    const t = await setupApp({ judgeVerdict: "injection", onWikiMutated: () => kicks++ })
+    try {
+      const src = "wiki/concepts/draft/_auto/rejected.md"
+      writeDraft(t.wikiRoot, src, "body that the injected judge will reject")
+      const resp = await t.app.inject({
+        method: "POST",
+        url: "/api/wiki/drafts/promote",
+        payload: {
+          srcDraftPath: src,
+          destWikiPath: "wiki/concepts/rejected.md",
+          callerAlias: "tester",
+          reason: "P1-4 reject test",
+        },
+      })
+      assert.equal(resp.statusCode, 422)
+      assert.equal(kicks, 0, "没有落盘就不该踢 reindex")
     } finally {
       await t.cleanup()
     }

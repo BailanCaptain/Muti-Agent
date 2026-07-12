@@ -336,54 +336,41 @@ export async function createApiServer(options: {
   let hybridWikiSearch: HybridSearchProvider | undefined
   {
     const { AdaptiveRecallCoordinator } = await import("./orchestrator/adaptive-recall-coordinator")
-    const {
-      createHybridWikiSearchProvider,
-      createProductionRecallExecutorDeps,
-      createSimpleLeaderContext,
-    } = await import("./orchestrator/production-recall-executor-deps")
-    const { ProductionLevel5Sink } = await import("./wiki/adaptive-recall/level5-escalate-sink")
-    const { createRealtimeAuditBroadcaster } = await import(
-      "./wiki/adaptive-recall/realtime-audit-broadcaster"
+    const { parseDirectTurnRecallMode, resolveTriggerScenarios } = await import(
+      "./orchestrator/direct-turn-recall-mode"
     )
-    const { WikiEventsRepository } = await import("./db/repositories/wiki-events-repository")
+    const { createDirectRecallDeps, createHybridWikiSearchProvider } = await import(
+      "./orchestrator/production-recall-executor-deps"
+    )
 
-    const wikiEventsRepo = new WikiEventsRepository(drizzleDb)
-    const auditBroadcaster = createRealtimeAuditBroadcaster(broadcaster)
-    const level5 = new ProductionLevel5Sink({
-      wikiEventsRepo,
-      leaderContext: createSimpleLeaderContext(),
-      broadcaster: auditBroadcaster,
-    })
-    // F027 #286 FU-2 · 冷启召回与 coordinator Level 2 共享同一 hybrid provider（B1-b-2 P3-5）。
-    // 起步 embedded records 空 → BM25-only；boot reindex 后 EmbeddedWikiRecordsLoader
-    // 热替换 records → 冷启 + coordinator 同时升级语义召回（F027 续 · 转正）。
+    // F042 AC6（ADR-005）· 同步召回链全量切 direct 快链：零 LLM critique / 零 embedding /
+    // miss 不进 L5。旧 5 级 executorDeps（CLI critique 30s vs 预算 5s = 100% 熔断，LL-035）
+    // 生产同步 caller 归零，保留为异步标注/离线校准位。
+    const directDeps = createDirectRecallDeps({ drizzleDb, messagesFtsRepo })
+
+    // F027 #286 FU-2 · 冷启 loadTaskMemoryPack 与 hybrid provider（boot reindex 后
+    // EmbeddedWikiRecordsLoader 热替换 embedded records）。注意：hybrid 仅供冷启
+    // memory-preflight——coordinator 召回已切 lexical-only 快链（德彪 1.5：防 ONNX 延迟）。
     hybridWikiSearch = createHybridWikiSearchProvider({ drizzleDb, embeddingService })
-    const executorDeps = createProductionRecallExecutorDeps({
-      drizzleDb,
-      wikiRoot: wikiRootBase,
-      messagesFtsRepo,
-      embeddingService,
-      level5,
-      hybridSearch: hybridWikiSearch,
-    })
 
-    // codex r1 P2-1 修: DEFAULT_RECALL_BUDGET.maxLevels=3 (defaults.ts) — 不传
-    // defaultBudget.maxLevels 时 Level 4 read_wiki backend 永远没跑 (跟 boot log "levels=[2,3,4,5]"
-    // 不符 — 虚假承诺)。wire 时显式 override maxLevels=5 让 critique 真按 5 级阶梯走。
+    // F042 AC1 · direct_turn 三态：off 维持 F027 白名单；shadow/inject 扩 direct_turn。
+    // shadow（默认）在 message-service 侧拦注入（applyShadowSuppression），链照跑、审计照写。
+    const directTurnRecallMode = parseDirectTurnRecallMode(
+      process.env.MULTI_AGENT_DIRECT_TURN_RECALL,
+    )
     messages.setAdaptiveRecallCoordinator(
       new AdaptiveRecallCoordinator({
         enabled: true,
-        executorDeps,
-        defaultBudget: { maxLevels: 5 },
+        directDeps,
+        triggerScenarios: resolveTriggerScenarios(directTurnRecallMode),
       }),
     )
+    messages.setDirectTurnRecallMode(directTurnRecallMode)
     // F027 B1-b-2 · 冷启 loadTaskMemoryPack 搜索 backend（北极星「新 agent 进新 room 不白板」）。
-    // FU-2（B1-b-2 P3-5）：从 search_wiki MCP 的 SearchWikiProvider 切到 coordinator Level 2
-    // 同一 hybrid 实例 —— 召回 backend 同源，行为今天等价（空 embedded records 退化 BM25）。
     messages.setMemoryPreflightSearch(hybridWikiSearch)
     // eslint-disable-next-line no-console
     console.log(
-      "[F027-P4 AC-P4-8] AdaptiveRecallCoordinator wired: enabled=true, levels=[2,3,4,5], maxLevels=5, broadcaster=on",
+      `[F042-AC6] AdaptiveRecallCoordinator wired: direct fast-path (lexical-only, no-LLM), directTurnMode=${directTurnRecallMode}`,
     )
   }
   // F027 Phase 3 P20 Day 8 b · PromptAuditWriter boot wiring (AC-P3-9 b)。
@@ -393,6 +380,19 @@ export async function createApiServer(options: {
   {
     const { PromptAuditWriter } = await import("./wiki/prompt-audit/prompt-audit-writer")
     messages.setPromptAuditWriter(new PromptAuditWriter({ db: drizzleDb }))
+  }
+
+  // F042 AC2 · 影子观察窗提示器（两时机一次性小结/rerank 提示；app_state 一次性保证）。
+  {
+    const { ShadowWindowNotifier } = await import("./wiki/prompt-audit/shadow-window-notifier")
+    const { RecallStatsService } = await import("./routes/phase3/recall-stats")
+    const { AppStateRepository } = await import("./db/repositories/app-state-repository")
+    messages.setShadowWindowNotifier(
+      new ShadowWindowNotifier({
+        stats: new RecallStatsService({ db: drizzleDb }),
+        appState: new AppStateRepository({ db: drizzleDb }),
+      }),
+    )
   }
 
   // F027 P4 hotfix · ViewfinderLoader boot wiring（V16.5 §11 + §4 line 396 + §18 line 2117）。
@@ -1015,12 +1015,34 @@ export async function createApiServer(options: {
       "[F027-G11] handbook compileRules load failed; ingest compile uses empty rules",
     )
   }
+  // F042 AC4 · 编译候选喂料：hybridWikiSearch（wiki_entity_index BM25+cosine）适配成
+  // pre-compile 候选源，替代 message_embeddings 误用（ingest 场景 threadIds 恒空从未产出）。
+  // hybridWikiSearch 未构造（embedding 块未跑）→ undefined = pre-compile 旧路径兜底。
+  const ingestCandidateSearch = await (async () => {
+    if (!hybridWikiSearch) return undefined
+    const { createWikiCandidateSearch } = await import("./wiki/llm-compile/wiki-candidate-search")
+    const { wikiEntityIndex } = await import("./db/schema")
+    const { eq } = await import("drizzle-orm")
+    const hybrid = hybridWikiSearch
+    return createWikiCandidateSearch({
+      hybrid,
+      lookupIndexRow: (p) => {
+        const row = drizzleDb
+          .select({ name: wikiEntityIndex.name, body: wikiEntityIndex.body })
+          .from(wikiEntityIndex)
+          .where(eq(wikiEntityIndex.path, p))
+          .get()
+        return row ?? null
+      },
+    })
+  })()
   const sharedIngestPreview = new IngestPreviewServiceCls({
     store: sharedPreviewStore,
     compile: {
       embedding: embeddingService,
       indexLoader: createProductionIndexLiteLoader({ wikiRoot: ingestCompileWikiRoot }),
       entityChecker: createProductionEntityExistenceChecker({ wikiRoot: ingestCompileWikiRoot }),
+      wikiCandidateSearch: ingestCandidateSearch,
       llmClient: createProductionCompileLLMClient({
         runner: createDynamicWikiCompileRunner({
           // AC-W1：降级审计带真实 primary 模型名（替换原硬编码 "Opus primary failed" 文案）
@@ -1075,7 +1097,10 @@ export async function createApiServer(options: {
   // F027 续（德彪 batch2 P1）：metaWikiRoot override 删除——wikiServices.wikiRoot 已是
   // wikiRootBase（preview 下与 fixtures dest 同根），强制 destWikiRoot 反而在
   // preview + 显式 WIKI_ROOT 时复活双根（writer 写 WIKI_ROOT、meta reader 读 fixtures 根）。
-  registerPhase4Routes(app, { wikiServices })
+  // F042 AC3 · 同源检测（德彪 r1 P1-4：detector 内部走 FS 权威 lookup，不再依赖 index）；
+  // onWikiMutated 接 fireWikiCommit forwarder（late-bind，scheduler boot 后回填）——
+  // promote/demote/supersede 落盘后 5s debounce reindex，召回面收敛不再等 5min 周期。
+  registerPhase4Routes(app, { wikiServices, onWikiMutated: () => fireWikiCommit?.() })
 
   // F027 Phase 3 P20 · scheduler go-live（Week 1 Day 1）
   //

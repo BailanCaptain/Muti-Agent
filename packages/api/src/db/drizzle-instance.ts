@@ -375,9 +375,19 @@ const INIT_SQL = `
     recall_budget_exceeded INTEGER,
     agent_session_ref TEXT,
     reserved_1 TEXT,
-    reserved_2 TEXT
+    reserved_2 TEXT,
+    recall_mode TEXT,
+    recall_adopted INTEGER,
+    recall_adoption_detail TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_prompt_audit ON prompt_audit(alias, room_id, created_at);
+
+  -- F042 AC2/D10 · app_state — 通用一次性标志/轻量状态 KV（新库 CREATE；老库走同名 MIGRATIONS 条目）。
+  CREATE TABLE IF NOT EXISTS app_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
 
   -- F027 AC-P1-5 · recent_drops — multi-drop cross-correlation 的"最近 drop 语料库"。
   -- commit 落盘写一条；preview 检测查 7 天窗口做相似度对比。embedding 存 JSON 文本（缺失视为 sim 0）。
@@ -717,6 +727,24 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   {
     name: "F043-threads-add-last-usage-source",
     sql: "ALTER TABLE threads ADD COLUMN last_usage_source TEXT;",
+  },
+  // F042 AC2 · 采纳度量三列（新库 CREATE 已带，旧库 ALTER 补列，duplicate 容错）
+  {
+    name: "F042-prompt_audit-add-recall_mode",
+    sql: "ALTER TABLE prompt_audit ADD COLUMN recall_mode TEXT;",
+  },
+  {
+    name: "F042-prompt_audit-add-recall_adopted",
+    sql: "ALTER TABLE prompt_audit ADD COLUMN recall_adopted INTEGER;",
+  },
+  {
+    name: "F042-prompt_audit-add-recall_adoption_detail",
+    sql: "ALTER TABLE prompt_audit ADD COLUMN recall_adoption_detail TEXT;",
+  },
+  // F042 AC2/D10 · app_state KV（IF NOT EXISTS 天然幂等——老库经此建表，新库 INIT_SQL 已建）
+  {
+    name: "F042-create-app_state",
+    sql: "CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);",
   },
 ]
 

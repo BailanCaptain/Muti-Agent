@@ -438,7 +438,8 @@ test("postCompile: dedup verdict=supersedes → 写 supersedes 数组", async ()
     target_entity: "old-rag-entity",
     rationale: "替代旧版",
   }
-  const checker = makeMockEntityChecker(new Set([]))
+  // F042 AC4 起 dedup target 过存在性校验——本测试意图是 verdict→frontmatter 映射，target 需真实存在
+  const checker = makeMockEntityChecker(new Set(["old-rag-entity"]))
   const wiki = makeMockWikiEvents()
   const result = await postCompile(
     llm,
@@ -741,4 +742,242 @@ test("runCompilePipelineWithRetry: 第 2 次成功不熔断", async () => {
   )
   assert.equal(attempts, 2)
   assert.equal(result.dedupDecision.verdict, "new_entity")
+})
+
+// ─── F042 AC4 · 编译候选喂料（wiki_entity_index 替代 message_embeddings 误用）───
+
+import { createWikiCandidateSearch, type WikiCandidateSearch } from "./wiki-candidate-search"
+
+function makeMockCandidateSearch(
+  entities: Array<{
+    path: string
+    title: string
+    summary: string
+    score: number
+    sourcePath?: string
+  }>,
+): WikiCandidateSearch {
+  return { findSimilar: async () => entities }
+}
+
+test("F042 AC4 · preCompile: wikiCandidateSearch 注入 → threadIds 恒空也产出候选（主修）", async () => {
+  const ctx = await preCompile(
+    "RAG 检索增强生成 raw content",
+    { ingestMessageId: "msg-1", fromUserDrop: true, date: "2026-07-11" },
+    {
+      embedding: makeMockEmbedding({ generateReturn: null }), // 旧路径条件不满足
+      indexLoader: makeIndexLoader(),
+      wikiCandidateSearch: makeMockCandidateSearch([
+        {
+          path: "wiki/concepts/rag-overview.md",
+          title: "rag-overview",
+          summary: "RAG 概览",
+          score: 0.82,
+          sourcePath: "docs/papers/rag-survey.md",
+        },
+        { path: "wiki/concepts/embedding.md", title: "embedding", summary: "向量", score: 0.61 },
+      ]),
+    },
+    { title: "RAG 教程" },
+  )
+  assert.equal(ctx.similarEntities.length, 2, "无 threadIds 也应产出候选")
+  assert.equal(ctx.similarEntities[0].path, "wiki/concepts/rag-overview.md")
+  assert.equal(ctx.similarEntities[0].sourcePath, "docs/papers/rag-survey.md")
+})
+
+test("F042 AC4 · preCompile: 无 wikiCandidateSearch → 现状路径不变（回归护栏）", async () => {
+  const ctx = await preCompile(
+    "raw",
+    { ingestMessageId: "m", fromUserDrop: true, date: "2026-07-11" },
+    { embedding: makeMockEmbedding(), indexLoader: makeIndexLoader() },
+  )
+  assert.deepEqual(ctx.similarEntities, [], "threadIds 空 + 无新 dep → 候选空（旧行为）")
+})
+
+test("F042 AC4 · createWikiCandidateSearch: hybrid 命中 → SimilarEntity + 来源提取 + 归档过滤", async () => {
+  const bodies: Record<string, { name: string; body: string }> = {
+    "wiki/concepts/rag-overview.md": {
+      name: "rag-overview",
+      body: "---\ntitle: rag-overview\nsources:\n  - type: text/markdown\n    path: docs/papers/rag-survey.md\n    contributed_by: docs-watcher\n---\n正文",
+    },
+    "wiki/concepts/no-source.md": { name: "no-source", body: "---\ntitle: no-source\n---\n正文" },
+  }
+  const search = createWikiCandidateSearch({
+    hybrid: {
+      search: async () => [
+        { path: "wiki/concepts/rag-overview.md", score: 0.9, excerpt: "RAG 概览摘录" },
+        { path: "wiki/concepts/no-source.md", score: 0.7, excerpt: "无来源摘录" },
+        { path: "wiki/concepts/draft/_auto/pending.md", score: 0.65, excerpt: "draft 不该出" },
+        { path: "wiki/_superseded/old.md", score: 0.6, excerpt: "归档不该出" },
+      ],
+    },
+    lookupIndexRow: (p) => bodies[p] ?? null,
+  })
+  const out = await search.findSimilar("RAG", "正文头", 5)
+  assert.deepEqual(
+    out.map((e) => e.path),
+    ["wiki/concepts/rag-overview.md", "wiki/concepts/no-source.md"],
+    "draft/归档命中被滤",
+  )
+  assert.equal(out[0].sourcePath, "docs/papers/rag-survey.md")
+  assert.equal(out[0].title, "rag-overview")
+  assert.equal(out[1].sourcePath, undefined)
+})
+
+test("F042 AC4 · prompt: 候选 [来源:] 渲染 + 【本次收录来源】段 + 同源 dedup 指令", () => {
+  const ctx: PreCompileContext = {
+    similarEntities: [
+      {
+        path: "wiki/concepts/rag-overview.md",
+        title: "rag-overview",
+        summary: "RAG 概览",
+        score: 0.82,
+        sourcePath: "docs/papers/rag-survey.md",
+      },
+    ],
+    indexLite: { concepts: [], rules: [], methods: [] },
+    totalContextTokens: 0,
+  }
+  const prompt = buildCompileLLMSystemPrompt({
+    context: ctx,
+    handbookCompileRules: "## 编译规则",
+    sources: [
+      { type: "text/markdown", path: "docs/papers/rag-survey.md", contributed_by: "docs-watcher" },
+    ],
+  })
+  assert.ok(prompt.includes("[来源: docs/papers/rag-survey.md]"), "候选行带来源标注")
+  assert.ok(prompt.includes("【本次收录来源】docs/papers/rag-survey.md"), "收录来源段")
+  assert.ok(prompt.includes("supersedes 或 merge_into"), "同源 dedup 指令")
+})
+
+test("F042 AC4 · prompt: 无 sources.path → 不渲染收录来源段（旧行为不变）", () => {
+  const ctx: PreCompileContext = {
+    similarEntities: [],
+    indexLite: { concepts: [], rules: [], methods: [] },
+    totalContextTokens: 0,
+  }
+  const prompt = buildCompileLLMSystemPrompt({
+    context: ctx,
+    handbookCompileRules: "## 编译规则",
+    sources: [{ type: "user-drop", contributed_by: "小孙" }],
+  })
+  assert.ok(!prompt.includes("【本次收录来源】"))
+})
+
+test("F042 AC4 · postCompile: dedup target 不存在 → 降级 new_entity + deadDedupTarget", async () => {
+  const llm = loadExpectedLLMOutput()
+  llm.dedup_decision = { verdict: "supersedes", target_entity: "wiki/concepts/编造的条目.md", rationale: "test" }
+  const checker = makeMockEntityChecker(new Set([])) // 什么都不存在
+  const wiki = makeMockWikiEvents()
+  const result = await postCompile(
+    llm,
+    { ingestMessageId: "msg-1", fromUserDrop: true, date: "2026-07-11" },
+    { title: "x", sources: [{ type: "x", contributed_by: "x" }] },
+    { entityChecker: checker, wikiEvents: wiki.writer },
+  )
+  assert.equal(result.dedupDecision.verdict, "new_entity", "编造 target 降级")
+  assert.equal(result.frontmatter.supersedes, undefined, "不落 supersedes 字段")
+  assert.ok(result.deadDedupTarget, "降级留痕")
+  assert.equal(result.deadDedupTarget?.target, "wiki/concepts/编造的条目.md")
+})
+
+test("F042 AC4 · postCompile: dedup target 真实存在 → 原样通过（校验不误伤）", async () => {
+  const llm = loadExpectedLLMOutput()
+  llm.dedup_decision = { verdict: "supersedes", target_entity: "old-rag-entity", rationale: "test" }
+  const checker = makeMockEntityChecker(new Set(["old-rag-entity"]))
+  const wiki = makeMockWikiEvents()
+  const result = await postCompile(
+    llm,
+    { ingestMessageId: "msg-1", fromUserDrop: true, date: "2026-07-11" },
+    { title: "x", sources: [{ type: "x", contributed_by: "x" }] },
+    { entityChecker: checker, wikiEvents: wiki.writer },
+  )
+  assert.equal(result.dedupDecision.verdict, "supersedes")
+  assert.deepEqual(result.frontmatter.supersedes, ["old-rag-entity"])
+  assert.equal(result.deadDedupTarget, undefined)
+})
+
+test("F042 AC4 · e2e: 同源候选喂进 prompt + fixture 判 supersedes → frontmatter 落真 target", async () => {
+  const expected = loadExpectedLLMOutput()
+  expected.dedup_decision = { verdict: "supersedes", target_entity: "rag-overview", rationale: "test" }
+  let capturedPrompt = ""
+  const capturingClient: CompileLLMClient = {
+    compile: async (args) => {
+      capturedPrompt = args.systemPrompt
+      return expected
+    },
+  }
+  const result = await runCompilePipeline({
+    rawContent: loadRagTutorialInput(),
+    rawMetadata: {
+      ingestMessageId: "msg-rag-2",
+      fromUserDrop: false,
+      date: "2026-07-11",
+      seriesId: null,
+    },
+    agentDraft: {
+      title: expected.title,
+      sources: [
+        { type: "text/markdown", path: "docs/papers/rag-survey.md", contributed_by: "docs-watcher" },
+      ],
+    },
+    handbookCompileRules: "## 编译规则",
+    deps: {
+      embedding: makeMockEmbedding(),
+      indexLoader: makeIndexLoader(),
+      llmClient: capturingClient,
+      entityChecker: makeMockEntityChecker(
+        new Set(["F018-context-resume-rebuild", "B022-prompt-injection", "rag-overview"]),
+      ),
+      wikiEvents: makeMockWikiEvents().writer,
+      wikiCandidateSearch: makeMockCandidateSearch([
+        {
+          path: "wiki/concepts/rag-overview.md",
+          title: "rag-overview",
+          summary: "RAG 概览",
+          score: 0.88,
+          sourcePath: "docs/papers/rag-survey.md",
+        },
+      ]),
+    },
+  })
+  assert.ok(capturedPrompt.includes("rag-overview"), "候选进了 prompt")
+  assert.ok(capturedPrompt.includes("【本次收录来源】docs/papers/rag-survey.md"))
+  assert.equal(result.dedupDecision.verdict, "supersedes")
+  assert.deepEqual(result.frontmatter.supersedes, ["rag-overview"])
+})
+
+test("德彪 r1 P2-6 · dedup 降级后 wiki_events content_hash 对应最终生效语义（非 LLM 原始输出）", async () => {
+  // LLM 编造 target → Step 1.5 降级 new_entity → frontmatter 用 effectiveDedup。
+  // ledger content_hash 若仍 hash 原始输出，事件指纹与实际提交内容脱钩（审计一致性）。
+  const llm = loadExpectedLLMOutput()
+  llm.dedup_decision = {
+    verdict: "supersedes",
+    target_entity: "fabricated-target",
+    rationale: "test",
+  }
+  const wiki = makeMockWikiEvents()
+  const result = await postCompile(
+    llm,
+    {
+      ingestMessageId: "msg-p26",
+      fromUserDrop: true,
+      date: "2026-07-11",
+      seriesId: null,
+    },
+    { title: llm.title, sources: [] },
+    { entityChecker: makeMockEntityChecker(new Set()), wikiEvents: wiki.writer },
+  )
+  assert.equal(result.dedupDecision.verdict, "new_entity", "编造 target 应降级")
+  const expectedHash = computeContentHash({ ...llm, dedup_decision: result.dedupDecision })
+  assert.equal(
+    wiki.calls[0].contentHash,
+    expectedHash,
+    "content_hash 必须对降级后的生效输出计算（与 frontmatter 一致）",
+  )
+  assert.notEqual(
+    wiki.calls[0].contentHash,
+    computeContentHash(llm),
+    "不得等于 LLM 原始输出 hash（降级已改变生效语义）",
+  )
 })

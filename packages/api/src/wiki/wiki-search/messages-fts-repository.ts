@@ -47,6 +47,12 @@ export type QueryMessagesOptions = {
   topK?: number
   /** 是否对 query 做 sanitize（FTS5 phrase quote 化），默认 true */
   sanitizeQuery?: boolean
+  /**
+   * F042 AC6 · 排除消息 id（召回自引用修复）：direct_turn 的用户消息先落库、
+   * shadow 召回随后跑 → L3 会搜到刚发的这条消息本身（活体实测「火锅烤鸭」
+   * miss 变自命中）——零信息量还污染命中率/采纳判定/inject 注入。
+   */
+  excludeMessageIds?: string[]
 }
 
 export class MessagesFtsRepository {
@@ -81,6 +87,10 @@ export class MessagesFtsRepository {
     if (opts.role) {
       where.push("m.role = ?")
       params.push(opts.role)
+    }
+    if (opts.excludeMessageIds && opts.excludeMessageIds.length > 0) {
+      where.push(`m.id NOT IN (${opts.excludeMessageIds.map(() => "?").join(",")})`)
+      params.push(...opts.excludeMessageIds)
     }
     params.push(topK)
 

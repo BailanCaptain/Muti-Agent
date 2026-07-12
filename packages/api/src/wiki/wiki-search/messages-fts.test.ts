@@ -270,6 +270,24 @@ describe("MessagesFtsRepository.query 过滤", () => {
       cleanup()
     }
   })
+
+  it("F042 AC6 · excludeMessageIds 排除当前消息（召回自引用修复——活体实测 L3 搜回刚发的消息本身）", () => {
+    const { raw, cleanup } = makeDb()
+    try {
+      seedRoom(raw, "R-001", ["t1"])
+      insertMessage(raw, "m1", "t1", "user", "历史消息聊过火锅烤鸭的选择")
+      insertMessage(raw, "m2", "t1", "user", "今晚吃火锅烤鸭比较好呢")
+      const drizzleDb = drizzleBetter(raw as never, { schema })
+      const repo = new MessagesFtsRepository(drizzleDb)
+      const all = repo.query("火锅烤鸭", { roomId: "R-001" })
+      assert.equal(all.length, 2, "不排除时两条都中（前置）")
+      const excluded = repo.query("火锅烤鸭", { roomId: "R-001", excludeMessageIds: ["m2"] })
+      assert.equal(excluded.length, 1)
+      assert.equal(excluded[0].messageId, "m1", "只剩历史消息——自己不算记忆")
+    } finally {
+      cleanup()
+    }
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────

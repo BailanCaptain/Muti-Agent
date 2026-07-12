@@ -10,6 +10,7 @@ import { PromoteModal } from "../promote-modal/promote-modal"
 import { IngestSettingsCard } from "./draft-approval/ingest-settings-card"
 import {
   BatchPromoteBanner,
+  PartialSupersedeBanner,
   PromoteJobBadge,
   PromoteRowButton,
   usePromoteJobsAutoRefetch,
@@ -166,6 +167,10 @@ export function DraftApprovalTab() {
         />
         {settingsOpen && <IngestSettingsCard />}
         <BatchPromoteBanner />
+        <PartialSupersedeBanner
+          callerAlias={getCurrentUserAlias()}
+          enabled={activeLvl2 === "draft-approval" && hasLoaded}
+        />
         <DraftList
           drafts={data.drafts}
           selectedPaths={selectedPaths}

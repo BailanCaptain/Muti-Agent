@@ -48,6 +48,11 @@ export interface SimilarEntity {
   summary: string
   /** cosine similarity score（保留 3 位小数） */
   score: number
+  /**
+   * F042 AC4 · 候选自身的 sources[0].path（从 wiki_entity_index body frontmatter 提取）。
+   * 与本次收录来源相同 = 同一文档旧版本——prompt 据此给 LLM 确定性 dedup 信号。
+   */
+  sourcePath?: string
 }
 
 /** 轻量目录条目（concepts / rules 名 + 1 句 summary） */
@@ -193,6 +198,11 @@ export interface DraftResult {
   frontmatter: CompiledFrontmatter
   /** dedup verdict（caller 路由用） */
   dedupDecision: DedupDecision
+  /**
+   * F042 AC4 · dedup target 存在性校验未过（LLM 编造）→ 已降级 new_entity 的留痕。
+   * 镜像 deadRefs（不阻塞编译，诚实透出）；undefined = 校验通过或本就 new_entity。
+   */
+  deadDedupTarget?: { target: string; reason: string }
 }
 
 // ─── 共用：LLM Client interface ─────────────────────────────────────────

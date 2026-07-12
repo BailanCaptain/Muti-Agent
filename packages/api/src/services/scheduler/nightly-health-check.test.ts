@@ -627,3 +627,164 @@ test("P2-3 · generated_by 派生视图 → missingFrontmatter + orphans 双豁�
   assert.ok(!report.orphans.includes("wiki/rooms/R-201/viewfinder.md"))
   assert.ok(report.orphans.includes("wiki/concepts/real-gap.md"))
 })
+
+// ── F042 AC3 · 归档区冻结豁免 ────────────────────────────────────────────
+
+test("F042 AC3 · _superseded/_rejected 归档实体的死链/缺字段不再报（历史自噪音）", async () => {
+  const check = newCheck({
+    entities: [
+      // 审计实测噪音形态：draft/_superseded 归档篇指向已消失的 draft/plans/*
+      entity("wiki/concepts/draft/_superseded/old-a.md", "[[draft/plans/gone-plan]]\n", {}),
+      // 顶级 supersede 归档（F042 新增目录）同样豁免
+      entity("wiki/_superseded/concepts--old-b--superseded-1.md", "[[wiki/concepts/missing]]\n"),
+      entity("wiki/_rejected/gone.md", "[[wiki/concepts/missing-too]]\n"),
+      // 正式区死链照常报（豁免不扩大化）
+      entity("wiki/concepts/live.md", "[[wiki/concepts/missing-live]]\n"),
+    ],
+  })
+  const report = await check.run()
+  assert.equal(report.deadLinks.length, 1, `只剩正式区死链: ${JSON.stringify(report.deadLinks)}`)
+  assert.equal(report.deadLinks[0].from, "wiki/concepts/live.md")
+  assert.ok(
+    !report.missingFrontmatter.some((m) => m.path.includes("_superseded")),
+    "归档区缺字段不报",
+  )
+})
+
+test("F042 AC3 · 正式区链接指向归档路径 → 可解析不算死链（allPaths 含归档）", async () => {
+  const archived = "wiki/_superseded/concepts--old--superseded-1.md"
+  const check = newCheck({
+    entities: [
+      entity(archived, "# 已归档旧版\n"),
+      entity("wiki/concepts/new.md", `[[${archived.replace(/\.md$/, "")}]]\n`),
+    ],
+  })
+  const report = await check.run()
+  assert.equal(report.deadLinks.length, 0, `指向归档的链接可解析: ${JSON.stringify(report.deadLinks)}`)
+})
+
+test("F042 AC3 · guardian 活体反例修 1：归档文件零 inbound 不进 orphans", async () => {
+  // preview NHC 2026-07-10T20:00 活体报告把 wiki/_superseded/concepts--f042-...md 列为
+  // orphan——orphans 循环豁免走 isAnyDraftPath（仅 /draft/ 子串），顶层 wiki/_superseded/
+  // 不含 /draft/ 照报。归档是历史快照，天然没人 [[link]] 它，零 inbound 不是治理信号。
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/live.md", "# live\n[[wiki/concepts/other]]\n"),
+      entity("wiki/concepts/other.md", "# other\n[[wiki/concepts/live]]\n"),
+      entity("wiki/_superseded/concepts--old-probe--superseded-1783711626641.md", "# old\n"),
+    ],
+  })
+  const report = await check.run()
+  assert.deepEqual(
+    report.orphans,
+    [],
+    `归档文件不应进 orphans，实际: ${JSON.stringify(report.orphans)}`,
+  )
+})
+
+test("F042 AC3 · guardian 活体反例修 2：supersedes 指向已归档 stem 豁免；指向真不存在照报", async () => {
+  // supersede 执行器把旧条目改名进 wiki/_superseded/（buildSupersededArchivePath 含原 stem），
+  // 新版 frontmatter supersedes: [旧名] 指针从此永久解析不到 → 每次 supersede 结构性
+  // 新增 1 条 deadSupersedes 自噪音（活体报告 deadSupersedes=1 实证，:192 旧注释承诺证伪）。
+  // 修语义：归档区能按 stem 确证目标 → 血缘真实（取代已完成）非死指针；确证不到照报。
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/probe-v2.md", "# v2\n", {
+        supersedes: ["f042-acceptance-probe"],
+      }),
+      entity("wiki/_superseded/concepts--f042-acceptance-probe--superseded-1783711626641.md", "# archived\n"),
+      entity("wiki/concepts/broken.md", "# broken\n", {
+        supersedes: ["never-existed-entity"],
+      }),
+    ],
+  })
+  const report = await check.run()
+  assert.equal(
+    report.deadSupersedes.length,
+    1,
+    `只有真不存在的目标才报，实际: ${JSON.stringify(report.deadSupersedes)}`,
+  )
+  assert.equal(report.deadSupersedes[0].path, "wiki/concepts/broken.md")
+  assert.deepEqual(report.deadSupersedes[0].missing, ["never-existed-entity"])
+})
+
+test("德彪 r1 P2-7 · 归档 stem 豁免不得跨桶：path 形态目标桶不符照报", async () => {
+  // concepts/foo 的归档不得豁免 rules/foo 的断链——归档命名含 bucket（concepts--foo--...），
+  // 反解后必须按 bucket+stem 匹配 path 形态目标。
+  const check = newCheck({
+    entities: [
+      entity("wiki/rules/pointer.md", "# p\n", {
+        supersedes: ["wiki/rules/foo.md"], // rules 桶目标
+      }),
+      entity("wiki/_superseded/concepts--foo--superseded-1700000000000.md", "# archived\n"), // concepts 桶归档
+    ],
+  })
+  const report = await check.run()
+  assert.equal(report.deadSupersedes.length, 1, "跨桶不得豁免")
+  assert.deepEqual(report.deadSupersedes[0].missing, ["wiki/rules/foo.md"])
+})
+
+test("德彪 r1 P2-7 · 纯名字目标遇同 stem 多桶归档 → 歧义照报（宁可误报不漏报）", async () => {
+  const check = newCheck({
+    entities: [
+      entity("wiki/concepts/pointer.md", "# p\n", {
+        supersedes: ["foo"], // 纯名字，无桶信息
+      }),
+      entity("wiki/_superseded/concepts--foo--superseded-1700000000000.md", "# a1\n"),
+      entity("wiki/_superseded/rules--foo--superseded-1700000000001.md", "# a2\n"),
+    ],
+  })
+  const report = await check.run()
+  assert.equal(report.deadSupersedes.length, 1, "多桶同 stem = 歧义，不豁免")
+})
+
+test("德彪 r2 P2-4 · 嵌套正式路径的归档反解：flatten-key 全链匹配不误报", async () => {
+  // buildSupersededArchivePath 把 wiki/rules/team/foo.md 展平为 rules--team--foo--superseded-<epoch>
+  // 旧反解按 bucket/stem 二元组切（lazy 吃出 bucket=rules stem=team--foo vs 目标 bucket=team
+  // stem=foo）→ 无法匹配 → 嵌套路径的合法 supersede 指针被误报 deadSupersedes。
+  const check = newCheck({
+    entities: [
+      entity("wiki/rules/new.md", "# new\n", {
+        supersedes: ["wiki/rules/team/foo.md"],
+      }),
+      entity("wiki/_superseded/rules--team--foo--superseded-1700000000000.md", "# archived\n"),
+    ],
+  })
+  const report = await check.run()
+  assert.deepEqual(
+    report.deadSupersedes,
+    [],
+    `嵌套归档应按全链键匹配豁免，实际: ${JSON.stringify(report.deadSupersedes)}`,
+  )
+})
+
+test("德彪 r3 F4 · 无 superseded 后缀的历史直搬归档按唯一尾段兼容 path 目标", async () => {
+  const nhc = new NightlyHealthCheck({
+    scanEntities: async () => [
+      entity("wiki/concepts/new.md", "# new\n", {
+        supersedes: ["wiki/concepts/old.md"],
+      }),
+      entity("wiki/_superseded/old.md", "# historical archive\n"),
+    ],
+  })
+
+  const report = await nhc.run()
+  assert.deepEqual(report.deadSupersedes, [])
+})
+
+test("德彪 r3 F4 · 历史宽松键与另一桶精确键同尾段时 fail-closed", async () => {
+  const nhc = new NightlyHealthCheck({
+    scanEntities: async () => [
+      entity("wiki/concepts/new.md", "# new\n", {
+        supersedes: ["wiki/concepts/old.md"],
+      }),
+      entity("wiki/_superseded/old.md", "# historical archive\n"),
+      entity("wiki/_superseded/rules--old--superseded-1700000000000.md", "# rules old\n"),
+    ],
+  })
+
+  const report = await nhc.run()
+  assert.deepEqual(report.deadSupersedes, [
+    { path: "wiki/concepts/new.md", missing: ["wiki/concepts/old.md"] },
+  ])
+})

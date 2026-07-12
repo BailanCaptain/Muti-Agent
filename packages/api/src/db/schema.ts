@@ -410,9 +410,22 @@ export const promptAudit = sqliteTable(
     agentSessionRef: text("agent_session_ref"),
     reserved1: text("reserved_1"),
     reserved2: text("reserved_2"),
+    // F042 AC2 · 采纳度量三列（migration F042-prompt_audit-*；F042 前旧行恒 NULL）
+    recallMode: text("recall_mode"), // off|shadow|inject 写入时三态；NULL=legacy
+    recallAdopted: integer("recall_adopted"), // 1/0；NULL=未判（召回空/启发式未跑）
+    recallAdoptionDetail: text("recall_adoption_detail"), // JSON {matches:[{path,term}],checkedAt}
   },
   (table) => [index("idx_prompt_audit").on(table.alias, table.roomId, table.createdAt)],
 )
+
+// F042 AC2/D10 · app_state — 通用一次性标志/轻量状态 KV（影子观察窗小结已发、rerank 提示已发）。
+// 只放标志与游标，别塞业务大对象。归 drizzle-instance.ts INIT_SQL+MIGRATIONS 单点管
+// （sqlite.ts 旧 store 不 own 此表，与 prompt_audit 同口径）。
+export const appState = sqliteTable("app_state", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: text("updated_at").notNull(),
+})
 
 // F027 AC-P1-5 · recent_drops — multi-drop cross-correlation 的"最近 drop 语料库"。
 // crossCorrelateDrops 需 7 天窗口的历史 drop + embedding 做相似度对比；commit 落盘写一条，

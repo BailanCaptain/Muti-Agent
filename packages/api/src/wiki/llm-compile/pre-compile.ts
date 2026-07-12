@@ -23,6 +23,7 @@ import type {
   RawMetadata,
   SimilarEntity,
 } from "./types"
+import type { WikiCandidateSearch } from "./wiki-candidate-search"
 
 /** Phase 1 默认参数（V16.5 chap 26 行 2740-2742） */
 const DEFAULT_TOP_K = 5
@@ -48,6 +49,11 @@ export interface PreCompileOptions {
     title: string
     summary: string
   } | null>
+  /**
+   * F042 AC4 · 候选检索查询文本的 title 部分（agentDraft.title，pipeline 透传）。
+   * 仅 wikiCandidateSearch 路径消费；缺省用空串（纯正文头查询）。
+   */
+  title?: string
 }
 
 export async function preCompile(
@@ -56,6 +62,12 @@ export async function preCompile(
   deps: {
     embedding: Pick<EmbeddingService, "generateEmbedding" | "searchByVector">
     indexLoader: IndexLiteLoader
+    /**
+     * F042 AC4 · wiki_entity_index 候选检索（生产 hybridWikiSearch 适配）。注入时优先于
+     * 旧 message_embeddings 路径（那条在 ingest 场景 threadIds 恒空从未产出）；不注入
+     * 保持现状（存量测试/旧 caller 零回归）。
+     */
+    wikiCandidateSearch?: WikiCandidateSearch
   },
   options?: PreCompileOptions,
 ): Promise<PreCompileContext> {
@@ -68,23 +80,33 @@ export async function preCompile(
     entityMetadataLookup: options?.entityMetadataLookup,
   }
 
-  // Step 1：embedding raw（失败返 null，进 Step 2 跳 vector search）
-  const rawEmbedding = await deps.embedding.generateEmbedding(rawContent)
-
-  // Step 2：top-k similar entity（rawEmbedding 缺失或 threadIds 空 → []）
+  // Step 1+2：相似候选。F042 AC4 双路：
+  //   - wikiCandidateSearch 注入（生产装配）→ 直查 wiki_entity_index（不依赖 threadIds/
+  //     embedding；hybrid 内部自带 BM25+cosine）。score_floor 不套用——hybrid 分数是
+  //     corpus 内相对置信度（min-max 归一），与 cosine 绝对阈值不同域。
+  //   - 未注入 → 原 message_embeddings 路径原样保留（rawEmbedding 缺失或 threadIds 空 → []）。
   let similarEntities: SimilarEntity[] = []
-  if (rawEmbedding && opts.threadIds.length > 0) {
-    const hits = deps.embedding.searchByVector({
-      queryVector: rawEmbedding,
-      threadIds: opts.threadIds,
-      topK: opts.topK * 2, // 多取一些再按 score_floor 过滤
-      excludeMessageIds: new Set(),
-      now: Date.now(),
-    })
-    similarEntities = await mapHitsToEntities(hits, opts)
-    similarEntities = similarEntities
-      .filter((e) => e.score >= opts.scoreFloor)
-      .slice(0, opts.topK)
+  if (deps.wikiCandidateSearch) {
+    similarEntities = await deps.wikiCandidateSearch.findSimilar(
+      options?.title ?? "",
+      rawContent,
+      opts.topK,
+    )
+  } else {
+    const rawEmbedding = await deps.embedding.generateEmbedding(rawContent)
+    if (rawEmbedding && opts.threadIds.length > 0) {
+      const hits = deps.embedding.searchByVector({
+        queryVector: rawEmbedding,
+        threadIds: opts.threadIds,
+        topK: opts.topK * 2, // 多取一些再按 score_floor 过滤
+        excludeMessageIds: new Set(),
+        now: Date.now(),
+      })
+      similarEntities = await mapHitsToEntities(hits, opts)
+      similarEntities = similarEntities
+        .filter((e) => e.score >= opts.scoreFloor)
+        .slice(0, opts.topK)
+    }
   }
 
   // Step 3：indexLite 加载（不依赖 embedding；总是跑）

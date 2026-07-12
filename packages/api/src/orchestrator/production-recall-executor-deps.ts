@@ -26,6 +26,45 @@ import { WikiEntityBm25Adapter } from "../wiki/memory-preflight/wiki-entity-bm25
 import { WikiEntityFtsProvider } from "../wiki/wiki-search/wiki-entity-fts-provider"
 
 import { Level2HybridSearchBackend } from "../wiki/adaptive-recall/level2-hybrid-search-backend"
+import type { DirectRecallDeps } from "../wiki/adaptive-recall/direct-recall-pipeline"
+import { analyzeClauseMatches } from "../wiki/wiki-search/fts-query-compiler"
+
+/**
+ * F042 AC6 · direct 快链生产 deps（ADR-005）。
+ *
+ * 与 createProductionRecallExecutorDeps 的关键差异：
+ *   - wiki 侧 = WikiEntityFtsProvider **lexical-only 直连**——不经 HybridSearchProvider，
+ *     防 boot reindex 后 embedded records 热替换引入同步 ONNX 推理延迟（德彪 1.5）
+ *   - messages 侧 = repo.query(compiled.matchExpr, {sanitizeQuery:false})——quote 安全
+ *     已在编译层完成；evidence 用 analyzeClauseMatches 对 content 计算
+ *   - 零 LLM / 零 embedding / 零 Level5
+ */
+export function createDirectRecallDeps(opts: {
+  drizzleDb: DrizzleDb
+  messagesFtsRepo: MessagesFtsRepository
+}): DirectRecallDeps {
+  const wikiFts = new WikiEntityFtsProvider(opts.drizzleDb)
+  return {
+    searchWiki: (compiled, topK) => wikiFts.searchCompiled(compiled, { topK }),
+    searchMessages: async (compiled, roomId, topK, excludeMessageIds) => {
+      const hits = opts.messagesFtsRepo.query(compiled.matchExpr, {
+        sanitizeQuery: false,
+        roomId,
+        topK,
+        excludeMessageIds,
+      })
+      return hits.map((h) => {
+        const { evidence } = analyzeClauseMatches(h.content, compiled)
+        return {
+          path: `messages/${roomId}/${h.messageId}`,
+          score: h.score,
+          excerpt: h.content.slice(0, 200),
+          evidence,
+        }
+      })
+    },
+  }
+}
 
 /**
  * F027 P4 AC-P4-8 · production ExecutorDeps factory.

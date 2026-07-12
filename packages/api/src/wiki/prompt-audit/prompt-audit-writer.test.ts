@@ -461,3 +461,114 @@ test("FU-3 receive P2-2 · audit 缺省（fail-soft crash）→ 退回 hits 派�
   assert.equal(patch.recallSatisfied, true)
   assert.equal(patch.recallBudgetExceeded, false)
 })
+
+// ─── F042 AC2 · recall_mode 落库 + updateAdoption 回写 + patch V15.1 填充 ───
+
+test("F042 AC2 · recallMode 写入可读回；updateAdoption 回写 adopted+detail", () => {
+  const { db, close, tmp } = makeDb()
+  try {
+    const writer = new PromptAuditWriter({ db })
+    const r = writer.write({
+      createdAt: "2026-07-11T08:00:00.000Z",
+      alias: "德彪",
+      roomId: "R-201",
+      scenario: "direct_turn",
+      totalTokens: 100,
+      cap: 0,
+      partsJson: "[]",
+      ironLawsCount: 1,
+      rawText: "x",
+      recallMode: "shadow",
+    })
+    assert.ok(r.id > 0)
+    const client = getSqliteClient(db)
+    const row = client
+      .prepare("SELECT recall_mode, recall_adopted, recall_adoption_detail FROM prompt_audit WHERE id = ?")
+      .get(r.id) as { recall_mode: string; recall_adopted: number | null; recall_adoption_detail: string | null }
+    assert.equal(row.recall_mode, "shadow")
+    assert.equal(row.recall_adopted, null, "未判定时恒 NULL（不计入标注）")
+
+    writer.updateAdoption(r.id, {
+      adopted: true,
+      matches: [{ path: "wiki/concepts/F031.md", term: "F031" }],
+    })
+    const row2 = client
+      .prepare("SELECT recall_adopted, recall_adoption_detail FROM prompt_audit WHERE id = ?")
+      .get(r.id) as { recall_adopted: number; recall_adoption_detail: string }
+    assert.equal(row2.recall_adopted, 1)
+    const detail = JSON.parse(row2.recall_adoption_detail) as { matches: Array<{ path: string }> }
+    assert.equal(detail.matches[0].path, "wiki/concepts/F031.md")
+  } finally {
+    close()
+    safeCleanup(tmp)
+  }
+})
+
+test("F042 AC1 · buildRecallAuditPatch 带 query → V15.1 recallQueries/recallResults 真填", () => {
+  const patch = buildRecallAuditPatch({
+    output: makeExecuteOutput([makeHit("wiki/concepts/F031.md", 0.88)]),
+    trigger: "direct_turn",
+    recallRequired: true,
+    query: "F031 现在什么状态",
+  })
+  assert.equal(patch.recallQueries, JSON.stringify(["F031 现在什么状态"]))
+  const results = JSON.parse(patch.recallResults!) as Array<{ path: string; score: number; excerpt: string }>
+  assert.equal(results.length, 1)
+  assert.equal(results[0].path, "wiki/concepts/F031.md")
+  assert.equal(results[0].score, 0.88)
+  assert.ok(results[0].excerpt.length > 0)
+})
+
+test("F042 AC1 · buildRecallAuditPatch 无 query/无 output → V15.1 字段 null（旧行为不破坏）", () => {
+  const noOutput = buildRecallAuditPatch({ output: undefined })
+  assert.equal(noOutput.recallQueries, null)
+  assert.equal(noOutput.recallResults, null)
+  const noQuery = buildRecallAuditPatch({ output: makeExecuteOutput([makeHit("wiki/x.md", 0.5)]) })
+  assert.equal(noQuery.recallQueries, null, "query 未传不编造")
+  assert.ok(noQuery.recallResults, "hits 有则 results 仍填（可追溯）")
+})
+
+test("F042 shadow-async · updateRecallPatch 回填 recall 列（占位行 → 真值覆盖）", () => {
+  const { db, close, tmp } = makeDb()
+  try {
+    const writer = new PromptAuditWriter({ db })
+    // 占位行：shadow 异步化后 assemble 即写行，recall 真值未知
+    const { id } = writer.write({
+      createdAt: "2026-07-11T10:00:00.000Z",
+      alias: "黄仁勋",
+      scenario: "direct_turn",
+      totalTokens: 100,
+      cap: 0,
+      partsJson: "[]",
+      ironLawsCount: 4,
+      rawText: "x",
+      recallMode: "shadow",
+      recallRequired: true,
+      recallTrigger: "direct_turn",
+    })
+    assert.ok(id > 0)
+
+    writer.updateRecallPatch(id, buildRecallAuditPatch({
+      output: makeExecuteOutput([makeHit("wiki/concepts/F031.md", 0.91)]),
+      trigger: "direct_turn",
+      recallRequired: true,
+      query: "异步回填验证",
+    }))
+
+    const client = getSqliteClient(db)
+    const row = client
+      .prepare(
+        "SELECT recall_queries, recall_results, recall_total_ms, top_score, recall_satisfied, recall_mode FROM prompt_audit WHERE id = ?",
+      )
+      .get(id) as Record<string, unknown>
+    assert.equal(row.recall_queries, JSON.stringify(["异步回填验证"]))
+    const results = JSON.parse(row.recall_results as string) as Array<{ path: string }>
+    assert.equal(results[0].path, "wiki/concepts/F031.md")
+    assert.equal(typeof row.recall_total_ms, "number")
+    assert.equal(row.top_score, 0.91)
+    assert.equal(row.recall_mode, "shadow", "UPDATE 不动 write 时已定的 mode")
+  } finally {
+    close()
+    safeCleanup(tmp)
+  }
+})

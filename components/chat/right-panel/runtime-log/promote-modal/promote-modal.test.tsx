@@ -656,3 +656,85 @@ describe("PromoteModal · dest_exists 对比+替换（小孙「失败了都不�
     expect(screen.getByText(/对比内容加载中/)).toBeTruthy()
   })
 })
+
+describe("德彪 r1 P1-3 · supersede 半态响亮透出", () => {
+  it("commit ok 但 supersedeFailures 非空 → 成功面板出 amber 警示（旧版仍在正式区）", async () => {
+    mockSequence([
+      { ok: true, status: 200, json: { ok: true, audit: { passed: true } } },
+      {
+        ok: true,
+        status: 200,
+        json: {
+          ok: true,
+          finalPath: "/tmp/wiki/concepts/probe-v2.md",
+          eventId: 9,
+          supersededPaths: [],
+          supersedeFailures: [
+            { path: "wiki/concepts/probe.md", error: "EPERM: rename blocked" },
+          ],
+        },
+      },
+    ])
+    render(
+      <PromoteModal
+        open={true}
+        srcDraftPath="wiki/concepts/draft/_auto/probe-v2.md"
+        callerAlias="黄仁勋"
+        onClose={() => {}}
+      />,
+    )
+    await waitFor(() => screen.getByText(/结构检查通过/))
+    fireEvent.change(screen.getByLabelText("Target wiki path"), {
+      target: { value: "wiki/concepts/probe-v2.md" },
+    })
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "取代 v1" } })
+    fireEvent.click(screen.getByRole("button", { name: "Promote" }))
+
+    await waitFor(() => expect(screen.getByTestId("promote-success")).toBeTruthy(), {
+      timeout: 3000,
+    })
+    const partial = screen.getByTestId("promote-supersede-partial")
+    expect(partial).toBeTruthy()
+    expect(partial.textContent).toContain("旧版取代未完成")
+    expect(partial.textContent).toContain("wiki/concepts/probe.md")
+    expect(partial.textContent).toContain("EPERM: rename blocked")
+    // 德彪 r2 P1-1 · 可处理入口：下架旧版按钮（demote=唯一后端真实支持的补救）
+    expect(screen.getByTestId("success-demote-old-wiki/concepts/probe.md")).toBeTruthy()
+  })
+
+  it("commit ok 且 supersede 全成功 → 无 partial 警示 + 显示归档路径", async () => {
+    mockSequence([
+      { ok: true, status: 200, json: { ok: true, audit: { passed: true } } },
+      {
+        ok: true,
+        status: 200,
+        json: {
+          ok: true,
+          finalPath: "/tmp/wiki/concepts/probe-v2.md",
+          eventId: 9,
+          supersededPaths: ["wiki/_superseded/concepts--probe--superseded-1700000000000.md"],
+        },
+      },
+    ])
+    render(
+      <PromoteModal
+        open={true}
+        srcDraftPath="wiki/concepts/draft/_auto/probe-v2b.md"
+        callerAlias="黄仁勋"
+        onClose={() => {}}
+      />,
+    )
+    await waitFor(() => screen.getByText(/结构检查通过/))
+    fireEvent.change(screen.getByLabelText("Target wiki path"), {
+      target: { value: "wiki/concepts/probe-v2b.md" },
+    })
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "取代 v1" } })
+    fireEvent.click(screen.getByRole("button", { name: "Promote" }))
+
+    await waitFor(() => expect(screen.getByTestId("promote-success")).toBeTruthy(), {
+      timeout: 3000,
+    })
+    expect(screen.queryByTestId("promote-supersede-partial")).toBeNull()
+    expect(screen.getByText(/旧版已取代归档/)).toBeTruthy()
+  })
+})

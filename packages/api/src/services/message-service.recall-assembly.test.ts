@@ -235,6 +235,8 @@ test("FU-1 · 冷启（nativeSessionId=null）+ search 命中 → [Recall Pack] 
       auditRows.push(input as unknown as Record<string, unknown>)
       return { id: auditRows.length }
     },
+    updateAdoption: () => {},
+    updateRecallPatch: () => {},
   })
 
   const events: RealtimeServerEvent[] = []
@@ -273,6 +275,9 @@ test("FU-1 · 冷启（nativeSessionId=null）+ search 命中 → [Recall Pack] 
   assert.equal(row.recallSatisfied, true, "有高置信命中 → satisfied=true")
   assert.equal(row.topScore, 0.95, "topScore = 命中最高分")
   assert.equal(row.recallPath, null, "轻量 Pack 非 coordinator executor → path 不冒充")
+  // 德彪 r1 P1-2 · 冷启 Pack 实际注入 → recallMode 必须 null（记 shadow 会把注入
+  // 行为污染进 shadow 观察窗；stats 侧另有 trigger/mode 双过滤）
+  assert.equal(row.recallMode, null, "冷启行不记 mode（实际注入，非 shadow 语义）")
 })
 
 test("FU-1 · wake_up（nativeSessionId 非空）+ coordinator 命中 → [Recall Pack] 注入", async () => {
@@ -359,4 +364,129 @@ test("FU-1 · direct_turn（普通用户问答，nativeSessionId 非空）→ sc
     !input.prompt.includes("[Recall Pack"),
     "direct_turn 不召回 → envelope 不得出现 [Recall Pack]",
   )
+})
+
+test("F042 shadow-async · shadow 态 direct_turn：慢召回不阻塞 spawn + audit 占位 → 回填 + 采纳交汇", async () => {
+  const h = makeHarness()
+  h.threads[0]!.nativeSessionId = "native-session-4"
+  // 挂起的 executor：只有测试显式放行才 settle —— spawn 若等召回，firstRun 永不 resolve
+  let releaseRecall: (out: ExecuteOutput) => void = () => {}
+  const gate = new Promise<ExecuteOutput>((resolve) => {
+    releaseRecall = resolve
+  })
+  h.messageService.setDirectTurnRecallMode("shadow")
+  h.messageService.setAdaptiveRecallCoordinator(
+    new AdaptiveRecallCoordinator({
+      enabled: true,
+      // shadow 白名单含 direct_turn（server.ts resolveTriggerScenarios 同形状）
+      triggerScenarios: ["wake_up", "a2a_handoff", "direct_turn"],
+      executorDeps: makeStubDeps(),
+      executor: async () => gate,
+    }),
+  )
+  const auditRows: Array<Record<string, unknown>> = []
+  const patches: Array<{ id: number; patch: Record<string, unknown> }> = []
+  const adoptions: Array<{ id: number; adopted: boolean }> = []
+  h.messageService.setPromptAuditWriter({
+    write: (input) => {
+      auditRows.push(input as unknown as Record<string, unknown>)
+      return { id: 42 }
+    },
+    updateRecallPatch: (id, patch) => {
+      patches.push({ id, patch: patch as unknown as Record<string, unknown> })
+    },
+    updateAdoption: (id, verdict) => {
+      adoptions.push({ id, adopted: verdict.adopted })
+    },
+  })
+
+  h.messageService.handleClientEvent(
+    {
+      type: "send_message",
+      payload: {
+        threadId: "thread-claude",
+        provider: "claude",
+        alias: "Reviewer",
+        content: "探针协议维护模式怎么开",
+      },
+    },
+    () => {},
+  )
+
+  // 核心断言 1：召回还挂着（gate 未放行），spawn 已发生 —— shadow 不阻塞主链
+  await h.fake.firstRun
+  assert.equal(h.fake.captured.length, 1, "召回未完成 spawn 已发生（异步不阻塞）")
+  assert.ok(
+    !h.fake.captured[0]!.prompt.includes("[Recall Pack"),
+    "shadow 不注入 → envelope 无 [Recall Pack]",
+  )
+
+  // 核心断言 2：audit 占位行已落（recall 真值列等回填）
+  assert.equal(auditRows.length, 1, "audit 占位行随 assemble 同步写")
+  const row = auditRows[0]!
+  assert.equal(row.recallMode, "shadow")
+  assert.equal(row.recallTrigger, "direct_turn")
+  assert.equal(row.recallRequired, true, "shadow 必然尝试召回 → 占位 required=true")
+  assert.equal(row.recallQueries, JSON.stringify(["探针协议维护模式怎么开"]), "query 写入时已知，占位即填")
+  assert.equal(row.recallTotalMs ?? null, null, "真值列占位为空，等回填")
+
+  // 放行召回 → settle 回填
+  releaseRecall(makeExecuteOutput([makeHit("wiki/concepts/probe.md", 0.87)]))
+  await new Promise((r) => setTimeout(r, 30))
+  assert.equal(patches.length, 1, "召回 settle 后 updateRecallPatch 回填")
+  assert.equal(patches[0]!.id, 42, "回填瞄准占位行 id")
+  assert.equal(patches[0]!.patch.recallTotalMs, 1, "回填带 executor 真值")
+  const results = JSON.parse(patches[0]!.patch.recallResults as string) as Array<{ path: string }>
+  assert.equal(results[0]!.path, "wiki/concepts/probe.md")
+
+  // 核心断言 3（德彪 r1 P2-5）：fake runtime 回复恒空 → turnLooksFailed=true →
+  // replyText 不设 → 交汇两侧都不判 → recall_adopted 保持 NULL。
+  // 失败/空回复 turn 不得成为负标注（有 hits 时旧行为会判出明确 false 污染采纳率）。
+  assert.equal(adoptions.length, 0, "失败态 turn（空回复）不判定，保持未标注")
+})
+
+test("F042 shadow-async · inject 态保持同步：召回完成前 spawn 不发生（注入需要结果）", async () => {
+  const h = makeHarness()
+  h.threads[0]!.nativeSessionId = "native-session-5"
+  let releaseRecall: (out: ExecuteOutput) => void = () => {}
+  const gate = new Promise<ExecuteOutput>((resolve) => {
+    releaseRecall = resolve
+  })
+  h.messageService.setDirectTurnRecallMode("inject")
+  h.messageService.setAdaptiveRecallCoordinator(
+    new AdaptiveRecallCoordinator({
+      enabled: true,
+      triggerScenarios: ["wake_up", "a2a_handoff", "direct_turn"],
+      executorDeps: makeStubDeps(),
+      executor: async () => gate,
+    }),
+  )
+
+  let spawned = false
+  void h.fake.firstRun.then(() => {
+    spawned = true
+  })
+  h.messageService.handleClientEvent(
+    {
+      type: "send_message",
+      payload: {
+        threadId: "thread-claude",
+        provider: "claude",
+        alias: "Reviewer",
+        content: "inject 同步等待验证",
+      },
+    },
+    () => {},
+  )
+
+  await new Promise((r) => setTimeout(r, 30))
+  assert.equal(spawned, false, "inject 态召回未完成 → spawn 必须还没发生（同步等结果注入）")
+
+  releaseRecall(makeExecuteOutput([makeHit("wiki/concepts/inject-hit.md", 0.92)]))
+  await h.fake.firstRun
+  assert.ok(
+    h.fake.captured[0]!.prompt.includes("[Recall Pack"),
+    "inject 命中 → [Recall Pack] 注入 envelope",
+  )
+  assert.ok(h.fake.captured[0]!.prompt.includes("wiki/concepts/inject-hit.md"))
 })

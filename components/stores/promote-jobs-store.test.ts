@@ -72,6 +72,24 @@ describe("promote-jobs-store · startPromote", () => {
     })
     await first
   })
+
+  it("r3 F2 · 同 src partial 时重复 startPromote → no-op（半态未处理前禁止覆盖）", async () => {
+    usePromoteJobsStore.setState({
+      jobs: {
+        [BODY.srcDraftPath]: {
+          srcDraftPath: BODY.srcDraftPath,
+          destWikiPath: BODY.destWikiPath,
+          status: "partial",
+          supersedeFailures: [{ path: "wiki/concepts/old.md", error: "EPERM" }],
+        },
+      },
+    })
+
+    await usePromoteJobsStore.getState().startPromote(BODY)
+
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+    expect(usePromoteJobsStore.getState().jobs[BODY.srcDraftPath]?.status).toBe("partial")
+  })
 })
 
 describe("promote-jobs-store · startBatch", () => {
@@ -237,6 +255,28 @@ describe("promote-jobs-store · 德彪 r1 修复", () => {
     expect(usePromoteJobsStore.getState().batch?.error).toContain("未提交")
   })
 
+  it("r3 F2 · startBatch 过滤同 src partial 项", async () => {
+    usePromoteJobsStore.setState({
+      jobs: {
+        [BODY.srcDraftPath]: {
+          srcDraftPath: BODY.srcDraftPath,
+          destWikiPath: BODY.destWikiPath,
+          status: "partial",
+          supersedeFailures: [{ path: "wiki/concepts/old.md", error: "EPERM" }],
+        },
+      },
+    })
+
+    await usePromoteJobsStore.getState().startBatch({
+      items: [{ srcDraftPath: BODY.srcDraftPath, destWikiPath: "wiki/methods/a.md" }],
+      callerAlias: "小孙",
+      reason: "batch",
+    })
+
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+    expect(usePromoteJobsStore.getState().jobs[BODY.srcDraftPath]?.status).toBe("partial")
+  })
+
   it("P2/r2 · 对账式 GC：消失的 ok 清掉，仍在列表的 ok 保留护栏，running/failed 不动", () => {
     usePromoteJobsStore.setState({
       jobs: {
@@ -343,5 +383,85 @@ describe("dest_exists 替换补丁 · batch errorCode 映射（德彪 replace-r1
     const jobs = usePromoteJobsStore.getState().jobs
     expect(jobs["wiki/concepts/draft/_auto/hit.md"]?.errorCode).toBe("DEST_EXISTS")
     expect(jobs["wiki/concepts/draft/_auto/other.md"]?.errorCode).toBeUndefined()
+  })
+})
+
+describe("r3 F1/F3 · partial 持久恢复与并发消解", () => {
+  it("F1 · store 重建后从服务端事件账本恢复 unresolved partial", async () => {
+    mockFetchOnce(200, {
+      ok: true,
+      failures: [
+        {
+          eventId: 41,
+          path: "wiki/concepts/old.md",
+          promotionTarget: "wiki/concepts/new.md",
+          error: "EPERM",
+        },
+      ],
+    })
+
+    await usePromoteJobsStore.getState().hydratePartialSupersedes()
+
+    const restored = Object.values(usePromoteJobsStore.getState().jobs).find(
+      (job) => job.supersedeFailures?.[0]?.path === "wiki/concepts/old.md",
+    )
+    expect(restored?.status).toBe("partial")
+    expect(restored?.destWikiPath).toBe("wiki/concepts/new.md")
+  })
+
+  it("F3 · 两条 failure 并发下架且逆序完成 → 两条都从当前 state 消失", async () => {
+    const src = "wiki/concepts/draft/_auto/new.md"
+    usePromoteJobsStore.setState({
+      jobs: {
+        [src]: {
+          srcDraftPath: src,
+          destWikiPath: "wiki/concepts/new.md",
+          status: "partial",
+          supersedeFailures: [
+            { path: "wiki/concepts/old-a.md", error: "EPERM" },
+            { path: "wiki/concepts/old-b.md", error: "EPERM" },
+          ],
+        },
+      },
+    })
+
+    const resolvers: Array<(value: Response) => void> = []
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolvers.push(resolve)
+        }),
+    )
+    const first = usePromoteJobsStore
+      .getState()
+      .resolvePartialSupersede(src, "wiki/concepts/old-a.md", "黄仁勋")
+    const second = usePromoteJobsStore
+      .getState()
+      .resolvePartialSupersede(src, "wiki/concepts/old-b.md", "黄仁勋")
+
+    expect(usePromoteJobsStore.getState().jobs[src]?.pendingSupersedePaths).toEqual([
+      "wiki/concepts/old-a.md",
+      "wiki/concepts/old-b.md",
+    ])
+
+    resolvers[1]!(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+    await second
+    resolvers[0]!(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+    await first
+
+    const job = usePromoteJobsStore.getState().jobs[src]
+    expect(job?.status).toBe("ok")
+    expect(job?.supersedeFailures).toBeUndefined()
+    expect(job?.pendingSupersedePaths).toBeUndefined()
   })
 })

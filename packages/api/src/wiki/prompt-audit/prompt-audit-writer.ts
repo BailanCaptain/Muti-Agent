@@ -65,6 +65,10 @@ export interface PromptAuditInput {
   recallTotalMs?: number | null
   recallCritiqueCalls?: number | null
   recallBudgetExceeded?: boolean
+
+  // ── F042 AC2 · 采纳度量 ─────────────────────────────────────────
+  /** 写入时 direct_turn 三态（off 不产行）；非 direct 场景 null。 */
+  recallMode?: string | null
 }
 
 export interface PromptAuditWriteResult {
@@ -97,8 +101,8 @@ export class PromptAuditWriter {
           recall_required, recall_trigger, recall_path, top_score,
           recall_satisfied, escalate_reason,
           recall_total_ms, recall_critique_calls, recall_budget_exceeded,
-          agent_session_ref
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          agent_session_ref, recall_mode
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         input.createdAt,
@@ -128,8 +132,54 @@ export class PromptAuditWriter {
         input.recallCritiqueCalls ?? null,
         input.recallBudgetExceeded === undefined ? null : input.recallBudgetExceeded ? 1 : 0,
         input.agentSessionRef ?? null,
+        input.recallMode ?? null,
       )
     return { id: Number(result.lastInsertRowid ?? 0) }
+  }
+
+  /**
+   * F042 shadow 异步化 · 召回完成后回填 recall 结构化列（write 时占位 → 真值覆盖）。
+   * shadow 不注入 → prompt 不依赖召回结果 → assemble 不等召回（fire-and-forget），
+   * audit 行先落占位，本方法在召回 settle 时补真值。行不存在静默 no-op（fail-soft 同口径）。
+   */
+  updateRecallPatch(id: number, patch: ReturnType<typeof buildRecallAuditPatch>): void {
+    this.client
+      .prepare(`
+        UPDATE prompt_audit SET
+          recall_required = ?, recall_trigger = ?, recall_path = ?, top_score = ?,
+          recall_satisfied = ?, escalate_reason = ?, recall_total_ms = ?,
+          recall_critique_calls = ?, recall_budget_exceeded = ?,
+          recall_queries = ?, recall_results = ?
+        WHERE id = ?
+      `)
+      .run(
+        patch.recallRequired ? 1 : 0,
+        patch.recallTrigger,
+        patch.recallPath,
+        patch.topScore,
+        patch.recallSatisfied ? 1 : 0,
+        patch.escalateReason,
+        patch.recallTotalMs,
+        patch.recallCritiqueCalls,
+        patch.recallBudgetExceeded ? 1 : 0,
+        patch.recallQueries,
+        patch.recallResults,
+        id,
+      )
+  }
+
+  /**
+   * F042 AC2 · 采纳判定回写（assistant 回复落库后补判）。
+   * verdict 来自 adoption-heuristic.judgeAdoption；行不存在时静默 no-op（audit fail-soft 同口径）。
+   */
+  updateAdoption(id: number, verdict: { adopted: boolean; matches: Array<{ path: string; term: string }> }): void {
+    this.client
+      .prepare("UPDATE prompt_audit SET recall_adopted = ?, recall_adoption_detail = ? WHERE id = ?")
+      .run(
+        verdict.adopted ? 1 : 0,
+        JSON.stringify({ matches: verdict.matches, checkedAt: new Date().toISOString() }),
+        id,
+      )
   }
 }
 
@@ -148,6 +198,12 @@ export function buildRecallAuditPatch(args: {
   recallRequired?: boolean
   /** caller 派生：trigger 字符串（Coordinator input.trigger 透传）。 */
   trigger?: string | null
+  /**
+   * F042 AC1 · 召回查询原文（coordinator input.query 透传）。传入且 output 非空时
+   * 一并填 V15.1 recallQueries/recallResults——此前 coordinator 路径这俩恒 NULL，
+   * direct_turn 审计行「查了什么/命中什么」不可追溯（AC1 验收要求含 queries/results）。
+   */
+  query?: string
 }): {
   recallRequired: boolean
   recallTrigger: string | null
@@ -158,6 +214,8 @@ export function buildRecallAuditPatch(args: {
   recallTotalMs: number | null
   recallCritiqueCalls: number | null
   recallBudgetExceeded: boolean
+  recallQueries: string | null
+  recallResults: string | null
 } {
   const out = args.output
   if (!out) {
@@ -171,6 +229,8 @@ export function buildRecallAuditPatch(args: {
       recallTotalMs: null,
       recallCritiqueCalls: null,
       recallBudgetExceeded: false,
+      recallQueries: null,
+      recallResults: null,
     }
   }
   return {
@@ -183,6 +243,10 @@ export function buildRecallAuditPatch(args: {
     recallTotalMs: out.totalMs,
     recallCritiqueCalls: out.critiqueCalls,
     recallBudgetExceeded: out.budgetExceeded,
+    recallQueries: args.query !== undefined ? JSON.stringify([args.query]) : null,
+    recallResults: JSON.stringify(
+      out.hits.map((h) => ({ path: h.path, score: h.score, excerpt: h.excerpt?.slice(0, 200) ?? "" })),
+    ),
   }
 }
 
@@ -232,9 +296,10 @@ export function buildColdStartRecallAuditPatch(args: {
    */
   audit?: ColdStartPreflightAudit | null
 }): ReturnType<typeof buildRecallAuditPatch> &
-  // topScore 已在 base（number|null 同型）；recallBudgetExceeded 排除 —— audit 侧是 0/1
-  // number（deriveAuditPatch SQLite 习惯），patch 侧统一 boolean（writer 落库再转）。
-  Partial<Omit<ColdStartPreflightAudit, "topScore" | "recallBudgetExceeded">> {
+  // topScore/recallQueries/recallResults 已在 base（F042 起 V15.1 俩字段进 base，string|null）；
+  // recallBudgetExceeded 排除 —— audit 侧是 0/1 number（deriveAuditPatch SQLite 习惯），
+  // patch 侧统一 boolean（writer 落库再转）。交集只补 base 没有的两个 V15.1 字段。
+  Partial<Pick<ColdStartPreflightAudit, "recallTotalTokens" | "recallRejectedReasons">> {
   if (!args.attempted) {
     return buildRecallAuditPatch({ output: undefined })
   }
@@ -249,6 +314,9 @@ export function buildColdStartRecallAuditPatch(args: {
     recallTotalMs: null,
     recallCritiqueCalls: null,
     recallBudgetExceeded: false,
+    // F042 · V15.1 基线 null——audit 传入时下方 spread 用 deriveAuditPatch 真值覆盖
+    recallQueries: null,
+    recallResults: null,
   } satisfies ReturnType<typeof buildRecallAuditPatch>
   if (!args.audit) return base
   return {
@@ -271,7 +339,20 @@ export class NoopPromptAuditWriter {
     void input
     return { id: 0 }
   }
+
+  updateAdoption(id: number, verdict: { adopted: boolean; matches: Array<{ path: string; term: string }> }): void {
+    void id
+    void verdict
+  }
+
+  updateRecallPatch(id: number, patch: ReturnType<typeof buildRecallAuditPatch>): void {
+    void id
+    void patch
+  }
 }
 
 /** 等价接口（caller 注 PromptAuditWriter | NoopPromptAuditWriter 都行）。 */
-export type PromptAuditWriterLike = Pick<PromptAuditWriter, "write">
+export type PromptAuditWriterLike = Pick<
+  PromptAuditWriter,
+  "write" | "updateAdoption" | "updateRecallPatch"
+>

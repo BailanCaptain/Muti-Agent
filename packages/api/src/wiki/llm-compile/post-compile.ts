@@ -57,6 +57,31 @@ export async function postCompile(
     }
   }
 
+  // Step 1.5：F042 AC4 · dedup target 存在性校验（镜像 Step 1 deadRefs 先例）。
+  // 此前 dedup_decision 只过枚举结构校验（schema-validator assertDedupDecision），
+  // LLM 编造的 target 会静默落 frontmatter.merge_target/supersedes → 死指针进 draft。
+  // 编造 → 降级 new_entity + deadDedupTarget 留痕（不阻塞编译，与 deadRefs 同姿态）。
+  let deadDedupTarget: DraftResult["deadDedupTarget"]
+  // 生效 dedup（可能被降级）；llmOutput 本体不动——Step 6 contentHash 语义保持「LLM 原始输出」
+  let effectiveDedup = llmOutput.dedup_decision
+  if (
+    (effectiveDedup.verdict === "merge_into" || effectiveDedup.verdict === "supersedes") &&
+    effectiveDedup.target_entity
+  ) {
+    const target = effectiveDedup.target_entity
+    if (!(await deps.entityChecker.exists(target))) {
+      deadDedupTarget = {
+        target,
+        reason: `dedup target "${target}" not found — downgraded to new_entity`,
+      }
+      effectiveDedup = {
+        verdict: "new_entity",
+        target_entity: null,
+        rationale: `[auto-downgraded] ${effectiveDedup.rationale}`,
+      }
+    }
+  }
+
   // Step 2：derive draftPath
   const slug = slugifyTitle(llmOutput.title)
   const draftPath = `${draftDirPrefix}${rawMetadata.date}-${slug}.md`
@@ -72,7 +97,7 @@ export async function postCompile(
     summary: llmOutput.summary,
     facts: llmOutput.facts,
     cross_refs: liveRefs, // 死链已过滤
-    dedup_decision: llmOutput.dedup_decision,
+    dedup_decision: effectiveDedup, // F042 AC4 · 编造 target 已降级（deadDedupTarget 留痕）
     draft_quality: llmOutput.draft_quality,
     canonical_owner_suggestion: llmOutput.canonical_owner_suggestion,
 
@@ -87,16 +112,16 @@ export async function postCompile(
     },
   }
 
-  // Step 4：dedup 边角字段（仅 merge_into / supersedes case）
-  switch (llmOutput.dedup_decision.verdict) {
+  // Step 4：dedup 边角字段（仅 merge_into / supersedes case；F042 起用降级后的生效值）
+  switch (effectiveDedup.verdict) {
     case "merge_into":
-      if (llmOutput.dedup_decision.target_entity) {
-        frontmatter.merge_target = llmOutput.dedup_decision.target_entity
+      if (effectiveDedup.target_entity) {
+        frontmatter.merge_target = effectiveDedup.target_entity
       }
       break
     case "supersedes":
-      if (llmOutput.dedup_decision.target_entity) {
-        frontmatter.supersedes = [llmOutput.dedup_decision.target_entity]
+      if (effectiveDedup.target_entity) {
+        frontmatter.supersedes = [effectiveDedup.target_entity]
       }
       break
     // case "new_entity": 无额外字段
@@ -109,7 +134,9 @@ export async function postCompile(
   }
 
   // Step 6：写 wiki_events action='ingest' + content_hash
-  const contentHash = computeContentHash(llmOutput)
+  // 德彪 r1 P2-6 · hash 对最终生效输出（dedup 可能已降级）——ledger 指纹必须与实际
+  // 提交内容（frontmatter 用的 effectiveDedup）一致，否则事件账与落盘语义脱钩。
+  const contentHash = computeContentHash({ ...llmOutput, dedup_decision: effectiveDedup })
   const { eventId } = await deps.wikiEvents.append({
     action: "ingest",
     path: draftPath,
@@ -123,7 +150,8 @@ export async function postCompile(
     eventId,
     deadRefs,
     frontmatter,
-    dedupDecision: llmOutput.dedup_decision,
+    dedupDecision: effectiveDedup,
+    ...(deadDedupTarget !== undefined && { deadDedupTarget }),
   }
 }
 

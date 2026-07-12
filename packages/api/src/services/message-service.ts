@@ -49,6 +49,7 @@ import type { ContextMessage } from "../orchestrator/context-snapshot"
 import { buildContextSnapshot, extractTaskSnippet } from "../orchestrator/context-snapshot"
 import type { DecisionBoard, DecisionBoardEntry } from "../orchestrator/decision-board"
 import type { DecisionManager } from "../orchestrator/decision-manager"
+import type { DirectTurnRecallMode } from "../orchestrator/direct-turn-recall-mode"
 import type {
   DispatchOrchestrator,
   EnqueueMentionsResult,
@@ -61,6 +62,8 @@ import type { InvocationRegistry } from "../orchestrator/invocation-registry"
 import { deriveAuditPatch, loadTaskMemoryPack } from "../wiki/memory-preflight/memory-preflight"
 import { toAssemblePromptHits } from "../wiki/memory-preflight/render-pack"
 import type { WikiSearchProvider } from "../wiki/memory-preflight/types"
+import { judgeAdoption } from "../wiki/prompt-audit/adoption-heuristic"
+import type { ShadowWindowNotifierLike } from "../wiki/prompt-audit/shadow-window-notifier"
 import {
   type ColdStartPreflightAudit,
   NoopPromptAuditWriter,
@@ -162,6 +165,8 @@ export async function resolveDirectTurnRecall(
     scenario: RecallScenario
     query: string
     guardianMode?: boolean
+    /** F042 AC6 · 当前 turn 的用户消息 id（L3 排除，防召回自引用——活体实测） */
+    excludeMessageIds?: string[]
   },
 ): Promise<{
   recallResult: RecallCoordinatorResult | null
@@ -176,10 +181,32 @@ export async function resolveDirectTurnRecall(
     scenario: input.scenario,
     trigger: deriveTriggerFromScenario(input.scenario),
     query: input.query,
+    excludeMessageIds: input.excludeMessageIds,
   })
-  const memoryPreflight =
-    recallResult.hits.length > 0 ? { hits: recallResult.hits.map(toAssemblePromptHits) } : null
+  // F042 AC6（德彪 1.3）· 注入 gate：executor 真跑时必须 recallSatisfied（evidence gate
+  // 放行）才组装 Recall Pack——只看 hits.length 会把 gate 拒掉的噪声照样注入。
+  // passthrough（未 executed，hits=taskMemoryPack 透传）保持原语义。
+  const injectable = recallResult.executed
+    ? recallResult.output?.recallSatisfied === true && recallResult.hits.length > 0
+    : recallResult.hits.length > 0
+  const memoryPreflight = injectable
+    ? { hits: recallResult.hits.map(toAssemblePromptHits) }
+    : null
   return { recallResult, memoryPreflight }
+}
+
+/**
+ * F042 AC1 · 影子拦截：shadow 模式下 direct_turn 的召回结果只进审计不进 prompt。
+ * 拆「执行」与「注入」的唯一开关点——wake_up 与 inject/off 模式恒等透传
+ * （off 时 coordinator 白名单未扩 direct_turn，上游已 scenario_skip，这里透传的是 null）。
+ */
+export function applyShadowSuppression<T>(
+  mode: DirectTurnRecallMode,
+  scenario: "wake_up" | "direct_turn",
+  memoryPreflight: T | null,
+): T | null {
+  if (mode === "shadow" && scenario === "direct_turn") return null
+  return memoryPreflight
 }
 
 /**
@@ -454,6 +481,10 @@ export class MessageService {
   // 后 setAdaptiveRecallCoordinator() 注入真 Coordinator 启用。
   private adaptiveRecallCoordinator: AdaptiveRecallCoordinator =
     createNoopAdaptiveRecallCoordinator()
+  // F042 AC1 · direct_turn 召回三态（默认 shadow：链真跑+写审计，不注入）。server.ts boot 注入 env 解析值。
+  private directTurnRecallMode: DirectTurnRecallMode = "shadow"
+  // F042 AC2 · 影子观察窗提示器（null = 未注入不提示）。
+  private shadowWindowNotifier: ShadowWindowNotifierLike | null = null
   // F027 B1-b-2 · 冷启 loadTaskMemoryPack 搜索 backend（北极星「新 agent 进新 room 不白板」）。
   // 默认 null —— 未注入时冷启不召回（单测 / 老路径无副作用）；server.ts boot 注入生产
   // SearchWikiProvider（search_wiki MCP 同款 BM25 backend，已对齐 WikiSearchProvider 接口）。
@@ -599,6 +630,16 @@ export class MessageService {
   /** F027 B1-b-2 · 注入冷启召回的 wiki 搜索 backend（server.ts boot 调）。 */
   setMemoryPreflightSearch(search: WikiSearchProvider) {
     this.memoryPreflightSearch = search
+  }
+
+  /** F042 AC1 · 注入 direct_turn 召回三态（server.ts boot 从 MULTI_AGENT_DIRECT_TURN_RECALL 解析）。 */
+  setDirectTurnRecallMode(mode: DirectTurnRecallMode) {
+    this.directTurnRecallMode = mode
+  }
+
+  /** F042 AC2 · 注入影子观察窗提示器（server.ts boot 调；未注入 = 不提示，测试/老路径无副作用）。 */
+  setShadowWindowNotifier(notifier: ShadowWindowNotifierLike) {
+    this.shadowWindowNotifier = notifier
   }
 
   /**
@@ -761,7 +802,10 @@ export class MessageService {
     agentSessionRef: string | null
     /** A2A 路径的 recall patch（direct turn 不跑 Coordinator，传 undefined 即可）。 */
     recallPatch?: ReturnType<typeof buildRecallAuditPatch>
-  }): void {
+    /** F042 AC2 · direct_turn 写入时三态；非 direct 场景不传（落 NULL）。 */
+    recallMode?: DirectTurnRecallMode | null
+  }): number | null {
+    // F042 AC2 · 返回 row id 供采纳判定回写（updateAdoption）；失败/Noop（id=0）→ null。
     try {
       const totalTokens = args.assembled.parts.reduce((sum, p) => sum + p.tokens, 0)
       const ironLawsCount = this.countIronLaws(
@@ -770,7 +814,7 @@ export class MessageService {
       const patch = args.recallPatch ?? buildRecallAuditPatch({ output: undefined })
       // F027 v3 G1 · V16.5 chap 20 line 2273 token 预算 — cap + notInjectedJson 真值写入
       // (Phase 3 / Phase 4 都是 cap=0 + notInjectedJson=null 占位; v3 接通 reducer 后真值)
-      this.promptAuditWriter.write({
+      const result = this.promptAuditWriter.write({
         createdAt: new Date().toISOString(),
         alias: args.alias,
         roomId: args.roomId,
@@ -786,13 +830,16 @@ export class MessageService {
         rawText: args.assembled.systemPrompt + "\n\n---\n\n" + args.assembled.content,
         sourceEventIds: JSON.stringify(args.sourceEventIds),
         agentSessionRef: args.agentSessionRef,
+        recallMode: args.recallMode ?? null,
         ...patch,
       })
+      return result.id > 0 ? result.id : null
     } catch (err) {
       this.log.warn(
         { stage: "prompt_audit.write", err: (err as Error).message, scenario: args.scenario },
         "prompt_audit write failed (non-blocking)",
       )
+      return null
     }
   }
 
@@ -1691,6 +1738,36 @@ export class MessageService {
     // returns both systemPrompt AND a content envelope with real history
     // baked in — the API is the authoritative history source.
     let assembledDirectTurn: AssemblePromptResult | null = null
+    // F042 AC2 · direct 支采纳判定上下文（回复终稿落库后回写 recall_adopted）。
+    // 方法级作用域——召回发生在下方 if 块内，判定钩子在 CLI 结果回来之后。
+    let directAuditRowId: number | null = null
+    let directAdoptionHits: Array<{ path: string }> | null = null
+    // F042 shadow 异步化 · 采纳判定双向交汇：shadow 态召回 fire-and-forget，hits 与
+    // replyText 谁后到谁触发判定（Node 单线程事件循环，无竞态锁需求）。judged 幂等闸。
+    let directReplyText: string | null = null
+    let directAdoptionJudged = false
+    const tryJudgeDirectAdoption = () => {
+      if (
+        directAdoptionJudged ||
+        directAuditRowId === null ||
+        !directAdoptionHits?.length ||
+        directReplyText === null
+      ) {
+        return
+      }
+      directAdoptionJudged = true
+      try {
+        const verdict = judgeAdoption(directReplyText, directAdoptionHits)
+        if (verdict) this.promptAuditWriter.updateAdoption(directAuditRowId, verdict)
+      } catch (err) {
+        this.log.warn(
+          { stage: "recall_adoption", err: (err as Error).message },
+          "recall adoption update failed (non-blocking)",
+        )
+      }
+    }
+    // shadow 态异步召回标记（写 audit 占位行后启动 fire-and-forget）
+    let shadowRecallAsync = false
     if (!options.systemPrompt) {
       const roomSnapshot = this.captureSnapshot(thread.sessionGroupId, options.rootMessageId)
       const parsedBookmark = thread.sopBookmark
@@ -1758,15 +1835,39 @@ export class MessageService {
           hits: directMemoryPreflight?.hits ?? null,
           audit: coldStart?.audit ?? null,
         })
+        // F042 AC2 · 冷启注入的 Pack 命中也进采纳判定（path 缺省的 hit 无从比对，滤掉）
+        const coldHitsWithPath = (directMemoryPreflight?.hits ?? []).filter(
+          (h): h is { score: number; summary: string; path: string } => typeof h.path === "string",
+        )
+        directAdoptionHits =
+          coldHitsWithPath.length > 0 ? coldHitsWithPath.map((h) => ({ path: h.path })) : null
+      } else if (this.directTurnRecallMode === "shadow" && directRecallScenario === "direct_turn") {
+        // F042 shadow 异步化 · shadow 不注入 → prompt 不依赖召回结果 → 不阻塞 spawn。
+        // 原同步 await 把 L2 CLI-spawn 型 rerank 的 20-60s 直接叠在用户实时等待上
+        // （preview 验收实测 20250/29758/60169ms 熔断三连）。观察器不该打扰被观察者。
+        // audit 行在下方先写占位（mode/trigger/query 已知），召回 settle 后回填真值。
+        shadowRecallAsync = true
       } else {
         const res = await resolveDirectTurnRecall(this.adaptiveRecallCoordinator, {
           roomId: directTurnRoomId ?? thread.sessionGroupId,
           alias: thread.alias,
           scenario: directRecallScenario,
           query: options.content,
+          excludeMessageIds: options.rootMessageId ? [options.rootMessageId] : undefined,
         })
         directRecall = res.recallResult
-        directMemoryPreflight = res.memoryPreflight
+        // F042 AC1 · shadow 影子拦截：召回结果保留给 audit（directRecall），注入按三态放行。
+        // （wake_up 场景 mode 不适用恒放行；inject 放行；off 在 coordinator 白名单外 executed=false）
+        directMemoryPreflight = applyShadowSuppression(
+          this.directTurnRecallMode,
+          directRecallScenario,
+          res.memoryPreflight,
+        )
+        // F042 AC2 · 召回命中留给采纳判定（shadow 不注入也判——相关性代理信号）
+        directAdoptionHits =
+          directRecall?.executed && directRecall.hits.length > 0
+            ? directRecall.hits.map((h) => ({ path: h.path }))
+            : null
       }
       assembledDirectTurn = await assembleDirectTurnPrompt(
         {
@@ -1802,23 +1903,85 @@ export class MessageService {
       // F027 P4 hotfix · direct turn 也写一行 prompt_audit（V16.5 §18 line 2117
       // "assembler 每次拼装完成时同步写一条 prompt_audit"）。Phase 1-3 只 A2A 写 →
       // prompt-inspector UI 看 direct turn 房间永远 0 row 是 bug。
-      this.writePromptAuditSafe({
+      directAuditRowId = this.writePromptAuditSafe({
         scenario: directRecallScenario,
         alias: thread.alias,
         roomId: directTurnRoomId,
         assembled: assembledDirectTurn,
         sourceEventIds: options.rootMessageId ? [options.rootMessageId] : [],
         agentSessionRef: thread.nativeSessionId,
+        // F042 AC2 · direct_turn 记写入时三态（wake_up 不记——模式语义只属 direct_turn；
+        // 德彪 r1 P1-2：冷启行也不记——冷启 Pack 实际注入，记 mode 会把注入行为污染进
+        // shadow 观察窗，audit 列语义与真实注入行为必须一致）。
+        recallMode:
+          directRecallScenario === "direct_turn" && coldStartRecallPatch === null
+            ? this.directTurnRecallMode
+            : null,
         // F027 B1-b · recall patch（Prompt Inspector 显示召回 trigger/required + output 派生字段）。
         // FU-3：冷启支用 session_bootstrap patch（coordinator patch 在冷启恒空）。
+        // F042 AC1 · query 透传 → V15.1 recallQueries/recallResults 落行（审计可追溯）。
+        // F042 shadow 异步化：占位 patch（required/trigger/query 已知），settle 后 updateRecallPatch 回填。
         recallPatch:
           coldStartRecallPatch ??
-          buildRecallAuditPatch({
-            output: directRecall?.output,
-            trigger: directRecall ? deriveTriggerFromScenario(directRecallScenario) : null,
-            recallRequired: directRecall?.executed === true,
-          }),
+          (shadowRecallAsync
+            ? {
+                ...buildRecallAuditPatch({
+                  output: undefined,
+                  trigger: deriveTriggerFromScenario(directRecallScenario),
+                  recallRequired: true,
+                }),
+                recallQueries: JSON.stringify([options.content]),
+              }
+            : buildRecallAuditPatch({
+                output: directRecall?.output,
+                trigger: directRecall ? deriveTriggerFromScenario(directRecallScenario) : null,
+                recallRequired: directRecall?.executed === true,
+                query: options.content,
+              })),
       })
+      if (shadowRecallAsync) {
+        const auditRowIdForBackfill = directAuditRowId
+        void resolveDirectTurnRecall(this.adaptiveRecallCoordinator, {
+          roomId: directTurnRoomId ?? thread.sessionGroupId,
+          alias: thread.alias,
+          scenario: directRecallScenario,
+          query: options.content,
+          excludeMessageIds: options.rootMessageId ? [options.rootMessageId] : undefined,
+        })
+          .then((res) => {
+            const recall = res.recallResult
+            if (auditRowIdForBackfill !== null) {
+              try {
+                this.promptAuditWriter.updateRecallPatch(
+                  auditRowIdForBackfill,
+                  buildRecallAuditPatch({
+                    output: recall?.output,
+                    trigger: deriveTriggerFromScenario(directRecallScenario),
+                    recallRequired: recall?.executed === true,
+                    query: options.content,
+                  }),
+                )
+              } catch (err) {
+                this.log.warn(
+                  { stage: "shadow_recall_backfill", err: (err as Error).message },
+                  "shadow recall audit backfill failed (non-blocking)",
+                )
+              }
+            }
+            directAdoptionHits =
+              recall?.executed && recall.hits.length > 0
+                ? recall.hits.map((h) => ({ path: h.path }))
+                : null
+            // turn 先完成（replyText 已知）时在此补判；否则 post-reply 钩子侧判
+            tryJudgeDirectAdoption()
+          })
+          .catch((err) => {
+            this.log.warn(
+              { stage: "shadow_recall_async", err: (err as Error).message },
+              "shadow async recall failed (non-blocking, audit row keeps placeholder)",
+            )
+          })
+      }
     }
     const systemPrompt = options.systemPrompt ?? assembledDirectTurn!.systemPrompt
     // When direct turn assembled its own envelope, send that envelope as the
@@ -2596,6 +2759,44 @@ export class MessageService {
               message: finalTimeline,
             },
           })
+        }
+      }
+
+      // F042 AC2 · 采纳判定回写（终稿落库后补判；fail-soft 不阻塞 turn）。
+      // shadow 期语义 = 相关性代理信号（回复独立提到召回条目 → 召回找得准），非严格采纳证明。
+      // shadow 异步化后为交汇形态：hits 已到 → 此处判；hits 未到（慢召回）→ 召回回调侧补判。
+      // 德彪 r1 P2-5：失败/取消/空异常回复不设 replyText → 交汇两侧都不会判，
+      // recall_adopted 保持 NULL（未判定）——失败 turn 不得成为负标注污染采纳率。
+      if (!promptRequestedByCli && directAuditRowId !== null && !turnLooksFailed) {
+        directReplyText = accumulatedContent || ""
+        tryJudgeDirectAdoption()
+      }
+
+      // F042 AC2 · 影子观察窗主动提示（两时机一次性；D3 每 direct turn 顺手查，不新造 cron）。
+      // 两阶段：check 出候选 → 发卡成功才 markSent（发失败不烧一次性标志，下 turn 重试）。
+      if (!promptRequestedByCli && directAuditRowId !== null && this.shadowWindowNotifier) {
+        try {
+          const candidate = this.shadowWindowNotifier.check()
+          if (candidate) {
+            const notice = this.sessions.appendSystemNoticeMessage(thread.id, candidate.content)
+            const noticeTimeline = this.sessions.toTimelineMessage(thread.id, notice.id)
+            if (noticeTimeline) {
+              options.emit({
+                type: "message.created",
+                payload: {
+                  threadId: thread.id,
+                  sessionGroupId: thread.sessionGroupId,
+                  message: noticeTimeline,
+                },
+              })
+            }
+            this.shadowWindowNotifier.markSent(candidate.kind)
+          }
+        } catch (err) {
+          this.log.warn(
+            { stage: "shadow_window_notify", err: (err as Error).message },
+            "shadow window notify failed (non-blocking, will retry next turn)",
+          )
         }
       }
 

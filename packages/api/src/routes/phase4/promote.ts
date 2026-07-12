@@ -34,6 +34,7 @@ import crypto from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 import type { WikiLeasesRepository } from "../../db/repositories/wiki-leases-repository"
+import type { WikiEventsRepository } from "../../db/repositories/wiki-events-repository"
 import { WikiPathInvalidError, readContainedFile, safeWikiPath } from "../../wiki/path-containment"
 import { checkExemptionSanitizeBlocked } from "../../wiki/promote-audit/exemption-tainted-fields"
 import type { PromoteWikiService } from "../../wiki/promote-audit/promote-wiki-service"
@@ -54,11 +55,14 @@ export interface PromoteRoutesDeps {
   promote: PromoteWikiService
   audit: V14PromoteAuditService
   leases: WikiLeasesRepository
+  events: WikiEventsRepository
   wikiRoot: string
   /** Compiler Leader Lease term (caller 注入, default '999')。 */
   leaderTerm: () => string
   /** Lease TTL (测试用; 默认 30s)。 */
   promoteLeaseTtlSeconds?: number
+  /** 德彪 r1 P1-4 · promote 成功（含 supersede/replace）后踢索引收敛（5s debounce reindex）。 */
+  onWikiMutated?: () => void
 }
 
 type PostPromotePreviewBody = {
@@ -77,6 +81,8 @@ type PostPromoteBody = {
   allowReplace?: boolean
   /** 德彪 replace-r1 P1 · CAS 闸：allowReplace 时必填——对比面板看到的现有页 contentHash。 */
   expectedDestHash?: string
+  /** F042 AC3 · 同源撞车显式取代：SAME_SOURCE_EXISTS 返回的 conflicts 中用户确认取代的路径。 */
+  supersedePaths?: string[]
 }
 
 /**
@@ -95,6 +101,86 @@ const FORMAL_PAGE_PREFIXES = [
 
 export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesDeps): void {
   const ttl = deps.promoteLeaseTtlSeconds ?? DEFAULT_PROMOTE_LEASE_TTL_SECONDS
+
+  app.get("/api/wiki/drafts/partial-supersedes", async () => {
+    const resolutions = new Set(
+      deps.events
+        .getByAction("supersede_resolution", 1_000)
+        .map((event) => parseResolutionEventId(event.path))
+        .filter((id): id is number => id !== null),
+    )
+    const failures = deps.events
+      .getByState("aborted", 1_000)
+      .filter((event) => event.action === "supersede" && !resolutions.has(event.id))
+      .filter((event) => {
+        const laterResolution = deps.events
+          .getByPath(event.path, 100)
+          .some(
+            (candidate) =>
+              candidate.id > event.id &&
+              candidate.state === "committed" &&
+              (candidate.action === "demote" || candidate.action === "supersede"),
+          )
+        if (laterResolution) return false
+        try {
+          return fs.existsSync(safeWikiPath(deps.wikiRoot, event.path))
+        } catch {
+          return false
+        }
+      })
+      .map((event) => ({
+        eventId: event.id,
+        path: event.path,
+        promotionTarget: event.promotionTarget ?? "",
+        error: event.error ?? "supersede failed",
+      }))
+    return { ok: true, failures }
+  })
+
+  app.post("/api/wiki/drafts/partial-supersedes/resolve", async (request, reply) => {
+    const body = (request.body ?? {}) as {
+      failureEventId?: number
+      callerAlias?: string
+      resolution?: string
+    }
+    if (
+      !Number.isInteger(body.failureEventId) ||
+      (body.failureEventId ?? 0) <= 0 ||
+      typeof body.callerAlias !== "string" ||
+      body.callerAlias.length === 0 ||
+      body.resolution !== "dismissed"
+    ) {
+      reply.code(400)
+      return { ok: false, code: "VALIDATION_ERROR", error: "invalid resolution request" }
+    }
+    const failureEventId = body.failureEventId as number
+    const failed = deps.events.get(failureEventId)
+    if (!failed || failed.action !== "supersede" || failed.state !== "aborted") {
+      reply.code(404)
+      return { ok: false, code: "FAILURE_NOT_FOUND", error: "supersede failure not found" }
+    }
+    const resolutionPath = resolutionEventPath(failureEventId)
+    const existing = deps.events.getByPath(resolutionPath, 1)[0]
+    if (existing?.state === "committed") return { ok: true, eventId: existing.id }
+
+    const attemptedHash = crypto
+      .createHash("sha256")
+      .update(`${failureEventId}:dismissed`, "utf-8")
+      .digest("hex")
+    const event = deps.events.appendPending({
+      ts: new Date().toISOString(),
+      alias: body.callerAlias,
+      action: "supersede_resolution",
+      path: resolutionPath,
+      attemptedHash,
+      promotionTarget: failed.promotionTarget,
+      reason: "dismissed",
+      fencingToken: failed.fencingToken,
+      leaderTerm: deps.leaderTerm(),
+    })
+    deps.events.commit(event.id, { contentHash: attemptedHash })
+    return { ok: true, eventId: event.id }
+  })
 
   app.post("/api/wiki/drafts/promote/preview", async (request, reply) => {
     const body = (request.body ?? {}) as PostPromotePreviewBody
@@ -215,15 +301,25 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
         sourceMessageIds: validation.body.sourceMessageIds,
         allowReplace: validation.body.allowReplace,
         expectedDestHash: validation.body.expectedDestHash,
+        supersedePaths: validation.body.supersedePaths,
       })
 
       switch (result.status) {
         case "ok":
+          // 德彪 r1 P1-4 · 落盘成功（promote 本体 + 可能的 supersede/replace 归档）→ 踢
+          // 索引收敛：不踢则召回面/同源检测最多滞后 5min 周期安全网（fail-soft 不阻响应）。
+          try {
+            deps.onWikiMutated?.()
+          } catch {
+            // 通知失败不影响 promote 结果——周期安全网兜底
+          }
           return {
             ok: true,
             finalPath: result.finalPath,
             eventId: result.eventId,
             replacedArchivePath: result.replacedArchivePath,
+            supersededPaths: result.supersededPaths,
+            supersedeFailures: result.supersedeFailures,
           }
         case "audit_rejected":
           reply.code(422)
@@ -247,6 +343,15 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
         case "dest_conflict":
           reply.code(409)
           return { ok: false, code: "DEST_CONFLICT", error: result.error }
+        case "same_source_exists":
+          // F042 AC3 · 双胞胎撞车：前端弹同源对比面板（取代 / 去合并二选一）
+          reply.code(409)
+          return {
+            ok: false,
+            code: "SAME_SOURCE_EXISTS",
+            conflicts: result.sameSourceConflicts,
+            error: result.error,
+          }
         case "path_invalid":
           reply.code(400)
           return { ok: false, code: "PATH_INVALID", error: result.error }
@@ -346,6 +451,18 @@ export function registerPromoteRoutes(app: FastifyInstance, deps: PromoteRoutesD
   })
 }
 
+const SUPERSEDE_RESOLUTION_PREFIX = "audit/supersede-resolution/"
+
+function resolutionEventPath(failureEventId: number): string {
+  return `${SUPERSEDE_RESOLUTION_PREFIX}${failureEventId}`
+}
+
+function parseResolutionEventId(eventPath: string): number | null {
+  if (!eventPath.startsWith(SUPERSEDE_RESOLUTION_PREFIX)) return null
+  const id = Number(eventPath.slice(SUPERSEDE_RESOLUTION_PREFIX.length))
+  return Number.isInteger(id) && id > 0 ? id : null
+}
+
 type ValidatedPromote =
   | {
       ok: true
@@ -358,6 +475,7 @@ type ValidatedPromote =
         sourceMessageIds?: string[]
         allowReplace?: boolean
         expectedDestHash?: string
+        supersedePaths?: string[]
       }
     }
   | { ok: false; error: string }
@@ -397,6 +515,14 @@ function validatePromoteBody(body: PostPromoteBody): ValidatedPromote {
       }
     }
   }
+  // F042 AC3 · supersedePaths 是破坏性确认（旧条目归档），只接受字符串数组
+  if (
+    body.supersedePaths !== undefined &&
+    (!Array.isArray(body.supersedePaths) ||
+      body.supersedePaths.some((p) => typeof p !== "string" || p.length === 0))
+  ) {
+    return { ok: false, error: "supersedePaths 必须是非空字符串数组" }
+  }
   return {
     ok: true,
     body: {
@@ -408,6 +534,7 @@ function validatePromoteBody(body: PostPromoteBody): ValidatedPromote {
       sourceMessageIds: body.sourceMessageIds,
       allowReplace: body.allowReplace,
       expectedDestHash: body.expectedDestHash,
+      supersedePaths: body.supersedePaths,
     },
   }
 }

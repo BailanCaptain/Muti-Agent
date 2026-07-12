@@ -11,6 +11,7 @@ import { IngestModal, type IngestModalFile } from "../ingest-modal/ingest-modal"
 import { PromoteModal } from "../promote-modal/promote-modal"
 import {
   BatchPromoteBanner,
+  PartialSupersedeBanner,
   PromoteJobBadge,
   PromoteRowButton,
   usePromoteJobsAutoRefetch,
@@ -223,6 +224,7 @@ export function KnowledgeBaseTab() {
         <IndexList data={indexData.data} isLoading={indexData.isLoading} error={indexData.error} />
         {/* §B · drafts list (codex Week 5 j2 FAIL P4-3 b + P4-4 Red→Green) */}
         <KbDraftsSection
+          partialSupersedeEnabled={activeLvl2 === "knowledge-base" && draftsData.hasLoaded}
           drafts={draftsData.data.drafts ?? []}
           total={draftsData.data.total ?? 0}
           isLoading={draftsData.isLoading}
@@ -268,6 +270,7 @@ export function KnowledgeBaseTab() {
 }
 
 function KbDraftsSection({
+  partialSupersedeEnabled,
   drafts,
   total,
   isLoading,
@@ -278,6 +281,7 @@ function KbDraftsSection({
   onDemote,
   onOpenBatch,
 }: {
+  partialSupersedeEnabled: boolean
   drafts: DraftSummary[]
   total: number
   isLoading: boolean
@@ -291,6 +295,10 @@ function KbDraftsSection({
   return (
     <div className="flex flex-col gap-2" data-testid="kb-drafts-section">
       <BatchPromoteBanner />
+      <PartialSupersedeBanner
+        callerAlias={getCurrentUserAlias()}
+        enabled={partialSupersedeEnabled}
+      />
       <div className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-2 py-1.5">
         <div className="text-micro uppercase tracking-wider text-slate-500">
           Drafts · {total}{" "}

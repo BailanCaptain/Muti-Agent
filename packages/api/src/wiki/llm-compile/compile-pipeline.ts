@@ -24,6 +24,7 @@ import { randomBytes } from "node:crypto"
 import { buildCompileLLMSystemPrompt } from "./compile-prompt"
 import { postCompile, type PostCompileOptions } from "./post-compile"
 import { preCompile, type PreCompileOptions } from "./pre-compile"
+import type { WikiCandidateSearch } from "./wiki-candidate-search"
 import {
   parseLLMCompileJSON,
   validateLLMCompileOutput,
@@ -58,6 +59,8 @@ export interface RunCompilePipelineInput {
     llmClient: CompileLLMClient
     entityChecker: EntityExistenceChecker
     wikiEvents: WikiEventsWriter
+    /** F042 AC4 · wiki_entity_index 候选检索（注入后 pre-compile 走真候选，见 pre-compile.ts）。 */
+    wikiCandidateSearch?: WikiCandidateSearch
   }
   options?: {
     pre?: PreCompileOptions
@@ -72,7 +75,12 @@ export async function runCompilePipeline(input: RunCompilePipelineInput): Promis
     preCtx = await preCompile(input.rawContent, input.rawMetadata, {
       embedding: input.deps.embedding,
       indexLoader: input.deps.indexLoader,
-    }, input.options?.pre)
+      wikiCandidateSearch: input.deps.wikiCandidateSearch,
+    }, {
+      // F042 AC4 · title 进候选查询文本（caller 显式传 pre.title 时不覆盖）
+      ...input.options?.pre,
+      title: input.options?.pre?.title ?? input.agentDraft.title,
+    })
   } catch (err) {
     throw new CompilePipelineError("pre", String(err instanceof Error ? err.message : err), err)
   }
@@ -81,6 +89,8 @@ export async function runCompilePipeline(input: RunCompilePipelineInput): Promis
   const systemPrompt = buildCompileLLMSystemPrompt({
     context: preCtx,
     handbookCompileRules: input.handbookCompileRules,
+    // F042 AC4 · sources[0].path 精确身份进 prompt（同源 dedup 确定性信号）
+    sources: input.agentDraft.sources,
   })
   const userMessage = buildUserMessage(input.rawContent, input.quotedSpans ?? [])
 

@@ -27,6 +27,10 @@ export type WikiEventAction =
    * appendPending → 立即 commit（contentHash = attemptedHash = sha256(reason)）。
    */
   | "recall_escalate"
+  /** F042 AC3 · 同源取代：promote 撞同源显式确认后，旧条目归档进 wiki/_superseded/（promotionTarget=新路径）。 */
+  | "supersede"
+  /** F042 r3 · supersede 半态的显式处理对账（当前用于用户知情忽略）。 */
+  | "supersede_resolution"
   /**
    * F027 Phase 4 AC-P4-9 a — DriftDetector / ChainedAlertNotifier / V14PromoteAuditService
    * 等 jobs/services 落 wiki/warnings/*.md 时写 audit row。

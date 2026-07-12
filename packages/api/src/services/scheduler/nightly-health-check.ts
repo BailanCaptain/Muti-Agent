@@ -26,6 +26,7 @@
 import path from "node:path"
 import type { FastifyBaseLogger } from "fastify"
 import { createLogger } from "../../lib/logger"
+import { isArchivedRelativePath } from "../../wiki/promote-audit/promote-wiki-service"
 
 export interface WikiFrontmatter {
   sources?: string[]
@@ -186,6 +187,13 @@ export class NightlyHealthCheck {
     for (const entity of entities) {
       const myPath = normalizePath(entity.path)
 
+      // F042 AC3 · 归档区（_superseded/_rejected）冻结豁免：归档是历史快照不是治理对象，
+      // 其死链/缺字段/漂移全是自噪音（2026-07-10 审计实测：NHC 15 条警告全是 _superseded
+      // 归档篇指向 draft/plans/* 的死链）。allPaths 仍含归档路径——正式区链接指向归档
+      // 照常可解析。注意 orphans (4) 与 deadSupersedes (7) 各有归档专项豁免（guardian
+      // 零上下文验收 07-10 活体报告抓出的两处漏网，见各自注释）。
+      if (isArchivedRelativePath(entity.path)) continue
+
       // (1) missingFrontmatter（派生视图豁免 — P2-3；refs 扫描仍照常走）
       if (!isDerivedView(entity)) {
         const missing: ("sources" | "canonical_owner_path")[] = []
@@ -239,11 +247,18 @@ export class NightlyHealthCheck {
     }
 
     // (4) orphans = inboundCounts == 0 的（任何 /draft/ 路径豁免——未发布 + 已归档不应被引用；
-    //     派生视图豁免 — P2-3：viewfinder/session-summary 本就没人 [[link]] 它们）
+    //     派生视图豁免 — P2-3：viewfinder/session-summary 本就没人 [[link]] 它们；
+    //     F042 AC3 修（guardian 活体反例 1）：顶层 wiki/_superseded|_rejected/ 不含 /draft/
+    //     子串，isAnyDraftPath 盖不住 → 归档文件天然零 inbound 被误报 orphan，加归档谓词豁免）
     const orphans: string[] = []
     for (const e of entities) {
       const myPath = normalizePath(e.path)
-      if ((inboundCounts.get(myPath) ?? 0) === 0 && !isAnyDraftPath(myPath) && !isDerivedView(e)) {
+      if (
+        (inboundCounts.get(myPath) ?? 0) === 0 &&
+        !isAnyDraftPath(myPath) &&
+        !isArchivedRelativePath(myPath) &&
+        !isDerivedView(e)
+      ) {
         orphans.push(e.path)
       }
     }
@@ -300,6 +315,53 @@ export class NightlyHealthCheck {
 
     // (7) deadSupersedes（F027 chunk B · wiki-memories-lint R3 搬来）
     // supersedes 指向的旧 path 必须仍在 entity 集合内（即使已 deprecated/归档）。
+    //
+    // F042 AC3 修（guardian 活体反例 2）：supersede 执行器把旧条目**改名**进归档
+    // （buildSupersededArchivePath = wiki/_superseded/<bucket>--<stem>--superseded-<epoch>.md），
+    // 新版 supersedes: [旧名] 指针从此在 allPaths 永久解析不到 → 每次 supersede 结构性
+    // 新增 1 条自噪音（07-10 preview 活体报告 deadSupersedes=1 实证）。修语义：目标能在
+    // 归档区按 stem 确证 → 血缘真实（取代已完成，权威记录在 wiki_events），非死指针，
+    // 豁免；确证不到（真编造/真丢失）照报——豁免面不扩大。
+    // 德彪 r1 P2-7 + r2 P2-4 · 豁免按 flatten-key 全链匹配：buildSupersededArchivePath 把
+    // 正式路径 wiki/<...segs>.md 展平为 <segs.join('--')>--superseded-<epoch>.md（嵌套层级
+    // 全保留）。r1 版按 bucket/stem 二元组反解在嵌套路径上切错位（rules--team--foo 被切成
+    // bucket=rules/stem=team--foo，目标却解析出 team/foo）→ 改为键对键：
+    //   新归档键 = basename 去掉 --superseded-<epoch> 后缀，按 flatten-key 精确匹配
+    //   无标记历史归档 = 未携带桶信息的宽松尾段键，仅全库唯一时匹配（歧义 fail-closed）
+    //   path 形态目标键 = 去 wiki/ 前缀后全段 '--' 连接 → 精确匹配（嵌套天然正确，跨桶天然不豁免）
+    //   纯名字目标 = 与归档键尾段（'--' split 最后一段）匹配且全库唯一；多键同尾段 = 歧义照报
+    const archivedKeys = new Set<string>()
+    const legacyArchiveTails = new Map<string, number>()
+    for (const p of allPaths) {
+      if (!isArchivedRelativePath(p)) continue
+      const base = p.split("/").pop()?.replace(/\.md$/, "") ?? ""
+      const match = base.match(/^(.*)--superseded-\d+$/)
+      if (match) {
+        archivedKeys.add(match[1].toLowerCase())
+      } else {
+        const tail = base.toLowerCase()
+        legacyArchiveTails.set(tail, (legacyArchiveTails.get(tail) ?? 0) + 1)
+      }
+    }
+    const archiveTailMatches = (tail: string): number => {
+      let matches = legacyArchiveTails.get(tail) ?? 0
+      for (const key of archivedKeys) {
+        if (key.split("--").pop() === tail) matches += 1
+      }
+      return matches
+    }
+    const resolvableInArchive = (target: string): boolean => {
+      const clean = target.replace(/\.md$/, "").toLowerCase()
+      if (clean.includes("/")) {
+        const segs = clean.split("/").filter((s) => s.length > 0)
+        if (segs[0] === "wiki") segs.shift()
+        if (archivedKeys.has(segs.join("--"))) return true
+        const tail = segs.at(-1) ?? ""
+        return (legacyArchiveTails.get(tail) ?? 0) === 1 && archiveTailMatches(tail) === 1
+      }
+      // 纯名字：唯一尾段匹配才豁免（宁可误报不漏报）
+      return archiveTailMatches(clean) === 1
+    }
     const deadSupersedes: DeadSupersedes[] = []
     for (const e of entities) {
       const sup = e.frontmatter.supersedes
@@ -307,6 +369,7 @@ export class NightlyHealthCheck {
       const missing = sup
         .filter((p): p is string => typeof p === "string")
         .filter((p) => !allPaths.has(normalizePath(p)))
+        .filter((p) => !resolvableInArchive(p))
       if (missing.length > 0) deadSupersedes.push({ path: e.path, missing })
     }
 

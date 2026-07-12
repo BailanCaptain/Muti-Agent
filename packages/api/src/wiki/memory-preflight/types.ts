@@ -57,6 +57,35 @@ export interface RecallHit {
   excerpt: string
   /** sha256 source hash（防漂移核验，可选） */
   sourceHash?: string
+  /**
+   * F042 AC6 · 命中证据（ADR-005 / LL-037）——evidence gate 的判定依据。
+   * score 是 topK 内 min-max 相对分（best/单 hit 恒 1），不能当绝对置信度；
+   * gate 必须基于「哪些 clause 真的命中了」的可数证据。仅 searchCompiled 路径填。
+   */
+  evidence?: RecallHitEvidence
+}
+
+export interface RecallHitEvidence {
+  /** 命中的 clause 数（must + or 合并逐一 substring 检验） */
+  matchedClauseCount: number
+  /** 编译产物 clause 总数 */
+  totalClauseCount: number
+  /** matchedClauseCount / totalClauseCount（totalClauseCount=0 时为 0） */
+  clauseCoverage: number
+  /**
+   * 命中的 OR clause 数（德彪 AC6-r1 P1-2）：区分「实体命中但内容无关」的噪声
+   * （matchedOrClauseCount=0）与「实体+内容双命中」的真目标——provider 按此重排，
+   * gate 在存在 OR-evidenced 候选时过滤零 OR 候选。
+   */
+  matchedOrClauseCount: number
+  /** 全部实体信号（文本 must ≥1 或 pathMusts ≥1）都命中 —— gate 的实体分支依据 */
+  exactEntityMatch: boolean
+  /**
+   * 德彪 AC6-r3 P1 · 显式 path 实体命中（本候选匹配任一点名 pathMust）。
+   * 与文本实体分开：用户点名文档不参与普通 OR 候选竞争——点名文档正文可以不含
+   * 内容词（OR=0），不得被含内容词的无关 decoy 靠零 OR 淘汰规则顶替。
+   */
+  exactPathMatch: boolean
 }
 
 export interface RecallResult {

@@ -32,6 +32,10 @@
  *   })
  */
 
+import {
+  executeDirectRecall,
+  type DirectRecallDeps,
+} from "../wiki/adaptive-recall/direct-recall-pipeline"
 import { executeAdaptiveRecall } from "../wiki/adaptive-recall/executor"
 import { DEFAULT_RECALL_BUDGET } from "../wiki/adaptive-recall/types"
 import type { ExecuteOutput, ExecutorDeps, RecallBudget } from "../wiki/adaptive-recall/types"
@@ -57,6 +61,8 @@ export interface RecallCoordinatorInput {
   taskMemoryPackHits?: ReadonlyArray<RecallHit>
   /** 单次调用 budget override（默认走 config.defaultBudget）。 */
   budgetOverride?: Partial<RecallBudget>
+  /** F042 AC6 · 快链 L3 排除的消息 id（当前 turn 的用户消息——防召回自引用）。 */
+  excludeMessageIds?: string[]
 }
 
 export type RecallCoordinatorReason =
@@ -100,6 +106,13 @@ export interface AdaptiveRecallCoordinatorConfig {
   defaultBudget?: Partial<RecallBudget>
   /** Executor deps（critique + level2-4 + level5 sink）。enabled=true 时必传。 */
   executorDeps?: ExecutorDeps
+  /**
+   * F042 AC6 · direct 快链 deps（ADR-005）。存在时**所有**白名单 scenario 走
+   * executeDirectRecall（零 LLM/零 embedding 毫秒级；miss 不进 L5），优先于
+   * executorDeps——同步链 CLI critique 全部退出（LL-035：30s critique vs 5s 预算
+   * 100% 熔断）。executorDeps 路径保留给测试/异步校准位。
+   */
+  directDeps?: DirectRecallDeps
   /** 注入 executeAdaptiveRecall（测试用；默认走真实模块）。 */
   executor?: typeof executeAdaptiveRecall
   /** Logger（warn 用；fail-soft + skip 路径都需要可观测）。 */
@@ -111,6 +124,7 @@ export class AdaptiveRecallCoordinator {
   private readonly triggerScenarios: ReadonlyArray<RecallScenario>
   private readonly defaultBudget: Partial<RecallBudget>
   private readonly executorDeps?: ExecutorDeps
+  private readonly directDeps?: DirectRecallDeps
   private readonly executor: typeof executeAdaptiveRecall
   private readonly logger?: { warn(obj: unknown, msg?: string): void }
 
@@ -119,6 +133,7 @@ export class AdaptiveRecallCoordinator {
     this.triggerScenarios = config.triggerScenarios ?? DEFAULT_TRIGGER_SCENARIOS
     this.defaultBudget = config.defaultBudget ?? {}
     this.executorDeps = config.executorDeps
+    this.directDeps = config.directDeps
     this.executor = config.executor ?? executeAdaptiveRecall
     this.logger = config.logger
   }
@@ -132,6 +147,34 @@ export class AdaptiveRecallCoordinator {
     if (!this.triggerScenarios.includes(input.scenario)) {
       return { executed: false, reason: "scenario_skip", hits: passthroughHits }
     }
+
+    // F042 AC6 · 快链优先（ADR-005）：同步链零 LLM，miss 是常态终态不进 L5。
+    if (this.directDeps) {
+      try {
+        const output = await executeDirectRecall(
+          {
+            query: input.query,
+            roomId: input.roomId,
+            trigger: input.trigger,
+            excludeMessageIds: input.excludeMessageIds,
+          },
+          this.directDeps,
+        )
+        return { executed: true, reason: "ok", hits: output.hits, output }
+      } catch (err) {
+        const e = err instanceof Error ? err : new Error(String(err))
+        this.logger?.warn(
+          {
+            stage: "adaptive_recall_coordinator.direct_pipeline_error",
+            err: { name: e.name, message: e.message },
+            input,
+          },
+          "executeDirectRecall threw; fail-soft passthrough",
+        )
+        return { executed: false, reason: "executor_error", hits: passthroughHits, error: e }
+      }
+    }
+
     if (!this.executorDeps) {
       this.logger?.warn(
         { stage: "adaptive_recall_coordinator", input },

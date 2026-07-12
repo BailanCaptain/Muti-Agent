@@ -8,7 +8,8 @@
  *     也落 jobs，行徽标单/批同源），batch 记批量整体进度
  *   - 完成（有 ok 项）置 settledUnconsumed → tab 端 refetch 列表后调 markSettledConsumed
  *
- * 不做：持久化（刷新页面丢 in-flight 展示，但 promote 本身是服务端事实，列表 refetch 即真相）。
+ * 持久边界：常规 running/ok/failed 仍是展示缓存；supersede partial 是服务端未收敛事实，
+ * 从 wiki_events 账本重建，刷新页面不能丢。
  */
 "use client"
 
@@ -23,7 +24,7 @@ import type {
   PromoteCommitResponse,
   V14RejectReason,
 } from "@/components/chat/right-panel/runtime-log/promote-modal/use-promote-api"
-import { create } from "zustand"
+import { create, type StoreApi } from "zustand"
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
 /** 后端单次上限（mirror routes/phase4/batch-promote MAX_BATCH_ITEMS=50）。 */
@@ -32,7 +33,12 @@ const MAX_BATCH_ITEMS = 50
 export interface PromoteJob {
   srcDraftPath: string
   destWikiPath: string
-  status: "running" | "ok" | "failed"
+  /**
+   * 德彪 r2 P1-1 · "partial" = promote 本体成功但 supersede 归档有失败（旧版仍在正式区）。
+   * 与 "ok" 分开：ok-GC（pruneOkJobsMissingFrom）只清 ok——partial 必须存活到用户处理
+   * （下架旧版/显式忽略），否则告警随 draft 行消失而永久丢失。
+   */
+  status: "running" | "ok" | "partial" | "failed"
   finalPath?: string
   eventId?: number
   /** 422 二次审计拒绝（弹窗 RejectPanel / 行徽标 title 用）。 */
@@ -43,6 +49,17 @@ export interface PromoteJob {
   errorCode?: string
   /** 替换成功时：旧页归档到的 _rejected/ 相对路径（成功面板展示）。 */
   replacedArchivePath?: string
+  /** F042 AC3 · SAME_SOURCE_EXISTS 载荷：同源冲突条目（SameSourcePanel 数据源）。 */
+  sameSourceConflicts?: Array<{ path: string; title: string }>
+  /** F042 AC3 · 取代成功归档的旧版路径（成功面板展示）。 */
+  supersededPaths?: string[]
+  /**
+   * 德彪 r1 P1-3 · supersede 半态：promote 本体成功但旧版归档失败（旧版仍在正式区+
+   * 召回面）。此前 store 丢弃该字段 → Modal 显示完全成功 = 用户以为取代完成。必须透出。
+   */
+  supersedeFailures?: Array<{ path: string; error: string; eventId?: number }>
+  /** F3 · path 级 in-flight 锁；settle 时基于当前 state 原子移除。 */
+  pendingSupersedePaths?: string[]
   fromBatch?: boolean
 }
 
@@ -58,8 +75,22 @@ type PromoteJobsStore = {
   batch: BatchRun | null
   /** 有 ok 且列表尚未 refetch 消费 → tab 端 useEffect 触发 refetch 后 markSettledConsumed()。 */
   settledUnconsumed: boolean
+  partialHydration: "idle" | "loading" | "loaded"
+  hydratePartialSupersedes: () => Promise<void>
   startPromote: (body: PromoteCommitBody) => Promise<void>
   startBatch: (req: BatchPromoteRequest) => Promise<void>
+  /**
+   * 德彪 r2 P1-1 · partial 半态的可行处理路径：下架仍在正式区的旧版（demote → _rejected/
+   * 归档），达成取代的最终效果。src draft 在 promote 时已删，「重试 supersede」不存在——
+   * demote 旧版是唯一由后端真实支持的补救操作。成功 → 从 failures 移除；清零 → 转 ok
+   * （随后自然被 GC）。失败 → 保留 failures 并更新该项 error（可再试）。
+   */
+  resolvePartialSupersede: (
+    srcDraftPath: string,
+    oldPath: string,
+    callerAlias: string,
+  ) => Promise<boolean>
+  dismissPartialSupersede: (srcDraftPath: string, callerAlias: string) => Promise<boolean>
   clearJob: (srcDraftPath: string) => void
   /** 对账式 GC：只清已从当前列表消失的 ok 项（在列的保留护栏——unlink-fail 兜底）。 */
   pruneOkJobsMissingFrom: (presentPaths: readonly string[]) => void
@@ -78,16 +109,81 @@ function setJob(
   set((s) => ({ jobs: { ...s.jobs, [job.srcDraftPath]: job } }))
 }
 
+function updatePartialFailure(
+  set: StoreApi<PromoteJobsStore>["setState"],
+  srcDraftPath: string,
+  oldPath: string,
+  error: string,
+): void {
+  set((s) => {
+    const current = s.jobs[srcDraftPath]
+    if (!current) return { jobs: s.jobs }
+    const pending = (current.pendingSupersedePaths ?? []).filter((path) => path !== oldPath)
+    return {
+      jobs: {
+        ...s.jobs,
+        [srcDraftPath]: {
+          ...current,
+          supersedeFailures: current.supersedeFailures?.map((failure) =>
+            failure.path === oldPath ? { ...failure, error } : failure,
+          ),
+          pendingSupersedePaths: pending.length > 0 ? pending : undefined,
+        },
+      },
+    }
+  })
+}
+
 export const usePromoteJobsStore = create<PromoteJobsStore>((set, get) => ({
   jobs: {},
   batch: null,
   settledUnconsumed: false,
+  partialHydration: "idle",
+
+  hydratePartialSupersedes: async () => {
+    if (get().partialHydration !== "idle") return
+    set({ partialHydration: "loading" })
+    try {
+      const resp = await fetch(`${API_BASE_URL}/api/wiki/drafts/partial-supersedes`)
+      const raw = (await resp.json()) as {
+        ok?: boolean
+        failures?: Array<{
+          eventId: number
+          path: string
+          promotionTarget: string
+          error: string
+        }>
+      }
+      if (!resp.ok || !raw.ok || !Array.isArray(raw.failures)) {
+        set({ partialHydration: "idle" })
+        return
+      }
+      set((s) => {
+        const jobs = { ...s.jobs }
+        for (const failure of raw.failures ?? []) {
+          const key = `wiki-events/partial-supersede/${failure.eventId}`
+          jobs[key] = {
+            srcDraftPath: key,
+            destWikiPath: failure.promotionTarget,
+            finalPath: failure.promotionTarget,
+            status: "partial",
+            supersedeFailures: [
+              { path: failure.path, error: failure.error, eventId: failure.eventId },
+            ],
+          }
+        }
+        return { jobs, partialHydration: "loaded" }
+      })
+    } catch {
+      set({ partialHydration: "idle" })
+    }
+  },
 
   startPromote: async (body) => {
     // 德彪 r2 P2：ok 也挡——unlink-fail 时后端返 ok 但 src 留盘（行还在列表），
     // 若放行会同 src 再 promote 到另一 dest。护栏由对账式 GC 在行真消失后解除。
     const cur = get().jobs[body.srcDraftPath]
-    if (cur?.status === "running" || cur?.status === "ok") return
+    if (cur?.status === "running" || cur?.status === "ok" || cur?.status === "partial") return
     const base: PromoteJob = {
       srcDraftPath: body.srcDraftPath,
       destWikiPath: body.destWikiPath,
@@ -104,16 +200,31 @@ export const usePromoteJobsStore = create<PromoteJobsStore>((set, get) => ({
       if (raw.ok) {
         setJob(set, {
           ...base,
-          status: "ok",
+          // 德彪 r1 P1-3 + r2 P1-1 · supersede 半态 = "partial"（不许静默当完全成功；
+          // 且不许被 ok-GC 清——旧版仍在正式区+召回面，告警必须存活到被处理）
+          status: raw.supersedeFailures?.length ? "partial" : "ok",
           finalPath: raw.finalPath,
           eventId: raw.eventId,
           replacedArchivePath: raw.replacedArchivePath,
+          supersededPaths: raw.supersededPaths,
+          supersedeFailures: raw.supersedeFailures,
         })
         set({ settledUnconsumed: true })
         return
       }
       if (resp.status === 422 && raw.code === "AUDIT_REJECTED" && "audit" in raw) {
         setJob(set, { ...base, status: "failed", rejectReason: raw.audit })
+        return
+      }
+      // F042 AC3 · 同源撞车：conflicts 载荷进 job，弹窗给「取代/去合并」面板
+      if (raw.code === "SAME_SOURCE_EXISTS" && "conflicts" in raw) {
+        setJob(set, {
+          ...base,
+          status: "failed",
+          errorCode: raw.code,
+          sameSourceConflicts: raw.conflicts,
+          error: `${raw.code}: ${raw.error ?? "same-source entry exists"}`,
+        })
         return
       }
       setJob(set, {
@@ -127,6 +238,101 @@ export const usePromoteJobsStore = create<PromoteJobsStore>((set, get) => ({
     }
   },
 
+  resolvePartialSupersede: async (srcDraftPath, oldPath, callerAlias) => {
+    const job = get().jobs[srcDraftPath]
+    if (
+      !job ||
+      job.status !== "partial" ||
+      !job.supersedeFailures?.some((failure) => failure.path === oldPath) ||
+      job.pendingSupersedePaths?.includes(oldPath)
+    )
+      return false
+    set((s) => {
+      const current = s.jobs[srcDraftPath]
+      if (!current || current.status !== "partial") return { jobs: s.jobs }
+      return {
+        jobs: {
+          ...s.jobs,
+          [srcDraftPath]: {
+            ...current,
+            pendingSupersedePaths: [...(current.pendingSupersedePaths ?? []), oldPath],
+          },
+        },
+      }
+    })
+    try {
+      const resp = await fetch(`${API_BASE_URL}/api/wiki/drafts/demote`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          srcWikiPath: oldPath,
+          callerAlias,
+          reason: `supersede 半态补救：下架未归档旧版（新版 ${job.finalPath ?? job.destWikiPath}）`,
+        }),
+      })
+      const raw = (await resp.json()) as { ok?: boolean; error?: string; code?: string }
+      if (!raw.ok) {
+        updatePartialFailure(
+          set,
+          srcDraftPath,
+          oldPath,
+          `下架失败：${raw.code ?? ""} ${raw.error ?? ""}`,
+        )
+        return false
+      }
+      set((s) => {
+        const current = s.jobs[srcDraftPath]
+        if (!current) return { jobs: s.jobs }
+        const remaining = (current.supersedeFailures ?? []).filter((f) => f.path !== oldPath)
+        const pending = (current.pendingSupersedePaths ?? []).filter((path) => path !== oldPath)
+        return {
+          jobs: {
+            ...s.jobs,
+            [srcDraftPath]: {
+              ...current,
+              status: remaining.length === 0 ? "ok" : "partial",
+              supersedeFailures: remaining.length > 0 ? remaining : undefined,
+              pendingSupersedePaths: pending.length > 0 ? pending : undefined,
+              supersededPaths: Array.from(new Set([...(current.supersededPaths ?? []), oldPath])),
+            },
+          },
+        }
+      })
+      return true
+    } catch (err) {
+      updatePartialFailure(
+        set,
+        srcDraftPath,
+        oldPath,
+        `下架失败：${(err as Error).message}`,
+      )
+      return false
+    }
+  },
+
+  dismissPartialSupersede: async (srcDraftPath, callerAlias) => {
+    const job = get().jobs[srcDraftPath]
+    if (!job || job.status !== "partial") return false
+    const eventIds = (job.supersedeFailures ?? [])
+      .map((failure) => failure.eventId)
+      .filter((id): id is number => typeof id === "number")
+    try {
+      for (const failureEventId of eventIds) {
+        const resp = await fetch(`${API_BASE_URL}/api/wiki/drafts/partial-supersedes/resolve`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ failureEventId, callerAlias, resolution: "dismissed" }),
+        })
+        const raw = (await resp.json()) as { ok?: boolean }
+        if (!resp.ok || !raw.ok) return false
+      }
+      get().clearJob(srcDraftPath)
+      return true
+    } catch {
+      return false
+    }
+  },
+
   startBatch: async (req) => {
     if (get().batch?.status === "running") return
     // 德彪 r1 P1：同 src 已有 running（单篇后台在跑）/ ok（已转正待 refetch 消行）的项
@@ -134,7 +340,7 @@ export const usePromoteJobsStore = create<PromoteJobsStore>((set, get) => ({
     const jobsNow = get().jobs
     const items = req.items.filter((it) => {
       const cur = jobsNow[it.srcDraftPath]
-      return !(cur?.status === "running" || cur?.status === "ok")
+      return !(cur?.status === "running" || cur?.status === "ok" || cur?.status === "partial")
     })
     const skipped = req.items.length - items.length
     if (items.length === 0) {
@@ -143,7 +349,7 @@ export const usePromoteJobsStore = create<PromoteJobsStore>((set, get) => ({
           status: "done",
           progress: { done: 0, total: 0 },
           summary: null,
-          error: `所选 ${skipped} 篇均已有进行中/已完成的 promote，任务未提交`,
+          error: `所选 ${skipped} 篇均已有进行中/已完成/待处理半态的 promote，任务未提交`,
         },
       })
       return
@@ -261,5 +467,6 @@ export const usePromoteJobsStore = create<PromoteJobsStore>((set, get) => ({
 
   markSettledConsumed: () => set({ settledUnconsumed: false }),
 
-  resetAll: () => set({ jobs: {}, batch: null, settledUnconsumed: false }),
+  resetAll: () =>
+    set({ jobs: {}, batch: null, settledUnconsumed: false, partialHydration: "idle" }),
 }))

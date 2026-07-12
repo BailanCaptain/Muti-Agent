@@ -760,3 +760,50 @@
   - `docs/features/F041-invest-research-tracker.md`（D9 / AC11）
 - 原理：「没观察到副作用」只有在副作用通道开启时才构成证据；通道关闭时观察不到是必然事件，信息量为零。测试的有效性前提（环境里被测机制真的在运行）本身需要被断言。
 - 关联：LL-022（测试金字塔在 UI 呈现倒置）、LL-030（验证链必须延伸到外部可观测）
+
+### LL-035: 子调用 timeout 必须严格小于调用链总预算——否则预算 cap 形同虚设且 100% 熔断
+- 状态：validated
+- 更新时间：2026-07-11
+
+- 坑：F027 adaptive recall 总预算 maxTotalMs=5000，但链上单次 critique 超时 30000ms、失败后 fallback runner 再拿同额 30s 重跑——单步预算是总预算 6 倍。F042 shadow 观察窗首批 6 行审计全部 20-60s 熔断、critique_calls=0（零次成功完成）、100% 走 L5 逃生舱。
+- 根因：预算检查只在子调用「前后」做（executor.ts runCritique），子调用本身不可中断（spawn CLI 进程）；总预算参数与子调用超时参数在两个文件各自配置，没人对齐过量纲。
+- 触发条件：任何「总预算 + 多级子调用」结构；子调用是不可中断原语（进程 spawn / 无 AbortSignal 的 SDK 调用）时尤甚。
+- 修复：F042 AC6 direct_turn 快链彻底移除同步 LLM critique（ADR-005）；保留结构的场景必须 min(子超时) < 总预算，且预算检查要能真正中断子调用。
+- 防护：写「预算」参数时 grep 链上所有子调用的 timeout 声明并断言 sum(最坏链路) ≤ 总预算；观察窗度量（F042 AC1/2）是这类矛盾的探测器——上线首日即照出。
+- 来源锚点：
+  - `packages/api/src/orchestrator/production-recall-executor-deps.ts`（critiqueTimeoutMs 30_000）
+  - `packages/api/src/wiki/adaptive-recall/types.ts`（DEFAULT_RECALL_BUDGET.maxTotalMs 5000）
+  - `.worktrees/F042/.runtime/reviews/F042-recall-fix-debiao-verdict.md`
+- 原理：预算是链路不变量，必须在链路每个原语上可执行；任一原语的自由裁量超过总量，不变量就只是注释。
+- 关联：LL-030（验证链延伸到外部可观测——本坑正是被外部度量抓出）
+
+### LL-036: trigram FTS 表上 <3 字 token 物理不可检索、长 phrase = verbatim substring 匹配——query 策略必须与表 tokenizer 对齐设计
+- 状态：validated
+- 更新时间：2026-07-11
+
+- 坑：wiki_entity_fts / messages_fts 用 trigram tokenizer（中文 substring 召回稳），但 sanitizeFtsQuery 把 CJK 连续段整体 phrase 化 + 隐式 AND——中文自然问句变成「文档必须逐字包含消息里的长片段」，恒零命中。中文检索从未真正工作过（注释自认「切词留 P15」但 P15 只落了 rerank stub）。德彪 SQLite 3.53 内存实测：1 字 0 中、2 字 0 中（物理死 token）、3 字命中、三字滑窗 OR 命中目标文档。
+- 根因：query 构造（sanitize）与表 tokenizer（trigram）各自演进无人对齐；sanitize 名义是「安全函数」却实际承担了检索策略职责，策略缺失被安全外衣掩盖。
+- 触发条件：FTS5 trigram 表 + 用户输入直接当 query；CJK 无空格语言 query 长度 <3 或 >3 未切窗。
+- 修复：F042 AC6 查询编译器——安全层与策略层分离；CJK ≥3 字段三字滑窗 OR、1-2 字段显式不支持、实体信号 MUST（ADR-005）。
+- 防护：建 FTS 表时同步写「query 构造契约」测试（中文自然句/2 字/实体混合各一条活体断言命中）；tokenizer 与 query 策略在同一文件或互相引用注释锚定。
+- 来源锚点：
+  - `packages/api/src/wiki/wiki-search/fts-query-sanitize.ts`（整段 phrase 化 + 隐式 AND）
+  - `packages/api/src/db/drizzle-instance.ts`（trigram tokenizer DDL）
+  - `packages/api/src/wiki/wiki-search/messages-fts.test.ts:180-184`（2 字不可命中已被测试承认却无人连线到召回恒空）
+- 原理：检索是「索引切分 × 查询切分」的交集；两侧切法不对齐，交集可以恒空——各自单测全绿也救不了。
+- 关联：LL-008（端到端走完信号链）、LL-030
+
+### LL-037: 相对排序分不能充当绝对置信度 gate——min-max 归一的 best/单命中恒为满分
+- 状态：validated
+- 更新时间：2026-07-11
+
+- 坑：F042 AC6 方案初稿（黄仁勋 R2）拟用「score≥floor && hits≥1」做本地 satisfied 判定；德彪实证否决：normalizeBm25Corpus 是 topK 内 min-max 相对归一，best 恒 1、单 hit 恒 1——OR 扩召回后任何偶然噪声文档都拿 score=1 直通 gate，会把「恒空」修成「恒有一个高置信噪声」，错误记忆注入比不注入更毒。
+- 根因：score 同时承担 ranking 与 confidence 双职责（types.ts 注释自认物理限制）；相对分的分布性质（组内归一）在跨组比较/绝对阈值场景下无意义。
+- 触发条件：任何用「组内归一化分数 + 固定阈值」做准入/注入/告警判定的设计；单结果集尤其危险（单元素 min-max 恒满分）。
+- 修复：gate 改基于命中证据——matchedClauseCount / clauseCoverage / exactEntityMatches（ADR-005）；排序分只管排序。
+- 防护：设计 gate 前先问「这个分数在单命中/全低质结果集下取什么值」；fixture 里必须有「一个弱命中」负例断言被 reject。
+- 来源锚点：
+  - `packages/api/src/wiki/wiki-search/wiki-entity-fts-provider.ts:222-232`（normalizeBm25Corpus）
+  - `packages/api/src/wiki/memory-preflight/types.ts:38-54`（score 双职责注释）
+- 原理：归一化保序不保距更不保锚——丢掉绝对量纲的分数只回答「谁更好」，永远回答不了「好不好」。
+- 关联：LL-036、F042 out-of-scope rerank 转正（rankScore/gateDecision 分离正是为此）

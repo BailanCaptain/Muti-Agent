@@ -42,6 +42,8 @@ import { isServiceAlias } from "../acl-types"
 import { writeFileAtomic, writeFileAtomicIfAbsent } from "../atomic-write"
 import { WikiPathInvalidError, safeWikiPath } from "../path-containment"
 import { checkExemptionSanitizeBlocked } from "./exemption-tainted-fields"
+// type-only：detector 运行时依赖本文件的路径谓词，值 import 会成环（cfg.findSameSource 闭包注入解耦）
+import type { SameSourceConflict } from "./same-source-detector"
 import {
   type V14PromoteAuditInput,
   V14PromoteAuditService,
@@ -57,6 +59,8 @@ export type PromoteStatus =
   | "dest_exists"
   /** 替换 CAS 失配（德彪 replace-r1 P1）：现有页与用户对比时看到的版本不一致 → 刷新对比后重试。 */
   | "dest_conflict"
+  /** F042 AC3 · 正式区已有 sources[0].path 相同的条目（双胞胎）——须显式选择取代或去合并。 */
+  | "same_source_exists"
   | "path_invalid"
   | "internal"
 
@@ -88,6 +92,12 @@ export interface PromoteRequest {
    * → dest_conflict 拒绝（绝不盲替换用户没看过的版本）。
    */
   expectedDestHash?: string
+  /**
+   * F042 AC3 · 同源撞车的显式取代确认：same_source_exists 返回的 conflicts 中用户选择
+   * 取代的旧条目路径。promote 落盘成功后归档进 wiki/_superseded/（move not delete +
+   * wiki_events action='supersede' 留痕，可恢复）。检测到同源而此处未覆盖 → 拒。
+   */
+  supersedePaths?: string[]
 }
 
 export interface PromoteResponse {
@@ -100,8 +110,21 @@ export interface PromoteResponse {
   replacedArchivePath?: string
   /** audit_rejected 时填 V14 reject reason (AC-P4-2 PromoteModal UI 显示) */
   auditReject?: V14RejectReason
+  /** F042 AC3 · same_source_exists 时：未被 supersedePaths 覆盖的同源冲突（前端对比面板数据源）。 */
+  sameSourceConflicts?: SameSourceConflict[]
+  /** F042 AC3 · ok 且执行了取代：旧条目归档后的 wiki/_superseded/ 相对路径（可恢复）。 */
+  supersededPaths?: string[]
+  /** F042 AC3 · ok 但个别取代失败（promote 本体已成功，不回滚）：路径+原因，人工善后。 */
+  supersedeFailures?: SupersedeFailure[]
   /** 拒因 / error 说明 */
   error?: string
+}
+
+export interface SupersedeFailure {
+  path: string
+  error: string
+  /** aborted wiki_events supersede row；前端显式忽略时据此写 resolution 对账。 */
+  eventId?: number
 }
 
 export interface PromoteWikiServiceConfig {
@@ -114,6 +137,12 @@ export interface PromoteWikiServiceConfig {
   currentLeaderTerm: () => string
   /** V14 audit service (可选注入测试 stub；默认 new instance)。 */
   auditService?: V14PromoteAuditService
+  /**
+   * F042 AC3 · 同源检测回调（装配点注入 detectSameSourceConflicts over wiki_entity_index；
+   * 缺省 = 跳过检测，存量装配零回归）。闭包注入而非直接 import——detector 依赖本文件的
+   * 路径谓词，反向 import 会成环。
+   */
+  findSameSource?: (srcContent: string, destWikiPath: string) => SameSourceConflict[]
 }
 
 export class PromoteWikiService {
@@ -173,6 +202,27 @@ export class PromoteWikiService {
     // F027 bucket-routing 补丁：落盘内容 = owner_path 刷成 dest 后的版本（审计/哈希/写盘
     // 三者用同一份，保「审的即写的」）。src 文件本身不动。
     const destContent = rewriteCanonicalOwnerPath(srcContent, req.destWikiPath)
+
+    // ─── 2.5 F042 AC3 · 同源撞车检测（sources[0].path 精确匹配正式区）──────────
+    // 在 V14 判官（可能调 LLM）之前拦：双胞胎是结构性问题，先于内容审计。
+    // 检测异常直接上抛（route 500 可见）——不静默 fail-open 放双胞胎进正式区。
+    let confirmedSupersedes: SameSourceConflict[] = []
+    if (this.cfg.findSameSource) {
+      const conflicts = this.cfg.findSameSource(srcContent, req.destWikiPath)
+      const chosen = new Set(req.supersedePaths ?? [])
+      const unresolved = conflicts.filter((c) => !chosen.has(c.path))
+      if (unresolved.length > 0) {
+        return {
+          status: "same_source_exists",
+          sameSourceConflicts: unresolved,
+          error: `正式区已有同源条目（sources.path 相同）——须显式选择「取代旧版」或去合并: ${unresolved
+            .map((c) => c.path)
+            .join(", ")}`,
+        }
+      }
+      // 只执行「本次检测确认的冲突」——supersedePaths 里的过期/无关路径自然忽略
+      confirmedSupersedes = conflicts
+    }
     // 德彪 r3 P1 · 人审豁免文档(frontmatter 带 ingest_exemption)promote 二道关:对编译产物
     // 跑 sanitize 复检,仍 blocked 直接拒。r2 的 layer3 substring 注入被 r3 实测推翻(matched
     // 归一化后形态 ≠ 原文域,同形字注入 includes 必漏);blocked 判定在归一化域内全文生效、
@@ -380,11 +430,120 @@ export class PromoteWikiService {
       // 不返 error 让 caller 知道 — 由 caller log 决定是否警告
     }
 
+    // ─── 9. F042 AC3 · 同源取代执行（post-commit 收尾）─────────────────────
+    // promote 本体已成功；旧版归档失败不回滚新页（failures 透出人工善后）。
+    // 血缘走事件账本（action='supersede' + promotionTarget=新路径），不做新页 frontmatter
+    // 手术（NHC deadSupersedes 校验目标存在性，指向搬走前路径必炸——账本可查即显式）。
+    let supersededPaths: string[] | undefined
+    let supersedeFailures: SupersedeFailure[] | undefined
+    if (confirmedSupersedes.length > 0) {
+      const sup = this.executeSupersedes(req, confirmedSupersedes)
+      supersededPaths = sup.superseded.length > 0 ? sup.superseded : undefined
+      supersedeFailures = sup.failures.length > 0 ? sup.failures : undefined
+    }
+
     return {
       status: "ok",
       eventId,
       finalPath: destAbsolute,
       replacedArchivePath,
+      supersededPaths,
+      supersedeFailures,
+    }
+  }
+
+  /**
+   * F042 AC3 · 逐条取代：旧同源条目 rename 进 wiki/_superseded/（flatten+时间戳，同
+   * buildReplacedArchivePath 惯例），wiki_events action='supersede' PREPARE→rename→COMMIT。
+   * 单条失败 abort 事件 + 记 failure 继续下一条——promote 已成功，不因归档翻车。
+   */
+  private executeSupersedes(
+    req: PromoteRequest,
+    conflicts: SameSourceConflict[],
+  ): { superseded: string[]; failures: SupersedeFailure[] } {
+    const superseded: string[] = []
+    const failures: SupersedeFailure[] = []
+    for (const conflict of conflicts) {
+      const oldRelative = conflict.path
+      let eventId: number | undefined
+      try {
+        const oldAbsolute = safeWikiPath(this.cfg.wikiRoot, oldRelative)
+        const oldContent = fs.readFileSync(oldAbsolute, "utf-8")
+        const oldHash = sha256(oldContent)
+        const archiveRelative = buildSupersededArchivePath(oldRelative, Date.now())
+        const archiveAbsolute = safeWikiPath(this.cfg.wikiRoot, archiveRelative)
+        const event = this.cfg.events.appendPending({
+          ts: new Date().toISOString(),
+          alias: req.callerAlias,
+          action: "supersede",
+          path: oldRelative,
+          baseHash: oldHash,
+          attemptedHash: oldHash,
+          diffSummary: `supersede-archive ${oldRelative} → ${archiveRelative}`,
+          sourceMessageIds: req.sourceMessageIds,
+          promotionTarget: req.destWikiPath,
+          reason: `superseded by promote of ${req.srcDraftPath}: ${req.reason}`,
+          fencingToken: req.fencingToken,
+          leaderTerm: this.cfg.currentLeaderTerm(),
+          result: "ok",
+        })
+        eventId = event.id
+        if (fs.existsSync(archiveAbsolute)) {
+          const error = `archive path collision: ${archiveRelative}`
+          this.cfg.events.abort(event.id, { error })
+          failures.push({ path: oldRelative, error, eventId })
+          continue
+        }
+        try {
+          fs.mkdirSync(path.dirname(archiveAbsolute), { recursive: true })
+          fs.renameSync(oldAbsolute, archiveAbsolute)
+        } catch (moveErr) {
+          this.cfg.events.abort(event.id, {
+            error: `supersede rename failed: ${(moveErr as Error).message}`,
+          })
+          failures.push({ path: oldRelative, error: (moveErr as Error).message, eventId })
+          continue
+        }
+        this.cfg.events.commit(event.id, { contentHash: oldHash })
+        superseded.push(archiveRelative)
+      } catch (err) {
+        const error = (err as Error).message
+        if (eventId !== undefined) {
+          this.cfg.events.abort(eventId, { error })
+        } else {
+          eventId = this.recordSupersedeFailure(req, oldRelative, error)
+        }
+        failures.push({ path: oldRelative, error, eventId })
+      }
+    }
+    return { superseded, failures }
+  }
+
+  private recordSupersedeFailure(
+    req: PromoteRequest,
+    oldRelative: string,
+    error: string,
+  ): number | undefined {
+    try {
+      const attemptedHash = sha256(`supersede-failure:${oldRelative}`)
+      const event = this.cfg.events.appendPending({
+        ts: new Date().toISOString(),
+        alias: req.callerAlias,
+        action: "supersede",
+        path: oldRelative,
+        attemptedHash,
+        diffSummary: `supersede-archive failed before move: ${oldRelative}`,
+        sourceMessageIds: req.sourceMessageIds,
+        promotionTarget: req.destWikiPath,
+        reason: `superseded by promote of ${req.srcDraftPath}: ${req.reason}`,
+        fencingToken: req.fencingToken,
+        leaderTerm: this.cfg.currentLeaderTerm(),
+        result: "ok",
+      })
+      this.cfg.events.abort(event.id, { error })
+      return event.id
+    } catch {
+      return undefined
     }
   }
 
@@ -553,6 +712,17 @@ export function isSupersededDraftRelativePath(p: string): boolean {
 }
 
 /**
+ * F042 AC3 · 召回面归档判定（单一真相源）：demote → `wiki/_rejected/`、supersede →
+ * `wiki/_superseded/` 的条目一律不进 search_wiki / preflight / adaptive-recall L2 /
+ * embedded records。normalize + 小写口径同 isDraftRelativePath（Windows 大小写旁路防护）。
+ * 注意与 isSupersededDraftRelativePath 分工：那个挡「归档 draft 转正」，这个挡「归档进召回」。
+ */
+export function isArchivedRelativePath(p: string): boolean {
+  const normalized = path.posix.normalize(p.replace(/\\/g, "/")).toLowerCase()
+  return normalized.includes("/_superseded/") || normalized.includes("/_rejected/")
+}
+
+/**
  * F027 bucket-routing 补丁 · promote 落盘时把 frontmatter 的 canonical_owner_path 刷成
  * dest 正式路径（此前 src 原样拷贝 → 存量正式区 entity 的 owner_path 全指着 draft 旧址）。
  * 只在「文件以 frontmatter 开头 且 frontmatter 区内已有 canonical_owner_path 单行字段」时
@@ -589,6 +759,21 @@ export function buildReplacedArchivePath(destRelative: string, epochMs: number):
   const flat = withoutWikiPrefix.replace(/\//g, "--")
   const stem = flat.endsWith(".md") ? flat.slice(0, -3) : flat
   return `wiki/_rejected/${stem}--replaced-${epochMs}.md`
+}
+
+/**
+ * F042 AC3 · supersede 归档路径：flatten 规则同 buildReplacedArchivePath，目录换
+ * wiki/_superseded/（语义区分：_rejected = 人工否决/替换旧页，_superseded = 同源新版取代）。
+ * 'wiki/concepts/F031-旧版.md' → 'wiki/_superseded/concepts--F031-旧版--superseded-<epoch>.md'
+ */
+export function buildSupersededArchivePath(oldRelative: string, epochMs: number): string {
+  const normalized = oldRelative.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")
+  const withoutWikiPrefix = normalized.startsWith("wiki/")
+    ? normalized.substring("wiki/".length)
+    : normalized
+  const flat = withoutWikiPrefix.replace(/\//g, "--")
+  const stem = flat.endsWith(".md") ? flat.slice(0, -3) : flat
+  return `wiki/_superseded/${stem}--superseded-${epochMs}.md`
 }
 
 function sha256(content: string): string {

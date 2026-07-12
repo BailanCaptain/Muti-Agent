@@ -27,6 +27,7 @@ import { IngestCommitService, registerIngestCommitRoute } from "./ingest-commit"
 import { IngestPreviewService, registerIngestPreviewRoute } from "./ingest-preview"
 import { PreviewStore } from "./preview-store"
 import { PromptInspectorService, registerPromptInspectorRoute } from "./prompt-inspector"
+import { RecallStatsService, registerRecallStatsRoute } from "./recall-stats"
 import { ViewfinderService, registerViewfinderRoute } from "./viewfinder"
 import { WikiStoryService, registerWikiStoryRoute } from "./wiki-story"
 
@@ -73,6 +74,8 @@ export function registerPhase3Routes(app: FastifyInstance, deps: Phase3RoutesDep
   registerViewfinderRoute(app, viewfinderService)
   registerDraftsRoute(app, draftScanner)
   registerPromptInspectorRoute(app, promptInspector)
+  // F042 AC2 · direct_turn 召回窗口统计（影子观察窗口径）
+  registerRecallStatsRoute(app, new RecallStatsService({ db: deps.db }))
   registerIngestPreviewRoute(app, ingestPreview)
   registerDecisionsRoute(app, decisionService)
   // F027 v3 G6 · Wiki 哲学 UI 后端 (GET /api/wiki/story)
@@ -96,6 +99,7 @@ export function registerPhase3Routes(app: FastifyInstance, deps: Phase3RoutesDep
 export { ViewfinderService, registerViewfinderRoute } from "./viewfinder"
 export { DraftScanner, registerDraftsRoute } from "./drafts"
 export { PromptInspectorService, registerPromptInspectorRoute } from "./prompt-inspector"
+export { RecallStatsService, registerRecallStatsRoute } from "./recall-stats"
 export { IngestPreviewService, registerIngestPreviewRoute } from "./ingest-preview"
 export { DecisionService, registerDecisionsRoute } from "./decisions"
 export { IngestCommitService, registerIngestCommitRoute } from "./ingest-commit"

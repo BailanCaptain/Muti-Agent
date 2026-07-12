@@ -37,6 +37,8 @@ const MAX_BATCH_ITEMS = 50
 
 export interface BatchPromoteRoutesDeps {
   batch: BatchPromoteService
+  /** 德彪 r2 P2-3 · 批量存在成功项时踢一次索引收敛（与单篇 promote 同链）。 */
+  onWikiMutated?: () => void
 }
 
 type PostBatchPromoteBody = {
@@ -75,6 +77,14 @@ export function registerBatchPromoteRoutes(
         taintedSourceFields: tainted,
         sourceMessageIds: body.sourceMessageIds,
       })
+      // 德彪 r2 P2-3 · 有成功落盘项 → 踢一次索引收敛（debounce 合并，全失败不踢）
+      if (summary.success.length > 0) {
+        try {
+          deps.onWikiMutated?.()
+        } catch {
+          // 通知失败不影响批量结果——周期安全网兜底
+        }
+      }
       return {
         ok: true,
         total: summary.total,

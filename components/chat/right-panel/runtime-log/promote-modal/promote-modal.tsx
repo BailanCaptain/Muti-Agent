@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 
 import { usePromoteJobsStore } from "@/components/stores/promote-jobs-store"
 import { ReplaceComparePanel } from "./replace-compare-panel"
+import { SameSourcePanel } from "./same-source-panel"
 import {
   type PromoteCommitSuccess,
   RETRYABLE_AUDIT_LAYERS,
@@ -106,8 +107,11 @@ export function PromoteModal({
   const job = usePromoteJobsStore((s) => (srcDraftPath ? s.jobs[srcDraftPath] : undefined))
   const startPromote = usePromoteJobsStore((s) => s.startPromote)
   const clearJob = usePromoteJobsStore((s) => s.clearJob)
+  const resolvePartialSupersede = usePromoteJobsStore((s) => s.resolvePartialSupersede)
   const jobRunning = job?.status === "running"
-  const jobOk = job?.status === "ok"
+  // 德彪 r2 P1-1 · partial（promote 成功但 supersede 有失败）与 ok 同走成功面板，
+  // 面板内 amber 警示块给「下架旧版」处理入口。
+  const jobOk = job?.status === "ok" || job?.status === "partial"
 
   // F027 bucket-routing 补丁：打开时按后端建议预填 Target path。ref 记录已预填的 src，
   // 同一 src 只填一次——用户手动清空/改写后不回填（deps 故意不含 destWikiPath）。
@@ -134,6 +138,9 @@ export function PromoteModal({
   const [successInfo, setSuccessInfo] = useState<{
     finalPath: string
     replacedArchivePath?: string
+    supersededPaths?: string[]
+    /** 德彪 r1 P1-3 · supersede 半态（旧版归档失败仍在正式区）——成功面板必须响亮透出。 */
+    supersedeFailures?: Array<{ path: string; error: string }>
   } | null>(null)
 
   // codex end-r3 P1 修（改 store 后语义不变）：同一 src 的 ok 只 notify 一次，防
@@ -143,7 +150,12 @@ export function PromoteModal({
     if (!jobOk || !srcDraftPath || !job?.finalPath) return
     if (notifiedOkSrcRef.current === srcDraftPath) return
     notifiedOkSrcRef.current = srcDraftPath
-    setSuccessInfo({ finalPath: job.finalPath, replacedArchivePath: job.replacedArchivePath })
+    setSuccessInfo({
+      finalPath: job.finalPath,
+      replacedArchivePath: job.replacedArchivePath,
+      supersededPaths: job.supersededPaths,
+      supersedeFailures: job.supersedeFailures,
+    })
     const payload: PromoteCommitSuccess = {
       ok: true,
       finalPath: job.finalPath,
@@ -175,8 +187,10 @@ export function PromoteModal({
   }
 
   // 成功面板点「完成」：ok 项已被列表 refetch 消化，清掉 store 条目防堆积。
+  // 德彪 r2 P1-1 · partial 不清——job 是关窗后 PartialSupersedeBanner 的数据源，
+  // 清了告警就永久失踪（用户处理完/显式忽略才由 store action / 横幅清）。
   const handleSuccessClose = () => {
-    if (srcDraftPath) clearJob(srcDraftPath)
+    if (srcDraftPath && job?.status !== "partial") clearJob(srcDraftPath)
     handleClose()
   }
 
@@ -210,6 +224,24 @@ export function PromoteModal({
     })
   }
 
+  // F042 AC3 · 同源撞车（双胞胎）：取代 = 带全部冲突路径重发（服务端要求全覆盖无半态）；
+  // 去合并 = 中止（机器不合并内容，用户手动把增量并入已有条目）。
+  const isSameSourceFailure =
+    job?.status === "failed" &&
+    job.errorCode === "SAME_SOURCE_EXISTS" &&
+    (job.sameSourceConflicts?.length ?? 0) > 0
+  const handleSupersede = () => {
+    if (!srcDraftPath || !job || !reasonValid || !job.sameSourceConflicts) return
+    void startPromote({
+      srcDraftPath,
+      destWikiPath: job.destWikiPath,
+      callerAlias,
+      reason,
+      sourceMessageIds,
+      supersedePaths: job.sameSourceConflicts.map((c) => c.path),
+    })
+  }
+
   if (!open) return null
 
   return (
@@ -229,6 +261,14 @@ export function PromoteModal({
           <PromoteSuccessView
             finalPath={successInfo.finalPath}
             replacedArchivePath={successInfo.replacedArchivePath}
+            supersededPaths={successInfo.supersededPaths}
+            // 德彪 r2 P1-1 · 失败清单读 store 实时值（处理后即时消行），快照只作面板开关
+            supersedeFailures={job?.supersedeFailures ?? successInfo.supersedeFailures}
+            onDemoteOld={
+              srcDraftPath
+                ? (oldPath) => void resolvePartialSupersede(srcDraftPath, oldPath, callerAlias)
+                : undefined
+            }
             onClose={handleSuccessClose}
           />
         ) : (
@@ -300,6 +340,16 @@ export function PromoteModal({
                 replaceDisabled={!reasonValid || jobRunning}
                 conflictNotice={job.errorCode === "DEST_CONFLICT"}
               />
+            ) : isSameSourceFailure && srcDraftPath && job.sameSourceConflicts ? (
+              /* F042 AC3 · 同源撞车 → 对比 + 取代/去合并二选一 */
+              <SameSourcePanel
+                key={`${job.errorCode}:${job.sameSourceConflicts.map((c) => c.path).join(",")}`}
+                srcDraftPath={srcDraftPath}
+                conflicts={job.sameSourceConflicts}
+                onSupersede={handleSupersede}
+                supersedeDisabled={!reasonValid || jobRunning}
+                onMerge={handleClose}
+              />
             ) : job?.status === "failed" && job.error ? (
               <div className="mb-4 p-3 border border-red-300 rounded bg-red-50 text-sm text-red-700">
                 <div className="font-medium">Promote error</div>
@@ -369,12 +419,20 @@ function Spinner() {
 function PromoteSuccessView({
   finalPath,
   replacedArchivePath,
+  supersededPaths,
+  supersedeFailures,
+  onDemoteOld,
   onClose,
 }: {
   finalPath: string
   replacedArchivePath?: string
+  supersededPaths?: string[]
+  supersedeFailures?: Array<{ path: string; error: string }>
+  /** 德彪 r2 P1-1 · 下架旧版（demote）——半态唯一由后端真实支持的补救路径。 */
+  onDemoteOld?: (oldPath: string) => void
   onClose: () => void
 }) {
+  const hasPartial = (supersedeFailures?.length ?? 0) > 0
   return (
     <div data-testid="promote-success">
       <div className="mb-4 rounded border border-green-300 bg-green-50 p-4">
@@ -391,8 +449,51 @@ function PromoteSuccessView({
             <span className="font-mono break-all">{replacedArchivePath}</span>
           </div>
         ) : null}
+        {supersededPaths?.length ? (
+          <div className="mt-1 text-xs text-green-700">
+            旧版已取代归档：
+            <span className="font-mono break-all">{supersededPaths.join("、")}</span>
+          </div>
+        ) : null}
         <div className="mt-1 text-xs text-green-600">该 draft 已从审批列表移除。</div>
       </div>
+      {/* 德彪 r1 P1-3 · supersede 半态响亮警示：promote 本体成功但旧版归档失败——
+          旧版仍在正式区和召回面，静默当完全成功会让用户以为取代已完成。 */}
+      {hasPartial ? (
+        <div
+          data-testid="promote-supersede-partial"
+          className="mb-4 rounded border border-amber-400 bg-amber-50 p-4"
+        >
+          <div className="font-medium text-amber-800">⚠ 旧版取代未完成（部分成功）</div>
+          <div className="mt-2 text-xs text-amber-800">
+            新页已落地，但以下旧版归档失败——<b>旧版仍在正式区且仍可被搜索到</b>：
+          </div>
+          <ul className="mt-1 space-y-1 text-xs text-amber-800">
+            {supersedeFailures?.map((f) => (
+              <li key={f.path} className="flex items-center justify-between gap-2">
+                <span className="font-mono break-all">
+                  {f.path}
+                  <span className="ml-1 font-sans text-amber-600">（{f.error}）</span>
+                </span>
+                {onDemoteOld ? (
+                  <button
+                    type="button"
+                    onClick={() => onDemoteOld(f.path)}
+                    className="shrink-0 rounded bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-700"
+                    data-testid={`success-demote-old-${f.path}`}
+                  >
+                    下架旧版
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2 text-xs text-amber-700">
+            「下架旧版」= demote 归档（达成取代终效）。暂不处理也可关窗——KB/审批 tab
+            顶部会持续显示此警示直到处理或显式忽略；处理前新旧双版并存。
+          </div>
+        </div>
+      ) : null}
       <div className="flex justify-end">
         <button
           type="button"

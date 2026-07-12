@@ -928,3 +928,69 @@ git commit -m "feat(F042): AC5 外部守活探针 — schtasks 单发探测 + �
 - **默认 shadow 上线即改变每条消息的执行路径**（多一次召回链 await）：`recall_total_ms` 全程记录，p95 异常另拆异步（D1 预案）；极端情况 `.env` 设 `MULTI_AGENT_DIRECT_TURN_RECALL=off` 一键回到 F027 现状（小孙操作，Iron Law 3）。
 - **migration 双镜像漏一处**：Task 3 测试用 `createDrizzleDb` 真建表验列，漏镜像会在测试期炸，不会带病合入。
 - **FTS 归档过滤误伤**：若存在依赖搜索 `_rejected` 的隐藏消费面（未发现 caller），worktree 全量测试 + preview 手测兜底；真有则给 FTS 加显式 `includeArchived` 选项而非回滚谓词。
+
+---
+
+# AC6 · direct_turn 召回快链改造（Task 14-20）
+
+**追加于 2026-07-11**：小孙愿景对照打回后拍「现在修」；方案 = 黄仁勋诊断 × 范德彪独立分析收敛（ADR-005，verdict 存 `.runtime/reviews/F042-recall-fix-debiao-verdict.md`）。三病灶：critique spawn CLI 30s×2 vs 预算 5s = 100% 熔断；CJK 整句 phrase AND 在 trigram 表下恒空；普通 miss 误入 L5 事件风暴。
+
+**终态契约**：同步召回链零 LLM/零 embedding（BM25-only lexical）；p95≤200ms/p99≤500ms/500ms fail-open；miss 是常态终态不写 escalate；手动 search_wiki/query_messages 语义不变（compiler 只挂召回链）。
+
+## Task 14: 查询编译器（纯函数）
+
+**Files**: Create `packages/api/src/wiki/wiki-search/fts-query-compiler.ts` + `fts-query-compiler.test.ts`
+
+- `compileRecallFtsQuery(raw: string): CompiledFtsQuery`
+- `CompiledFtsQuery = { matchExpr: string; mustClauses: string[]; orClauses: string[]; unsupported: boolean; droppedShortFragments: string[] }`
+- 顺序：①raw 上先提实体信号（`/\bF\d{3}\b/` `/\bB\d{3}\b/` `/\bR-\d+\b/` `/\bLL-\d+\b/`、wiki path 形 `[\w-]+/[\w./-]+\.md`、「」/引号内 ≥3 字术语）→ mustClauses；②剩余文本 normalize（非 `\p{L}\p{N}_` → 空格）切段；③CJK 连续段 len≥3 → 三字滑窗去重进 orClauses，len 1-2 → droppedShortFragments（trigram 物理死 token，LL-036）；④非 CJK token len≥3 进 orClauses，len<3 丢；⑤全部 clause 经 quoteFtsTerm（`"` 双倍转义包引号——从 sanitize 抽出复用）；⑥去重、must 优先封顶 32；⑦matchExpr = must AND-joined，or 组 `(a OR b …)` 与 must AND 连接；两组皆空 → unsupported=true。
+- 测试：中文自然句出滑窗 OR；`F042 召回管道怎么修` → must=["F042"]+or 滑窗；纯 2 字 → unsupported；FTS DSL 注入被 quote 中和（`MATCH`/`*`/`OR` 字面）；超长消息 clause≤32；`R-205`/path/「术语」提取；滑窗去重。
+
+## Task 15: provider 命中证据 + snippet excerpt
+
+**Files**: Modify `wiki-entity-fts-provider.ts`、`memory-preflight/types.ts`（RecallHit 加 optional `evidence`）; test 同目录
+
+- `RecallHit.evidence?: { matchedClauseCount: number; totalClauseCount: number; clauseCoverage: number; exactEntityMatch: boolean }`
+- provider 新入口 `searchCompiled(compiled, opts): RecallHit[]`：内核复用现 SQL（抽私有 runMatch(matchExpr)），命中后**应用层**算证据——每 clause 对 `(name+body).toLowerCase().includes(clause)`（trigram=substring 语义等价，零 SQL 复杂度）；exactEntityMatch = mustClauses 全命中且非空。
+- excerpt 改命中窗 snippet：第一个命中 clause 在 body 的 index，取 `[i-40, i+160)`；仅 name 命中 → 原 slice(0,200) 兜底（防「相关 path+无关正文开头」注入——德彪风险清单）。
+- 测试：证据计数/coverage 正确；snippet 含命中词；name-only 兜底；旧 search() 路径行为不变（回归）。
+
+## Task 16: direct 快链管道（无 LLM 状态机）
+
+**Files**: Create `packages/api/src/wiki/adaptive-recall/direct-recall-pipeline.ts` + test；Modify `messages-fts-repository.ts`（加 compiled 表达式入口，绕 sanitize 不绕 quote）
+
+- `executeDirectRecall(input {query,roomId,trigger}, deps {wikiSearch.searchCompiled, messagesFts.queryCompiled, now?}, opts {deadlineMs=500, topK=5}) → ExecuteOutput 兼容 shape`
+- 流程：compile → unsupported → 正常 miss（early return）；L2 wiki searchCompiled → `evidenceGate` → pass → `{recallPath:2, recallSatisfied:true, hits:gated, critiqueCalls:0}`；fail → L3 messages 同一 matchExpr → gate → pass/`{recallPath:3,…}`；仍 fail → **正常 miss**：`{recallPath:3, recallSatisfied:false, hits:[], critiqueCalls:0}` —— **不调 level5、不写 escalate**（ADR-005）。
+- `evidenceGate(hits)`：exactEntityMatch → pass；matchedClauseCount≥2 且 clauseCoverage≥GATE_MIN_COVERAGE（常量 0.25 起，fixture 校准）→ pass；单 clause 命中 → reject（LL-037：不用 minmax score）。
+- deadline：每级 backend 调用前查 elapsed（覆盖 backend 本身——德彪 1.1 补充），到点 fail-open miss + budgetExceeded=true。
+- 测试：L2 命中直返；OR 噪声（单 clause 偶合文档）被 gate 拒进 L3；两级 miss 零 escalate 调用（spy 断言 level5 不存在于 deps）；deadline fail-open；unsupported 直 miss；输出 shape 与审计写入兼容。
+
+## Task 17: coordinator/message-service 全同步链切换
+
+**Files**: Modify `adaptive-recall-coordinator.ts`、`message-service.ts`、`server.ts` 装配；tests 同步
+
+- coordinator 换引擎：所有同步 scenario（direct_turn/wake_up/a2a_handoff）走 `executeDirectRecall`（德彪：wake_up 同为用户可感链路，同步链全去 LLM）。旧 `executeAdaptiveRecall`/production deps 工厂保留文件（异步校准位复用），生产同步 caller 归零。
+- message-service 注入 gate：`hits.length>0` → `recallSatisfied && hits.length>0`（德彪 1.3：注入必须消费 gated 结果，不能只改审计）。shadow 异步分流（80bd2fd）结构不动，只换内部引擎。
+- direct_turn 显式 lexical-only：装配传 WikiEntityFtsProvider 直连（不经 HybridSearchProvider——防 embedded records 热替换后引入 ONNX 推理延迟，德彪 1.5）。
+- 测试：coordinator 三 scenario 输出；inject 组装消费 gated hits；shadow 占位/回填路径回归。
+
+## Task 18: 审计/stats/notifier 语义同步
+
+**Files**: Modify `shadow-window-notifier.ts`（14 天分支加 ≥20 settled 最小样本下限——德彪 2.5）；检查 `recall-stats.ts`（hitRate 定义基于 results 非空，miss 语义变化无破坏——验证后不动或微调）；受影响存量测试全修
+
+- 具名回归：历史 escalate 行（path=5）仍被 stats 兼容统计（只读历史）；新 miss 行（satisfied=0 无 escalate）正确入窗。
+
+## Task 19: preview 活体验收（AC6 验收句逐条）
+
+1. 重启 preview API（:8806，env 全集）；库内已有 f042-acceptance-probe 条目含「探针协议」——**同 query 新旧对照**：修复前审计行 20-60s/results=[]（id=2/3/51/53 铁证在库），修复后同句应 <500ms/results 非空/critique_calls=0。
+2. shadow 活体：网页发「探针协议的核心规则有几条？」→ 审计行断言上述三项。
+3. inject 活体：启动命令注入 `MULTI_AGENT_DIRECT_TURN_RECALL=inject` 重启 → 回复携带召回内容 + 延迟无感（<1s 增量）。
+4. 噪声负例：发库内无关消息 → miss 行 results=[] 且零新增 recall_escalate 事件（wiki_events 行数前后对比）。
+5. 延迟分布：连发 ≥10 条统计 total_ms p95 ≤200ms。
+6. 全量回归 + 复原现场（临时行清理、env 恢复 shadow）。
+
+## Task 20: 收口链
+
+quality-gate 四连 → acceptance-guardian → @范德彪真 Codex 审 AC6 批 → 小孙 UI 复验（含 AC1-5 原 5 项 + AC6 活体）→ merge-gate。
+
+**inject 开启门槛**（合并后生产观察，非本期验收项）：≥50 settled（网页+IM）+ ≥30 条人工标注 top-1 precision ≥80% + 严重误召回 0 + p95≤200ms；达标出小结卡 → 小孙人工 .env 开闸。

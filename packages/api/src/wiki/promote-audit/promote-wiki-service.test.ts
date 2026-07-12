@@ -13,6 +13,7 @@ import { compileACL } from "../acl-engine"
 import type { ACLConfig } from "../acl-types"
 import { writeFileAtomicIfAbsent } from "../atomic-write"
 import { PromoteWikiService, buildReplacedArchivePath } from "./promote-wiki-service"
+import { detectSameSourceConflicts, type SameSourceConflict } from "./same-source-detector"
 import { V14PromoteAuditService } from "./v14-promote-audit-service"
 
 /** posture C：注 stub runner，单测不真调 LLM。默认 safe（结构层/tainted 不触发时放行）。 */
@@ -59,7 +60,13 @@ const ACL_DENY_ALL: ACLConfig = {
   ],
 }
 
-function setupTest(opts: { acl?: ACLConfig; judgeRunner?: HaikuRunner } = {}): {
+function setupTest(
+  opts: {
+    acl?: ACLConfig
+    judgeRunner?: HaikuRunner
+    findSameSource?: (srcContent: string, destWikiPath: string) => SameSourceConflict[]
+  } = {},
+): {
   service: PromoteWikiService
   wikiRoot: string
   events: WikiEventsRepository
@@ -83,6 +90,7 @@ function setupTest(opts: { acl?: ACLConfig; judgeRunner?: HaikuRunner } = {}): {
     wikiRoot,
     currentLeaderTerm: () => "999",
     auditService: new V14PromoteAuditService({ runner: opts.judgeRunner ?? safeJudgeRunner() }),
+    findSameSource: opts.findSameSource,
   })
 
   const acquireLease = (relPath: string, owner: string): string => {
@@ -1056,6 +1064,198 @@ describe("writeFileAtomicIfAbsent（德彪 replace-r3 P1 · 内核级 create-if-
       assert.equal(fs.readdirSync(dir).filter((n) => n.endsWith(".tmp")).length, 0, "无 tmp 残留")
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ─── F042 AC3 · 同源撞车强制显式 supersede ──────────────────────────────
+
+describe("F042 AC3 · 同源撞车强制显式 supersede", () => {
+  const DOCS = "docs/features/F031-ws-recovery.md"
+  const fmDoc = (title: string) =>
+    `---\ntitle: ${title}\nsources:\n  - type: text/markdown\n    path: ${DOCS}\n    contributed_by: docs-watcher\n---\n\n# ${title}\n\n知识正文，seq epoch 恢复机制说明。`
+
+  it("检测到同源且未选取代 → same_source_exists + conflicts；盘上什么都不动", async () => {
+    const old = "wiki/concepts/F031-旧版.md"
+    const { service, wikiRoot, events, acquireLease, cleanup } = setupTest({
+      findSameSource: () => [{ path: old, title: "F031-旧版" }],
+    })
+    try {
+      const src = "wiki/concepts/draft/_auto/F031-新版.md"
+      const dest = "wiki/concepts/F031-新版.md"
+      writeDraft(wikiRoot, src, fmDoc("F031-新版"))
+      writeDraft(wikiRoot, old, fmDoc("F031-旧版"))
+      const token = acquireLease(dest, "黄仁勋")
+      const r = await service.promote({
+        srcDraftPath: src,
+        destWikiPath: dest,
+        callerAlias: "黄仁勋",
+        reason: "新版收录",
+        fencingToken: token,
+      })
+      assert.equal(r.status, "same_source_exists")
+      assert.deepEqual(r.sameSourceConflicts, [{ path: old, title: "F031-旧版" }])
+      assert.ok(fs.existsSync(path.join(wikiRoot, src)), "src 留原位")
+      assert.ok(!fs.existsSync(path.join(wikiRoot, dest)), "dest 未创建")
+      assert.ok(fs.existsSync(path.join(wikiRoot, old)), "旧版未动")
+      assert.equal(events.getByPath(old).length, 0, "无事件写入")
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("带 supersedePaths → ok + 旧版移入 wiki/_superseded/ + supersede 事件 committed", async () => {
+    const old = "wiki/concepts/F031-旧版.md"
+    const { service, wikiRoot, events, acquireLease, cleanup } = setupTest({
+      findSameSource: () => [{ path: old, title: "F031-旧版" }],
+    })
+    try {
+      const src = "wiki/concepts/draft/_auto/F031-新版.md"
+      const dest = "wiki/concepts/F031-新版.md"
+      writeDraft(wikiRoot, src, fmDoc("F031-新版"))
+      writeDraft(wikiRoot, old, fmDoc("F031-旧版"))
+      const token = acquireLease(dest, "黄仁勋")
+      const r = await service.promote({
+        srcDraftPath: src,
+        destWikiPath: dest,
+        callerAlias: "黄仁勋",
+        reason: "新版收录",
+        fencingToken: token,
+        supersedePaths: [old],
+      })
+      assert.equal(r.status, "ok")
+      assert.ok(fs.existsSync(path.join(wikiRoot, dest)), "新版落正式区")
+      assert.ok(!fs.existsSync(path.join(wikiRoot, old)), "旧版离开原路径（退召回面）")
+      assert.equal(r.supersededPaths?.length, 1)
+      const archived = r.supersededPaths?.[0] ?? ""
+      assert.ok(archived.startsWith("wiki/_superseded/"), `归档路径应在 _superseded/: ${archived}`)
+      assert.ok(fs.existsSync(path.join(wikiRoot, archived)), "归档副本存在（move not delete 可恢复）")
+      assert.equal(r.supersedeFailures, undefined, "无失败项")
+      const row = events.getByPath(old).find((e) => e.action === "supersede")
+      assert.ok(row, "supersede 事件应落账本")
+      assert.equal(row?.state, "committed")
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("r3 F1 · supersede 预移动失败也落 aborted 事件并把 eventId 透给前端", async () => {
+    const old = "wiki/concepts/not-a-file.md"
+    const { service, wikiRoot, events, acquireLease, cleanup } = setupTest({
+      findSameSource: () => [{ path: old, title: "坏旧版" }],
+    })
+    try {
+      const src = "wiki/concepts/draft/_auto/new.md"
+      const dest = "wiki/concepts/new.md"
+      writeDraft(wikiRoot, src, fmDoc("新版"))
+      fs.mkdirSync(path.join(wikiRoot, old), { recursive: true })
+      const token = acquireLease(dest, "黄仁勋")
+
+      const result = await service.promote({
+        srcDraftPath: src,
+        destWikiPath: dest,
+        callerAlias: "黄仁勋",
+        reason: "新版收录",
+        fencingToken: token,
+        supersedePaths: [old],
+      })
+
+      assert.equal(result.status, "ok")
+      assert.equal(result.supersedeFailures?.length, 1)
+      const failureEventId = result.supersedeFailures?.[0]?.eventId
+      assert.equal(typeof failureEventId, "number")
+      assert.equal(events.get(failureEventId ?? -1)?.state, "aborted")
+      assert.equal(events.get(failureEventId ?? -1)?.action, "supersede")
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("findSameSource 未注入 → 检测跳过（存量装配零回归）", async () => {
+    const { service, wikiRoot, acquireLease, cleanup } = setupTest()
+    try {
+      const src = "wiki/concepts/draft/_auto/normal.md"
+      const dest = "wiki/concepts/normal.md"
+      writeDraft(wikiRoot, src, fmDoc("normal"))
+      const token = acquireLease(dest, "黄仁勋")
+      const r = await service.promote({
+        srcDraftPath: src,
+        destWikiPath: dest,
+        callerAlias: "黄仁勋",
+        reason: "常规",
+        fencingToken: token,
+      })
+      assert.equal(r.status, "ok")
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("F031 双胞胎重放（真 detector）：先收旧版→再收新版撞车→取代后旧版退出", async () => {
+    // 真 detectSameSourceConflicts 接管，index stub = 实时扫正式区文件（模拟 wiki_entity_index）
+    let wikiRootRef = ""
+    const listIndexedEntries = () => {
+      const out: Array<{ path: string; name: string; body: string }> = []
+      const walk = (dir: string) => {
+        for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+          const abs = path.join(dir, ent.name)
+          if (ent.isDirectory()) walk(abs)
+          else if (ent.name.endsWith(".md")) {
+            const rel = path.relative(wikiRootRef, abs).replace(/\\/g, "/")
+            out.push({ path: rel, name: ent.name.replace(/\.md$/, ""), body: fs.readFileSync(abs, "utf-8") })
+          }
+        }
+      }
+      const wikiDir = path.join(wikiRootRef, "wiki")
+      if (fs.existsSync(wikiDir)) walk(wikiDir)
+      return out
+    }
+    const { service, wikiRoot, acquireLease, cleanup } = setupTest({
+      findSameSource: (srcContent, dest) =>
+        detectSameSourceConflicts({ listIndexedEntries }, srcContent, dest),
+    })
+    wikiRootRef = wikiRoot
+    try {
+      // 第一次收录（正式区空）→ ok
+      writeDraft(wikiRoot, "wiki/concepts/draft/_auto/F031-spec版.md", fmDoc("F031-spec版"))
+      const t1 = acquireLease("wiki/concepts/F031-spec版.md", "黄仁勋")
+      const r1 = await service.promote({
+        srcDraftPath: "wiki/concepts/draft/_auto/F031-spec版.md",
+        destWikiPath: "wiki/concepts/F031-spec版.md",
+        callerAlias: "黄仁勋",
+        reason: "首次收录",
+        fencingToken: t1,
+      })
+      assert.equal(r1.status, "ok")
+
+      // 第二次同源不同 dest（双胞胎）→ 撞车
+      writeDraft(wikiRoot, "wiki/concepts/draft/_auto/F031-完成版.md", fmDoc("F031-完成版"))
+      const t2 = acquireLease("wiki/concepts/F031-完成版.md", "黄仁勋")
+      const r2 = await service.promote({
+        srcDraftPath: "wiki/concepts/draft/_auto/F031-完成版.md",
+        destWikiPath: "wiki/concepts/F031-完成版.md",
+        callerAlias: "黄仁勋",
+        reason: "完成版收录",
+        fencingToken: t2,
+      })
+      assert.equal(r2.status, "same_source_exists")
+      assert.equal(r2.sameSourceConflicts?.[0]?.path, "wiki/concepts/F031-spec版.md")
+
+      // 显式取代 → ok，旧版退出原路径（t2 lease 60s 未过期，复用同 token 重试——
+      // 与真实前端行为一致：撞车弹窗确认后带 supersedePaths 原 token 重发）
+      const r3 = await service.promote({
+        srcDraftPath: "wiki/concepts/draft/_auto/F031-完成版.md",
+        destWikiPath: "wiki/concepts/F031-完成版.md",
+        callerAlias: "黄仁勋",
+        reason: "完成版收录",
+        fencingToken: t2,
+        supersedePaths: ["wiki/concepts/F031-spec版.md"],
+      })
+      assert.equal(r3.status, "ok")
+      assert.ok(!fs.existsSync(path.join(wikiRoot, "wiki/concepts/F031-spec版.md")), "spec 版退出")
+      assert.ok(fs.existsSync(path.join(wikiRoot, "wiki/concepts/F031-完成版.md")), "完成版在位")
+    } finally {
+      cleanup()
     }
   })
 })

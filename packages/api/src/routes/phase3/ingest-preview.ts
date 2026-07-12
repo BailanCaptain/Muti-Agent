@@ -32,6 +32,7 @@ import { stringify as stringifyYaml } from "yaml"
 import type { EmbeddingService } from "../../services/embedding-service"
 import { runCompilePipelineWithRetry } from "../../wiki/llm-compile/compile-pipeline"
 import { createPreviewWikiEventsWriter } from "../../wiki/llm-compile/preview-wiki-events-writer"
+import type { WikiCandidateSearch } from "../../wiki/llm-compile/wiki-candidate-search"
 import type {
   CompileLLMClient,
   DraftResult,
@@ -104,6 +105,11 @@ export interface IngestCompileDeps {
   indexLoader: IndexLiteLoader
   llmClient: CompileLLMClient
   entityChecker: EntityExistenceChecker
+  /**
+   * F042 AC4 · wiki_entity_index 候选检索（server.ts 装配 hybridWikiSearch 适配器）。
+   * 注入后 pre-compile 产出真候选（此前 message_embeddings 误用 + threadIds 恒空 → 恒空）。
+   */
+  wikiCandidateSearch?: WikiCandidateSearch
   /** handbook "## 编译规则" 切片（server.ts loadHandbookSlices().compileRules）。 */
   handbookCompileRules: string
   /** schema 失败重试次数（默认 3，透传 runCompilePipelineWithRetry）。 */
@@ -298,6 +304,8 @@ export class IngestPreviewService {
           llmClient: compile.llmClient,
           entityChecker: compile.entityChecker,
           wikiEvents: this.previewWikiEvents,
+          // F042 AC4 · 真候选喂料（未装配时 undefined = 旧行为）
+          wikiCandidateSearch: compile.wikiCandidateSearch,
         },
       },
       { maxAttempts: compile.maxAttempts ?? 3, logger: compile.logger },

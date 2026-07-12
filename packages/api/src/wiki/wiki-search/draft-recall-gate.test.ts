@@ -151,3 +151,83 @@ describe("draft 召回准入闸门 · EmbeddedWikiRecordsLoader", () => {
     }
   })
 })
+
+// ─── F042 AC3 · 归档区召回排除（_superseded / _rejected 同谓词无条件闸门）──────
+//
+// 现症（2026-07-10 生产库实测）：wiki_entity_index 有 _rejected|5 行——demote 掉的
+// 条目仍可被 search_wiki 搜到（indexer 动态枚举 wiki/ 下所有目录当 bucket，FTS 只滤
+// /draft/）。supersede（AC3 新增）走同一顶级归档目录惯例，两目录一个谓词一并收编。
+
+import { isArchivedRelativePath } from "../promote-audit/promote-wiki-service"
+
+describe("F042 AC3 · isArchivedRelativePath（归档区判定单一真相源）", () => {
+  it("顶级 _superseded/ 与 _rejected/ → true（大小写/反斜杠同 isDraftRelativePath 口径）", () => {
+    assert.equal(isArchivedRelativePath("wiki/_superseded/concepts/old.md"), true)
+    assert.equal(isArchivedRelativePath("wiki/_rejected/replaced-x.md"), true)
+    assert.equal(isArchivedRelativePath("wiki/_REJECTED/x.md"), true)
+    assert.equal(isArchivedRelativePath("wiki\\_superseded\\concepts\\old.md"), true)
+    // draft 区内归档（AC-W2 同源收敛）同样匹配——它已被 isSupersededDraftRelativePath
+    // 挡 promote，这里挡召回面（双闸互补不冲突）
+    assert.equal(isArchivedRelativePath("wiki/concepts/draft/_superseded/old.md"), true)
+  })
+  it("canonical / 一字之差路径 → false", () => {
+    assert.equal(isArchivedRelativePath("wiki/concepts/approved.md"), false)
+    assert.equal(isArchivedRelativePath("wiki/concepts/unrejected/x.md"), false)
+    assert.equal(isArchivedRelativePath("wiki/superseded-notes.md"), false)
+  })
+})
+
+describe("F042 AC3 · 归档召回闸门 · WikiEntityFtsProvider", () => {
+  it("_superseded/_rejected 无条件排除（includeDrafts=true 也不放行）", async () => {
+    const dbh = makeDb()
+    const fs = makeWikiRoot()
+    try {
+      await writeWiki(fs.root, "wiki/_superseded/concepts/old-twin.md",
+        "---\ntype: concept\n---\n# superseded zebramarker twin\nbody\n")
+      await writeWiki(fs.root, "wiki/_rejected/replaced.md",
+        "---\ntype: concept\n---\n# rejected zebramarker page\nbody\n")
+      await writeWiki(fs.root, "wiki/concepts/approved.md",
+        "---\ntype: concept\n---\n# approved zebramarker entry\nbody\n")
+      await reindexWikiEntities({ wikiRoot: fs.root, db: dbh.db })
+
+      const provider = new WikiEntityFtsProvider(dbh.db)
+      const hits = await provider.search("zebramarker", { topK: 10 })
+      const paths = hits.map((h) => h.path)
+      assert.deepEqual(paths, ["wiki/concepts/approved.md"], `归档区不应被召回: ${JSON.stringify(paths)}`)
+
+      const debugProvider = new WikiEntityFtsProvider(dbh.db, { includeDrafts: true })
+      const debugHits = await debugProvider.search("zebramarker", { topK: 10 })
+      const debugPaths = debugHits.map((h) => h.path)
+      assert.ok(!debugPaths.some((p) => isArchivedRelativePath(p)),
+        `includeDrafts 逃生舱也不放行归档区: ${JSON.stringify(debugPaths)}`)
+    } finally {
+      dbh.cleanup(); fs.cleanup()
+    }
+  })
+})
+
+describe("F042 AC3 · 归档召回闸门 · EmbeddedWikiRecordsLoader", () => {
+  it("load 排除 _superseded/_rejected 行（语义召回同闸门）", async () => {
+    const dbh = makeDb()
+    try {
+      const insert = (p: string, name: string) => {
+        dbh.db.insert(wikiEntityIndex).values({
+          path: p, bucket: p.split("/")[1] ?? "concepts", name, body: "body",
+          sourceHash: `h-${name}`, mtimeMs: 1, indexedAt: "2026-07-11T00:00:00Z",
+        }).run()
+      }
+      insert("wiki/_superseded/concepts/old.md", "old")
+      insert("wiki/_rejected/gone.md", "gone")
+      insert("wiki/concepts/canon.md", "canon")
+      const loader = new EmbeddedWikiRecordsLoader({
+        db: dbh.db,
+        generateEmbedding: async () => [1, 2],
+      })
+      const { records } = await loader.load()
+      const paths = records.map((r) => r.path)
+      assert.deepEqual(paths, ["wiki/concepts/canon.md"], `归档区不应进 embedded records: ${JSON.stringify(paths)}`)
+    } finally {
+      dbh.cleanup()
+    }
+  })
+})

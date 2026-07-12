@@ -32,6 +32,8 @@ export interface DemoteRoutesDeps {
   leases: WikiLeasesRepository
   leaderTerm: () => string
   demoteLeaseTtlSeconds?: number
+  /** 德彪 r1 P1-4 · demote 成功后踢索引收敛（5s debounce reindex）。 */
+  onWikiMutated?: () => void
 }
 
 type PostDemoteBody = {
@@ -78,6 +80,12 @@ export function registerDemoteRoutes(app: FastifyInstance, deps: DemoteRoutesDep
 
       switch (result.status) {
         case "ok":
+          // 德彪 r1 P1-4 · 落盘成功 → 踢索引收敛（fail-soft，周期安全网兜底）
+          try {
+            deps.onWikiMutated?.()
+          } catch {
+            // 通知失败不影响 demote 结果
+          }
           return {
             ok: true,
             rejectedPath: result.rejectedPath,

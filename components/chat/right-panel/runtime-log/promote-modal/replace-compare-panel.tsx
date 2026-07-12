@@ -31,7 +31,8 @@ const SIDE_INIT: SideState = {
   loading: true,
 }
 
-function useSideContent(endpoint: string, path: string | null): SideState {
+// F042 AC3 · 导出给 SameSourcePanel 复用（同款并排对比，数据源换同源冲突条目）
+export function useSideContent(endpoint: string, path: string | null): SideState {
   const [state, setState] = useState<SideState>(SIDE_INIT)
   useEffect(() => {
     if (!path) return
@@ -77,7 +78,7 @@ function formatMtime(mtime: string | null): string {
   return Number.isNaN(d.getTime()) ? mtime : d.toLocaleString()
 }
 
-function SideCard(props: { title: string; side: SideState; newer: boolean }) {
+export function SideCard(props: { title: string; side: SideState; newer: boolean }) {
   const { title, side, newer } = props
   return (
     <div className="min-w-0 flex-1 rounded border border-gray-200">

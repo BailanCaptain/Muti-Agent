@@ -41,6 +41,19 @@ export function PromoteJobBadge({ path }: { path: string }) {
       </span>
     )
   }
+  // 德彪 r2 P1-1 · partial：promote 成功但旧版取代未完成——不能落进「已转正」绿标误导
+  if (job.status === "partial") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-micro font-medium text-amber-700 border border-amber-300"
+        data-testid={`promote-job-badge-${path}`}
+        title={`旧版取代未完成：${(job.supersedeFailures ?? []).map((f) => f.path).join("、")}——见顶部警示横幅处理`}
+      >
+        <XCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
+        部分完成
+      </span>
+    )
+  }
   return (
     <span
       className="inline-flex items-center gap-1 rounded bg-green-50 px-1.5 py-0.5 text-micro font-medium text-green-700 border border-green-200"
@@ -68,7 +81,7 @@ export function PromoteRowButton<T extends { path: string }>({
 }) {
   // 德彪 r2 P2：ok 也禁用——unlink-fail 时行仍在列表但已转正，放行会同 src 双路 promote
   const status = usePromoteJobsStore((s) => s.jobs[draft.path]?.status)
-  const blocked = status === "running" || status === "ok"
+  const blocked = status === "running" || status === "ok" || status === "partial"
   return (
     <button
       type="button"
@@ -81,7 +94,9 @@ export function PromoteRowButton<T extends { path: string }>({
           ? "该 draft 的后台审核进行中"
           : status === "ok"
             ? "该 draft 已转正（等列表刷新消行）"
-            : "提升此 draft 到正式 wiki path (走 V14 二次审计)"
+            : status === "partial"
+              ? "旧版取代半态尚未处理"
+              : "提升此 draft 到正式 wiki path (走 V14 二次审计)"
       }
     >
       Promote
@@ -136,6 +151,77 @@ export function BatchPromoteBanner() {
       >
         知道了
       </button>
+    </div>
+  )
+}
+
+/**
+ * 德彪 r2 P1-1 · supersede 半态持久横幅（两 tab 共用，与 BatchPromoteBanner 并列挂载）。
+ * partial job 不被 ok-GC 清、draft 行已消失（promote 成功）——这里是关窗/刷新后唯一
+ * 还能看到并处理半态的入口。逐条给「下架旧版」（demote=唯一后端真实支持的补救；
+ * src draft 已删，重试 supersede 不存在）+ 整体「忽略」（显式知情丢弃）。
+ */
+export function PartialSupersedeBanner({
+  callerAlias,
+  enabled = true,
+}: {
+  callerAlias: string
+  enabled?: boolean
+}) {
+  const jobs = usePromoteJobsStore((s) => s.jobs)
+  const resolvePartialSupersede = usePromoteJobsStore((s) => s.resolvePartialSupersede)
+  const dismissPartialSupersede = usePromoteJobsStore((s) => s.dismissPartialSupersede)
+  const hydratePartialSupersedes = usePromoteJobsStore((s) => s.hydratePartialSupersedes)
+  const partials = Object.values(jobs).filter((j) => j.status === "partial")
+  useEffect(() => {
+    if (!enabled || partials.length > 0) return
+    void hydratePartialSupersedes()
+  }, [enabled, hydratePartialSupersedes, partials.length])
+  if (partials.length === 0) return null
+  return (
+    <div
+      className="rounded border border-amber-400 bg-amber-50 p-2 text-micro text-amber-900"
+      data-testid="partial-supersede-banner"
+      role="alert"
+    >
+      <div className="mb-1 font-medium">⚠ 旧版取代未完成——以下旧版仍在正式区且仍可被搜索到：</div>
+      {partials.map((job) => (
+        <div key={job.srcDraftPath} className="mb-1">
+          <div className="text-amber-700">
+            新版：<span className="font-mono break-all">{job.finalPath ?? job.destWikiPath}</span>
+          </div>
+          <ul className="mt-0.5 space-y-0.5">
+            {(job.supersedeFailures ?? []).map((f) => (
+              <li key={f.path} className="flex items-center justify-between gap-2">
+                <span className="font-mono break-all">
+                  {f.path}
+                  <span className="ml-1 font-sans text-amber-600">（{f.error}）</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void resolvePartialSupersede(job.srcDraftPath, f.path, callerAlias)}
+                  disabled={job.pendingSupersedePaths?.includes(f.path) === true}
+                  className="shrink-0 rounded bg-amber-600 px-2 py-0.5 font-medium text-white hover:bg-amber-700 disabled:bg-amber-300 disabled:cursor-not-allowed"
+                  data-testid={`partial-supersede-demote-${f.path}`}
+                >
+                  下架旧版
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-1 flex justify-end">
+            <button
+              type="button"
+              onClick={() => void dismissPartialSupersede(job.srcDraftPath, callerAlias)}
+              className="rounded border border-amber-300 px-2 py-0.5 hover:bg-white"
+              data-testid={`partial-supersede-dismiss-${job.srcDraftPath}`}
+              title="知情忽略：旧版将继续留在正式区（新旧双版并存）"
+            >
+              忽略
+            </button>
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

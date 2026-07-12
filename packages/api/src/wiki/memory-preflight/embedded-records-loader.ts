@@ -19,7 +19,7 @@
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type * as schema from "../../db/schema"
 import { wikiEntityIndex } from "../../db/schema"
-import { isDraftRelativePath } from "../promote-audit/promote-wiki-service"
+import { isArchivedRelativePath, isDraftRelativePath } from "../promote-audit/promote-wiki-service"
 import type { EmbeddingGeneratorFn } from "./hybrid-search-provider"
 import type { WikiEntityRecord } from "./in-memory-provider"
 
@@ -88,7 +88,9 @@ export class EmbeddedWikiRecordsLoader {
       })
       .from(wikiEntityIndex)
       .all()
-      .filter((row) => !isDraftRelativePath(row.path))
+      // F042 AC3 · 归档区（_superseded/_rejected）同闸门排除——demote/supersede 的退出
+      // 在语义召回侧同步生效（与 FTS archiveClause 口径一致）。
+      .filter((row) => !isDraftRelativePath(row.path) && !isArchivedRelativePath(row.path))
 
     const records: WikiEntityRecord[] = []
     const stats = { total: rows.length, embedded: 0, reused: 0, failed: 0, aborted: false }

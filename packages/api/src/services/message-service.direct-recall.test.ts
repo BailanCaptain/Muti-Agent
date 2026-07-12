@@ -17,9 +17,14 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { AdaptiveRecallCoordinator } from "../orchestrator/adaptive-recall-coordinator"
+import { resolveTriggerScenarios } from "../orchestrator/direct-turn-recall-mode"
 import type { ExecuteOutput, ExecutorDeps } from "../wiki/adaptive-recall/types"
 import type { RecallHit, WikiSearchProvider } from "../wiki/memory-preflight/types"
-import { resolveColdStartRecall, resolveDirectTurnRecall } from "./message-service"
+import {
+  applyShadowSuppression,
+  resolveColdStartRecall,
+  resolveDirectTurnRecall,
+} from "./message-service"
 
 function makeHit(path: string, score: number): RecallHit {
   return { path, score, excerpt: `excerpt for ${path}` }
@@ -117,6 +122,64 @@ test("B1-b · guardian 模式 → 短路 null，executor 不调（零上下文�
   assert.equal(called, false, "guardian 模式 executor 不该被调")
   assert.equal(r.memoryPreflight, null)
   assert.equal(r.recallResult, null)
+})
+
+// ─── F042 AC1 · direct_turn 三态（白名单扩容 + shadow 影子拦截）──────────
+
+test("F042 AC1 · shadow 白名单扩 direct_turn → 召回链真跑，helper 照常产出 preflight", async () => {
+  let called = false
+  const coord = new AdaptiveRecallCoordinator({
+    enabled: true,
+    executorDeps: makeStubDeps(),
+    triggerScenarios: resolveTriggerScenarios("shadow"),
+    executor: async () => {
+      called = true
+      return makeExecuteOutput([makeHit("wiki/concepts/F031.md", 0.88)])
+    },
+  })
+  const r = await resolveDirectTurnRecall(coord, {
+    roomId: "R-201",
+    alias: "桂芬",
+    scenario: "direct_turn",
+    query: "F031 现在什么状态",
+  })
+  assert.equal(called, true, "shadow 下 direct_turn 在白名单内，executor 必须真跑")
+  assert.ok(r.recallResult, "recallResult 保留（喂 prompt_audit）")
+  assert.equal(r.recallResult!.executed, true)
+  assert.ok(r.memoryPreflight, "helper 层不拦截——注入拦截是 runThreadTurn 消费端的事")
+})
+
+test("F042 AC1 · off → 白名单不含 direct_turn → scenario_skip（F027 现状回归）", async () => {
+  let called = false
+  const coord = new AdaptiveRecallCoordinator({
+    enabled: true,
+    executorDeps: makeStubDeps(),
+    triggerScenarios: resolveTriggerScenarios("off"),
+    executor: async () => {
+      called = true
+      return makeExecuteOutput([makeHit("wiki/x.md", 0.9)])
+    },
+  })
+  const r = await resolveDirectTurnRecall(coord, {
+    roomId: "R-201",
+    alias: "桂芬",
+    scenario: "direct_turn",
+    query: "任意",
+  })
+  assert.equal(called, false)
+  assert.equal(r.recallResult!.executed, false)
+  assert.equal(r.recallResult!.reason, "scenario_skip")
+  assert.equal(r.memoryPreflight, null)
+})
+
+test("F042 AC1 · applyShadowSuppression：只拦 shadow+direct_turn，其余恒等透传", () => {
+  const preflight = { hits: [{ score: 0.9, summary: "s", path: "wiki/concepts/x.md" }] }
+  assert.equal(applyShadowSuppression("shadow", "direct_turn", preflight), null)
+  assert.equal(applyShadowSuppression("shadow", "wake_up", preflight), preflight)
+  assert.equal(applyShadowSuppression("inject", "direct_turn", preflight), preflight)
+  assert.equal(applyShadowSuppression("inject", "wake_up", preflight), preflight)
+  assert.equal(applyShadowSuppression("off", "direct_turn", preflight), preflight)
+  assert.equal(applyShadowSuppression("shadow", "direct_turn", null), null)
 })
 
 // ─── B1-b-2 · resolveColdStartRecall（冷启 loadTaskMemoryPack）──────────
