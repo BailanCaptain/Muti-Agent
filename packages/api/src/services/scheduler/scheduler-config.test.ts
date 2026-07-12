@@ -18,7 +18,7 @@ import fs from "node:fs"
 import path from "node:path"
 import test from "node:test"
 import { Cron } from "croner"
-import { SMTP_SEND_DEADLINE_MS } from "../daily-digest/email-sender"
+import { SMTP_SEND_DEADLINE_MS } from "../../lib/email-sender"
 import {
   DEFAULT_SUBTITLE_TIMEOUT_MS,
   SUBTITLE_429_RETRY_DELAY_MS,

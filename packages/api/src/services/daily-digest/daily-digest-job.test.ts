@@ -8,8 +8,8 @@ import {
   createDailyDigestJob,
   isDigestFailureStatus,
 } from "./daily-digest-job"
-import { createFileDigestLedger } from "./digest-ledger"
-import type { EmailSender } from "./email-sender"
+import { createFileAttemptLedger } from "../../lib/attempt-ledger"
+import type { EmailSender } from "../../lib/email-sender"
 import { buildNormalizedItem } from "./feed-parsers"
 import { createFileSourceHealthStore } from "./source-health"
 import type { TranslateExtrasInput } from "./summarizer"
@@ -69,7 +69,7 @@ const fakeSummary: DigestSummary = { overview: ["要点"], sections: [], degrade
 
 function makeDeps(overrides: Partial<DailyDigestJobDeps> = {}): DailyDigestJobDeps {
   return {
-    ledger: createFileDigestLedger(dir),
+    ledger: createFileAttemptLedger(dir, "[daily-digest]"),
     health: createFileSourceHealthStore(dir),
     sources: [okSource("smol-ai")],
     http: { fetchText: async () => "" },
@@ -310,7 +310,7 @@ describe("reconcile（D10/D11）", () => {
       // 每次独立 dir：同一测试内两轮 reconcile 同一天，共用 dir 会撞 sent marker
       const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "f037-fuse-"))
       const deps = makeDeps({
-        ledger: createFileDigestLedger(runDir),
+        ledger: createFileAttemptLedger(runDir, "[daily-digest]"),
         health: createFileSourceHealthStore(runDir),
         baseDir: runDir,
         sources: [mkCommSource(5), okSource("smol-ai")],
@@ -785,7 +785,7 @@ describe("选材预滤链（E1/E2，07-07 小孙「重复信息」「政治去�
     const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "f037-budget-"))
     const jobB = createDailyDigestJob(
       makeDeps({
-        ledger: createFileDigestLedger(dir2),
+        ledger: createFileAttemptLedger(dir2, "[daily-digest]"),
         health: createFileSourceHealthStore(dir2),
         baseDir: dir2,
         sources: [multiSource("s1", entries)],

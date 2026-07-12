@@ -77,17 +77,12 @@ export interface DigestSource {
 export type { SafeHttpErrorKind, SafeHttpFetchOptions } from "../../net/safe-http-client"
 export type SafeHttpClient = Pick<SharedSafeHttpClient, "fetchText">
 
-/** 幂等 ledger（D10）：attempted 计数 + sent 唯一终态；失败只记在 attempt 明细，非终态 */
-export interface DigestLedgerState {
-  attempts: Array<{ at: string; note: string }>
-  sent: { at: string; messageId: string; to: string } | null
-}
-
-export interface DigestLedger {
-  read(businessDate: string): DigestLedgerState
-  recordAttempt(businessDate: string, note: string): void
-  recordSent(businessDate: string, meta: { messageId: string; to: string }): void
-}
+// 幂等 ledger（D10）原语已提升共享（F041 W7）：lib/attempt-ledger.ts；
+// 域内旧名别名 re-export 保住既有 import 面（key=businessDate）。
+export type {
+  AttemptLedgerState as DigestLedgerState,
+  AttemptLedger as DigestLedger,
+} from "../../lib/attempt-ledger"
 
 /** 源健康持久化（AC8）：连续失败判定重启不丢 */
 export interface SourceHealthStore {

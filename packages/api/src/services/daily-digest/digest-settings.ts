@@ -1,5 +1,5 @@
 import { MODEL_ID_MAX_LEN, isValidModelId } from "../../runtime/model-id"
-import { parseRecipients } from "./email-sender"
+import { parseRecipients } from "../../lib/email-sender"
 
 /**
  * F037 设置页 · 日报运行配置（小孙 07-05「把前端能配的都一起做了」）。

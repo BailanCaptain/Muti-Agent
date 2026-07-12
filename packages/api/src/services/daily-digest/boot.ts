@@ -3,16 +3,16 @@ import { ProxyAgent } from "undici"
 import { createClaudeModelRunner } from "../../runtime/haiku-runner"
 import { createRunnerWithFallback } from "../../runtime/runner-with-fallback"
 import { loadRuntimeConfig } from "../../runtime/runtime-config"
-import { type DigestRunOverrides, createDailyDigestJob } from "./daily-digest-job"
-import { createFileDigestLedger } from "./digest-ledger"
-import { type DigestSettings, resolveEffectiveDigestSettings } from "./digest-settings"
+import { createFileAttemptLedger } from "../../lib/attempt-ledger"
 import {
   createAllowlistedSender,
   createMockSender,
   createQqSmtpSender,
-  resolveDigestEnv,
-} from "./email-sender"
+} from "../../lib/email-sender"
 import { createSafeHttpClient } from "../../net/safe-http-client"
+import { type DigestRunOverrides, createDailyDigestJob } from "./daily-digest-job"
+import { type DigestSettings, resolveEffectiveDigestSettings } from "./digest-settings"
+import { resolveDigestEnv } from "./email-sender"
 import { createFileSourceHealthStore } from "./source-health"
 import { makeDiggAiSource } from "./sources/digg-ai"
 import {
@@ -301,7 +301,7 @@ export function bootDailyDigest(opts: DailyDigestBootOptions = {}): DailyDigestR
   }
 
   const job = createDailyDigestJob({
-    ledger: createFileDigestLedger(baseDir),
+    ledger: createFileAttemptLedger(baseDir, "[daily-digest]"),
     health: createFileSourceHealthStore(baseDir),
     // 静态 deps 用 boot 时刻的动态件快照兜底（runtimeSettings 缺省语义），真相在每轮 overrides
     sources: initial.sources as NonNullable<DigestRunOverrides["sources"]>,

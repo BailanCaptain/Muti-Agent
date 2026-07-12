@@ -1,7 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { DIGEST_TZ, formatBusinessDate } from "./business-dates"
-import { type EmailSender, appendOutboundLedger } from "./email-sender"
+import { type EmailSender, appendOutboundLedger } from "../../lib/email-sender"
 import { runAllSources } from "./orchestrator"
 import { isCommunityNoiseItem, isPoliticalItem, isUnsafeItem } from "./relevance-filter"
 import { renderDigest, splitGithubSnippet } from "./renderer"
