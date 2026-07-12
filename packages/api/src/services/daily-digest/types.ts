@@ -3,6 +3,8 @@
  * 设计合同 v2 见 docs/features/F037-daily-news-digest.md（德彪 Design Gate r2 GO）。
  */
 
+import type { SafeHttpClient as SharedSafeHttpClient } from "../../net/safe-http-client"
+
 // 2026-07-03 小孙拍板「让我们纯粹一点」：删篮球/电竞/股市三板块，聚焦 AI+热点+X+GitHub。
 // 2026-07-06 小孙改版：「x」板块扩成「community 社区动态」（X + Reddit + Digg + V2EX + 小红书——
 // 社区里的人在聊什么）；旧归档里的 "x" 由读取侧 normalizeDigestCategory 归一。
@@ -69,35 +71,11 @@ export interface DigestSource {
   fetch(ctx: SourceFetchContext): Promise<NormalizedItem[]>
 }
 
-export type SafeHttpErrorKind =
-  | "scheme"
-  | "userinfo"
-  | "port"
-  | "host_not_allowed"
-  | "ip_blocked"
-  | "redirect_limit"
-  | "redirect_invalid"
-  | "too_large"
-  | "timeout"
-  | "http_status"
-  | "network"
-
-export interface SafeHttpFetchOptions {
-  headers?: Record<string, string>
-  /** 解压后响应体上限，默认 2MB */
-  maxBytes?: number
-  /** 默认 20s */
-  timeoutMs?: number
-  /** 默认 GET；POST 目前唯一消费方=小红书 sidecar MCP 调用（#31）。全套出站校验与 GET 同链 */
-  method?: "GET" | "POST"
-  /** 仅 method=POST 时随请求发出 */
-  body?: string
-}
-
-/** 出站 HTTP 安全合同（AC10）：非 2xx/超限/校验失败均抛 SafeHttpError */
-export interface SafeHttpClient {
-  fetchText(url: string, opts?: SafeHttpFetchOptions): Promise<string>
-}
+// 出站 HTTP 安全合同（AC10）真相源已收敛到共享模块（F041 W7，F040「谁先落地谁抽」合同清账）。
+// options/error kind 直接 re-export；SafeHttpClient 在本域窄化为 fetchText 单法面——
+// daily-digest 只消费 fetchText（测试 fixture 据此不用陪跑 request()），共享实现是其超集。
+export type { SafeHttpErrorKind, SafeHttpFetchOptions } from "../../net/safe-http-client"
+export type SafeHttpClient = Pick<SharedSafeHttpClient, "fetchText">
 
 /** 幂等 ledger（D10）：attempted 计数 + sent 唯一终态；失败只记在 attempt 明细，非终态 */
 export interface DigestLedgerState {

@@ -12,7 +12,7 @@ import {
   createQqSmtpSender,
   resolveDigestEnv,
 } from "./email-sender"
-import { createSafeHttpClient } from "./safe-http-client"
+import { createSafeHttpClient } from "../../net/safe-http-client"
 import { createFileSourceHealthStore } from "./source-health"
 import { makeDiggAiSource } from "./sources/digg-ai"
 import {

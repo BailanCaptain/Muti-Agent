@@ -166,6 +166,26 @@ describe("SafeHttpClient 合同矩阵", () => {
     await expectKind(c.fetchText("https://allowed.com/x", { timeoutMs: 50 }), "timeout")
   })
 
+  // 自 F037 daily-digest 副本收敛（F041 W7）：副本在 F040 提升后长出的 fetchText POST 面
+  it("POST method/body 透传（#31 小红书 MCP）；默认仍 GET；校验链同判（白名单外 host 照拒）", async () => {
+    const seen: Array<{ method?: string; body?: unknown }> = []
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      seen.push({ method: init?.method, body: init?.body })
+      return new Response("ok", { status: 200 })
+    }) as unknown as typeof fetch
+    const c = client({ fetchImpl })
+    await c.fetchText("https://allowed.com/mcp", { method: "POST", body: '{"a":1}' })
+    await c.fetchText("https://allowed.com/plain")
+    assert.equal(seen[0].method, "POST")
+    assert.equal(seen[0].body, '{"a":1}')
+    assert.equal(seen[1].method, "GET")
+    assert.equal(seen[1].body, undefined)
+    await expectKind(
+      c.fetchText("https://evil.com/mcp", { method: "POST", body: "{}" }),
+      "host_not_allowed",
+    )
+  })
+
   it("happy path 200 返回文本", async () => {
     assert.equal(await client().fetchText("https://allowed.com/x"), "hello")
   })

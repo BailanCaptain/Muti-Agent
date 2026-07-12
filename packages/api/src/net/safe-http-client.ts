@@ -11,8 +11,8 @@ import { lookup } from "node:dns/promises"
  *
  * 出处：`谁先落地谁抽`合同（F037/F040 feature doc）—— 实现最初落在
  * .worktrees/F037 services/daily-digest/safe-http-client.ts，F040 原样提升至本共享路径并
- * 加法扩展 request()（fetchText 行为未动，F037 原版测试矩阵在本目录测试文件中原样通过）。
- * TD：F037 合入后将其 import 切到本模块并删除 feature 内副本。
+ * 加法扩展 request()。F041 W7 收敛（TD 清账）：daily-digest 副本删除、import 切到本模块；
+ * 副本在提升后长出的 fetchText method/body 透传（#31）已合入本版，两套测试矩阵在本目录合并。
  */
 
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024
@@ -38,9 +38,13 @@ export interface SafeHttpFetchOptions {
   maxBytes?: number
   /** 默认 20s */
   timeoutMs?: number
+  /** 默认 GET；POST 目前唯一消费方=小红书 sidecar MCP 调用（#31）。全套出站校验与 GET 同链 */
+  method?: "GET" | "POST"
+  /** 仅 method=POST 时随请求发出 */
+  body?: string
 }
 
-export interface SafeHttpRequestOptions extends SafeHttpFetchOptions {
+export interface SafeHttpRequestOptions extends Omit<SafeHttpFetchOptions, "method" | "body"> {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
   /** 序列化为 JSON body + content-type application/json */
   jsonBody?: unknown
@@ -316,12 +320,18 @@ export function createSafeHttpClient(options: SafeHttpClientOptions): SafeHttpCl
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
     const signal = AbortSignal.timeout(timeoutMs)
 
+    // method/body 扩展（#31 小红书 sidecar MCP，自 F037 版收敛）：不改任何校验环节——
+    // host/端口/DNS/IP/redirect 全链与 GET 同判。3xx 跳转会以同 method+body 重发
+    // （MCP 场景走信任锚无跳转）
+    const method = opts.method ?? "GET"
     let current = url
     for (let hop = 0; ; hop += 1) {
       const u = await validateHop(current, hop)
       const res = await doFetch(
         u,
         {
+          method,
+          ...(method === "POST" && opts.body !== undefined ? { body: opts.body } : {}),
           redirect: "manual",
           signal,
           headers: {
