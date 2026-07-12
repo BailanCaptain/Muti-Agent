@@ -34,6 +34,7 @@ import { resolveUploadUrl } from "./preview/resolve-upload-url"
 import { captureScreenshot } from "./preview/screenshot-service"
 import { registerAuthorizationRoutes } from "./routes/authorization"
 import { registerCallbackRoutes } from "./routes/callbacks"
+import { registerDailyDigestRoutes } from "./routes/daily-digest"
 import { registerDebugA2ARoutes } from "./routes/debug-a2a"
 import { registerDecisionBoardRoutes } from "./routes/decision-board"
 import { registerMessageRoutes } from "./routes/messages"
@@ -53,6 +54,7 @@ import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
 import { bootSchedulerRuntime } from "./runtime/scheduler-bootstrap"
 import { awaitRunsToStop } from "./runtime/shutdown"
+import { bootDailyDigest, isDigestEnabled } from "./services/daily-digest/boot"
 import { MemoryService } from "./services/memory-service"
 import { MessageService } from "./services/message-service"
 import { SessionService } from "./services/session-service"
@@ -645,6 +647,17 @@ export async function createApiServer(options: {
   })
   registerMessageRoutes(app)
   registerRuntimeConfigRoutes(app)
+  // F037 日报：归档读取面 + 设置面 + 立即补发。runtime 实例 server 统一持有——
+  // 路由（send-now）与 scheduler（cron/startup）必须共用同一 reconcile（进程内互斥不许旁路）
+  const digestEnabled = isDigestEnabled(process.env)
+  const dailyDigestRuntime = digestEnabled
+    ? bootDailyDigest({
+        rootDir: process.cwd(),
+        log: (m) => app.log.info(m),
+        pushAlert: (m) => app.log.warn(m),
+      })
+    : undefined
+  registerDailyDigestRoutes(app, { runtime: dailyDigestRuntime, enabled: digestEnabled })
   registerSessionRuntimeConfigRoutes(app, { sessions: repository })
   registerAuthorizationRoutes(app, { approvals, ruleStore })
   registerDecisionBoardRoutes(app, {
@@ -929,7 +942,12 @@ export async function createApiServer(options: {
           },
         },
         runtimeConfig: {
-          getGlobal: () => loadRuntimeConfig(),
+          // 命令面只消费 agent override 段（global[provider]）——RuntimeConfig 的
+          // 非 agent 段（wikiCompile/dailyDigest 等）形状与 AgentOverride 不兼容，投影后再交
+          getGlobal: () => {
+            const { claude, codex, gemini } = loadRuntimeConfig()
+            return { claude, codex, gemini }
+          },
           getSession: (g) => repository.getSessionRuntimeConfig(g),
           setSession: (g, c) => repository.setSessionRuntimeConfig(g, c),
           getPending: (g) => repository.getSessionPendingConfig(g),
@@ -1296,6 +1314,8 @@ export async function createApiServer(options: {
   const schedulerRuntime = await bootSchedulerRuntime({
     db: drizzleDb,
     log: app.log,
+    // F037：与 send-now 路由共用同一 digest runtime（未启用时 undefined → scheduler 门自决）
+    dailyDigest: dailyDigestRuntime,
     // 调度告警走 ws broadcast（lazy resolve broadcaster.broadcast — registerWsRoute
     // 已在上面装好实际实现，此处闭包捕获最新引用）。
     pushAlert: (trace) =>

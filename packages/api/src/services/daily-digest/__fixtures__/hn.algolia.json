@@ -1,0 +1,223 @@
+{
+  "exhaustive": {
+    "nbHits": false,
+    "typo": false
+  },
+  "exhaustiveNbHits": false,
+  "exhaustiveTypo": false,
+  "hits": [
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "edward"
+        },
+        "title": {
+          "fullyHighlighted": false,
+          "matchLevel": "full",
+          "matchedWords": ["llm"],
+          "value": "No <em>LLM</em> Code in Dependencies"
+        },
+        "url": {
+          "fullyHighlighted": false,
+          "matchLevel": "full",
+          "matchedWords": ["llm"],
+          "value": "https://joeyh.name/blog/entry/no_<em>LLM</em>_code_in_dependencies/"
+        }
+      },
+      "_tags": ["story", "author_edward", "story_48762008"],
+      "author": "edward",
+      "children": [
+        48765590, 48767037, 48765868, 48766889, 48765308, 48766604, 48767013, 48765710, 48768986,
+        48767130, 48768377, 48765299, 48765468, 48767562, 48765568, 48766866
+      ],
+      "created_at": "2026-07-02T14:17:23Z",
+      "created_at_i": 1783001843,
+      "num_comments": 97,
+      "objectID": "48762008",
+      "points": 115,
+      "story_id": 48762008,
+      "title": "No LLM Code in Dependencies",
+      "updated_at": "2026-07-03T02:07:51Z",
+      "url": "https://joeyh.name/blog/entry/no_LLM_code_in_dependencies/"
+    },
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "chvid"
+        },
+        "title": {
+          "fullyHighlighted": false,
+          "matchLevel": "full",
+          "matchedWords": ["llm"],
+          "value": "ZCode – Harness for <em>GLM</em>-5.2"
+        },
+        "url": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "https://zcode.z.ai/en"
+        }
+      },
+      "_tags": ["story", "author_chvid", "story_48753715"],
+      "author": "chvid",
+      "children": [
+        48752128, 48752110, 48762232, 48752274, 48753056, 48757122, 48752216, 48752258, 48753539,
+        48761303, 48752737, 48752461, 48752678, 48754894, 48754268, 48753298, 48757294, 48756111,
+        48752037, 48752356, 48752550, 48766411, 48752620, 48757115, 48754184, 48754002, 48754703,
+        48755534, 48759085, 48756285, 48753734, 48757691, 48753667, 48753736, 48752384, 48758547,
+        48756530, 48752097, 48752971, 48754785, 48755511, 48762891, 48752667, 48752259, 48755493,
+        48754507, 48755361, 48754183, 48755482, 48752278, 48757032, 48752092, 48755141, 48757186,
+        48754134, 48753840, 48758396, 48751964, 48754516, 48767111, 48761708, 48755772, 48755758,
+        48758135, 48755777, 48752098, 48753746
+      ],
+      "created_at": "2026-07-01T22:03:36Z",
+      "created_at_i": 1782943416,
+      "num_comments": 345,
+      "objectID": "48753715",
+      "points": 498,
+      "story_id": 48753715,
+      "title": "ZCode – Harness for GLM-5.2",
+      "updated_at": "2026-07-03T02:07:51Z",
+      "url": "https://zcode.z.ai/en"
+    },
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "jms703"
+        },
+        "title": {
+          "fullyHighlighted": false,
+          "matchLevel": "full",
+          "matchedWords": ["llm"],
+          "value": "<em>GLM</em> 5.2 beats Claude in our benchmarks"
+        },
+        "url": {
+          "fullyHighlighted": false,
+          "matchLevel": "full",
+          "matchedWords": ["llm"],
+          "value": "https://semgrep.dev/blog/2026/we-have-mythos-at-home-<em>glm</em>-52-beats-claude-in-our-cyber-benchmarks/"
+        }
+      },
+      "_tags": ["story", "author_jms703", "story_48709670"],
+      "author": "jms703",
+      "children": [
+        48712124, 48712434, 48711804, 48711297, 48710977, 48718975, 48711621, 48718779, 48725492,
+        48713092, 48711047, 48715728, 48718395, 48714705, 48717242, 48713547, 48713246, 48712516,
+        48711274, 48718075, 48714862, 48716459, 48722466, 48712194, 48716428, 48715826, 48711811,
+        48711028, 48712710, 48715921, 48713607, 48713949, 48712719, 48730441, 48715599, 48714352,
+        48714427, 48709826, 48719596, 48712006, 48714425, 48719241, 48715452, 48719500, 48712662,
+        48714627, 48713889, 48715843, 48715701, 48712563, 48713203, 48717044, 48716989, 48719176,
+        48712980, 48713062, 48717721, 48712816, 48714097, 48715695, 48717131, 48719088, 48712993,
+        48714329, 48719921, 48716252, 48712263, 48715767, 48731219, 48713005, 48715374, 48712674,
+        48712383, 48715359, 48721180, 48714712, 48717256, 48714960, 48714490, 48738990, 48715561,
+        48712426, 48718319, 48718853, 48726755, 48713277, 48711679, 48712070
+      ],
+      "created_at": "2026-06-28T17:50:47Z",
+      "created_at_i": 1782669047,
+      "num_comments": 513,
+      "objectID": "48709670",
+      "points": 1105,
+      "story_id": 48709670,
+      "title": "GLM 5.2 beats Claude in our benchmarks",
+      "updated_at": "2026-07-03T00:39:54Z",
+      "url": "https://semgrep.dev/blog/2026/we-have-mythos-at-home-glm-52-beats-claude-in-our-cyber-benchmarks/"
+    },
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "root-parent"
+        },
+        "title": {
+          "fullyHighlighted": false,
+          "matchLevel": "full",
+          "matchedWords": ["llm"],
+          "value": "Google <em>lim</em>its Meta's use of its Gemini AI models"
+        },
+        "url": {
+          "fullyHighlighted": false,
+          "matchLevel": "full",
+          "matchedWords": ["llm"],
+          "value": "https://www.cnbc.com/2026/06/28/google-<em>lim</em>its-metas-use-of-its-gemini-ai-models-ft-reports.html"
+        }
+      },
+      "_tags": ["story", "author_root-parent", "story_48707103"],
+      "author": "root-parent",
+      "children": [
+        48707420, 48708486, 48707493, 48707461, 48709483, 48708162, 48707415, 48708428, 48708402,
+        48708311, 48708731, 48707439, 48708980, 48710908, 48709673, 48707749, 48708845
+      ],
+      "created_at": "2026-06-28T13:30:06Z",
+      "created_at_i": 1782653406,
+      "num_comments": 71,
+      "objectID": "48707103",
+      "points": 162,
+      "story_id": 48707103,
+      "title": "Google limits Meta's use of its Gemini AI models",
+      "updated_at": "2026-07-02T13:03:35Z",
+      "url": "https://www.cnbc.com/2026/06/28/google-limits-metas-use-of-its-gemini-ai-models-ft-reports.html"
+    },
+    {
+      "_highlightResult": {
+        "author": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "handfuloflight"
+        },
+        "title": {
+          "fullyHighlighted": false,
+          "matchLevel": "full",
+          "matchedWords": ["llm"],
+          "value": "Wayfinder Router: deterministic routing of queries between local and hosted <em>LLM</em>"
+        },
+        "url": {
+          "matchLevel": "none",
+          "matchedWords": [],
+          "value": "https://github.com/itsthelore/wayfinder-router"
+        }
+      },
+      "_tags": ["story", "author_handfuloflight", "story_48704373"],
+      "author": "handfuloflight",
+      "children": [
+        48705423, 48760765, 48705143, 48705919, 48704672, 48705752, 48706592, 48705785, 48705453,
+        48706914, 48707362, 48706152, 48709560, 48705071, 48706912, 48705250, 48705059, 48706785,
+        48706782, 48706720, 48707395, 48708000, 48706108, 48709345, 48704878, 48707116, 48705219,
+        48704890, 48705749, 48705417
+      ],
+      "created_at": "2026-06-28T04:31:18Z",
+      "created_at_i": 1782621078,
+      "num_comments": 56,
+      "objectID": "48704373",
+      "points": 122,
+      "story_id": 48704373,
+      "title": "Wayfinder Router: deterministic routing of queries between local and hosted LLM",
+      "updated_at": "2026-07-02T23:51:21Z",
+      "url": "https://github.com/itsthelore/wayfinder-router"
+    }
+  ],
+  "hitsPerPage": 20,
+  "nbHits": 2142,
+  "nbPages": 50,
+  "page": 0,
+  "params": "query=LLM&tags=story&numericFilters=points%3E100&advancedSyntax=true&analyticsTags=backend",
+  "processingTimeMS": 27,
+  "processingTimingsMS": {
+    "_request": {
+      "roundTrip": 19
+    },
+    "fetch": {
+      "query": 2,
+      "scanning": 23,
+      "total": 26
+    },
+    "total": 27
+  },
+  "query": "LLM",
+  "serverTimeMS": 28
+}

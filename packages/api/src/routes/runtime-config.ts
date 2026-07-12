@@ -25,7 +25,15 @@ export function registerRuntimeConfigRoutes(app: FastifyInstance) {
       return { error: "Invalid runtime config payload.", errors }
     }
     try {
-      saveRuntimeConfig(body.config as RuntimeConfig)
+      // F037（德彪 batchB P2 丢写窗）：agent 设置前端不管理 dailyDigest 段——payload
+      // 未带该段时保留已存值，防「agent 页旧快照整存」清掉设置页刚存的日报段。
+      // 显式清空日报段只走 PUT /api/daily-digest/settings { settings: null }。
+      const incoming = { ...(body.config as RuntimeConfig) }
+      if (incoming.dailyDigest === undefined) {
+        const existing = loadRuntimeConfig().dailyDigest
+        if (existing) incoming.dailyDigest = existing
+      }
+      saveRuntimeConfig(incoming)
     } catch (error) {
       reply.code(500)
       return { error: `Failed to save runtime config: ${(error as Error).message}` }

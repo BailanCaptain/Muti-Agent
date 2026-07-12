@@ -1,9 +1,10 @@
 ---
 id: F037
 title: 日报邮件推送系统（DailyBrief）
-status: spec
+status: done
 owner: 黄仁勋
 created: 2026-07-03
+completed: 2026-07-12
 ---
 
 # F037 — 日报邮件推送系统（DailyBrief）
@@ -20,7 +21,9 @@ created: 2026-07-03
 
 每天定时（默认 07:30 Asia/Shanghai）自动生成一封**中文 HTML 日报邮件**发到小孙邮箱：
 
-- **版式**：顶部「今日速览」（LLM 跨板块总摘要）→ 五大板块分节（AI / 热点 / 篮球 / 电竞 / 股票），每条 = 标题 + 一句话中文摘要 + 来源名 + 原文链接
+> **范围收敛（2026-07-03 小孙拍板）**：「让我们纯粹一点 删除篮球、股市、电竞相关的」——板块纯化为 **AI / X 一手动态 / 热点 / GitHub 周榜**（D15）。原 AC5/AC6/AC14 随之移除，下文保留原文划线存档。
+
+- **版式**：顶部「今日速览」（LLM 跨板块总摘要）→ 板块分节（AI / X 一手动态 / 热点），每条 = 标题 + 一句话中文摘要 + 来源名 + 原文链接
 - **周一加餐**：「GitHub 周榜」板块（按权威周增 star 排名 + AI/MCP/skill 主题加权 + 新贵子榜）
 - **页脚**：当日源健康状态（失败源明示，不静默）
 - 每日 markdown + html 本地归档可回看；机器当时不在线则启动后补发（按日幂等）
@@ -57,26 +60,28 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 
 ## Acceptance Criteria
 
+> 勾选依据（2026-07-10 收口）：范德彪 12 轮 code review 全 GO（台账=discussions [F037-sources-v2-expansion.md](../discussions/F037-sources-v2-expansion.md) §7）+ 5 天真发账本（07-04/05/06/07/10，`.runtime/daily-digest/outbound-ledger.jsonl`）+ digest 专项测试全绿；合并前 acceptance-guardian 零上下文复核为最后一道门。
+
 ### Phase 1 — MVP：管道骨架 + 五板块基础版（零部署依赖源）
 
-- [ ] AC1: 每日 07:30（Asia/Shanghai）自动生成并发送日报到配置收件箱；进程当时不在线 → 启动后补发；按日幂等 = at-least-once 有界重试（已确认 sent 的绝不重发；发送结果未知最多补发 1 次并记 R-201；attempted≥2 转人工，见 D10/D11）
-- [ ] AC2: 邮件版式 = 「今日速览」总摘要 → 板块分节（每条：标题+一句话中文摘要+来源名+原文链接）→ 页脚源健康状态
-- [ ] AC3: AI 板块：smol.ai 全文 RSS + 官方 blog（OpenAI/DeepMind/Mistral + Anthropic/Meta 社区桥）+ HF Daily Papers API + vLLM blog/SGLang releases + HN 高分 AI 帖；LLM 按「推理优化/训练」加权排序，优化点单独突出
-- [ ] AC4: 热点板块：知乎热榜 + 百度热搜 + 头条热榜（直连 JSON）+ BBC 中文 RSS
-- [ ] AC5: 体育板块：篮球（ESPN NBA + Yahoo NBA RSS；虎扑经可用 RSSHub 公共实例尽力接入）+ 电竞（虎扑电竞尽力 + Dot Esports + HLTV RSS）
-- [ ] AC6: 股票板块：A 股快讯（东财/新浪 JSON）+ 美股（Yahoo Finance + CNBC RSS）；非交易日自动缩减；范围按 Design Decisions D8
-- [ ] AC7: GitHub 周榜（周一版）：scrape `trending?since=weekly`（权威周增数）+ Search API `topic:mcp/claude` 新贵子榜 + AI/MCP/skill 加权；OSS Insight 仅兜底名次（其 star 数字禁止进正文）
-- [ ] AC8: 可靠性：单源失败隔离（独立超时/try-catch）不影响整报；同源连续 3 天失败推 R-201 告警；源健康计数持久化（重启不丢连续失败判定）
-- [ ] AC9: 归档：每日 markdown + html 落 `.runtime/daily-digest/YYYY-MM-DD/`
-- [ ] AC10: 安全边界：出站走 SafeHttpClient 合同（完整 host 白名单 + IANA 精确段 + 逐跳 redirect 校验 + 流式大小上限，见「设计合同 v2」，Iron Law §4 对齐）；收件人白名单统一 `.env`；SMTP 凭证 .env 人工填、代码只读（Iron Law §3）；每次外发落账本（时间/收件人/各板块条数）
-- [ ] AC11: LLM 降级：runner 降级链全挂时发「原始条目清单版」，不丢当日报
-- [ ] AC12: 邮件渲染验收：HTML 内联 CSS、table 布局 ≤600px、无脚本/无远程图片依赖、链接可点击；本地 HTML/mail-parser 快照测试；上线前 QQ→Gmail 活体 smoke 一次（首日人工标「非垃圾」），mock sender 单测不被活体项阻塞
+- [x] AC1: 每日 07:30（Asia/Shanghai）自动生成并发送日报到配置收件箱；进程当时不在线 → 启动后补发；按日幂等 = at-least-once 有界重试（已确认 sent 的绝不重发；发送结果未知最多补发 1 次并记 R-201；attempted≥2 转人工，见 D10/D11）。机制由 reconcile 三入口 + scheduler 看门狗 3600s 测试与 5 天全链真发覆盖；首个 07:30 live cron 于合并重启 runtime 后进入观察
+- [x] AC2: 邮件版式 = 「今日速览」总摘要 → 板块分节（每条：标题+一句话中文摘要+来源名+原文链接）→ 页脚源健康状态（终态=D17 Bento 版式：导览卡+锚点直达+其余速览行区+刊头体检行）
+- [x] AC3: AI 板块：smol.ai 全文 RSS + 官方 blog（OpenAI/DeepMind/Mistral + Anthropic/Meta 社区桥）+ HF Daily Papers API + vLLM blog/SGLang releases + HN 高分 AI 帖；LLM 按「推理优化/训练」加权排序，优化点单独突出（终态超集=40 路主表 §0；「推理」为 ai 板块首位子栏 tag）
+- [x] AC4: 热点板块：知乎热榜 + 百度热搜 + 头条热榜（直连 JSON）+ BBC 中文 RSS
+- ~~AC5: 体育板块（篮球+电竞）~~ **已移除（D15，小孙 2026-07-03 拍板纯化）**——曾完整交付并 review 通过，ESPN/HLTV 反爬教训（简单 UA+直连优先+transport 级 fallback）沉淀在 D12 与 git 历史
+- ~~AC6: 股票板块~~ **已移除（D15）**——A 股快讯/美股 RSS/非交易日逻辑一并下线
+- [x] AC7: GitHub 板块（2026-07-07 E3 改「四榜常驻」，小孙拍「增长、周榜、月榜都要」拆掉原周一/每月 1 号时间门）：scrape trending 日/周/月三时窗（权威增星数）+ Search API `topic:mcp` 新秀榜（新仓 7 天）；邮件端 caps 限量（6/6/4/6）、跨榜同仓 dedupe 先到者赢、desc 批翻中文；原设想「OSS Insight 兜底名次」从未接线（scrape 四路稳定，无需兜底）
+- [x] AC8: 可靠性：单源失败隔离（独立超时/try-catch）不影响整报；同源连续 3 天失败推 R-201 告警；源健康计数持久化（重启不丢连续失败判定）；07-06 纠偏=keepIf 全滤「健康空」≠ 失败（`26eba5d`）
+- [x] AC9: 归档：每日 markdown + html 落 `.runtime/daily-digest/YYYY-MM-DD/`（终态超集：+summary.json 结构化归档 + items.jsonl 全量证据底料（F029 语料）+ shown.json 已见账本）
+- [x] AC10: 安全边界：出站走 SafeHttpClient 合同（完整 host 白名单 + IANA 精确段 + 逐跳 redirect 校验 + 流式大小上限，见「设计合同 v2」，Iron Law §4 对齐）；收件人白名单统一 `.env`（多收件人逐地址 fail-closed）；SMTP 凭证 .env 人工填、代码只读（Iron Law §3）；每次外发落账本（时间/收件人/各板块条数）
+- [x] AC11: LLM 降级：runner 降级链全挂时发「原始条目清单版」，不丢当日报（07-07 v5 实战后加固：尾部截断 repairTruncatedJson 结构修复不豁免护栏；修复缺节保守记账+透出，喂样不烧 shown）
+- [x] AC12: 邮件渲染验收：HTML 内联 CSS、table 布局 ≤600px、无脚本/无远程图片依赖、链接可点击；本地 HTML/mail-parser 快照测试；上线前 QQ→Gmail 活体 smoke 一次（2026-07-04 PASS，Gmail 实收 degraded=false），mock sender 单测不被活体项阻塞
 
 ### Phase 2 — 增强（Phase 1 验收后按需拍）
 
-- [ ] AC13: 境内自部署 RSSHub（chromium-bundled）：虎扑篮球/CBA/电竞、5EPlay、澎湃、微博热搜；fallback 链 自建→rssforever→ktachibana
-- [ ] AC14: 个股自选分析（daily_stock_analysis 式：行情多源 fallback + LLM 决策报告）
-- [ ] AC15: X 一手动态直采（TwitterAPI.io/官方按量，供应商抽象层可随时切换）——花钱项，小孙拍
+- [x] AC13: 境内自部署 RSSHub：fallback 链 自建→rssforever→ktachibana（2026-07-04 小孙 Docker 起 `diygod/rsshub` 实例 `localhost:1200`，trustedBaseUrls 信任锚 + 前插链首）；自建实例配小号 cookie 后解锁 Twitter 路由（与 AC15 cookie 路线共用一套部署）
+- ~~AC14: 个股自选分析~~ **已移除（D15）**——watchlist 模块（腾讯→新浪多源行情）曾完整交付，随板块纯化删除
+- [x] AC15: X 一手动态直采，双路供应商抽象（D16，小孙 2026-07-03 拍 cookie 路线）：**主路=自建 RSSHub `/twitter/user/:handle`（小号 TWITTER_AUTH_TOKEN cookie，免费，封号风险专用小号隔离 + 逐账号限速 4-7s 抖动）**；备路=TwitterAPI.io 按量（配 `_X_API_KEY` 时优先）。终态 35 验活账号（17 机构含 claudeai/claudeDevs + 18 从业者，主表 §5），公司/从业者结构分栏
 
 ## Dependencies
 
@@ -87,6 +92,22 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
   - host/port 代码默认 `smtp.qq.com:465`（非敏感不进 .env）。**Phase 1 活体发信前置阻塞项**（开发/测试用 mock sender 不阻塞）
 - GitHub PAT（免费，推荐：Search API 10/min → 30/min）
 - 无阻塞性 Feature 依赖；Related: F029（外发边界设计参考，其代码未落地不可依赖）
+
+### 完整 env 清单（实现终态，全部 Iron Law §3 人工配置、代码只读）
+
+| 变量 | 必需性 | 作用 |
+|------|--------|------|
+| `MULTI_AGENT_DIGEST_SMTP_USER` / `_SMTP_PASS` / `_TO` | 活体发信必需 | QQ 邮箱 + 16 位授权码 + 收件箱；三者齐 = 功能启用（D13） |
+| `MULTI_AGENT_DIGEST_ENABLED` | 可选 | `1`=无凭证也启用（mock 落盘不外发）；`0`=强制关 |
+| `MULTI_AGENT_DIGEST_PROXY` | 推荐（大陆网络） | 出站代理；缺省回退标准 `HTTPS_PROXY`/`HTTP_PROXY`（HF/mistral/anthropic 桥等 7 源直连不通，2026-07-03 实测） |
+| `MULTI_AGENT_DIGEST_GITHUB_PAT` | 可选 | GitHub 周榜 topics 加权 + Search 限额提升 |
+| `MULTI_AGENT_DIGEST_RSSHUB_BASE` | 可选（AC13/AC15） | 自建 RSSHub base（如 `http://localhost:1200`），信任锚放行 + 前插 fallback 链首；实例配 `TWITTER_AUTH_TOKEN`（小号 cookie）后即 X cookie 路线数据源 |
+| `MULTI_AGENT_DIGEST_X_HANDLES` | 可选（AC15） | 关注账号逗号分隔（如 `@sama,karpathy`）；与 `_RSSHUB_BASE`（cookie 路线）或 `_X_API_KEY`（按量路线）任一搭配即启用 X 板块 |
+| `MULTI_AGENT_DIGEST_X_API_KEY` | 可选（AC15 备路，花钱项） | TwitterAPI.io key；配置时优先于 cookie 路线 |
+| `MULTI_AGENT_DIGEST_STT_API_KEY` | 可选（#33 播客速递启用门） | STT 转写 key；缺省=播客源不注册日报无感。07-11 实配硅基流动（Groq 注册被地区拦） |
+| `MULTI_AGENT_DIGEST_STT_BASE` / `_STT_MODEL` | 可选（#33） | OpenAI-compatible base+模型；缺省 Groq `openai/v1`+`whisper-large-v3-turbo`；硅基流动=`api.siliconflow.cn/v1`+`FunAudioLLM/SenseVoiceSmall`（免费档，官方定价页 07-11 核）。配自定义 BASE 走直连、默认 Groq 走代理 |
+| `MULTI_AGENT_DIGEST_FFMPEG_PATH` | 可选（#33） | ffmpeg 绝对路径；缺省 PATH 探测（07-11 winget 装 8.1.2，用户 PATH 已挂） |
+| `MULTI_AGENT_DIGEST_YTDLP_PATH` | 可选（#34） | yt-dlp 路径；缺省 PATH 探测。未装=YouTube 字幕深读整条静默关闭（行为同未接线），装了自动激活 |
 
 ## Design Decisions
 
@@ -103,6 +124,12 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 | D9 | 凭证管理 | — | 密钥+**收件人白名单**走 `.env` 人工填；板块开关/发送时间等非敏感走 config | Iron Law §3；收件人属外发边界（德彪 r1 P2-3 消解 AC10/D9 冲突） |
 | D10 | 发送幂等语义 | 严格 at-most-once / at-least-once 有界重试 | at-least-once 有界重试（attempted→sent 双态 ledger + 未知态补发 1 次 + ≥2 转人工） | SMTP 无 exactly-once；日报偶重复优于静默缺报（德彪 r1 P1-2） |
 | D11 | catch-up 机制 | 仅 startup job / reconcile 单入口 | `reconcile(businessDate)` 幂等单入口 ×3 触发（主 cron/startup/每小时安全网） | startup job 不覆盖 leader takeover（德彪 r1 P1-3，scheduler-runtime.ts:223,340） |
+| D12 | 出站代理 | 不支持 / 可选 env 代理 | 可选 `MULTI_AGENT_DIGEST_PROXY`（回退标准 HTTPS_PROXY），undici ProxyAgent；def.direct 双 transport | smoke 实测：Node fetch 不吃 proxy env，7 源大陆直连不通；ESPN/HLTV 反而要直连+简单 UA（实现期，2026-07-03） |
+| D13 | 启用门 | 默认开 / 默认关 / 存在性门 | SMTP 凭证齐（.env 配置即意图）或 `MULTI_AGENT_DIGEST_ENABLED=1` 才注册调度 job；`=0` 强制关 | startup job 会在 boot 真跑 → 测试/CI/未配置环境必须默认不打真网（实现期） |
+| D14 | Phase 2 可选源开关 | — | X 直采 env 存在才注册（`_X_HANDLES` + 任一数据路凭证），默认 disabled | 账号清单/凭证都是小孙人工件；未配置不产生失败噪音（实现期） |
+| D15 | 板块纯化 | 保留五板块 / 纯化 | **删篮球/电竞/股市三板块（小孙拍 2026-07-03「让我们纯粹一点」）**，终态=AI/X/热点/GitHub 周榜 | 聚焦 AI 主线；已交付代码（10 源+watchlist+交易日逻辑）整体下线，教训沉淀 D12/git 历史 |
+| D16 | X 数据路线 | A=TwitterAPI.io 按量 / B=cookie 小号免费 / C=仅 smol.ai recap | **B 为主（小孙拍 2026-07-03「我弄个小号」）**：自建 RSSHub Twitter 路由消费小号 cookie；A 保留为备路（配 key 优先）；C 始终兜底 | 免费；cookie 不经本进程（只在 RSSHub 实例侧）；参考项目同款姿势，封号风险用专用小号隔离 |
+| D17 | 邮件视觉版式 | 报纸头版 v3 / Bento 大小格 / 双列卡墙 / 杂志格子 | **Bento 大小格混排 + 顶部导览（②，小孙 2026-07-04 拍板「可以 不错」）**：深金刊头 + 导览卡（今日速览 + 4 板块锚点格）+ 每板块 hero 大卡 + 其余两列成对/落单整宽；暖金 token 锁定（禁冷色，对齐 dashboard-rank） | 「一格一个」有设计感；顶部导览减少下滑；固定像素多列（272+16+272）防错位；注入护栏不变（渲染器 v4 `e87b78c`，德彪 r5 GO） |
 
 ## Timeline
 
@@ -112,6 +139,28 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 | 2026-07-03 | Kickoff；小孙拍 D3=QQ SMTP、D8=Phase 1 大盘+市场要闻（个股先不加）；派范德彪设计审 |
 | 2026-07-03 | 范德彪设计审 r1 NEEDS-WORK（3 P1 + 5 P2）→ 全接：设计合同 v2 落盘（SafeHttpClient/幂等状态机 D10/reconcile D11/fetcher 合同/LLM 护栏/AC12 渲染验收）→ **r2 GO，Design Gate 通过**（1 条非阻断术语统一已修：ledger=attempted 计数+sent 唯一终态） |
 | 2026-07-03 | 实施计划落盘 `docs/plans/F037-daily-news-digest-plan.md`（15 Task，TDD） |
+| 2026-07-03 | 小孙拍「不只 Phase 1，整个 feature 一起做完；需要人工的先不管」（凌晨 /goal 授权自主夜跑） |
+| 2026-07-03 | **Phase 1 实施完成**（worktree feat/F037-daily-digest，15 Task 全过）：commit 链 `8dfc77f`→`82ab087`→`54ffce9`→`36e885a`；157 测试全绿；真网 smoke **26/26 源全绿**（ai=2763/hot=173/basketball=104/esports=75/stocks=51/github=33 条）；实现期决策 D12-D14 | 
+| 2026-07-03 | 派范德彪 Phase 1 code review r1（安全底座标准，含 TOCTOU/代理路径/信任锚三残余主动交代）；并行推进 Phase 2 新模块（x-provider 骨架 + watchlist 行情多源 fallback，12 测试绿） |
+| 2026-07-03 | 范德彪 r1 NEEDS-WORK（1P1+4P2）→ 全修 `91f2046`：P1 跨触发点并发互斥+并发回归测试；summarizer 无 pick 整体降级/代理日志脱敏/账本先于 sent-marker/白名单 byte-equal。同 commit 交付 **Phase 2 全量**：AC13（5eplay/thepaper+自建前插+transport 级 fallback）/AC14（watchlist 腾讯→新浪多源）/AC15（XProvider+TwitterAPI.io 骨架），三者 env 存在性开关默认 disabled（D14） |
+| 2026-07-03 | r2 NEEDS-WORK（1P2：代理 catch 分支泄露原串）→ 修 `1f14193`（safeOrigin 预计算+3 回归）→ **r3 GO（无 findings，德彪沙箱实跑新增测试 3/3）**。整 feature 代码侧完成：173 测试全绿/typecheck 0/真网 smoke 28 源全绿。残余人工件：.env 凭证/活体 smoke（AC12 活体项）/RSSHub 容器（本机无 Docker）/X key+自选清单（可选）/merge 拍板 |
+| 2026-07-03 | 小孙看 smoke 预览四连反馈：① 骨架丑（restyle `9fae3a2` 后仍打回「太难看了」→ **报纸头版风 v3 重设计**：白卡/衬线刊头/双细线/金色编号/中文源名）② **拍 D16 X cookie 小号路线**（翻查 last30days=浏览器 cookie+Bird/XAI key、Agent-Reach=twitter-cli→OpenCLI cookie 兜底后三选一）→ 落 createRsshubXProvider + resolveXConfig 双模 ③ **拍 D15 板块纯化**：删篮球/电竞/股市 10 源+watchlist 模块+交易日逻辑 ④「引用源这么少」→ 源轮转多样性（diversifyBySource：防大体量 feed 刷屏）+ 清单版每板块 6→10 条。133 测试全绿 |
+| 2026-07-03 | 本批落 `9fae3a2`+`0ffecf2`（gate 全过，真网 smoke 18 源全绿）→ 派范德彪 **r4 GO（无阻断 findings）**：scope cut 无悬空引用/allowlist 残留、X 双模 fail-closed（无「配一半意外启用」组合）、渲染重写护栏完整（canonicalUrl 单一链接源+escape 全覆盖+空 summaryZh 占位）、diversifyBySource 边界正确。唯一非阻断=本行测试数口径（132→133，已改） |
+| 2026-07-04 | 小孙对邮件视觉连续打回（「一长条没设计感」/「没对齐错位」）→ ultracode workflow 并行选型收敛到 **② Bento 大小格混排**（暖金锁定），小孙拍板「可以 不错」；追加「顶部加导览、不想一直往下划」→ 导览卡（今日速览概述 + 4 板块锚点格）。**渲染器 v4 落 `e87b78c`**（D17）：renderer.ts 视觉层重写为 bento+导览，注入护栏一字不动（链接只从 itemsById 取/escapeHtml 全覆盖/safeHref/无 script·远程图·flex-grid·oklch/固定像素多列防错位）；真渲染器输出 playwright 截图自查对齐干净；全量 3670/3672 绿/tsc0/biome0 |
+| 2026-07-04 | 派范德彪 **code review r5 GO（零 findings）**：7 条挑刺清单逐条 PASS 且 file:line 实证（护栏未改丢/邮件合规/bento 分格边界连续无跳号/导览计数与渲染同源/github 路径/degraded·notes·源健康语义/markdown 平行输出），德彪重跑 renderer 单测 9/9。**剩余=纯人工件**：.env（SMTP 三变量 + 可选 X handles/RSSHub base）/活体 smoke（AC12）/acceptance-guardian（配活体证据一并跑）/merge 拍板 |
+| 2026-07-04 | **全链活体打通 + AC12 PASS**：小孙装 Docker 起自建 RSSHub（`diygod/rsshub` + 小号 cookie，`wsl --update` 解 WSL2 报错）→ 验 `/twitter/user/karpathy` 真 RSS + X provider 抓真推；填主仓 .env（SMTP+RSSHUB_BASE+X_HANDLES）→ `bootDailyDigest()` 真发信 `sent degraded=false`（LLM 全跑通、含 X 板块）到 Gmail 收到。**union rebase 到 origin/dev**（唯一冲突 scheduler-bootstrap.ts = biome import 排序，取 MonthlySnapshot 超集 import 去重；后 9 commit 干净重放；3720/3722 绿）。**AC10 增强多收件人（小孙点名）**：`_TO` 逗号分隔 → parseRecipients（去空白/去空/去重）+ 白名单逐地址 fail-closed（大小写仍敏感）；nodemailer `to` 逗号发全部。全量 3723/3725 绿 |
+| 2026-07-05 | **P0 扩源 8 路 + 质量四层 + 分栏改版 + 网页版 + 设置页全链 + P1 收口**（`b0ea28e`/`a1ef5eb`/`184ee1d`/`a9498d3`/`5895cd0`/`1b9e019`/`f420fe1`/`5d608dd`/`9aff853`/`75e7ff4`/`6a93299`，详录=discussions §7）：信源主表 v2.1 立唯一真相源；engagement 贯穿/跨源合并 alsoItemIds/两段式深读/刊头体检行；网页 /digest 真 tabs + summary.json 归档；设置页 runtime-config 段热生效+立即补发；#28 YouTube 六频道/#30 HN 评论富化/#29 LinkedIn 活探判死；X 33 验活账号代配（小孙授权）。范德彪批次 A r1 NO-GO→`72349e9`→**r2 GO**；批次 B r1 NO-GO→`61405d8`→**r2 GO**。华为邮箱第二收件人 18:31 真发 |
+| 2026-07-06 | 首跑纠偏 `26eba5d`：keepIf 全滤「健康空」≠ 失败（安静频道误报 failed 是所有 keepIf 源共性雷）→ parse 契约 {parsedCount,items}，**范德彪 r3 GO**（+`98fb7e9` 契约注释同步）；00:23 第二封真发 86KB；X 覆盖率之谜定案=33 账号零失败、仅 5 人 24h 发推（公司官方号低频是常态） |
+| 2026-07-07 | **批次 D 六件套** `46e6a00`（社区动态板块/GitHub 中文化 translateExtras/月榜常驻/vllm+vllm-ascend releases 双源/板块标题层级/速览治理）+ **批次 E 内容治理** `a48901d`+`0000ab3`（小孙七问：7 天新鲜窗+shown 已见账本根治跨日重复 2881/3178、政治词表+提示词规则 7 双滤、v2ex 科技聚焦、四榜常驻、Gmail 102KB 字节口径+密度阶梯）；超时 120→240s `f27adb4`；v5 截断降级 → `6f9a251` repairTruncatedJson 括号栈修复（护栏不豁免）v6 补发；德彪批次 D r1 NO-GO→`bbe3f93` 三修→r2 併入 DE 合并审（codex 配额墙 07-09 解锁） |
+| 2026-07-10 | **德彪 DE 合并审四轮收敛：批次 D GO + 批次 E GO 零 findings**（`d7b5634` 三修/超时 360s `5b36cfc`/看门狗 600→3600s `3d03093`+`283123c` 三入口锁值）；小孙四问 → 字体提档 `c59966b`+release 时效窗 72h→7 天 `feba9d2`（vllm-ascend 发版漏报根因）→ **r-final holistic 终审**（小孙点名：前端整体+全链方案+review 覆盖盘点=30 实现 commit 9 批全覆盖）**NO-GO 4P1+4P2** → 全修 `5831cf3`（md 链接注入/shown 同日并集/修复缺节记账/邮件红线/网页口径与 scheme 门/tab 假空态）→ r2 全 CONFIRMED-FIXED+2 新洞 → 签名重写+保守合同 `b4b3d32` → **r3 GO 零 findings**；X 机构组 +claudeai/claudeDevs `7835270`（RSSHub 验活；裸 claude=路人坑）；**P2 源五拍收口**（#31 小红书转 F029 当 UGC 核查源/#32 B站收档/#33#34 播客开工=合并后第一批/#35 FB·IG 收档/#29 判死维持，详录=discussions P2 段+§8）；当日 3 封真发（02:53 清单版超时首发→360s 修→03:14 `95317824` 96KB；17:13 `3073d4f8` 97KB 新字体+shown 并集 86→140 活体证）；feature doc 收口 |
+| 2026-07-11 | **#33/#34 转写批（小孙改拍「现在搞」不等合并）三 commit**：播客速递 `5c3bbd1`（小宇宙 4 播客 RSSHub enclosure 直链→下载白名单+150MB 顶→ffmpeg 16kHz mono 32k→STT→Claude 提炼→「有新集才出现」板块；转写缓存分层=transcript 先落盘提炼失败下轮只补、单轮 cap 3 集、超 3h 跳过；job/renderer/web 直渲流仿 github，shown 账本跨日去重）+ YouTube 字幕深读 `6dfc64a`（yt-dlp 字幕优先喂 deep-read fetchContent 钩，18K 喂入闸；未装 ENOENT 记忆化静默关闭；Whisper 音频兜底不做留案）+ **STT provider 通用化 `7b90541`**（小孙 Groq 注册被地区拦「does not belong to any organizations」→ 切硅基流动 SenseVoiceSmall 免费档；STT_API_KEY/BASE/MODEL 三变量，段长 5400→3300s 两家门通吃，自定义 BASE 直连）；ffmpeg 8.1.2 winget 代装 + .env 三行小孙明确授权代笔（单次授权不成先例）；**活体验证全链通**：硅谷101 76min 集 68s 跑完（27,949 字转写 + 6 要点带嘉宾归属），缓存 `77bd748e2de7ecec.json`；测试 +34（全套 313→347 绿）。同日扩源 `8a20209`（小孙「多加一点 AI 影响大的」：播客 4→8 家/YouTube 6→12 频道全验活，@Anthropic=路人坑；yt-dlp 429 硬化 --sub-langs 收窄+--sleep-subtitles 3，活体=Dwarkesh 883KB vtt）+ yt-dlp 2026.07.04 代装。**德彪转写批四轮审收敛 GO**：r1 NO-GO 11 条→`8acd214`→r2 NO-GO 6 条→`739d996`（haiku-runner +signal 取消贯通）→r3 NO-GO 1 条→`590778f`（凭证脱敏长度降序）→**r4 GO 零 findings**（德彪自跑注入实验实证双脱敏）；收敛 11→6→1→0，详录=discussions §7 item 11 |
+| 2026-07-11 | **小孙六问批（`d7fd5a8`+`7257180`）**：①收件人互不可见=**BCC 密送**（to=发件人自身+bcc=真实清单，newsletter 惯例；mock .eml 同姿态；allowlist/账本口径不变）②X「都是转贴」初版直接滤被小孙二拍打回（「有价值应该找到原帖贴上去」）→ **改版=保留+如实归属+落原帖**：xHeadline 标题「@转推者 转推 原作者: 原文」；api 路线 retweeted_tweet 直构原帖 URL+原推全文；rsshub 无原推 id（07-11 实测 link=转推 status/description 无原帖 URL）维持转推 status=X 登录态自动落原帖；当日转推 38 条/轮 ③**未成年人内容防护**：UNSAFE_CONTENT_RE（色情/赌博/毒品/暴力犯罪细节，与政治词表同机制同 400 字符口径；自杀/枪击类刻意不进硬表防误杀 AI 安全产业新闻）+job 预滤接线+summarizer 规则 7 扩「内容红线」④答疑：haiku=runtime 模块名（haiku-runner）不进邮件；发送时间+全链 LLM 模型设置页已可配（buildRunOverrides 每轮现读热生效；STT 模型例外走 env）⑤验证发信 20:55 `61c080dc` degraded=false：**播客 3 集真转写**（硅谷101 E242/What's Next S10E20/乱翻书 269；ffmpeg 走绝对路径注入——winget PATH 新进程坑）+预滤 3269→389+**101KB 压 Gmail 102KB 线**（降密度到 0 行仍超预算，观察项：picks/X caps 合并后再议）；测试 +11。**德彪三轮审 GO（3→1→0）**：r1 3P2（转推挤轮转队列/retweeted_tweet 错型伪链接/治理语境词误杀）→`b30753c`→r2 1P2（回归测试不咬人+原创版历史债）→`085b31e`（红测实证）→**r3 GO 零 findings**；详录=discussions §7 item 12 |
+| 2026-07-11 | **晚二批（小孙「再发一封+起 preview 看设置页」+「设置页不在前端里？」）**：①preview 双进程 API :8807/Web :3107，设置页截图自查**抓漏**→`022512e` groupSources ORDER 写死四类把 podcast 源静默吞（设置页无播客开关可关）——+podcast 组对齐邮件板块序+分组测试 ②第二封 06:21Z `7f6e9d75` degraded=true **新降级形态首例**：summaryZh 引 V2EX 标题带未转义英文双引号炸穿 parse（repairTruncatedJson 只兜尾部截断兜不了中段裸引号）→`07efed7` prompt 规则 2 加字符串值内英文双引号禁令（引用一律中文引号「」）；若再犯升级 jsonrepair 裸引号修复 pass（观察项）③**主界面 header 📰 日报入口 `4a1e98b`**——档案馆拍板（07-05）连带把设置页漏出动线，主站零入口只能手敲 URL；现 📰→/digest（自动跳最新期）→页内 ⚙ 设置 ④第三封 06:43Z `d3790159` **degraded=false 全 LLM 版**（引号禁令首战生效）；三小修未单独派审（纯 UI/prompt 文案/分组，随合并前 guardian 零上下文验收兜底）。**坑：TaskStop 杀外壳不杀 node 子进程——旧 next dev 继续占端口新实例 EADDRINUSE、页面照常 200（陈旧代码假活）；重启 preview 必须按端口 PID 杀真进程（后端 tsx 非 watch 同理，改 registry 必重启 API）** |
+| 2026-07-11 | **小孙四问收尾**：①清单版=兜底设计答疑（三降级实案三修：截断→repair/超时→360s/裸引号→prompt 禁令；再犯升级 parse-fail 单次重试，观察项）②**设置页摘小红书编辑面 `ab74fac`**（#31 转 F029 时只休眠后端 UI 忘摘——关键词文本域/凭证 chip/源开关三处摘，xhsKeywords 数据面原样往返零行为变化，适配器留存；其余界面逐项核无死面）③数据尺寸实测答疑：~2.4MB/天（大头 items.jsonl 2.3MB=F029 语料底料）+transcripts 累计 472KB，**.runtime 不进 git 项目零增长**，年 ~850MB 磁盘；留存策略（如底料 90 天轮转）待小孙拍 ④YouTube 答疑：当日 45 条 yt 条目进池、**3 条被精选**（GPT-5.6 速评/ARC-AGI-3/Claude 思维层次）；「邮件底部两个视频」=Gmail 对正文 YouTube 链接的自动预览卡非我们嵌入；视频条目 ▶ 标识待小孙拍 |
+| 2026-07-11 | **小孙三拍批 `4cd5fa2`**：①**摘要重试+宁缺勿发**——summarize 失败自动重试（MAX_SUMMARIZE_ATTEMPTS=4：首次+3 重试，对齐小孙「可以重试3次」；runner 内另有 primary→fallback 双保险）→ 4 次全败返回 null **不再降级清单版**；job 判 null → 新状态 `failed_summarize` **不发+pushAlert 告警**（sent marker 未落，下一整点 reconcile 安全网自动重跑）；**飞书私聊告警=合并后接线项**（F040 IM 代码不在本分支基线——scheduler-bootstrap.ts:642 digest pushAlert 现=log.warn，合并 dev 后升级为 F040 私聊出站）；**看门狗 3600→7200s** 三入口（daily-digest/reconcile/startup）+锁值测试同步——新最坏账 540(X fetch)+4×720(summarize)+780(深读)+720(翻译)=4920s，**改任何一腿超时/尝试次数必重算这笔账** ②数据留存小孙拍「不用自动清理」零动作 ③**YouTube 源名标注**：source-labels 12 频道 label 加「YouTube · 」前缀（label=唯一源名出口，精选卡/速览行/md/网页/设置页全消费面一次生效；不加 ▶ 单独条目标识）；outcomeLine +failed_summarize 人话；测试：summarizer +3（4 次全败双形态 calls=4/第 2 次救回 calls=2 degraded=false）+13 处 null 窄化守卫、job failed_summarize（不发+告警+账本不落）、scheduler-config 锁值 7200、settings-model outcomeLine——API 68/68+web 21/21 双 tsc 零。**第五封验证发信 07:32Z `c38ab7ab` degraded=false**（TO 双址 gmail+huawei/BCC 密送；板块账 ai12·hot8·社区12·gh59·播客4；YouTube · 前缀正文实证 5 频道；一次尾截断 repair 救回未触发重试=机制原地待命）；**坑：手动发信 shell 探不到 winget 用户 PATH——yt-dlp ENOENT 深读回落原摘要（设计内降级），下次发信命令加 `MULTI_AGENT_DIGEST_YTDLP_PATH` 绝对路径注入（同 FFMPEG_PATH 坑）；真 runtime 走 start-project 用户会话 PATH 正常** |
+| 2026-07-12 | **三拍批德彪四轮审 → §17 TAKEOVER → 闭环**（小孙点名补审——我漏派了，认账）：r1 NO-GO 3P2+1P3（failed_summarize 被 cron 适配层标绿/看门狗 4920 账漏 podcast 900+YouTube 字幕腿+SMTP/失败测试没锁副作用/yt 前缀无需求级测试）→`d49e19c`（失败态收敛 job.ts DIGEST_FAILURE_STATUSES+编译期穷尽红测证/SMTP 三段超时/job 测试零副作用+二轮真重跑/yt 枚举锁）→ r2 NO-GO 2P2（偏离点裁决=要原症状集成回归；socketTimeout=无活动窗非总时限——德彪翻 nodemailer 源码实证）→`623a5d9`（bootstrap 集成回归 failed_summarize→trace failed+SMTP 总 deadline 120s+账 5670 常量推导）→ r3 NO-GO 1P2（transport.close 够不着 sendMail 内局部 SMTPConnection=ghost send 重复邮件，smtp-transport:158/:420 实证）→`ad380ac`（弃 transport 层：MailComposer 组 MIME BCC 仅进信封+自持 SMTPConnection 直发+deadline 真杀 socket+greeting 契约测试）→ r4 NO-GO 2P2 **触发家规 §17 TAKEOVER**（login/send err+QUIT 无响应+成功路径终态 close 全悬空；fake close 伪调 send cb=假绿，真类只清 actions+emit end）→ handoff 四件套→**德彪 danger-full-access 实现 `91c2607`**（closeOnce 幂等+finally 全终态收口；fake 对齐真类 end 语义；真 SMTP 状态机契约三场景 AUTH 535/QUIT 扣响应/DATA 扣 250）→ **我独立复审 PASS**（tsc 零+专项 17/17+定向 74/74 独立复跑+红测抽验注释 closeOnce 7 红恢复绿+守护报告 7/7 门禁）。**看门狗终账=5670s**（源 max 900+摘要 2880+深读 1050+翻译 720+SMTP deadline 120；此前行的 4920/5760 为历史快照——r1 漏并发源 max 与 SMTP、r2 的 210 段和不构成总上限）；SMTP at-least-once DATA→250 模糊窗口按既有 retry 语义保留（无幂等键）。**教训：①fixture 必须按真类行为写不是按期望写（fake close 伪调回调=三轮假绿根因）②连接治理要全生命周期终态收口，不是只治 deadline 单路径③全套回归撞出的 wiki-scanners/compile-fn 两败=dev 基线债（stash 实证，非本分支引入），合并 gate 知情** |
+| 2026-07-12 | **检讨文批（小孙报 yt 精选卡「正文仅为样板…无法提炼」元评论）四轮审闭环 GO**：根因三层=yt RSS snippet 全空（第一轮凭标题进精选）+深读字幕失败回落 http 抓 YouTube 页（JS 渲染页只有版权样板且过 200 字闸）+深读 LLM 面对样板写检讨文。**环境两行小孙授权代笔**：主仓 .env +YTDLP_PATH/+FFMPEG_PATH（winget 绝对路径验活）。**三修 `6e6b2a1`**（深读后置摘除门：yt pick 无深读产出→摘除降速览/boot fetchContent 空串语义禁 http 回落/双 prompt 元评论禁令）→ **德彪 jtw-r1 1P1+1P2+1P3**（P1=单 pick section 摘空被 renderer 一刀切 filter 整类蒸发+shown 照烧=永久漏报，他独立探针实证；P2=测试手写 mock 绕开 boot 接线；P3=断言只咬关键词）→ **修批+小孙增强 `10a0640`**（rest-only section 保留+hero guard+**repairDropped 丢节类目例外仍蒸发**——截断事故要回补，语义冲突是既有测试红了才撞出；makeYtDeepReadFetchContent 适配器单点；完整指令断言；**yt 24h 延迟窗**=小孙「我在意 直接做」：yt 发布 <24h 本期完全不进不烧 shown、字幕就绪次日进、可见窗第 2~7 天；yt-dlp 子进程注 ffmpeg PATH——第六封实测 YTDLP 生效但 yt-dlp 探不到 ffmpeg 套娃坑）→ **r2 2P2**（速览容量 0 时空壳+烧账复现——超预算自动降 0 也触发；ffmpeg 读全局 process.env 绕 bootEnv 契约）→`d923a43`（保留门补容量条件+容量 0 烧账注释明确为既有语义；ffmpegPath 走 YtSubsDeps 注入+子进程 env 三态回归）→ **r3 1 finding**（N 谓词过宽缺 usedIds：唯一候选被跨板块 alsoItemIds 占用时空壳复现）→`0887454`（谓词与 restAll 完全同式+占用场景回归含板块头断言）→ **r4 GO 零 findings**（真值表核完+反例推演六路不破）。**第六封 11:22Z `8f8464d5` degraded=false=摘除门活体首秀**（「ai 摘除 1 条无字幕 yt 精选」）；红测四轮（摘除门/rest-only filter/usedIds/穷尽检查）；**坑：perl 多行替换红测 mutate 误伤两处同型谓词（吞类目条件）——红测 mutate 一律 Edit 单点，perl 只用于可 grep 验证的单点替换**；第二批候选=media:description 补抽（无字幕视频有真简介可依） |
+| 2026-07-12 | **深夜双批+合审闭环**：①**字幕命中率批 `b6f5058`**（第七封 429 破案→小孙拍 D）：YouTube 登录 cookies 提权（小孙小号导出→主仓 .runtime/secrets/、.env 第三行授权代笔；argv 只路径/未配匿名 fail-open）+`--js-runtimes node` 钉死+429 退避 30s 重试一次+stderr 窗 2000 优先抓 ERROR 行+看门狗账 5670→5970（字幕腿 210s×3 常量推导）②**内容质量批 `345b006`**（小孙两反馈：社区收求助帖「专科大二迷茫」/Reddit 名人八卦、推理栏混 GPU 循环融资）：根因=prompt 规则 6 写了「算力芯片」+速览行是渲染层直出 LLM 选材管不到——推理定义收紧（仅限技术，商业新闻→公司名/其他）+规则 1 community 五类性质不选+`COMMUNITY_NOISE_RE` 结构层词表（只扫标题/只限 community/「离职薪资」产业用词刻意不收防误杀）+**communityDropIds 语义反选**（LLM 反选性质不合格条目，速览行剔除；parse 白名单+renderer category 双保险+picks 优先）③**德彪合审 r1 两批 NO-GO（2P1+1P2 全带独立复现）**：cookie 值可经 yt-dlp stderr 回显进日志/community 喂样 36 上限第 37+ 条无从反选=未审八卦补位/恶意 snippet 可诱导整版蒸发→**三修 `1e7af65`**：cookies 模式失败信息=安全枚举（枚举保「429」兼容重试判定；未配模式保留 ERROR 行）+`communityFedIds` 审查集合闭合（喂样即视野，速览候选限 fed 内「未审=不上」；保留门与 restAll 共用同一 `communityRestBlocked` 函数）+job 层反选熔断（∩fed 占比 >80% 作废+告警）→**r2 GO**（P1/P2 零；德彪独立复跑 40 条原场景 r1RestIds=0+secretLeaked=false+三例外无回归；P3 流程项=subject 缺签名，squash 时补齐拍板不重写历史）④**第八封 15:11Z `22a5a517` degraded=false**：反选首弹 15/36=42% 全真噪声零误杀（情绪帖/名人 meme/@sama 互怼推）+**推理栏对照实证：同一篇 Nvidia/CoreWeave 融资文第七封「推理」→本封「其他」**+社区噪声预滤上链 3206→320+预算护栏首弹 109KB 自动降密度 97KB；cookies 字幕实弹=本期无 yt pick 测不到（延迟窗+摘除门正常形态）挂观察项；测试 131→157、红测五发（restAll 谓词/category 限定/cookies 分支/fed 闭合/熔断阈值 mutate 均红）；审档 .runtime/reviews/F037-hitrate-quality-* 全套 |
 
 ## Links
 

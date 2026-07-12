@@ -3,7 +3,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
-import { loadRuntimeConfig, resolveEffectiveOverride, saveRuntimeConfig } from "./runtime-config"
+import {
+  loadRuntimeConfig,
+  resolveEffectiveOverride,
+  saveRuntimeConfig,
+  validateRuntimeConfigInput,
+  validateSessionRuntimeConfigInput,
+} from "./runtime-config"
 
 function tmpConfigPath() {
   const dir = mkdtempSync(path.join(os.tmpdir(), "ma-runtime-config-"))
@@ -268,4 +274,39 @@ test("F021 P6: sanitize keeps entry when only contextWindow or sealPct present (
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// ---- F037 日报设置段（dailyDigest：全局专属，同 wikiCompile 姿势）----
+
+test("dailyDigest：validate 委托 digest-settings（合法通过 / 非法显式报错）", () => {
+  assert.deepEqual(
+    validateRuntimeConfigInput({ dailyDigest: { sendTime: "06:30", recipients: ["a@b.com"] } }),
+    [],
+  )
+  const errs = validateRuntimeConfigInput({ dailyDigest: { sendTime: "25:61" } })
+  assert.equal(errs.length, 1)
+  assert.match(errs[0], /dailyDigest\.sendTime/)
+})
+
+test("dailyDigest：save→load 往返保留合法段、剥非法条目", () => {
+  const { configPath, dir } = tmpConfigPath()
+  try {
+    saveRuntimeConfig(
+      {
+        claude: { model: "claude-opus-4-6" },
+        dailyDigest: { recipients: ["ok@x.com", "bad email"], xHandles: ["@sama"] },
+      },
+      configPath,
+    )
+    const loaded = loadRuntimeConfig(configPath)
+    assert.deepEqual(loaded.dailyDigest, { recipients: ["ok@x.com"], xHandles: ["sama"] })
+    assert.equal(loaded.claude?.model, "claude-opus-4-6")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("dailyDigest：session 层拒收（global-only，同 wikiCompile）", () => {
+  const errs = validateSessionRuntimeConfigInput({ dailyDigest: { sendTime: "06:30" } })
+  assert.ok(errs.some((e) => e.includes("dailyDigest is global-only")))
 })

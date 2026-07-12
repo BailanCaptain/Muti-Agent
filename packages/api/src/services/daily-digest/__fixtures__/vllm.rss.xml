@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>vLLM Blog</title>
+    <link>https://vllm.ai/blog</link>
+    <description>Technical articles, release announcements, model guides, and community updates from the vLLM project.</description>
+    <language>en-us</language>
+    <lastBuildDate>Fri, 03 Jul 2026 01:49:22 GMT</lastBuildDate>
+    <atom:link href="https://vllm.ai/blog/rss.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>Micro-Agent: Beat Frontier Models with Collaboration inside Model API</title>
+      <link>https://vllm.ai/blog/2026-06-29-micro-agent-frontier-models</link>
+      <guid isPermaLink="true">https://vllm.ai/blog/2026-06-29-micro-agent-frontier-models</guid>
+      <pubDate>Mon, 29 Jun 2026 00:00:00 GMT</pubDate>
+      <description>How vLLM Semantic Router turns vllm-sr/auto into a bounded micro-agent runtime for Confidence, Ratings, ReMoM, Fusion, Workflows, and benchmark-shaped collaboration.</description>
+      <category>ecosystem</category>
+      <category>agentic-routing</category>
+      <dc:creator>vLLM Semantic Router Team</dc:creator>
+    </item>
+    <item>
+      <title>Engineering TTS Inference in vLLM-Omni</title>
+      <link>https://vllm.ai/blog/2026-06-23-vllm-omni-tts</link>
+      <guid isPermaLink="true">https://vllm.ai/blog/2026-06-23-vllm-omni-tts</guid>
+      <pubDate>Tue, 23 Jun 2026 00:00:00 GMT</pubDate>
+      <description>How vLLM-Omni supports and optimizes Qwen3-TTS, VoxCPM2, Higgs Audio V3, and Fish Speech S2 Pro with staged serving, batching, CUDA Graphs, and model-specific kernels.</description>
+      <category>performance</category>
+      <category>multimodal</category>
+      <category>inference</category>
+      <dc:creator>vLLM-Omni TTS Team</dc:creator>
+    </item>
+    <item>
+      <title>Beyond One Model: Fusion in vLLM Semantic Router</title>
+      <link>https://vllm.ai/blog/2026-06-16-vllm-sr-fusion-api</link>
+      <guid isPermaLink="true">https://vllm.ai/blog/2026-06-16-vllm-sr-fusion-api</guid>
+      <pubDate>Tue, 16 Jun 2026 00:00:00 GMT</pubDate>
+      <description>How vLLM Semantic Router Fusion runs a panel of models, uses a judge to analyze agreement and gaps, and synthesizes one answer while preserving routing policy, traces, and OpenAI-compatible serving.</description>
+      <category>ecosystem</category>
+      <dc:creator>vLLM Semantic Router Team</dc:creator>
+    </item>
+  </channel>
+</rss>

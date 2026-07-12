@@ -18,6 +18,12 @@ import fs from "node:fs"
 import path from "node:path"
 import test from "node:test"
 import { Cron } from "croner"
+import { SMTP_SEND_DEADLINE_MS } from "../daily-digest/email-sender"
+import {
+  DEFAULT_SUBTITLE_TIMEOUT_MS,
+  SUBTITLE_429_RETRY_DELAY_MS,
+} from "../daily-digest/sources/youtube-subs"
+import { DEFAULT_TIMEOUT_MS, MAX_SUMMARIZE_ATTEMPTS } from "../daily-digest/summarizer"
 import {
   DEFAULT_SCHEDULER_CONFIG,
   assertNoConfigFile,
@@ -134,8 +140,9 @@ test("scheduler-config · DEFAULT all 'cron' kind patterns valid (croner) — no
   }
 })
 
-// 范-r1 P1-2: feature.md AC-P2-1 锁定 9 scheduled jobs (7 cron + 1 startup + 1 watcher)
-test("scheduler-config · 范-r1 P1-2: DEFAULT 锁定 9 scheduled jobs (7 cron + 1 startup + 1 watcher)", () => {
+// 范-r1 P1-2: feature.md AC-P2-1 锁定 scheduled jobs 清单（F027 原 9 个；F037 日报 +3：
+// daily-digest / daily-digest-reconcile / daily-digest-startup → 现 12 个）
+test("scheduler-config · 范-r1 P1-2: DEFAULT 锁定 12 scheduled jobs (9 cron + 2 startup + 1 watcher)", () => {
   const expectedNames = [
     "room-compiler-tick",
     "nightly-health-check",
@@ -144,20 +151,60 @@ test("scheduler-config · 范-r1 P1-2: DEFAULT 锁定 9 scheduled jobs (7 cron +
     "drift-detector",
     "monthly-snapshot",
     "archive-yearly-sessions",
+    "daily-digest",
+    "daily-digest-reconcile",
     "startup-reconciler",
+    "daily-digest-startup",
     "docs-watcher",
   ]
   const actualNames = DEFAULT_SCHEDULER_CONFIG.scheduled.map((j) => j.name).sort()
   assert.deepEqual(actualNames, [...expectedNames].sort())
-  assert.equal(DEFAULT_SCHEDULER_CONFIG.scheduled.length, 9, "exactly 9 scheduled per AC-P2-1")
+  assert.equal(
+    DEFAULT_SCHEDULER_CONFIG.scheduled.length,
+    12,
+    "exactly 12 scheduled (AC-P2-1 + F037)",
+  )
 })
 
-test("scheduler-config · 范-r1 P1-2: kind 分布 7 cron + 1 startup + 1 watcher", () => {
+// 德彪 DE-r3 锁值机制：日报三入口看门狗精确锁值，防回归改小产生假 timeout/幽灵任务。
+// 最坏账见下一个测试（07-11 三拍 r1 P2-2 德彪重算→r2 修正 5670→07-12 字幕 429 重试 5970s）
+test("scheduler-config · F037: 日报三入口看门狗 = 7200s（> 全链最坏 5970s，含摘要重试）", () => {
+  for (const name of ["daily-digest", "daily-digest-reconcile", "daily-digest-startup"]) {
+    const job = DEFAULT_SCHEDULER_CONFIG.scheduled.find((j) => j.name === name)
+    assert.equal(job?.timeoutSeconds, 7200, name)
+  }
+})
+
+// 07-11 三拍 r1 P2-2（德彪）：锁值之外补账目关系——摘要腿从 summarizer 导出常量推导，
+// 重试次数 / LLM 超时改动直接改变最坏账，看门狗不够时这里变红（此前只锁 ===7200 不随腿动）。
+// 其余腿预算散在各源文件（来源注释在行内），改那些预算时必须回来同步这笔账。
+test("scheduler-config · F037: 看门狗 > 全链最坏账（腿账关系可校验，改腿必红）", () => {
+  const llmS = DEFAULT_TIMEOUT_MS / 1000 // summarizer 单模型单次 360s
+  const sourceStageMaxS = 900 // 并发源阶段取 max：podcast.ts timeoutBudgetMs 900_000（X 540 次之）
+  const summarizeS = MAX_SUMMARIZE_ATTEMPTS * 2 * llmS // 4 尝试 × primary+fallback
+  // 字幕单条最坏 = 90s 首次 + 30s 429 退避 + 90s 重试（07-12 字幕命中率批）；盖过非 yt 20s http 回落
+  const subtitleWorstS = (DEFAULT_SUBTITLE_TIMEOUT_MS + SUBTITLE_429_RETRY_DELAY_MS + DEFAULT_SUBTITLE_TIMEOUT_MS) / 1000
+  const deepReadS = 3 * subtitleWorstS + 2 * llmS // 3 条深读 + LLM 双模型
+  const translateS = 2 * llmS
+  // r2 P2-2：SMTP 腿只认发送总 deadline（三段 nodemailer 超时是无活动窗，推不出总上限）
+  const smtpS = SMTP_SEND_DEADLINE_MS / 1000
+  const worstS = sourceStageMaxS + summarizeS + deepReadS + translateS + smtpS
+  assert.equal(worstS, 5970, "腿账变了——改 daily-digest 看门狗注释并重核 7200 余量")
+  for (const name of ["daily-digest", "daily-digest-reconcile", "daily-digest-startup"]) {
+    const job = DEFAULT_SCHEDULER_CONFIG.scheduled.find((j) => j.name === name)
+    assert.ok(
+      (job?.timeoutSeconds ?? 0) > worstS,
+      `${name}: 看门狗 ${job?.timeoutSeconds}s 必须 > 最坏账 ${worstS}s`,
+    )
+  }
+})
+
+test("scheduler-config · 范-r1 P1-2: kind 分布 9 cron + 2 startup + 1 watcher", () => {
   const byKind: Record<string, number> = { cron: 0, startup: 0, watcher: 0 }
   for (const job of DEFAULT_SCHEDULER_CONFIG.scheduled) {
     byKind[job.kind] = (byKind[job.kind] ?? 0) + 1
   }
-  assert.deepEqual(byKind, { cron: 7, startup: 1, watcher: 1 })
+  assert.deepEqual(byKind, { cron: 9, startup: 2, watcher: 1 })
 })
 
 // 范-r1 P2-1: windowMinutes 全部 5 (cron) / 0 (non-cron)，违反 plan §4 min(cron_period, 5min) 修复
@@ -252,15 +299,13 @@ test("scheduler-config · YAML invalid kind value → throws", () => {
   try {
     fs.writeFileSync(
       configPath,
-      [
-        "scheduled:",
-        "  - name: weird",
-        "    kind: not-a-kind",
-        "    cron: '0 0 * * *'",
-      ].join("\n"),
+      ["scheduled:", "  - name: weird", "    kind: not-a-kind", "    cron: '0 0 * * *'"].join("\n"),
       "utf-8",
     )
-    assert.throws(() => loadSchedulerConfig({ configPath }), /kind must be 'cron'\|'startup'\|'watcher'/)
+    assert.throws(
+      () => loadSchedulerConfig({ configPath }),
+      /kind must be 'cron'\|'startup'\|'watcher'/,
+    )
   } finally {
     safeCleanup(tempDir)
   }

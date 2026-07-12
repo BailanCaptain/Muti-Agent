@@ -25,7 +25,8 @@ import {
   PROVIDER_ALIASES,
   type SequencedRealtimeServerEvent,
 } from "@multi-agent/shared"
-import { PanelLeft, PanelLeftClose, PanelRight, PanelRightClose } from "lucide-react"
+import { Newspaper, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose } from "lucide-react"
+import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 
 function formatBlockedDispatchMessage(attempts: BlockedDispatchAttempt[]) {
@@ -430,6 +431,15 @@ export default function HomePage() {
               <PanelLeft className="h-4 w-4" />
             </button>
           )}
+          {/* F037 日报入口（07-11 小孙问「设置页不在前端里？」——网页版当时拍档案馆
+              不进动线，设置页被连带漏了入口）：落地页自动跳最新一期，页内 ⚙ 进设置 */}
+          <Link
+            className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            href="/digest"
+            title="日报 · 网页版与设置"
+          >
+            <Newspaper className="h-4 w-4" />
+          </Link>
           {!sidebarCollapsed && (
             <button
               className="hidden rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 md:block"

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
+    <channel>
+        <title><![CDATA[OpenAI News]]></title>
+        <description><![CDATA[The OpenAI blog]]></description>
+        <link>https://openai.com/news</link>
+        <generator>OpenAI</generator>
+        <lastBuildDate>Fri, 03 Jul 2026 02:08:34 GMT</lastBuildDate>
+        <atom:link href="https://openai.com/news/rss" rel="self" type="application/rss+xml"/>
+        <item>
+            <title><![CDATA[How ChatGPT adoption has expanded]]></title>
+            <description><![CDATA[New OpenAI Signals data shows how ChatGPT adoption is growing globally, with users increasing usage, exploring more capabilities, and driving growth across regions and languages.]]></description>
+            <link>https://openai.com/index/how-chatgpt-adoption-has-expanded</link>
+            <guid isPermaLink="true">https://openai.com/index/how-chatgpt-adoption-has-expanded</guid>
+            <category><![CDATA[Global Affairs]]></category>
+            <pubDate>Tue, 30 Jun 2026 09:00:00 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[Inside Genebench-Pro]]></title>
+            <link>https://openai.com/index/genebench-pro/case-studies</link>
+            <guid isPermaLink="true">https://openai.com/index/genebench-pro/case-studies</guid>
+            <pubDate>Tue, 30 Jun 2026 00:00:00 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[Introducing GeneBench-Pro]]></title>
+            <description><![CDATA[Introducing GeneBench-Pro, a new benchmark testing AI performance in genomics, biology, and scientific research using complex, real-world datasets.]]></description>
+            <link>https://openai.com/index/introducing-genebench-pro</link>
+            <guid isPermaLink="true">https://openai.com/index/introducing-genebench-pro</guid>
+            <category><![CDATA[Research]]></category>
+            <pubDate>Tue, 30 Jun 2026 00:00:00 GMT</pubDate>
+        </item>
+    </channel>
+</rss>

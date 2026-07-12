@@ -15,6 +15,11 @@ export interface HaikuRunResult {
 export interface HaikuRunOptions {
   /** Default 5000ms. */
   timeoutMs?: number
+  /**
+   * 外部取消（F037 播客批德彪 r2 P1）：abort → kill CLI 子进程并立即 settle
+   * `error:"aborted"`。缺省不挂——既有调用方零影响。
+   */
+  signal?: AbortSignal
 }
 
 export interface HaikuRunner {
@@ -59,6 +64,10 @@ function createClaudeCliRunner(
   return {
     runPrompt(prompt, opts = {}) {
       const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
+      // 预 abort：不 spawn（F037 德彪 r2 P1——预算已掐断时绝不再起 CLI 进程烧配额）
+      if (opts.signal?.aborted) {
+        return Promise.resolve({ ok: false, text: "", durationMs: 0, error: "aborted" })
+      }
       const runtime = resolveClaudeCommand()
       const args = [...runtime.prefixArgs, "--print", "--model", model]
       // 补丁#3（小孙「claude 可选强度」）：effort → `--effort <value>`（同 claude-runtime 主链）。
@@ -101,6 +110,7 @@ function createClaudeCliRunner(
           if (settled) return
           settled = true
           clearTimeout(timer)
+          opts.signal?.removeEventListener("abort", onAbort)
           resolve(res)
         }
 
@@ -108,6 +118,14 @@ function createClaudeCliRunner(
           proc.kill()
           settle({ ok: false, text: "", durationMs: Date.now() - start, error: "timeout" })
         }, timeoutMs)
+
+        // 外部取消：kill 子进程立即收场；注册后补查一次防「spawn 与注册之间」的窗口漏
+        const onAbort = () => {
+          proc.kill()
+          settle({ ok: false, text: "", durationMs: Date.now() - start, error: "aborted" })
+        }
+        opts.signal?.addEventListener("abort", onAbort, { once: true })
+        if (opts.signal?.aborted) onAbort()
 
         proc.on("close", (code) => {
           const durationMs = Date.now() - start

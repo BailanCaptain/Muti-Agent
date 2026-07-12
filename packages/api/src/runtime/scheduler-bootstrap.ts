@@ -49,7 +49,14 @@ import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type { FastifyBaseLogger } from "fastify"
 import { CompilerLeaderRepository } from "../db/repositories/compiler-leader-repository"
 import { WikiEventsRepository } from "../db/repositories/wiki-events-repository"
+import type { WikiLeasesRepository } from "../db/repositories/wiki-leases-repository"
 import type * as schema from "../db/schema"
+import {
+  type DailyDigestRuntime,
+  bootDailyDigest,
+  isDigestEnabled,
+} from "../services/daily-digest/boot"
+import { isDigestFailureStatus } from "../services/daily-digest/daily-digest-job"
 import { ArchiveYearlySessions } from "../services/scheduler/archive-yearly-sessions"
 import {
   type ChainedAlert,
@@ -59,16 +66,13 @@ import type { DocsIngestRunner } from "../services/scheduler/docs-ingest-runner"
 import { DocsWatcher } from "../services/scheduler/docs-watcher"
 import {
   type DriftAlert,
-  DriftDetector,
   type DriftDetectionResult,
+  DriftDetector,
   buildDriftAlert,
 } from "../services/scheduler/drift-detector"
 import { createDriftWarningsWriter } from "../services/scheduler/drift-warnings-writer"
 import { createHealthWarningsWriter } from "../services/scheduler/health-warnings-writer"
 import type { JobTrace } from "../services/scheduler/job-trace"
-import type { WikiLeasesRepository } from "../db/repositories/wiki-leases-repository"
-import type { UpdateWikiService } from "../wiki/update-wiki-service"
-import { createDriftDraftOpener } from "./drift-draft-opener"
 import {
   MonthlySnapshot,
   type RoomSnapshot,
@@ -78,9 +82,9 @@ import { NightlyHealthCheck } from "../services/scheduler/nightly-health-check"
 import { NightlyVacuum } from "../services/scheduler/nightly-vacuum"
 import { RoomCompilerTick } from "../services/scheduler/room-compiler-tick"
 import {
-  assertNoConfigFile,
-  type SchedulerConfig,
   type ScheduledJobConfig,
+  type SchedulerConfig,
+  assertNoConfigFile,
   loadSchedulerConfig,
 } from "../services/scheduler/scheduler-config"
 import {
@@ -99,7 +103,9 @@ import {
   scanWikiDraftsFs,
   scanWikiEntitiesFs,
 } from "../services/scheduler/wiki-scanners"
+import type { UpdateWikiService } from "../wiki/update-wiki-service"
 import { createWikiIndexRecompiler } from "../wiki/wiki-index-recompile"
+import { createDriftDraftOpener } from "./drift-draft-opener"
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>
 
@@ -276,6 +282,12 @@ export interface SchedulerBootOptions {
    * reindex 是 mtime 增量（廉价）。仅当 opts.reindexWiki 提供时启动。
    */
   reindexIntervalMs?: number
+  /**
+   * F037 日报 · reconcile 单入口注入（测试用）。缺 → bootDailyDigest() 从 env 组装真实链
+   * （凭证缺失自动降 mock sender，boot 不强依赖）。三个触发点（07:30 主 cron / startup /
+   * 每小时安全网）共用同一 reconcile（D11）。
+   */
+  dailyDigest?: Pick<DailyDigestRuntime, "reconcile">
 }
 
 /**
@@ -325,8 +337,7 @@ export async function bootSchedulerRuntime(
   // Week 5 hotfix: 如果 caller 注入了真 roomCompileExecutor (server.ts 走真业务),
   // 用真; 否则 fallback 到 noop (跟 Phase 3 行为一致, 测试 / CI 用).
   const tick = new RoomCompilerTick({
-    compileExecutor:
-      opts.roomCompileExecutor ?? (async () => ({ roomsProcessed: 0 })),
+    compileExecutor: opts.roomCompileExecutor ?? (async () => ({ roomsProcessed: 0 })),
     logger: opts.log,
   })
 
@@ -388,9 +399,7 @@ export async function bootSchedulerRuntime(
       })
     : undefined
   const healthCheck = new NightlyHealthCheck({
-    scanEntities: opts.wikiRoot
-      ? scanWikiEntitiesFs(opts.wikiRoot, opts.log)
-      : noopScanEntities,
+    scanEntities: opts.wikiRoot ? scanWikiEntitiesFs(opts.wikiRoot, opts.log) : noopScanEntities,
     onReport: healthWarningsWriter,
     logger: opts.log,
   })
@@ -421,9 +430,7 @@ export async function bootSchedulerRuntime(
   })
 
   const draftDigest = new WeeklyDraftDigest({
-    scanDrafts: opts.wikiRoot
-      ? scanWikiDraftsFs(opts.wikiRoot, opts.log)
-      : noopScanDrafts,
+    scanDrafts: opts.wikiRoot ? scanWikiDraftsFs(opts.wikiRoot, opts.log) : noopScanDrafts,
     logger: opts.log,
   })
 
@@ -467,9 +474,7 @@ export async function bootSchedulerRuntime(
       })
 
   const archive = new ArchiveYearlySessions({
-    scanSessions: opts.wikiRoot
-      ? scanAgentSessionsFs(opts.wikiRoot, opts.log)
-      : noopScanSessions,
+    scanSessions: opts.wikiRoot ? scanAgentSessionsFs(opts.wikiRoot, opts.log) : noopScanSessions,
     logger: opts.log,
   })
 
@@ -622,7 +627,53 @@ export async function bootSchedulerRuntime(
     })
   }
 
-  // ── startup jobs (1) ─────────────────────────────────────────────────
+  // ── F037 日报 daily-digest（2 cron + 1 startup 共用 reconcile 单入口，D11）──
+  // 启用门 isDigestEnabled：与 server routes 共用一份逻辑（boot.ts 真相源）。
+  // 默认关 → 测试/CI/未配置环境绝不打真网（startup job 会在 boot 时真跑）。
+  const digestEnabled = isDigestEnabled(process.env)
+  const digestCfg = cronCfgByName.get("daily-digest")
+  const digestSafetyCfg = cronCfgByName.get("daily-digest-reconcile")
+  const digestStartupCfg = startupCfgByName.get("daily-digest-startup")
+  if ((opts.dailyDigest || digestEnabled) && (digestCfg || digestSafetyCfg || digestStartupCfg)) {
+    const dailyDigest =
+      opts.dailyDigest ??
+      bootDailyDigest({
+        rootDir,
+        log: (m) => opts.log.info(m),
+        pushAlert: (m) => opts.log.warn(m),
+      })
+    const runDigestReconcile = async (): Promise<{ status: "ok"; result: unknown }> => {
+      const outcome = await dailyDigest.reconcile(new Date())
+      // 失败态判定收敛到 daily-digest-job DIGEST_FAILURE_STATUSES（07-11 三拍 r1 P2-1：
+      // failed_summarize 曾漏在这里的硬编码两态判断外 → 摘要全败监控标绿）；skipped_* 幂等噪音
+      if (isDigestFailureStatus(outcome.status)) {
+        throw new Error(
+          `daily-digest ${outcome.status}${outcome.detail ? `: ${outcome.detail}` : ""}`,
+        )
+      }
+      return { status: "ok", result: outcome }
+    }
+    for (const cfg of [digestCfg, digestSafetyCfg]) {
+      if (!cfg) continue
+      cronJobs.push({
+        name: cfg.name,
+        cron: cfg.cron,
+        timezone: cfg.timezone,
+        windowMinutes: cfg.windowMinutes,
+        timeoutSeconds: cfg.timeoutSeconds,
+        run: runDigestReconcile,
+      })
+    }
+    if (digestStartupCfg) {
+      startupJobs.push({
+        name: "daily-digest-startup",
+        timeoutSeconds: digestStartupCfg.timeoutSeconds,
+        run: runDigestReconcile,
+      })
+    }
+  }
+
+  // ── startup jobs (2 · 另一个是 daily-digest-startup ↑) ────────────────
   const reconcilerCfg = startupCfgByName.get("startup-reconciler")
   if (reconcilerCfg) {
     startupJobs.push({

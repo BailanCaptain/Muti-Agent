@@ -1,0 +1,156 @@
+{
+  "success": true,
+  "data": {
+    "cards": [
+      {
+        "component": "hotList",
+        "content": [
+          {
+            "appUrl": "https://www.baidu.com/s?wd=C%E7%BD%97%E7%82%B9%E7%90%83%E7%A0%B4%E9%97%A8%EF%BC%81%E8%91%A1%E8%90%84%E7%89%992-1%E5%85%8B%E7%BD%97%E5%9C%B0%E4%BA%9A&sa=fyb_news&rsv_dl=fyb_news",
+            "desc": "北京时间7月3日上午，世界杯1/16决赛，葡萄牙对阵克罗地亚。经过激战，葡萄牙击败对手进军16强。",
+            "hotChange": "same",
+            "hotScore": "7809655",
+            "hotTag": "5",
+            "hotTagImg": "https://search-operate.cdn.bcebos.com/88cd2b09219da7dc3af3fe179621061a.png",
+            "img": "https://fyb-2.cdn.bcebos.com/hotboard_image/90c24809e68b335f1a2b5fbb093b46ff",
+            "index": 0,
+            "indexUrl": "",
+            "query": "C罗点球破门！葡萄牙2-1克罗地亚",
+            "rawUrl": "https://www.baidu.com/s?wd=C%E7%BD%97%E7%82%B9%E7%90%83%E7%A0%B4%E9%97%A8%EF%BC%81%E8%91%A1%E8%90%84%E7%89%992-1%E5%85%8B%E7%BD%97%E5%9C%B0%E4%BA%9A",
+            "show": [],
+            "url": "https://www.baidu.com/s?wd=C%E7%BD%97%E7%82%B9%E7%90%83%E7%A0%B4%E9%97%A8%EF%BC%81%E8%91%A1%E8%90%84%E7%89%992-1%E5%85%8B%E7%BD%97%E5%9C%B0%E4%BA%9A&sa=fyb_news&rsv_dl=fyb_news",
+            "word": "C罗点球破门！葡萄牙2-1克罗地亚"
+          },
+          {
+            "appUrl": "https://www.baidu.com/s?wd=%E5%85%8B%E7%BD%97%E5%9C%B0%E4%BA%9A103%E5%88%86%E9%92%9F%E7%BB%9D%E5%B9%B3%E8%BF%9B%E7%90%83%E8%A2%AB%E5%90%B9&sa=fyb_news&rsv_dl=fyb_news",
+            "desc": "",
+            "hotChange": "same",
+            "hotScore": "7714139",
+            "hotTag": "3",
+            "hotTagImg": "https://search-operate.cdn.bcebos.com/54a1ed72d00cd07334860b0509489d8b.png",
+            "img": "https://fyb-1.cdn.bcebos.com/fyb/de6163834f53ca92c1273fff98ac9078.jpeg",
+            "index": 1,
+            "indexUrl": "",
+            "query": "克罗地亚103分钟绝平进球被吹",
+            "rawUrl": "https://www.baidu.com/s?wd=%E5%85%8B%E7%BD%97%E5%9C%B0%E4%BA%9A103%E5%88%86%E9%92%9F%E7%BB%9D%E5%B9%B3%E8%BF%9B%E7%90%83%E8%A2%AB%E5%90%B9",
+            "show": [],
+            "url": "https://www.baidu.com/s?wd=%E5%85%8B%E7%BD%97%E5%9C%B0%E4%BA%9A103%E5%88%86%E9%92%9F%E7%BB%9D%E5%B9%B3%E8%BF%9B%E7%90%83%E8%A2%AB%E5%90%B9&sa=fyb_news&rsv_dl=fyb_news",
+            "word": "克罗地亚103分钟绝平进球被吹"
+          },
+          {
+            "appUrl": "https://www.baidu.com/s?wd=%E5%90%84%E5%9C%B0%E5%A4%9A%E6%8E%AA%E5%B9%B6%E4%B8%BE%E5%8A%A9%E6%8E%A8%E9%AB%98%E8%B4%A8%E9%87%8F%E5%8F%91%E5%B1%95&sa=fyb_news&rsv_dl=fyb_news",
+            "desc": "近年来，各地立足自身发展优势，从实际出发，铆足干劲、担当作为，多措并举助推高质量发展。",
+            "hotChange": "same",
+            "hotScore": "7617188",
+            "hotTag": "0",
+            "img": "https://fyb-2.cdn.bcebos.com/hotboard_image/ac80eb448f5d07e0f869ca09c4488c38",
+            "index": 2,
+            "indexUrl": "",
+            "query": "各地多措并举助推高质量发展",
+            "rawUrl": "https://www.baidu.com/s?wd=%E5%90%84%E5%9C%B0%E5%A4%9A%E6%8E%AA%E5%B9%B6%E4%B8%BE%E5%8A%A9%E6%8E%A8%E9%AB%98%E8%B4%A8%E9%87%8F%E5%8F%91%E5%B1%95",
+            "show": [],
+            "url": "https://www.baidu.com/s?wd=%E5%90%84%E5%9C%B0%E5%A4%9A%E6%8E%AA%E5%B9%B6%E4%B8%BE%E5%8A%A9%E6%8E%A8%E9%AB%98%E8%B4%A8%E9%87%8F%E5%8F%91%E5%B1%95&sa=fyb_news&rsv_dl=fyb_news",
+            "word": "各地多措并举助推高质量发展"
+          },
+          {
+            "appUrl": "https://www.baidu.com/s?wd=C%E7%BD%97%E4%B8%96%E7%95%8C%E6%9D%AF%E6%B7%98%E6%B1%B0%E8%B5%9B%E4%B8%AA%E4%BA%BA%E9%A6%96%E7%90%83&sa=fyb_news&rsv_dl=fyb_news",
+            "desc": "北京时间7月3日上午7点，2026世界杯1/16决赛，葡萄牙队对战克罗地亚队。41岁的C罗在第67分钟点球破门，收获个人世界杯淘汰赛首球。",
+            "hotChange": "same",
+            "hotScore": "7520525",
+            "hotTag": "3",
+            "hotTagImg": "https://search-operate.cdn.bcebos.com/54a1ed72d00cd07334860b0509489d8b.png",
+            "img": "https://fyb-2.cdn.bcebos.com/hotboard_image/65edeeba856c4d11d5b6f64200a1660d",
+            "index": 3,
+            "indexUrl": "",
+            "query": "C罗世界杯淘汰赛个人首球",
+            "rawUrl": "https://www.baidu.com/s?wd=C%E7%BD%97%E4%B8%96%E7%95%8C%E6%9D%AF%E6%B7%98%E6%B1%B0%E8%B5%9B%E4%B8%AA%E4%BA%BA%E9%A6%96%E7%90%83",
+            "show": [],
+            "url": "https://www.baidu.com/s?wd=C%E7%BD%97%E4%B8%96%E7%95%8C%E6%9D%AF%E6%B7%98%E6%B1%B0%E8%B5%9B%E4%B8%AA%E4%BA%BA%E9%A6%96%E7%90%83&sa=fyb_news&rsv_dl=fyb_news",
+            "word": "C罗世界杯淘汰赛个人首球"
+          },
+          {
+            "appUrl": "https://www.baidu.com/s?wd=C%E7%BD%97%E5%AE%89%E6%85%B0%E8%8E%AB%E5%BE%B7%E9%87%8C%E5%A5%87&sa=fyb_news&rsv_dl=fyb_news",
+            "desc": "7月3日，世界杯1/16决赛葡萄牙2‑1淘汰克罗地亚后，41岁的C罗第一时间穿过人群拥抱并安慰了40岁的莫德里奇。",
+            "hotChange": "same",
+            "hotScore": "7425839",
+            "hotTag": "1",
+            "hotTagImg": "https://search-operate.cdn.bcebos.com/42e626c5469cc4cd3b91131bcfe53d44.png",
+            "img": "https://fyb-2.cdn.bcebos.com/hotboard_image/863822b5ce662944b6b694fbfc623ed3",
+            "index": 4,
+            "indexUrl": "",
+            "query": "C罗安慰莫德里奇",
+            "rawUrl": "https://www.baidu.com/s?wd=C%E7%BD%97%E5%AE%89%E6%85%B0%E8%8E%AB%E5%BE%B7%E9%87%8C%E5%A5%87",
+            "show": [],
+            "url": "https://www.baidu.com/s?wd=C%E7%BD%97%E5%AE%89%E6%85%B0%E8%8E%AB%E5%BE%B7%E9%87%8C%E5%A5%87&sa=fyb_news&rsv_dl=fyb_news",
+            "word": "C罗安慰莫德里奇"
+          }
+        ],
+        "more": 0,
+        "moreAppUrl": "https://top.baidu.com/board?tab=realtime&sa=fyb_realtime",
+        "moreUrl": "https://top.baidu.com/board?tab=realtime&sa=fyb_realtime",
+        "text": "热搜榜",
+        "topContent": [
+          {
+            "appUrl": "https://www.baidu.com/s?wd=%E4%B8%AD%E5%9B%BD%E5%85%B1%E4%BA%A7%E5%85%9A%E4%B8%BA%E4%BB%80%E4%B9%88%E8%83%BD%E7%9A%84%E5%85%B3%E9%94%AE%E5%AF%86%E7%A0%81&sa=fyb_news&rsv_dl=fyb_news",
+            "desc": "7月1日，北京人民大会堂，当习近平总书记讲到“完全无愧为伟大光荣正确的党”，掌声如潮。这一重要论断，由中国发展奇迹所铸就，由党心民心所雕琢，由理论和实践所检验。",
+            "hotChange": "same",
+            "hotScore": "7904474",
+            "hotTag": "0",
+            "img": "https://fyb-2.cdn.bcebos.com/hotboard_image/7317460d8b4ac52447d9631fed519a31",
+            "index": 0,
+            "indexUrl": "",
+            "query": "中国共产党为什么能的关键密码",
+            "rawUrl": "https://www.baidu.com/s?wd=%E4%B8%AD%E5%9B%BD%E5%85%B1%E4%BA%A7%E5%85%9A%E4%B8%BA%E4%BB%80%E4%B9%88%E8%83%BD%E7%9A%84%E5%85%B3%E9%94%AE%E5%AF%86%E7%A0%81",
+            "show": [],
+            "url": "https://www.baidu.com/s?wd=%E4%B8%AD%E5%9B%BD%E5%85%B1%E4%BA%A7%E5%85%9A%E4%B8%BA%E4%BB%80%E4%B9%88%E8%83%BD%E7%9A%84%E5%85%B3%E9%94%AE%E5%AF%86%E7%A0%81&sa=fyb_news&rsv_dl=fyb_news",
+            "word": "中国共产党为什么能的关键密码"
+          }
+        ],
+        "typeName": "realtime",
+        "updateTime": "1783044439"
+      }
+    ],
+    "curBoardName": "热搜榜",
+    "logid": "1788858156",
+    "platform": "pc",
+    "tabBoard": [
+      {
+        "index": 0,
+        "text": "首页",
+        "typeName": "homepage"
+      },
+      {
+        "index": 1,
+        "text": "热搜榜",
+        "typeName": "realtime"
+      },
+      {
+        "index": 2,
+        "text": "小说榜",
+        "typeName": "novel"
+      },
+      {
+        "index": 3,
+        "text": "电影榜",
+        "typeName": "movie"
+      },
+      {
+        "index": 4,
+        "text": "电视剧榜",
+        "typeName": "teleplay"
+      }
+    ],
+    "tag": [
+      {
+        "typeName": "category",
+        "text": "类型",
+        "content": ["全部类型"],
+        "curIndex": 0
+      }
+    ]
+  },
+  "error": {
+    "code": 0,
+    "message": "api response ok"
+  }
+}

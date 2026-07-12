@@ -1,6 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
+import {
+  type DigestSettings,
+  sanitizeDigestSettings,
+  validateDigestSettings,
+} from "../services/daily-digest/digest-settings"
 import { type AgentKind, MODEL_CATALOG } from "./model-catalog"
+import { MODEL_ID_MAX_LEN, isValidModelId } from "./model-id"
 
 export type AgentOverride = {
   model?: string
@@ -32,8 +38,8 @@ export const WIKI_COMPILE_MODEL_IDS = [
   "claude-haiku-4-5",
 ] as const
 export const DEFAULT_WIKI_COMPILE_MODEL = "claude-opus-4-7"
-/** primaryModel 自由字符串格式上限（防垃圾/注入；正常 model id 远短于此）。 */
-export const WIKI_COMPILE_MODEL_MAX_LEN = 64
+/** primaryModel 自由字符串格式上限（真相源移至 model-id.ts，F037 日报设置页共用）。 */
+export const WIKI_COMPILE_MODEL_MAX_LEN = MODEL_ID_MAX_LEN
 
 export type WikiCompileOverride = {
   /** 编译引擎；缺省 claude。 */
@@ -55,23 +61,9 @@ function resolveWikiCompileProvider(provider: unknown): WikiCompileProvider {
     : DEFAULT_WIKI_COMPILE_PROVIDER
 }
 
-/**
- * primaryModel 格式校验（trim 后非空 + ≤64 + 保守字符集）。
- *
- * 字符集 `[A-Za-z0-9._:/-]`：覆盖三家真实 id 形态（claude-opus-4-7 / gpt-5.4-codex /
- * gemini-3-pro / o3 / org/model）。**收紧不是洁癖**：model id 会进 `spawn(..., {shell:true})`
- * 的 argv（-m <model>），cmd.exe 元字符（& | > ^ " 空格等）可构成命令注入——单一入口
- * （本校验 + sanitize 同口径）堵死，runner 层不接任何未过此闸的字符串。
- *
- * 首字符额外限定字母数字：`-` 开头的"模型 id"（如 `--yolo`）跟在 `-m` 后会被 CLI
- * parser 当 flag 解析（clap/yargs 行为各家不一，不赌单家语义）——真实 model id 全部
- * 字母数字开头，零功能代价杀死整类 flag 注入。
- */
-const WIKI_COMPILE_MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/
+/** primaryModel 格式校验 —— 真相源在 model-id.ts（注入面 rationale 见彼处），此处保名。 */
 export function isValidWikiCompileModelId(v: string): boolean {
-  const trimmed = v.trim()
-  if (trimmed.length === 0 || trimmed.length > WIKI_COMPILE_MODEL_MAX_LEN) return false
-  return WIKI_COMPILE_MODEL_ID_RE.test(trimmed)
+  return isValidModelId(v)
 }
 
 /** 仅 agent 维度的 overrides（session 快照 / invocation configSnapshot 用——不含 wikiCompile）。 */
@@ -80,6 +72,8 @@ export type AgentOverridesConfig = Partial<Record<AgentKind, AgentOverride>>
 export type RuntimeConfig = AgentOverridesConfig & {
   /** F027 收尾补丁 AC-W1 · wiki ingest 编译 LLM 配置（前端全局默认 tab 可改，热生效）。 */
   wikiCompile?: WikiCompileOverride
+  /** F037 日报设置页 · 全局专属段（真相源/校验在 services/daily-digest/digest-settings.ts）。 */
+  dailyDigest?: DigestSettings
 }
 
 const CONFIG_FILE_NAME = "multi-agent.runtime-config.json"
@@ -210,9 +204,7 @@ export function validateRuntimeConfigInput(input: unknown): string[] {
         (typeof entry.provider !== "string" ||
           !(WIKI_COMPILE_PROVIDERS as readonly string[]).includes(entry.provider))
       ) {
-        errors.push(
-          `wikiCompile.provider must be one of: ${WIKI_COMPILE_PROVIDERS.join(", ")}`,
-        )
+        errors.push(`wikiCompile.provider must be one of: ${WIKI_COMPILE_PROVIDERS.join(", ")}`)
       }
       const pm = entry.primaryModel
       if (pm !== undefined && (typeof pm !== "string" || !isValidWikiCompileModelId(pm))) {
@@ -235,6 +227,10 @@ export function validateRuntimeConfigInput(input: unknown): string[] {
       }
     }
   }
+  // F037 日报设置段：校验真相源在 digest-settings.ts（同 wikiCompile 姿势：显式 400）
+  if (source.dailyDigest !== undefined) {
+    errors.push(...validateDigestSettings(source.dailyDigest))
+  }
   return errors
 }
 
@@ -246,15 +242,15 @@ export function validateRuntimeConfigInput(input: unknown): string[] {
  */
 export function validateSessionRuntimeConfigInput(input: unknown): string[] {
   const errors = validateRuntimeConfigInput(input)
-  if (
-    input &&
-    typeof input === "object" &&
-    !Array.isArray(input) &&
-    "wikiCompile" in (input as Record<string, unknown>)
-  ) {
-    errors.push(
-      "wikiCompile is global-only (PUT /api/runtime-config); session config must not include it",
-    )
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    // 全局专属段进 session config 即 400（否则 flushSessionPending 会带进 invocation snapshot）
+    for (const globalOnly of ["wikiCompile", "dailyDigest"] as const) {
+      if (globalOnly in (input as Record<string, unknown>)) {
+        errors.push(
+          `${globalOnly} is global-only (PUT /api/runtime-config); session config must not include it`,
+        )
+      }
+    }
   }
   return errors
 }
@@ -324,13 +320,12 @@ function sanitize(input: unknown): RuntimeConfig {
         wc.effort = entry.effort
       }
     }
-    if (
-      wc.provider !== undefined ||
-      wc.primaryModel !== undefined ||
-      wc.effort !== undefined
-    ) {
+    if (wc.provider !== undefined || wc.primaryModel !== undefined || wc.effort !== undefined) {
       result.wikiCompile = wc
     }
   }
+  // F037 日报设置段：存储层 sanitize 委托 digest-settings（非法字段/条目静默丢）
+  const dd = sanitizeDigestSettings(source.dailyDigest)
+  if (dd) result.dailyDigest = dd
   return result
 }

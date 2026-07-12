@@ -363,3 +363,32 @@ test("AC-29 PUT /api/runtime-config aggregates multiple errors across providers"
 })
 
 // 注：model / effort 仍走 sanitize 静默 drop（plan Task 8 scope 仅含 contextWindow + sealPct）
+
+// ── F037 · dailyDigest 段与 agent 整存 PUT 的共存（德彪 batchB P2 丢写窗修法）──
+
+test("F037 · agent 整存 PUT 不带 dailyDigest → 已存日报段保留；带了则以 payload 为准", async () => {
+  await withTempConfig(async () => {
+    const app = Fastify()
+    registerRuntimeConfigRoutes(app)
+    // 先经日报设置面语义存入 dailyDigest（这里直接 PUT 带段模拟已存态）
+    const seed = await app.inject({
+      method: "PUT",
+      url: "/api/runtime-config",
+      payload: { config: { dailyDigest: { sendTime: "06:00" } } },
+    })
+    assert.equal(seed.statusCode, 200)
+    // agent 页旧快照整存（无 dailyDigest 字段）→ 段不许被清
+    const agentPut = await app.inject({
+      method: "PUT",
+      url: "/api/runtime-config",
+      payload: { config: { claude: { model: "claude-opus-4-8" } } },
+    })
+    assert.equal(agentPut.statusCode, 200)
+    const got = (await app.inject({ method: "GET", url: "/api/runtime-config" })).json() as {
+      config: { dailyDigest?: { sendTime?: string }; claude?: { model?: string } }
+    }
+    await app.close()
+    assert.equal(got.config.dailyDigest?.sendTime, "06:00", "日报段被 agent 整存清掉了")
+    assert.equal(got.config.claude?.model, "claude-opus-4-8")
+  })
+})

@@ -21,8 +21,8 @@
 import fs from "node:fs"
 import path from "node:path"
 import { Cron } from "croner"
-import yaml from "yaml"
 import type { FastifyBaseLogger } from "fastify"
+import yaml from "yaml"
 import { createLogger } from "../../lib/logger"
 
 /**
@@ -88,7 +88,7 @@ export const DEFAULT_SCHEDULER_CONFIG: SchedulerConfig = {
   defaultTimezone: "Asia/Shanghai",
   source: "fallback:default",
   scheduled: [
-    // ── kind: 'cron' (7) ─────────────────────────────────────────────────
+    // ── kind: 'cron' (9) ─────────────────────────────────────────────────
     {
       name: "room-compiler-tick",
       kind: "cron",
@@ -145,13 +145,51 @@ export const DEFAULT_SCHEDULER_CONFIG: SchedulerConfig = {
       timeoutSeconds: 3600,
       windowMinutes: 5,
     },
-    // ── kind: 'startup' (1) — runtime 起来后跑一次 ───────────────────────
+    // F037 日报：07:30 主发送 + 每小时安全网（reconcile 幂等单入口，D11 触发点 ①③)。
+    // 看门狗 7200s：须高于全链真实最坏才不产生假 timeout/幽灵任务。最坏有界路径
+    // （顺序腿相加；源阶段并发取 max。07-11 三拍 r1 P2-2 德彪重算——此前 4920 账
+    // 漏了并发源 max=podcast、YouTube 字幕超时腿、SMTP）：
+    //   源阶段 max = 播客 STT 预算 900s（podcast.ts timeoutBudgetMs；X 540 次之）
+    // + summarize 4 尝试×2 模型×360s = 2880s（小孙 07-11 拍「重试 3 次宁缺勿发清单版」）
+    // + 深读 3 抓×(字幕 90s 超时+429 退避 30s+重试 90s)=630s + LLM 2×360s=720s → 1350s
+    //   （07-12 字幕命中率批：429 退避重试一次；单条 210s 已盖过非 yt 的 20s http 回落腿）
+    // + 翻译 2×360s = 720s
+    // + SMTP 发送总 deadline 120s（email-sender SMTP_SEND_DEADLINE_MS——r2 P2-2：三段
+    //   nodemailer 超时是分段/无活动窗不是总时限，真上限=sendMail 外层 race+到点关连接）
+    // = 5970s；取 7200s 留余量（每腿自有硬超时，链不可能真挂死；看门狗只为逻辑级挂死兜底）。
+    // 改任何一腿的超时/尝试次数必须重算这笔账——scheduler-config.test 账目关系测试会咬
+    {
+      name: "daily-digest",
+      kind: "cron",
+      cron: "30 7 * * *",
+      timezone: "Asia/Shanghai",
+      timeoutSeconds: 7200,
+      windowMinutes: 5,
+    },
+    {
+      name: "daily-digest-reconcile",
+      kind: "cron",
+      cron: "10 * * * *",
+      timezone: "Asia/Shanghai",
+      timeoutSeconds: 7200,
+      windowMinutes: 5,
+    },
+    // ── kind: 'startup' (2) — runtime 起来后跑一次 ───────────────────────
     {
       name: "startup-reconciler",
       kind: "startup",
       cron: "@startup",
       timezone: "Asia/Shanghai",
       timeoutSeconds: 60,
+      windowMinutes: 0,
+    },
+    // F037 日报：进程启动补发（机器 07:30 不在线场景，D11 触发点 ②）
+    {
+      name: "daily-digest-startup",
+      kind: "startup",
+      cron: "@startup",
+      timezone: "Asia/Shanghai",
+      timeoutSeconds: 7200,
       windowMinutes: 0,
     },
     // ── kind: 'watcher' (1) — fs watch，无周期 ──────────────────────────
@@ -274,15 +312,18 @@ function parseAndValidateConfig(raw: string, sourcePath: string): SchedulerConfi
   try {
     parsed = yaml.parse(raw)
   } catch (err) {
-    throw new Error(`scheduler-config: YAML parse failed at ${sourcePath}: ${(err as Error).message}`)
+    throw new Error(
+      `scheduler-config: YAML parse failed at ${sourcePath}: ${(err as Error).message}`,
+    )
   }
   if (typeof parsed !== "object" || parsed === null) {
     throw new Error(`scheduler-config: ${sourcePath} must be a YAML object`)
   }
   const obj = parsed as Record<string, unknown>
-  const defaultTimezone = typeof obj.defaultTimezone === "string"
-    ? obj.defaultTimezone
-    : DEFAULT_SCHEDULER_CONFIG.defaultTimezone
+  const defaultTimezone =
+    typeof obj.defaultTimezone === "string"
+      ? obj.defaultTimezone
+      : DEFAULT_SCHEDULER_CONFIG.defaultTimezone
 
   const rawScheduled = obj.scheduled
   if (!Array.isArray(rawScheduled)) {
@@ -333,11 +374,7 @@ function normalizeJob(
     timeoutSeconds: typeof j.timeoutSeconds === "number" ? j.timeoutSeconds : 600,
     // 范-r1 P2-1: 默认 5min；non-cron kind 默认 0
     windowMinutes:
-      typeof j.windowMinutes === "number"
-        ? j.windowMinutes
-        : kindRaw === "cron"
-          ? 5
-          : 0,
+      typeof j.windowMinutes === "number" ? j.windowMinutes : kindRaw === "cron" ? 5 : 0,
   }
 }
 

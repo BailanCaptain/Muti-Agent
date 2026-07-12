@@ -27,9 +27,9 @@ import {
   DriftDetector,
   type DriftTrigger,
 } from "../services/scheduler/drift-detector"
+import type { JobTrace } from "../services/scheduler/job-trace"
 import { assertNoConfigFile } from "../services/scheduler/scheduler-config"
 import { DriftCronFailure, bootSchedulerRuntime, runDriftCron } from "./scheduler-bootstrap"
-import type { JobTrace } from "../services/scheduler/job-trace"
 
 function safeTempDir(prefix: string): string {
   const base = path.join(process.cwd(), ".runtime")
@@ -139,6 +139,96 @@ test("AC-P3-7 a · bootSchedulerRuntime → SchedulerRuntime 起 + 7 cron 注册
   } finally {
     close()
     safeCleanup(tempDir)
+  }
+})
+
+test("F037 三拍 r2 P2-1 · reconcile=failed_summarize → startup trace=failed（r1 原症状：适配层硬编码两态把摘要全败标绿）", async () => {
+  const tempDir = safeTempDir("F037-boot-fs-")
+  const { db, close } = createDrizzleDb(path.join(tempDir, "test.sqlite"))
+  try {
+    const runtime = await bootSchedulerRuntime({
+      db,
+      log: silentLogger(),
+      rootDir: tempDir,
+      dailyDigest: {
+        reconcile: async () => ({
+          status: "failed_summarize" as const,
+          businessDate: "2026-07-11",
+        }),
+      },
+    })
+    assert.ok(runtime)
+    const traces = await waitForTrace(tempDir, "daily-digest-startup")
+    assert.ok(traces.length > 0, "daily-digest-startup trace 应落盘")
+    const last = traces[traces.length - 1]
+    assert.equal(last.status, "failed", "failed_summarize 必须以 failed trace 收场（曾被标绿）")
+    assert.ok(
+      JSON.stringify(last).includes("failed_summarize"),
+      "trace 错误信息应携带状态名（告警链可读因）",
+    )
+    await runtime.stop()
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+})
+
+test("F037 h · dailyDigest 注入 → 2 cron 注册 + startup 触发 reconcile + 未注入且无凭证时默认不注册", async () => {
+  const tempDir = safeTempDir("F037-boot-h-")
+  const dbPath = path.join(tempDir, "test.sqlite")
+  const { db, close } = createDrizzleDb(dbPath)
+  const calls: Date[] = []
+  try {
+    const runtime = await bootSchedulerRuntime({
+      db,
+      log: silentLogger(),
+      rootDir: tempDir,
+      dailyDigest: {
+        reconcile: async (now: Date) => {
+          calls.push(now)
+          return { status: "skipped_not_due" as const, businessDate: "2026-07-03" }
+        },
+      },
+    })
+    assert.ok(runtime)
+    const names = runtime
+      .health()
+      .jobs.map((j) => j.name)
+      .sort()
+    assert.ok(names.includes("daily-digest"), "daily-digest cron 应注册")
+    assert.ok(names.includes("daily-digest-reconcile"), "安全网 cron 应注册")
+    assert.equal(names.length, 9, "7 原有 + 2 digest cron")
+
+    // startup 触发点（D11 ②）：boot 即跑一次 reconcile
+    const traces = await waitForTrace(tempDir, "daily-digest-startup")
+    assert.ok(traces.length > 0, "daily-digest-startup trace 应落盘")
+    assert.equal(traces[traces.length - 1].status, "ok")
+    assert.ok(calls.length > 0, "startup 应真调 reconcile")
+
+    await runtime.stop()
+  } finally {
+    close()
+    safeCleanup(tempDir)
+  }
+
+  // 负断言：未注入 + 无 SMTP env + 无显式开关 → 不注册（测试/CI 不打真网）
+  const tempDir2 = safeTempDir("F037-boot-h2-")
+  const { db: db2, close: close2 } = createDrizzleDb(path.join(tempDir2, "test.sqlite"))
+  const savedFlag = process.env.MULTI_AGENT_DIGEST_ENABLED
+  const savedUser = process.env.MULTI_AGENT_DIGEST_SMTP_USER
+  delete process.env.MULTI_AGENT_DIGEST_ENABLED
+  delete process.env.MULTI_AGENT_DIGEST_SMTP_USER
+  try {
+    const runtime2 = await bootSchedulerRuntime({ db: db2, log: silentLogger(), rootDir: tempDir2 })
+    assert.ok(runtime2)
+    const names2 = runtime2.health().jobs.map((j) => j.name)
+    assert.ok(!names2.includes("daily-digest"), "无凭证/无开关不应注册 daily-digest")
+    await runtime2.stop()
+  } finally {
+    if (savedFlag !== undefined) process.env.MULTI_AGENT_DIGEST_ENABLED = savedFlag
+    if (savedUser !== undefined) process.env.MULTI_AGENT_DIGEST_SMTP_USER = savedUser
+    close2()
+    safeCleanup(tempDir2)
   }
 })
 
@@ -429,9 +519,14 @@ test("修1 runDriftCron · 开了 draft → pushDriftAlert 收到 buildDriftAler
     ],
   })
   const alerts: DriftAlert[] = []
-  const out = await runDriftCron(drift, (a) => {
+  const out = await runDriftCron(
+    drift,
+    (a) => {
       alerts.push(a)
-    }, "R-201", silentLogger())
+    },
+    "R-201",
+    silentLogger(),
+  )
 
   assert.equal(out.status, "ok")
   assert.equal(out.result.draftsOpened.length, 2)
@@ -445,9 +540,14 @@ test("修1 runDriftCron · 开了 draft → pushDriftAlert 收到 buildDriftAler
 test("修1 runDriftCron · 零 trigger → 不告警 + status ok（不打扰小孙）", async () => {
   const drift = driftWith({ triggers: [] })
   const alerts: DriftAlert[] = []
-  const out = await runDriftCron(drift, (a) => {
+  const out = await runDriftCron(
+    drift,
+    (a) => {
       alerts.push(a)
-    }, "R-201", silentLogger())
+    },
+    "R-201",
+    silentLogger(),
+  )
   assert.equal(out.status, "ok")
   assert.equal(alerts.length, 0, "无 draft 无失败 → 不推告警")
 })
@@ -547,9 +647,10 @@ test("修1 runDriftCron · 有失败 → 抛 DriftCronFailure 前仍写 warning�
   })
   const written: DriftDetectionResult[] = []
   await assert.rejects(
-    () => runDriftCron(drift, undefined, "R-201", silentLogger(), async (r) => {
-      written.push(r)
-    }),
+    () =>
+      runDriftCron(drift, undefined, "R-201", silentLogger(), async (r) => {
+        written.push(r)
+      }),
     (err: unknown) => err instanceof DriftCronFailure,
   )
   assert.equal(written.length, 1, "失败也要先写 warning 再抛")

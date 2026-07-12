@@ -340,3 +340,38 @@ describe("SonnetRunner (F027 P12 decision extractor — 小孙拍 sonnet-4-6)", 
     assert.equal(typeof sonnetRes.durationMs, "number")
   })
 })
+
+describe("signal 取消（F037 播客批德彪 r2 P1）", () => {
+  it("预 abort：不 spawn、立即 error:aborted", async () => {
+    let spawned = 0
+    const spawn = (() => {
+      spawned++
+      const proc: any = new EventEmitter()
+      proc.stdout = new EventEmitter()
+      proc.stderr = new EventEmitter()
+      proc.stdin = { write: () => {}, end: () => {} }
+      proc.kill = () => {}
+      return proc as ChildProcess
+    }) as any
+    const ac = new AbortController()
+    ac.abort()
+    const r = await createHaikuRunner({ spawn }).runPrompt("p", { signal: ac.signal })
+    assert.equal(r.ok, false)
+    assert.equal(r.error, "aborted")
+    assert.equal(spawned, 0)
+  })
+
+  it("运行中 abort：kill 子进程并立即 settle error:aborted", async () => {
+    const { spawn, killSpy } = fakeSpawn({ code: 0, stdout: "late", delayMs: 5_000 })
+    const ac = new AbortController()
+    const p = createHaikuRunner({ spawn }).runPrompt("p", {
+      timeoutMs: 60_000,
+      signal: ac.signal,
+    })
+    setTimeout(() => ac.abort(), 20)
+    const r = await p
+    assert.equal(r.ok, false)
+    assert.equal(r.error, "aborted")
+    assert.equal(killSpy.mock.callCount(), 1)
+  })
+})
