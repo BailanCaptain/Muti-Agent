@@ -54,6 +54,51 @@ function makeFakeSpawn(opts: FakeProcOpts = {}) {
 }
 
 describe("createCodexPromptRunner", () => {
+  it("signal 已取消 → 不 spawn，直接返回 aborted", async () => {
+    const fake = makeFakeSpawn({ stdout: "不应执行" })
+    const ac = new AbortController()
+    ac.abort()
+    const r = await createCodexPromptRunner({ spawn: fake.spawn }).runPrompt("p", {
+      signal: ac.signal,
+    })
+    assert.equal(r.ok, false)
+    assert.equal(r.error, "aborted")
+    assert.equal(fake.calls.length, 0)
+  })
+
+  it("运行中取消 → killTree 整树终止并返回 aborted", async () => {
+    const killed: unknown[] = []
+    let plainKilled = 0
+    const hangingSpawn = () => {
+      const proc = new EventEmitter() as never as EventEmitter & {
+        stdin: { write: () => void; end: () => void; on: () => void }
+        stdout: EventEmitter
+        stderr: EventEmitter
+        kill: () => void
+      }
+      proc.stdin = { write: () => {}, end: () => {}, on: () => {} }
+      proc.stdout = new EventEmitter()
+      proc.stderr = new EventEmitter()
+      proc.kill = () => {
+        plainKilled++
+      }
+      return proc as never
+    }
+    const ac = new AbortController()
+    const pending = createCodexPromptRunner({
+      spawn: hangingSpawn,
+      killTree: (proc) => killed.push(proc),
+    }).runPrompt("p", { timeoutMs: 20, signal: ac.signal })
+    ac.abort()
+    const r = await pending
+    assert.equal(r.ok, false)
+    assert.equal(r.error, "aborted")
+    assert.equal(killed.length, 1)
+    assert.equal(plainKilled, 0, "Windows shell runner 取消不能只杀 cmd 壳")
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    assert.equal(killed.length, 1, "aborted settle 后必须清 timer，不能再按 timeout 二次树杀")
+  })
+
   it("args = exec -s read-only --skip-git-repo-check；prompt 经 stdin；stdout trim 返回", async () => {
     const fake = makeFakeSpawn({ stdout: "  compiled-json  " })
     const runner = createCodexPromptRunner({ spawn: fake.spawn })

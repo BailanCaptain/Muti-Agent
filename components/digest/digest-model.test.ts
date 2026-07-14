@@ -1,3 +1,4 @@
+import { DIGEST_GH_KINDS } from "@multi-agent/shared"
 import { describe, expect, it } from "vitest"
 import {
   ALL_TAB,
@@ -6,6 +7,8 @@ import {
   checkLine,
   filterByTab,
   githubGroups,
+  githubMetaLine,
+  overviewOf,
   podcastEpisodes,
   rawItems,
   resolvePicks,
@@ -161,18 +164,105 @@ describe("digest-model（网页版分栏纯函数层）", () => {
   })
 
   it("githubGroups：按榜种分组全量不限量；splitGhSnippet 解析今日/本周", () => {
+    expect(DIGEST_GH_KINDS.map((kind) => kind.label)).toEqual([
+      "增长榜 · 今日",
+      "周榜",
+      "新秀 · 7 天新仓",
+      "月榜",
+    ])
     const groups = githubGroups(day)
     expect(groups.map((g) => g.label)).toEqual(["增长榜 · 今日", "周榜"])
     expect(splitGhSnippet(day.items[6].rawSnippet).meta).toBe("▲ 320 今日　★9,000　Go")
     expect(splitGhSnippet(day.items[7].rawSnippet).meta).toBe("▲ 6,989 本周　★8,695　Python")
   })
 
+  it("GitHub 状态沿用原数据行：仅增长榜/新秀榜显示，周榜/月榜忽略脏状态", () => {
+    const daily = {
+      ...day.items[6],
+      githubMeta: { rankStatus: { kind: "streak" as const, days: 2 } },
+    }
+    const weekly = {
+      ...day.items[7],
+      githubMeta: { rankStatus: { kind: "new" as const } },
+    }
+    expect(githubMetaLine(daily)).toBe("▲ 320 今日　★9,000　Go　连续 2 日上榜")
+    expect(githubMetaLine(weekly)).toBe("▲ 6,989 本周　★8,695　Python")
+    const newcomer = {
+      ...day.items[6],
+      sourceId: "github-ai-newcomers",
+      rawSnippet: "新仓 7 天 ★1,200 · AI agent search",
+      githubMeta: { rankStatus: { kind: "returning" as const } },
+    }
+    expect(githubMetaLine(newcomer)).toBe("新仓 7 天　★1,200　重新上榜")
+  })
+
   it("rawItems：互动量倒序，无互动量按时间倒序垫底", () => {
     expect(rawItems(day, "ai").map((i) => i.id)).toEqual(["a1", "a2"])
   })
 
-  it("checkLine：收录走 counts 预滤后口径（德彪 r-final P2-1）+ GitHub 榜单单列", () => {
-    expect(checkLine(day)).toBe("本期扫描 1/2 源 · 收录 8 条 · 精选 6 条 · GitHub 榜单 2 条")
+  it("B027 v2：picks/raw/GitHub 只按 publication join，raw pool 未审核条目不得在网页回流", () => {
+    const v2: DigestDayResponse = {
+      ...day,
+      summary: day.summary && {
+        ...day.summary,
+        schemaVersion: 2,
+        publication: {
+          schemaVersion: 2,
+          businessDate: day.businessDate,
+          overview: ["要点"],
+          sections: [
+            {
+              category: "ai",
+              entries: [{ itemId: "a1", role: "hero", summaryZh: "摘要一", displayTag: "推理" }],
+            },
+            { category: "github", entries: [{ itemId: "g2", role: "list" }] },
+          ],
+        },
+      },
+    }
+
+    expect(resolvePicks(v2, "ai").map((pick) => pick.item.id)).toEqual(["a1"])
+    expect(rawItems(v2, "ai").map((item) => item.id)).toEqual(["a1"])
+    expect(githubGroups(v2).flatMap((group) => group.items.map((item) => item.id))).toEqual(["g2"])
+  })
+
+  it("B027 v2 fail-closed：schemaVersion=2 但 publication 缺失时不回落 raw discovery", () => {
+    const broken: DigestDayResponse = {
+      ...day,
+      summary: day.summary && { ...day.summary, schemaVersion: 2 },
+    }
+    expect(resolvePicks(broken, "ai")).toEqual([])
+    expect(rawItems(broken, "ai")).toEqual([])
+    expect(githubGroups(broken)).toEqual([])
+  })
+
+  it("B027 overview：v2 只读 publication；缺失 fail-closed；legacy 才回落 summary", () => {
+    const v2: DigestDayResponse = {
+      ...day,
+      summary: day.summary && {
+        ...day.summary,
+        schemaVersion: 2,
+        summary: { ...day.summary.summary, overview: ["被拒内容的旧速览"] },
+        publication: {
+          schemaVersion: 2,
+          businessDate: day.businessDate,
+          overview: ["最终获批速览"],
+          sections: [],
+        },
+      },
+    }
+    expect(overviewOf(v2)).toEqual(["最终获批速览"])
+    expect(
+      overviewOf({
+        ...v2,
+        summary: v2.summary && { ...v2.summary, publication: undefined },
+      }),
+    ).toEqual([])
+    expect(overviewOf(day)).toEqual(["要点"])
+  })
+
+  it("checkLine：收录走 counts 预滤后口径（德彪 r-final P2-1）+ 开源榜单单列", () => {
+    expect(checkLine(day)).toBe("本期扫描 1/2 源 · 收录 8 条 · 精选 6 条 · 开源榜单 2 条")
   })
 
   it("checkLine：老归档无 counts 回落全量数（无 GitHub 段）", () => {
@@ -181,6 +271,34 @@ describe("digest-model（网页版分栏纯函数层）", () => {
       summary: day.summary ? { ...day.summary, counts: undefined as never } : null,
     }
     expect(checkLine(legacy)).toBe("本期扫描 1/2 源 · 收录 8 条 · 精选 6 条")
+  })
+
+  it("B027 checkLine：v2 精选只按最终 publication 卡片计数，预算裁掉/审核拒绝不回流", () => {
+    const v2: DigestDayResponse = {
+      ...day,
+      summary: day.summary && {
+        ...day.summary,
+        schemaVersion: 2,
+        counts: { content: 6, github: 2 },
+        publication: {
+          schemaVersion: 2,
+          businessDate: day.businessDate,
+          overview: [],
+          sections: [
+            {
+              category: "ai",
+              entries: [
+                { itemId: "a1", role: "hero", summaryZh: "摘要一" },
+                { itemId: "a2", role: "brief" },
+              ],
+            },
+            { category: "github", entries: [{ itemId: "g1", role: "list" }] },
+          ],
+        },
+      },
+    }
+
+    expect(checkLine(v2)).toBe("本期扫描 1/2 源 · 收录 8 条 · 精选 1 条 · 开源榜单 2 条")
   })
 
   it("safeExternalHref：只放行 http(s)——React 只拦 javascript:，data: 要自己守（P2-3）", () => {
@@ -271,9 +389,9 @@ describe("#33 播客速递（07-10）", () => {
 
   it("checkLine：收录含播客 + 播客单列；老归档无 podcast 键不受影响", () => {
     expect(checkLine(withPodcast)).toBe(
-      "本期扫描 1/2 源 · 收录 10 条 · 精选 6 条 · GitHub 榜单 2 条 · 播客 2 集",
+      "本期扫描 1/2 源 · 收录 10 条 · 精选 6 条 · 开源榜单 2 条 · 播客 2 集",
     )
-    expect(checkLine(day)).toBe("本期扫描 1/2 源 · 收录 8 条 · 精选 6 条 · GitHub 榜单 2 条")
+    expect(checkLine(day)).toBe("本期扫描 1/2 源 · 收录 8 条 · 精选 6 条 · 开源榜单 2 条")
   })
 })
 

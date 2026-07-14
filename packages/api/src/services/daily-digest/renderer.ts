@@ -3,16 +3,24 @@ import {
   DIGEST_COMMUNITY_TAB_FALLBACK,
   DIGEST_COMMUNITY_TAB_ORDER,
   DIGEST_GH_KINDS,
+  DIGEST_GITHUB_SECTION_LABEL,
   DIGEST_X_TAB_MORE,
   DIGEST_X_TAB_ORG,
   DIGEST_X_TAB_PERSON,
 } from "@multi-agent/shared"
+import { formatGithubRankStatus } from "./github-rank-state"
 import { AI_TAG_ORDER, HOT_TAG_ORDER } from "./section-tags"
 import { sourceLabel } from "./source-labels"
 import { deriveDeepReadSourceIds } from "./sources/registry"
 import { X_GROUP_ORG, X_GROUP_PERSON } from "./sources/x-handle-groups"
 import { diversifyBySource } from "./summarizer"
-import type { DigestCategory, NormalizedItem, RenderedDigest, SourceFetchResult } from "./types"
+import type {
+  DigestCategory,
+  DigestSummary,
+  NormalizedItem,
+  RenderedDigest,
+  SourceFetchResult,
+} from "./types"
 
 /**
  * T11 渲染器 v4（AC2 版式 + AC12 邮件兼容 · Bento 大小格混排 + 顶部导览，小孙 07-04 选型 ② 并拍板）：
@@ -80,10 +88,10 @@ const SECTION_META: SectionMeta[] = [
   },
   {
     category: "github",
-    label: "GitHub 增长榜",
+    label: DIGEST_GITHUB_SECTION_LABEL,
     en: "TRENDING REPOS · TODAY",
     anchor: "sec-gh",
-    nav: "开源增长",
+    nav: DIGEST_GITHUB_SECTION_LABEL,
     hero: "榜首",
   },
 ]
@@ -127,6 +135,11 @@ function ghKindLabel(kind: string): string {
   return DIGEST_GH_KINDS.find((k) => k.sourceId === kind)?.label ?? sourceLabel(kind)
 }
 
+function githubRankStatusLabel(item: NormalizedItem): string | null {
+  if (!new Set(["github-trending-daily", "github-ai-newcomers"]).has(item.sourceId)) return null
+  return formatGithubRankStatus(item.githubMeta?.rankStatus ?? null)
+}
+
 export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -149,17 +162,21 @@ function weekdayZh(businessDate: string): string {
 export interface RenderInput {
   businessDate: string
   summary: import("./types").DigestSummary
+  /** B027 v2：存在时是唯一发布真相源；raw items 只作 lookup，不再有补位权限。 */
+  publication?: import("./types").DigestPublicationV2
   items: NormalizedItem[]
   results: SourceFetchResult[]
-  /** 周一 github 条目直接渲染（不走 LLM） */
+  /** GitHub 原始 lookup；v2 只有 publication 明确列出的 AI 合格仓库可沿既有榜单样式渲染。 */
   githubItems?: NormalizedItem[]
-  /** #33 播客速递：转写提炼完成的新集直接渲染（rawSnippet=要点简报，不走 LLM 挑选） */
+  /** 播客原始 lookup；v2 单集经语义审核后才沿既有列表样式渲染。 */
   podcastItems?: NormalizedItem[]
   notes?: string[]
   /** 网页版基址：配置则刊头/页脚带「网页版全量分栏 →」链接（邮件是精选快照，可点切换在网页） */
   webBaseUrl?: string
   /** 邮件密度（设置页）：每板块「其余速览」行数，默认 12；0 = 关掉速览区 */
   restOverviewRows?: number
+  /** v2 过滤 raw lookup 后仍保留原「本期扫描」统计口径。 */
+  scannedItemCount?: number
 }
 
 // 暖金 token：从产品 OKLCH 真相源换算的邮件可用 hex（邮件客户端不认 OKLCH）——数值对齐 dashboard-rank/DESIGN token，禁冷色
@@ -335,7 +352,7 @@ function ghListCard(
     .map((e, i) => {
       const href = safeHref(e.item.canonicalUrl)
       const gh = splitGithubSnippet(e.pick.summaryZh)
-      const meta = gh ? gh.meta : ""
+      const meta = [gh ? gh.meta : "", githubRankStatusLabel(e.item)].filter(Boolean).join(" · ")
       const desc = clampText(e.pick.descZh ?? (gh ? gh.desc : e.pick.summaryZh), 90)
       const divider =
         i > 0
@@ -410,13 +427,11 @@ function navCard(
 function adaptGithubMeta(base: SectionMeta, githubItems: NormalizedItem[]): SectionMeta {
   const kinds = new Set(githubItems.map((g) => g.sourceId))
   if (kinds.size <= 1) {
-    if (kinds.has("github-trending-weekly"))
-      return { ...base, label: "GitHub 周榜", en: "TRENDING REPOS · WEEKLY", nav: "开源周榜" }
-    if (kinds.has("github-trending-monthly"))
-      return { ...base, label: "GitHub 月榜", en: "TRENDING REPOS · MONTHLY", nav: "开源月榜" }
+    if (kinds.has("github-trending-weekly")) return { ...base, en: "TRENDING REPOS · WEEKLY" }
+    if (kinds.has("github-trending-monthly")) return { ...base, en: "TRENDING REPOS · MONTHLY" }
     return base
   }
-  return { ...base, label: "GitHub 榜单", en: "TRENDING REPOS", nav: "开源榜单" }
+  return { ...base, en: "TRENDING REPOS" }
 }
 
 /**
@@ -490,6 +505,61 @@ function pushItemMd(
 const BRIEFING_SOURCE_IDS: ReadonlySet<string> = new Set(deriveDeepReadSourceIds())
 
 export function renderDigest(input: RenderInput): RenderedDigest {
+  // B027 v2 适配层：只把 publication 明确批准的条目投影到既有 renderer 数据面，
+  // 下方 HTML/CSS/文案与布局函数完全不动。递归一次后 publication 清空，避免双真相源。
+  if (input.publication) {
+    const approvedByCategory = new Map<DigestCategory, Set<string>>()
+    for (const section of input.publication.sections) {
+      approvedByCategory.set(
+        section.category,
+        new Set(section.entries.flatMap((entry) => [entry.itemId, ...(entry.alsoItemIds ?? [])])),
+      )
+    }
+    const publishedSections: DigestSummary["sections"] = input.publication.sections
+      .filter((section) => section.category !== "github" && section.category !== "podcast")
+      .map((section) => {
+        const picks = section.entries
+          .filter((entry) => entry.role === "hero" || entry.role === "card")
+          .map((entry) => ({
+            itemId: entry.itemId,
+            summaryZh: entry.summaryZh ?? "",
+            ...(entry.displayTag ? { tag: entry.displayTag } : {}),
+            ...(entry.alsoItemIds?.length ? { alsoItemIds: entry.alsoItemIds } : {}),
+          }))
+          .filter((pick) => pick.summaryZh.length > 0)
+        const briefItemIds = section.entries
+          .filter((entry) => entry.role === "brief")
+          .map((entry) => entry.itemId)
+        return {
+          category: section.category,
+          picks,
+          ...(briefItemIds.length ? { briefItemIds } : {}),
+        }
+      })
+    const communityApproved = [...(approvedByCategory.get("community") ?? new Set<string>())]
+    const scannedItemCount =
+      input.scannedItemCount ??
+      input.items.length + (input.githubItems?.length ?? 0) + (input.podcastItems?.length ?? 0)
+    return renderDigest({
+      ...input,
+      publication: undefined,
+      summary: {
+        ...input.summary,
+        overview: input.publication.overview,
+        sections: publishedSections,
+        communityDropIds: undefined,
+        communityFedIds: communityApproved.length ? communityApproved : undefined,
+      },
+      items: input.items.filter((item) => approvedByCategory.get(item.category)?.has(item.id)),
+      githubItems: (input.githubItems ?? []).filter((item) =>
+        approvedByCategory.get("github")?.has(item.id),
+      ),
+      podcastItems: (input.podcastItems ?? []).filter((item) =>
+        approvedByCategory.get("podcast")?.has(item.id),
+      ),
+      scannedItemCount,
+    })
+  }
   const itemsById = new Map(input.items.map((i) => [i.id, i]))
   for (const g of input.githubItems ?? []) itemsById.set(g.id, g)
   for (const p of input.podcastItems ?? []) itemsById.set(p.id, p)
@@ -553,9 +623,7 @@ export function renderDigest(input: RenderInput): RenderedDigest {
   // 审查集合闭合（德彪 hitrate-r1 P1）：community 喂样有 36 上限，视野外条目 LLM 无从
   // 反选——速览候选必须限于「LLM 看过」的集合，否则未审八卦帖补位绕过反选。
   // fedIds 缺失（老 summary/降级清单版）= fail-open 不限（此时反选字段同样缺失，语义自洽）。
-  const communityFed = input.summary.communityFedIds
-    ? new Set(input.summary.communityFedIds)
-    : null
+  const communityFed = input.summary.communityFedIds ? new Set(input.summary.communityFedIds) : null
   // 社区速览拦截谓词：保留门与 restAll 共用**同一函数**（jtw-r3 同式纪律的强化形态）；
   // 非 community 条目恒 false（drop 构建已滤板块、fed 只约束 community）。
   const communityRestBlocked = (i: NormalizedItem): boolean =>
@@ -682,8 +750,9 @@ export function renderDigest(input: RenderInput): RenderedDigest {
         for (const e of entries) {
           // md 版同享 descZh：meta 数据行 + 中文描述拼展示串（不再进任何 parser）
           const gh = splitGithubSnippet(e.pick.summaryZh)
+          const rankStatus = githubRankStatusLabel(e.item)
           const mdSummary = gh
-            ? [gh.meta, e.pick.descZh ?? gh.desc].filter(Boolean).join("　")
+            ? [gh.meta, rankStatus, e.pick.descZh ?? gh.desc].filter(Boolean).join("　")
             : (e.pick.descZh ?? e.pick.summaryZh)
           pushItemMd(mdParts, e.item, { ...e.pick, summaryZh: mdSummary }, e.alsoLabels)
         }
@@ -794,6 +863,7 @@ export function renderDigest(input: RenderInput): RenderedDigest {
   // 质量层 4 体检行（主表 §2，抄 AINews "We checked 12 subreddits, 544 Twitters"）：
   // 透明度 = 信任感；扫描量与精选量同框，讲清筛选力度
   const scannedCount =
+    input.scannedItemCount ??
     input.items.length + (input.githubItems?.length ?? 0) + (input.podcastItems?.length ?? 0)
   const pickCount = chips.reduce((n, c) => n + c.count, 0)
   const checkLine = `本期扫描 ${okCount}/${input.results.length} 源 · 收录 ${scannedCount} 条 · 精选 ${pickCount} 条`
@@ -811,7 +881,7 @@ export function renderDigest(input: RenderInput): RenderedDigest {
     ...notes,
   )
 
-  const masthead = `<tr><td style="padding:0 0 16px 0;"><a name="top"></a><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.ink};border:1px solid ${C.ink};border-radius:14px;"><tr><td style="padding:28px 26px;"><div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:4px;color:${C.goldLight};padding-bottom:10px;">MULTI-AGENT · DAILY BRIEF</div><div style="font-family:${SERIF};font-size:34px;font-weight:700;letter-spacing:2px;color:${C.white};line-height:1.1;">每日简报</div><div style="height:14px;line-height:14px;font-size:0;">&nbsp;</div><div style="border-top:2px solid ${C.accent};width:52px;font-size:0;line-height:0;">&nbsp;</div><div style="height:14px;line-height:14px;font-size:0;">&nbsp;</div><div style="font-family:${SANS};font-size:13px;letter-spacing:1px;color:${C.goldLight};">${escapeHtml(input.businessDate)}${weekday ? `　${escapeHtml(weekday)}` : ""}${input.summary.degraded ? "　· 清单版" : ""}</div><div style="font-family:${SANS};font-size:13px;letter-spacing:1px;color:${C.cream};padding-top:5px;">AI · 社区动态 · 今日热点 · GitHub 榜单</div><div style="font-family:${SANS};font-size:12px;letter-spacing:1px;color:${C.goldLight};padding-top:8px;">${escapeHtml(checkLine)}</div>${webUrl ? `<div style="font-family:${SANS};font-size:12px;letter-spacing:1px;padding-top:8px;"><a href="${safeHref(webUrl)}" style="color:${C.goldLight};text-decoration:underline;">网页版全量分栏 →</a></div>` : ""}</td></tr></table></td></tr>`
+  const masthead = `<tr><td style="padding:0 0 16px 0;"><a name="top"></a><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.ink};border:1px solid ${C.ink};border-radius:14px;"><tr><td style="padding:28px 26px;"><div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:4px;color:${C.goldLight};padding-bottom:10px;">MULTI-AGENT · DAILY BRIEF</div><div style="font-family:${SERIF};font-size:34px;font-weight:700;letter-spacing:2px;color:${C.white};line-height:1.1;">每日简报</div><div style="height:14px;line-height:14px;font-size:0;">&nbsp;</div><div style="border-top:2px solid ${C.accent};width:52px;font-size:0;line-height:0;">&nbsp;</div><div style="height:14px;line-height:14px;font-size:0;">&nbsp;</div><div style="font-family:${SANS};font-size:13px;letter-spacing:1px;color:${C.goldLight};">${escapeHtml(input.businessDate)}${weekday ? `　${escapeHtml(weekday)}` : ""}${input.summary.degraded ? "　· 清单版" : ""}</div><div style="font-family:${SANS};font-size:13px;letter-spacing:1px;color:${C.cream};padding-top:5px;">AI · 社区动态 · 今日热点 · ${DIGEST_GITHUB_SECTION_LABEL}</div><div style="font-family:${SANS};font-size:12px;letter-spacing:1px;color:${C.goldLight};padding-top:8px;">${escapeHtml(checkLine)}</div>${webUrl ? `<div style="font-family:${SANS};font-size:12px;letter-spacing:1px;padding-top:8px;"><a href="${safeHref(webUrl)}" style="color:${C.goldLight};text-decoration:underline;">网页版全量分栏 →</a></div>` : ""}</td></tr></table></td></tr>`
 
   const footer = `<tr><td style="padding:22px 0 0 0;"><div style="border-top:1px solid ${C.goldLight};font-size:0;line-height:0;">&nbsp;</div></td></tr><tr><td align="center" style="padding:18px 0 6px 0;"><div style="font-family:${SANS};font-size:12px;line-height:1.9;color:${C.sub};">源健康：${escapeHtml(healthLine)}</div>${webUrl ? `<div style="font-family:${SANS};font-size:12px;line-height:1.9;"><a href="${safeHref(webUrl)}" style="color:${C.gold};text-decoration:underline;">网页版全量分栏（可点切换）→</a></div>` : ""}${notes.length ? `<div style="font-family:${SANS};font-size:12px;line-height:1.9;color:${C.sub};">${notes.map(escapeHtml).join("<br>")}</div>` : ""}<div style="font-family:${SANS};font-size:12px;line-height:1.9;color:${C.sub};"><span style="color:${C.gold};">◆</span>&nbsp; DailyBrief · Multi-Agent · F037 每日简报</div></td></tr>`
 
@@ -833,5 +903,11 @@ export function renderDigest(input: RenderInput): RenderedDigest {
     "</body></html>",
   ].join("\n")
 
-  return { subject, html, markdown: mdParts.join("\n"), restItemIds }
+  return {
+    subject,
+    html,
+    markdown: mdParts.join("\n"),
+    restItemIds,
+    displayedItemIds: [...new Set([...usedIds, ...restItemIds])],
+  }
 }

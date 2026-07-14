@@ -8,6 +8,7 @@ import {
   resolveEffectiveDigestSettings,
   validateDigestSettings,
 } from "../services/daily-digest/digest-settings"
+import { DIGEST_EMERGENCY_FALLBACK } from "../services/daily-digest/model-runner"
 import { sourceLabel } from "../services/daily-digest/source-labels"
 import { listAllSourceMeta } from "../services/daily-digest/sources/registry"
 
@@ -96,6 +97,8 @@ export function registerDailyDigestRoutes(app: FastifyInstance, opts: DailyDiges
       enabled: opts.enabled ?? false,
       stored,
       effective: resolveEffectiveDigestSettings(env, stored ?? undefined),
+      // 固定第三层，只读下发给设置页展示；不属于 DigestSettings，PUT 会按 unknown field 拒绝。
+      emergencyFallback: DIGEST_EMERGENCY_FALLBACK,
       // 纯 .env 基线（stored=∅ 的生效值）：前端「与默认相同的字段不落存储」的 diff 基准，
       // 免得前端复刻内置默认常量
       seedEffective: resolveEffectiveDigestSettings(env, undefined),

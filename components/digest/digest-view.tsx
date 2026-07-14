@@ -1,5 +1,6 @@
 "use client"
 
+import { DIGEST_GITHUB_SECTION_LABEL } from "@multi-agent/shared"
 import { AlertTriangle, ArrowUpRight, ChevronDown, Settings as SettingsIcon } from "lucide-react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
@@ -13,7 +14,9 @@ import {
   checkLine,
   filterByTab,
   githubGroups,
+  githubMetaLine,
   labelOf,
+  overviewOf,
   podcastEpisodes,
   rawItems,
   resolvePicks,
@@ -216,7 +219,7 @@ function GithubSection({ day }: { day: DigestDayResponse }) {
     <section className="pt-8">
       <div className="border-l-4 border-accent pl-3">
         <div className="text-[10px] font-bold tracking-[3px] text-accent-600">TRENDING REPOS</div>
-        <h2 className="pt-0.5 text-xl font-bold text-slate-900">GitHub 榜单</h2>
+        <h2 className="pt-0.5 text-xl font-bold text-slate-900">{DIGEST_GITHUB_SECTION_LABEL}</h2>
       </div>
       <div className="pt-3">
         {tabs.length >= 2 && (
@@ -229,6 +232,7 @@ function GithubSection({ day }: { day: DigestDayResponse }) {
         <ol className="divide-y divide-slate-200 rounded-2xl border border-slate-200 bg-surface-elevated">
           {current.items.map((repo, i) => {
             const gh = splitGhSnippet(repo.rawSnippet)
+            const meta = githubMetaLine(repo)
             return (
               <li key={repo.id} className="flex gap-3 p-3.5">
                 <span className="w-6 shrink-0 pt-0.5 text-right text-xs font-bold text-accent-600">
@@ -243,8 +247,8 @@ function GithubSection({ day }: { day: DigestDayResponse }) {
                   >
                     {repo.title}
                   </a>
-                  {gh.meta && (
-                    <div className="pt-0.5 text-[11px] font-medium text-accent-600">{gh.meta}</div>
+                  {meta && (
+                    <div className="pt-0.5 text-[11px] font-medium text-accent-600">{meta}</div>
                   )}
                   {(() => {
                     // 中文化补全（07-06）：翻译 map 命中用中文 desc，缺省回落英文
@@ -296,6 +300,7 @@ export function DigestView({ date }: { date: string }) {
   }, [date])
 
   const failed = (day?.summary?.sourceHealth ?? []).filter((h) => h.status !== "ok")
+  const overview = day ? overviewOf(day) : []
 
   return (
     <div className="min-h-screen bg-surface-sunken">
@@ -362,13 +367,13 @@ export function DigestView({ date }: { date: string }) {
           </div>
         )}
 
-        {day && (day.summary?.summary.overview.length ?? 0) > 0 && (
+        {day && overview.length > 0 && (
           <div className="mt-4 rounded-2xl border border-slate-200 bg-surface-elevated p-5">
             <div className="text-[10px] font-bold tracking-[3px] text-accent-600">
               今日速览 · AT A GLANCE
             </div>
             <ul className="space-y-1.5 pt-2">
-              {day.summary?.summary.overview.map((o) => (
+              {overview.map((o) => (
                 <li key={o} className="flex gap-2 text-[13.5px] leading-relaxed text-slate-700">
                   <span className="text-accent-600">◆</span>
                   <span>{o}</span>

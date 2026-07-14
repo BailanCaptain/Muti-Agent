@@ -181,7 +181,13 @@ describe("createYtSubsFetcher", () => {
     const state2: SpawnState = { calls: [], envs: [], behavior: "no-output" }
     const f2 = createYtSubsFetcher({ tmpDir, spawnImpl: mockSpawn(state2) })
     await f2.fetchSubtitleText(VIDEO)
-    assert.equal(state2.envs[0]?.PATH, process.env.PATH, "不注入时 PATH 不得被改写")
+    // Windows 的 process.env 键大小写不敏感，但对象展开会保留枚举名 `Path`；测试读取
+    // 必须兼容两种拼法，否则子进程环境明明原样透传也会被误报成 PATH 丢失。
+    assert.equal(
+      state2.envs[0]?.PATH ?? state2.envs[0]?.Path,
+      process.env.PATH ?? process.env.Path,
+      "不注入时 PATH 不得被改写",
+    )
   })
 
   it("cookies 配置 → argv 带 --cookies 路径；未配 → 不带（07-12 D 方案）；--js-runtimes node 常开", async () => {

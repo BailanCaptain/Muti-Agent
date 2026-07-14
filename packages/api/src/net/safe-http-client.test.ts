@@ -152,7 +152,12 @@ describe("SafeHttpClient 合同矩阵", () => {
 
   it("非 2xx 拒", async () => {
     const c = client({ fetchImpl: fakeFetchOk("err", 500) })
-    await expectKind(c.fetchText("https://allowed.com/x"), "http_status")
+    await assert.rejects(c.fetchText("https://allowed.com/x"), (err: unknown) => {
+      assert.ok(err instanceof SafeHttpError)
+      assert.equal(err.kind, "http_status")
+      assert.equal((err as SafeHttpError & { status?: number }).status, 500)
+      return true
+    })
   })
 
   it("超时 → timeout", async () => {
@@ -164,6 +169,59 @@ describe("SafeHttpClient 合同矩阵", () => {
       })) as unknown as typeof fetch
     const c = client({ fetchImpl: never })
     await expectKind(c.fetchText("https://allowed.com/x", { timeoutMs: 50 }), "timeout")
+  })
+
+  it("调用方 AbortSignal 可立即取消已启动请求，不等待内部 timeout", async () => {
+    let notifyStarted: (() => void) | undefined
+    const started = new Promise<void>((resolve) => {
+      notifyStarted = resolve
+    })
+    const never: typeof fetch = ((_u: unknown, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        notifyStarted?.()
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+          { once: true },
+        )
+      })) as unknown as typeof fetch
+    const c = client({ fetchImpl: never })
+    const controller = new AbortController()
+    const begunAt = Date.now()
+    const pending = c.fetchText("https://allowed.com/x", {
+      timeoutMs: 120,
+      signal: controller.signal,
+    } as Parameters<typeof c.fetchText>[1])
+    await started
+    controller.abort(new Error("source budget exhausted"))
+
+    await expectKind(pending, "timeout")
+    assert.ok(Date.now() - begunAt < 80, "外部 abort 不得继续占用内部 timeout 窗口")
+  })
+
+  it("调用方 AbortSignal 在 DNS 校验阶段也必须快速释放，不能等 resolver 返回", async () => {
+    let notifyDnsStarted: (() => void) | undefined
+    const dnsStarted = new Promise<void>((resolve) => {
+      notifyDnsStarted = resolve
+    })
+    const c = client({
+      resolveDns: async () => {
+        notifyDnsStarted?.()
+        await new Promise((resolve) => setTimeout(resolve, 120))
+        return [PUBLIC_IP]
+      },
+    })
+    const controller = new AbortController()
+    const begunAt = Date.now()
+    const pending = c.fetchText("https://allowed.com/x", {
+      timeoutMs: 500,
+      signal: controller.signal,
+    })
+    await dnsStarted
+    controller.abort(new Error("source budget exhausted"))
+
+    await expectKind(pending, "timeout")
+    assert.ok(Date.now() - begunAt < 80, "DNS 校验必须响应外部 abort 并释放调用链")
   })
 
   // 自 F037 daily-digest 副本收敛（F041 W7）：副本在 F040 提升后长出的 fetchText POST 面
@@ -328,7 +386,11 @@ describe("request() 扩展（F040）", () => {
     const c = client({ fetchImpl: fakeFetchSeq([resp]) })
     const r = await c.request("https://allowed.com/x")
     assert.equal(r.headers?.["x-ratelimit"], "10")
-    assert.equal(r.headers?.["set-cookie"], undefined, "set-cookie 禁入单值 headers（逗号合并损坏语义）")
+    assert.equal(
+      r.headers?.["set-cookie"],
+      undefined,
+      "set-cookie 禁入单值 headers（逗号合并损坏语义）",
+    )
     assert.deepEqual(r.setCookies, ["A=1; Path=/", "B=2; HttpOnly"])
     assert.equal(r.finalUrl, "https://allowed.com/x")
   })
@@ -425,8 +487,7 @@ describe("F040 P3 AC16：rawBody / responseAs buffer / multipart 构造", () => 
   it("responseAs buffer → bytes 二进制保真（含 0x00/高位），text 空串", async () => {
     const bin = new Uint8Array([0x00, 0x01, 0xfe, 0xff, 0x89, 0x50])
     const c = client({
-      fetchImpl: (async () =>
-        new Response(bin, { status: 200 })) as unknown as typeof fetch,
+      fetchImpl: (async () => new Response(bin, { status: 200 })) as unknown as typeof fetch,
     })
     const r = await c.request("https://allowed.com/dl", { responseAs: "buffer" })
     assert.equal(r.status, 200)

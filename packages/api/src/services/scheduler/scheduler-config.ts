@@ -146,24 +146,28 @@ export const DEFAULT_SCHEDULER_CONFIG: SchedulerConfig = {
       windowMinutes: 5,
     },
     // F037 日报：07:30 主发送 + 每小时安全网（reconcile 幂等单入口，D11 触发点 ①③)。
-    // 看门狗 7200s：须高于全链真实最坏才不产生假 timeout/幽灵任务。最坏有界路径
-    // （顺序腿相加；源阶段并发取 max。07-11 三拍 r1 P2-2 德彪重算——此前 4920 账
-    // 漏了并发源 max=podcast、YouTube 字幕超时腿、SMTP）：
-    //   源阶段 max = 播客 STT 预算 900s（podcast.ts timeoutBudgetMs；X 540 次之）
-    // + summarize 4 尝试×2 模型×360s = 2880s（小孙 07-11 拍「重试 3 次宁缺勿发清单版」）
-    // + 深读 3 抓×(字幕 90s 超时+429 退避 30s+重试 90s)=630s + LLM 2×360s=720s → 1350s
+    // B031 看门狗 1209600s（14d）：须高于所有极宽保险丝顺序相加的最坏账，避免
+    // 慢模型仍在工作时先记 timeout 并留下幽灵任务。它是最终挂死保险丝，不是 SLA。
+    // 最坏有界路径（顺序腿相加；源阶段并发取 max）：
+    //   源阶段 max = 播客整源保险丝 345600s（96h；podcast.ts；X 540s 次之）
+    //   单条 LLM 三层链 = Claude 2×21600s + Codex/high 43200s = 86400s（24h）
+    // + B032 EditorialDecider 降级最坏 = Claude A/B 43200s + Codex clean-room A/B/C
+    //   129600s = 172800s（每 reviewer slot 仅一个批次；全部争议 ID 合并）
+    // + DigestComposer target 内结构校验 = 86400s（每 target 一次，不重启 primary）
+    // + 深读 3 抓×(字幕 90s 超时+429 退避 30s+重试 90s)=630s + LLM 86400s → 87030s
     //   （07-12 字幕命中率批：429 退避重试一次；单条 210s 已盖过非 yt 的 20s http 回落腿）
-    // + 翻译 2×360s = 720s
+    // + 翻译 86400s
     // + SMTP 发送总 deadline 120s（email-sender SMTP_SEND_DEADLINE_MS——r2 P2-2：三段
     //   nodemailer 超时是分段/无活动窗不是总时限，真上限=sendMail 外层 race+到点关连接）
-    // = 5970s；取 7200s 留余量（每腿自有硬超时，链不可能真挂死；看门狗只为逻辑级挂死兜底）。
+    // = 778350s（9d12m30s）；取 1209600s 留 4d23h47m30s 余量。每腿仍有极宽
+    // 硬保险丝/AbortSignal，看门狗只为逻辑级挂死兜底，不用紧时限误杀慢模型。
     // 改任何一腿的超时/尝试次数必须重算这笔账——scheduler-config.test 账目关系测试会咬
     {
       name: "daily-digest",
       kind: "cron",
       cron: "30 7 * * *",
       timezone: "Asia/Shanghai",
-      timeoutSeconds: 7200,
+      timeoutSeconds: 1_209_600,
       windowMinutes: 5,
     },
     {
@@ -171,7 +175,7 @@ export const DEFAULT_SCHEDULER_CONFIG: SchedulerConfig = {
       kind: "cron",
       cron: "10 * * * *",
       timezone: "Asia/Shanghai",
-      timeoutSeconds: 7200,
+      timeoutSeconds: 1_209_600,
       windowMinutes: 5,
     },
     // ── kind: 'startup' (2) — runtime 起来后跑一次 ───────────────────────
@@ -189,7 +193,7 @@ export const DEFAULT_SCHEDULER_CONFIG: SchedulerConfig = {
       kind: "startup",
       cron: "@startup",
       timezone: "Asia/Shanghai",
-      timeoutSeconds: 7200,
+      timeoutSeconds: 1_209_600,
       windowMinutes: 0,
     },
     // ── kind: 'watcher' (1) — fs watch，无周期 ──────────────────────────

@@ -34,6 +34,9 @@ type SpawnFn = (
 
 export interface HaikuRunnerDeps {
   spawn?: SpawnFn
+  /** Windows shell/Node 包装层必须整树终止；测试可注入观察。 */
+  killTree?: (proc: ChildProcess) => void
+  isWindows?: boolean
 }
 
 const DEFAULT_TIMEOUT_MS = 15000
@@ -42,6 +45,15 @@ const HAIKU_MODEL = "claude-haiku-4-5"
 const SONNET_MODEL = "claude-sonnet-4-6"
 const OPUS_MODEL = "claude-opus-4-7"
 const OPUS_46_MODEL = "claude-opus-4-6"
+
+function winKillTree(proc: ChildProcess): void {
+  if (proc.pid) {
+    const taskkill = realSpawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"])
+    taskkill.on("error", () => {})
+  } else {
+    proc.kill()
+  }
+}
 
 /**
  * 单轮 Claude CLI 调用封装。内部 spawn `claude --print --model <model> "<prompt>"`，
@@ -60,6 +72,8 @@ function createClaudeCliRunner(
   effort?: string,
 ): HaikuRunner {
   const spawn = deps.spawn ?? (realSpawn as SpawnFn)
+  const isWindows = deps.isWindows ?? process.platform === "win32"
+  const killTree = deps.killTree ?? (isWindows ? winKillTree : (proc: ChildProcess) => proc.kill())
 
   return {
     runPrompt(prompt, opts = {}) {
@@ -115,14 +129,23 @@ function createClaudeCliRunner(
         }
 
         const timer = setTimeout(() => {
-          proc.kill()
           settle({ ok: false, text: "", durationMs: Date.now() - start, error: "timeout" })
+          // Windows 下 Claude 可能经 cmd/node 包装；必须杀进程树，避免超时后仍后台耗额度。
+          try {
+            killTree(proc)
+          } catch {
+            // 调用已 fail-closed；终止失败不得让 promise 悬挂。
+          }
         }, timeoutMs)
 
         // 外部取消：kill 子进程立即收场；注册后补查一次防「spawn 与注册之间」的窗口漏
         const onAbort = () => {
-          proc.kill()
           settle({ ok: false, text: "", durationMs: Date.now() - start, error: "aborted" })
+          try {
+            killTree(proc)
+          } catch {
+            // 调用已取消；终止失败不得让 promise 悬挂。
+          }
         }
         opts.signal?.addEventListener("abort", onAbort, { once: true })
         if (opts.signal?.aborted) onAbort()

@@ -1,3 +1,5 @@
+import { DIGEST_GITHUB_SECTION_LABEL } from "@multi-agent/shared"
+
 /**
  * F037 设置页数据模型（小孙 07-05 §5）：纯函数层。
  * 核心语义 = 「与 .env 基线相同的字段不落存储」：表单值与 seedEffective 一致的字段
@@ -32,11 +34,18 @@ export interface SourceMeta {
   label: string
 }
 
+export interface EmergencyFallback {
+  provider: "codex"
+  model: string
+  effort: string
+}
+
 export interface SettingsResponse {
   enabled: boolean
   stored: DigestSettingsDto | null
   effective: EffectiveSettings
   seedEffective: EffectiveSettings
+  emergencyFallback: EmergencyFallback
   envSeeds: { recipients: string[]; xHandles: string[]; xhsKeywords: string[] }
   secrets: {
     smtp: boolean
@@ -46,6 +55,12 @@ export interface SettingsResponse {
     xhsBase: boolean
   }
   sources: SourceMeta[]
+}
+
+export function formatEmergencyFallback(fallback: EmergencyFallback): string {
+  const model = fallback.model === "gpt-5.6-sol" ? "GPT-5.6 Sol" : fallback.model
+  const provider = fallback.provider === "codex" ? "Codex" : fallback.provider
+  return `最终兜底：${model} · ${provider} · ${fallback.effort}，仅前两层均失败时启用`
 }
 
 /** 表单态：文本域存原始串（提交时解析），开关存禁用集合 */
@@ -161,7 +176,7 @@ export function groupSources(
     // #33 播客（07-11 preview 实截抓漏：ORDER 写死四类会把 podcast 源静默吞掉，
     // 设置页无开关可关）；排位对齐邮件板块序（hot 与 github 之间）
     { category: "podcast", label: "播客速递" },
-    { category: "github", label: "GitHub 榜单" },
+    { category: "github", label: DIGEST_GITHUB_SECTION_LABEL },
   ]
   return ORDER.map((g) => ({
     ...g,

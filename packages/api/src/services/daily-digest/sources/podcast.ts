@@ -52,6 +52,13 @@ export const PODCAST_SOURCE_ID = "podcast-transcribe"
 /** 单轮新转写上限：Groq 免费层 28.8K audio-sec/天 ≈8h（硅基流动更宽）——3 集封顶留余量，超出的明天缓存续做 */
 export const MAX_NEW_EPISODES_PER_RUN = 3
 
+/**
+ * 单集慢模型链保险丝 = Claude 2×6h + Codex/high 12h；最多三集顺序执行，再叠加
+ * 下载、ffmpeg、STT 与 feed fallback。取 96h 作为整源极宽保险丝，不用短外层提前
+ * 截断仍在正常工作的模型。
+ */
+export const PODCAST_SOURCE_TIMEOUT_MS = 96 * 60 * 60_000
+
 /** itunes:duration 三形态容错："1:10:46" / "50:20" / "3020"（纯秒） */
 export function parseDurationSec(raw: string): number | null {
   const s = raw.trim()
@@ -169,9 +176,9 @@ export function makePodcastSource(cfg: PodcastSourceConfig): DigestSource {
   return {
     sourceId: PODCAST_SOURCE_ID,
     category: "podcast",
-    // 最坏 3 集全链（下载 180s+转码 180s+转写 300s+提炼 120s）≈ 40min 理论值，实测单集 ~2min；
-    // 15min 预算：正常轮绰绰有余，异常轮被 orchestrator 掐掉不拖全局（其他源并发不受影响）
-    timeoutBudgetMs: 900_000,
+    // 播客提炼与主摘要共用慢模型三层链；外层预算必须覆盖三集顺序执行，不能让 15min
+    // 源隔离提前截断最终 Codex/high。单源失败仍由 orchestrator 隔离，不污染其他源。
+    timeoutBudgetMs: PODCAST_SOURCE_TIMEOUT_MS,
     async fetch(ctx) {
       // 德彪 r2 P1：预 abort 时连 feeds 都不拉（原实现先并发拉全部 feed 才进循环查 signal）
       ctx.signal.throwIfAborted()

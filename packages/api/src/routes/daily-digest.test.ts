@@ -166,6 +166,7 @@ test("settings GET：secrets 只出布尔、种子/生效值/源清单齐全", a
         enabled: boolean
         stored: unknown
         effective: { recipients: string[]; xHandles: string[] }
+        emergencyFallback: { provider: string; model: string; effort: string }
         secrets: Record<string, boolean>
         sources: Array<{ id: string; label: string; category: string }>
       }
@@ -173,6 +174,11 @@ test("settings GET：secrets 只出布尔、种子/生效值/源清单齐全", a
       assert.equal(body.stored, null)
       assert.deepEqual(body.effective.recipients, ["a@x.com"])
       assert.deepEqual(body.effective.xHandles, ["sama"])
+      assert.deepEqual(body.emergencyFallback, {
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        effort: "high",
+      })
       // seedEffective = 纯 .env 基线（前端 diff 基准）
       const seed = (res.json() as { seedEffective: { recipients: string[] } }).seedEffective
       assert.deepEqual(seed.recipients, ["a@x.com"])
@@ -219,6 +225,43 @@ test("settings PUT：合法存段（sanitize 归一）；非法 400；null 清�
       const badBody = bad.json() as { errors: string[] }
       assert.ok(badBody.errors.some((e) => e.includes("sendTime")))
       assert.ok(badBody.errors.some((e) => e.includes("unknown field")))
+
+      const forgedTopology = await app.inject({
+        method: "PUT",
+        url: "/api/daily-digest/settings",
+        payload: {
+          settings: { primaryModel: "gpt-5.6-sol", fallbackModel: "gpt-5.6-sol" },
+        },
+      })
+      assert.equal(forgedTopology.statusCode, 400)
+      const topologyErrors = (forgedTopology.json() as { errors: string[] }).errors
+      assert.ok(topologyErrors.some((error) => error.includes("primaryModel")))
+      assert.ok(topologyErrors.some((error) => error.includes("fallbackModel")))
+
+      const forgedEmergency = await app.inject({
+        method: "PUT",
+        url: "/api/daily-digest/settings",
+        payload: {
+          settings: {
+            emergencyFallback: { provider: "codex", model: "gpt-5.6-sol", effort: "low" },
+          },
+        },
+      })
+      assert.equal(forgedEmergency.statusCode, 400)
+      assert.ok(
+        (forgedEmergency.json() as { errors: string[] }).errors.some((e) =>
+          e.includes("emergencyFallback"),
+        ),
+      )
+      const afterForged = await app.inject({
+        method: "GET",
+        url: "/api/daily-digest/settings",
+      })
+      assert.deepEqual(
+        (afterForged.json() as { effective: { recipients: string[] } }).effective.recipients,
+        ["me@y.com"],
+        "伪造只读字段被拒后不得覆盖此前合法设置",
+      )
 
       const clear = await app.inject({
         method: "PUT",

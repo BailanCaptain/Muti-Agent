@@ -5,14 +5,25 @@ import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, it } from "node:test"
 import {
+  DOWNLOAD_TIMEOUT_MS,
   type EpisodeRecord,
+  FFMPEG_TIMEOUT_MS,
   type PodcastEpisodeRef,
   SEGMENT_SEC,
+  STT_TIMEOUT_MS,
   createPodcastTranscriber,
   episodeCacheKey,
   readEpisodeRecord,
   sanitizeDigestText,
 } from "./podcast-transcribe"
+
+describe("播客非文本模型/处理腿也只保留极宽挂死保险丝", () => {
+  it("下载与 ffmpeg 各 30min，STT 每段 1h", () => {
+    assert.equal(DOWNLOAD_TIMEOUT_MS, 30 * 60_000)
+    assert.equal(FFMPEG_TIMEOUT_MS, 30 * 60_000)
+    assert.equal(STT_TIMEOUT_MS, 60 * 60_000)
+  })
+})
 
 /** 全 mock 单测：无真网、无真 ffmpeg、缓存盘用临时目录（Iron Law §1：测试用临时实例） */
 
@@ -477,11 +488,13 @@ describe("德彪 r2 残余修复红测", () => {
     const state = freshState()
     const ac = new AbortController()
     let runnerSawSignal = false
+    let runnerTimeoutMs: number | undefined
     const deps = {
       ...makeDeps(state),
       runner: {
-        runPrompt: async (_p: string, opts?: { signal?: AbortSignal }) => {
+        runPrompt: async (_p: string, opts?: { signal?: AbortSignal; timeoutMs?: number }) => {
           runnerSawSignal = opts?.signal === ac.signal
+          runnerTimeoutMs = opts?.timeoutMs
           ac.abort() // 提炼期间预算掐断——runner 仍带回结果（迟到）
           return { ok: true, text: "• 迟到要点", durationMs: 5 }
         },
@@ -490,6 +503,7 @@ describe("德彪 r2 残余修复红测", () => {
     const t = createPodcastTranscriber(deps)
     await assert.rejects(() => t.ensureDigest(EP, ac.signal))
     assert.ok(runnerSawSignal, "signal 必须直通 runner（kill CLI 子进程）")
+    assert.equal(runnerTimeoutMs, 6 * 60 * 60_000, "播客提炼也必须给两层 Claude 各 6h")
     const cached = readEpisodeRecord(baseDir, episodeCacheKey(EP.enclosureUrl))
     assert.equal(cached?.digestZh ?? null, null, "abort 后绝不迟到写 digest")
     assert.equal(cached?.transcript, "转写全文内容", "已完成的转写仍保留（下轮只补提炼）")

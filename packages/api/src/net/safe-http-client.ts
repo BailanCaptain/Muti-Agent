@@ -38,6 +38,8 @@ export interface SafeHttpFetchOptions {
   maxBytes?: number
   /** 默认 20s */
   timeoutMs?: number
+  /** 调用方生命周期取消信号；与内部 timeout 取最先触发者。 */
+  signal?: AbortSignal
   /** 默认 GET；POST 目前唯一消费方=小红书 sidecar MCP 调用（#31）。全套出站校验与 GET 同链 */
   method?: "GET" | "POST"
   /** 仅 method=POST 时随请求发出 */
@@ -92,11 +94,13 @@ export interface SafeHttpClient {
 export class SafeHttpError extends Error {
   readonly kind: SafeHttpErrorKind
   readonly url: string
-  constructor(kind: SafeHttpErrorKind, url: string, detail?: string) {
+  readonly status?: number
+  constructor(kind: SafeHttpErrorKind, url: string, detail?: string, status?: number) {
     super(`SafeHttp[${kind}] ${url}${detail ? ` — ${detail}` : ""}`)
     this.name = "SafeHttpError"
     this.kind = kind
     this.url = url
+    this.status = status
   }
 }
 
@@ -252,8 +256,45 @@ export function createSafeHttpClient(options: SafeHttpClientOptions): SafeHttpCl
     }),
   )
 
+  function awaitWithAbort<T>(
+    pending: Promise<T>,
+    signal: AbortSignal,
+    current: string,
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      let settled = false
+      const cleanup = () => signal.removeEventListener("abort", onAbort)
+      const onAbort = () => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(new SafeHttpError("timeout", current))
+      }
+      signal.addEventListener("abort", onAbort, { once: true })
+      if (signal.aborted) {
+        onAbort()
+        return
+      }
+      pending.then(
+        (value) => {
+          if (settled) return
+          settled = true
+          cleanup()
+          resolve(value)
+        },
+        (error) => {
+          if (settled) return
+          settled = true
+          cleanup()
+          reject(error)
+        },
+      )
+    })
+  }
+
   /** 单跳安全校验（信任锚判定 + URL 合同 + DNS special-use 预检），返回校验后 URL */
-  async function validateHop(current: string, hop: number): Promise<URL> {
+  async function validateHop(current: string, hop: number, signal: AbortSignal): Promise<URL> {
+    if (signal.aborted) throw new SafeHttpError("timeout", current)
     let trustedHop = false
     try {
       trustedHop = trustedOrigins.has(new URL(current).origin.toLowerCase())
@@ -271,7 +312,13 @@ export function createSafeHttpClient(options: SafeHttpClientOptions): SafeHttpCl
     // IP 字面量直接判；域名解析全部记录判（任一命中即拒）
     const literal = /^[\d.]+$/.test(u.hostname) || u.hostname.includes(":")
     const hostForDns = u.hostname.replace(/^\[|\]$/g, "")
-    const addrs = literal ? [hostForDns] : await resolveDns(hostForDns).catch(() => [])
+    const addrs = literal
+      ? [hostForDns]
+      : await awaitWithAbort(
+          resolveDns(hostForDns).catch(() => []),
+          signal,
+          current,
+        )
     if (addrs.length === 0) throw new SafeHttpError("network", current, "dns resolution failed")
     for (const a of addrs) {
       if (isBlockedIp(a)) throw new SafeHttpError("ip_blocked", current, a)
@@ -283,7 +330,11 @@ export function createSafeHttpClient(options: SafeHttpClientOptions): SafeHttpCl
     try {
       return await fetchImpl(u.toString(), init)
     } catch (err) {
-      if ((err as Error)?.name === "AbortError" || (err as Error)?.name === "TimeoutError") {
+      if (
+        init.signal?.aborted ||
+        (err as Error)?.name === "AbortError" ||
+        (err as Error)?.name === "TimeoutError"
+      ) {
         throw new SafeHttpError("timeout", current)
       }
       throw new SafeHttpError("network", current, String(err))
@@ -334,7 +385,8 @@ export function createSafeHttpClient(options: SafeHttpClientOptions): SafeHttpCl
   async function fetchText(url: string, opts: SafeHttpFetchOptions = {}): Promise<string> {
     const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
-    const signal = AbortSignal.timeout(timeoutMs)
+    const timeoutSignal = AbortSignal.timeout(timeoutMs)
+    const signal = opts.signal ? AbortSignal.any([opts.signal, timeoutSignal]) : timeoutSignal
 
     // method/body 扩展（#31 小红书 sidecar MCP，自 F037 版收敛）：不改任何校验环节——
     // host/端口/DNS/IP/redirect 全链与 GET 同判。3xx 跳转会以同 method+body 重发
@@ -342,7 +394,7 @@ export function createSafeHttpClient(options: SafeHttpClientOptions): SafeHttpCl
     const method = opts.method ?? "GET"
     let current = url
     for (let hop = 0; ; hop += 1) {
-      const u = await validateHop(current, hop)
+      const u = await validateHop(current, hop, signal)
       const res = await doFetch(
         u,
         {
@@ -367,7 +419,9 @@ export function createSafeHttpClient(options: SafeHttpClientOptions): SafeHttpCl
         current = new URL(loc, u).toString()
         continue
       }
-      if (!res.ok) throw new SafeHttpError("http_status", current, `status ${res.status}`)
+      if (!res.ok) {
+        throw new SafeHttpError("http_status", current, `status ${res.status}`, res.status)
+      }
 
       return readBodyCapped(res, maxBytes, current)
     }
@@ -378,17 +432,23 @@ export function createSafeHttpClient(options: SafeHttpClientOptions): SafeHttpCl
    * 与 fetchText 的差异（均为收紧不放松）：3xx 一律 redirect_invalid 不跟随（POST 重放
    * body 是 footgun）；HTTP 状态码不抛 —— 业务错误码在 body 里由调用方裁决。
    */
-  async function request(url: string, opts: SafeHttpRequestOptions = {}): Promise<SafeHttpResponse> {
+  async function request(
+    url: string,
+    opts: SafeHttpRequestOptions = {},
+  ): Promise<SafeHttpResponse> {
     const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
-    const signal = AbortSignal.timeout(timeoutMs)
+    const timeoutSignal = AbortSignal.timeout(timeoutMs)
+    const signal = opts.signal ? AbortSignal.any([opts.signal, timeoutSignal]) : timeoutSignal
     const method = opts.method ?? "GET"
 
     if (opts.jsonBody !== undefined && opts.rawBody !== undefined) {
       throw new TypeError("SafeHttp request(): jsonBody and rawBody are mutually exclusive")
     }
     if (opts.followRedirects && method !== "GET") {
-      throw new TypeError("SafeHttp request(): followRedirects is GET-only（非 GET 重放是 footgun）")
+      throw new TypeError(
+        "SafeHttp request(): followRedirects is GET-only（非 GET 重放是 footgun）",
+      )
     }
     const headers: Record<string, string> = { ...opts.headers }
     let body: string | Uint8Array | undefined
@@ -402,11 +462,15 @@ export function createSafeHttpClient(options: SafeHttpClientOptions): SafeHttpCl
     }
     let current = url
     for (let hop = 0; ; hop += 1) {
-      const u = await validateHop(current, hop)
+      const u = await validateHop(current, hop, signal)
       const res = await doFetch(u, { method, body, headers, redirect: "manual", signal }, current)
       if (res.status >= 300 && res.status < 400) {
         if (!opts.followRedirects) {
-          throw new SafeHttpError("redirect_invalid", current, `request() does not follow ${res.status}`)
+          throw new SafeHttpError(
+            "redirect_invalid",
+            current,
+            `request() does not follow ${res.status}`,
+          )
         }
         if (hop >= maxRedirects) throw new SafeHttpError("redirect_limit", current)
         const loc = res.headers.get("location")
@@ -424,7 +488,14 @@ export function createSafeHttpClient(options: SafeHttpClientOptions): SafeHttpCl
       const setCookies = typeof hdrs.getSetCookie === "function" ? hdrs.getSetCookie() : []
       if (opts.responseAs === "buffer") {
         const bytes = await readBytesCapped(res, maxBytes, current)
-        return { status: res.status, text: "", bytes, headers: outHeaders, setCookies, finalUrl: current }
+        return {
+          status: res.status,
+          text: "",
+          bytes,
+          headers: outHeaders,
+          setCookies,
+          finalUrl: current,
+        }
       }
       const text = await readBodyCapped(res, maxBytes, current)
       return { status: res.status, text, headers: outHeaders, setCookies, finalUrl: current }

@@ -2,14 +2,31 @@ import fs from "node:fs"
 import path from "node:path"
 import { DIGEST_TZ, formatBusinessDate } from "./business-dates"
 import { type EmailSender, appendOutboundLedger } from "../../lib/email-sender"
+import { validateEditorialDecisionSet } from "./editorial-decider"
 import { runAllSources } from "./orchestrator"
-import { isCommunityNoiseItem, isPoliticalItem, isUnsafeItem } from "./relevance-filter"
+import { isPoliticalItem, isUnsafeItem } from "./relevance-filter"
 import { renderDigest, splitGithubSnippet } from "./renderer"
+import {
+  applyGithubRankStatuses,
+  loadGithubRankHistory,
+  writeGithubRankSnapshot,
+} from "./github-rank-state"
 import { loadShownKeys, writeShownLedger } from "./shown-ledger"
-import { selectFeedItems } from "./summarizer"
-import type { TranslateExtrasInput, TranslateExtrasResult } from "./summarizer"
+import {
+  buildDigestPublication,
+  filterDigestPublication,
+  missingRequiredAiCoverage,
+  validateDigestOverviewDensity,
+} from "./publication"
+import {
+  buildEditorialPromptItems,
+  isInferenceReviewCandidate,
+  type TranslateExtrasInput,
+  type TranslateExtrasResult,
+} from "./summarizer"
 import type {
   DigestLedger,
+  DigestPublicationV2,
   DigestSource,
   DigestSummary,
   NormalizedItem,
@@ -107,6 +124,8 @@ export interface DailyDigestJobDeps {
   recipient: string
   /** 归档根：.runtime/daily-digest */
   baseDir: string
+  /** 正式去重起算日；此前 shown 账本保留但不参与跨日筛选。 */
+  shownLedgerNotBefore?: string
   /** "HH:mm"，默认 07:30 */
   sendTime?: string
   timeZone?: string
@@ -209,9 +228,29 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
       }
     }
 
-    const githubItems = items.filter((i) => i.category === "github")
-    // #33 播客速递（07-10）：与 github 同为 items 直渲流——不喂 summarizer LLM；
-    // 跨日去重走 shown 账本（集级幂等在转写缓存，这里只管「上过报不再上」）
+    const githubCandidates = items.filter((i) => i.category === "github")
+    const githubEligibilityAudit = githubCandidates.map((item) => ({
+      itemId: item.id,
+      repo: item.githubMeta?.repo ?? item.title,
+      state: item.githubMeta?.eligibility.state ?? ("unknown" as const),
+      confidence: item.githubMeta?.eligibility.confidence ?? 0,
+      reasons: item.githubMeta?.eligibility.reasons ?? ["缺少 GitHub AI 准入判定"],
+    }))
+    const publishableGithubItems = githubCandidates.filter(
+      (item) => item.githubMeta?.eligibility.state === "yes",
+    )
+    const githubItems = applyGithubRankStatuses(
+      publishableGithubItems,
+      businessDate,
+      loadGithubRankHistory(deps.baseDir, businessDate),
+    )
+    if (githubItems.length < githubCandidates.length) {
+      log(
+        `[daily-digest] ${businessDate} GitHub AI 准入：${githubCandidates.length} 候选 → ${githubItems.length} 条 yes；no/unknown 仅归档不发布`,
+      )
+    }
+    // #33 播客速递（07-10）：源侧仍提供转写后的单集 item；B027 起与普通内容一起进入
+    // 语义审核，只有 publication 明确批准的单集才沿既有播客列表样式渲染。
     const podcastItemsAll = items.filter((i) => i.category === "podcast")
     const contentItemsRaw = items.filter((i) => i.category !== "github" && i.category !== "podcast")
     // E1/E2 选材预滤链（07-07 小孙「昨天今天很多重复」「政治内容去除」）。只滤选材视野，
@@ -219,11 +258,13 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
     // ① 7 天新鲜窗：档案型全量 feed（openai-news 千条历史档案）每天整库回流是跨日重复的
     //    大头；无日期条目保守保留（热榜类天然是「今天的」）。github 榜豁免（榜是状态非新闻流）。
     // ② 政治词表硬滤（结构层；summarizer 提示词规则 7 是语义层双保险）。
-    // ③ 跨日已见账本：近 30 天喂过样/上过速览/被精选的条目不再回流（宁缺勿滥）。有日期
+    // ③ 跨日已见账本：近 30 天实际发布的条目不再回流（宁缺勿滥）。有日期
     //    条目 7 天新鲜窗先兜；无日期条目（热榜/X 类）唯一靠账本压回流，回看太短会周期性
     //    回流（德彪 r-final P2-2：7 天回看下第 8 天就重新有资格）。
     const freshCutoff = now.getTime() - FRESH_WINDOW_MS
-    const shownKeys = loadShownKeys(deps.baseDir, businessDate)
+    const shownKeys = loadShownKeys(deps.baseDir, businessDate, {
+      notBefore: run.shownLedgerNotBefore,
+    })
     const contentItems = contentItemsRaw.filter((i) => {
       if (i.publishedAt) {
         const t = Date.parse(i.publishedAt)
@@ -232,14 +273,11 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
         if (i.sourceId.startsWith("yt-") && !Number.isNaN(t) && t > now.getTime() - YT_SETTLE_MS)
           return false
       }
-      // ④ 社区噪声词表（07-12 小孙「社区动态要研究/讨论/进展，不是抱怨求助」）：
-      //    只限 community 板块——同词条目在 ai/hot 是产业新闻（如薪资报告），不误伤
-      if (i.category === "community" && isCommunityNoiseItem(i)) return false
       return !isPoliticalItem(i) && !isUnsafeItem(i) && !shownKeys.has(i.dedupeKey)
     })
     if (contentItemsRaw.length > contentItems.length) {
       log(
-        `[daily-digest] ${businessDate} 选材预滤（新鲜窗/yt延迟窗/社区噪声/政治/未成年人防护/已见）：${contentItemsRaw.length} → ${contentItems.length} 条`,
+        `[daily-digest] ${businessDate} 选材预滤（新鲜窗/yt延迟窗/政治/未成年人防护/已见）：${contentItemsRaw.length} → ${contentItems.length} 条`,
       )
     }
     const podcastItems = podcastItemsAll.filter((i) => !shownKeys.has(i.dedupeKey))
@@ -250,26 +288,35 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
       return { status: "failed_no_items", businessDate }
     }
 
-    // 极端护栏：常规源全空、仅播客有新集 → 不空转 LLM，合成空 summary 只渲染播客节
-    const summarized: DigestSummary | null =
-      contentItems.length > 0
-        ? await run.summarize(contentItems, businessDate)
-        : { overview: [], sections: [], degraded: false }
-    // 小孙 07-11 拍「清单版宁愿不发，重试 3 次然后告警」：summarizer 4 次尝试全败 →
-    // 本轮不发报 + 告警（pushAlert 管道；飞书私聊接线=合并后把 scheduler-bootstrap 里
-    // digest 的 pushAlert 从 log.warn 升级为 F040 IM 出站——F040 代码不在本分支）。
-    // 已发门（sent marker）未落，下一整点安全网 reconcile 自动重跑整轮。
+    // B027：播客按「单集」过同一正向编辑门禁，不再因来自 AI 播客源就整流直出。
+    const editorialItems = [...contentItems, ...podcastItems]
+    const summarized: DigestSummary | null = await run.summarize(editorialItems, businessDate)
+    // B032：审核/成稿任一结构化阶段全败 → 本轮不发报 + 告警；sent marker 未落，
+    // 下一整点安全网重跑整轮。target-aware 生产路径每个 reviewer/compose target 最多一次，
+    // 旧注入 runner 仍保留历史兼容行为。
     if (!summarized) {
       pushAlert(
-        `[daily-digest] ${businessDate} AI 摘要 4 次尝试全败，本轮不发报（宁缺勿发清单版）——下一整点自动重试`,
+        `[daily-digest] ${businessDate} AI 摘要审核/成稿模型链全败，本轮不发报（宁缺勿发清单版）——下一整点自动重试`,
       )
       return { status: "failed_summarize", businessDate }
     }
     let summary: DigestSummary = summarized
-    // 反选熔断（德彪 hitrate-r1 P2）：communityDropIds 是受 data block（不可信抓取内容）
-    // 影响的输出通道——恶意 snippet 可诱导 LLM 大面积反选、整版蒸发。有效反选（∩喂样
-    // 集合）占比 >80% 判异常：本期反选作废（fail-open 回到不滤现状）+告警留痕。阈值宁
-    // 松勿紧：正常噪声日词表滤后残余不合格比例远低于此，超 80% 更可能是注入而非真实分布。
+    if (summary.editorialDecisionSet !== undefined) {
+      const trustedDecisionSet = validateEditorialDecisionSet(
+        summary.editorialDecisionSet,
+        buildEditorialPromptItems(editorialItems),
+      )
+      if (!trustedDecisionSet) {
+        pushAlert(
+          `[daily-digest] ${businessDate} editorial_decision_set_invalid：审核凭证 schema/hash/evidence/共识校验失败，本轮不发送且不回退旧语义规则`,
+        )
+        return { status: "failed_summarize", businessDate }
+      }
+      summary = { ...summary, editorialDecisionSet: trustedDecisionSet }
+    }
+    // 旧反选通道仍保留注入熔断：恶意 snippet 若诱导 communityDropIds 大面积拒绝，作废
+    // 这张兼容性负面清单并告警。B027 publication 仍要求正向 eligible assessment，熔断
+    // 不会把未审核条目放回正式发布路径。
     {
       const fed = summary.communityFedIds ?? []
       const fedSet = new Set(fed)
@@ -283,9 +330,38 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
       }
     }
     const notes: string[] = []
-    // 德彪 r-final P1-3 + r2 P2：截断修复缺节 → 邮件 notes 透出 + 该类目喂样不烧 shown
-    // （候选明日回补）。缺节类目在渲染层整节消失（renderer 只渲染有 picks 的节）。文案与
-    // 记账同为保守口径：repair 下分不清截断丢失还是模型省节，一律按缺失处理
+    const decisionSet = summary.editorialDecisionSet
+    if (decisionSet) {
+      const editorialItemsById = new Map(editorialItems.map((item) => [item.id, item]))
+      const unresolvedInferenceIds = decisionSet.decisions
+        .filter((decision) => {
+          const item = editorialItemsById.get(decision.itemId)
+          return (
+            decision.reviewState === "unreviewed" &&
+            item !== undefined &&
+            isInferenceReviewCandidate(item)
+          )
+        })
+        .map((decision) => decision.itemId)
+      if (unresolvedInferenceIds.length > 0) {
+        if (decisionSet.reviewMode !== "degraded_same_target") {
+          pushAlert(
+            `[daily-digest] ${businessDate} inference_review_unresolved：${unresolvedInferenceIds.length} 个高召回推理候选仍未决，本轮不发送，不能伪称今日无推理进展`,
+          )
+          return { status: "failed_summarize", businessDate }
+        }
+        const note = "⚠ 推理候选审核未决（Claude 当前不可用，Codex 降级复核仍无共识）；相关条目已摘除，本期不代表「今日无推理进展」"
+        notes.push(note)
+        pushAlert(
+          `[daily-digest] ${businessDate} inference_review_unresolved：${unresolvedInferenceIds.length} 个候选在 degraded_same_target 下仍未决；已摘条目但继续生成其余非空日报`,
+        )
+        log(
+          `[daily-digest] ${businessDate} degraded_same_target unresolved inference=${unresolvedInferenceIds.length}`,
+        )
+      }
+    }
+    // 德彪 r-final P1-3 + r2 P2：截断修复缺节 → 邮件 notes 透出；未进入终态 publication
+    // 的候选天然不烧 shown，可在次日回补。repair 下分不清截断丢失还是模型省节，统一按缺失处理。
     const repairDropped = new Set<string>(summary.repairDroppedCategories ?? [])
     if (repairDropped.size > 0) {
       const labels = [...repairDropped].map((c) => SECTION_LABEL[c] ?? c)
@@ -293,12 +369,38 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
         `⚠ AI 摘要输出截断已修复，${labels.join("、")}板块本期未成节（保守按缺失处理，候选明日回补）`,
       )
       log(
-        `[daily-digest] ${businessDate} 截断修复丢节：${[...repairDropped].join(",")}——该类目喂样不烧 shown`,
+        `[daily-digest] ${businessDate} 截断修复丢节：${[...repairDropped].join(",")}——未发布候选不写 shown`,
       )
+    }
+    const publicationItems = [...contentItems, ...githubItems, ...podcastItems]
+    const builtPublication = buildDigestPublication({
+      businessDate,
+      summary,
+      items: publicationItems,
+      githubItemIds: githubItems.map((item) => item.id),
+      // podcast 的批准 id 已由 summary.sections[].briefItemIds 正向给出；这里禁止整流放行。
+      podcastItemIds: [],
+    })
+    let publication = builtPublication.publication
+    const editorialAudit = builtPublication.audit
+    if (!publication.sections.some((section) => section.entries.length > 0)) {
+      pushAlert(
+        `[daily-digest] ${businessDate} 编辑门禁后无可发布内容，本轮不发送空日报——下一整点自动重试`,
+      )
+      return { status: "failed_summarize", businessDate }
+    }
+    const initialCoverageGaps = missingRequiredAiCoverage(publication, editorialAudit.assessments)
+    if (initialCoverageGaps.length > 0) {
+      const labels = initialCoverageGaps.map((gap) => (gap === "inference" ? "推理" : "非推理 AI"))
+      pushAlert(
+        `[daily-digest] ${businessDate} 编辑后缺少合格${labels.join("、")}代表，本轮不发送失真日报——下一整点自动重试`,
+      )
+      return { status: "failed_summarize", businessDate }
     }
     const renderInput = {
       businessDate,
       summary,
+      publication,
       items: contentItems,
       results,
       githubItems,
@@ -363,6 +465,33 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
         `[daily-digest] ${businessDate} HTML ${Math.round(fullBytes / 1024)}KB 超邮件预算 ${Math.round(emailByteBudget / 1024)}KB，速览降密度后 ${Math.round(finalBytes / 1024)}KB${finalBytes > emailByteBudget ? "（已降到 0 行仍超，接受被 Gmail 折叠尾部）" : ""}`,
       )
     }
+    // 邮件预算可能裁掉 brief 尾部：先以 renderer 的实际显示集合收敛 publication，随后
+    // archive/web/shown 全消费这份终态，避免「归档说发布了、邮件却没显示」的双账。
+    publication = filterDigestPublication(publication, new Set(rendered.displayedItemIds))
+    // overview 也带结构化事件引用；预算裁掉其支撑条目后再用终态 publication 渲染一次，
+    // 保证邮件正文、归档和 web 的速览没有悬空事件。终态条目只会更少，不会重新超预算。
+    rendered = renderDigest({ ...renderInput, summary, publication })
+    if (!publication.sections.some((section) => section.entries.length > 0)) {
+      pushAlert(
+        `[daily-digest] ${businessDate} 邮件密度裁剪后无可发布内容，本轮不发送空日报——下一整点自动重试`,
+      )
+      return { status: "failed_summarize", businessDate }
+    }
+    const overviewDensity = validateDigestOverviewDensity(publication, summary)
+    if (!overviewDensity.valid) {
+      pushAlert(
+        `[daily-digest] ${businessDate} 邮件终态速览密度不合格：实际 ${overviewDensity.actual} 条，要求 ${overviewDensity.requiredMin}-${overviewDensity.allowedMax} 条（获批 ${overviewDensity.approvedCount} 条）；本轮不发送——下一整点自动重试`,
+      )
+      return { status: "failed_summarize", businessDate }
+    }
+    const finalCoverageGaps = missingRequiredAiCoverage(publication, editorialAudit.assessments)
+    if (finalCoverageGaps.length > 0) {
+      const labels = finalCoverageGaps.map((gap) => (gap === "inference" ? "推理" : "非推理 AI"))
+      pushAlert(
+        `[daily-digest] ${businessDate} 邮件终态裁剪后缺少合格${labels.join("、")}代表，本轮不发送失真日报——下一整点自动重试`,
+      )
+      return { status: "failed_summarize", businessDate }
+    }
 
     // AC9 先归档后发送（发送失败也留档）
     const dayDir = path.join(deps.baseDir, businessDate)
@@ -372,7 +501,12 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
     // F029 证据底料（小孙 07-05 拍）：当日全量归一条目按行落 items.jsonl —— 调研核查 feature
     // 直接把日报归档当历史语料库（某日各源说了什么），复用零改动、回溯无需重抓。
     // 注意是预滤**前**的全量（contentItemsRaw）：语料库要「当日各源全貌」，选材口味不该改写证据
-    const corpus = [...contentItemsRaw, ...podcastItemsAll, ...githubItems]
+    const rankedGithubById = new Map(githubItems.map((item) => [item.id, item]))
+    const corpus = [
+      ...contentItemsRaw,
+      ...podcastItemsAll,
+      ...githubCandidates.map((item) => rankedGithubById.get(item.id) ?? item),
+    ]
     fs.writeFileSync(
       path.join(dayDir, "items.jsonl"),
       corpus.length ? `${corpus.map((i) => JSON.stringify(i)).join("\n")}\n` : "",
@@ -383,10 +517,14 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
       path.join(dayDir, "summary.json"),
       JSON.stringify(
         {
+          schemaVersion: 2,
           businessDate,
           generatedAt: new Date().toISOString(),
           degraded: summary.degraded,
           summary,
+          publication,
+          editorialAudit,
+          githubEligibilityAudit,
           sourceHealth: results.map((r) => ({
             sourceId: r.sourceId,
             status: r.status,
@@ -395,13 +533,29 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
             error: r.errors[0] ?? null,
           })),
           counts: {
-            content: contentItems.length,
-            github: githubItems.length,
-            podcast: podcastItems.length,
+            content: publication.sections
+              .filter((section) => !["github", "podcast"].includes(section.category))
+              .reduce((count, section) => count + section.entries.length, 0),
+            github:
+              publication.sections.find((section) => section.category === "github")?.entries
+                .length ?? 0,
+            podcast:
+              publication.sections.find((section) => section.category === "podcast")?.entries
+                .length ?? 0,
+            // 「收录」延续原体检行口径：预滤后、进入编辑流程的候选总数；分栏计数则是
+            // publication 最终发布数。web 优先读 scanned，邮件由 adapter 保留同一口径。
+            scanned: contentItems.length + githubItems.length + podcastItems.length,
           },
           // 本期实际渲染的播客集 id（德彪 r1 P2-1）：items.jsonl 存全量底料（F029 语料
           // 语义），网页版必须按本清单 join——否则邮件被 shown 滤掉的旧集网页仍会重现
-          podcastItemIds: podcastItems.map((i) => i.id),
+          podcastItemIds:
+            publication.sections
+              .find((section) => section.category === "podcast")
+              ?.entries.map((entry) => entry.itemId) ?? [],
+          githubItemIds:
+            publication.sections
+              .find((section) => section.category === "github")
+              ?.entries.map((entry) => entry.itemId) ?? [],
         },
         null,
         2,
@@ -434,37 +588,39 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
     }
     // 德彪 P1r1-P2：外发账本先于 sent-marker 落盘 —— crash 窗口下账本绝不漏记真实外发
     // （代价：重试场景可能多一行账本记录，与 at-least-once 语义一致，记的是真实发生的事）
+    const finalGithubIds = new Set(
+      publication.sections
+        .find((section) => section.category === "github")
+        ?.entries.map((entry) => entry.itemId) ?? [],
+    )
+    const finalGithubItems = githubItems.filter((item) => finalGithubIds.has(item.id))
     appendOutboundLedger(deps.baseDir, {
       at: new Date().toISOString(),
       to: run.recipient,
       subject: rendered.subject,
       senderKind: run.sender.kind,
       messageId,
-      sections: countSections(summary, githubItems.length, podcastItems.length),
+      sections: countSections(publication),
     })
-    // E1 已见账本：喂样 ∪ 速览行 ∪ 精选（含 alsoItemIds）都算「已见」，次日选材预滤不再
-    // 回流。只在真发送成功后落盘（构建/发送失败不烧已见）；github 榜不记（蝉联是榜单语义）。
+    try {
+      writeGithubRankSnapshot(deps.baseDir, businessDate, finalGithubItems)
+    } catch (err) {
+      pushAlert(
+        `[daily-digest] ${businessDate} GitHub 上榜状态快照写入失败（邮件已发送，不阻断 sent 落账）：${String(err).slice(0, 240)}`,
+      )
+    }
+    // B027 已见账本：只记最终 publication 中实际显示的条目（含同报 id）；fed-but-unshown
+    // 不再烧 30 天。只在真发送成功后落盘；github 榜不记（蝉联是榜单语义）。
     // 顺序（德彪 DE-r2 P2）：shown 先于 sent-marker——若在两者间崩溃，下一轮按未发处理重发
     // （at-least-once 既有语义）并重写 shown；反过来（sent 先落）崩溃则当天永缺 shown，
     // 次日跨日去重静默失效。
     const shownThisIssue = new Set<string>()
-    for (const i of selectFeedItems(contentItems)) {
-      if (repairDropped.has(i.category)) continue // 修复丢节类目本期没渲染，不算已见（P1-3）
-      shownThisIssue.add(i.dedupeKey)
-    }
-    const contentById = new Map(contentItems.map((i) => [i.id, i]))
-    for (const id of rendered.restItemIds) {
-      const it = contentById.get(id)
-      if (it) shownThisIssue.add(it.dedupeKey)
-    }
-    // 播客节全量直渲（不限量、不进速览）——渲染了即已见，次日不再回流
-    for (const p of podcastItems) shownThisIssue.add(p.dedupeKey)
-    for (const sec of summary.sections) {
-      for (const p of sec.picks) {
-        for (const id of [p.itemId, ...(p.alsoItemIds ?? [])]) {
-          const it = contentById.get(id)
-          if (it) shownThisIssue.add(it.dedupeKey)
-        }
+    const publishedById = new Map(publicationItems.map((item) => [item.id, item]))
+    const finalEntries = publication.sections.flatMap((section) => section.entries)
+    for (const entry of finalEntries) {
+      for (const id of [entry.itemId, ...(entry.alsoItemIds ?? [])]) {
+        const item = publishedById.get(id)
+        if (item && item.category !== "github") shownThisIssue.add(item.dedupeKey)
       }
     }
     writeShownLedger(deps.baseDir, businessDate, shownThisIssue)
@@ -476,14 +632,10 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
   return { reconcile }
 }
 
-function countSections(
-  summary: DigestSummary,
-  githubCount: number,
-  podcastCount = 0,
-): Record<string, number> {
+function countSections(publication: DigestPublicationV2): Record<string, number> {
   const out: Record<string, number> = {}
-  for (const s of summary.sections) out[s.category] = s.picks.length
-  if (githubCount > 0) out.github = githubCount
-  if (podcastCount > 0) out.podcast = podcastCount
+  for (const section of publication.sections) {
+    if (section.entries.length > 0) out[section.category] = section.entries.length
+  }
   return out
 }

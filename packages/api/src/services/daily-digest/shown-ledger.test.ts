@@ -61,4 +61,25 @@ describe("shown-ledger（E1 跨日已见账本）", () => {
     const keys = loadShownKeys(dir, "2026-07-07")
     assert.deepEqual([...keys], ["good"], "坏 JSON 跳过；keys 里非字符串逐个丢")
   })
+
+  it("正式去重 epoch 之前的试发账本保留但不参与筛选，epoch 当日从次日开始生效", () => {
+    writeShownLedger(dir, "2026-07-14", ["trial-before-launch"])
+    writeShownLedger(dir, "2026-07-15", ["formal-first-issue"])
+
+    const firstFormalDay = loadShownKeys(dir, "2026-07-15", {
+      days: 30,
+      notBefore: "2026-07-15",
+    })
+    const dayAfterLaunch = loadShownKeys(dir, "2026-07-16", {
+      days: 30,
+      notBefore: "2026-07-15",
+    })
+
+    assert.deepEqual([...firstFormalDay], [])
+    assert.deepEqual([...dayAfterLaunch], ["formal-first-issue"])
+    assert.ok(
+      fs.existsSync(path.join(dir, "2026-07-14", "shown.json")),
+      "试发账本必须保留，禁止通过删除数据实现重置",
+    )
+  })
 })

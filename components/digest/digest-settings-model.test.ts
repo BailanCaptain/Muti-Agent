@@ -4,6 +4,7 @@ import {
   type SettingsForm,
   buildSettingsPayload,
   formFromEffective,
+  formatEmergencyFallback,
   groupSources,
   listToInput,
   outcomeLine,
@@ -62,6 +63,21 @@ describe("buildSettingsPayload（与 .env 基线同则省略 → 字段级回落
   })
 })
 
+describe("固定终极兜底", () => {
+  it("只读显示 GPT-5.6 Sol / Codex / high；不进入保存 payload", () => {
+    const fallback = { provider: "codex" as const, model: "gpt-5.6-sol", effort: "high" }
+    expect(formatEmergencyFallback(fallback)).toBe(
+      "最终兜底：GPT-5.6 Sol · Codex · high，仅前两层均失败时启用",
+    )
+    const payload = buildSettingsPayload(
+      { ...formFromEffective(SEED), primaryModel: "claude-opus-4-9" },
+      SEED,
+    )
+    expect(payload).toEqual({ primaryModel: "claude-opus-4-9" })
+    expect(payload).not.toHaveProperty("emergencyFallback")
+  })
+})
+
 describe("groupSources / outcomeLine", () => {
   it("按 ai→hot→x→github 分组，空组不出", () => {
     const groups = groupSources([
@@ -69,6 +85,7 @@ describe("groupSources / outcomeLine", () => {
       { id: "github-trending-daily", category: "github", label: "增长榜" },
     ])
     expect(groups.map((g) => g.category)).toEqual(["ai", "github"])
+    expect(groups.find((g) => g.category === "github")?.label).toBe("开源榜单")
   })
 
   it("podcast 源有自己的组且排在 hot 与 github 之间（07-11 preview 实截抓漏：ORDER 缺类=源被静默吞）", () => {

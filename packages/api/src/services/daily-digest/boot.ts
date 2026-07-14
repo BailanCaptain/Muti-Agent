@@ -1,7 +1,5 @@
 import path from "node:path"
 import { ProxyAgent } from "undici"
-import { createClaudeModelRunner } from "../../runtime/haiku-runner"
-import { createRunnerWithFallback } from "../../runtime/runner-with-fallback"
 import { loadRuntimeConfig } from "../../runtime/runtime-config"
 import { createFileAttemptLedger } from "../../lib/attempt-ledger"
 import {
@@ -13,9 +11,12 @@ import { createSafeHttpClient } from "../../net/safe-http-client"
 import { type DigestRunOverrides, createDailyDigestJob } from "./daily-digest-job"
 import { type DigestSettings, resolveEffectiveDigestSettings } from "./digest-settings"
 import { resolveDigestEnv } from "./email-sender"
+import { createDigestModelRunner } from "./model-runner"
 import { createFileSourceHealthStore } from "./source-health"
+import { F037_FORMAL_DEDUP_START_DATE } from "./shown-ledger"
 import { makeDiggAiSource } from "./sources/digg-ai"
 import {
+  createGithubEvidenceCache,
   makeGithubDailySource,
   makeGithubMonthlySource,
   makeGithubNewcomersSource,
@@ -193,11 +194,10 @@ export function bootDailyDigest(opts: DailyDigestBootOptions = {}): DailyDigestR
     const eff = resolveEffectiveDigestSettings(bootEnv, loadSettings())
     const disabled = new Set(eff.disabledSources)
 
-    const runner = createRunnerWithFallback({
-      primary: createClaudeModelRunner(eff.primaryModel),
-      fallback: createClaudeModelRunner(eff.fallbackModel),
-      // 日报场景：primary 任何失败都值得降级试一次（业务错也一样，宁降不缺）
-      shouldFallback: (err) => err !== undefined,
+    const runner = createDigestModelRunner({
+      primaryModel: eff.primaryModel,
+      fallbackModel: eff.fallbackModel,
+      log,
     })
     // 质量层 3：简报型源（smol-ai 类）被选中后二次深读正文（同 http 全套白名单/大小/超时约束）；
     // #34：yt-* 条目被选中后深读走字幕路线（fetchContent 覆盖，null 回落 http 默认路径）
@@ -253,6 +253,9 @@ export function bootDailyDigest(opts: DailyDigestBootOptions = {}): DailyDigestR
         : []),
     ]
 
+    const githubEvidenceCache = createGithubEvidenceCache()
+    const githubOptions = { pat: env.githubPat, evidenceCache: githubEvidenceCache }
+
     return {
       sources: [
         ...buildAllSources({ rsshubBase: env.rsshubBase }),
@@ -262,13 +265,13 @@ export function bootDailyDigest(opts: DailyDigestBootOptions = {}): DailyDigestR
         ...extraSources,
       ].filter((s) => !disabled.has(s.sourceId)),
       githubSources: [
-        makeGithubWeeklySource({ pat: env.githubPat }),
-        makeGithubNewcomersSource(),
+        makeGithubWeeklySource(githubOptions),
+        makeGithubNewcomersSource(githubOptions),
       ].filter((s) => !disabled.has(s.sourceId)),
-      githubMonthlySources: [makeGithubMonthlySource({ pat: env.githubPat })].filter(
+      githubMonthlySources: [makeGithubMonthlySource(githubOptions)].filter(
         (s) => !disabled.has(s.sourceId),
       ),
-      githubDailySources: [makeGithubDailySource({ pat: env.githubPat })].filter(
+      githubDailySources: [makeGithubDailySource(githubOptions)].filter(
         (s) => !disabled.has(s.sourceId),
       ),
       summarize: (items, businessDate) => summarizer.summarize(items, businessDate),
@@ -317,6 +320,7 @@ export function bootDailyDigest(opts: DailyDigestBootOptions = {}): DailyDigestR
     sender: initial.sender as NonNullable<DigestRunOverrides["sender"]>,
     recipient: initial.recipient as string,
     baseDir,
+    shownLedgerNotBefore: F037_FORMAL_DEDUP_START_DATE,
     pushAlert,
     log,
     runtimeSettings: buildRunOverrides,

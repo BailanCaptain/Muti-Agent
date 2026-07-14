@@ -8,8 +8,8 @@ import type { SafeHttpClient as SharedSafeHttpClient } from "../../net/safe-http
 // 2026-07-03 小孙拍板「让我们纯粹一点」：删篮球/电竞/股市三板块，聚焦 AI+热点+X+GitHub。
 // 2026-07-06 小孙改版：「x」板块扩成「community 社区动态」（X + Reddit + Digg + V2EX + 小红书——
 // 社区里的人在聊什么）；旧归档里的 "x" 由读取侧 normalizeDigestCategory 归一。
-// 2026-07-10 #33 播客速递（小孙拍「现在搞」）：小宇宙新集转写提炼；有新集才出现的板块，
-// 与 github 同为「items 直渲」流——不进 summarizer LLM 挑选。
+// 2026-07-10 #33 播客速递（小孙拍「现在搞」）：小宇宙新集转写提炼；有获批新集才出现。
+// B027 起单集也进入语义审核，publication 批准后仍复用原列表样式。
 export type DigestCategory = "ai" | "hot" | "community" | "github" | "podcast"
 
 export interface NormalizedItem {
@@ -37,6 +37,28 @@ export interface NormalizedItem {
    * 不在此——那是 LLM 打在 pick.tag 上的。
    */
   topicTag?: string
+  /** B028 GitHub 结构化事实；renderer 只读展示，不再反解析它来决定排名/准入。 */
+  githubMeta?: {
+    repo: string
+    period: "daily" | "weekly" | "monthly" | "newcomer"
+    windowStars: number
+    totalStars: number
+    language: string
+    description: string
+    /** 判定时实际可用的证据面；不保存 README 正文，只保存取证状态与 topics。 */
+    evidence: {
+      topics: string[]
+      metadataStatus: "embedded" | "loaded" | "failed" | "not_requested"
+      readmeStatus: "loaded" | "failed" | "not_requested"
+      evidenceComplete: boolean
+    }
+    eligibility: {
+      state: "yes" | "no" | "unknown"
+      confidence: number
+      reasons: string[]
+    }
+    rankStatus?: { kind: "new" } | { kind: "streak"; days: number } | { kind: "returning" }
+  }
 }
 
 export interface SourceFetchResult {
@@ -94,6 +116,12 @@ export interface SourceHealthStore {
 export interface DigestSummary {
   /** 今日速览 5-8 条中文 */
   overview: string[]
+  /** B027：每条速览必须引用输入事件；publication 只保留最终发布集合内的引用。 */
+  overviewRefs?: DigestOverviewRef[]
+  /** B027：语义审核的真实输出；缺失/非法 = unreviewed，发布侧失败关闭。 */
+  editorialAssessments?: EditorialAssessment[]
+  /** B032：服务端冻结的证据化编辑决定；新生产路径优先，外层归档仍保持 schema v2。 */
+  editorialDecisionSet?: EditorialDecisionSet
   sections: Array<{
     category: DigestCategory
     picks: Array<{
@@ -108,6 +136,11 @@ export interface DigestSummary {
        */
       tag?: string
     }>
+    /**
+     * B027 正向发布许可：可进入现有「其余速览」形态的条目 id。
+     * 新版 renderer 只消费这里明确列出的 id；缺字段 = 本节没有获批速览，不再从 raw pool 补位。
+     */
+    briefItemIds?: string[]
   }>
   /**
    * 质量层 3 两段式深读产物：简报型源（smol.ai 类标题无信息量）正文二次提炼——
@@ -122,25 +155,19 @@ export interface DigestSummary {
   githubDescZh?: Record<string, string>
   restTitleZh?: Record<string, string>
   /**
-   * 截断修复缺节账（德彪 r-final P1-3 + r2 P2）：repair 成功 parse 后「喂过样但缺失」的
+   * 截断修复缺节账（德彪 r-final P1-3 + r2 P2）：repair 成功 parse 后「送审但缺失」的
    * 类目清单。**保守语义**：repair 下无法区分截断丢失与模型主动省节，两者都记（宁可多
-   * 回补一天，不可漏回补）。job 据此不把该类目喂样烧进 shown，并在邮件 notes 透出。
+   * 回补一天，不可漏回补）。job 在邮件 notes 透出；shown 只记录最终 publication。
    */
   repairDroppedCategories?: DigestCategory[]
   /**
-   * 社区速览行语义反选（07-12 小孙「社区动态要研究/讨论/进展」）：LLM 判定性质不合格
-   * （求助/闲聊/名人八卦）的 community 条目 id——速览行是渲染层直出未 pick 条目，选材
-   * 规则管不到它，这是唯一的语义把关口。结构层 COMMUNITY_NOISE_RE 词表在前，这里兜
-   * 词表抓不住的。fail-open：缺字段 = 不滤（现状）；渲染层再按 category 限定双保险。
+   * 旧版社区速览反选兼容字段。B027 起 publication 只认正向 eligible assessment；
+   * 此字段只能追加拒绝，缺失或被熔断都不能使未审核条目获准发布。
    */
   communityDropIds?: string[]
-  /**
-   * 社区语义审查集合（德彪 hitrate-r1 P1）：本期真正进过 LLM 视野的 community 条目 id
-   * （喂样有 36 上限，视野外条目 LLM 无从反选）。渲染层速览候选与之闭合——「未审=不上」，
-   * 否则第 37+ 条八卦帖会绕过反选补位进邮件。缺字段（老 summary/降级链）= fail-open 不限。
-   */
+  /** 旧版 renderer 的社区审查视野兼容字段；v2 publication 不用它授予发布权限。 */
   communityFedIds?: string[]
-  /** true = LLM 降级链全挂，走清单版（AC11） */
+  /** 旧归档/注入摘要兼容标记；生产 summarizer 全败时返回 null，不再生成清单版。 */
   degraded: boolean
 }
 
@@ -150,4 +177,158 @@ export interface RenderedDigest {
   markdown: string
   /** 本次渲染实际展示的「其余速览」行 id（中文化补全：job 层据此送翻译后二次渲染） */
   restItemIds: string[]
+  /** 本次最终渲染实际出现的全部条目 id（精选/列表/速览/同报），shown ledger 的唯一输入。 */
+  displayedItemIds: string[]
+}
+
+export type EditorialReviewState = "eligible" | "rejected" | "unreviewed"
+export type EditorialRejectReason =
+  | "help"
+  | "complaint"
+  | "gossip"
+  | "self_promo"
+  | "unsafe"
+  | "politics"
+  | "low_signal"
+  | "classifier_failure"
+  | "other"
+export type EditorialTopicTag =
+  | "inference"
+  | "research"
+  | "training"
+  | "agent"
+  | "model_release"
+  | "safety"
+  | "other"
+export type EditorialContentKind =
+  | "research"
+  | "engineering"
+  | "release"
+  | "discussion"
+  | "industry"
+  | "finance"
+  | "help"
+  | "complaint"
+  | "gossip"
+  | "other"
+
+/** B027 审核事实；发布与否由 publication 中是否出现决定，不再复用 reviewState 表意。 */
+export interface EditorialAssessment {
+  itemId: string
+  sourceCategory: DigestCategory
+  reviewState: EditorialReviewState
+  rejectReason?: EditorialRejectReason
+  topicTags: EditorialTopicTag[]
+  organizationTags: string[]
+  ecosystemTags: Array<"open_source" | "closed_source">
+  regionTags: Array<"cn" | "global">
+  contentKind: EditorialContentKind
+  confidence: number
+  eventKey?: string
+}
+
+export type EditorialBasis =
+  | "research_result"
+  | "engineering_work"
+  | "product_release"
+  | "technical_discussion"
+  | "ai_industry_event"
+  | "finance_event"
+  | "personal_help"
+  | "complaint"
+  | "gossip"
+  | "self_promo_only"
+  | "reaction_only"
+  | "off_topic"
+  | "unsafe"
+  | "politics"
+  | "insufficient_context"
+  | "mixed_signals"
+
+export type EditorialEvidenceSupport =
+  | "ai_relevance"
+  | "substantive_fact"
+  | "inference_technical"
+  | "finance_context"
+  | "disqualifier"
+
+export interface EditorialEvidence {
+  field: "title" | "snippet"
+  quote: string
+  supports: EditorialEvidenceSupport
+}
+
+export interface EditorialReviewerTarget {
+  provider: "claude" | "codex"
+  model: string
+  effort?: string
+}
+
+export type EditorialReviewerSlot =
+  | "review_a"
+  | "review_b"
+  | "codex_pass_1"
+  | "codex_pass_2"
+  | "codex_pass_3"
+export type EditorialReviewMode = "multi_target" | "degraded_same_target"
+
+/** 模型只产 basis/tags/evidence；reviewerTarget 必须由服务端 executor 注入。 */
+export interface EditorialReviewVote {
+  itemId: string
+  basis: EditorialBasis
+  topicTags: EditorialTopicTag[]
+  organizationTags: string[]
+  ecosystemTags: Array<"open_source" | "closed_source">
+  regionTags: Array<"cn" | "global">
+  evidence: EditorialEvidence[]
+  confidence?: number
+  reviewerTarget: EditorialReviewerTarget
+  reviewerSlot: EditorialReviewerSlot
+}
+
+/**
+ * B032 三态复用既有发布合同：eligible=publish、rejected=reject、unreviewed=abstain。
+ * 不另存重复 verdict，避免审核真相出现互相矛盾的双状态。
+ */
+export interface EditorialDecision extends EditorialAssessment {
+  basis?: EditorialBasis
+  reviewMode: EditorialReviewMode
+  votes: EditorialReviewVote[]
+}
+
+export interface EditorialDecisionSet {
+  schemaVersion: 1
+  policyVersion: string
+  inputHash: string
+  reviewMode: EditorialReviewMode
+  decisions: EditorialDecision[]
+}
+
+export interface DigestOverviewRef {
+  text: string
+  itemIds: string[]
+}
+
+export interface EditorialAudit {
+  policyVersion: string
+  assessments: EditorialAssessment[]
+}
+
+export type PublicationRole = "hero" | "card" | "brief" | "list"
+
+export interface PublicationEntry {
+  itemId: string
+  role: PublicationRole
+  displayTag?: string
+  summaryZh?: string
+  alsoItemIds?: string[]
+}
+
+/** 邮件、web curated 与 shown ledger 共同消费的唯一发布清单。 */
+export interface DigestPublicationV2 {
+  schemaVersion: 2
+  businessDate: string
+  overview: string[]
+  overviewRefs?: DigestOverviewRef[]
+  sections: Array<{ category: DigestCategory; entries: PublicationEntry[] }>
 }

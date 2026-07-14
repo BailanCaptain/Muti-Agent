@@ -19,11 +19,13 @@ import path from "node:path"
 import test from "node:test"
 import { Cron } from "croner"
 import { SMTP_SEND_DEADLINE_MS } from "../../lib/email-sender"
+import { DIGEST_CODEX_TIMEOUT_MS } from "../daily-digest/model-runner"
+import { PODCAST_SOURCE_TIMEOUT_MS } from "../daily-digest/sources/podcast"
 import {
   DEFAULT_SUBTITLE_TIMEOUT_MS,
   SUBTITLE_429_RETRY_DELAY_MS,
 } from "../daily-digest/sources/youtube-subs"
-import { DEFAULT_TIMEOUT_MS, MAX_SUMMARIZE_ATTEMPTS } from "../daily-digest/summarizer"
+import { DEFAULT_TIMEOUT_MS } from "../daily-digest/summarizer"
 import {
   DEFAULT_SCHEDULER_CONFIG,
   assertNoConfigFile,
@@ -167,11 +169,11 @@ test("scheduler-config · 范-r1 P1-2: DEFAULT 锁定 12 scheduled jobs (9 cron 
 })
 
 // 德彪 DE-r3 锁值机制：日报三入口看门狗精确锁值，防回归改小产生假 timeout/幽灵任务。
-// 最坏账见下一个测试（07-11 三拍 r1 P2-2 德彪重算→r2 修正 5670→07-12 字幕 429 重试 5970s）
-test("scheduler-config · F037: 日报三入口看门狗 = 7200s（> 全链最坏 5970s，含摘要重试）", () => {
+// 最坏账见下一个测试（B031：三层模型 + Codex/high 宽时限后重算）。
+test("scheduler-config · F037: 日报三入口看门狗 = 14d（> Claude 故障降级全链最坏 778350s）", () => {
   for (const name of ["daily-digest", "daily-digest-reconcile", "daily-digest-startup"]) {
     const job = DEFAULT_SCHEDULER_CONFIG.scheduled.find((j) => j.name === name)
-    assert.equal(job?.timeoutSeconds, 7200, name)
+    assert.equal(job?.timeoutSeconds, 14 * 24 * 60 * 60, name)
   }
 })
 
@@ -179,17 +181,24 @@ test("scheduler-config · F037: 日报三入口看门狗 = 7200s（> 全链最�
 // 重试次数 / LLM 超时改动直接改变最坏账，看门狗不够时这里变红（此前只锁 ===7200 不随腿动）。
 // 其余腿预算散在各源文件（来源注释在行内），改那些预算时必须回来同步这笔账。
 test("scheduler-config · F037: 看门狗 > 全链最坏账（腿账关系可校验，改腿必红）", () => {
-  const llmS = DEFAULT_TIMEOUT_MS / 1000 // summarizer 单模型单次 360s
-  const sourceStageMaxS = 900 // 并发源阶段取 max：podcast.ts timeoutBudgetMs 900_000（X 540 次之）
-  const summarizeS = MAX_SUMMARIZE_ATTEMPTS * 2 * llmS // 4 尝试 × primary+fallback
+  const llmS = DEFAULT_TIMEOUT_MS / 1000 // Claude 单模型单次 6h
+  const codexS = DIGEST_CODEX_TIMEOUT_MS / 1000 // 最终 Codex/high 至少 12h
+  const modelChainS = 2 * llmS + codexS // Claude 主力 + Claude 备用 + Codex
+  const sourceStageMaxS = PODCAST_SOURCE_TIMEOUT_MS / 1000
+  // B032 EditorialDecider 最坏：Claude A/B 均跑满 + Codex clean-room pass 1/2/3。
+  const editorialReviewS = 2 * llmS + 3 * codexS
+  // Composer 把结构校验放进 target 循环，每个 Claude/Codex target 最多一次。
+  const composerS = modelChainS
   // 字幕单条最坏 = 90s 首次 + 30s 429 退避 + 90s 重试（07-12 字幕命中率批）；盖过非 yt 20s http 回落
-  const subtitleWorstS = (DEFAULT_SUBTITLE_TIMEOUT_MS + SUBTITLE_429_RETRY_DELAY_MS + DEFAULT_SUBTITLE_TIMEOUT_MS) / 1000
-  const deepReadS = 3 * subtitleWorstS + 2 * llmS // 3 条深读 + LLM 双模型
-  const translateS = 2 * llmS
+  const subtitleWorstS =
+    (DEFAULT_SUBTITLE_TIMEOUT_MS + SUBTITLE_429_RETRY_DELAY_MS + DEFAULT_SUBTITLE_TIMEOUT_MS) / 1000
+  const deepReadS = 3 * subtitleWorstS + modelChainS // 3 条深读 + LLM 三层链
+  const translateS = modelChainS
   // r2 P2-2：SMTP 腿只认发送总 deadline（三段 nodemailer 超时是无活动窗，推不出总上限）
   const smtpS = SMTP_SEND_DEADLINE_MS / 1000
-  const worstS = sourceStageMaxS + summarizeS + deepReadS + translateS + smtpS
-  assert.equal(worstS, 5970, "腿账变了——改 daily-digest 看门狗注释并重核 7200 余量")
+  const worstS =
+    sourceStageMaxS + editorialReviewS + composerS + deepReadS + translateS + smtpS
+  assert.equal(worstS, 778_350, "腿账变了——改 daily-digest 看门狗注释并重核 14d 余量")
   for (const name of ["daily-digest", "daily-digest-reconcile", "daily-digest-startup"]) {
     const job = DEFAULT_SCHEDULER_CONFIG.scheduled.find((j) => j.name === name)
     assert.ok(

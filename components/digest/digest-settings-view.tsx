@@ -8,6 +8,7 @@ import {
   type SettingsForm,
   type SettingsResponse,
   buildSettingsPayload,
+  formatEmergencyFallback,
   formFromEffective,
   groupSources,
   outcomeLine,
@@ -253,6 +254,13 @@ export function DigestSettingsView() {
                 <option key={m} value={m} />
               ))}
             </datalist>
+          </div>
+          <div
+            role="note"
+            aria-label="模型最终兜底"
+            className="mt-3 border-t border-slate-200 pt-3 text-xs text-slate-500"
+          >
+            {formatEmergencyFallback(resp.emergencyFallback)}
           </div>
         </section>
 

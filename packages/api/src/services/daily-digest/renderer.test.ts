@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { buildNormalizedItem } from "./feed-parsers"
 import { escapeHtml, mdLink, renderDigest } from "./renderer"
-import type { DigestSummary, SourceFetchResult } from "./types"
+import type { DigestPublicationV2, DigestSummary, SourceFetchResult } from "./types"
 
 const items = [
   buildNormalizedItem(
@@ -52,6 +52,201 @@ const results: SourceFetchResult[] = [
 ]
 
 const render = () => renderDigest({ businessDate: "2026-07-03", summary, items, results })
+
+describe("B027 publication manifest 渲染闭环", () => {
+  it("v2 今日速览只读 publication，summary 里的被拒文案不能绕回邮件", () => {
+    const ai = buildNormalizedItem(
+      "vllm-blog",
+      "ai",
+      "vLLM 推理吞吐优化",
+      "https://vllm.ai/progress",
+      null,
+      "engineering progress",
+    )
+    const publication: DigestPublicationV2 = {
+      schemaVersion: 2,
+      businessDate: "2026-07-12",
+      overview: ["vLLM 推理吞吐取得新进展"],
+      overviewRefs: [{ text: "vLLM 推理吞吐取得新进展", itemIds: [ai.id] }],
+      sections: [
+        {
+          category: "ai",
+          entries: [{ itemId: ai.id, role: "hero", summaryZh: "推理吞吐提升" }],
+        },
+      ],
+    }
+    const out = renderDigest({
+      businessDate: "2026-07-12",
+      summary: {
+        overview: ["Tim Cook 致信 Sam Altman 引发热议"],
+        sections: [],
+        degraded: false,
+      },
+      publication,
+      items: [ai],
+      results: [],
+    })
+
+    assert.ok(out.html.includes("vLLM 推理吞吐取得新进展"))
+    assert.ok(!out.html.includes("Tim Cook 致信 Sam Altman"))
+    assert.ok(!out.markdown.includes("Tim Cook 致信 Sam Altman"))
+  })
+
+  it("v2 只渲染显式批准的 pick/brief，raw pool 的 rejected/unreviewed 不得补位", () => {
+    const good = buildNormalizedItem(
+      "reddit-ai",
+      "community",
+      "vLLM 量化实践复盘",
+      "https://reddit.com/r/good",
+      null,
+      "工程讨论",
+    )
+    const help = buildNormalizedItem(
+      "v2ex-hot",
+      "community",
+      "奔三了很迷茫，AI 创业该怎么办",
+      "https://v2ex.com/t/help",
+      null,
+      "个人求助",
+    )
+    const unreviewed = buildNormalizedItem(
+      "digg-ai",
+      "community",
+      "UNREVIEWED AI 热议",
+      "https://digg.com/unreviewed",
+      null,
+      "未审核",
+    )
+    const publication: DigestPublicationV2 = {
+      schemaVersion: 2,
+      businessDate: "2026-07-12",
+      overview: [],
+      sections: [{ category: "community", entries: [{ itemId: good.id, role: "brief" }] }],
+    }
+    const out = renderDigest({
+      businessDate: "2026-07-12",
+      summary: {
+        overview: [],
+        sections: [{ category: "community", picks: [], briefItemIds: [good.id] }],
+        degraded: false,
+      },
+      publication,
+      items: [good, help, unreviewed],
+      results: [],
+    })
+
+    assert.ok(out.markdown.includes(good.title))
+    assert.ok(!out.markdown.includes(help.title))
+    assert.ok(!out.markdown.includes(unreviewed.title))
+    assert.deepEqual(out.displayedItemIds, [good.id])
+  })
+
+  it("未进入 publication 的 GitHub/podcast 即使传给旧直渲参数也不得回流", () => {
+    const ai = buildNormalizedItem(
+      "openai-news",
+      "ai",
+      "OpenAI 模型发布",
+      "https://openai.com/release",
+      null,
+      "release",
+    )
+    const github = buildNormalizedItem(
+      "github-trending-daily",
+      "github",
+      "iptv-org/iptv",
+      "https://github.com/iptv-org/iptv",
+      null,
+      "★ +1000 · 100000 total · TypeScript\nIPTV channels",
+    )
+    const podcast = buildNormalizedItem(
+      "podcast-random",
+      "podcast",
+      "与 AI 无关的闲聊",
+      "https://example.com/podcast",
+      null,
+      "闲聊要点",
+    )
+    const publication: DigestPublicationV2 = {
+      schemaVersion: 2,
+      businessDate: "2026-07-12",
+      overview: [],
+      sections: [
+        {
+          category: "ai",
+          entries: [{ itemId: ai.id, role: "hero", summaryZh: "模型正式发布" }],
+        },
+      ],
+    }
+    const out = renderDigest({
+      businessDate: "2026-07-12",
+      summary: {
+        overview: [],
+        sections: [{ category: "ai", picks: [{ itemId: ai.id, summaryZh: "模型正式发布" }] }],
+        degraded: false,
+      },
+      publication,
+      items: [ai],
+      githubItems: [github],
+      podcastItems: [podcast],
+      results: [],
+    })
+
+    assert.ok(out.markdown.includes(ai.title))
+    assert.ok(!out.markdown.includes(github.title))
+    assert.ok(!out.markdown.includes(podcast.title))
+    assert.deepEqual(out.displayedItemIds, [ai.id])
+  })
+
+  it("v2 supporting source 保留同报徽章与 lookup；displayed/shown 只记录真实展示事件", () => {
+    const primary = buildNormalizedItem(
+      "openai-news",
+      "ai",
+      "OpenAI 推理优化发布",
+      "https://openai.com/inference",
+      null,
+      "release",
+    )
+    const alternate = buildNormalizedItem(
+      "hn-ai",
+      "ai",
+      "HN 讨论同一推理优化",
+      "https://news.ycombinator.com/item?id=1",
+      null,
+      "discussion",
+    )
+    const publication: DigestPublicationV2 = {
+      schemaVersion: 2,
+      businessDate: "2026-07-12",
+      overview: [],
+      sections: [
+        {
+          category: "ai",
+          entries: [
+            {
+              itemId: primary.id,
+              role: "hero",
+              summaryZh: "推理吞吐获得提升",
+              displayTag: "推理",
+              alsoItemIds: [alternate.id],
+            },
+          ],
+        },
+      ],
+    }
+
+    const out = renderDigest({
+      businessDate: "2026-07-12",
+      summary: { overview: [], sections: [], degraded: false },
+      publication,
+      items: [primary, alternate],
+      results: [],
+    })
+
+    assert.ok(out.html.includes("2 源同报"))
+    assert.ok(out.markdown.includes("2 源同报"))
+    assert.deepEqual(new Set(out.displayedItemIds), new Set([primary.id, alternate.id]))
+  })
+})
 
 describe("rest-only section（07-12 德彪 jtw-r1 P1：picks 摘空后整类蒸发+shown 已烧=永久漏报）", () => {
   it("section picks 为空但类目有速览候选 → 保留板块只渲染速览行（标题可见 + restItemIds 进账）", () => {
@@ -130,10 +325,7 @@ describe("rest-only section（07-12 德彪 jtw-r1 P1：picks 摘空后整类蒸�
       results: [],
     })
     assert.ok(!out.restItemIds.includes(ytOnly.id), "被占用条目不得再进速览账")
-    assert.ok(
-      !out.markdown.includes(ytOnly.title),
-      "ai 类目无真实候选，不得以空壳板块形态保留",
-    )
+    assert.ok(!out.markdown.includes(ytOnly.title), "ai 类目无真实候选，不得以空壳板块形态保留")
     // 空壳的真实表征（德彪 jtw-r3 探针：hasSection=true 而 restItemIds=[]）——板块头不得出现
     assert.ok(!out.markdown.includes("## AI"), "ai 板块头不得以空壳形态渲染")
   })
@@ -264,7 +456,14 @@ describe("communityDropIds 速览反选（07-12 小孙：社区要研究/讨论/
     assert.ok(!out.restItemIds.includes(unreviewed.id), "未审条目不得补位（视野=候选闭合）")
     assert.ok(!out.markdown.includes("UNREVIEWED_GOSSIP"))
     // ai/hot 板块不受 fed 集合约束（fed 只约束 community）
-    const aiItem = buildNormalizedItem("hn-ai", "ai", "推理框架发布", "https://a.com/ai1", null, "s")
+    const aiItem = buildNormalizedItem(
+      "hn-ai",
+      "ai",
+      "推理框架发布",
+      "https://a.com/ai1",
+      null,
+      "s",
+    )
     const out2 = renderDigest({
       businessDate: "2026-07-12",
       summary: {
@@ -357,10 +556,79 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
       results,
       githubItems: [gh],
     })
-    assert.ok(html.includes("GitHub 周榜"))
+    assert.ok(html.includes("开源榜单"))
+    assert.ok(html.includes("◆ 周榜"))
     assert.ok(html.includes("▲ 6,989 本周"))
     assert.ok(html.includes("★8,695"))
     assert.ok(html.includes("Python"))
+  })
+
+  it("增长榜/新秀榜状态追加在原数据行；周榜/月榜即使带脏状态也不展示", () => {
+    const dailyBase = buildNormalizedItem(
+      "github-trending-daily",
+      "github",
+      "Panniantong/Agent-Reach",
+      "https://github.com/Panniantong/Agent-Reach",
+      null,
+      "+860 stars today · ★12,000 · TypeScript · AI agent search",
+    )
+    const daily = {
+      ...dailyBase,
+      githubMeta: {
+        repo: "Panniantong/Agent-Reach",
+        period: "daily" as const,
+        windowStars: 860,
+        totalStars: 12_000,
+        language: "TypeScript",
+        description: "AI agent search",
+        evidence: {
+          topics: [],
+          metadataStatus: "not_requested" as const,
+          readmeStatus: "not_requested" as const,
+          evidenceComplete: false,
+        },
+        eligibility: { state: "yes" as const, confidence: 0.98, reasons: ["AI 核心用途"] },
+        rankStatus: { kind: "streak" as const, days: 3 },
+      },
+    }
+    const weeklyBase = buildNormalizedItem(
+      "github-trending-weekly",
+      "github",
+      "owner/weekly-ai",
+      "https://github.com/owner/weekly-ai",
+      null,
+      "+2,000 stars this week · ★20,000 · Rust · AI inference runtime",
+    )
+    const weekly = {
+      ...weeklyBase,
+      githubMeta: {
+        repo: "owner/weekly-ai",
+        period: "weekly" as const,
+        windowStars: 2_000,
+        totalStars: 20_000,
+        language: "Rust",
+        description: "AI inference runtime",
+        evidence: {
+          topics: [],
+          metadataStatus: "not_requested" as const,
+          readmeStatus: "not_requested" as const,
+          evidenceComplete: false,
+        },
+        eligibility: { state: "yes" as const, confidence: 0.98, reasons: ["AI 核心用途"] },
+        rankStatus: { kind: "new" as const },
+      },
+    }
+
+    const { html, markdown } = renderDigest({
+      businessDate: "2026-07-13",
+      summary,
+      items,
+      results,
+      githubItems: [daily, weekly],
+    })
+    assert.ok(html.includes("连续 3 日上榜"))
+    assert.ok(markdown.includes("连续 3 日上榜"))
+    assert.ok(!html.includes(">NEW<"), "周榜不应消费跨日状态")
   })
 
   it("GitHub 月榜条目 → 板块标题自适应 + 本月数据行（#27）", () => {
@@ -379,9 +647,8 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
       results,
       githubItems: [ghM],
     })
-    assert.ok(monthlyOnly.html.includes("GitHub 月榜"))
+    assert.ok(monthlyOnly.html.includes("开源榜单"))
     assert.ok(monthlyOnly.html.includes("▲ 12,345 本月"))
-    assert.ok(!monthlyOnly.html.includes("GitHub 周榜"))
     const ghW = buildNormalizedItem(
       "github-trending-weekly",
       "github",
@@ -397,8 +664,11 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
       results,
       githubItems: [ghW, ghM],
     })
-    // 分栏改版（07-05）：多榜同场 → 板块名「GitHub 榜单」+ 每种榜一张榜单卡
-    assert.ok(both.html.includes("GitHub 榜单"))
+    // 总名固定为「开源榜单」，榜种仍各自一张原名列表卡。
+    assert.ok(both.html.includes("AI · 社区动态 · 今日热点 · 开源榜单"))
+    assert.ok(!both.html.includes("GitHub 榜单"))
+    assert.match(both.markdown, /^## 开源榜单$/m)
+    assert.doesNotMatch(both.markdown, /^## GitHub 榜单$/m)
     assert.ok(both.html.includes("◆ 周榜 · 1"))
     assert.ok(both.html.includes("◆ 月榜 · 1"))
     assert.ok(both.html.includes("▲ 6,989 本周"))
@@ -817,7 +1087,8 @@ describe("分栏改版（小孙 07-05 #1-#5）", () => {
       results,
       githubItems: ghd,
     })
-    assert.ok(html.includes("GitHub 增长榜"))
+    assert.ok(html.includes("开源榜单"))
+    assert.ok(html.includes("◆ 增长榜 · 今日"))
     assert.ok(html.includes("◆ 增长榜 · 今日 · 6")) // cap 6
     assert.ok(html.includes("▲ 320 今日"))
     assert.ok(html.includes("owner/daily-5"))

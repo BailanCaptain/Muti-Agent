@@ -64,17 +64,17 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 
 ### Phase 1 — MVP：管道骨架 + 五板块基础版（零部署依赖源）
 
-- [x] AC1: 每日 07:30（Asia/Shanghai）自动生成并发送日报到配置收件箱；进程当时不在线 → 启动后补发；按日幂等 = at-least-once 有界重试（已确认 sent 的绝不重发；发送结果未知最多补发 1 次并记 R-201；attempted≥2 转人工，见 D10/D11）。机制由 reconcile 三入口 + scheduler 看门狗 3600s 测试与 5 天全链真发覆盖；首个 07:30 live cron 于合并重启 runtime 后进入观察
+- [x] AC1: 每日 07:30（Asia/Shanghai）自动生成并发送日报到配置收件箱；进程当时不在线 → 启动后补发；按日幂等 = at-least-once 有界重试（已确认 sent 的绝不重发；发送结果未知最多补发 1 次并记 R-201；attempted≥2 转人工，见 D10/D11）。机制由 reconcile 三入口 + scheduler 14d 极宽看门狗（1209600s，严格高于 Claude 6h/Codex 12h、播客 96h 及 B032 Claude 故障降级后的保守全链最坏 778350s）关系测试与 5 天全链真发覆盖；首个 07:30 live cron 于合并重启 runtime 后进入观察
 - [x] AC2: 邮件版式 = 「今日速览」总摘要 → 板块分节（每条：标题+一句话中文摘要+来源名+原文链接）→ 页脚源健康状态（终态=D17 Bento 版式：导览卡+锚点直达+其余速览行区+刊头体检行）
-- [x] AC3: AI 板块：smol.ai 全文 RSS + 官方 blog（OpenAI/DeepMind/Mistral + Anthropic/Meta 社区桥）+ HF Daily Papers API + vLLM blog/SGLang releases + HN 高分 AI 帖；LLM 按「推理优化/训练」加权排序，优化点单独突出（终态超集=40 路主表 §0；「推理」为 ai 板块首位子栏 tag）
+- [x] AC3: AI 板块：smol.ai 全文 RSS + 官方 blog（OpenAI/DeepMind/Mistral + Anthropic/Meta 社区桥）+ HF Daily Papers API + vLLM blog/SGLang releases + HN 高分 AI 帖（终态超集=40 路主表 §0）；“推理”仅指大模型推理/部署/服务，置于 AI 首位但不独占，推理与非推理两侧均有合格内容时稳定精选各至少一条，真实无合格推理可为空，GPU 融资不得归入推理；mail/web/archive/shown 统一消费预算裁剪后的终态 publication
 - [x] AC4: 热点板块：知乎热榜 + 百度热搜 + 头条热榜（直连 JSON）+ BBC 中文 RSS
 - ~~AC5: 体育板块（篮球+电竞）~~ **已移除（D15，小孙 2026-07-03 拍板纯化）**——曾完整交付并 review 通过，ESPN/HLTV 反爬教训（简单 UA+直连优先+transport 级 fallback）沉淀在 D12 与 git 历史
 - ~~AC6: 股票板块~~ **已移除（D15）**——A 股快讯/美股 RSS/非交易日逻辑一并下线
-- [x] AC7: GitHub 板块（2026-07-07 E3 改「四榜常驻」，小孙拍「增长、周榜、月榜都要」拆掉原周一/每月 1 号时间门）：scrape trending 日/周/月三时窗（权威增星数）+ Search API `topic:mcp` 新秀榜（新仓 7 天）；邮件端 caps 限量（6/6/4/6）、跨榜同仓 dedupe 先到者赢、desc 批翻中文；原设想「OSS Insight 兜底名次」从未接线（scrape 四路稳定，无需兜底）
+- [x] AC7: GitHub 板块四榜常驻：scrape trending 日/周/月三时窗（权威增星数）+ Search API 全量 7 天新仓候选；四榜统一以结构化证据判定 `yes/no/unknown`，仅 `yes` 准入，再严格按 `windowStars → totalStars → repo` 排序；邮件端 caps 保持 6/6/4/6，同一期同仓按增长榜 → 周榜 → 新秀榜 → 月榜归属；周/月不跨日抑制，增长/新秀只显示 NEW、连续 X 日或重新上榜而不隐藏；总名“开源榜单”、四组原名、HTML/CSS 与排版不变
 - [x] AC8: 可靠性：单源失败隔离（独立超时/try-catch）不影响整报；同源连续 3 天失败推 R-201 告警；源健康计数持久化（重启不丢连续失败判定）；07-06 纠偏=keepIf 全滤「健康空」≠ 失败（`26eba5d`）
 - [x] AC9: 归档：每日 markdown + html 落 `.runtime/daily-digest/YYYY-MM-DD/`（终态超集：+summary.json 结构化归档 + items.jsonl 全量证据底料（F029 语料）+ shown.json 已见账本）
 - [x] AC10: 安全边界：出站走 SafeHttpClient 合同（完整 host 白名单 + IANA 精确段 + 逐跳 redirect 校验 + 流式大小上限，见「设计合同 v2」，Iron Law §4 对齐）；收件人白名单统一 `.env`（多收件人逐地址 fail-closed）；SMTP 凭证 .env 人工填、代码只读（Iron Law §3）；每次外发落账本（时间/收件人/各板块条数）
-- [x] AC11: LLM 降级：runner 降级链全挂时发「原始条目清单版」，不丢当日报（07-07 v5 实战后加固：尾部截断 repairTruncatedJson 结构修复不豁免护栏；修复缺节保守记账+透出，喂样不烧 shown）
+- [x] AC11: LLM 失败治理：runner/解析/编辑覆盖失败最多尝试 4 次；全败返回 `null`，job 宁缺勿发、告警且不落 sent，下一整点重试（旧归档清单版仍只读兼容；尾部截断 repairTruncatedJson 不豁免护栏；shown 只记录最终 publication）
 - [x] AC12: 邮件渲染验收：HTML 内联 CSS、table 布局 ≤600px、无脚本/无远程图片依赖、链接可点击；本地 HTML/mail-parser 快照测试；上线前 QQ→Gmail 活体 smoke 一次（2026-07-04 PASS，Gmail 实收 degraded=false），mock sender 单测不被活体项阻塞
 
 ### Phase 2 — 增强（Phase 1 验收后按需拍）
@@ -82,6 +82,20 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 - [x] AC13: 境内自部署 RSSHub：fallback 链 自建→rssforever→ktachibana（2026-07-04 小孙 Docker 起 `diygod/rsshub` 实例 `localhost:1200`，trustedBaseUrls 信任锚 + 前插链首）；自建实例配小号 cookie 后解锁 Twitter 路由（与 AC15 cookie 路线共用一套部署）
 - ~~AC14: 个股自选分析~~ **已移除（D15）**——watchlist 模块（腾讯→新浪多源行情）曾完整交付，随板块纯化删除
 - [x] AC15: X 一手动态直采，双路供应商抽象（D16，小孙 2026-07-03 拍 cookie 路线）：**主路=自建 RSSHub `/twitter/user/:handle`（小号 TWITTER_AUTH_TOKEN cookie，免费，封号风险专用小号隔离 + 逐账号限速 4-7s 抖动）**；备路=TwitterAPI.io 按量（配 `_X_API_KEY` 时优先）。终态 35 验活账号（17 机构含 claudeai/claudeDevs + 18 从业者，主表 §5），公司/从业者结构分栏
+
+### Post-completion hardening — B032 证据化编辑判定
+
+- [x] AC16: 审核与摘要彻底分离：`EditorialDecider` 先冻结每个送审 ID 的 publish/reject/abstain；`DigestComposer` 只接收 final publish 原文快照与冻结 facets，不能看到或引用 rejected/abstain 内容。
+- [x] AC17: 正常模式下 AI/community/podcast 由两个不同 Claude target 独立审核，争议只交固定 `gpt-5.6-sol/high`；全部 Claude target 均为结构化 runner 失败时必须可进入明确标记的 `degraded_same_target`，由固定 Codex 做 clean-room A/B、分歧才 C。模型/slot provenance 必须如实落档；三票仍无共识则摘除该条并告警，不能因 Claude 不可用阻断其余非空日报，也不能伪称“无推理进展”。
+- [x] AC18: 每票携带 1-3 条有界原文 evidence 与 reviewer target；代码验证同 ID/同字段 provenance，并从类型化 basis 派生准入、内容类型与拒绝原因。evidence 不冒充语义正确性证明，confidence 不单独决定准入。
+- [x] AC19: `FINANCE/HELP/COMPLAINT/GOSSIP` 与 community substantive 语义正则不再拥有送审前或 publication 后的改判权；Sakana、CUDA、vLLM、推荐模型正例与求助/抱怨/八卦/纯赞叹反例全部穿过终态生产链。
+- [x] AC20: 外层归档与 `DigestPublicationV2` 继续 schema v2；邮件格局、原有文案、推理突出但不独占、开源榜单四组、GitHub 排序/跨日状态、单腿 timeout 与 14d watchdog 值均不变。
+
+### Production launch hardening — B033 首封正式日报
+
+- [x] AC21: 新生产 Composer 在获批输入不少于 5 条时输出 5–8 条独立“今日速览”，不得重复引用同一事件凑数；引用必须属于终态 publication。邮件字节裁剪后再次校验，不合格则不发送、不写 sent，交由整点安全网重试。
+- [x] AC22: 12 个 YouTube RSS 源仅对可恢复 HTTP 状态做至多一次受控重试，AbortSignal 全程贯通；403 等永久错误不重试，其他 RSS/POST 源不被全局放大。
+- [x] AC23: 2026-07-15 07:30 定义为首封正式日报与跨日去重 epoch；此前试发 shown 文件保留但不参与过滤，07-15 成功发布项从 07-16 起成为去重基线。邮件格局、原有文案、“开源榜单”及四组榜单不变。
 
 ## Dependencies
 
@@ -130,6 +144,9 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 | D15 | 板块纯化 | 保留五板块 / 纯化 | **删篮球/电竞/股市三板块（小孙拍 2026-07-03「让我们纯粹一点」）**，终态=AI/X/热点/GitHub 周榜 | 聚焦 AI 主线；已交付代码（10 源+watchlist+交易日逻辑）整体下线，教训沉淀 D12/git 历史 |
 | D16 | X 数据路线 | A=TwitterAPI.io 按量 / B=cookie 小号免费 / C=仅 smol.ai recap | **B 为主（小孙拍 2026-07-03「我弄个小号」）**：自建 RSSHub Twitter 路由消费小号 cookie；A 保留为备路（配 key 优先）；C 始终兜底 | 免费；cookie 不经本进程（只在 RSSHub 实例侧）；参考项目同款姿势，封号风险用专用小号隔离 |
 | D17 | 邮件视觉版式 | 报纸头版 v3 / Bento 大小格 / 双列卡墙 / 杂志格子 | **Bento 大小格混排 + 顶部导览（②，小孙 2026-07-04 拍板「可以 不错」）**：深金刊头 + 导览卡（今日速览 + 4 板块锚点格）+ 每板块 hero 大卡 + 其余两列成对/落单整宽；暖金 token 锁定（禁冷色，对齐 dashboard-rank） | 「一格一个」有设计感；顶部导览减少下滑；固定像素多列（272+16+272）防错位；注入护栏不变（渲染器 v4 `e87b78c`，德彪 r5 GO） |
+| D18 | 编辑门禁与推理语义 | renderer 补齐 / 唯一发布清单 | **唯一发布清单（B027，小孙 2026-07-13 拍板）**：邮件、web curated、shown ledger 只消费编辑批准 ID；“推理”仅指大模型推理/部署/服务，突出但不独占 AI 板块 | 修复有限 feed 审核后 raw rest/直出流回流，以及 cap 前截断造成的推理假空；确实无合格推理允许为空 |
+| D19 | 开源榜单准入与排名 | AI 权重混排 / 双轨榜 / 准入后真实增星排序 | **保持单一“开源榜单”与四组原名；AI 准入后按真实增星排序（B028，小孙 2026-07-13 拍板）**；增长/新秀记跨日状态，周/月不跨日抑制 | 双轨榜被否决为太乱；AI 相关性是准入条件，不是排名倍率；邮件格局和现有榜单排版不改 |
+| D20 | 编辑语义判定 | 继续补正则 / 强依赖双 Claude / 可审计的多目标+单 provider 降级 | **B032 采用证据化两阶段：正常模式双 Claude 独审 + 固定 Codex 裁关键分歧；Claude provider 全部失败时，Codex clean-room A/B/C 以 `degraded_same_target` 明示降级；代码从类型化 basis 派生决定，摘要只看 publish 集** | 小孙拍板否决正则补丁，并明确当前 Claude 不可用不能导致方案失败；同模型 clean-room 不冒充多模型独立性，但比恢复正则或整报停摆更符合可用性边界，最坏账仍低于 14d |
 
 ## Timeline
 
@@ -162,10 +179,29 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 | 2026-07-12 | **检讨文批（小孙报 yt 精选卡「正文仅为样板…无法提炼」元评论）四轮审闭环 GO**：根因三层=yt RSS snippet 全空（第一轮凭标题进精选）+深读字幕失败回落 http 抓 YouTube 页（JS 渲染页只有版权样板且过 200 字闸）+深读 LLM 面对样板写检讨文。**环境两行小孙授权代笔**：主仓 .env +YTDLP_PATH/+FFMPEG_PATH（winget 绝对路径验活）。**三修 `6e6b2a1`**（深读后置摘除门：yt pick 无深读产出→摘除降速览/boot fetchContent 空串语义禁 http 回落/双 prompt 元评论禁令）→ **德彪 jtw-r1 1P1+1P2+1P3**（P1=单 pick section 摘空被 renderer 一刀切 filter 整类蒸发+shown 照烧=永久漏报，他独立探针实证；P2=测试手写 mock 绕开 boot 接线；P3=断言只咬关键词）→ **修批+小孙增强 `10a0640`**（rest-only section 保留+hero guard+**repairDropped 丢节类目例外仍蒸发**——截断事故要回补，语义冲突是既有测试红了才撞出；makeYtDeepReadFetchContent 适配器单点；完整指令断言；**yt 24h 延迟窗**=小孙「我在意 直接做」：yt 发布 <24h 本期完全不进不烧 shown、字幕就绪次日进、可见窗第 2~7 天；yt-dlp 子进程注 ffmpeg PATH——第六封实测 YTDLP 生效但 yt-dlp 探不到 ffmpeg 套娃坑）→ **r2 2P2**（速览容量 0 时空壳+烧账复现——超预算自动降 0 也触发；ffmpeg 读全局 process.env 绕 bootEnv 契约）→`d923a43`（保留门补容量条件+容量 0 烧账注释明确为既有语义；ffmpegPath 走 YtSubsDeps 注入+子进程 env 三态回归）→ **r3 1 finding**（N 谓词过宽缺 usedIds：唯一候选被跨板块 alsoItemIds 占用时空壳复现）→`0887454`（谓词与 restAll 完全同式+占用场景回归含板块头断言）→ **r4 GO 零 findings**（真值表核完+反例推演六路不破）。**第六封 11:22Z `8f8464d5` degraded=false=摘除门活体首秀**（「ai 摘除 1 条无字幕 yt 精选」）；红测四轮（摘除门/rest-only filter/usedIds/穷尽检查）；**坑：perl 多行替换红测 mutate 误伤两处同型谓词（吞类目条件）——红测 mutate 一律 Edit 单点，perl 只用于可 grep 验证的单点替换**；第二批候选=media:description 补抽（无字幕视频有真简介可依） |
 | 2026-07-12 | **深夜双批+合审闭环**：①**字幕命中率批 `b6f5058`**（第七封 429 破案→小孙拍 D）：YouTube 登录 cookies 提权（小孙小号导出→主仓 .runtime/secrets/、.env 第三行授权代笔；argv 只路径/未配匿名 fail-open）+`--js-runtimes node` 钉死+429 退避 30s 重试一次+stderr 窗 2000 优先抓 ERROR 行+看门狗账 5670→5970（字幕腿 210s×3 常量推导）②**内容质量批 `345b006`**（小孙两反馈：社区收求助帖「专科大二迷茫」/Reddit 名人八卦、推理栏混 GPU 循环融资）：根因=prompt 规则 6 写了「算力芯片」+速览行是渲染层直出 LLM 选材管不到——推理定义收紧（仅限技术，商业新闻→公司名/其他）+规则 1 community 五类性质不选+`COMMUNITY_NOISE_RE` 结构层词表（只扫标题/只限 community/「离职薪资」产业用词刻意不收防误杀）+**communityDropIds 语义反选**（LLM 反选性质不合格条目，速览行剔除；parse 白名单+renderer category 双保险+picks 优先）③**德彪合审 r1 两批 NO-GO（2P1+1P2 全带独立复现）**：cookie 值可经 yt-dlp stderr 回显进日志/community 喂样 36 上限第 37+ 条无从反选=未审八卦补位/恶意 snippet 可诱导整版蒸发→**三修 `1e7af65`**：cookies 模式失败信息=安全枚举（枚举保「429」兼容重试判定；未配模式保留 ERROR 行）+`communityFedIds` 审查集合闭合（喂样即视野，速览候选限 fed 内「未审=不上」；保留门与 restAll 共用同一 `communityRestBlocked` 函数）+job 层反选熔断（∩fed 占比 >80% 作废+告警）→**r2 GO**（P1/P2 零；德彪独立复跑 40 条原场景 r1RestIds=0+secretLeaked=false+三例外无回归；P3 流程项=subject 缺签名，squash 时补齐拍板不重写历史）④**第八封 15:11Z `22a5a517` degraded=false**：反选首弹 15/36=42% 全真噪声零误杀（情绪帖/名人 meme/@sama 互怼推）+**推理栏对照实证：同一篇 Nvidia/CoreWeave 融资文第七封「推理」→本封「其他」**+社区噪声预滤上链 3206→320+预算护栏首弹 109KB 自动降密度 97KB；cookies 字幕实弹=本期无 yt pick 测不到（延迟窗+摘除门正常形态）挂观察项；测试 131→157、红测五发（restAll 谓词/category 限定/cookies 分支/fed 闭合/熔断阈值 mutate 均红）；审档 .runtime/reviews/F037-hitrate-quality-* 全套 |
 
+| 2026-07-13 | 小孙报最新日报仍有非 AI V2EX 人生帖、推理栏再次消失，并追问其他栏目是否同类绕过；对齐后拍板 B027/B028 按 Bug 流程推进。终态合同：发布清单唯一真相源；推理专指大模型推理且突出不独占；开源榜单保持原名/四组/现有排版，AI 准入后按真实增星排序，周/月不跨日抑制，增长/新秀记上榜状态；双轨榜与邮件两行改版均明确不做。计划见 `docs/plans/F037-editorial-quality-hardening-plan.md`，正式 reviewer 指定 Claude Opus 4.8。 |
+| 2026-07-13 | **B027/B028 实现进入质量门禁**：结构化审核 + `DigestPublicationV2` 收口 mail/web/archive/shown，推理/非推理稳定精选与终态裁剪双门禁；GitHub 四榜 `yes/no/unknown` 准入后真实增星排序，增长/新秀仅标状态不隐藏，周/月无跨日抑制；四榜全部请求共享并发闸，SafeHttp abort 覆盖 DNS/fetch 且失败缓存可重试。专项 115/115、全量 E2E 11/11、typecheck/build/lint/diff gate 通过；独立验收与 Claude Opus 4.8 正式 review 待执行，故 B027/B028 仍为 verification。 |
+| 2026-07-13 | **B027/B028 Bug 流程闭环**：独立 acceptance-guardian PASS；Claude Opus 4.8 首轮正式 review GO（0 P1/P2、1 P3），唯一 P3 为更强 GitHub evidence 跨榜替换保留旧 `Map` 插槽导致新秀榜错位，经 RED→GREEN 于 `12624e8` 修复，同模型定点复审确认 CLOSED、无新增 P1/P2/P3、最终 GO。实现提交 `3dc1f1d` + `12624e8`；F037 相关 API/Node 254/254、web model 18/18、Playwright 11/11、全量 components 901/901。邮件格局、原有文案、总名“开源榜单”和四组均未改；本分支未合并。 |
+| 2026-07-13 | **B029 真实补发阻塞闭环**：首次 `force reconcile` 的三份摘要均为合法 JSON，但稳定漏审被引用 hot 条目并引用 policy-rejected community；四次盲重试后 `failed_summarize`、零 SMTP。修复保持 strict parser 不变，只向下一轮追加内部 ID 级定点纠错；RED→GREEN、独立 review 0 P1/P2、acceptance-guardian PASS。第二次真实运行首稿被拒、下一稿修正后 `status=ok / degraded=false`，外发账本 21→22、六文件归档落盘。该轮 37 个源受瞬时网络/DNS 与本机 ffmpeg/PATH 异常影响，四榜未成节，故邮件可验 B029 与内容门禁、不可作为 B028 四榜完整样本；本分支仍未合并。 |
+| 2026-07-14 | **B030 跨 provider 兜底进入实现**：FFmpeg 修正后的隔离预检为 42/43，唯一失败 `podcast-transcribe` 已定位到 STT 完成后的 LLM 提炼；主摘要同时全败。根因是主力/备用都走 Claude CLI，组织关闭 subscription access 时同故障域失效。拍板保留原两列与邮件呈现，增加固定第三层 `Codex gpt-5.6-sol/high`，摘要、翻译补全、播客共用；设置页只读展示，不新增可持久化字段。计划见 `docs/plans/F037-cross-provider-fallback-plan.md`；验证与补发待完成。 |
+| 2026-07-14 | **B030/B031 质量门禁推进**：三层 provider-aware runner 与 Codex 子进程取消完成；真实预检再暴露统一 360s 误杀慢 Codex、旧看门狗漏算第三层、parse-fail 原因不可观测。首次 guardian 又抓到原始 provider stderr 旁路，敏感哨兵双 RED→GREEN 后日志/聚合错误只保留安全分类。第二 guardian PASS 后，专项 timeout 审计继续抓到播客 120s Claude + 900s 整源会把 2h Codex 截成 ≤15min；再以四项 RED→GREEN 统一播客 Claude 30min/层、Codex/high 2h、整源 12h，并把全链最坏账重算为 108750s、三个入口 watchdog 129600s。隔离全链 17m52s：43/43、首稿 6 个 policy-rejected 引用、第二稿通过，最终 `status=ok/degraded=false`、三份播客、六件归档+mock 邮件。内容审计社区9/9、AI推理6/16且非推理10/16、四榜19/19 yes；全量门禁与 F037 E2E 通过。新增 timeout 修正的复验/review/补发仍待执行。 |
+| 2026-07-14 | **B030/B031 review 修复**：Guardian R3 先行 PASS；指定 Claude Opus 4.8 CLI 随后被组织策略拒绝（无 API/Bedrock/Vertex/Foundry 备用通道），备用零上下文 review 判 2P1+2P2：两个 Claude 配置位可被固定 Codex slug 折叠、Windows Claude timeout/abort 只杀 shell、community pick 过信模型 assessment、GitHub `mcp` topic 与 Minecraft Coder Pack 歧义。四项均以反例 RED 后最小修复：API/存储/运行三层锁 Claude 拓扑，Claude 整树终止，publication 用原始事实做最终门，`mcp` 需正文消歧；目标 58/58、扩展定向 310/310。排序、四榜、跨日状态及邮件格局未变；代码变化后新 guardian/复审/补发待执行。 |
+| 2026-07-14 | **B031 Guardian R4 二次收口**：R4 证明“AI 实体 + 描述性原文”仍不足以区分实质讨论与个人生活性质；三个模型伪标反例（AI offer 选项征询、加班薪资抱怨、ChatGPT 相亲闲聊）均穿透 publication，故判 BLOCKED。反例先 RED 6/7；最终 publication 改为在模型审核后再次复用原始标题社区性质门，并新增两类高置信组合信号，GREEN 7/7、邻接 59/59，vLLM/SGLang 推理讨论正例保留。没有改栏目、邮件格局、榜单排序或去重语义；全新 R5/复审/补发待执行。 |
+| 2026-07-14 | **B031 最终门与极宽保险丝再收口**：备用复审发现个人性质可藏入 `rawSnippet`，GPT/vLLM 长纯赞叹仍可借“长度 + AI/技术词”穿透；同时过宽生活/加班词会误杀真实推荐模型评测与 CUDA 故障复盘。新增原症状和反误杀 RED 后，最终门改为“AI/技术信号 + 发布事件/事实动作/技术细节”，正文个人噪声只在成对高置信叙事下硬拒绝；vLLM/SGLang 调度、Blender MCP 构建、相亲推荐模型 A/B 研究均保留。按小孙“慢也要等”的新拍板，Claude/Codex 单层保险丝扩为 6h/12h，播客下载/ffmpeg/STT 为 30m/30m/1h、整源 96h，三入口 watchdog 14d；保守全链最坏 864750s。新 guardian/复审/真实补发仍待完成。 |
+| 2026-07-14 | **Guardian R6 blocker 与 production-path 补强**：R6 的九例终态探针证明 CUDA 故障诊断虽未被“加班”噪声门拦截，仍会因实质门不识别“排查/定位/batching/竞态”而降为 `low_signal`，故判 BLOCKED。把该正例加入与五类反例、其余三类正例相同的 `buildDigestPublication` 用例，先 7/8 RED，再最小补入诊断动作与竞态细节后 8/8；邻接 62/62、全量 API 4633/4635（0 FAIL）。R6 结论不原地改判，须全新 R7 与新复审后才能真实补发。 |
+| 2026-07-14 | **B032 Design Gate（小孙拍板停止正则补丁，并补充 Claude 故障可用性约束）**：真发审计发现 Sakana “share our latest research” 被 `shares?` 当 finance；与 R4-R7 的反例穿透/正例误杀构成系统性摆动。D20 将审核与摘要拆分、类型化 basis + 原文 evidence；正常双 Claude + Codex 争议裁决，Claude 全部 runner 失败时固定 Codex clean-room A/B/C 且明示 `degraded_same_target`，不能因当前 Claude 不可用整报失败。composer 只见 publish 集；外层 schema v2、邮件/榜单/单腿 timeout 不动，降级全链最坏 `778350s < 14d`；未放行前不补发。 |
+| 2026-07-14 | **B032 Bug 流程放行**：证据化 Decider→DecisionSet→Composer 落地，Claude 全挂注入矩阵 7 正/7 反与真实 `gpt-5.6-sol/high` clean-room smoke 通过；DecisionSet 在 job/publication 重算 hash、重验 evidence/slot 并从 votes 重建。零上下文 Guardian 独立回放旧归档与篡改探针后 PASS（专项 171/171、packages 4557/0、components 903/903、Chromium 2/2）。独立 Codex review 首轮抓出 empty-output 误触降级、重复 reviewer slot 可伪造授权 2P1，均以正式 RED→GREEN 修复；原攻击 probe 2/2、聚焦 176/176，定点复审两项 CLOSED、最终 GO。Claude Opus 4.8 因组织策略不可用，本轮没有冒充 Claude review；真实补发待最终运行门。 |
+| 2026-07-14 | **B032 真实补发闭环**：首轮 force 运行耗时约 15 分钟，两个 Claude target 在审核与成稿阶段均失败后，由固定 `gpt-5.6-sol/high` 高推理兜底完成；终态 `status=ok / degraded=false`，DecisionSet 如实标记 `degraded_same_target`。ledger attempt `1→2`、outbound `23→24`、六件归档刷新并含新 SMTP messageId。成品 AI 15 条（推理专栏 1 + 推理速览 1，其余 13），社区头条另有 vLLM 推理工程、14 条社区内容无 V2EX 人生求助，“开源榜单”及增长/周榜/新秀/月榜四组未变。小孙随后明确要求再发一封查看，第二轮于 22:44 同样成功，attempt `2→3`、outbound `24→25`；本轮 43/43 源正常、AI 12 条中有 EAGLE-3/vLLM 推理进展、社区 15 条且 V2EX 0、四榜 19 项、播客 1 条。 |
+| 2026-07-14 | **B033 首发可靠性施工**：小孙指定 2026-07-15 07:30 为第一封正式日报，去重从该日开始。RED 复现 B032 Composer 漏掉 5–8 条合同、YouTube 瞬时 404/500 无重试、07-14 试发 shown 污染首发；GREEN 落地动态速览合同与终态门禁、YouTube opt-in 单次重试、`2026-07-15` 去重 epoch。旧 shown 数据不删，邮件版式/文案/开源榜单与 GitHub 语义不动；待全量门禁、Guardian、review 后当日合入。 |
+
 ## Links
 
 - Discussion: [F037-daily-digest-sources-research.md](../discussions/F037-daily-digest-sources-research.md)（信息源逐个实测验证 + 排除清单 + 方法论借鉴）
 - Plan: [F037-daily-news-digest-plan.md](../plans/F037-daily-news-digest-plan.md)（Phase 1 = 15 Task）
+- Hardening: [F037-editorial-quality-hardening-plan.md](../plans/F037-editorial-quality-hardening-plan.md)（B027/B028）
+- Bugs: [B027](../bugReport/B027-digest-editorial-bypass.md) / [B028](../bugReport/B028-github-ranking-ai-eligibility.md) / [B029](../bugReport/B029-digest-summary-schema-parse.md) / [B030](../bugReport/B030-digest-cross-provider-fallback.md) / [B031](../bugReport/B031-digest-slow-fallback-and-opaque-rejection.md) / [B032](../bugReport/B032-digest-semantic-regex-oscillation.md) / [B033](../bugReport/B033-digest-first-production-launch-readiness.md)
+- Cross-provider fallback: [F037-cross-provider-fallback-plan.md](../plans/F037-cross-provider-fallback-plan.md)（B030）
+- Evidence-based editorial gate: [discussion](../discussions/F037-evidence-based-editorial-gate.md) / [plan](../plans/F037-evidence-based-editorial-gate-plan.md)（B032）
 - Related: [F029](F029-research-verification-pipeline.md)（外发数据边界设计参考）
 
 ## Evolution

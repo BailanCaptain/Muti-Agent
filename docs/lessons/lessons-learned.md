@@ -807,3 +807,39 @@
   - `packages/api/src/wiki/memory-preflight/types.ts:38-54`（score 双职责注释）
 - 原理：归一化保序不保距更不保锚——丢掉绝对量纲的分数只回答「谁更好」，永远回答不了「好不好」。
 - 关联：LL-036、F042 out-of-scope rerank 转正（rankScore/gateDecision 分离正是为此）
+
+### LL-038: 设置页出现模型 ID ≠ runtime 真正跨 provider——模型配置必须绑定执行器并做活体探针
+- 状态：validated
+- 更新时间：2026-07-14
+
+- 坑：F037 设置页已有“主力模型 / 兜底模型”两个自由 model id，看起来可以换模型；但 boot 把两者无条件交给 `createClaudeModelRunner`。Claude organization 关闭 subscription access 后，两层同时失败；若只把 `gpt-5.6-sol` 加进 UI 建议列表，它会被错误传给 `claude --model`，属于可见但不可用的假功能。
+- 根因：持久化 schema 只表达 model，没有 provider/执行器语义；UI 可选项、运行时 factory 和故障域各自演进，测试只验证字段保存，没有验证“这个 ID 最终启动了哪一个 CLI”。
+- 触发条件：一个设置字段允许跨厂商 model id；同一 fallback 链的多层由同一个 provider factory 构造；验收只有表单/单元测试，没有真实 provider 探针与外部产物。
+- 修复：运行前先归一成 `{provider, model, effort}` 有序目标，按三元组去重，再由 provider-specific factory 构造；固定灾备层不落可编辑存储。两个可编辑位置还必须在 API 校验、存储 sanitize 和运行时 fail-safe 三层锁为 Claude——否则用户把固定 Codex slug 填回前两格，会把三层拓扑去重成单层 Codex。测试必须锁定实际 CLI 参数与 abort，验收必须用真实模型生成生产 schema，并在隔离全链中观察最终文件/健康/发送产物。
+- 证据：B030 实测 Claude 两层均 `exit-code-1`，随后 `codex:gpt-5.6-sol:high` 为三份播客和主摘要成功兜底；隔离 reconcile 为 `43/43`、`degraded=false`、六件归档 + mock 邮件落盘。仅 UI formatter / payload 单测不足以提供这些证据。
+- 原理：model id 是数据，provider runner 是能力；只有二者在运行时被显式绑定并产生外部可观测结果，配置才是真功能。多模型不等于多故障域，多层 fallback 也不等于跨 provider 容灾。
+- 关联：LL-008（端到端信号链）、LL-030（外部可观测）、B030、F037
+
+### LL-039: 新增 fallback 层必须重算“每层 timeout × 顺序链 × 重试次数”——统一时限会误杀慢模型
+- 状态：validated
+- 更新时间：2026-07-14
+
+- 坑：B030 增加第三层 `gpt-5.6-sol/high` 后，runner 继续把摘要器为 Claude 校准的 360s 原样传给所有 provider；真实主摘要第三轮恰在 360s 被本地终止。同时 scheduler 测试仍写死 `4×2×360s`，7200s watchdog 已小于三层旧最坏账 8130s。parse 失败虽已在内存生成定点反馈，日志却只记原始响应 tail，既说不清失败合同又泄露正文片段。
+- 根因：timeout 被当成单个常量而不是 provider 能力与完整调用图的不变量；新增 fallback 只补成功路径测试，没有让总预算公式消费目标层数/专属上限。诊断信息的“计算”和“可观测”也分处两点，反馈只进下一轮 prompt、没有安全进入日志。
+- 触发条件：给顺序 fallback 链新增/更换 provider；不同模型推理时长差异大；外层 watchdog 公式硬编码层数；失败日志只写 `parse failed` 或原始输出片段。
+- 修复：按“慢本身不算失败”原则，Claude 使用 `max(调用方, 21600s)`，最终 Codex 使用 `max(调用方, 43200s)`，signal 不变；摘要、深读、翻译和播客提炼共用该预算。专项 timeout 审计不能只看模型 runner：它先抓到播客短外层会截断 Codex，后又确认 STT 本身也是慢模型，于是下载/ffmpeg/STT 分别放宽为 30min/30min/1h，播客三集整源 96h；保守全任务最坏 864750s，watchdog 取 1209600s（14d）。预算关系由测试直接导入 Claude/Codex/播客/重试常量推导。Windows 下 timeout/abort 应尝试终止 CLI **进程树**，不能只杀 `cmd.exe` 外壳；现 `taskkill` 仍是 fire-and-forget 残余风险，不能声称 OS 子进程百分百已死。日志只记录固定规则和内部 ID 的 safe diagnostic，provider 原始 stderr 在日报边界归一成安全错误闭集。
+- 证据：B031 四项 RED→GREEN；隔离全链 17m52s 完成 43/43、`degraded=false`。首稿日志精确点出 6 个被引用后结构复核为 rejected 的 ID，第二稿据此通过 strict parser；全程未降低内容门禁。
+- 原理：timeout 不是“模型参数”，而是整张调用图的可执行预算。每增加一条顺序腿，必须同时更新该腿上限、外层 signal、重试乘数、总 watchdog 和关系测试；否则所谓总预算只是一条会漂移的注释。
+- 关联：LL-008（信号贯通）、LL-030（外部可观测）、LL-035（子调用与总预算）、B031、F037
+
+### LL-040: AI 准入不能只信模型标签或歧义缩写——最终门要回到原始事实
+- 状态：validated
+- 更新时间：2026-07-14
+
+- 坑：community pick/card 只检查模型给出的 `eligible`，因此纯 `nice!` 可被同一模型生成的“工程摘要”包装后发布；第一轮补“AI 实体 + 描述性”后仍不够，个人 offer 征询、加班薪资抱怨、ChatGPT 相亲闲聊可把性质藏进 `rawSnippet`，GPT/vLLM 长纯赞叹又能借“字数 + 实体/技术词”穿透。反向加粗词表还会误杀真实的推荐模型评测与 CUDA 故障复盘。GitHub 又把 topic `mcp` 当强 AI 信号，Minecraft Coder Pack 会被误判为 Model Context Protocol。
+- 根因：分类结果和证明分类的内容来自同一不可靠判断源；“主题域是 AI”被误当成“内容性质是研究/讨论/进展/工程”；长度和任一技术 token 被错误当成实质证据；噪声硬门没有区分“生活领域研究”和“个人生活叙事”。缩写又被当成无歧义实体，强 signal 在完整正文之前直接短路。测试也曾只在前置噪声分类器里放 CUDA 正例，没有让它穿过最终 publication，因此“前门未误杀”被误当成“终态能发布”。
+- 触发条件：LLM assessment 直接控制外发；生成摘要被用来证明原文有实质；topic/关键词集合包含跨领域缩写（MCP/AI/agent 等）并允许一票准入。
+- 修复：publication 最终门只检查原始 title+snippet，生成摘要不能自证；AI/技术信号必须再配发布事件、solved/built/tested/diagnosed/debugged 等事实动作，或调度/吞吐/架构/batching/竞态/数据集等技术细节。标题宽门和正文高置信门分开，正文只有在职业征询、加班薪资/同辈比较、生活主题+叙事结果成对出现时硬拒绝，避免裸词误杀。歧义 topic 降为弱信号，必须由 description/README 的全称或明确用途消歧。排名仍只消费准入后的真实增量，不把语义信号混成排序分。每个硬拒绝门的指定正例都必须进入 `buildDigestPublication` production-path 测试；分类器单测只能证明局部谓词。
+- 证据：纯 reaction + 伪造 eligible/summary、正文三类个人噪声、GPT/vLLM 长赞叹、过宽标题/正文噪声门，以及 Minecraft Coder Pack + `mcp` 先后 RED；R6 又用终态探针证明 CUDA 正例虽通过前置噪声门，仍被 publication 降为 `low_signal`。补入 production-path RED 后，真实 `GPT-5.6 Sol + Cursor + Blender MCP` 工程样本、vLLM/SGLang 推理讨论、相亲推荐模型 A/B 评测和 CUDA 故障诊断四类正例与五类反例在同一终态测试中闭合。
+- 原理：标签是结论，不是证据；主题域与内容性质是两条正交轴，命中 AI 实体不能赦免求助/抱怨/生活叙事。最终外发门必须能从不可伪造的原始事实独立重建最小判断；缩写只有在上下文消歧后才是强信号。
+- 关联：LL-008、LL-030、LL-037、B027、B028、B031、F037

@@ -83,6 +83,33 @@ describe("HaikuRunner", () => {
     assert.equal(killSpy.mock.calls.length, 1, "should kill the child process")
   })
 
+  it("Windows timeout 使用进程树终止钩子，不能只 kill cmd.exe 外壳", async () => {
+    const { spawn, killSpy } = fakeSpawn({ code: 0, stdout: "late", delayMs: 200 })
+    const killTreeSpy = mock.fn()
+    const r = createHaikuRunner({ spawn, isWindows: true, killTree: killTreeSpy })
+
+    const res = await r.runPrompt("x", { timeoutMs: 10 })
+
+    assert.equal(res.error, "timeout")
+    assert.equal(killTreeSpy.mock.calls.length, 1)
+    assert.equal(killSpy.mock.calls.length, 0, "不得只杀 shell child")
+  })
+
+  it("Windows AbortSignal 使用进程树终止钩子并返回 aborted", async () => {
+    const { spawn, killSpy } = fakeSpawn({ code: 0, stdout: "late", delayMs: 200 })
+    const killTreeSpy = mock.fn()
+    const controller = new AbortController()
+    const r = createHaikuRunner({ spawn, isWindows: true, killTree: killTreeSpy })
+
+    const pending = r.runPrompt("x", { timeoutMs: 1_000, signal: controller.signal })
+    controller.abort()
+    const res = await pending
+
+    assert.equal(res.error, "aborted")
+    assert.equal(killTreeSpy.mock.calls.length, 1)
+    assert.equal(killSpy.mock.calls.length, 0, "不得只杀 shell child")
+  })
+
   it("returns empty-output when stdout is blank on exit 0", async () => {
     const { spawn } = fakeSpawn({ code: 0, stdout: "   \n  " })
     const r = createHaikuRunner({ spawn })

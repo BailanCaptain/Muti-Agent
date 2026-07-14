@@ -68,6 +68,10 @@ function createCliPromptRunner(command: string, args: string[], deps: CliPromptR
   return {
     runPrompt(prompt, opts = {}) {
       const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
+      // 调用方预算已取消时绝不再起 CLI 进程。
+      if (opts.signal?.aborted) {
+        return Promise.resolve({ ok: false, text: "", durationMs: 0, error: "aborted" })
+      }
       const start = Date.now()
       // shell 仅 win32（解析 codex.cmd / gemini.cmd shim）；POSIX 直接 exec 免壳层
       const proc = spawn(command, args, { shell: isWindows })
@@ -94,13 +98,32 @@ function createCliPromptRunner(command: string, args: string[], deps: CliPromptR
           if (settled) return
           settled = true
           clearTimeout(timer)
+          opts.signal?.removeEventListener("abort", onAbort)
           resolve(res)
         }
 
         const timer = setTimeout(() => {
-          killTree(proc)
           settle({ ok: false, text: "", durationMs: Date.now() - start, error: "timeout" })
+          // settle 在前：测试/平台钩子若同步发 close，也不能覆盖 timeout 结果。
+          try {
+            killTree(proc)
+          } catch {
+            // 终止失败不改变 runner 已经 fail-closed 的 timeout 结果。
+          }
         }, timeoutMs)
+
+        const onAbort = () => {
+          settle({ ok: false, text: "", durationMs: Date.now() - start, error: "aborted" })
+          // Windows 下 proc 是 cmd 壳，必须整树终止，不能只杀壳留下 Codex 孤儿进程。
+          try {
+            killTree(proc)
+          } catch {
+            // 取消结果保持 aborted；终止钩子异常不得把调用方悬挂。
+          }
+        }
+        opts.signal?.addEventListener("abort", onAbort, { once: true })
+        // 覆盖 spawn 与 listener 注册之间的竞态窗口。
+        if (opts.signal?.aborted) onAbort()
 
         proc.on("close", (code) => {
           const durationMs = Date.now() - start

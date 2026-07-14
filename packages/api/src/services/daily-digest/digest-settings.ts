@@ -1,5 +1,5 @@
-import { MODEL_ID_MAX_LEN, isValidModelId } from "../../runtime/model-id"
 import { parseRecipients } from "../../lib/email-sender"
+import { MODEL_ID_MAX_LEN, isValidModelId } from "../../runtime/model-id"
 
 /**
  * F037 设置页 · 日报运行配置（小孙 07-05「把前端能配的都一起做了」）。
@@ -82,6 +82,12 @@ const SEND_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 拦截控制字符正是本意
 const CONTROL_RE = /[\u0000-\u001f\u007f]/
 
+/** 两个可编辑位置都属于 Claude provider；Codex 是运行层固定的第三层，不能占位。 */
+export function isDigestClaudeModelId(value: string): boolean {
+  const normalized = value.trim()
+  return isValidModelId(normalized) && /^claude(?:[-._:/]|$)/i.test(normalized)
+}
+
 function normalizeHandle(h: string): string {
   return h.trim().replace(/^@/, "")
 }
@@ -105,6 +111,10 @@ export function validateDigestSettings(input: unknown): string[] {
     if (typeof v !== "string" || !isValidModelId(v)) {
       errors.push(
         `dailyDigest.${field}: must be a model id (≤${MODEL_ID_MAX_LEN} chars, [A-Za-z0-9._:/-], 字母数字开头)`,
+      )
+    } else if (!isDigestClaudeModelId(v)) {
+      errors.push(
+        `dailyDigest.${field}: must be a Claude model id；Codex gpt-5.6-sol/high 是固定最终兜底，不能占用前两层`,
       )
     }
   }
@@ -196,7 +206,7 @@ export function sanitizeDigestSettings(input: unknown): DigestSettings | undefin
   const out: DigestSettings = {}
   for (const field of ["primaryModel", "fallbackModel"] as const) {
     const v = rec[field]
-    if (typeof v === "string" && isValidModelId(v)) out[field] = v.trim()
+    if (typeof v === "string" && isDigestClaudeModelId(v)) out[field] = v.trim()
   }
   if (Array.isArray(rec.recipients)) {
     const list: string[] = []
@@ -277,8 +287,14 @@ export function resolveEffectiveDigestSettings(
 ): EffectiveDigestSettings {
   const seeds = digestEnvSeeds(env)
   return {
-    primaryModel: stored?.primaryModel ?? DIGEST_DEFAULT_PRIMARY_MODEL,
-    fallbackModel: stored?.fallbackModel ?? DIGEST_DEFAULT_FALLBACK_MODEL,
+    primaryModel:
+      stored?.primaryModel && isDigestClaudeModelId(stored.primaryModel)
+        ? stored.primaryModel.trim()
+        : DIGEST_DEFAULT_PRIMARY_MODEL,
+    fallbackModel:
+      stored?.fallbackModel && isDigestClaudeModelId(stored.fallbackModel)
+        ? stored.fallbackModel.trim()
+        : DIGEST_DEFAULT_FALLBACK_MODEL,
     recipients: stored?.recipients ?? seeds.recipients,
     xHandles: stored?.xHandles ?? seeds.xHandles,
     xhsKeywords: stored?.xhsKeywords ?? seeds.xhsKeywords,

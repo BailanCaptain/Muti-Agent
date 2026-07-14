@@ -266,12 +266,12 @@ describe("makePodcastSource fetch", () => {
     assert.equal(state.calls.length, 0)
   })
 
-  it("默认清单 8 家 + 长跑预算存在", () => {
+  it("默认清单 8 家 + 三集慢模型全链保留 96h 极宽保险丝", () => {
     assert.equal(PODCAST_FEEDS.length, 8)
     const src = makePodcastSource(srcConfig(fakeTranscriber({ calls: [] })))
     assert.equal(src.sourceId, PODCAST_SOURCE_ID)
     assert.equal(src.category, "podcast")
-    assert.ok((src.timeoutBudgetMs ?? 0) >= 600_000)
+    assert.equal(src.timeoutBudgetMs, 96 * 60 * 60_000)
   })
 })
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
 import { describe, it } from "node:test"
+import { SafeHttpError } from "../../../net/safe-http-client"
 import { buildNormalizedItem } from "../feed-parsers"
 import type { SafeHttpClient, SourceFetchContext } from "../types"
 import {
@@ -334,5 +335,78 @@ describe("健康空 ≠ 失败（07-06 首跑纠偏：安静频道被时效窗�
       keepIf: () => false,
     })
     assert.deepEqual(await src.fetch(ctxWith(http)), [])
+  })
+
+  it("YouTube Feed 的瞬时 404 只重试一次，恢复后按正常源发布并透传 source abort signal", async () => {
+    const rss = fs.readFileSync(path.join(FIX, "openai.rss.xml"), "utf8")
+    const controller = new AbortController()
+    const calls: Array<{ url: string; signal?: AbortSignal }> = []
+    const transient404 = Object.assign(
+      new SafeHttpError("http_status", "https://www.youtube.com/feeds/videos.xml", "status 404"),
+      { status: 404 },
+    )
+    const http: SafeHttpClient = {
+      fetchText: async (url, opts) => {
+        calls.push({ url, signal: opts?.signal })
+        if (calls.length === 1) throw transient404
+        return rss
+      },
+    }
+    const src = makeRssSource({
+      sourceId: "yt-retry-test",
+      category: "ai",
+      urls: ["https://www.youtube.com/feeds/videos.xml?channel_id=UCtest"],
+      retryPolicy: {
+        maxAttempts: 2,
+        delayMs: 0,
+        retryHttpStatuses: [404, 408, 425, 429, 500, 502, 503, 504],
+      },
+    })
+
+    const items = await src.fetch({ http, signal: controller.signal, now: () => NOW })
+
+    assert.equal(calls.length, 2)
+    assert.ok(items.length > 0)
+    assert.ok(calls.every((call) => call.signal === controller.signal))
+  })
+
+  it("YouTube Feed 的永久 403 不重试，连续 500 也最多请求两次", async () => {
+    const policy = {
+      maxAttempts: 2 as const,
+      delayMs: 0,
+      retryHttpStatuses: [404, 408, 425, 429, 500, 502, 503, 504],
+    }
+    const makeError = (status: number) =>
+      Object.assign(
+        new SafeHttpError(
+          "http_status",
+          "https://www.youtube.com/feeds/videos.xml",
+          `status ${status}`,
+        ),
+        { status },
+      )
+    for (const scenario of [
+      { status: 403, expectedCalls: 1 },
+      { status: 500, expectedCalls: 2 },
+    ]) {
+      let calls = 0
+      const src = makeRssSource({
+        sourceId: `yt-${scenario.status}`,
+        category: "ai",
+        urls: ["https://www.youtube.com/feeds/videos.xml?channel_id=UCtest"],
+        retryPolicy: policy,
+      })
+      await assert.rejects(
+        src.fetch(
+          ctxWith({
+            fetchText: async () => {
+              calls += 1
+              throw makeError(scenario.status)
+            },
+          }),
+        ),
+      )
+      assert.equal(calls, scenario.expectedCalls)
+    }
   })
 })

@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 import { buildNormalizedItem } from "./feed-parsers"
 import {
   isCommunityNoiseItem,
+  isHighConfidenceCommunitySourceNoiseItem,
   isPoliticalItem,
   isTechTopicItem,
   isUnsafeItem,
@@ -126,6 +127,9 @@ describe("isCommunityNoiseItem（07-12 社区噪声负向词表：性质维度�
       "年薪 40w 但天天加班，值不值",
       "吐槽一下公司的技术栈",
       "毕业第一年租房踩的坑",
+      "刚毕业拿到两个 AI 岗位 offer，一个做模型应用一个做销售，大家会选哪个",
+      "做了半年大模型应用，每天加班到凌晨，工资还没有同学高",
+      "周末用 ChatGPT 规划相亲路线，最后还是一个人吃了火锅",
     ]
     for (const t of hits) assert.equal(isCommunityNoiseItem(item(t)), true, t)
   })
@@ -139,6 +143,8 @@ describe("isCommunityNoiseItem（07-12 社区噪声负向词表：性质维度�
       "DeepSeek 新模型技术报告解读",
       "OpenAI 首席科学家官宣离职创业", // 「离职」是产业新闻用词，词表不收
       "Meta 天价薪资挖角 AI 人才引热议", // 「薪资」同理
+      "相亲平台推荐模型的离线评测", // 生活领域不等于生活帖；核心是模型评测
+      "团队每天加班排查 CUDA 故障，最终定位动态 batching 竞态", // 加班只是背景，核心是工程事实
     ]
     for (const t of passes) assert.equal(isCommunityNoiseItem(item(t)), false, t)
   })
@@ -156,5 +162,32 @@ describe("isCommunityNoiseItem（07-12 社区噪声负向词表：性质维度�
     assert.equal(isCommunityNoiseItem(item("[Rant] Ollama defaults are terrible")), true)
     assert.equal(isCommunityNoiseItem(item("Grant program for open-source AI research")), false)
     assert.equal(isCommunityNoiseItem(item("Scaling laws for sparse models explained")), false)
+  })
+})
+
+describe("isHighConfidenceCommunitySourceNoiseItem（最终门：只拦正文中的高置信个人噪声）", () => {
+  it("中性 AI 标题不能掩盖正文里的职业征询、职场抱怨和生活叙事", () => {
+    const hits = [
+      item("AI 岗位选择讨论", "刚毕业拿到两个岗位，一个做模型应用一个做销售，大家会选哪个"),
+      item("Claude Code 使用体验复盘", "做了半年大模型应用，每天加班到凌晨，工资还没有同学高"),
+      item("ChatGPT 周末路线规划体验", "周末用 ChatGPT 规划相亲路线，最后还是一个人吃了火锅"),
+    ]
+    for (const candidate of hits) {
+      assert.equal(isHighConfidenceCommunitySourceNoiseItem(candidate), true, candidate.rawSnippet)
+    }
+  })
+
+  it("技术正文偶然出现生活或成本词不误杀", () => {
+    const passes = [
+      item(
+        "vLLM 推理服务成本复盘",
+        "我们比较了工资支出和 GPU 成本，随后通过 KV cache 量化把吞吐提高了 30%。",
+      ),
+      item("相亲平台推荐模型的离线评测", "研究团队公开了数据集、排序算法与 A/B 测试结果。"),
+      item("推理故障复盘", "团队每天加班排查，最终定位到 CUDA graph 与动态 batching 的竞态条件。"),
+    ]
+    for (const candidate of passes) {
+      assert.equal(isHighConfidenceCommunitySourceNoiseItem(candidate), false, candidate.title)
+    }
   })
 })

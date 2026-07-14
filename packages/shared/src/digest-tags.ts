@@ -68,6 +68,9 @@ export function normalizeDigestCategory(category: string): string {
   return category === "x" ? "community" : category
 }
 
+/** GitHub 四榜在日报中的固定总名；榜种名称仍由 DIGEST_GH_KINDS 单独定义。 */
+export const DIGEST_GITHUB_SECTION_LABEL = "开源榜单"
+
 /** GitHub 榜种（顺序 = 展示顺序）；sourceId 与 sources/github-trending.ts 对齐 */
 export const DIGEST_GH_KINDS = [
   { sourceId: "github-trending-daily", label: "增长榜 · 今日" },

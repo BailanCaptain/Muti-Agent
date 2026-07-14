@@ -1,4 +1,5 @@
 import { formatBusinessDate, prevBusinessDate } from "../business-dates"
+import { SafeHttpError } from "../../../net/safe-http-client"
 import { buildNormalizedItem, parseRssOrAtom } from "../feed-parsers"
 import { isTechTopicItem } from "../relevance-filter"
 import type { DigestCategory, DigestSource, NormalizedItem, SourceFetchContext } from "../types"
@@ -13,6 +14,12 @@ import { enrichHnComments } from "./hn-comments"
 
 type UrlOrBuilder = string | ((now: Date) => string)
 
+export interface FeedRetryPolicy {
+  maxAttempts: 1 | 2
+  delayMs: number
+  retryHttpStatuses: readonly number[]
+}
+
 export interface RssSourceDef {
   sourceId: string
   category: DigestCategory
@@ -25,6 +32,8 @@ export interface RssSourceDef {
   direct?: boolean
   /** 质量层 3："digest"=整期简报型源（标题无信息量，被选中后必须深读正文重写标题） */
   contentMode?: "digest"
+  /** 仅幂等 GET feed 的显式受控重试；默认不重试，禁止扩散到其他源。 */
+  retryPolicy?: FeedRetryPolicy
 }
 
 export interface RawJsonItem {
@@ -63,6 +72,12 @@ const AI_KEYWORDS =
 /** #28 YouTube 频道 Atom feed（channel_id 形态，无需 API key） */
 const ytFeed = (channelId: string): string =>
   `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`
+
+const YOUTUBE_FEED_RETRY_POLICY: FeedRetryPolicy = {
+  maxAttempts: 2,
+  delayMs: 750,
+  retryHttpStatuses: [404, 408, 425, 429, 500, 502, 503, 504],
+}
 
 /**
  * #28 时效窗（视频/release 类低频源共用）：keepIf 无 now 注入（表驱动合同），此处用真时钟——
@@ -150,36 +165,42 @@ export const RSS_SOURCES: RssSourceDef[] = [
     category: "ai",
     urls: [ytFeed("UCbfYPyITQ-7l4upoX8nvctg")],
     keepIf: withinRecentWindow,
+    retryPolicy: YOUTUBE_FEED_RETRY_POLICY,
   },
   {
     sourceId: "yt-lex-fridman",
     category: "ai",
     urls: [ytFeed("UCSHZKyawb77ixDdsGog4iWA")],
     keepIf: withinRecentWindow,
+    retryPolicy: YOUTUBE_FEED_RETRY_POLICY,
   },
   {
     sourceId: "yt-3blue1brown",
     category: "ai",
     urls: [ytFeed("UCYO_jab_esuFRV4b17AJtAw")],
     keepIf: withinRecentWindow,
+    retryPolicy: YOUTUBE_FEED_RETRY_POLICY,
   },
   {
     sourceId: "yt-fireship",
     category: "ai",
     urls: [ytFeed("UCsBjURrPoezykLs9EqgamOA")],
     keepIf: withinRecentWindow,
+    retryPolicy: YOUTUBE_FEED_RETRY_POLICY,
   },
   {
     sourceId: "yt-ai-explained",
     category: "ai",
     urls: [ytFeed("UCNJ1Ymd5yFuUPtn21xtRbbw")],
     keepIf: withinRecentWindow,
+    retryPolicy: YOUTUBE_FEED_RETRY_POLICY,
   },
   {
     sourceId: "yt-karpathy",
     category: "ai",
     urls: [ytFeed("UCXUPKJO5MZQN11PqgIvyuvQ")],
     keepIf: withinRecentWindow,
+    retryPolicy: YOUTUBE_FEED_RETRY_POLICY,
   },
   // ---- 07-11 扩六频道（小孙「AI 领域影响大的」；channel_id 逐个页面源码抠 + feed
   // 实测 200 + 标题核对。坑：@Anthropic 是路人 Matt Gregory，官方=@anthropic-ai——
@@ -189,36 +210,42 @@ export const RSS_SOURCES: RssSourceDef[] = [
     category: "ai",
     urls: [ytFeed("UCXl4i9dYBrFOabk0xGmbkRA")],
     keepIf: withinRecentWindow,
+    retryPolicy: YOUTUBE_FEED_RETRY_POLICY,
   },
   {
     sourceId: "yt-yannic-kilcher",
     category: "ai",
     urls: [ytFeed("UCZHmQk67mSJgfCCTn7xBfew")],
     keepIf: withinRecentWindow,
+    retryPolicy: YOUTUBE_FEED_RETRY_POLICY,
   },
   {
     sourceId: "yt-mlst",
     category: "ai",
     urls: [ytFeed("UCMLtBahI5DMrt0NPvDSoIRQ")],
     keepIf: withinRecentWindow,
+    retryPolicy: YOUTUBE_FEED_RETRY_POLICY,
   },
   {
     sourceId: "yt-openai",
     category: "ai",
     urls: [ytFeed("UCXZCJLdBC09xxGZ6gcdrc6A")],
     keepIf: withinRecentWindow,
+    retryPolicy: YOUTUBE_FEED_RETRY_POLICY,
   },
   {
     sourceId: "yt-anthropic",
     category: "ai",
     urls: [ytFeed("UCrDwWp7EBBv4NwvScIpBDOA")],
     keepIf: withinRecentWindow,
+    retryPolicy: YOUTUBE_FEED_RETRY_POLICY,
   },
   {
     sourceId: "yt-deepmind",
     category: "ai",
     urls: [ytFeed("UCP7jMXSY2xbc3KCAE0MHQ-A")],
     keepIf: withinRecentWindow,
+    retryPolicy: YOUTUBE_FEED_RETRY_POLICY,
   },
   // ---- 热点（AC4）----
   {
@@ -404,6 +431,72 @@ function applyKeep(
   return keepIf ? items.filter(keepIf) : items
 }
 
+function isRetryableFeedError(
+  error: unknown,
+  policy: FeedRetryPolicy,
+  signal: AbortSignal,
+): error is SafeHttpError {
+  if (signal.aborted || !(error instanceof SafeHttpError)) return false
+  if (error.kind === "network" || error.kind === "timeout") return true
+  return (
+    error.kind === "http_status" &&
+    typeof error.status === "number" &&
+    policy.retryHttpStatuses.includes(error.status)
+  )
+}
+
+async function waitForFeedRetry(delayMs: number, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return false
+  if (delayMs <= 0) return true
+  return new Promise<boolean>((resolve) => {
+    const finish = (ready: boolean) => {
+      clearTimeout(timer)
+      signal.removeEventListener("abort", onAbort)
+      resolve(ready)
+    }
+    const onAbort = () => finish(false)
+    signal.addEventListener("abort", onAbort, { once: true })
+    const timer = setTimeout(() => finish(!signal.aborted), delayMs)
+  })
+}
+
+async function fetchFeedText(
+  ctx: SourceFetchContext,
+  http: SourceFetchContext["http"],
+  sourceId: string,
+  url: string,
+  headers: Record<string, string> | undefined,
+  policy: FeedRetryPolicy | undefined,
+): Promise<string> {
+  const maxAttempts = policy?.maxAttempts ?? 1
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const body = await http.fetchText(url, { headers, signal: ctx.signal })
+      if (attempt > 1) {
+        console.warn(`[daily-digest] ${sourceId} source-recovered attempt=${attempt}`)
+      }
+      return body
+    } catch (error) {
+      if (
+        !policy ||
+        attempt >= maxAttempts ||
+        !isRetryableFeedError(error, policy, ctx.signal)
+      ) {
+        throw error
+      }
+      const delayMs =
+        policy.delayMs <= 0
+          ? 0
+          : Math.max(1, Math.round(policy.delayMs * (0.75 + Math.random() * 0.5)))
+      console.warn(
+        `[daily-digest] ${sourceId} feed-retry attempt=${attempt + 1}/${maxAttempts} kind=${error.kind}${typeof error.status === "number" ? ` status=${error.status}` : ""} delayMs=${delayMs}`,
+      )
+      if (!(await waitForFeedRetry(delayMs, ctx.signal))) throw error
+    }
+  }
+  throw new Error(`${sourceId} feed attempts exhausted`)
+}
+
 /**
  * fallback 链：逐 URL × 逐 transport 试，非空即返；全空/全错抛最后错误（orchestrator 记 failed）。
  * def.direct=true 优先 ctx.httpDirect（不走代理）——部分源（ESPN/HLTV）对代理出口 IP 返回
@@ -422,6 +515,7 @@ async function fetchViaChain(
     urls: UrlOrBuilder[]
     headers?: Record<string, string>
     direct?: boolean
+    retryPolicy?: FeedRetryPolicy
   },
   parse: (body: string) => { parsedCount: number; items: NormalizedItem[] },
 ): Promise<NormalizedItem[]> {
@@ -435,7 +529,14 @@ async function fetchViaChain(
     const url = resolveUrl(u, ctx.now())
     for (const http of clients) {
       try {
-        const body = await http.fetchText(url, { headers: def.headers })
+        const body = await fetchFeedText(
+          ctx,
+          http,
+          def.sourceId,
+          url,
+          def.headers,
+          def.retryPolicy,
+        )
         const { parsedCount, items } = parse(body)
         if (items.length > 0 || parsedCount > 0) {
           // 德彪 r-final P3：前跳失败、后跳成功要透出——否则主 URL 长期腐烂完全不可见
@@ -449,6 +550,7 @@ async function fetchViaChain(
         lastError = new Error(`no items parsed from ${url}`)
         failedHops++
       } catch (err) {
+        if (ctx.signal.aborted) throw err
         lastError = err
         failedHops++
       }

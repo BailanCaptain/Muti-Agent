@@ -88,6 +88,23 @@ export function dedupeItems(items: NormalizedItem[]): NormalizedItem[] {
       byKey.set(item.dedupeKey, item)
       continue
     }
+    if (prev.category === "github" && item.category === "github") {
+      const priority = (candidate: NormalizedItem) => {
+        const state = candidate.githubMeta?.eligibility.state
+        // 跨榜证据冲突按 fail-closed：明确 no 高于 yes；yes/no 都可替换证据不足的 unknown。
+        return state === "no" ? 2 : state === "yes" ? 1 : 0
+      }
+      const previousPriority = priority(prev)
+      const currentPriority = priority(item)
+      if (currentPriority > previousPriority) {
+        // Map.set(existing) 会保留旧插槽：daily unknown 被 newcomer yes 替换后会跑到
+        // 新秀榜已排序块的最前面。先删再写，使替代项回到当前榜种的原始排名位置。
+        byKey.delete(item.dedupeKey)
+        byKey.set(item.dedupeKey, item)
+        continue
+      }
+      if (currentPriority < previousPriority) continue
+    }
     const prevT = prev.publishedAt ? Date.parse(prev.publishedAt) : -1
     const curT = item.publishedAt ? Date.parse(item.publishedAt) : -1
     if (curT > prevT) byKey.set(item.dedupeKey, item)

@@ -5,6 +5,7 @@ import path from "node:path"
 import { Readable, Transform } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import type { HaikuRunner } from "../../../runtime/haiku-runner"
+import { DIGEST_CLAUDE_TIMEOUT_MS } from "../model-runner"
 
 /**
  * #33 播客转写引擎（小孙 07-10 拍「现在搞」）：
@@ -87,9 +88,10 @@ const MAX_SEGMENT_BYTES = Math.floor(24.5 * 1024 * 1024)
 /** OpenAI-compatible base（末尾拼 /audio/transcriptions）；硅基流动=https://api.siliconflow.cn/v1 */
 export const DEFAULT_STT_BASE = "https://api.groq.com/openai/v1"
 export const DEFAULT_STT_MODEL = "whisper-large-v3-turbo"
-const DOWNLOAD_TIMEOUT_MS = 180_000
-const FFMPEG_TIMEOUT_MS = 300_000
-const STT_TIMEOUT_MS = 300_000
+/** 非模型处理与 STT 同样只保留极宽挂死保险丝，避免慢下载/转码/识别误判为失败。 */
+export const DOWNLOAD_TIMEOUT_MS = 30 * 60_000
+export const FFMPEG_TIMEOUT_MS = 30 * 60_000
+export const STT_TIMEOUT_MS = 60 * 60_000
 /** 提炼喂入截断（1.5h 集转写 ≈3 万+汉字；要点在全篇分布，截断够用且控成本） */
 const DIGEST_PROMPT_MAX_CHARS = 30_000
 
@@ -485,7 +487,7 @@ export function createPodcastTranscriber(deps: PodcastTranscriberDeps): PodcastT
       // signal 直通 runner（德彪 r2 P1）：预算掐断 → CLI 子进程被 kill，primary/fallback
       // 都不再后台烧配额
       const run = await deps.runner.runPrompt(buildDigestPrompt(ep, transcript), {
-        timeoutMs: 120_000,
+        timeoutMs: DIGEST_CLAUDE_TIMEOUT_MS,
         signal,
       })
       // 迟到写防护：abort 后即便 runner 已带回结果也不落缓存（本轮成果作废，下轮重提炼）
