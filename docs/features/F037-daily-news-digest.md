@@ -193,6 +193,7 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 | 2026-07-14 | **B032 Bug 流程放行**：证据化 Decider→DecisionSet→Composer 落地，Claude 全挂注入矩阵 7 正/7 反与真实 `gpt-5.6-sol/high` clean-room smoke 通过；DecisionSet 在 job/publication 重算 hash、重验 evidence/slot 并从 votes 重建。零上下文 Guardian 独立回放旧归档与篡改探针后 PASS（专项 171/171、packages 4557/0、components 903/903、Chromium 2/2）。独立 Codex review 首轮抓出 empty-output 误触降级、重复 reviewer slot 可伪造授权 2P1，均以正式 RED→GREEN 修复；原攻击 probe 2/2、聚焦 176/176，定点复审两项 CLOSED、最终 GO。Claude Opus 4.8 因组织策略不可用，本轮没有冒充 Claude review；真实补发待最终运行门。 |
 | 2026-07-14 | **B032 真实补发闭环**：首轮 force 运行耗时约 15 分钟，两个 Claude target 在审核与成稿阶段均失败后，由固定 `gpt-5.6-sol/high` 高推理兜底完成；终态 `status=ok / degraded=false`，DecisionSet 如实标记 `degraded_same_target`。ledger attempt `1→2`、outbound `23→24`、六件归档刷新并含新 SMTP messageId。成品 AI 15 条（推理专栏 1 + 推理速览 1，其余 13），社区头条另有 vLLM 推理工程、14 条社区内容无 V2EX 人生求助，“开源榜单”及增长/周榜/新秀/月榜四组未变。小孙随后明确要求再发一封查看，第二轮于 22:44 同样成功，attempt `2→3`、outbound `24→25`；本轮 43/43 源正常、AI 12 条中有 EAGLE-3/vLLM 推理进展、社区 15 条且 V2EX 0、四榜 19 项、播客 1 条。 |
 | 2026-07-14 | **B033 首发可靠性施工**：小孙指定 2026-07-15 07:30 为第一封正式日报，去重从该日开始。RED 复现 B032 Composer 漏掉 5–8 条合同、YouTube 瞬时 404/500 无重试、07-14 试发 shown 污染首发；GREEN 落地动态速览合同与终态门禁、YouTube opt-in 单次重试、`2026-07-15` 去重 epoch。旧 shown 数据不删，邮件版式/文案/开源榜单与 GitHub 语义不动；待全量门禁、Guardian、review 后当日合入。 |
+| 2026-07-15 | **B033 / F037 正式合入**：最终 SHA `57c54fc` 经全量门禁、独立 Guardian PASS 与零上下文复审 GO 后，以单提交 fast-forward 直接合入 `dev`（按小孙要求不走 PR）。首封正式日报仍定于 07:30，旧试发 shown 保留但不参与首发过滤；本次正式发送成功后写入的 shown 自 07-16 起成为跨日去重基线。 |
 
 ## Links
 
