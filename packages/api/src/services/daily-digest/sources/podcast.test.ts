@@ -15,7 +15,8 @@ import {
 import type { EpisodeRecord, PodcastEpisodeRef, PodcastTranscriber } from "./podcast-transcribe"
 import { episodeCacheKey } from "./podcast-transcribe"
 
-const NOW = new Date("2026-07-10T08:00:00Z")
+const DAY_MS = 24 * 3600_000
+const NOW = new Date()
 
 let baseDir: string
 beforeEach(() => {
@@ -44,8 +45,9 @@ function feedXml(
   return `<?xml version="1.0" encoding="UTF-8"?><rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" version="2.0"><channel><title>42章经</title>${items}</channel></rss>`
 }
 
-const FRESH_PUB = "Wed, 08 Jul 2026 13:30:00 GMT" // NOW-2 天，7 天窗内
-const STALE_PUB = "Sat, 27 Jun 2026 13:30:00 GMT" // NOW-13 天，窗外
+const FRESH_PUB = new Date(NOW.getTime() - 2 * DAY_MS).toUTCString()
+const FRESH_ISO = new Date(FRESH_PUB).toISOString()
+const STALE_PUB = new Date(NOW.getTime() - 13 * DAY_MS).toUTCString()
 
 function makeCtx(bodyByUrl: (url: string) => string): SourceFetchContext {
   const http: SafeHttpClient = {
@@ -120,7 +122,7 @@ describe("parsePodcastFeed", () => {
     assert.equal(eps[0].enclosureUrl, "https://media.xyzcdn.net/p1/a1.m4a")
     assert.equal(eps[0].durationSec, 3020)
     assert.equal(eps[0].podcast, "42章经")
-    assert.ok(eps[0].publishedAt?.startsWith("2026-07-08"))
+    assert.equal(eps[0].publishedAt, FRESH_ISO)
   })
 
   it("坏 XML / 非 RSS → []", () => {
@@ -178,7 +180,7 @@ describe("makePodcastSource fetch", () => {
       enclosureUrl: cachedUrl,
       title: eps[0].title,
       podcast: "42章经",
-      publishedAt: "2026-07-08T13:30:00.000Z",
+      publishedAt: FRESH_ISO,
       durationSec: 3020,
       transcript: "已有",
       digestZh: "• 缓存要点",
@@ -302,7 +304,7 @@ describe("health 计数三分法（德彪 r1 P2-2 红测）", () => {
         enclosureUrl: eps[0].audio,
         title: eps[0].title,
         podcast: "42章经",
-        publishedAt: "2026-07-08T13:30:00.000Z",
+        publishedAt: FRESH_ISO,
         durationSec: 3020,
         transcript: "有",
         digestZh: "• 缓存要点",
