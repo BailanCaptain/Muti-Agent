@@ -23,11 +23,11 @@ import type {
 } from "./types"
 
 /**
- * T11 渲染器 v4（AC2 版式 + AC12 邮件兼容 · Bento 大小格混排 + 顶部导览，小孙 07-04 选型 ② 并拍板）：
+ * T11 渲染器 v5（AC2 版式 + AC12 邮件兼容 · 暖白编辑部 + 顶部导览）：
  * - 数据直出 HTML：链接只从 itemsById[pick.itemId].canonicalUrl 取（注入护栏落地，escapeHtml 全覆盖 / safeHref 只放 http(s)）
  * - table 布局 ≤600px、全内联样式、无 <script>/无远程图片/无 flex-grid/无 oklch/无 @media；固定像素多列（272+16+272）杜绝 %宽+padding 溢出错位
  * - 顶部导览卡：今日速览概述 + 4 板块格（锚点 <a href="#sec-xx">，Apple 邮件可跳，Gmail 剥 id 降级为目录/速览仍成立）
- * - 每板块 bento：首条 hero 大卡（X=深金焦点卡 / 其余=浅金徽标卡）+ 其余两两成对列，落单则整宽卡
+ * - 每板块 bento：首条暖白焦点卡 + 其余两两成对列，落单则整宽卡
  * - 正文只露中文源名（sourceLabel），内部 sourceId 只出现在页脚健康行（排障用）
  */
 
@@ -179,34 +179,37 @@ export interface RenderInput {
   scannedItemCount?: number
 }
 
-// 暖金 token：从产品 OKLCH 真相源换算的邮件可用 hex（邮件客户端不认 OKLCH）——数值对齐 dashboard-rank/DESIGN token，禁冷色
+// 暖白编辑部 token：从产品 OKLCH 真相源换算成邮件可用 hex（邮件客户端不认 OKLCH）。
+// 色彩职责收敛为纸面 / 正文 / 次要文字 / 陶土强调，避免旧版每一层都抢同一个金色。
 const C = {
-  page: "#efe7e2", // 页面暖灰底
-  card: "#ffffff",
-  heroLight: "#f7efe9", // 浅金 hero / 导览卡
-  border: "#efe7e2",
-  ink: "#26201f", // 墨色标题 / 刊头底
-  // 07-10 小孙「字体有些不太清晰」→ 正文灰从色板 #5c5856 加深一档（同暖色相，对比 6.9:1→9.3:1）
-  sub: "#4a4644",
-  gold: "#8a3a00", // accent-600 铜金（小字号点缀对比度）
-  goldLight: "#eebb99",
-  accent: "#d97a3e",
+  page: "#eee7df",
+  paper: "#fffaf5",
+  card: "#fffdf9",
+  heroLight: "#f6eee7",
+  border: "#ded4ca",
+  title: "#161513",
+  ink: "#24211f",
+  sub: "#514c48",
+  muted: "#746c66",
+  gold: "#8a3a00",
+  goldLight: "#e7c2aa",
+  accent: "#c65d2e",
+  alert: "#fff1e6",
   white: "#ffffff",
-  cream: "#f7efe9",
+  cream: "#f8eee7",
 }
 
 const SERIF = "Georgia,'Songti SC','PingFang SC','Microsoft YaHei',serif"
 const SANS = "-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
 
-const kickerCol = `font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:2px;color:${C.gold};padding-bottom:8px;`
-const bodySmall = `font-family:${SANS};font-size:13px;line-height:1.7;color:${C.sub};padding-top:8px;`
-const bodyLarge = `font-family:${SANS};font-size:14px;line-height:1.75;color:${C.sub};padding-top:9px;`
+const kickerCol = `font-family:${SANS};font-size:12px;font-weight:700;line-height:150%;letter-spacing:1px;color:${C.gold};padding-bottom:8px;`
+const bodySmall = `font-family:${SANS};font-size:14px;line-height:175%;color:${C.sub};padding-top:8px;`
+const bodyLarge = `font-family:${SANS};font-size:14px;line-height:175%;color:${C.sub};padding-top:10px;`
 const ghMeta = `font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:0.5px;color:${C.gold};padding-top:8px;`
 const ghMetaHero = `font-family:${SANS};font-size:13px;font-weight:700;letter-spacing:0.5px;color:${C.gold};padding-top:9px;`
-const titleHero = `font-family:${SERIF};font-size:19px;font-weight:700;line-height:1.5;color:${C.ink};text-decoration:none;`
-const titleWide = `font-family:${SERIF};font-size:16px;font-weight:700;line-height:1.5;color:${C.ink};text-decoration:none;word-break:break-word;`
-const titleCol = `font-family:${SERIF};font-size:15px;font-weight:700;line-height:1.5;color:${C.ink};text-decoration:none;word-break:break-word;`
-const titleXHero = `font-family:${SERIF};font-size:18px;font-weight:700;line-height:1.6;color:${C.white};text-decoration:none;`
+const titleHero = `font-family:${SERIF};font-size:20px;font-weight:700;line-height:150%;color:${C.title};text-decoration:none;`
+const titleWide = `font-family:${SANS};font-size:17px;font-weight:700;line-height:150%;color:${C.title};text-decoration:none;word-break:break-word;`
+const titleCol = `font-family:${SANS};font-size:16px;font-weight:700;line-height:150%;color:${C.title};text-decoration:none;word-break:break-word;`
 
 /** 排版均衡（#1）：双列卡摘要截断（整宽/焦点卡不截，全文永远在链接里） */
 function clampText(s: string, max: number): string {
@@ -218,13 +221,9 @@ function estHeight(item: NormalizedItem, pick: SectionPick): number {
   return item.title.length * 2 + Math.min(pick.summaryZh.length, 80)
 }
 
-/**
- * 子栏标题行（分栏改版；07-06 小孙「小标题不明显」升级）：浅金横带 + 左侧铜金竖条 +
- * 墨色 13px 粗体——从「细线上的小金字」升级成实体章节条，扫读时一眼见分界。
- * 单组板块不出（保持旧版扁平观感）。
- */
+/** 子栏标题行：保留明确分界，但不再与板块标题重复使用强调色竖条。 */
 function subHeading(label: string, count: number, anchor: string): string {
-  return `<tr><td style="padding:4px 0 12px 0;"><a name="${anchor}"></a><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.heroLight};border-left:3px solid ${C.accent};border-radius:8px;"><tr><td style="padding:8px 14px;font-family:${SANS};font-size:13px;font-weight:700;letter-spacing:1px;color:${C.ink};">${escapeHtml(label)} · ${count} 条</td></tr></table></td></tr>`
+  return `<tr><td style="padding:6px 0 12px 0;"><a name="${anchor}"></a><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.cream};border-bottom:1px solid ${C.border};border-radius:12px;"><tr><td style="padding:10px 14px;font-family:${SANS};font-size:13px;font-weight:700;line-height:150%;letter-spacing:0.5px;color:${C.ink};">${escapeHtml(label)} · ${count} 条</td></tr></table></td></tr>`
 }
 
 /**
@@ -248,11 +247,11 @@ function restRowsCard(
           : ""
       // 中文化补全（07-06）：翻译 map 命中就用中文标题（缺 map/缺 id 回落原文）
       const shown = titleZh?.[i.id] ?? i.title
-      return `<div style="font-family:${SANS};font-size:13px;line-height:1.9;color:${C.sub};"><span style="color:${C.gold};font-weight:700;">${escapeHtml(sourceLabel(i.sourceId))}</span>　<a href="${href}" style="color:${C.ink};text-decoration:none;">${escapeHtml(clampText(shown, 64))}</a>${eng}</div>`
+      return `<div style="font-family:${SANS};font-size:14px;line-height:180%;color:${C.sub};"><span style="color:${C.gold};font-weight:700;">${escapeHtml(sourceLabel(i.sourceId))}</span>　<a href="${href}" style="color:${C.title};text-decoration:none;">${escapeHtml(clampText(shown, 64))}</a>${eng}</div>`
     })
     .join("")
   const headTail = total > rest.length ? `TOP ${rest.length} / 共 ${total} 条` : `${rest.length} 条`
-  return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.heroLight};border:1px solid ${C.border};border-radius:14px;"><tr><td style="padding:14px 18px 16px 18px;"><div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:2px;color:${C.gold};padding-bottom:6px;">◇ 其余速览 · ${headTail}</div>${rows}</td></tr></table></td></tr>`
+  return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.cream};border:1px solid ${C.border};border-radius:16px;"><tr><td style="padding:16px 20px 18px 20px;"><div style="font-family:${SANS};font-size:12px;font-weight:700;line-height:150%;letter-spacing:1px;color:${C.gold};padding-bottom:8px;">◇ 其余速览 · ${headTail}</div>${rows}</td></tr></table></td></tr>`
 }
 
 /** 每节尾「回目录」：邮件里的导航回程（锚点是邮件唯一可用的"跳转"原语） */
@@ -280,7 +279,7 @@ export function splitGithubSnippet(text: string): { meta: string; desc: string }
   return null
 }
 
-/** 单卡内容（kicker + 标题链接 + 正文），hero/wide/col 三态复用；X hero 为深金焦点卡 */
+/** 单卡内容（kicker + 标题链接 + 正文），hero/wide/col 三态复用。 */
 function renderCardInner(
   item: NormalizedItem,
   pick: SectionPick,
@@ -294,20 +293,8 @@ function renderCardInner(
   const noStr = String(no).padStart(2, "0")
   // 质量层 2「N 源同报」徽章：多源印证即头条信号，来源名给读者交叉核验入口
   const alsoChip = alsoLabels.length
-    ? `<div style="font-family:${SANS};font-size:11px;letter-spacing:1px;color:${C.gold};padding-top:8px;">◈ ${alsoLabels.length + 1} 源同报 · ${escapeHtml(alsoLabels.slice(0, 3).join(" · "))}</div>`
+    ? `<div style="font-family:${SANS};font-size:12px;line-height:150%;letter-spacing:0.5px;color:${C.gold};padding-top:10px;">◈ ${alsoLabels.length + 1} 源同报 · ${escapeHtml(alsoLabels.slice(0, 3).join(" · "))}</div>`
     : ""
-
-  // 社区焦点大卡（深金底、白字）——原 X 焦点卡待遇，整个社区板块共用
-  if (meta.category === "community" && variant === "hero") {
-    return (
-      `<div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:2px;color:${C.goldLight};padding-bottom:10px;">${escapeHtml(label)} · 焦点</div>` +
-      `<a href="${href}" style="${titleXHero}">${escapeHtml(item.title)}</a>` +
-      (pick.summaryZh
-        ? `<div style="font-family:${SANS};font-size:13px;letter-spacing:1px;color:${C.goldLight};padding-top:10px;">${escapeHtml(pick.summaryZh)}</div>`
-        : "") +
-      alsoChip
-    )
-  }
 
   let body = ""
   const gh = meta.category === "github" ? splitGithubSnippet(pick.summaryZh) : null
@@ -325,9 +312,18 @@ function renderCardInner(
     body = `<div style="${variant === "hero" ? bodyLarge : bodySmall}">${escapeHtml(summaryText)}</div>`
   }
 
+  if (meta.category === "community" && variant === "hero") {
+    return (
+      `<div style="font-family:${SANS};font-size:12px;font-weight:700;line-height:150%;letter-spacing:1px;color:${C.gold};padding-bottom:10px;">${escapeHtml(label)} · 焦点</div>` +
+      `<a href="${href}" style="${titleHero}">${escapeHtml(item.title)}</a>` +
+      body +
+      alsoChip
+    )
+  }
+
   if (variant === "hero") {
     return (
-      `<div style="padding-bottom:10px;"><span style="display:inline-block;background-color:${C.gold};color:${C.white};font-family:${SANS};font-size:10px;font-weight:700;letter-spacing:2px;padding:3px 9px;border-radius:8px;">${escapeHtml(meta.hero)}</span>&nbsp;&nbsp;<span style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:2px;color:${C.gold};">${escapeHtml(label)} · ${noStr}</span></div>` +
+      `<div style="padding-bottom:10px;"><span style="display:inline-block;background-color:${C.gold};color:${C.white};font-family:${SANS};font-size:11px;font-weight:700;line-height:150%;letter-spacing:1px;padding:4px 10px;border-radius:12px;">${escapeHtml(meta.hero)}</span>&nbsp;&nbsp;<span style="font-family:${SANS};font-size:12px;font-weight:700;line-height:150%;letter-spacing:1px;color:${C.gold};">${escapeHtml(label)} · ${noStr}</span></div>` +
       `<a href="${href}" style="${titleHero}">${escapeHtml(item.title)}</a>` +
       body +
       alsoChip
@@ -360,37 +356,35 @@ function ghListCard(
           : ""
       return (
         divider +
-        `<div style="padding-top:${i > 0 ? 12 : 0}px;"><span style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:1px;color:${C.gold};">${String(i + 1).padStart(2, "0")}</span>&nbsp;&nbsp;<a href="${href}" style="font-family:${SERIF};font-size:15px;font-weight:700;line-height:1.5;color:${C.ink};text-decoration:none;word-break:break-word;">${escapeHtml(e.item.title)}</a></div>` +
+        `<div style="padding-top:${i > 0 ? 12 : 0}px;"><span style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:1px;color:${C.muted};">${String(i + 1).padStart(2, "0")}</span>&nbsp;&nbsp;<a href="${href}" style="font-family:${SANS};font-size:16px;font-weight:700;line-height:150%;color:${C.title};text-decoration:none;word-break:break-word;">${escapeHtml(e.item.title)}</a></div>` +
         (meta ? `<div style="${ghMeta}">${escapeHtml(meta)}</div>` : "") +
         (desc ? `<div style="${bodySmall}">${escapeHtml(desc)}</div>` : "")
       )
     })
     .join("")
-  return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.card};border:1px solid ${C.border};border-radius:14px;"><tr><td style="padding:18px;"><div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:2px;color:${C.gold};padding-bottom:4px;">◆ ${escapeHtml(kindLabel)} · ${entries.length}</div>${rows}</td></tr></table></td></tr>`
+  return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.card};border:1px solid ${C.border};border-radius:16px;"><tr><td style="padding:20px;"><div style="font-family:${SANS};font-size:12px;font-weight:700;line-height:150%;letter-spacing:1px;color:${C.gold};padding-bottom:6px;">◆ ${escapeHtml(kindLabel)} · ${entries.length}</div>${rows}</td></tr></table></td></tr>`
 }
 
-function heroRow(inner: string, category: DigestCategory): string {
-  const bg = category === "community" ? C.gold : C.heroLight
-  const border = category === "community" ? C.gold : C.border
-  return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${bg};border:1px solid ${border};border-radius:14px;"><tr><td style="padding:18px;">${inner}</td></tr></table></td></tr>`
+function heroRow(inner: string): string {
+  return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.heroLight};border:1px solid ${C.border};border-top:3px solid ${C.accent};border-radius:16px;"><tr><td style="padding:22px;">${inner}</td></tr></table></td></tr>`
 }
 
 function wideRow(inner: string): string {
-  return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.card};border:1px solid ${C.border};border-radius:14px;"><tr><td style="padding:18px;">${inner}</td></tr></table></td></tr>`
+  return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.card};border:1px solid ${C.border};border-radius:16px;"><tr><td style="padding:20px;">${inner}</td></tr></table></td></tr>`
 }
 
 function colCard(inner: string): string {
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;background-color:${C.card};border:1px solid ${C.border};border-radius:14px;"><tr><td style="padding:18px;">${inner}</td></tr></table>`
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;background-color:${C.card};border:1px solid ${C.border};border-radius:16px;"><tr><td style="padding:18px;">${inner}</td></tr></table>`
 }
 
 function twoColRow(left: string, right: string): string {
   return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="560" cellpadding="0" cellspacing="0" style="width:560px;border-collapse:collapse;table-layout:fixed;"><tr><td width="272" valign="top" style="width:272px;padding:0;">${colCard(left)}</td><td width="16" style="width:16px;font-size:0;line-height:0;">&nbsp;</td><td width="272" valign="top" style="width:272px;padding:0;">${colCard(right)}</td></tr></table></td></tr>`
 }
 
-/** 板块大标题（07-06 小孙「标题不明显」升级）：竖条加粗 + 24px 衬线 + 通栏金底线收尾 */
+/** 板块标题：恢复克制的上一版排法，以陶土英文眉题和细分隔线建立层级。 */
 function sectionHeading(meta: SectionMeta, first: boolean): string {
-  const pad = first ? "6px 0 16px 0" : "22px 0 16px 0"
-  return `<tr><td style="padding:${pad};"><a name="${meta.anchor}"></a><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr><td width="6" valign="top" style="width:6px;background-color:${C.accent};border-radius:3px;font-size:0;line-height:0;">&nbsp;</td><td width="14" style="width:14px;font-size:0;line-height:0;">&nbsp;</td><td valign="middle" style="padding:0;"><div style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:3px;color:${C.accent};">${escapeHtml(meta.en)}</div><div style="font-family:${SERIF};font-size:24px;font-weight:700;color:${C.ink};padding-top:4px;">${escapeHtml(meta.label)}</div></td></tr><tr><td colspan="3" style="padding-top:10px;"><div style="border-bottom:2px solid ${C.goldLight};font-size:0;line-height:0;">&nbsp;</div></td></tr></table></td></tr>`
+  const pad = first ? "10px 0 16px 0" : "28px 0 16px 0"
+  return `<tr><td style="padding:${pad};"><a name="${meta.anchor}"></a><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr><td valign="middle" style="padding:0;"><div style="font-family:${SANS};font-size:12px;font-weight:700;line-height:150%;letter-spacing:2px;color:${C.gold};">${escapeHtml(meta.en)}</div><div style="font-family:${SERIF};font-size:26px;font-weight:700;line-height:130%;color:${C.title};padding-top:4px;">${escapeHtml(meta.label)}</div></td></tr><tr><td style="padding-top:12px;"><div style="border-bottom:1px solid ${C.border};font-size:0;line-height:0;">&nbsp;</div></td></tr></table></td></tr>`
 }
 
 interface SubNavEntry {
@@ -405,22 +399,21 @@ function navCard(
   subNav: SubNavEntry[] = [],
 ): string {
   const n = chips.length
-  const chipW = n > 0 ? Math.floor((524 - (n - 1) * 12) / n) : 524
+  const chipW = n > 0 ? Math.floor((524 - (n - 1) * 8) / n) : 524
   let cells = ""
   chips.forEach((c, i) => {
-    cells += `<td width="${chipW}" valign="top" style="width:${chipW}px;padding:0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;background-color:${C.card};border:1px solid ${C.border};border-radius:12px;"><tr><td align="center" style="padding:11px 4px;"><a href="#${c.meta.anchor}" style="text-decoration:none;color:${C.ink};"><div style="font-family:${SERIF};font-size:14px;font-weight:700;color:${C.ink};line-height:1.2;">${escapeHtml(c.meta.nav)}</div><div style="font-family:${SANS};font-size:11px;letter-spacing:1px;color:${C.gold};padding-top:4px;">${c.count} 条</div></a></td></tr></table></td>`
-    if (i < n - 1)
-      cells += `<td width="12" style="width:12px;font-size:0;line-height:0;">&nbsp;</td>`
+    cells += `<td width="${chipW}" valign="top" style="width:${chipW}px;padding:0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;background-color:${C.paper};border:1px solid ${C.border};border-radius:12px;"><tr><td align="center" style="padding:12px 4px;"><a href="#${c.meta.anchor}" style="text-decoration:none;color:${C.ink};"><div style="font-family:${SANS};font-size:13px;font-weight:700;color:${C.ink};line-height:150%;">${escapeHtml(c.meta.nav)}</div><div style="font-family:${SANS};font-size:12px;line-height:150%;letter-spacing:0.5px;color:${C.gold};padding-top:3px;">${c.count} 条</div></a></td></tr></table></td>`
+    if (i < n - 1) cells += `<td width="8" style="width:8px;font-size:0;line-height:0;">&nbsp;</td>`
   })
   const overviewBlock = overview.length
-    ? `<tr><td style="padding:20px 20px 15px 20px;"><div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:3px;color:${C.gold};padding-bottom:10px;">今日速览 · AT A GLANCE</div>${overview.map((o) => `<div style="font-family:${SANS};font-size:14px;line-height:1.85;color:${C.sub};padding:2px 0;"><span style="color:${C.gold};">◆</span>&nbsp;&nbsp;${escapeHtml(o)}</div>`).join("")}</td></tr><tr><td style="padding:0 20px;"><div style="border-top:1px solid ${C.goldLight};font-size:0;line-height:0;">&nbsp;</div></td></tr>`
+    ? `<tr><td style="padding:22px 22px 17px 22px;"><div style="font-family:${SANS};font-size:12px;font-weight:700;line-height:150%;letter-spacing:2px;color:${C.gold};padding-bottom:10px;">今日速览 · AT A GLANCE</div>${overview.map((o) => `<div style="font-family:${SANS};font-size:14px;line-height:180%;color:${C.sub};padding:3px 0;"><span style="color:${C.accent};font-weight:700;">·</span>&nbsp;&nbsp;${escapeHtml(o)}</div>`).join("")}</td></tr><tr><td style="padding:0 22px;"><div style="border-top:1px solid ${C.border};font-size:0;line-height:0;">&nbsp;</div></td></tr>`
     : ""
   // 子栏目录：一节一行「板块名　子栏1 n · 子栏2 n」，锚点直达（不支持锚点的客户端退化为静态目录，内容零丢失）
   const subLines = subNav.filter((s) => s.links.length > 0)
   const subBlock = subLines.length
-    ? `<tr><td style="padding:12px 20px 16px 20px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">${subLines.map((s) => `<tr><td style="white-space:nowrap;vertical-align:top;padding:2px 10px 2px 0;font-family:${SANS};font-size:12px;font-weight:700;color:${C.ink};">${escapeHtml(s.nav)}</td><td style="padding:2px 0;font-family:${SANS};font-size:12px;line-height:1.9;color:${C.sub};">${s.links.map((l) => `<a href="#${l.anchor}" style="color:${C.gold};text-decoration:none;white-space:nowrap;">${escapeHtml(l.label)}&nbsp;${l.count}</a>`).join("&nbsp;·&nbsp; ")}</td></tr>`).join("")}</table></td></tr>`
+    ? `<tr><td style="padding:12px 22px 18px 22px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">${subLines.map((s) => `<tr><td style="white-space:nowrap;vertical-align:top;padding:3px 10px 3px 0;font-family:${SANS};font-size:12px;font-weight:700;line-height:180%;color:${C.ink};">${escapeHtml(s.nav)}</td><td style="padding:3px 0;font-family:${SANS};font-size:12px;line-height:180%;color:${C.sub};">${s.links.map((l) => `<a href="#${l.anchor}" style="color:${C.gold};text-decoration:none;white-space:nowrap;">${escapeHtml(l.label)}&nbsp;${l.count}</a>`).join("&nbsp;·&nbsp; ")}</td></tr>`).join("")}</table></td></tr>`
     : ""
-  return `<tr><td style="padding:0 0 20px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.heroLight};border:1px solid ${C.border};border-radius:14px;">${overviewBlock}<tr><td style="padding:15px 18px ${subBlock ? "3px" : "17px"} 18px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr>${cells}</tr></table></td></tr>${subBlock}</table></td></tr>`
+  return `<tr><td style="padding:0 0 22px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.heroLight};border:1px solid ${C.border};border-radius:16px;">${overviewBlock}<tr><td style="padding:16px 18px ${subBlock ? "4px" : "18px"} 18px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr>${cells}</tr></table></td></tr>${subBlock}</table></td></tr>`
 }
 
 /** github 板块标题按当日在场榜单自适应：单榜用榜名；多榜同场（月榜常驻后即每天）= 榜单合集 */
@@ -446,12 +439,12 @@ function alertCard(failed: SourceFetchResult[]): string {
         (f.errors[0] ?? "").slice(0, 90) || (f.status === "timeout" ? "超时" : "抓取失败")
       const hint =
         f.sourceId === "x-firsthand"
-          ? `<div style="font-family:${SANS};font-size:12px;line-height:1.7;color:${C.gold};padding:2px 0 0 14px;">↳ 大概率小号 cookie 失效：重新提取 auth_token → 更新 RSSHub 容器变量并重启容器</div>`
+          ? `<div style="font-family:${SANS};font-size:12px;line-height:170%;color:${C.gold};padding:2px 0 0 14px;">↳ 大概率小号 cookie 失效：重新提取 auth_token → 更新 RSSHub 容器变量并重启容器</div>`
           : ""
-      return `<div style="font-family:${SANS};font-size:13px;line-height:1.8;color:${C.ink};padding-top:5px;"><span style="font-weight:700;">▲ ${escapeHtml(sourceLabel(f.sourceId))}</span><span style="color:${C.sub};">　${escapeHtml(reason)}</span></div>${hint}`
+      return `<div style="font-family:${SANS};font-size:13px;line-height:180%;color:${C.ink};padding-top:5px;"><span style="font-weight:700;">▲ ${escapeHtml(sourceLabel(f.sourceId))}</span><span style="color:${C.sub};">　${escapeHtml(reason)}</span></div>${hint}`
     })
     .join("")
-  return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:#fbeee1;border:1px solid ${C.accent};border-radius:14px;"><tr><td style="padding:14px 18px 16px 18px;"><div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:2px;color:${C.accent};">⚠ 信源异常 · SOURCE ALERT</div><div style="font-family:${SANS};font-size:13px;line-height:1.7;color:${C.sub};padding-top:6px;">今日 ${failed.length} 个信源抓取失败，对应板块内容可能缺失或不全：</div>${rows}</td></tr></table></td></tr>`
+  return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.alert};border:1px solid ${C.goldLight};border-left:4px solid ${C.accent};border-radius:16px;"><tr><td style="padding:16px 20px 18px 20px;"><div style="font-family:${SANS};font-size:12px;font-weight:700;line-height:150%;letter-spacing:1px;color:${C.gold};">⚠ 信源异常 · SOURCE ALERT</div><div style="font-family:${SANS};font-size:14px;line-height:175%;color:${C.sub};padding-top:6px;">今日 ${failed.length} 个信源抓取失败，对应板块内容可能缺失或不全：</div>${rows}</td></tr></table></td></tr>`
 }
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 剥控制字符正是本意
@@ -766,10 +759,7 @@ export function renderDigest(input: RenderInput): RenderedDigest {
     const [hero] = s.resolved
     if (hero) {
       sectionHtml.push(
-        heroRow(
-          renderCardInner(hero.item, hero.pick, 1, s.meta, "hero", hero.alsoLabels),
-          s.meta.category,
-        ),
+        heroRow(renderCardInner(hero.item, hero.pick, 1, s.meta, "hero", hero.alsoLabels)),
       )
       pushItemMd(mdParts, hero.item, hero.pick, hero.alsoLabels)
     }
@@ -881,16 +871,16 @@ export function renderDigest(input: RenderInput): RenderedDigest {
     ...notes,
   )
 
-  const masthead = `<tr><td style="padding:0 0 16px 0;"><a name="top"></a><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.ink};border:1px solid ${C.ink};border-radius:14px;"><tr><td style="padding:28px 26px;"><div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:4px;color:${C.goldLight};padding-bottom:10px;">MULTI-AGENT · DAILY BRIEF</div><div style="font-family:${SERIF};font-size:34px;font-weight:700;letter-spacing:2px;color:${C.white};line-height:1.1;">每日简报</div><div style="height:14px;line-height:14px;font-size:0;">&nbsp;</div><div style="border-top:2px solid ${C.accent};width:52px;font-size:0;line-height:0;">&nbsp;</div><div style="height:14px;line-height:14px;font-size:0;">&nbsp;</div><div style="font-family:${SANS};font-size:13px;letter-spacing:1px;color:${C.goldLight};">${escapeHtml(input.businessDate)}${weekday ? `　${escapeHtml(weekday)}` : ""}${input.summary.degraded ? "　· 清单版" : ""}</div><div style="font-family:${SANS};font-size:13px;letter-spacing:1px;color:${C.cream};padding-top:5px;">AI · 社区动态 · 今日热点 · ${DIGEST_GITHUB_SECTION_LABEL}</div><div style="font-family:${SANS};font-size:12px;letter-spacing:1px;color:${C.goldLight};padding-top:8px;">${escapeHtml(checkLine)}</div>${webUrl ? `<div style="font-family:${SANS};font-size:12px;letter-spacing:1px;padding-top:8px;"><a href="${safeHref(webUrl)}" style="color:${C.goldLight};text-decoration:underline;">网页版全量分栏 →</a></div>` : ""}</td></tr></table></td></tr>`
+  const masthead = `<tr><td style="padding:0 0 18px 0;"><a name="top"></a><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.ink};border:1px solid ${C.ink};border-top:6px solid ${C.accent};border-radius:16px;"><tr><td style="padding:26px 26px 24px 26px;"><div style="font-family:${SANS};font-size:12px;font-weight:700;line-height:150%;letter-spacing:3px;color:${C.goldLight};padding-bottom:8px;">MULTI-AGENT · DAILY BRIEF</div><div style="font-family:${SERIF};font-size:38px;font-weight:700;letter-spacing:1px;color:${C.white};line-height:120%;">每日简报</div><div style="height:14px;line-height:14px;font-size:0;">&nbsp;</div><div style="border-top:2px solid ${C.accent};width:52px;font-size:0;line-height:0;">&nbsp;</div><div style="height:14px;line-height:14px;font-size:0;">&nbsp;</div><div style="font-family:${SANS};font-size:14px;line-height:160%;letter-spacing:0.5px;color:${C.goldLight};">${escapeHtml(input.businessDate)}${weekday ? `　${escapeHtml(weekday)}` : ""}${input.summary.degraded ? "　· 清单版" : ""}</div><div style="font-family:${SANS};font-size:13px;line-height:160%;letter-spacing:0.5px;color:${C.cream};padding-top:3px;">AI · 社区动态 · 今日热点 · ${DIGEST_GITHUB_SECTION_LABEL}</div><div style="border-top:1px solid ${C.goldLight};font-size:0;line-height:0;margin-top:14px;">&nbsp;</div><div style="font-family:${SANS};font-size:12px;line-height:160%;letter-spacing:0.5px;color:${C.goldLight};padding-top:10px;">${escapeHtml(checkLine)}</div>${webUrl ? `<div style="font-family:${SANS};font-size:12px;line-height:160%;letter-spacing:0.5px;padding-top:6px;"><a href="${safeHref(webUrl)}" style="color:${C.goldLight};text-decoration:underline;">网页版全量分栏 →</a></div>` : ""}</td></tr></table></td></tr>`
 
-  const footer = `<tr><td style="padding:22px 0 0 0;"><div style="border-top:1px solid ${C.goldLight};font-size:0;line-height:0;">&nbsp;</div></td></tr><tr><td align="center" style="padding:18px 0 6px 0;"><div style="font-family:${SANS};font-size:12px;line-height:1.9;color:${C.sub};">源健康：${escapeHtml(healthLine)}</div>${webUrl ? `<div style="font-family:${SANS};font-size:12px;line-height:1.9;"><a href="${safeHref(webUrl)}" style="color:${C.gold};text-decoration:underline;">网页版全量分栏（可点切换）→</a></div>` : ""}${notes.length ? `<div style="font-family:${SANS};font-size:12px;line-height:1.9;color:${C.sub};">${notes.map(escapeHtml).join("<br>")}</div>` : ""}<div style="font-family:${SANS};font-size:12px;line-height:1.9;color:${C.sub};"><span style="color:${C.gold};">◆</span>&nbsp; DailyBrief · Multi-Agent · F037 每日简报</div></td></tr>`
+  const footer = `<tr><td style="padding:24px 0 0 0;"><div style="border-top:1px solid ${C.border};font-size:0;line-height:0;">&nbsp;</div></td></tr><tr><td align="left" style="padding:18px 2px 8px 2px;"><div style="font-family:${SANS};font-size:12px;line-height:180%;color:${C.sub};">源健康：${escapeHtml(healthLine)}</div>${webUrl ? `<div style="font-family:${SANS};font-size:12px;line-height:180%;"><a href="${safeHref(webUrl)}" style="color:${C.gold};text-decoration:underline;">网页版全量分栏（可点切换）→</a></div>` : ""}${notes.length ? `<div style="font-family:${SANS};font-size:12px;line-height:180%;color:${C.sub};">${notes.map(escapeHtml).join("<br>")}</div>` : ""}<div style="font-family:${SANS};font-size:12px;line-height:180%;color:${C.muted};padding-top:6px;">DailyBrief · Multi-Agent · F037 每日简报</div></td></tr>`
 
   const html = [
     "<!doctype html>",
     `<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>每日简报 · DailyBrief</title></head>`,
     `<body style="margin:0;padding:0;background-color:${C.page};">`,
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;background-color:${C.page};"><tr><td align="center" style="padding:28px 16px;">`,
-    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;border-collapse:collapse;background-color:${C.page};"><tr><td style="padding:20px;">`,
+    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;border-collapse:separate;border-spacing:0;background-color:${C.paper};border:1px solid ${C.border};border-radius:20px;"><tr><td style="padding:20px 19px;">`,
     `<table role="presentation" width="560" cellpadding="0" cellspacing="0" style="width:560px;border-collapse:collapse;">`,
     masthead,
     alertCard(failed),

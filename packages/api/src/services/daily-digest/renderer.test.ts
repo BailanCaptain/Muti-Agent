@@ -497,12 +497,141 @@ describe("communityDropIds 速览反选（07-12 小孙：社区要研究/讨论/
 })
 
 describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
+  it("邮件视觉 v5.2：顶部恢复原版深墨刊头，速览恢复小圆点", () => {
+    const { html } = render()
+    assert.ok(
+      html.includes("background-color:#fffaf5;border:1px solid #ded4ca;border-radius:20px"),
+      "邮件整体仍应保留当前暖白纸面",
+    )
+    assert.ok(
+      html.includes(
+        "background-color:#24211f;border:1px solid #24211f;border-top:6px solid #c65d2e;border-radius:16px",
+      ),
+      "顶部刊头应以最初原版的深墨构图为基础",
+    )
+    assert.ok(
+      html.includes(
+        "font-size:38px;font-weight:700;letter-spacing:1px;color:#ffffff;line-height:120%",
+      ),
+      "每日简报应使用高对比大标题",
+    )
+    assert.ok(html.includes("border-top:2px solid #c65d2e;width:52px"), "标题下应恢复原版陶土短线")
+    assert.ok(
+      html.includes("font-size:14px;line-height:175%;color:#514c48"),
+      "正文应至少使用 14px/175% 的阅读规格",
+    )
+    assert.ok(
+      html.includes('<span style="color:#c65d2e;font-weight:700;">·</span>'),
+      "今日速览应恢复小圆点项目符号",
+    )
+    assert.ok(!html.includes('<span style="color:#c65d2e;">—</span>'))
+  })
+
+  it("邮件视觉 v5.1：恢复上一版结构，并加深来源、榜单数据与文章标题", () => {
+    const hackerNews = buildNormalizedItem(
+      "hn-ai",
+      "ai",
+      "Hacker News 条目",
+      "https://news.ycombinator.com/item?id=1",
+      null,
+      "Hacker News 条目摘要",
+    )
+    const openAi = buildNormalizedItem(
+      "openai-news",
+      "ai",
+      "OpenAI 条目",
+      "https://openai.com/news/example",
+      null,
+      "OpenAI 条目摘要",
+    )
+    const githubWeekly = buildNormalizedItem(
+      "github-trending-weekly",
+      "github",
+      "owner/weekly-repo",
+      "https://github.com/owner/weekly-repo",
+      null,
+      "+7,596 stars this week · ★16,709 · C# · 开源项目摘要",
+    )
+    const { html } = renderDigest({
+      businessDate: "2026-07-03",
+      summary: {
+        ...summary,
+        sections: [
+          {
+            category: "ai",
+            picks: [
+              ...(summary.sections[0]?.picks ?? []),
+              { itemId: hackerNews.id, summaryZh: "Hacker News 条目摘要" },
+              { itemId: openAi.id, summaryZh: "OpenAI 条目摘要" },
+            ],
+          },
+          { category: "hot", picks: [{ itemId: items[1].id, summaryZh: "热点摘要" }] },
+        ],
+      },
+      items: [...items, hackerNews, openAi],
+      results,
+      githubItems: [githubWeekly],
+    })
+    assert.ok(
+      html.includes(
+        'font-size:12px;font-weight:700;line-height:150%;letter-spacing:2px;color:#8a3a00;">ARTIFICIAL INTELLIGENCE',
+      ),
+      "板块标题应恢复上一版的陶土英文眉题",
+    )
+    assert.ok(
+      html.includes(
+        "background-color:#f6eee7;border:1px solid #ded4ca;border-top:3px solid #c65d2e;border-radius:16px",
+      ),
+      "焦点稿应恢复上一版的顶部细强调线",
+    )
+    assert.ok(!html.includes("border-left:5px solid #c65d2e"), "不得保留新版左侧粗色条")
+    assert.ok(
+      html.includes("font-size:20px;font-weight:700;line-height:150%;color:#161513"),
+      "焦点标题应恢复上一版尺寸，同时使用更深的暖墨标题色",
+    )
+    assert.match(
+      html,
+      /color:#8a3a00;padding-bottom:8px;\">Hacker News · 02/,
+      "Hacker News 来源与编号应加深",
+    )
+    assert.match(html, /color:#8a3a00;padding-bottom:8px;\">OpenAI · 03/, "OpenAI 来源与编号应加深")
+    assert.match(
+      html,
+      /color:#8a3a00;padding-top:8px;\">▲ 7,596 本周　★16,709　C#/,
+      "GitHub 涨幅、星数和语言应加深",
+    )
+  })
+
   it("无脚本/无远程图片/table ≤600px/含 color-scheme", () => {
     const { html } = render()
     assert.ok(!html.toLowerCase().includes("<script"))
     assert.ok(!/<img[^>]+src="http/i.test(html))
     assert.ok(html.includes("max-width:600px"))
     assert.ok(html.includes('name="color-scheme"'))
+    assert.doesNotMatch(
+      html,
+      /<style|<link|@media|display:\s*(?:flex|grid)|oklch\(/i,
+      "邮件必须保持全内联 table 布局，不依赖客户端易剥离的样式能力",
+    )
+    const fixedWidths = [...html.matchAll(/(?:width="(\d+)"|width:(\d+)px)/g)].map((match) =>
+      Number(match[1] ?? match[2]),
+    )
+    assert.ok(fixedWidths.length > 0)
+    assert.ok(
+      fixedWidths.every((width) => width <= 600),
+      "所有固定宽度都必须守住 600px 上限",
+    )
+    const frameMatch = html.match(
+      /(<table role="presentation" width="600"[^>]*>)<tr><td style="padding:(\d+)px(?: (\d+)px)?;">\n<table role="presentation" width="(\d+)"/,
+    )
+    assert.ok(frameMatch, "应能解析邮件主表的边框、内边距与正文宽度")
+    const borderWidth = Number(frameMatch[1].match(/border:(\d+)px solid/)?.[1] ?? 0)
+    const horizontalPadding = Number(frameMatch[3] ?? frameMatch[2])
+    const contentWidth = Number(frameMatch[4])
+    assert.ok(
+      contentWidth + horizontalPadding * 2 + borderWidth * 2 <= 600,
+      "邮件主表的实际盒模型宽度也必须守住 600px 上限",
+    )
   })
 
   it("链接严格等于 canonicalUrl（escape 后），标题被转义", () => {
@@ -1001,6 +1130,12 @@ describe("分栏改版（小孙 07-05 #1-#5）", () => {
     })
     assert.ok(html.includes("◇ 其余速览 · TOP 12 / 共 14 条"))
     assert.equal((html.match(/未选条目/g) ?? []).length, 12) // 14 条帽到 12
+    assert.ok(
+      html.includes(
+        'href="https://r.com/e0" style="color:#161513;text-decoration:none;">未选条目0</a>',
+      ),
+      "其余速览里的文章标题也应使用统一的深暖墨色",
+    )
     assert.ok(!html.includes("未选条目13"))
     assert.ok(html.includes('href="#top"')) // 每节尾回目录
     assert.ok(html.includes('name="top"')) // 刊头锚点
