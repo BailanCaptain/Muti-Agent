@@ -636,7 +636,7 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
       "所有固定宽度都必须守住 600px 上限",
     )
     const frameMatch = html.match(
-      /(<table role="presentation" width="600"[^>]*>)<tr><td style="padding:(\d+)px(?: (\d+)px)?;">\n<table role="presentation" width="(\d+)"/,
+      /(<table\b[^>]*\bwidth="600"[^>]*>)<tr><td style="padding:(\d+)px(?: (\d+)px)?;">\n<table role="presentation" width="(\d+)"/,
     )
     assert.ok(frameMatch, "应能解析邮件主表的边框、内边距与正文宽度")
     const borderWidth = Number(frameMatch[1].match(/border:(\d+)px solid/)?.[1] ?? 0)
@@ -648,7 +648,7 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
     )
   })
 
-  it("B035：Windows 经典 Outlook 获得 MSO/96-DPI/字体/行高/背景色兼容", () => {
+  it("B035/B036：Windows 经典 Outlook 保留 96-DPI/字体/行高兜底，刊头不依赖动态 VML", () => {
     const { html } = render()
 
     assert.ok(html.includes('xmlns:o="urn:schemas-microsoft-com:office:office"'))
@@ -658,10 +658,19 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
     assert.ok(html.includes("mso-line-height-rule:exactly"))
     assert.ok(html.includes("mso-fareast-font-family:SimSun"))
     assert.ok(html.includes("'SimSun'"), "Windows 中文标题必须有衬线字体落点")
-    assert.ok(html.includes("<v:roundrect"), "刊头圆角应由 VML 在 Classic Outlook 中保持")
-    assert.ok(html.includes('arcsize="8%"'))
-    assert.ok(html.includes("mso-fit-shape-to-text:true"), "动态刊头不得使用容易裁字的固定高度")
+    assert.doesNotMatch(html, /<v:(?:roundrect|textbox)\b/i, "动态多行刊头不得进入 VML story")
+    assert.doesNotMatch(html, /mso-fit-shape-to-text:true/i)
+    assert.doesNotMatch(
+      html,
+      /\.masthead-table\{background-color:transparent!important\}/,
+      "Outlook 不得撤掉刊头 table 自身的深墨背景",
+    )
     assert.ok(html.includes('class="masthead-content-table"'))
+    const mastheadTable = html.match(/<table class="masthead-table"[^>]*>/)?.[0]
+    assert.ok(mastheadTable, "应保留单一、可独立渲染的刊头 table")
+    assert.match(mastheadTable, /bgcolor="#24211f"/)
+    assert.match(mastheadTable, /background-color:#24211f/)
+    assert.match(mastheadTable, /border-top:6px solid #c65d2e/)
     assert.doesNotMatch(
       html,
       /<td style="padding:(?:18|20|22)px;"><table class="card-content-table"/,
@@ -702,6 +711,246 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
         `带 CSS 背景色的 table 必须有 Outlook HTML bgcolor 兜底：${tag}`,
       )
     }
+  })
+
+  it("B036：回目录只跳到普通 table 内的唯一可见 Word 书签", () => {
+    const { html } = render()
+    const bookmark = html.match(
+      /<a id="([A-Za-z][A-Za-z0-9_]*)" name="\1"[^>]*>MULTI-AGENT · DAILY BRIEF<\/a>/,
+    )
+    assert.ok(bookmark, "顶部可见眉题本身应承载符合 Word 命名规则的 name+id 书签")
+    assert.equal(bookmark[1], "DigestTop")
+    assert.equal((html.match(/(?:id|name)="DigestTop"/g) ?? []).length, 2, "顶部书签必须唯一")
+
+    const targetIndex = html.indexOf('id="DigestTop"')
+    const backLinks = [...html.matchAll(/<a href="([^"]+)"[^>]*>↑ 回目录<\/a>/g)]
+    assert.ok(backLinks.length > 0)
+    assert.ok(backLinks.every((match) => match[1] === "#DigestTop"))
+    assert.ok(backLinks.every((match) => targetIndex < (match.index ?? -1)))
+    assert.doesNotMatch(html, /href="#top"|<a name="top"><\/a>/)
+  })
+
+  it("B036：GitHub 条目间距附着在真实内容行，不生成 Outlook 灰色空矩形", () => {
+    const githubItems = [
+      ["owner/meta-and-desc", "+1,000 stars this week · ★10,000 · TypeScript · 仓库摘要"],
+      ["owner/meta-only", "+2,000 stars this week · ★20,000"],
+      ["owner/desc-only", "不可解析的普通描述"],
+      ["owner/title-only", ""],
+      ["owner/last-sentinel", "+5,000 stars this week · ★50,000 · TypeScript · 末条摘要"],
+    ].map(([title, snippet]) =>
+      buildNormalizedItem(
+        "github-trending-weekly",
+        "github",
+        title,
+        `https://github.com/${title}`,
+        null,
+        snippet,
+      ),
+    )
+    const { html } = renderDigest({
+      businessDate: "2026-07-03",
+      summary: { overview: [], sections: [], degraded: false },
+      items: [],
+      githubItems,
+      results: [],
+    })
+
+    const cardStart = html.indexOf('<table class="card-content-table"')
+    const cardEnd = html.indexOf("</table>", cardStart)
+    assert.ok(cardStart >= 0 && cardEnd > cardStart, "fixture 应生成一张 GitHub 榜单卡")
+    const listCard = html.slice(cardStart, cardEnd + "</table>".length)
+    assert.doesNotMatch(
+      listCard,
+      /<tr><td\b[^>]*height="12"[^>]*>\s*&nbsp;\s*<\/td><\/tr>/,
+      "独立 &nbsp; spacer 会被 Word 画成有底色的固定高矩形",
+    )
+    assert.equal(
+      (listCard.match(/border-top:1px solid #ded4ca;padding:12px 0 0 0/g) ?? []).length,
+      4,
+      "后续四条仍应保留真实分隔线与上间距",
+    )
+    assert.equal(
+      (listCard.match(/padding-bottom:12px/g) ?? []).length,
+      4,
+      "四个非末条的几何间距应各自迁到最后一个真实内容单元格",
+    )
+    assert.match(
+      listCard,
+      /padding:8px 0 0 0;padding-bottom:12px;">仓库摘要<\/td>/,
+      "meta+desc 的间距应附着到 desc",
+    )
+    assert.match(
+      listCard,
+      /class="github-meta-row"[^>]*padding-bottom:12px;">▲ 2,000 本周　★20,000<\/td>/,
+      "meta-only 的间距应附着到 meta",
+    )
+    assert.match(
+      listCard,
+      /padding:8px 0 0 0;padding-bottom:12px;">不可解析的普通描述<\/td>/,
+      "desc-only 的间距应附着到 desc",
+    )
+    assert.match(
+      listCard,
+      /padding:12px 0 0 0;padding-bottom:12px;">[\s\S]*?owner\/title-only<\/a><\/td>/,
+      "title-only 的间距应附着到 title",
+    )
+  })
+
+  it("B036：双栏中央 gutter 是明确暖白底的空结构列，不生成 Outlook 灰色竖块", () => {
+    const items = ["焦点条目", "左侧小卡", "右侧小卡"].map((title, index) =>
+      buildNormalizedItem(
+        "smol-ai",
+        "ai",
+        title,
+        `https://example.com/two-col-${index}`,
+        null,
+        `${title}摘要`,
+      ),
+    )
+    const { html } = renderDigest({
+      businessDate: "2026-07-16",
+      summary: {
+        overview: [],
+        sections: [
+          {
+            category: "ai",
+            picks: items.map((item) => ({ itemId: item.id, summaryZh: `${item.title}摘要` })),
+          },
+        ],
+        degraded: false,
+      },
+      items,
+      results: [],
+    })
+    const gutters = [...html.matchAll(/<td width="16"[^>]*>[\s\S]*?<\/td>/g)].map(
+      (match) => match[0],
+    )
+
+    assert.ok(gutters.length > 0, "fixture 必须覆盖至少一组双栏小卡")
+    for (const gutter of gutters) {
+      assert.match(gutter, /bgcolor="#fffaf5"/, "Word 单元格必须明确归属暖白纸面")
+      assert.match(gutter, /background-color:#fffaf5/, "现代客户端与 Outlook 应使用同一表面色")
+      assert.match(gutter, />\s*<\/td>$/, "结构 gutter 不得含会被 Word 画成实体块的文本节点")
+      assert.doesNotMatch(gutter, /&nbsp;/)
+    }
+  })
+
+  it("B036 A：Classic Outlook 延续原版完整卡片视觉，只让圆角自然降级", () => {
+    const fixtureItems = ["焦点条目", "推理左卡", "推理右卡", "OpenAI 左卡", "OpenAI 右卡"].map(
+      (title, index) =>
+        buildNormalizedItem(
+          "smol-ai",
+          "ai",
+          title,
+          `https://example.com/outlook-editorial-${index}`,
+          null,
+          `${title}摘要`,
+        ),
+    )
+    const tags = ["推理", "推理", "推理", "OpenAI", "OpenAI"]
+    const { html } = renderDigest({
+      businessDate: "2026-07-16",
+      summary: {
+        overview: ["今日速览"],
+        sections: [
+          {
+            category: "ai",
+            picks: fixtureItems.map((item, index) => ({
+              itemId: item.id,
+              summaryZh: `${item.title}摘要`,
+              tag: tags[index],
+            })),
+          },
+        ],
+        degraded: false,
+      },
+      items: fixtureItems,
+      results: [],
+    })
+
+    assert.match(html, /\/\* OUTLOOK_VISUAL_START \*\//)
+    assert.match(html, /\.outlook-paper\{border:1px solid #ded4ca!important\}/)
+    assert.match(
+      html,
+      /\.masthead-table\{background-color:#24211f!important;border:1px solid #24211f!important;border-top:6px solid #c65d2e!important\}/,
+    )
+    assert.match(
+      html,
+      /\.outlook-nav-shell\{background-color:#f6eee7!important;border:1px solid #ded4ca!important\}/,
+    )
+    assert.match(
+      html,
+      /\.outlook-nav-chip\{background-color:#fffaf5!important;border:1px solid #ded4ca!important\}/,
+    )
+    assert.match(
+      html,
+      /\.outlook-story-card,\.outlook-list-card\{background-color:#fffdf9!important;border:1px solid #ded4ca!important\}/,
+    )
+    assert.match(
+      html,
+      /\.outlook-rest-card\{background-color:#f8eee7!important;border:1px solid #ded4ca!important\}/,
+    )
+    assert.match(
+      html,
+      /\.outlook-hero-card\{background-color:#f6eee7!important;border:1px solid #ded4ca!important;border-top:3px solid #c65d2e!important\}/,
+    )
+    assert.match(
+      html,
+      /\.outlook-subheading\{background-color:#f8eee7!important;border:0!important;border-bottom:1px solid #ded4ca!important\}/,
+    )
+    assert.match(
+      html,
+      /\.outlook-card-summary\{font-size:14px!important;line-height:25px!important\}/,
+    )
+    assert.ok(html.includes('class="outlook-nav-grid"'))
+    assert.ok(html.includes('class="outlook-nav-chip"'))
+    assert.ok(html.includes('class="digest-sans outlook-story-card"'))
+    assert.ok(html.includes('class="outlook-subheading"'))
+    assert.ok(html.includes('class="outlook-card-summary"'))
+    assert.doesNotMatch(html, /box-shadow:|linear-gradient\(/i)
+  })
+
+  it("B036 V4：所有仍含 nbsp 的结构空 cell 都有明确不透明底色", () => {
+    const { html } = render()
+    const structuralCells = [
+      ...html.matchAll(/<td\b[^>]*font-size:0[^>]*>\s*&nbsp;\s*<\/td>/gi),
+    ].map((match) => match[0])
+
+    assert.ok(structuralCells.length > 0, "fixture 应覆盖刊头规则等有意的结构 cell")
+    for (const cell of structuralCells) {
+      assert.match(cell, /bgcolor="#[0-9a-f]{6}"/i, `结构 cell 缺少 Outlook bgcolor：${cell}`)
+      assert.match(
+        cell,
+        /background-color:#[0-9a-f]{6}/i,
+        `结构 cell 缺少现代客户端背景色：${cell}`,
+      )
+    }
+  })
+
+  it("B036 A：同类内容卡一律完整四边框，不残留报刊左轨或混合边框", () => {
+    const { html } = render()
+    const outlookCss = html.match(
+      /\/\* OUTLOOK_VISUAL_START \*\/([\s\S]*?)\/\* OUTLOOK_VISUAL_END \*\//,
+    )?.[1]
+
+    assert.ok(outlookCss, "邮件必须包含 Classic Outlook 专用视觉规则")
+    assert.match(
+      outlookCss,
+      /\.outlook-story-card,\.outlook-list-card\{background-color:#fffdf9!important;border:1px solid #ded4ca!important\}/,
+    )
+    assert.match(
+      outlookCss,
+      /\.outlook-rest-card\{background-color:#f8eee7!important;border:1px solid #ded4ca!important\}/,
+    )
+    assert.match(
+      outlookCss,
+      /\.outlook-subheading\{background-color:#f8eee7!important;border:0!important;border-bottom:1px solid #ded4ca!important\}/,
+    )
+    assert.doesNotMatch(
+      outlookCss,
+      /border-left:3px solid|\.outlook-nav-grid\{border-top:/,
+      "不得残留 V4/V4.1 的左轨或报刊导航顶线",
+    )
   })
 
   it("B035：双栏长 ASCII token 只给 Outlook 断词样式，不注入污染复制内容的字符", () => {
@@ -1522,8 +1771,8 @@ describe("分栏改版（小孙 07-05 #1-#5）", () => {
       "其余速览里的文章标题也应使用统一的深暖墨色",
     )
     assert.ok(!html.includes("未选条目13"))
-    assert.ok(html.includes('href="#top"')) // 每节尾回目录
-    assert.ok(html.includes('name="top"')) // 刊头锚点
+    assert.ok(html.includes('href="#DigestTop"')) // 每节尾回目录
+    assert.ok(html.includes('id="DigestTop" name="DigestTop"')) // 可见刊头 Word 书签
     assert.ok(markdown.includes("### 其余速览（共 14 条）"))
     assert.ok(markdown.includes("未选条目0"))
   })

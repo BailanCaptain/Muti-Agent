@@ -229,8 +229,19 @@ table{border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt}
 td,div,a,span{mso-line-height-rule:exactly}
 .digest-sans,.digest-sans td,.digest-sans a,.digest-sans span{font-family:'Microsoft YaHei',Arial,sans-serif!important}
 .digest-serif,.digest-sans .digest-serif{font-family:Georgia,SimSun,'Microsoft YaHei',serif!important;mso-fareast-font-family:SimSun!important}
-.masthead-table{background-color:transparent!important}
 .outlook-break-long{word-break:break-all!important}
+/* OUTLOOK_VISUAL_START */
+.outlook-paper{border:1px solid #ded4ca!important}
+.masthead-table{background-color:#24211f!important;border:1px solid #24211f!important;border-top:6px solid #c65d2e!important}
+.outlook-nav-shell{background-color:#f6eee7!important;border:1px solid #ded4ca!important}
+.outlook-nav-chip{background-color:#fffaf5!important;border:1px solid #ded4ca!important}
+.outlook-nav-gutter{background-color:#f6eee7!important}
+.outlook-story-card,.outlook-list-card{background-color:#fffdf9!important;border:1px solid #ded4ca!important}
+.outlook-rest-card{background-color:#f8eee7!important;border:1px solid #ded4ca!important}
+.outlook-hero-card{background-color:#f6eee7!important;border:1px solid #ded4ca!important;border-top:3px solid #c65d2e!important}
+.outlook-subheading{background-color:#f8eee7!important;border:0!important;border-bottom:1px solid #ded4ca!important}
+.outlook-card-summary{font-size:14px!important;line-height:25px!important}
+/* OUTLOOK_VISUAL_END */
 </style>
 <![endif]-->`
 
@@ -248,7 +259,7 @@ function estHeight(item: NormalizedItem, pick: SectionPick): number {
 
 /** 子栏标题行：保留明确分界，但不再与板块标题重复使用强调色竖条。 */
 function subHeading(label: string, count: number, anchor: string): string {
-  return `<tr><td style="padding:6px 0 12px 0;"><a name="${anchor}"></a><table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.cream}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.cream};border-bottom:1px solid ${C.border};border-radius:12px;"><tr><td style="padding:10px 14px;font-family:${SANS};font-size:13px;font-weight:700;line-height:20px;letter-spacing:0.5px;color:${C.ink};">${escapeHtml(label)} · ${count} 条</td></tr></table></td></tr>`
+  return `<tr><td style="padding:6px 0 12px 0;"><a name="${anchor}"></a><table class="outlook-subheading" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.cream}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.cream};border-bottom:1px solid ${C.border};border-radius:12px;"><tr><td style="padding:10px 14px;font-family:${SANS};font-size:13px;font-weight:700;line-height:20px;letter-spacing:0.5px;color:${C.ink};">${escapeHtml(label)} · ${count} 条</td></tr></table></td></tr>`
 }
 
 /**
@@ -277,12 +288,12 @@ function restRowsCard(
     .join("")
   const headTail = total > rest.length ? `TOP ${rest.length} / 共 ${total} 条` : `${rest.length} 条`
   const content = `<table class="rest-content-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:1px;color:${C.gold};padding:0 0 8px 0;">◇ 其余速览 · ${headTail}</td></tr>${rows}</table>`
-  return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.cream}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.cream};border:1px solid ${C.border};border-radius:16px;"><tr><td style="padding:16px 20px 18px 20px;">${content}</td></tr></table></td></tr>`
+  return `<tr><td style="padding:0 0 16px 0;"><table class="outlook-rest-card" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.cream}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.cream};border:1px solid ${C.border};border-radius:16px;"><tr><td style="padding:16px 20px 18px 20px;">${content}</td></tr></table></td></tr>`
 }
 
 /** 每节尾「回目录」：邮件里的导航回程（锚点是邮件唯一可用的"跳转"原语） */
 function backToTopRow(): string {
-  return `<tr><td align="right" style="padding:0 2px 6px 0;"><a href="#top" style="font-family:${SANS};font-size:12px;letter-spacing:1px;color:${C.gold};text-decoration:none;">↑ 回目录</a></td></tr>`
+  return `<tr><td align="right" style="padding:0 2px 6px 0;"><a href="#DigestTop" style="font-family:${SANS};font-size:12px;letter-spacing:1px;color:${C.gold};text-decoration:none;">↑ 回目录</a></td></tr>`
 }
 
 /** github 条目 snippet（"+N stars today/this week · ★M · Lang · desc" / "新仓 7 天 ★M · desc"）→ 数据行 + 描述 */
@@ -394,6 +405,7 @@ function renderCardInner(
     })
     if (desc) {
       bodyRows.push({
+        className: "outlook-card-summary",
         style: variant === "hero" ? bodyLarge : bodySmall,
         top: variant === "hero" ? 10 : 8,
         content: escapeHtml(desc),
@@ -404,6 +416,7 @@ function renderCardInner(
     const summaryText = clampText(pick.summaryZh, density.summaryChars[variant])
     if (summaryText) {
       bodyRows.push({
+        className: "outlook-card-summary",
         style: variant === "hero" ? bodyLarge : bodySmall,
         top: variant === "hero" ? 10 : 8,
         content: escapeHtml(summaryText),
@@ -441,7 +454,7 @@ function renderCardInner(
   }
 
   if (variant === "hero") {
-    const heroHeader = `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr><td valign="middle" style="padding:0;"><table class="hero-badge-table" role="presentation" cellpadding="0" cellspacing="0" bgcolor="${C.gold}" style="border-collapse:separate;border-spacing:0;background-color:${C.gold};border-radius:12px;"><tr><td bgcolor="${C.gold}" style="color:${C.white};font-size:11px;font-weight:700;line-height:17px;letter-spacing:1px;padding:4px 10px;">${escapeHtml(meta.hero)}</td></tr></table></td><td width="10" style="width:10px;font-size:0;line-height:0;">&nbsp;</td><td valign="middle" style="font-size:12px;font-weight:700;line-height:18px;letter-spacing:1px;color:${C.gold};padding:0;">${escapeHtml(label)} · ${noStr}</td></tr></table>`
+    const heroHeader = `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr><td valign="middle" style="padding:0;"><table class="hero-badge-table" role="presentation" cellpadding="0" cellspacing="0" bgcolor="${C.gold}" style="border-collapse:separate;border-spacing:0;background-color:${C.gold};border-radius:12px;"><tr><td bgcolor="${C.gold}" style="color:${C.white};font-size:11px;font-weight:700;line-height:17px;letter-spacing:1px;padding:4px 10px;">${escapeHtml(meta.hero)}</td></tr></table></td><td width="10" bgcolor="${C.heroLight}" aria-hidden="true" style="width:10px;background-color:${C.heroLight};font-size:0;line-height:0;"></td><td valign="middle" style="font-size:12px;font-weight:700;line-height:18px;letter-spacing:1px;color:${C.gold};padding:0;">${escapeHtml(label)} · ${noStr}</td></tr></table>`
     return insetCardRows(
       [
         { content: heroHeader, bottom: 10 },
@@ -487,16 +500,19 @@ function ghListCard(
         e.pick.descZh ?? (gh ? gh.desc : e.pick.summaryZh),
         density.githubDescChars,
       )
+      const hasNext = i < entries.length - 1
+      // B036：Word 会把独立 height + &nbsp; spacer 画成着色矩形；把同等留白附着到
+      // 前一条最后一个真实内容 cell，下一条仍以 border-top + padding-top 分隔。
+      const titleBottom = hasNext && !meta && !desc ? "padding-bottom:12px;" : ""
+      const metaBottom = hasNext && meta && !desc ? "padding-bottom:12px;" : ""
+      const descBottom = hasNext && desc ? "padding-bottom:12px;" : ""
       return (
-        `<tr><td${needsOutlookBreakAll(e.item.title) ? ' class="outlook-break-long"' : ""} style="${i > 0 ? `border-top:1px solid ${C.border};padding:12px 0 0 0;` : "padding:0;"}"><span style="font-size:12px;font-weight:700;letter-spacing:1px;color:${C.muted};">${String(i + 1).padStart(2, "0")}</span>&nbsp;&nbsp;<a href="${href}" style="font-size:16px;font-weight:700;line-height:24px;color:${C.title};text-decoration:none;overflow-wrap:anywhere;word-break:break-word;">${escapeHtml(e.item.title)}</a></td></tr>` +
+        `<tr><td${needsOutlookBreakAll(e.item.title) ? ' class="outlook-break-long"' : ""} style="${i > 0 ? `border-top:1px solid ${C.border};padding:12px 0 0 0;` : "padding:0;"}${titleBottom}"><span style="font-size:12px;font-weight:700;letter-spacing:1px;color:${C.muted};">${String(i + 1).padStart(2, "0")}</span>&nbsp;&nbsp;<a href="${href}" style="font-size:16px;font-weight:700;line-height:24px;color:${C.title};text-decoration:none;overflow-wrap:anywhere;word-break:break-word;">${escapeHtml(e.item.title)}</a></td></tr>` +
         (meta
-          ? `<tr><td class="github-meta-row" style="${ghMeta}padding:8px 0 0 0;">${escapeHtml(meta)}</td></tr>`
+          ? `<tr><td class="github-meta-row" style="${ghMeta}padding:8px 0 0 0;${metaBottom}">${escapeHtml(meta)}</td></tr>`
           : "") +
         (desc
-          ? `<tr><td style="${bodySmall}padding:8px 0 0 0;">${escapeHtml(desc)}</td></tr>`
-          : "") +
-        (i < entries.length - 1
-          ? `<tr><td height="12" style="height:12px;font-size:0;line-height:12px;">&nbsp;</td></tr>`
+          ? `<tr><td class="outlook-card-summary" style="${bodySmall}padding:8px 0 0 0;${descBottom}">${escapeHtml(desc)}</td></tr>`
           : "")
       )
     })
@@ -504,29 +520,31 @@ function ghListCard(
   const content = cardContentTable(
     `<tr><td style="font-size:12px;font-weight:700;line-height:18px;letter-spacing:1px;color:${C.gold};padding:0 0 6px 0;">◆ ${escapeHtml(kindLabel)} · ${entries.length}</td></tr>${rows}`,
   )
-  return `<tr><td style="padding:0 0 16px 0;"><table class="digest-sans" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.card}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.card};border:1px solid ${C.border};border-radius:16px;font-family:${SANS};"><tr><td style="padding:20px;">${content}</td></tr></table></td></tr>`
+  return `<tr><td style="padding:0 0 16px 0;"><table class="digest-sans outlook-list-card" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.card}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.card};border:1px solid ${C.border};border-radius:16px;font-family:${SANS};"><tr><td style="padding:20px;">${content}</td></tr></table></td></tr>`
 }
 
 function heroRow(inner: string): string {
-  return `<tr><td style="padding:0 0 16px 0;"><table class="digest-sans" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.heroLight}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.heroLight};border:1px solid ${C.border};border-top:3px solid ${C.accent};border-radius:16px;font-family:${SANS};">${inner}</table></td></tr>`
+  return `<tr><td style="padding:0 0 16px 0;"><table class="digest-sans outlook-hero-card" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.heroLight}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.heroLight};border:1px solid ${C.border};border-top:3px solid ${C.accent};border-radius:16px;font-family:${SANS};">${inner}</table></td></tr>`
 }
 
 function wideRow(inner: string): string {
-  return `<tr><td style="padding:0 0 16px 0;"><table class="digest-sans" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.card}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.card};border:1px solid ${C.border};border-radius:16px;font-family:${SANS};">${inner}</table></td></tr>`
+  return `<tr><td style="padding:0 0 16px 0;"><table class="digest-sans outlook-story-card" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.card}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.card};border:1px solid ${C.border};border-radius:16px;font-family:${SANS};">${inner}</table></td></tr>`
 }
 
 function colCard(inner: string): string {
-  return `<table class="digest-sans" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.card}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.card};border:1px solid ${C.border};border-radius:16px;font-family:${SANS};">${inner}</table>`
+  return `<table class="digest-sans outlook-story-card" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.card}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.card};border:1px solid ${C.border};border-radius:16px;font-family:${SANS};">${inner}</table>`
 }
 
 function twoColRow(left: string, right: string): string {
-  return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="560" cellpadding="0" cellspacing="0" style="width:560px;border-collapse:collapse;table-layout:fixed;"><tr><td width="272" valign="top" style="width:272px;padding:0;">${colCard(left)}</td><td width="16" style="width:16px;font-size:0;line-height:0;">&nbsp;</td><td width="272" valign="top" style="width:272px;padding:0;">${colCard(right)}</td></tr></table></td></tr>`
+  // B036：双栏中央只是一列结构间距。透明 &nbsp; cell 会被 Word 画成贯穿整行的灰块；
+  // 保留固定列宽，但去掉文本节点并明确归属暖白纸面，现代客户端的 16px 几何不变。
+  return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="560" cellpadding="0" cellspacing="0" style="width:560px;border-collapse:collapse;table-layout:fixed;"><tr><td width="272" valign="top" style="width:272px;padding:0;">${colCard(left)}</td><td width="16" bgcolor="${C.paper}" aria-hidden="true" style="width:16px;background-color:${C.paper};font-size:0;line-height:0;"></td><td width="272" valign="top" style="width:272px;padding:0;">${colCard(right)}</td></tr></table></td></tr>`
 }
 
 /** 板块标题：恢复克制的上一版排法，以陶土英文眉题和细分隔线建立层级。 */
 function sectionHeading(meta: SectionMeta, first: boolean): string {
   const pad = first ? "10px 0 16px 0" : "28px 0 16px 0"
-  return `<tr><td style="padding:${pad};"><a name="${meta.anchor}"></a><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:2px;color:${C.gold};padding:0;">${escapeHtml(meta.en)}</td></tr><tr><td class="digest-serif" style="font-family:${SERIF};mso-fareast-font-family:SimSun;font-size:26px;font-weight:700;line-height:34px;color:${C.title};padding:4px 0 0 0;">${escapeHtml(meta.label)}</td></tr><tr><td style="border-bottom:1px solid ${C.border};font-size:0;line-height:0;padding:12px 0 0 0;">&nbsp;</td></tr></table></td></tr>`
+  return `<tr><td style="padding:${pad};"><a name="${meta.anchor}"></a><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:2px;color:${C.gold};padding:0;">${escapeHtml(meta.en)}</td></tr><tr><td class="digest-serif" style="font-family:${SERIF};mso-fareast-font-family:SimSun;font-size:26px;font-weight:700;line-height:34px;color:${C.title};padding:4px 0 0 0;">${escapeHtml(meta.label)}</td></tr><tr><td bgcolor="${C.paper}" style="border-bottom:1px solid ${C.border};background-color:${C.paper};font-size:0;line-height:0;padding:12px 0 0 0;">&nbsp;</td></tr></table></td></tr>`
 }
 
 interface SubNavEntry {
@@ -545,8 +563,9 @@ function navCard(
   const chipW = n > 0 ? Math.floor((524 - (n - 1) * 8) / n) : 524
   let cells = ""
   chips.forEach((c, i) => {
-    cells += `<td width="${chipW}" valign="top" style="width:${chipW}px;padding:0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.paper}" style="width:100%;border-collapse:separate;border-spacing:0;background-color:${C.paper};border:1px solid ${C.border};border-radius:12px;"><tr><td align="center" style="padding:12px 4px;"><a href="#${c.meta.anchor}" style="text-decoration:none;color:${C.ink};"><span style="font-family:${SANS};font-size:13px;font-weight:700;color:${C.ink};line-height:20px;">${escapeHtml(c.meta.nav)}</span><br><span style="font-family:${SANS};font-size:12px;line-height:21px;letter-spacing:0.5px;color:${C.gold};">${c.count} 条</span></a></td></tr></table></td>`
-    if (i < n - 1) cells += `<td width="8" style="width:8px;font-size:0;line-height:0;">&nbsp;</td>`
+    cells += `<td width="${chipW}" valign="top" style="width:${chipW}px;padding:0;"><table class="outlook-nav-chip" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.paper}" style="width:100%;border-collapse:separate;border-spacing:0;background-color:${C.paper};border:1px solid ${C.border};border-radius:12px;"><tr><td align="center" style="padding:12px 4px;"><a href="#${c.meta.anchor}" style="text-decoration:none;color:${C.ink};"><span style="font-family:${SANS};font-size:13px;font-weight:700;color:${C.ink};line-height:20px;">${escapeHtml(c.meta.nav)}</span><br><span style="font-family:${SANS};font-size:12px;line-height:21px;letter-spacing:0.5px;color:${C.gold};">${c.count} 条</span></a></td></tr></table></td>`
+    if (i < n - 1)
+      cells += `<td class="outlook-nav-gutter" width="8" bgcolor="${C.heroLight}" aria-hidden="true" style="width:8px;background-color:${C.heroLight};font-size:0;line-height:0;"></td>`
   })
   const overviewRows = overview
     .map(
@@ -555,14 +574,14 @@ function navCard(
     )
     .join("")
   const overviewBlock = overview.length
-    ? `<tr><td style="padding:22px 22px 17px 22px;"><table class="overview-content-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;"><tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:2px;color:${C.gold};padding:0 0 10px 0;">今日速览 · AT A GLANCE</td></tr>${overviewRows}</table></td></tr><tr><td style="padding:0 22px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;"><tr><td style="border-top:1px solid ${C.border};font-size:0;line-height:0;">&nbsp;</td></tr></table></td></tr>`
+    ? `<tr><td style="padding:22px 22px 17px 22px;"><table class="overview-content-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;"><tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:2px;color:${C.gold};padding:0 0 10px 0;">今日速览 · AT A GLANCE</td></tr>${overviewRows}</table></td></tr><tr><td style="padding:0 22px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;"><tr><td bgcolor="${C.heroLight}" style="border-top:1px solid ${C.border};background-color:${C.heroLight};font-size:0;line-height:0;">&nbsp;</td></tr></table></td></tr>`
     : ""
   // 子栏目录：一节一行「板块名　子栏1 n · 子栏2 n」，锚点直达（不支持锚点的客户端退化为静态目录，内容零丢失）
   const subLines = density.includeSubNav ? subNav.filter((s) => s.links.length > 0) : []
   const subBlock = subLines.length
     ? `<tr><td style="padding:12px 22px 18px 22px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">${subLines.map((s) => `<tr><td valign="top" style="vertical-align:top;padding:3px 10px 3px 0;font-family:${SANS};font-size:12px;font-weight:700;line-height:22px;color:${C.ink};">${escapeHtml(s.nav)}</td><td style="padding:3px 0;font-family:${SANS};font-size:12px;line-height:22px;color:${C.sub};">${s.links.map((l) => `<a href="#${l.anchor}" style="color:${C.gold};text-decoration:none;">${escapeHtml(l.label)}&nbsp;${l.count}</a>`).join("&nbsp;·&nbsp; ")}</td></tr>`).join("")}</table></td></tr>`
     : ""
-  return `<tr><td style="padding:0 0 22px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.heroLight}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.heroLight};border:1px solid ${C.border};border-radius:16px;">${overviewBlock}<tr><td style="padding:16px 18px ${subBlock ? "4px" : "18px"} 18px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr>${cells}</tr></table></td></tr>${subBlock}</table></td></tr>`
+  return `<tr><td style="padding:0 0 22px 0;"><table class="outlook-nav-shell" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.heroLight}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.heroLight};border:1px solid ${C.border};border-radius:16px;">${overviewBlock}<tr><td style="padding:16px 18px ${subBlock ? "4px" : "18px"} 18px;"><table class="outlook-nav-grid" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr>${cells}</tr></table></td></tr>${subBlock}</table></td></tr>`
 }
 
 /** github 板块标题按当日在场榜单自适应：单榜用榜名；多榜同场（月榜常驻后即每天）= 榜单合集 */
@@ -1026,22 +1045,20 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
     ...notes,
   )
 
-  // 同一份刊头内容在 Outlook 内进入动态高度 VML roundrect；其他客户端只看到原 table。
-  // 这保留了深色刊头与圆角语言，不会把桌面版替换成另一套“方框降级版”。
-  const mastheadVmlOpen = `<!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" arcsize="8%" fillcolor="${C.ink}" strokecolor="${C.ink}" strokeweight="1px" style="width:560px;v-text-anchor:top;"><v:textbox inset="0,0,0,0" style="mso-fit-shape-to-text:true;"><![endif]-->`
-  const mastheadVmlClose = "<!--[if mso]></v:textbox></v:roundrect><![endif]-->"
-  const mastheadContent = `<table class="masthead-content-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:3px;color:${C.goldLight};padding:0 0 8px 0;">MULTI-AGENT · DAILY BRIEF</td></tr><tr><td class="digest-serif" style="font-family:${SERIF};mso-fareast-font-family:SimSun;font-size:38px;font-weight:700;letter-spacing:1px;color:${C.white};line-height:46px;padding:0;">每日简报</td></tr><tr><td height="14" style="height:14px;line-height:14px;font-size:0;">&nbsp;</td></tr><tr><td style="padding:0;"><table role="presentation" width="52" cellpadding="0" cellspacing="0" style="width:52px;border-collapse:collapse;"><tr><td height="2" bgcolor="${C.accent}" style="height:2px;background-color:${C.accent};font-size:0;line-height:2px;">&nbsp;</td></tr></table></td></tr><tr><td height="14" style="height:14px;line-height:14px;font-size:0;">&nbsp;</td></tr><tr><td style="font-family:${SANS};font-size:14px;line-height:22px;letter-spacing:0.5px;color:${C.goldLight};padding:0;">${escapeHtml(input.businessDate)}${weekday ? `　${escapeHtml(weekday)}` : ""}${input.summary.degraded ? "　· 清单版" : ""}</td></tr><tr><td style="font-family:${SANS};font-size:13px;line-height:21px;letter-spacing:0.5px;color:${C.cream};padding:3px 0 0 0;">AI · 社区动态 · 今日热点 · ${DIGEST_GITHUB_SECTION_LABEL}</td></tr><tr><td height="14" style="height:14px;line-height:14px;font-size:0;">&nbsp;</td></tr><tr><td style="border-top:1px solid ${C.goldLight};font-size:0;line-height:0;padding:0;">&nbsp;</td></tr><tr><td style="font-family:${SANS};font-size:12px;line-height:19px;letter-spacing:0.5px;color:${C.goldLight};padding:10px 0 0 0;">${escapeHtml(checkLine)}</td></tr>${webUrl ? `<tr><td style="font-family:${SANS};font-size:12px;line-height:19px;letter-spacing:0.5px;padding:6px 0 0 0;"><a href="${safeHref(webUrl)}" style="color:${C.goldLight};text-decoration:underline;">网页版全量分栏 →</a></td></tr>` : ""}</table>`
-  const masthead = `<tr><td style="padding:0 0 18px 0;"><a name="top"></a>${mastheadVmlOpen}<table class="masthead-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.ink}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.ink};border:1px solid ${C.ink};border-top:6px solid ${C.accent};border-radius:16px;"><tr><td style="padding:26px 26px 24px 26px;">${mastheadContent}</td></tr></table>${mastheadVmlClose}</td></tr>`
+  // B036：动态多行刊头留在普通 presentation table。Classic Outlook 只退化方角，
+  // 不再让 VML textbox 接管高度/背景；可见眉题本身承载 Word 可识别的非空书签。
+  const mastheadContent = `<table class="masthead-content-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:3px;color:${C.goldLight};padding:0 0 8px 0;"><a id="DigestTop" name="DigestTop" style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:3px;color:${C.goldLight};text-decoration:none;">MULTI-AGENT · DAILY BRIEF</a></td></tr><tr><td class="digest-serif" style="font-family:${SERIF};mso-fareast-font-family:SimSun;font-size:38px;font-weight:700;letter-spacing:1px;color:${C.white};line-height:46px;padding:0;">每日简报</td></tr><tr><td height="14" bgcolor="${C.ink}" style="height:14px;background-color:${C.ink};line-height:14px;font-size:0;">&nbsp;</td></tr><tr><td style="padding:0;"><table role="presentation" width="52" cellpadding="0" cellspacing="0" style="width:52px;border-collapse:collapse;"><tr><td height="2" bgcolor="${C.accent}" style="height:2px;background-color:${C.accent};font-size:0;line-height:2px;">&nbsp;</td></tr></table></td></tr><tr><td height="14" bgcolor="${C.ink}" style="height:14px;background-color:${C.ink};line-height:14px;font-size:0;">&nbsp;</td></tr><tr><td style="font-family:${SANS};font-size:14px;line-height:22px;letter-spacing:0.5px;color:${C.goldLight};padding:0;">${escapeHtml(input.businessDate)}${weekday ? `　${escapeHtml(weekday)}` : ""}${input.summary.degraded ? "　· 清单版" : ""}</td></tr><tr><td style="font-family:${SANS};font-size:13px;line-height:21px;letter-spacing:0.5px;color:${C.cream};padding:3px 0 0 0;">AI · 社区动态 · 今日热点 · ${DIGEST_GITHUB_SECTION_LABEL}</td></tr><tr><td height="14" bgcolor="${C.ink}" style="height:14px;background-color:${C.ink};line-height:14px;font-size:0;">&nbsp;</td></tr><tr><td bgcolor="${C.ink}" style="border-top:1px solid ${C.goldLight};background-color:${C.ink};font-size:0;line-height:0;padding:0;">&nbsp;</td></tr><tr><td style="font-family:${SANS};font-size:12px;line-height:19px;letter-spacing:0.5px;color:${C.goldLight};padding:10px 0 0 0;">${escapeHtml(checkLine)}</td></tr>${webUrl ? `<tr><td style="font-family:${SANS};font-size:12px;line-height:19px;letter-spacing:0.5px;padding:6px 0 0 0;"><a href="${safeHref(webUrl)}" style="color:${C.goldLight};text-decoration:underline;">网页版全量分栏 →</a></td></tr>` : ""}</table>`
+  const masthead = `<tr><td style="padding:0 0 18px 0;"><table class="masthead-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.ink}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.ink};border:1px solid ${C.ink};border-top:6px solid ${C.accent};border-radius:16px;"><tr><td style="padding:26px 26px 24px 26px;">${mastheadContent}</td></tr></table></td></tr>`
 
   const footerRows = `<tr><td style="font-family:${SANS};font-size:12px;line-height:22px;color:${C.sub};padding:0;">源健康：${escapeHtml(healthLine)}</td></tr>${webUrl ? `<tr><td style="font-family:${SANS};font-size:12px;line-height:22px;padding:0;"><a href="${safeHref(webUrl)}" style="color:${C.gold};text-decoration:underline;">网页版全量分栏（可点切换）→</a></td></tr>` : ""}${notes.length ? `<tr><td style="font-family:${SANS};font-size:12px;line-height:22px;color:${C.sub};padding:0;">${notes.map(escapeHtml).join("<br>")}</td></tr>` : ""}<tr><td style="font-family:${SANS};font-size:12px;line-height:22px;color:${C.muted};padding:6px 0 0 0;">DailyBrief · Multi-Agent · F037 每日简报</td></tr>`
-  const footer = `<tr><td style="border-bottom:1px solid ${C.border};font-size:0;line-height:0;padding:24px 0 0 0;">&nbsp;</td></tr><tr><td align="left" style="padding:18px 2px 8px 2px;"><table class="footer-content-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;">${footerRows}</table></td></tr>`
+  const footer = `<tr><td bgcolor="${C.paper}" style="border-bottom:1px solid ${C.border};background-color:${C.paper};font-size:0;line-height:0;padding:24px 0 0 0;">&nbsp;</td></tr><tr><td align="left" style="padding:18px 2px 8px 2px;"><table class="footer-content-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;">${footerRows}</table></td></tr>`
 
   const html = [
     "<!doctype html>",
-    `<html lang="zh-CN" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">${MSO_HEAD}<title>每日简报 · DailyBrief</title></head>`,
+    `<html lang="zh-CN" xmlns:o="urn:schemas-microsoft-com:office:office"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">${MSO_HEAD}<title>每日简报 · DailyBrief</title></head>`,
     `<body bgcolor="${C.page}" style="margin:0;padding:0;background-color:${C.page};">`,
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.page}" style="width:100%;border-collapse:collapse;background-color:${C.page};"><tr><td align="center" style="padding:28px 16px;">`,
-    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" bgcolor="${C.paper}" style="width:600px;max-width:600px;border-collapse:separate;border-spacing:0;background-color:${C.paper};border:1px solid ${C.border};border-radius:20px;"><tr><td style="padding:20px 19px;">`,
+    `<table class="outlook-paper" role="presentation" width="600" cellpadding="0" cellspacing="0" bgcolor="${C.paper}" style="width:600px;max-width:600px;border-collapse:separate;border-spacing:0;background-color:${C.paper};border:1px solid ${C.border};border-radius:20px;"><tr><td style="padding:20px 19px;">`,
     `<table role="presentation" width="560" cellpadding="0" cellspacing="0" style="width:560px;border-collapse:collapse;">`,
     masthead,
     alertCard(failed),
