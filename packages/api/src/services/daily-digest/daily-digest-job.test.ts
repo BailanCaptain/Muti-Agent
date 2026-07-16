@@ -13,7 +13,7 @@ import {
 import { buildEditorialDecisionSet } from "./editorial-decider"
 import { buildNormalizedItem } from "./feed-parsers"
 import { createFileSourceHealthStore } from "./source-health"
-import { buildEditorialPromptItems, type TranslateExtrasInput } from "./summarizer"
+import { type TranslateExtrasInput, buildEditorialPromptItems } from "./summarizer"
 import type {
   DigestSource,
   DigestSummary,
@@ -931,9 +931,21 @@ describe("选材预滤链（E1/E2，07-07 小孙「重复信息」「政治去�
   })
 
   it("正式首发日忽略此前试发去重，首发实际发布项从次日起成为跨日去重基线", async () => {
-    const itemA = { title: "trial-story-A", url: "https://a.com/formal-A", publishedAt: "2026-07-13T00:00:00Z" }
-    const itemB = { title: "formal-story-B", url: "https://a.com/formal-B", publishedAt: "2026-07-15T00:00:00Z" }
-    const itemC = { title: "next-day-story-C", url: "https://a.com/formal-C", publishedAt: "2026-07-16T00:00:00Z" }
+    const itemA = {
+      title: "trial-story-A",
+      url: "https://a.com/formal-A",
+      publishedAt: "2026-07-13T00:00:00Z",
+    }
+    const itemB = {
+      title: "formal-story-B",
+      url: "https://a.com/formal-B",
+      publishedAt: "2026-07-15T00:00:00Z",
+    }
+    const itemC = {
+      title: "next-day-story-C",
+      url: "https://a.com/formal-C",
+      publishedAt: "2026-07-16T00:00:00Z",
+    }
     const shownLedgerNotBefore = "2026-07-15"
 
     const trial = createDailyDigestJob(
@@ -942,10 +954,7 @@ describe("选材预滤链（E1/E2，07-07 小孙「重复信息」「政治去�
         shownLedgerNotBefore,
       }),
     )
-    assert.equal(
-      (await trial.reconcile(new Date("2026-07-14T08:00:00+08:00"))).status,
-      "ok",
-    )
+    assert.equal((await trial.reconcile(new Date("2026-07-14T08:00:00+08:00"))).status, "ok")
 
     const launchSink = { items: [] as NormalizedItem[] }
     const launch = createDailyDigestJob(
@@ -955,10 +964,7 @@ describe("选材预滤链（E1/E2，07-07 小孙「重复信息」「政治去�
         shownLedgerNotBefore,
       }),
     )
-    assert.equal(
-      (await launch.reconcile(new Date("2026-07-15T08:00:00+08:00"))).status,
-      "ok",
-    )
+    assert.equal((await launch.reconcile(new Date("2026-07-15T08:00:00+08:00"))).status, "ok")
     assert.deepEqual(
       launchSink.items.map((item) => item.title),
       ["trial-story-A", "formal-story-B"],
@@ -973,11 +979,11 @@ describe("选材预滤链（E1/E2，07-07 小孙「重复信息」「政治去�
         shownLedgerNotBefore,
       }),
     )
-    assert.equal(
-      (await dayAfter.reconcile(new Date("2026-07-16T08:00:00+08:00"))).status,
-      "ok",
+    assert.equal((await dayAfter.reconcile(new Date("2026-07-16T08:00:00+08:00"))).status, "ok")
+    assert.deepEqual(
+      dayAfterSink.items.map((item) => item.title),
+      ["next-day-story-C"],
     )
-    assert.deepEqual(dayAfterSink.items.map((item) => item.title), ["next-day-story-C"])
     assert.ok(fs.existsSync(path.join(dir, "2026-07-14", "shown.json")))
   })
 
@@ -1171,39 +1177,36 @@ describe("选材预滤链（E1/E2，07-07 小孙「重复信息」「政治去�
           reviewerTarget: { provider: "codex", model: "gpt-5.6-sol", effort: "high" },
           reviewerSlot: "codex_pass_1",
         }
-        const editorialDecisionSet = buildEditorialDecisionSet(
-          buildEditorialPromptItems(fed),
-          [
-            {
-              itemId: inference.id,
-              sourceCategory: "ai",
-              reviewState: "unreviewed",
-              rejectReason: "classifier_failure",
-              topicTags: [],
-              organizationTags: [],
-              ecosystemTags: [],
-              regionTags: [],
-              contentKind: "other",
-              confidence: 0,
-              reviewMode: "degraded_same_target",
-              votes: [],
-            },
-            {
-              itemId: hot.id,
-              sourceCategory: "hot",
-              reviewState: "eligible",
-              basis: "ai_industry_event",
-              topicTags: ["other"],
-              organizationTags: [],
-              ecosystemTags: [],
-              regionTags: ["cn"],
-              contentKind: "industry",
-              confidence: 0.9,
-              reviewMode: "degraded_same_target",
-              votes: [hotVote],
-            },
-          ],
-        )
+        const editorialDecisionSet = buildEditorialDecisionSet(buildEditorialPromptItems(fed), [
+          {
+            itemId: inference.id,
+            sourceCategory: "ai",
+            reviewState: "unreviewed",
+            rejectReason: "classifier_failure",
+            topicTags: [],
+            organizationTags: [],
+            ecosystemTags: [],
+            regionTags: [],
+            contentKind: "other",
+            confidence: 0,
+            reviewMode: "degraded_same_target",
+            votes: [],
+          },
+          {
+            itemId: hot.id,
+            sourceCategory: "hot",
+            reviewState: "eligible",
+            basis: "ai_industry_event",
+            topicTags: ["other"],
+            organizationTags: [],
+            ecosystemTags: [],
+            regionTags: ["cn"],
+            contentKind: "industry",
+            confidence: 0.9,
+            reviewMode: "degraded_same_target",
+            votes: [hotVote],
+          },
+        ])
         return {
           overview: ["科技产业今日进展"],
           overviewRefs: [{ text: "科技产业今日进展", itemIds: [hot.id] }],
@@ -1233,10 +1236,7 @@ describe("选材预滤链（E1/E2，07-07 小孙「重复信息」「政治去�
     }
     assert.equal(archive.schemaVersion, 2, "B032 不得抬升既有归档外层 schema")
     assert.equal(archive.summary?.editorialDecisionSet?.schemaVersion, 1)
-    assert.equal(
-      archive.summary?.editorialDecisionSet?.reviewMode,
-      "degraded_same_target",
-    )
+    assert.equal(archive.summary?.editorialDecisionSet?.reviewMode, "degraded_same_target")
   })
 
   it("B032：五条获批内容若终态速览不足五条，必须失败关闭而不是发送缩水日报", async () => {
@@ -1559,20 +1559,22 @@ describe("选材预滤链（E1/E2，07-07 小孙「重复信息」「政治去�
     assert.equal((await jobA.reconcile(FRI_0800)).status, "ok")
     const htmlA = fs.readFileSync(path.join(dir, "2026-07-03", "digest.html"), "utf8")
     assert.ok(htmlA.includes("其余速览"), "对照组应有速览区")
-    // 实验组：5KB 极小预算逼降密度阶梯打到底 → 速览区整体消失，但报仍发出
+    // 实验组：12.5KiB 预算位于「3 行仍超、0 行可发」之间，逼降密度阶梯打到底
     const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "f037-budget-"))
+    const emailByteBudget = 12_800
     const jobB = createDailyDigestJob(
       makeDeps({
         ledger: createFileAttemptLedger(dir2, "[daily-digest]"),
         health: createFileSourceHealthStore(dir2),
         baseDir: dir2,
         sources: [multiSource("s1", entries)],
-        emailByteBudget: 5 * 1024,
+        emailByteBudget,
       }),
     )
     assert.equal((await jobB.reconcile(FRI_0800)).status, "ok")
     const htmlB = fs.readFileSync(path.join(dir2, "2026-07-03", "digest.html"), "utf8")
     assert.ok(!htmlB.includes("其余速览"), "超预算应降到 0 行速览")
+    assert.ok(Buffer.byteLength(htmlB, "utf8") <= emailByteBudget, "终态 HTML 必须守住硬预算")
     const archiveB = JSON.parse(
       fs.readFileSync(path.join(dir2, "2026-07-03", "summary.json"), "utf8"),
     ) as { publication: { sections: Array<{ entries: unknown[] }> } }
@@ -1585,6 +1587,43 @@ describe("选材预滤链（E1/E2，07-07 小孙「重复信息」「政治去�
     ) as { keys: string[] }
     assert.equal(finalPublishedCount, 3, "预算裁掉的 brief 必须同步从最终 publication 删除")
     assert.equal(shownB.keys.length, finalPublishedCount, "shown 必须与最终实际发布集合严格同源")
+  })
+
+  it("B035：密度阶梯耗尽后仍超 98KiB 必须 fail-closed，禁止 Gmail 裁断正文", async () => {
+    const sender = makeSender()
+    const alerts: string[] = []
+    const longTitle = "超长标题".repeat(10_000)
+    const longTitleSource: DigestSource = {
+      sourceId: "long-title",
+      category: "ai",
+      async fetch() {
+        return [
+          buildNormalizedItem(
+            "long-title",
+            "ai",
+            longTitle,
+            "https://example.com/long-title",
+            "2026-07-02T00:00:00Z",
+            "合法但异常长的上游标题",
+          ),
+        ]
+      },
+    }
+    const deps = makeDeps({
+      sender,
+      sources: [longTitleSource],
+      pushAlert: (message) => alerts.push(message),
+    })
+
+    const out = await createDailyDigestJob(deps).reconcile(FRI_0800)
+
+    assert.equal(out.status, "failed_summarize")
+    assert.equal(sender.sent.length, 0, "超预算正文不得交给 SMTP")
+    assert.equal(deps.ledger.read("2026-07-03").sent, null)
+    assert.equal(deps.ledger.read("2026-07-03").attempts.length, 0)
+    assert.ok(!fs.existsSync(path.join(dir, "2026-07-03", "digest.html")))
+    assert.ok(!fs.existsSync(path.join(dir, "outbound-ledger.jsonl")))
+    assert.ok(alerts.some((message) => message.includes("HTML") && message.includes("不发送")))
   })
 })
 

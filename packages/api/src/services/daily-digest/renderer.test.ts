@@ -511,14 +511,18 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
     )
     assert.ok(
       html.includes(
-        "font-size:38px;font-weight:700;letter-spacing:1px;color:#ffffff;line-height:120%",
+        "font-size:38px;font-weight:700;letter-spacing:1px;color:#ffffff;line-height:46px",
       ),
       "每日简报应使用高对比大标题",
     )
-    assert.ok(html.includes("border-top:2px solid #c65d2e;width:52px"), "标题下应恢复原版陶土短线")
     assert.ok(
-      html.includes("font-size:14px;line-height:175%;color:#514c48"),
-      "正文应至少使用 14px/175% 的阅读规格",
+      html.includes("width:52px;border-collapse:collapse") &&
+        html.includes("height:2px;background-color:#c65d2e"),
+      "标题下应以 Outlook 稳定的小表格恢复原版陶土短线",
+    )
+    assert.ok(
+      html.includes("font-size:14px;line-height:25px;color:#514c48"),
+      "正文应保持约 14px/175% 的阅读规格，并用 Outlook 可预测的像素行高",
     )
     assert.ok(
       html.includes('<span style="color:#c65d2e;font-weight:700;">·</span>'),
@@ -574,7 +578,7 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
     })
     assert.ok(
       html.includes(
-        'font-size:12px;font-weight:700;line-height:150%;letter-spacing:2px;color:#8a3a00;">ARTIFICIAL INTELLIGENCE',
+        'font-size:12px;font-weight:700;line-height:18px;letter-spacing:2px;color:#8a3a00;padding:0;">ARTIFICIAL INTELLIGENCE',
       ),
       "板块标题应恢复上一版的陶土英文眉题",
     )
@@ -586,18 +590,22 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
     )
     assert.ok(!html.includes("border-left:5px solid #c65d2e"), "不得保留新版左侧粗色条")
     assert.ok(
-      html.includes("font-size:20px;font-weight:700;line-height:150%;color:#161513"),
+      html.includes("font-size:20px;font-weight:700;line-height:30px;color:#161513"),
       "焦点标题应恢复上一版尺寸，同时使用更深的暖墨标题色",
     )
     assert.match(
       html,
-      /color:#8a3a00;padding-bottom:8px;\">Hacker News · 02/,
+      /color:#8a3a00;padding:18px 18px 8px 18px;\">Hacker News · 02/,
       "Hacker News 来源与编号应加深",
     )
-    assert.match(html, /color:#8a3a00;padding-bottom:8px;\">OpenAI · 03/, "OpenAI 来源与编号应加深")
     assert.match(
       html,
-      /color:#8a3a00;padding-top:8px;\">▲ 7,596 本周　★16,709　C#/,
+      /color:#8a3a00;padding:18px 18px 8px 18px;\">OpenAI · 03/,
+      "OpenAI 来源与编号应加深",
+    )
+    assert.match(
+      html,
+      /color:#8a3a00;padding:8px 0 0 0;\">▲ 7,596 本周　★16,709　C#/,
       "GitHub 涨幅、星数和语言应加深",
     )
   })
@@ -608,10 +616,16 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
     assert.ok(!/<img[^>]+src="http/i.test(html))
     assert.ok(html.includes("max-width:600px"))
     assert.ok(html.includes('name="color-scheme"'))
+    const modernHtml = html.replace(/<!--\[if mso\]>[\s\S]*?<!\[endif\]-->/gi, "")
+    assert.doesNotMatch(
+      modernHtml,
+      /<style/i,
+      "现代客户端仍应保持全内联；唯一 style 只能位于 Outlook 条件注释中",
+    )
     assert.doesNotMatch(
       html,
-      /<style|<link|@media|display:\s*(?:flex|grid)|oklch\(/i,
-      "邮件必须保持全内联 table 布局，不依赖客户端易剥离的样式能力",
+      /<link|@media|display:\s*(?:flex|grid)|oklch\(/i,
+      "邮件必须保持 table 布局，不依赖客户端易剥离的现代样式能力",
     )
     const fixedWidths = [...html.matchAll(/(?:width="(\d+)"|width:(\d+)px)/g)].map((match) =>
       Number(match[1] ?? match[2]),
@@ -632,6 +646,377 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
       contentWidth + horizontalPadding * 2 + borderWidth * 2 <= 600,
       "邮件主表的实际盒模型宽度也必须守住 600px 上限",
     )
+  })
+
+  it("B035：Windows 经典 Outlook 获得 MSO/96-DPI/字体/行高/背景色兼容", () => {
+    const { html } = render()
+
+    assert.ok(html.includes('xmlns:o="urn:schemas-microsoft-com:office:office"'))
+    assert.ok(html.includes("<!--[if mso]>"), "Outlook Classic 必须有独立 MSO 条件分支")
+    assert.ok(html.includes("<o:PixelsPerInch>96</o:PixelsPerInch>"), "Windows DPI 必须归一到 96")
+    assert.ok(html.includes("mso-table-lspace:0pt;mso-table-rspace:0pt"))
+    assert.ok(html.includes("mso-line-height-rule:exactly"))
+    assert.ok(html.includes("mso-fareast-font-family:SimSun"))
+    assert.ok(html.includes("'SimSun'"), "Windows 中文标题必须有衬线字体落点")
+    assert.ok(html.includes("<v:roundrect"), "刊头圆角应由 VML 在 Classic Outlook 中保持")
+    assert.ok(html.includes('arcsize="8%"'))
+    assert.ok(html.includes("mso-fit-shape-to-text:true"), "动态刊头不得使用容易裁字的固定高度")
+    assert.ok(html.includes('class="masthead-content-table"'))
+    assert.doesNotMatch(
+      html,
+      /<td style="padding:(?:18|20|22)px;"><table class="card-content-table"/,
+      "hero/wide/col 外层卡片必须直接承载内容行，避免每条新闻重复一层完整 table",
+    )
+    assert.ok(html.includes('class="hero-badge-table"'))
+    assert.doesNotMatch(
+      html,
+      /display:inline-block;background-color:#8a3a00/,
+      "焦点徽标的间距必须落在 table/td，不能依赖 Word 不稳定的 inline span padding",
+    )
+
+    assert.doesNotMatch(
+      html,
+      /line-height:\d+%/,
+      "百分比行高在 Word HTML 引擎中会膨胀，必须换成等值像素行高",
+    )
+    assert.doesNotMatch(
+      html,
+      /white-space:nowrap/,
+      "Classic Outlook 对 nowrap/word-break 组合支持不一致，目录不得被强制撑宽",
+    )
+    assert.ok(
+      html.includes("overflow-wrap:anywhere;word-break:break-word"),
+      "现代客户端必须保留长 token 断词；Classic Outlook 再由条件样式覆盖为 break-all",
+    )
+
+    assert.match(html, /<body\b[^>]*bgcolor="#eee7df"/i)
+    const backgroundTables = [
+      ...html.matchAll(/<table\b[^>]*style="[^"]*background-color:(#[0-9a-f]{6})[^"]*"[^>]*>/gi),
+    ]
+    assert.ok(backgroundTables.length >= 5, "fixture 应覆盖外框、刊头、导航与卡片背景")
+    for (const match of backgroundTables) {
+      const tag = match[0]
+      const color = match[1]
+      assert.ok(
+        tag.toLowerCase().includes(`bgcolor="${color.toLowerCase()}"`),
+        `带 CSS 背景色的 table 必须有 Outlook HTML bgcolor 兜底：${tag}`,
+      )
+    }
+  })
+
+  it("B035：双栏长 ASCII token 只给 Outlook 断词样式，不注入污染复制内容的字符", () => {
+    const heroItem = buildNormalizedItem(
+      "smol-ai",
+      "ai",
+      "焦点条目",
+      "https://example.com/hero",
+      null,
+      "hero",
+    )
+    const peerItem = buildNormalizedItem(
+      "smol-ai",
+      "ai",
+      "普通双栏条目",
+      "https://example.com/peer",
+      null,
+      "peer",
+    )
+    const longTitle = "WWWWWWWWWWWWW"
+    const longItem = buildNormalizedItem(
+      "smol-ai",
+      "ai",
+      longTitle,
+      "https://example.com/long-token",
+      null,
+      "long token",
+    )
+    const { html } = renderDigest({
+      businessDate: "2026-07-16",
+      summary: {
+        overview: [],
+        sections: [
+          {
+            category: "ai",
+            picks: [
+              { itemId: heroItem.id, summaryZh: "焦点摘要" },
+              { itemId: peerItem.id, summaryZh: "普通摘要" },
+              { itemId: longItem.id, summaryZh: "长 token 摘要" },
+            ],
+          },
+        ],
+        degraded: false,
+      },
+      items: [heroItem, peerItem, longItem],
+      results: [],
+    })
+
+    assert.ok(html.includes(longTitle), "正文标题必须保持原始文本")
+    assert.ok(!html.includes("&#8203;"), "不得向可复制标题注入零宽字符")
+    assert.ok(html.includes(".outlook-break-long{word-break:break-all!important}"))
+    assert.match(
+      html,
+      /<td width="272"[^>]*><table[^>]*bgcolor="#fffdf9"[^>]*table-layout:fixed/,
+      "双栏卡本身必须固定布局，Outlook 才能在 234px 内容盒中执行断词",
+    )
+    assert.match(
+      html,
+      new RegExp(`<td class="outlook-break-long"[^>]*><a[^>]*>${longTitle}</a></td>`),
+      "13 个宽 ASCII 字符已经能撑破 272px 双栏，必须只在 Outlook 上启用 break-all",
+    )
+    assert.ok(html.includes('href="https://example.com/long-token"'), "canonical href 不得改变")
+
+    const assertLongTitleGuard = (document: string, href: string, title: string) => {
+      const anchor = `<a href="${href}"`
+      const anchorIndex = document.indexOf(anchor)
+      assert.ok(anchorIndex >= 0, `缺少长标题链接 ${href}`)
+      const cellStart = document.lastIndexOf("<td", anchorIndex)
+      const cellEnd = document.indexOf(">", cellStart)
+      assert.ok(
+        document.slice(cellStart, cellEnd + 1).includes('class="outlook-break-long"'),
+        `Classic Outlook 断词类必须覆盖 ${href}`,
+      )
+      const anchorEnd = document.indexOf("</a>", anchorIndex)
+      const anchorHtml = document.slice(anchorIndex, anchorEnd + 4)
+      assert.ok(anchorHtml.includes("overflow-wrap:anywhere;word-break:break-word"))
+      assert.ok(anchorHtml.includes(`>${title}</a>`), "长标题可复制文本必须原样保留")
+    }
+
+    const wideItem = buildNormalizedItem(
+      "smol-ai",
+      "ai",
+      longTitle,
+      "https://example.com/wide-token",
+      null,
+      "wide",
+    )
+    const widePeers = [1, 2].map((index) =>
+      buildNormalizedItem(
+        "smol-ai",
+        "ai",
+        `普通整宽同组条目 ${index}`,
+        `https://example.com/wide-peer-${index}`,
+        null,
+        "peer",
+      ),
+    )
+    const wideHtml = renderDigest({
+      businessDate: "2026-07-16",
+      summary: {
+        overview: [],
+        sections: [
+          {
+            category: "ai",
+            picks: [
+              { itemId: heroItem.id, summaryZh: "焦点摘要" },
+              { itemId: wideItem.id, summaryZh: "整宽长摘要".repeat(12) },
+              ...widePeers.map((item) => ({ itemId: item.id, summaryZh: "短摘要" })),
+            ],
+          },
+        ],
+        degraded: false,
+      },
+      items: [heroItem, wideItem, ...widePeers],
+      results: [],
+      restOverviewRows: 0,
+    }).html
+    assertLongTitleGuard(wideHtml, "https://example.com/wide-token", longTitle)
+
+    const githubItem = buildNormalizedItem(
+      "github-trending-daily",
+      "github",
+      longTitle,
+      "https://example.com/github-token",
+      null,
+      "+1,000 stars today · ★10,000 · TypeScript · description",
+    )
+    const githubHtml = renderDigest({
+      businessDate: "2026-07-16",
+      summary: { overview: [], degraded: false, sections: [] },
+      items: [],
+      githubItems: [githubItem],
+      results: [],
+      restOverviewRows: 0,
+    }).html
+    assertLongTitleGuard(githubHtml, "https://example.com/github-token", longTitle)
+  })
+
+  it("B035：摘要降密度不得从 emoji 代理对中间截断", () => {
+    const hero = buildNormalizedItem(
+      "smol-ai",
+      "ai",
+      "焦点",
+      "https://example.com/emoji-hero",
+      null,
+      "hero",
+    )
+    const emoji = buildNormalizedItem(
+      "smol-ai",
+      "ai",
+      "Emoji 摘要",
+      "https://example.com/emoji-summary",
+      null,
+      "emoji",
+    )
+    const peer = buildNormalizedItem(
+      "smol-ai",
+      "ai",
+      "配对摘要",
+      "https://example.com/emoji-peer",
+      null,
+      "peer",
+    )
+    const emojiSummary = `${"界".repeat(78)}😀尾巴`
+    const { html } = renderDigest({
+      businessDate: "2026-07-16",
+      summary: {
+        overview: [],
+        degraded: false,
+        sections: [
+          {
+            category: "ai",
+            picks: [
+              { itemId: hero.id, summaryZh: "焦点摘要" },
+              { itemId: emoji.id, summaryZh: emojiSummary },
+              { itemId: peer.id, summaryZh: "配对摘要" },
+            ],
+          },
+        ],
+      },
+      items: [hero, emoji, peer],
+      results: [],
+      restOverviewRows: 0,
+    })
+
+    assert.ok(html.includes(`${"界".repeat(78)}😀…`), "80 字摘要应保留完整 emoji 后再加省略号")
+    assert.doesNotMatch(
+      html,
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+      "HTML 不得含孤立 UTF-16 surrogate",
+    )
+  })
+
+  it("B035：正式上限 34 篇正文 + 22 个仓库 + 4 个播客即使分组最碎也守住 98KiB", () => {
+    const title = "模型推理基础设施与智能体工程可靠性持续演进".repeat(2)
+    const summaryText = `摘要：${"界".repeat(300)}`.slice(0, 300)
+    const githubDescText = `仓库：${"界".repeat(120)}`.slice(0, 120)
+    const aiTags = ["推理", "OpenAI", "Anthropic", "Google", "Meta", "国产", "开源", "研究", "其他"]
+    const hotTags = ["科技", "财经", "社会", "民生", "体育", "娱乐", "国际", "其他"]
+    const communityVariants: Array<readonly [string, string | undefined]> = [
+      ["reddit-ai", undefined],
+      ["x-firsthand", "公司"],
+      ["x-firsthand", "从业者"],
+      ["x-firsthand", undefined],
+      ["reddit-ai", undefined],
+      ["digg-ai", undefined],
+      ["v2ex-hot", undefined],
+      ["xiaohongshu", undefined],
+      ["community-fallback", undefined],
+      ["community-fallback", undefined],
+      ["community-fallback", undefined],
+      ["community-fallback", undefined],
+    ]
+    const specs = [
+      ["ai", "smol-ai", 12],
+      ["hot", "zhihu-hot", 10],
+      ["community", "reddit-ai", 12],
+    ] as const
+    let itemNo = 0
+    const groups = specs.map(([category, sourceId, count]) => {
+      const entries = Array.from({ length: count }, (_, localIndex) => {
+        itemNo += 1
+        const [resolvedSourceId, topicTag] =
+          category === "community" ? communityVariants[localIndex] : [sourceId, undefined]
+        const item = buildNormalizedItem(
+          resolvedSourceId,
+          category,
+          `${title}${itemNo}`,
+          `https://example.com/dense/${itemNo}`,
+          null,
+          "dense",
+        )
+        return topicTag ? { ...item, topicTag } : item
+      })
+      return { category, entries }
+    })
+    const denseItems = groups.flatMap((group) => group.entries)
+    const githubDescZh: Record<string, string> = {}
+    const githubItems = (
+      [
+        ["github-trending-daily", 6, "today"],
+        ["github-trending-weekly", 6, "this week"],
+        ["github-ai-newcomers", 4, "new"],
+        ["github-trending-monthly", 6, "this month"],
+      ] as const
+    ).flatMap(([sourceId, count, period]) => {
+      return Array.from({ length: count }, (_, index) => {
+        const snippet =
+          period === "new"
+            ? "新仓 7 天 · ★10,000 · English description"
+            : `+1,000 stars ${period} · ★10,000 · TypeScript · English description`
+        const item = buildNormalizedItem(
+          sourceId,
+          "github",
+          `owner/repository-${sourceId}-${index}`,
+          `https://github.com/owner/repository-${sourceId}-${index}`,
+          null,
+          snippet,
+        )
+        githubDescZh[item.id] = githubDescText
+        return item
+      })
+    })
+    const podcastItems = Array.from({ length: 4 }, (_, index) =>
+      buildNormalizedItem(
+        "podcast",
+        "podcast",
+        `播客节目｜第 ${index + 1} 期`,
+        `https://example.com/podcast/${index + 1}`,
+        null,
+        `· ${"播客要点覆盖模型训练推理与工程实践".repeat(30)}`.slice(0, 600),
+      ),
+    )
+    const rendered = renderDigest({
+      businessDate: "2026-07-16",
+      summary: {
+        overview: Array.from({ length: 8 }, () => summaryText),
+        degraded: false,
+        sections: groups.map((group) => ({
+          category: group.category,
+          picks: group.entries.map((item, localIndex) => {
+            const tags =
+              group.category === "ai" ? aiTags : group.category === "hot" ? hotTags : null
+            const tag = tags
+              ? localIndex === 0
+                ? tags[0]
+                : tags[Math.min(localIndex - 1, tags.length - 1)]
+              : undefined
+            return { itemId: item.id, summaryZh: summaryText, ...(tag ? { tag } : {}) }
+          }),
+        })),
+        githubDescZh,
+      },
+      items: denseItems,
+      githubItems,
+      podcastItems,
+      results: [],
+      restOverviewRows: 0,
+    })
+
+    const bytes = Buffer.byteLength(rendered.html, "utf8")
+    assert.equal(
+      rendered.displayedItemIds.length,
+      60,
+      "体积探针必须覆盖正文、仓库和播客正式选择上限",
+    )
+    for (const item of [...denseItems, ...githubItems, ...podcastItems]) {
+      assert.ok(rendered.html.includes(escapeHtml(item.title)), `HTML 不得丢标题：${item.id}`)
+      assert.ok(
+        rendered.html.includes(`href="${escapeHtml(item.canonicalUrl)}"`),
+        `HTML 不得丢链接：${item.id}`,
+      )
+    }
+    assert.ok(rendered.markdown.includes(summaryText), "自适应密度不得裁剪 Markdown 归档正文")
+    assert.ok(bytes <= 98 * 1024, `0 行速览仍不得越过 Gmail 裁剪预算，实际 ${bytes} bytes`)
   })
 
   it("链接严格等于 canonicalUrl（escape 后），标题被转义", () => {

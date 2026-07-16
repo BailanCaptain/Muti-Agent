@@ -1,28 +1,28 @@
 import fs from "node:fs"
 import path from "node:path"
-import { DIGEST_TZ, formatBusinessDate } from "./business-dates"
 import { type EmailSender, appendOutboundLedger } from "../../lib/email-sender"
+import { DIGEST_TZ, formatBusinessDate } from "./business-dates"
 import { validateEditorialDecisionSet } from "./editorial-decider"
-import { runAllSources } from "./orchestrator"
-import { isPoliticalItem, isUnsafeItem } from "./relevance-filter"
-import { renderDigest, splitGithubSnippet } from "./renderer"
 import {
   applyGithubRankStatuses,
   loadGithubRankHistory,
   writeGithubRankSnapshot,
 } from "./github-rank-state"
-import { loadShownKeys, writeShownLedger } from "./shown-ledger"
+import { runAllSources } from "./orchestrator"
 import {
   buildDigestPublication,
   filterDigestPublication,
   missingRequiredAiCoverage,
   validateDigestOverviewDensity,
 } from "./publication"
+import { isPoliticalItem, isUnsafeItem } from "./relevance-filter"
+import { renderDigest, splitGithubSnippet } from "./renderer"
+import { loadShownKeys, writeShownLedger } from "./shown-ledger"
 import {
-  buildEditorialPromptItems,
-  isInferenceReviewCandidate,
   type TranslateExtrasInput,
   type TranslateExtrasResult,
+  buildEditorialPromptItems,
+  isInferenceReviewCandidate,
 } from "./summarizer"
 import type {
   DigestLedger,
@@ -130,7 +130,7 @@ export interface DailyDigestJobDeps {
   sendTime?: string
   timeZone?: string
   perSourceTimeoutMs?: number
-  /** 邮件 HTML 字节预算（默认 96KB=Gmail 102KB 裁剪线留头寸）；超了自动降速览密度重渲染 */
+  /** 邮件 HTML 字节预算（默认 98KiB，低于 Gmail 102KB 裁剪线）；超了先降密度，耗尽仍超则不发送 */
   emailByteBudget?: number
   pushAlert?: (message: string) => void
   log?: (msg: string) => void
@@ -350,7 +350,8 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
           )
           return { status: "failed_summarize", businessDate }
         }
-        const note = "⚠ 推理候选审核未决（Claude 当前不可用，Codex 降级复核仍无共识）；相关条目已摘除，本期不代表「今日无推理进展」"
+        const note =
+          "⚠ 推理候选审核未决（Claude 当前不可用，Codex 降级复核仍无共识）；相关条目已摘除，本期不代表「今日无推理进展」"
         notes.push(note)
         pushAlert(
           `[daily-digest] ${businessDate} inference_review_unresolved：${unresolvedInferenceIds.length} 个候选在 degraded_same_target 下仍未决；已摘条目但继续生成其余非空日报`,
@@ -462,7 +463,7 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
       }
       const finalBytes = Buffer.byteLength(rendered.html, "utf8")
       log(
-        `[daily-digest] ${businessDate} HTML ${Math.round(fullBytes / 1024)}KB 超邮件预算 ${Math.round(emailByteBudget / 1024)}KB，速览降密度后 ${Math.round(finalBytes / 1024)}KB${finalBytes > emailByteBudget ? "（已降到 0 行仍超，接受被 Gmail 折叠尾部）" : ""}`,
+        `[daily-digest] ${businessDate} HTML ${Math.round(fullBytes / 1024)}KB 超邮件预算 ${Math.round(emailByteBudget / 1024)}KB，速览降密度后 ${Math.round(finalBytes / 1024)}KB${finalBytes > emailByteBudget ? "（已降到 0 行仍超，将由终态硬门禁拦截）" : ""}`,
       )
     }
     // 邮件预算可能裁掉 brief 尾部：先以 renderer 的实际显示集合收敛 publication，随后
@@ -471,6 +472,13 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
     // overview 也带结构化事件引用；预算裁掉其支撑条目后再用终态 publication 渲染一次，
     // 保证邮件正文、归档和 web 的速览没有悬空事件。终态条目只会更少，不会重新超预算。
     rendered = renderDigest({ ...renderInput, summary, publication })
+    const finalEmailBytes = Buffer.byteLength(rendered.html, "utf8")
+    if (finalEmailBytes > emailByteBudget) {
+      pushAlert(
+        `[daily-digest] ${businessDate} 邮件终态 HTML ${finalEmailBytes} bytes 超过 ${emailByteBudget} bytes 硬预算，本轮不发送——下一整点自动重试`,
+      )
+      return { status: "failed_summarize", businessDate }
+    }
     if (!publication.sections.some((section) => section.entries.length > 0)) {
       pushAlert(
         `[daily-digest] ${businessDate} 邮件密度裁剪后无可发布内容，本轮不发送空日报——下一整点自动重试`,
