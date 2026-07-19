@@ -60,18 +60,22 @@ function asRecord(v: unknown): Record<string, unknown> {
 
 export function parseDiggStories(html: string): DiggStory[] {
   const payload = extractRscPayload(html)
-  const sbf = payload.indexOf('"storiesByFilter":')
+  const marker = '"storiesByFilter":'
+  const sbf = payload.indexOf(marker)
   if (sbf === -1) return []
-  const itemsIdx = payload.indexOf('"items":[', sbf)
-  if (itemsIdx === -1) return []
-  const raw = scanJsonValue(payload, itemsIdx + '"items":'.length)
+  let valueStart = sbf + marker.length
+  while (/\s/.test(payload[valueStart] ?? "")) valueStart++
+  if (payload[valueStart] !== "{") return []
+  const raw = scanJsonValue(payload, valueStart)
   if (!raw) return []
-  let arr: unknown
+  let storiesByFilter: unknown
   try {
-    arr = JSON.parse(raw)
+    storiesByFilter = JSON.parse(raw)
   } catch {
     return []
   }
+  const top = asRecord(asRecord(storiesByFilter).top)
+  const arr = Array.isArray(top.posts) ? top.posts : top.items
   const out: DiggStory[] = []
   for (const e of Array.isArray(arr) ? arr : []) {
     const rec = asRecord(e)
@@ -105,35 +109,39 @@ export function makeDiggAiSource(opts: DiggAiOptions = {}): DigestSource {
     sourceId: "digg-ai",
     category: "community",
     async fetch(ctx): Promise<NormalizedItem[]> {
-      let lastErr: unknown = null
+      let lastFetchErr: unknown = null
       for (const url of DIGG_URLS) {
+        let html: string
         try {
-          const html = await ctx.http.fetchText(url)
-          const stories = parseDiggStories(html)
-          if (stories.length > 0) {
-            return stories
-              .sort((a, b) => a.rank - b.rank)
-              .slice(0, cap)
-              .map((s) =>
-                buildNormalizedItem(
-                  "digg-ai",
-                  // 德彪批次 D r1 P1：item 级 category 必须与源声明一致（orchestrator 只认 item 自带值）
-                  "community",
-                  s.title,
-                  // 集群页 = 聚合导航页（07-05 实测 /tech/{id} 200，/ai/{id} 308 过去）
-                  `https://digg.com/tech/${s.clusterUrlId}`,
-                  s.createdAt,
-                  `[#${s.rank} · ${s.postCount} 帖聚合] ${s.tldr}`,
-                  s.postCount, // 聚合帖数 = 多账号交叉印证强度
-                ),
-              )
-          }
-          lastErr = new Error(`digg-ai: no stories parsed from ${url}（RSC 结构改版？）`)
+          html = await ctx.http.fetchText(url)
         } catch (err) {
-          lastErr = err
+          lastFetchErr = err
+          continue
         }
+        const stories = parseDiggStories(html)
+        // fetch 已成功却解析为 0 是 schema 故障，必须立即 fail-closed；否则后续 URL 的
+        // network error 会覆盖真正根因，误导 shadow/运维把 parser failure 当成网络故障。
+        if (stories.length === 0) {
+          throw new Error(`digg-ai: no stories parsed from ${url}（RSC 结构改版？）`)
+        }
+        return stories
+          .sort((a, b) => a.rank - b.rank)
+          .slice(0, cap)
+          .map((s) =>
+            buildNormalizedItem(
+              "digg-ai",
+              // 德彪批次 D r1 P1：item 级 category 必须与源声明一致（orchestrator 只认 item 自带值）
+              "community",
+              s.title,
+              // 集群页 = 聚合导航页（07-05 实测 /tech/{id} 200，/ai/{id} 308 过去）
+              `https://digg.com/tech/${s.clusterUrlId}`,
+              s.createdAt,
+              `[#${s.rank} · ${s.postCount} 帖聚合] ${s.tldr}`,
+              s.postCount, // 聚合帖数 = 多账号交叉印证强度
+            ),
+          )
       }
-      throw lastErr ?? new Error("digg-ai: all urls exhausted")
+      throw lastFetchErr ?? new Error("digg-ai: all urls exhausted")
     },
   }
 }

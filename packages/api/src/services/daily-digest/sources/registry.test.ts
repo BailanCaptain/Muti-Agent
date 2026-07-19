@@ -124,6 +124,28 @@ describe("JSON source map（真实 fixture 逐源验证）", () => {
 })
 
 describe("fallback 链", () => {
+  it("smol-ai 使用源级 3 MiB 响应预算，普通 RSS 仍沿用共享默认", async () => {
+    const rss = fs.readFileSync(path.join(FIX, "openai.rss.xml"), "utf8")
+    const seen: Array<{ sourceId: string; maxBytes?: number }> = []
+    const http: SafeHttpClient = {
+      fetchText: async (_url, opts) => {
+        seen.push({
+          sourceId: seen.length === 0 ? "smol-ai" : "openai-news",
+          maxBytes: opts?.maxBytes,
+        })
+        return rss
+      },
+    }
+
+    await makeRssSource(RSS_SOURCES.find((d) => d.sourceId === "smol-ai")!).fetch(ctxWith(http))
+    await makeRssSource(RSS_SOURCES.find((d) => d.sourceId === "openai-news")!).fetch(ctxWith(http))
+
+    assert.deepEqual(seen, [
+      { sourceId: "smol-ai", maxBytes: 3 * 1024 * 1024 },
+      { sourceId: "openai-news", maxBytes: undefined },
+    ])
+  })
+
   it("第一个 URL 抛错时用第二个", async () => {
     const rss = fs.readFileSync(path.join(FIX, "openai.rss.xml"), "utf8")
     const calls: string[] = []

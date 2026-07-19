@@ -45,6 +45,26 @@ describe("parseDiggStories（07-05 真实 fixture，schema 已演化过一次 la
     assert.ok(stories[0].createdAt?.endsWith("Z"))
   })
 
+  it("storiesByFilter.top.posts → 兼容 07-18 上游集合键改版", () => {
+    const post = {
+      title: "Digg current posts schema regression",
+      tldr: "Current RSC payload uses posts instead of items",
+      clusterUrlId: "posts20260718",
+      rank: 1,
+      postCount: 8,
+      createdAt: "2026-07-17T23:00:00.000Z",
+    }
+    const payload = JSON.stringify({
+      storiesByFilter: { top: { posts: [post] } },
+      unrelated: { items: [] },
+    })
+    const postsHtml = `<script>self.__next_f.push([1,${JSON.stringify(payload)}])</script>`
+
+    const stories = parseDiggStories(postsHtml)
+
+    assert.deepEqual(stories, [post])
+  })
+
   it("RSC 结构改版（无 storiesByFilter）→ 0 story", () => {
     assert.equal(parseDiggStories("<html><body>redesigned</body></html>").length, 0)
     assert.equal(
@@ -89,5 +109,22 @@ describe("makeDiggAiSource（#23 主表 v2.1）", () => {
     assert.equal(items.length, 3)
     const dead: SafeHttpClient = { fetchText: async () => "<html>blocked</html>" }
     await assert.rejects(makeDiggAiSource().fetch(ctxWith(dead)), /no stories parsed/)
+  })
+
+  it("canonical fetch 成功但解析为 0 时 fail-closed，不得被后续网络错误覆盖", async () => {
+    const calls: string[] = []
+    const http: SafeHttpClient = {
+      fetchText: async (url) => {
+        calls.push(url)
+        if (url.endsWith("/tech/")) return "<html>RSC schema changed</html>"
+        throw new Error("network unavailable")
+      },
+    }
+
+    await assert.rejects(
+      makeDiggAiSource().fetch(ctxWith(http)),
+      /no stories parsed from https:\/\/digg\.com\/tech\//,
+    )
+    assert.deepEqual(calls, ["https://digg.com/tech/"])
   })
 })

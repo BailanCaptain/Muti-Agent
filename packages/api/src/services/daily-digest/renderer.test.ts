@@ -1005,7 +1005,7 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
     assert.match(
       html,
       /<td width="272"[^>]*><table[^>]*bgcolor="#fffdf9"[^>]*table-layout:fixed/,
-      "双栏卡本身必须固定布局，Outlook 才能在 234px 内容盒中执行断词",
+      "普通长 token 双栏卡仍须固定布局，避免把全部英文卡误降为单栏",
     )
     assert.match(
       html,
@@ -1087,6 +1087,72 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
       restOverviewRows: 0,
     }).html
     assertLongTitleGuard(githubHtml, "https://example.com/github-token", longTitle)
+  })
+
+  it("B037：双栏标题含超长 URL 时，两卡顺序整宽，避免 Outlook 同行高度留白", () => {
+    const heroItem = buildNormalizedItem(
+      "smol-ai",
+      "community",
+      "社区焦点",
+      "https://example.com/hero",
+      null,
+      "hero",
+    )
+    const peerItem = buildNormalizedItem(
+      "x-firsthand",
+      "community",
+      "@gdb: team is responding to feedback and iterating quickly.",
+      "https://x.com/gdb/status/2078004399675503093",
+      null,
+      "peer",
+    )
+    const longUrlTitle =
+      "@DrJimFan: Re How it's done: https://x.com/DrJimFan/status/2077414142340988962?s=20"
+    const longUrlItem = buildNormalizedItem(
+      "x-firsthand",
+      "community",
+      longUrlTitle,
+      "https://x.com/DrJimFan/status/2078150496683213151",
+      null,
+      "long URL",
+    )
+    const { html } = renderDigest({
+      businessDate: "2026-07-18",
+      summary: {
+        overview: [],
+        sections: [
+          {
+            category: "community",
+            picks: [
+              { itemId: heroItem.id, summaryZh: "焦点摘要" },
+              { itemId: peerItem.id, summaryZh: "短摘要" },
+              { itemId: longUrlItem.id, summaryZh: "长 URL 摘要" },
+            ],
+          },
+        ],
+        degraded: false,
+      },
+      items: [heroItem, peerItem, longUrlItem],
+      results: [],
+    })
+
+    const directWideRows =
+      html.match(
+        /<tr><td style="padding:0 0 16px 0;"><table class="digest-sans outlook-story-card"/g,
+      ) ?? []
+    const narrowCells = html.match(/<td width="272"/g) ?? []
+    assert.equal(directWideRows.length, 2, "超长 URL 配对必须拆成两个独立 Outlook table row")
+    assert.equal(narrowCells.length, 0, "超长 URL 配对不得进入 272px twoColRow")
+    const escapedLongUrlTitle = longUrlTitle.replace("'", "&#39;")
+    assert.match(
+      html,
+      new RegExp(
+        `<td class="outlook-break-long"[^>]*><a[^>]*>${escapedLongUrlTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}</a></td>`,
+      ),
+      "整宽卡仍须保留 Outlook 断词防线",
+    )
+    assert.ok(html.includes('href="https://x.com/gdb/status/2078004399675503093"'))
+    assert.ok(html.includes('href="https://x.com/DrJimFan/status/2078150496683213151"'))
   })
 
   it("B035：摘要降密度不得从 emoji 代理对中间截断", () => {
