@@ -1,5 +1,5 @@
-import { formatBusinessDate, prevBusinessDate } from "../business-dates"
 import { SafeHttpError } from "../../../net/safe-http-client"
+import { formatBusinessDate, prevBusinessDate } from "../business-dates"
 import { buildNormalizedItem, parseRssOrAtom } from "../feed-parsers"
 import { isTechTopicItem } from "../relevance-filter"
 import type { DigestCategory, DigestSource, NormalizedItem, SourceFetchContext } from "../types"
@@ -25,6 +25,8 @@ export interface RssSourceDef {
   category: DigestCategory
   urls: UrlOrBuilder[]
   headers?: Record<string, string>
+  /** 仅供已知大 feed 收紧地抬高单源预算；未指定时继续使用 SafeHttpClient 共享默认。 */
+  maxBytes?: number
   keepIf?: (item: NormalizedItem) => boolean
   /** RSSHub 路由（如 /hupu/nba）：配置了自建实例（AC13）时把自建 URL 前插到 fallback 链 */
   rsshubRoute?: string
@@ -104,6 +106,7 @@ export const RSS_SOURCES: RssSourceDef[] = [
     sourceId: "smol-ai",
     category: "ai",
     urls: ["https://news.smol.ai/rss.xml"],
+    maxBytes: 3 * 1024 * 1024,
     contentMode: "digest",
   },
   { sourceId: "openai-news", category: "ai", urls: ["https://openai.com/news/rss.xml"] },
@@ -466,22 +469,19 @@ async function fetchFeedText(
   sourceId: string,
   url: string,
   headers: Record<string, string> | undefined,
+  maxBytes: number | undefined,
   policy: FeedRetryPolicy | undefined,
 ): Promise<string> {
   const maxAttempts = policy?.maxAttempts ?? 1
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const body = await http.fetchText(url, { headers, signal: ctx.signal })
+      const body = await http.fetchText(url, { headers, maxBytes, signal: ctx.signal })
       if (attempt > 1) {
         console.warn(`[daily-digest] ${sourceId} source-recovered attempt=${attempt}`)
       }
       return body
     } catch (error) {
-      if (
-        !policy ||
-        attempt >= maxAttempts ||
-        !isRetryableFeedError(error, policy, ctx.signal)
-      ) {
+      if (!policy || attempt >= maxAttempts || !isRetryableFeedError(error, policy, ctx.signal)) {
         throw error
       }
       const delayMs =
@@ -514,6 +514,7 @@ async function fetchViaChain(
     sourceId: string
     urls: UrlOrBuilder[]
     headers?: Record<string, string>
+    maxBytes?: number
     direct?: boolean
     retryPolicy?: FeedRetryPolicy
   },
@@ -535,6 +536,7 @@ async function fetchViaChain(
           def.sourceId,
           url,
           def.headers,
+          def.maxBytes,
           def.retryPolicy,
         )
         const { parsedCount, items } = parse(body)

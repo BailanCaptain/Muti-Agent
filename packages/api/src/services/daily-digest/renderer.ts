@@ -154,6 +154,11 @@ function needsOutlookBreakAll(s: string): boolean {
   return /[\x21-\x7e]{13,}/.test(s)
 }
 
+/** Classic Outlook 会把超长 URL 拆成很多行；双栏同行会因此把短卡下方撑出大块空白。 */
+function needsOutlookWideRow(s: string): boolean {
+  return /https?:\/\/[^\s<]{24,}/i.test(s)
+}
+
 function safeHref(url: string): string {
   return /^https?:\/\//i.test(url) ? escapeHtml(url) : "#"
 }
@@ -974,6 +979,26 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
           )
           pushItemMd(mdParts, L.item, L.pick, L.alsoLabels)
           no++
+          continue
+        }
+        if (needsOutlookWideRow(L.item.title) || needsOutlookWideRow(R.item.title)) {
+          for (const entry of [L, R]) {
+            sectionHtml.push(
+              wideRow(
+                renderCardInner(
+                  entry.item,
+                  entry.pick,
+                  no,
+                  s.meta,
+                  "wide",
+                  density,
+                  entry.alsoLabels,
+                ),
+              ),
+            )
+            pushItemMd(mdParts, entry.item, entry.pick, entry.alsoLabels)
+            no++
+          }
           continue
         }
         sectionHtml.push(
