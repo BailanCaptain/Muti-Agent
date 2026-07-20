@@ -8,6 +8,7 @@
 - AC3: 同一解析后环境传给 enable gate、`bootDailyDigest`、scheduler fallback 与 settings route，不能出现“任务注册但 sender 退化 mock”。
 - AC4: 禁用日志只输出固定原因码/缺失键，不输出 SMTP 用户、密码、收件人或代理值。
 - AC5: 合入并精确重启后，startup reconcile 为 2026-07-20 生成归档并按正式收件人清单只发送一次，账本终态为 `sent`。
+**Result:** AC1–AC5 全部完成。修复以 `8fd4ef3c` 合入 `dev`；运行时恢复 `9 cron/2 startup`，2026-07-20 正式发送一次并以 `status=ok`、`degraded=false`、`attempts=1`、`sent=true` 收口，outbound ledger 35 → 36。
 **Architecture:** 在 `daily-digest/boot.ts` 增加纯只读的前缀解析与 enablement decision；server 和 scheduler 从各自明确的 `rootDir/.env` 取得同一快照并显式传递。保留 `process.env` 优先级、显式关闭及现有 reconcile/ledger 单入口。
 **Tech Stack:** TypeScript、Node `fs`、Fastify、node:test、现有 SchedulerRuntime/F037 ledger。
 

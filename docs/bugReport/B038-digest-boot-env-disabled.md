@@ -1,6 +1,6 @@
 ---
 title: F037 日报重启后启用环境丢失导致整日未发送
-status: verification
+status: resolved
 related: F037
 reported: 2026-07-20
 ---
@@ -20,7 +20,7 @@ Related: [F037](../features/F037-daily-news-digest.md)
 | 5 | **超时策略** | 若无法从已退出父进程恢复环境块，不猜历史瞬时值；修复到“入口无论由 bat 还是直接 tsx 启动都窄读日报前缀”，并增加原因码。 |
 | 6 | **预警策略** | 若需要改 `.env`、全量加载 dotenv、泄露 SMTP 值或绕过发送账本，立即停止。运行时重启和补发必须由小孙明确授权。 |
 | 7 | **用户可见修正** | 小孙已于 2026-07-20 授权修复、重启并补发今日正式日报；补发仍走同一 reconcile/ledger，禁止旁路 SMTP。 |
-| 8 | **复现验收** | 无进程级日报变量、仅根 `.env` 配齐时，启动装配应注册 `9 cron/2 startup`；重启后 startup reconcile 只发送 2026-07-20 一次并写 `sent`。 |
+| 8 | **复现验收** | 已完成：仅根 `.env` 配齐时启动装配注册 `9 cron/2 startup`；API 取得 leader term 42 后，经同一 send-now/reconcile/ledger 入口只触发一次，2026-07-20 账本 `attempts=1`、`sent=true`。 |
 
 ## Bug Report 六件套
 
@@ -42,3 +42,6 @@ Related: [F037](../features/F037-daily-news-digest.md)
 - 2026-07-20 首轮 Guardian 判 `BLOCKED`：实施计划承诺的 dotenv 行内注释未被解析；真实当前配置虽为 `smtp_ready/qq-smtp`，但未来人工注释会污染值。
 - finding 经 Red→Green 修正：新增 `export`、非引号/闭引号后注释、引号内 `#` 保留与无空格注释用例，`15/16 FAIL → 16/16 PASS`；联合定向 `44/44`、typecheck、lint、build 与全仓测试通过，等待同一 Guardian 改判及 AC5 运行时证据。
 - peer review 首轮判 `NO-GO`（P2=1）：server 的 disabled runtime 以 `undefined` 交接，scheduler 会重读 `.env` 并可能与 routes 分叉。新增“caller 已给 disabled boot state 不得重读”测试先 `1 read / FAIL`，再显式传递同一 `DigestBootState` 后 `0 read / PASS`；联合定向增至 `45/45`，等待 reviewer 复核。
+- 最终 Guardian 复验 PASS，peer review 复核为 P1/P2/P3=0、Approved/GO；修复提交 `8fd4ef3c` 已 fast-forward 合入并推送 `dev`。
+- 2026-07-20 13:34:59 +08:00 精确重启 API 后，scheduler 从旧合同 `7 cron/1 startup` 恢复为 `9 cron/2 startup`；启动任务因当时仍是 follower 留下 `skipped_not_leader` trace，13:35:59 取得 leader term 42。
+- 13:38:58 仅调用一次正式 send-now 入口，13:57:47 终态 `status=ok`、`degraded=false`。当日归档生成 6 个文件，43/43 信源健康；正式收件人数 7（包含用户指定邮箱），attempt ledger 为一次、outbound ledger 精确从 35 增至 36 行，message id 已记账且未重复触发。
