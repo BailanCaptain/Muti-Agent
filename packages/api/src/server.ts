@@ -54,7 +54,7 @@ import { listProviderProfiles } from "./runtime/provider-profiles"
 import { getRedisReservation } from "./runtime/redis"
 import { bootSchedulerRuntime } from "./runtime/scheduler-bootstrap"
 import { awaitRunsToStop } from "./runtime/shutdown"
-import { bootDailyDigest, isDigestEnabled } from "./services/daily-digest/boot"
+import { bootDailyDigest, resolveDigestBootState } from "./services/daily-digest/boot"
 import { MemoryService } from "./services/memory-service"
 import { MessageService } from "./services/message-service"
 import { SessionService } from "./services/session-service"
@@ -649,15 +649,21 @@ export async function createApiServer(options: {
   registerRuntimeConfigRoutes(app)
   // F037 日报：归档读取面 + 设置面 + 立即补发。runtime 实例 server 统一持有——
   // 路由（send-now）与 scheduler（cron/startup）必须共用同一 reconcile（进程内互斥不许旁路）
-  const digestEnabled = isDigestEnabled(process.env)
+  const digestBootState = resolveDigestBootState(process.env, process.cwd())
+  const digestEnabled = digestBootState.decision.enabled
   const dailyDigestRuntime = digestEnabled
     ? bootDailyDigest({
+        env: digestBootState.env,
         rootDir: process.cwd(),
         log: (m) => app.log.info(m),
         pushAlert: (m) => app.log.warn(m),
       })
     : undefined
-  registerDailyDigestRoutes(app, { runtime: dailyDigestRuntime, enabled: digestEnabled })
+  registerDailyDigestRoutes(app, {
+    runtime: dailyDigestRuntime,
+    enabled: digestEnabled,
+    env: digestBootState.env,
+  })
   registerSessionRuntimeConfigRoutes(app, { sessions: repository })
   registerAuthorizationRoutes(app, { approvals, ruleStore })
   registerDecisionBoardRoutes(app, {
@@ -1314,8 +1320,10 @@ export async function createApiServer(options: {
   const schedulerRuntime = await bootSchedulerRuntime({
     db: drizzleDb,
     log: app.log,
-    // F037：与 send-now 路由共用同一 digest runtime（未启用时 undefined → scheduler 门自决）
+    // F037：与 send-now 路由共用同一 digest runtime；enabled/disabled 判定另由同一 boot state 交接。
     dailyDigest: dailyDigestRuntime,
+    // B038：disabled 也必须显式交接，避免 undefined 被 scheduler 误解为“未装配”后重读 .env。
+    dailyDigestBootState: digestBootState,
     // 调度告警走 ws broadcast（lazy resolve broadcaster.broadcast — registerWsRoute
     // 已在上面装好实际实现，此处闭包捕获最新引用）。
     pushAlert: (trace) =>

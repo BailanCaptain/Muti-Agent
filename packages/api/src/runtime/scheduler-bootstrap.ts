@@ -53,8 +53,9 @@ import type { WikiLeasesRepository } from "../db/repositories/wiki-leases-reposi
 import type * as schema from "../db/schema"
 import {
   type DailyDigestRuntime,
+  type DigestBootState,
   bootDailyDigest,
-  isDigestEnabled,
+  resolveDigestBootState,
 } from "../services/daily-digest/boot"
 import { isDigestFailureStatus } from "../services/daily-digest/daily-digest-job"
 import { ArchiveYearlySessions } from "../services/scheduler/archive-yearly-sessions"
@@ -288,6 +289,12 @@ export interface SchedulerBootOptions {
    * 每小时安全网）共用同一 reconcile（D11）。
    */
   dailyDigest?: Pick<DailyDigestRuntime, "reconcile">
+  /**
+   * F037/B038 生产装配快照。server 必须在 enabled/disabled 两态都显式传入，避免用
+   * `dailyDigest === undefined` 同时表示“已判关闭”和“调用方未装配”。独立 scheduler 调用方
+   * 不传时才从 rootDir/.env 自决。
+   */
+  dailyDigestBootState?: DigestBootState
 }
 
 /**
@@ -628,16 +635,25 @@ export async function bootSchedulerRuntime(
   }
 
   // ── F037 日报 daily-digest（2 cron + 1 startup 共用 reconcile 单入口，D11）──
-  // 启用门 isDigestEnabled：与 server routes 共用一份逻辑（boot.ts 真相源）。
+  // 启用门 resolveDigestBootState：与 server routes 共用一份 env 快照（boot.ts 真相源）。
   // 默认关 → 测试/CI/未配置环境绝不打真网（startup job 会在 boot 时真跑）。
-  const digestEnabled = isDigestEnabled(process.env)
+  const digestBootState =
+    opts.dailyDigestBootState ?? resolveDigestBootState(process.env, rootDir)
+  const digestEnabled = digestBootState.decision.enabled
   const digestCfg = cronCfgByName.get("daily-digest")
   const digestSafetyCfg = cronCfgByName.get("daily-digest-reconcile")
   const digestStartupCfg = startupCfgByName.get("daily-digest-startup")
+  if (!opts.dailyDigest && !digestEnabled) {
+    opts.log.info(
+      { component: "daily-digest", reason: digestBootState.decision.reason },
+      "[daily-digest] disabled at boot; scheduler triggers not registered",
+    )
+  }
   if ((opts.dailyDigest || digestEnabled) && (digestCfg || digestSafetyCfg || digestStartupCfg)) {
     const dailyDigest =
       opts.dailyDigest ??
       bootDailyDigest({
+        env: digestBootState.env,
         rootDir,
         log: (m) => opts.log.info(m),
         pushAlert: (m) => opts.log.warn(m),

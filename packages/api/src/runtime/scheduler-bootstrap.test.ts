@@ -93,6 +93,12 @@ function silentLogger() {
   return log
 }
 
+function capturingLogger(entries: unknown[][]) {
+  const log = silentLogger()
+  log.info = (...args: unknown[]) => entries.push(args)
+  return log
+}
+
 test("AC-P3-7 a · bootSchedulerRuntime → SchedulerRuntime 起 + 7 cron 注册 + startup-reconciler trace 落盘", async () => {
   const tempDir = safeTempDir("F027-P20-boot-a-")
   const dbPath = path.join(tempDir, "test.sqlite")
@@ -216,19 +222,71 @@ test("F037 h · dailyDigest 注入 → 2 cron 注册 + startup 触发 reconcile 
   const { db: db2, close: close2 } = createDrizzleDb(path.join(tempDir2, "test.sqlite"))
   const savedFlag = process.env.MULTI_AGENT_DIGEST_ENABLED
   const savedUser = process.env.MULTI_AGENT_DIGEST_SMTP_USER
+  const disabledLogs: unknown[][] = []
   delete process.env.MULTI_AGENT_DIGEST_ENABLED
   delete process.env.MULTI_AGENT_DIGEST_SMTP_USER
   try {
-    const runtime2 = await bootSchedulerRuntime({ db: db2, log: silentLogger(), rootDir: tempDir2 })
+    const runtime2 = await bootSchedulerRuntime({
+      db: db2,
+      log: capturingLogger(disabledLogs),
+      rootDir: tempDir2,
+    })
     assert.ok(runtime2)
     const names2 = runtime2.health().jobs.map((j) => j.name)
     assert.ok(!names2.includes("daily-digest"), "无凭证/无开关不应注册 daily-digest")
+    const serializedLogs = JSON.stringify(disabledLogs)
+    assert.match(serializedLogs, /daily-digest.*missing_user|missing_user.*daily-digest/)
+    assert.ok(!serializedLogs.includes("SMTP_PASS"), "禁用日志不得输出凭证字段/值")
+    assert.ok(!serializedLogs.includes("recipient@"), "禁用日志不得输出收件人值")
     await runtime2.stop()
   } finally {
     if (savedFlag !== undefined) process.env.MULTI_AGENT_DIGEST_ENABLED = savedFlag
     if (savedUser !== undefined) process.env.MULTI_AGENT_DIGEST_SMTP_USER = savedUser
     close2()
     safeCleanup(tempDir2)
+  }
+})
+
+test("B038 · caller 显式 disabled 快照时 scheduler 不得重读 .env", async (t) => {
+  const tempDir = safeTempDir("B038-boot-state-")
+  const { db, close } = createDrizzleDb(path.join(tempDir, "test.sqlite"))
+  const dotenvPath = path.join(tempDir, ".env")
+  const originalReadFileSync = fs.readFileSync
+  let dotenvReads = 0
+  t.mock.method(
+    fs,
+    "readFileSync",
+    ((...args: unknown[]) => {
+      if (path.resolve(String(args[0])) === path.resolve(dotenvPath)) {
+        dotenvReads += 1
+        return ""
+      }
+      return (originalReadFileSync as (...inner: unknown[]) => unknown)(...args)
+    }) as typeof fs.readFileSync,
+  )
+  const logs: unknown[][] = []
+  let runtime: Awaited<ReturnType<typeof bootSchedulerRuntime>> = null
+
+  try {
+    runtime = await bootSchedulerRuntime({
+      db,
+      log: capturingLogger(logs),
+      rootDir: tempDir,
+      dailyDigestBootState: {
+        env: { MULTI_AGENT_DIGEST_ENABLED: "0" },
+        decision: { enabled: false, reason: "explicit_off" },
+      },
+    })
+    assert.ok(runtime)
+    assert.equal(dotenvReads, 0, "调用方已给 boot state 时 scheduler 不得再次读取 .env")
+    assert.ok(!runtime.health().jobs.some((job) => job.name === "daily-digest"))
+    const serializedLogs = JSON.stringify(logs)
+    assert.match(serializedLogs, /explicit_off/)
+    assert.ok(!serializedLogs.includes("missing_user"), "禁用原因必须来自 caller 的同一快照")
+  } finally {
+    await runtime?.stop()
+    close()
+    safeCleanup(tempDir)
   }
 })
 

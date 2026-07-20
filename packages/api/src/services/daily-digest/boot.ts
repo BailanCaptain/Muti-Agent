@@ -1,3 +1,4 @@
+import fs from "node:fs"
 import path from "node:path"
 import { ProxyAgent } from "undici"
 import { loadRuntimeConfig } from "../../runtime/runtime-config"
@@ -58,6 +59,102 @@ export interface DailyDigestRuntime {
   senderKind: string
 }
 
+export type DigestEnablementReason =
+  | "explicit_on"
+  | "explicit_off"
+  | "smtp_ready"
+  | "missing_user"
+  | "missing_pass"
+  | "missing_recipient"
+
+export interface DigestEnablementDecision {
+  enabled: boolean
+  reason: DigestEnablementReason
+}
+
+export interface DigestBootState {
+  env: NodeJS.ProcessEnv
+  decision: DigestEnablementDecision
+}
+
+function parseDigestDotenvValue(raw: string): string {
+  const value = raw.trim()
+  const quote = value[0]
+  if (quote === '"' || quote === "'") {
+    let escaped = false
+    for (let i = 1; i < value.length; i += 1) {
+      const char = value[i]
+      if (quote === '"' && char === "\\" && !escaped) {
+        escaped = true
+        continue
+      }
+      if (char === quote && !escaped) {
+        const remainder = value.slice(i + 1).trim()
+        if (!remainder || remainder.startsWith("#")) return value.slice(1, i)
+        break
+      }
+      escaped = false
+    }
+  }
+
+  const commentAt = value.indexOf("#")
+  return (commentAt >= 0 ? value.slice(0, commentAt) : value).trim()
+}
+
+/**
+ * API 入口（tsx index.ts）不会自动加载根 `.env`。这里只读 F037 自己的前缀，避免把
+ * CORS/SQLite/Feishu 等全局配置注入错误入口；process env 逐键覆盖文件（空值和显式 0
+ * 也算覆盖），因此人工/启动器的显式选择始终优先。函数只返回快照，不修改 process.env。
+ */
+export function resolveDigestBootEnv(
+  processEnv: NodeJS.ProcessEnv,
+  dotenvPath: string,
+): NodeJS.ProcessEnv {
+  const fromFile: NodeJS.ProcessEnv = {}
+  try {
+    for (const line of fs.readFileSync(dotenvPath, "utf8").split(/\r?\n/)) {
+      let trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith("#")) continue
+      trimmed = trimmed.replace(/^export\s+/, "")
+      const equalsAt = trimmed.indexOf("=")
+      if (equalsAt < 0) continue
+      const key = trimmed.slice(0, equalsAt).trim()
+      if (!key.startsWith("MULTI_AGENT_DIGEST_")) continue
+      fromFile[key] = parseDigestDotenvValue(trimmed.slice(equalsAt + 1))
+    }
+  } catch {
+    // 缺失/不可读时保留既有 fail-closed：只使用调用方进程环境。
+  }
+  return { ...fromFile, ...processEnv }
+}
+
+/** 安全、可观测的启用判定；reason 只含固定枚举，不携带任何配置值。 */
+export function evaluateDigestEnablement(
+  env: NodeJS.ProcessEnv,
+  loadSettings: () => DigestSettings | undefined = () => loadRuntimeConfig().dailyDigest,
+): DigestEnablementDecision {
+  const flag = env.MULTI_AGENT_DIGEST_ENABLED?.trim()
+  if (flag === "1") return { enabled: true, reason: "explicit_on" }
+  if (flag === "0") return { enabled: false, reason: "explicit_off" }
+
+  const cfg = resolveDigestEnv(env)
+  if (!cfg.smtpUser?.trim()) return { enabled: false, reason: "missing_user" }
+  if (!cfg.smtpPass?.trim()) return { enabled: false, reason: "missing_pass" }
+  const hasRecipients = Boolean(cfg.to?.trim()) || (loadSettings()?.recipients?.length ?? 0) > 0
+  if (!hasRecipients) return { enabled: false, reason: "missing_recipient" }
+  return { enabled: true, reason: "smtp_ready" }
+}
+
+/** 生产装配终态：gate、runtime、scheduler 与 routes 必须复用这里返回的同一 env 快照。 */
+export function resolveDigestBootState(
+  processEnv: NodeJS.ProcessEnv,
+  rootDir: string,
+  loadSettings: () => DigestSettings | undefined = () => loadRuntimeConfig().dailyDigest,
+): DigestBootState {
+  const env = resolveDigestBootEnv(processEnv, path.join(rootDir, ".env"))
+  return { env, decision: evaluateDigestEnablement(env, loadSettings) }
+}
+
 /**
  * 日报启用门（scheduler 与 server routes 共用一份逻辑，禁双写）：SMTP 凭证齐全
  * （.env 配置即开启意图）+ **任一来源有收件人**（.env 种子或设置页已存清单——德彪
@@ -70,13 +167,7 @@ export function isDigestEnabled(
   env: NodeJS.ProcessEnv = process.env,
   loadSettings: () => DigestSettings | undefined = () => loadRuntimeConfig().dailyDigest,
 ): boolean {
-  const cfg = resolveDigestEnv(env)
-  const flag = env.MULTI_AGENT_DIGEST_ENABLED
-  if (flag === "1") return true
-  if (flag === "0") return false
-  if (!cfg.smtpUser || !cfg.smtpPass) return false
-  const hasRecipients = Boolean(cfg.to) || (loadSettings()?.recipients?.length ?? 0) > 0
-  return hasRecipients
+  return evaluateDigestEnablement(env, loadSettings).enabled
 }
 
 /**
@@ -109,11 +200,12 @@ export function createDigestFetchImpl(
 }
 
 export function bootDailyDigest(opts: DailyDigestBootOptions = {}): DailyDigestRuntime {
-  const bootEnv = opts.env ?? process.env
+  const rootDir = opts.rootDir ?? process.cwd()
+  const bootEnv = opts.env ?? resolveDigestBootEnv(process.env, path.join(rootDir, ".env"))
   const env = resolveDigestEnv(bootEnv)
   const log = opts.log ?? (() => {})
   const pushAlert = opts.pushAlert ?? log
-  const baseDir = path.join(opts.rootDir ?? process.cwd(), ".runtime", "daily-digest")
+  const baseDir = path.join(rootDir, ".runtime", "daily-digest")
   // 设置段读取口：每轮 reconcile 现读（改设置/点补发即生效）；损坏文件由 loadRuntimeConfig
   // 容错为空 → 全回落 .env 种子
   const loadSettings = opts.loadSettings ?? (() => loadRuntimeConfig().dailyDigest)
