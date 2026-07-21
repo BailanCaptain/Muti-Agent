@@ -755,7 +755,7 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
       results: [],
     })
 
-    const cardStart = html.indexOf('<table class="card-content-table"')
+    const cardStart = html.indexOf('<table class="card-content-table')
     const cardEnd = html.indexOf("</table>", cardStart)
     assert.ok(cardStart >= 0 && cardEnd > cardStart, "fixture 应生成一张 GitHub 榜单卡")
     const listCard = html.slice(cardStart, cardEnd + "</table>".length)
@@ -781,7 +781,7 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
     )
     assert.match(
       listCard,
-      /class="github-meta-row"[^>]*padding-bottom:12px;">▲ 2,000 本周　★20,000<\/td>/,
+      /class="github-meta-row digest-sans"[^>]*padding-bottom:12px;">▲ 2,000 本周　★20,000<\/td>/,
       "meta-only 的间距应附着到 meta",
     )
     assert.match(
@@ -793,6 +793,135 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
       listCard,
       /padding:12px 0 0 0;padding-bottom:12px;">[\s\S]*?owner\/title-only<\/a><\/td>/,
       "title-only 的间距应附着到 title",
+    )
+  })
+
+  it("B039：GitHub 榜种标题独立复用与 AI/X 相同的子标题层级", () => {
+    const githubItems = [
+      buildNormalizedItem(
+        "github-trending-daily",
+        "github",
+        "owner/daily-repo",
+        "https://github.com/owner/daily-repo",
+        null,
+        "+1,000 stars today · ★10,000 · TypeScript · 日榜摘要",
+      ),
+      buildNormalizedItem(
+        "github-trending-weekly",
+        "github",
+        "owner/weekly-repo",
+        "https://github.com/owner/weekly-repo",
+        null,
+        "+2,000 stars this week · ★20,000 · Rust · 周榜摘要",
+      ),
+      buildNormalizedItem(
+        "github-ai-newcomers",
+        "github",
+        "owner/newcomer-repo",
+        "https://github.com/owner/newcomer-repo",
+        null,
+        "新仓 7 天 ★3,000 · 新秀摘要",
+      ),
+      buildNormalizedItem(
+        "github-trending-monthly",
+        "github",
+        "owner/monthly-repo",
+        "https://github.com/owner/monthly-repo",
+        null,
+        "+4,000 stars this month · ★40,000 · Go · 月榜摘要",
+      ),
+    ]
+    const { html } = renderDigest({
+      businessDate: "2026-07-22",
+      summary: { overview: [], sections: [], degraded: false },
+      items: [],
+      githubItems,
+      results: [],
+    })
+    const githubSection = html.slice(html.indexOf('name="sec-gh"'))
+    const growthHeading = githubSection.indexOf(">增长榜 · 今日 · 1 条</td>")
+    const growthCard = githubSection.indexOf(
+      '<table class="digest-sans outlook-list-card"',
+      growthHeading,
+    )
+    const weeklyHeading = githubSection.indexOf(">周榜 · 1 条</td>")
+    const weeklyCard = githubSection.indexOf(
+      '<table class="digest-sans outlook-list-card"',
+      growthCard + 1,
+    )
+    const newcomerHeading = githubSection.indexOf(">新秀 · 7 天新仓 · 1 条</td>")
+    const newcomerCard = githubSection.indexOf(
+      '<table class="digest-sans outlook-list-card"',
+      weeklyCard + 1,
+    )
+    const monthlyHeading = githubSection.indexOf(">月榜 · 1 条</td>")
+    const monthlyCard = githubSection.indexOf(
+      '<table class="digest-sans outlook-list-card"',
+      newcomerCard + 1,
+    )
+
+    assert.ok(growthHeading >= 0, "增长榜应使用现有 outlook-subheading 独立成行")
+    assert.ok(growthHeading < growthCard, "增长榜子标题应位于列表卡外部")
+    assert.ok(growthCard < weeklyHeading, "周榜子标题应位于增长榜卡之后")
+    assert.ok(weeklyHeading < weeklyCard, "周榜子标题应位于自己的列表卡外部")
+    assert.ok(weeklyCard < newcomerHeading && newcomerHeading < newcomerCard)
+    assert.ok(newcomerCard < monthlyHeading && monthlyHeading < monthlyCard)
+    assert.equal(
+      (githubSection.match(/class="outlook-subheading"/g) ?? []).length,
+      4,
+      "四个榜种应复用同一子标题组件",
+    )
+    assert.doesNotMatch(
+      githubSection,
+      /◆ (?:增长榜|周榜|新秀|月榜)/,
+      "榜单卡内部不得重复旧标题",
+    )
+  })
+
+  it("B039：GitHub 嵌套列表的所有文字节点显式锁定 Outlook sans 字体", () => {
+    const githubItem = buildNormalizedItem(
+      "github-trending-weekly",
+      "github",
+      "owner/font-contract",
+      "https://github.com/owner/font-contract",
+      null,
+      "+2,000 stars this week · ★20,000 · TypeScript · 字体合同摘要",
+    )
+    const { html } = renderDigest({
+      businessDate: "2026-07-22",
+      summary: { overview: [], sections: [], degraded: false },
+      items: [],
+      githubItems: [githubItem],
+      results: [],
+    })
+    const start = html.indexOf('<table class="digest-sans outlook-list-card"')
+    const end = html.indexOf("</table></td></tr>", start)
+    const listCard = html.slice(start, end + "</table></td></tr>".length)
+    const sans = "font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;"
+    const contentTable = listCard.match(
+      /<table class="card-content-table digest-sans"[^>]*>/,
+    )?.[0]
+
+    assert.ok(start >= 0 && end > start, "fixture 应生成 GitHub 列表卡")
+    assert.ok(
+      contentTable?.includes(sans),
+      "嵌套列表 table 自身也需显式锁定字体，不能依赖跨 table 继承",
+    )
+    assert.ok(
+      listCard.includes('<span class="digest-sans" style="font-size:12px'),
+      "序号节点需直接挂 Outlook 字体类",
+    )
+    assert.ok(
+      listCard.includes('<a class="digest-sans" href="https://github.com/owner/font-contract"'),
+      "仓库标题节点需直接挂 Outlook 字体类",
+    )
+    assert.ok(
+      listCard.includes('class="github-meta-row digest-sans"'),
+      "榜单数据行需直接挂 Outlook 字体类",
+    )
+    assert.ok(
+      listCard.includes('class="outlook-card-summary digest-sans"'),
+      "仓库摘要需直接挂 Outlook 字体类",
     )
   })
 
@@ -1015,13 +1144,12 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
     assert.ok(html.includes('href="https://example.com/long-token"'), "canonical href 不得改变")
 
     const assertLongTitleGuard = (document: string, href: string, title: string) => {
-      const anchor = `<a href="${href}"`
-      const anchorIndex = document.indexOf(anchor)
+      const anchorIndex = document.indexOf(`href="${href}"`)
       assert.ok(anchorIndex >= 0, `缺少长标题链接 ${href}`)
       const cellStart = document.lastIndexOf("<td", anchorIndex)
       const cellEnd = document.indexOf(">", cellStart)
       assert.ok(
-        document.slice(cellStart, cellEnd + 1).includes('class="outlook-break-long"'),
+        document.slice(cellStart, cellEnd + 1).includes("outlook-break-long"),
         `Classic Outlook 断词类必须覆盖 ${href}`,
       )
       const anchorEnd = document.indexOf("</a>", anchorIndex)
@@ -1386,7 +1514,7 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
       githubItems: [gh],
     })
     assert.ok(html.includes("开源榜单"))
-    assert.ok(html.includes("◆ 周榜"))
+    assert.ok(html.includes(">周榜 · 1 条</td>"))
     assert.ok(html.includes("▲ 6,989 本周"))
     assert.ok(html.includes("★8,695"))
     assert.ok(html.includes("Python"))
@@ -1493,17 +1621,17 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
       results,
       githubItems: [ghW, ghM],
     })
-    // 总名固定为「开源榜单」，榜种仍各自一张原名列表卡。
+    // 总名固定为「开源榜单」，榜种仍各自保留原名并以独立子标题带出列表卡。
     assert.ok(both.html.includes("AI · 社区动态 · 今日热点 · 开源榜单"))
     assert.ok(!both.html.includes("GitHub 榜单"))
     assert.match(both.markdown, /^## 开源榜单$/m)
     assert.doesNotMatch(both.markdown, /^## GitHub 榜单$/m)
-    assert.ok(both.html.includes("◆ 周榜 · 1"))
-    assert.ok(both.html.includes("◆ 月榜 · 1"))
+    assert.ok(both.html.includes(">周榜 · 1 条</td>"))
+    assert.ok(both.html.includes(">月榜 · 1 条</td>"))
     assert.ok(both.html.includes("▲ 6,989 本周"))
     assert.ok(both.html.includes("▲ 12,345 本月"))
     // 周榜卡在月榜卡之前（GH_KIND_ORDER）
-    assert.ok(both.html.indexOf("◆ 周榜") < both.html.indexOf("◆ 月榜"))
+    assert.ok(both.html.indexOf(">周榜 · 1 条</td>") < both.html.indexOf(">月榜 · 1 条</td>"))
   })
 
   it("正文源名走中文 label，不露内部 sourceId", () => {
@@ -1923,8 +2051,7 @@ describe("分栏改版（小孙 07-05 #1-#5）", () => {
       githubItems: ghd,
     })
     assert.ok(html.includes("开源榜单"))
-    assert.ok(html.includes("◆ 增长榜 · 今日"))
-    assert.ok(html.includes("◆ 增长榜 · 今日 · 6")) // cap 6
+    assert.ok(html.includes(">增长榜 · 今日 · 6 条</td>")) // cap 6 + 独立子标题
     assert.ok(html.includes("▲ 320 今日"))
     assert.ok(html.includes("owner/daily-5"))
     assert.ok(!html.includes("owner/daily-6")) // 第 7 条被限量截走

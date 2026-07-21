@@ -322,8 +322,10 @@ export function splitGithubSnippet(text: string): { meta: string; desc: string }
 }
 
 /** 关键卡片内部统一用 table/td 承担间距，避免 Classic Outlook 忽略 div/span padding。 */
-function cardContentTable(rows: string): string {
-  return `<table class="card-content-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;">${rows}</table>`
+function cardContentTable(rows: string, explicitFontFamily?: string): string {
+  const className = explicitFontFamily ? "card-content-table digest-sans" : "card-content-table"
+  const fontStyle = explicitFontFamily ? `font-family:${explicitFontFamily};` : ""
+  return `<table class="${className}" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;${fontStyle}">${rows}</table>`
 }
 
 interface CardRow {
@@ -492,7 +494,6 @@ function renderCardInner(
 
 /** GitHub 榜单卡（#2）：每种榜一张列表卡 —— 榜单的正确形态是行式列表，不是新闻卡片对 */
 function ghListCard(
-  kindLabel: string,
   entries: Array<{ pick: SectionPick; item: NormalizedItem }>,
   density: HtmlDensity,
 ): string {
@@ -511,20 +512,21 @@ function ghListCard(
       const titleBottom = hasNext && !meta && !desc ? "padding-bottom:12px;" : ""
       const metaBottom = hasNext && meta && !desc ? "padding-bottom:12px;" : ""
       const descBottom = hasNext && desc ? "padding-bottom:12px;" : ""
+      const titleCellClass = needsOutlookBreakAll(e.item.title)
+        ? "digest-sans outlook-break-long"
+        : "digest-sans"
       return (
-        `<tr><td${needsOutlookBreakAll(e.item.title) ? ' class="outlook-break-long"' : ""} style="${i > 0 ? `border-top:1px solid ${C.border};padding:12px 0 0 0;` : "padding:0;"}${titleBottom}"><span style="font-size:12px;font-weight:700;letter-spacing:1px;color:${C.muted};">${String(i + 1).padStart(2, "0")}</span>&nbsp;&nbsp;<a href="${href}" style="font-size:16px;font-weight:700;line-height:24px;color:${C.title};text-decoration:none;overflow-wrap:anywhere;word-break:break-word;">${escapeHtml(e.item.title)}</a></td></tr>` +
+        `<tr><td class="${titleCellClass}" style="${i > 0 ? `border-top:1px solid ${C.border};padding:12px 0 0 0;` : "padding:0;"}${titleBottom}"><span class="digest-sans" style="font-size:12px;font-weight:700;letter-spacing:1px;color:${C.muted};">${String(i + 1).padStart(2, "0")}</span>&nbsp;&nbsp;<a class="digest-sans" href="${href}" style="font-size:16px;font-weight:700;line-height:24px;color:${C.title};text-decoration:none;overflow-wrap:anywhere;word-break:break-word;">${escapeHtml(e.item.title)}</a></td></tr>` +
         (meta
-          ? `<tr><td class="github-meta-row" style="${ghMeta}padding:8px 0 0 0;${metaBottom}">${escapeHtml(meta)}</td></tr>`
+          ? `<tr><td class="github-meta-row digest-sans" style="${ghMeta}padding:8px 0 0 0;${metaBottom}">${escapeHtml(meta)}</td></tr>`
           : "") +
         (desc
-          ? `<tr><td class="outlook-card-summary" style="${bodySmall}padding:8px 0 0 0;${descBottom}">${escapeHtml(desc)}</td></tr>`
+          ? `<tr><td class="outlook-card-summary digest-sans" style="${bodySmall}padding:8px 0 0 0;${descBottom}">${escapeHtml(desc)}</td></tr>`
           : "")
       )
     })
     .join("")
-  const content = cardContentTable(
-    `<tr><td style="font-size:12px;font-weight:700;line-height:18px;letter-spacing:1px;color:${C.gold};padding:0 0 6px 0;">◆ ${escapeHtml(kindLabel)} · ${entries.length}</td></tr>${rows}`,
-  )
+  const content = cardContentTable(rows, SANS)
   return `<tr><td style="padding:0 0 16px 0;"><table class="digest-sans outlook-list-card" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.card}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.card};border:1px solid ${C.border};border-radius:16px;font-family:${SANS};"><tr><td style="padding:20px;">${content}</td></tr></table></td></tr>`
 }
 
@@ -890,7 +892,7 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
   }
 
   const chips = sections.map((s) => ({ meta: s.meta, count: s.resolved.length }))
-  // 子栏目录（≥2 组的板块才有"tab 栏"可跳；github 榜单卡自带分组头不进目录）
+  // 子栏目录（≥2 组的板块才有"tab 栏"可跳；github 独立榜种标题不进目录）
   const subNav = sections
     .filter((s) => s.meta.category !== "github" && s.groups.length >= 2)
     .map((s) => ({
@@ -905,7 +907,7 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
     sectionHtml.push(sectionHeading(s.meta, si === 0))
     mdParts.push(`## ${s.meta.label}`, "")
 
-    // GitHub：榜单卡分栏（每种榜一张列表卡；ghPicks 已按 kind 顺序排好）
+    // GitHub：榜种标题与 AI/X 共用 subHeading；每种榜随后是一张行式列表卡。
     if (s.meta.category === "github") {
       const byKind = new Map<string, typeof s.resolved>()
       for (const e of s.resolved) {
@@ -913,9 +915,12 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
         list.push(e)
         byKind.set(e.item.sourceId, list)
       }
+      let groupIndex = 0
       for (const [kind, entries] of byKind) {
         const label = ghKindLabel(kind)
-        sectionHtml.push(ghListCard(label, entries, density))
+        sectionHtml.push(subHeading(label, entries.length, `sub-github-${groupIndex}`))
+        sectionHtml.push(ghListCard(entries, density))
+        groupIndex++
         mdParts.push(`### ${label}`, "")
         for (const e of entries) {
           // md 版同享 descZh：meta 数据行 + 中文描述拼展示串（不再进任何 parser）

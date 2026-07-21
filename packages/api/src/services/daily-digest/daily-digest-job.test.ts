@@ -516,7 +516,7 @@ describe("reconcile（D10/D11）", () => {
     assert.equal(gh.calls.length, 1)
     const html = fs.readFileSync(path.join(dir, "2026-07-03", "digest.html"), "utf8")
     assert.ok(html.includes("开源榜单"))
-    assert.ok(html.includes("◆ 周榜"))
+    assert.ok(html.includes(">周榜 · 1 条</td>"))
   })
 
   it("增长榜（日）每天都带：非周一/非 1 号也抓（07-05 分栏改版 #2）", async () => {
@@ -526,7 +526,7 @@ describe("reconcile（D10/D11）", () => {
     assert.equal(ghd.calls.length, 1)
     const html = fs.readFileSync(path.join(dir, "2026-07-03", "digest.html"), "utf8")
     assert.ok(html.includes("开源榜单"))
-    assert.ok(html.includes("◆ 增长榜 · 今日"))
+    assert.ok(html.includes(">增长榜 · 今日 · 1 条</td>"))
   })
 
   it("月榜每天常驻（#27；07-06 小孙「月榜咋没有了」——原每月 1 号门拆掉）；items.jsonl 证据底料落盘（F029）", async () => {
@@ -536,7 +536,7 @@ describe("reconcile（D10/D11）", () => {
     assert.equal(ghm.calls.length, 1)
     const html = fs.readFileSync(path.join(dir, "2026-07-03", "digest.html"), "utf8")
     assert.ok(html.includes("开源榜单"))
-    assert.ok(html.includes("◆ 月榜"))
+    assert.ok(html.includes(">月榜 · 1 条</td>"))
     // F029 证据底料：内容源 + github 源全量逐行 JSONL 可解析
     const lines = fs
       .readFileSync(path.join(dir, "2026-07-03", "items.jsonl"), "utf8")
