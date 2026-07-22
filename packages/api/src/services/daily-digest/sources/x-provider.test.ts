@@ -44,6 +44,36 @@ describe("createTwitterApiIoProvider", () => {
     assert.equal(items[0].topicTag, "从业者")
   })
 
+  it("外部 TwitterAPI.io 保持使用代理 client，不误走 RSSHub 直连 client", async () => {
+    let proxyCalls = 0
+    let directCalls = 0
+    const source = makeXSource({
+      provider: createTwitterApiIoProvider({ apiKey: "k", pacing: NO_PACING }),
+      handles: ["sama"],
+    })
+
+    const items = await source.fetch({
+      http: {
+        fetchText: async () => {
+          proxyCalls += 1
+          return JSON.stringify({ tweets: [tweet("333", "ok", 1)] })
+        },
+      },
+      httpDirect: {
+        fetchText: async () => {
+          directCalls += 1
+          throw new Error("external API must keep proxy transport")
+        },
+      },
+      signal: new AbortController().signal,
+      now: () => NOW,
+    })
+
+    assert.equal(items.length, 1)
+    assert.equal(proxyCalls, 1)
+    assert.equal(directCalls, 0)
+  })
+
   it("单账号失败跳过不炸（per-author 隔离）", async () => {
     let call = 0
     const http: SafeHttpClient = {
@@ -126,6 +156,68 @@ describe("createRsshubXProvider（cookie 小号路线，小孙 07-03 拍板 D16�
       },
     }
   }
+
+  it("全局代理启用时，本机 RSSHub 必须优先走 orchestrator 的直连 client", async () => {
+    let proxyCalls = 0
+    const proxyHttp: SafeHttpClient = {
+      fetchText: async () => {
+        proxyCalls += 1
+        throw new Error("trusted RSSHub request must not enter ProxyAgent")
+      },
+    }
+    const directHttp = httpReturning({
+      "/twitter/user/sama": tweetRss(NOW.toUTCString()),
+    })
+    const source = makeXSource({
+      provider: createRsshubXProvider({
+        rsshubBase: "http://localhost:1200",
+        pacing: NO_PACING,
+      }),
+      handles: ["sama"],
+    })
+
+    const items = await source.fetch({
+      http: proxyHttp,
+      httpDirect: directHttp,
+      signal: new AbortController().signal,
+      now: () => NOW,
+    })
+
+    assert.equal(items.length, 1)
+    assert.equal(proxyCalls, 0)
+    assert.deepEqual(directHttp.calls, ["http://localhost:1200/twitter/user/sama"])
+  })
+
+  it("远端 RSSHub 保持使用代理 client，不误套用本机直连策略", async () => {
+    let directCalls = 0
+    const directHttp: SafeHttpClient = {
+      fetchText: async () => {
+        directCalls += 1
+        throw new Error("remote RSSHub must keep proxy transport")
+      },
+    }
+    const proxyHttp = httpReturning({
+      "/twitter/user/sama": tweetRss(NOW.toUTCString()),
+    })
+    const source = makeXSource({
+      provider: createRsshubXProvider({
+        rsshubBase: "https://rsshub.example.com",
+        pacing: NO_PACING,
+      }),
+      handles: ["sama"],
+    })
+
+    const items = await source.fetch({
+      http: proxyHttp,
+      httpDirect: directHttp,
+      signal: new AbortController().signal,
+      now: () => NOW,
+    })
+
+    assert.equal(items.length, 1)
+    assert.equal(directCalls, 0)
+    assert.deepEqual(proxyHttp.calls, ["https://rsshub.example.com/twitter/user/sama"])
+  })
 
   it("近 24h 推文 → x 类目条目，标题带 @handle 前缀；base 尾斜杠归一", async () => {
     const http = httpReturning({ "/twitter/user/sama": tweetRss(NOW.toUTCString()) })

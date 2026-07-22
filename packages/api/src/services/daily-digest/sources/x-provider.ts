@@ -30,7 +30,12 @@ export interface XProvider {
   /** 拉一批账号最近 tweets → NormalizedItem[]；单账号失败跳过不抛 */
   fetchHandles(
     handles: string[],
-    ctx: { http: SafeHttpClient; now: () => Date; signal?: AbortSignal },
+    ctx: {
+      http: SafeHttpClient
+      httpDirect?: SafeHttpClient
+      now: () => Date
+      signal?: AbortSignal
+    },
   ): Promise<NormalizedItem[]>
 }
 
@@ -172,6 +177,21 @@ export interface RsshubXOptions {
  */
 const RSSHUB_PACING_DEFAULTS = { delayMs: 4000, jitterMs: 3000, maxTotalMs: 480_000 }
 
+function isLoopbackRsshubBase(base: string): boolean {
+  try {
+    const hostname = new URL(base).hostname.toLowerCase().replace(/\.$/, "")
+    return (
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      /^127(?:\.\d{1,3}){3}$/.test(hostname) ||
+      hostname === "::1" ||
+      hostname === "[::1]"
+    )
+  } catch {
+    return false
+  }
+}
+
 /**
  * cookie 小号路线（小孙 2026-07-03 拍板）：自建 RSSHub `/twitter/user/:handle` RSS 路由。
  * 实例侧须配 TWITTER_AUTH_TOKEN（小号 cookie，人工件）；本 provider 只消费 RSS，
@@ -179,6 +199,7 @@ const RSSHUB_PACING_DEFAULTS = { delayMs: 4000, jitterMs: 3000, maxTotalMs: 480_
  */
 export function createRsshubXProvider(opts: RsshubXOptions): XProvider {
   const base = opts.rsshubBase.replace(/\/$/, "")
+  const preferDirect = isLoopbackRsshubBase(base)
   const pacing = resolvePacing(opts.pacing, RSSHUB_PACING_DEFAULTS)
   return {
     providerId: "rsshub-twitter",
@@ -187,12 +208,13 @@ export function createRsshubXProvider(opts: RsshubXOptions): XProvider {
       const out: NormalizedItem[] = []
       const cutoff = ctx.now().getTime() - 24 * 3600_000
       const tally = createHandleFailureTally()
+      // 显式 loopback RSSHub 必须复用 orchestrator 的直连 client：全局 ProxyAgent 不消费
+      // NO_PROXY。远端自建 RSSHub 保持原代理通道，避免破坏只能经代理访问的配置。
+      const http = preferDirect && ctx.httpDirect ? ctx.httpDirect : ctx.http
       await forEachPaced(handles, pacing, ctx.signal, async (handle) => {
         tally.attempted++
         try {
-          const body = await ctx.http.fetchText(
-            `${base}/twitter/user/${encodeURIComponent(handle)}`,
-          )
+          const body = await http.fetchText(`${base}/twitter/user/${encodeURIComponent(handle)}`)
           for (const item of parseRssOrAtom(body, "x-firsthand", "community")) {
             const ts = item.publishedAt ? Date.parse(item.publishedAt) : Number.NaN
             if (!Number.isNaN(ts) && ts < cutoff) continue
@@ -266,6 +288,7 @@ export function makeXSource(cfg: XSourceConfig): DigestSource {
       if (cfg.handles.length === 0) throw new Error("x-firsthand: no handles configured")
       const items = await cfg.provider.fetchHandles(cfg.handles, {
         http: ctx.http,
+        httpDirect: ctx.httpDirect,
         now: ctx.now,
         signal: ctx.signal,
       })
