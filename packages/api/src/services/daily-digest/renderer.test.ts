@@ -2032,6 +2032,101 @@ describe("分栏改版（小孙 07-05 #1-#5）", () => {
     assert.ok(/AI 前沿<\/td>[\s\S]*?推理&nbsp;1/.test(html))
   })
 
+  it("B041：Outlook 子目录标题列固定 64px，不随右侧标签数量漂移", () => {
+    const aiHero = mk("smol-ai", "ai", "AI 焦点", "https://spacing.test/ai-hero")
+    const aiEntries = [
+      ["hn-ai", "AI 推理", "推理"],
+      ["openai-news", "OpenAI 一", "OpenAI"],
+      ["openai-news", "OpenAI 二", "OpenAI"],
+      ["hf-blog", "研究一", "研究"],
+      ["arxiv-ai", "研究二", "研究"],
+    ] as const
+    const communityHero = mk(
+      "reddit-ai",
+      "community",
+      "社区焦点",
+      "https://spacing.test/community-hero",
+    )
+    const communityEntries = [
+      ...Array.from({ length: 1 }, (_, index) => ["reddit-ai", `Reddit ${index}`] as const),
+      ...Array.from({ length: 5 }, (_, index) => ["digg-ai", `Digg ${index}`] as const),
+      ...Array.from({ length: 2 }, (_, index) => ["v2ex-hot", `V2EX ${index}`] as const),
+    ]
+    const hotHero = mk("thepaper", "hot", "热点头条", "https://spacing.test/hot-hero")
+    const hotEntries = [
+      ["thepaper", "科技一", "科技"],
+      ["cls-finance", "财经一", "财经"],
+      ["cls-finance", "财经二", "财经"],
+      ["huxiu", "体育一", "体育"],
+    ] as const
+
+    const aiItems = aiEntries.map(([sourceId, title], index) =>
+      mk(sourceId, "ai", title, `https://spacing.test/ai-${index}`),
+    )
+    const communityItems = communityEntries.map(([sourceId, title], index) =>
+      mk(sourceId, "community", title, `https://spacing.test/community-${index}`),
+    )
+    const hotItems = hotEntries.map(([sourceId, title], index) =>
+      mk(sourceId, "hot", title, `https://spacing.test/hot-${index}`),
+    )
+    const { html } = renderDigest({
+      businessDate: "2026-07-22",
+      summary: {
+        overview: [],
+        degraded: false,
+        sections: [
+          {
+            category: "ai",
+            picks: [
+              { itemId: aiHero.id, summaryZh: "AI 焦点摘要" },
+              ...aiItems.map((item, index) => ({
+                itemId: item.id,
+                summaryZh: `${item.title}摘要`,
+                tag: aiEntries[index][2],
+              })),
+            ],
+          },
+          {
+            category: "community",
+            picks: [
+              { itemId: communityHero.id, summaryZh: "社区焦点摘要" },
+              ...communityItems.map((item) => ({
+                itemId: item.id,
+                summaryZh: `${item.title}摘要`,
+              })),
+            ],
+          },
+          {
+            category: "hot",
+            picks: [
+              { itemId: hotHero.id, summaryZh: "热点头条摘要" },
+              ...hotItems.map((item, index) => ({
+                itemId: item.id,
+                summaryZh: `${item.title}摘要`,
+                tag: hotEntries[index][2],
+              })),
+            ],
+          },
+        ],
+      },
+      items: [aiHero, ...aiItems, communityHero, ...communityItems, hotHero, ...hotItems],
+      results,
+    })
+
+    assert.match(html, /AI 前沿<\/td>[\s\S]*?推理&nbsp;1[\s\S]*?OpenAI&nbsp;2[\s\S]*?研究&nbsp;2/)
+    assert.match(html, /社区动态<\/td>[\s\S]*?Reddit&nbsp;1[\s\S]*?Digg&nbsp;5[\s\S]*?V2EX&nbsp;2/)
+    assert.match(html, /今日热点<\/td>[\s\S]*?科技&nbsp;1[\s\S]*?财经&nbsp;2[\s\S]*?体育&nbsp;1/)
+    assert.match(
+      html,
+      /<table class="outlook-subnav-table"[^>]*style="[^"]*table-layout:fixed;/,
+      "Outlook 子目录必须使用 fixed layout，禁止由右侧内容反推左列宽度",
+    )
+    const labelCells = html.match(
+      /<td class="outlook-subnav-label" width="64"[^>]*style="[^"]*width:64px;[^"]*">(?:AI 前沿|社区动态|今日热点)<\/td>/g,
+    )
+    assert.equal(labelCells?.length, 3, "三个板块标题列都必须锁定同一 64px 宽度")
+  })
+
   it("GitHub 增长榜（日）：榜单卡 + ▲ N 今日 + 每种榜限量（日榜 6）", () => {
     const ghd = Array.from({ length: 8 }, (_, i) =>
       buildNormalizedItem(
