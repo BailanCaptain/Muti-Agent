@@ -25,6 +25,8 @@
 
 代码合入和项目重启不等于 Outlook 实机视觉通过。最终视觉以用户指定邮箱中的 Classic Outlook 实收为准；单收件人补发必须使用独立原子 marker，不调用生产 `send-now`，也不覆盖正式日报账本。
 
+2026-07-22 运行闭环：最终 `039b9c98` 已合入并推送 `dev`；项目 API/Web 换新进程后均为 HTTP 200，scheduler 恢复 `9 cron / 2 startup` 与 leader term 45。exact-recipient 修正版只投递指定单人并明确返回成功，outbound ledger `38→39` 且 operation 恰好一条；原 archive、shown、rank、sent ledger 与 health 保持不变。真实 Classic Outlook 视觉仍待收件人确认。
+
 ## Quality Gate
 
 - renderer + daily-digest job：`105/105`；全量 `pnpm test`：exit 0。
