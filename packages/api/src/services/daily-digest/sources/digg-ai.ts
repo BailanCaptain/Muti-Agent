@@ -79,13 +79,18 @@ export function parseDiggStories(html: string): DiggStory[] {
   const out: DiggStory[] = []
   for (const e of Array.isArray(arr) ? arr : []) {
     const rec = asRecord(e)
-    const title = String(rec.title ?? "")
+    const summary = asRecord(rec.summary)
+    const title = String(
+      rec.title ?? (typeof summary.title === "string" ? summary.title : ""),
+    )
     const clusterUrlId = String(rec.clusterUrlId ?? "")
     if (!title || !/^[a-z0-9]+$/i.test(clusterUrlId)) continue
     const created = typeof rec.createdAt === "string" ? Date.parse(rec.createdAt) : Number.NaN
     out.push({
       title,
-      tldr: String(rec.tldr ?? ""),
+      tldr: String(
+        rec.tldr ?? (typeof summary.description === "string" ? summary.description : ""),
+      ),
       clusterUrlId,
       rank: Number(rec.rank ?? 999),
       postCount: Number(rec.postCount ?? 0),

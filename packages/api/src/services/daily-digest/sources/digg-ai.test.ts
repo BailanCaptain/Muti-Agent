@@ -65,6 +65,145 @@ describe("parseDiggStories（07-05 真实 fixture，schema 已演化过一次 la
     assert.deepEqual(stories, [post])
   })
 
+  it("storiesByFilter.top.posts[].summary → 兼容 07-23 标题与摘要嵌套改版", () => {
+    const post = {
+      summary: {
+        title: "Digg nested summary schema regression",
+        description: "Current RSC payload nests story copy under summary",
+      },
+      clusterUrlId: "summary20260723",
+      rank: 1,
+      postCount: 11,
+      createdAt: "2026-07-23T00:30:00.000Z",
+    }
+    const payload = JSON.stringify({
+      storiesByFilter: { top: { posts: [post] } },
+    })
+    const postsHtml = `<script>self.__next_f.push([1,${JSON.stringify(payload)}])</script>`
+
+    const stories = parseDiggStories(postsHtml)
+
+    assert.deepEqual(stories, [
+      {
+        title: post.summary.title,
+        tldr: post.summary.description,
+        clusterUrlId: post.clusterUrlId,
+        rank: post.rank,
+        postCount: post.postCount,
+        createdAt: post.createdAt,
+      },
+    ])
+  })
+
+  it("根级字段优先、title/tldr 逐字段回退，空字符串保持旧语义", () => {
+    const posts = [
+      {
+        title: "Root title",
+        tldr: "Root tldr",
+        summary: { title: "Nested title 1", description: "Nested description 1" },
+        clusterUrlId: "rootwins",
+      },
+      {
+        title: "Root title only",
+        summary: { title: "Nested title 2", description: "Nested description 2" },
+        clusterUrlId: "mixedtitle",
+      },
+      {
+        tldr: "Root tldr only",
+        summary: { title: "Nested title 3", description: "Nested description 3" },
+        clusterUrlId: "mixedtldr",
+      },
+      {
+        title: "",
+        summary: { title: "Must not revive empty root title", description: "Nested description 4" },
+        clusterUrlId: "emptytitle",
+      },
+      {
+        title: "Keep empty root tldr",
+        tldr: "",
+        summary: { title: "Nested title 5", description: "Must not replace empty root tldr" },
+        clusterUrlId: "emptytldr",
+      },
+    ]
+    const payload = JSON.stringify({ storiesByFilter: { top: { posts } } })
+    const postsHtml = `<script>self.__next_f.push([1,${JSON.stringify(payload)}])</script>`
+
+    assert.deepEqual(parseDiggStories(postsHtml), [
+      {
+        title: "Root title",
+        tldr: "Root tldr",
+        clusterUrlId: "rootwins",
+        rank: 999,
+        postCount: 0,
+        createdAt: null,
+      },
+      {
+        title: "Root title only",
+        tldr: "Nested description 2",
+        clusterUrlId: "mixedtitle",
+        rank: 999,
+        postCount: 0,
+        createdAt: null,
+      },
+      {
+        title: "Nested title 3",
+        tldr: "Root tldr only",
+        clusterUrlId: "mixedtldr",
+        rank: 999,
+        postCount: 0,
+        createdAt: null,
+      },
+      {
+        title: "Keep empty root tldr",
+        tldr: "",
+        clusterUrlId: "emptytldr",
+        rank: 999,
+        postCount: 0,
+        createdAt: null,
+      },
+    ])
+  })
+
+  it("summary.title 错型 → 丢弃，不把 object/array/boolean 刊成垃圾标题", () => {
+    const posts = [
+      { summary: { title: { text: "object" } }, clusterUrlId: "objecttitle" },
+      { summary: { title: ["array"] }, clusterUrlId: "arraytitle" },
+      { summary: { title: true }, clusterUrlId: "booleantitle" },
+    ]
+    const payload = JSON.stringify({ storiesByFilter: { top: { posts } } })
+    const postsHtml = `<script>self.__next_f.push([1,${JSON.stringify(payload)}])</script>`
+
+    assert.deepEqual(parseDiggStories(postsHtml), [])
+  })
+
+  it("summary.description 错型 → 摘要留空，不强转 object/array/boolean", () => {
+    const posts = [
+      {
+        summary: { title: "Object description", description: { text: "object" } },
+        clusterUrlId: "objectdescription",
+      },
+      {
+        summary: { title: "Array description", description: ["array"] },
+        clusterUrlId: "arraydescription",
+      },
+      {
+        summary: { title: "Boolean description", description: true },
+        clusterUrlId: "booleandescription",
+      },
+    ]
+    const payload = JSON.stringify({ storiesByFilter: { top: { posts } } })
+    const postsHtml = `<script>self.__next_f.push([1,${JSON.stringify(payload)}])</script>`
+
+    assert.deepEqual(
+      parseDiggStories(postsHtml).map(({ title, tldr }) => ({ title, tldr })),
+      [
+        { title: "Object description", tldr: "" },
+        { title: "Array description", tldr: "" },
+        { title: "Boolean description", tldr: "" },
+      ],
+    )
+  })
+
   it("RSC 结构改版（无 storiesByFilter）→ 0 story", () => {
     assert.equal(parseDiggStories("<html><body>redesigned</body></html>").length, 0)
     assert.equal(
@@ -74,7 +213,7 @@ describe("parseDiggStories（07-05 真实 fixture，schema 已演化过一次 la
   })
 })
 
-describe("makeDiggAiSource（#23 主表 v2.1）", () => {
+describe("makeDiggAiSource（#23 主表 v2.3）", () => {
   it("rank 排序 + 集群页 /tech/{id} 链接 + 帖聚合数前置 snippet", async () => {
     const http: SafeHttpClient = { fetchText: async () => diggHtml }
     const items = await makeDiggAiSource().fetch(ctxWith(http))
