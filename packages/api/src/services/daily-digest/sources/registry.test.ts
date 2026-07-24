@@ -4,6 +4,7 @@ import path from "node:path"
 import { describe, it } from "node:test"
 import { SafeHttpError } from "../../../net/safe-http-client"
 import { buildNormalizedItem } from "../feed-parsers"
+import { runAllSources } from "../orchestrator"
 import type { SafeHttpClient, SourceFetchContext } from "../types"
 import {
   JSON_SOURCES,
@@ -166,6 +167,31 @@ describe("fallback 链", () => {
     assert.ok(items.length > 0)
   })
 
+  it("http 与 httpDirect 指向同一底层 client 时，direct source 不重复请求", async () => {
+    let calls = 0
+    const sharedHttp: SafeHttpClient = {
+      async fetchText(url) {
+        calls += 1
+        throw new SafeHttpError("network", url)
+      },
+    }
+    const source = makeRssSource({
+      sourceId: "direct-alias",
+      category: "hot",
+      urls: ["https://a.com/direct"],
+      direct: true,
+    })
+
+    const { results } = await runAllSources([source], {
+      http: sharedHttp,
+      httpDirect: sharedHttp,
+      perSourceTimeoutMs: 100,
+    })
+
+    assert.equal(results[0].status, "failed")
+    assert.equal(calls, 1)
+  })
+
   it("全链空/错 → 抛（orchestrator 记 failed）", async () => {
     const http: SafeHttpClient = { fetchText: async () => "not xml" }
     const src = makeRssSource({
@@ -200,6 +226,18 @@ describe("#28 YouTube AI 频道（07-05 六频道 + 07-11 扩六=12，逐个 fee
         String(d.urls[0]),
         /^https:\/\/www\.youtube\.com\/feeds\/videos\.xml\?channel_id=UC/,
       )
+      assert.equal(d.urls.length, 2)
+      assert.match(
+        String(d.urls[1]),
+        /^https:\/\/m\.youtube\.com\/feeds\/videos\.xml\?channel_id=UC/,
+      )
+      assert.deepEqual(makeRssSource(d).concurrencyGroup, {
+        key: "youtube-feed",
+        maxConcurrency: 1,
+        minIntervalMs: 1_500,
+      })
+      assert.equal(d.retryPolicy?.delayMs, 3_000)
+      assert.deepEqual(d.retryPolicy?.retryHostnames, ["www.youtube.com"])
       assert.ok(d.keepIf, `${d.sourceId} 必须带时效窗`)
       const fresh = buildNormalizedItem(
         d.sourceId,
@@ -361,7 +399,6 @@ describe("健康空 ≠ 失败（07-06 首跑纠偏：安静频道被时效窗�
 
   it("YouTube Feed 的瞬时 404 只重试一次，恢复后按正常源发布并透传 source abort signal", async () => {
     const rss = fs.readFileSync(path.join(FIX, "openai.rss.xml"), "utf8")
-    const controller = new AbortController()
     const calls: Array<{ url: string; signal?: AbortSignal }> = []
     const transient404 = Object.assign(
       new SafeHttpError("http_status", "https://www.youtube.com/feeds/videos.xml", "status 404"),
@@ -385,11 +422,17 @@ describe("健康空 ≠ 失败（07-06 首跑纠偏：安静频道被时效窗�
       },
     })
 
-    const items = await src.fetch({ http, signal: controller.signal, now: () => NOW })
+    const { items, results } = await runAllSources([src], {
+      http,
+      now: () => NOW,
+      transportRetryDelayMs: 0,
+    })
 
     assert.equal(calls.length, 2)
+    assert.equal(results[0].status, "ok")
     assert.ok(items.length > 0)
-    assert.ok(calls.every((call) => call.signal === controller.signal))
+    assert.ok(calls.every((call) => call.signal))
+    assert.equal(calls[0].signal, calls[1].signal)
   })
 
   it("YouTube Feed 的永久 403 不重试，连续 500 也最多请求两次", async () => {
@@ -418,17 +461,130 @@ describe("健康空 ≠ 失败（07-06 首跑纠偏：安静频道被时效窗�
         urls: ["https://www.youtube.com/feeds/videos.xml?channel_id=UCtest"],
         retryPolicy: policy,
       })
-      await assert.rejects(
-        src.fetch(
-          ctxWith({
-            fetchText: async () => {
-              calls += 1
-              throw makeError(scenario.status)
-            },
-          }),
-        ),
-      )
+      const { results } = await runAllSources([src], {
+        http: {
+          fetchText: async () => {
+            calls += 1
+            throw makeError(scenario.status)
+          },
+        },
+        now: () => NOW,
+        transportRetryDelayMs: 0,
+      })
+      assert.equal(results[0].status, "failed")
       assert.equal(calls, scenario.expectedCalls)
     }
+  })
+
+  it("source retry policy 只给单路幂等 feed；fallback 链不逐跳放大", () => {
+    const single = makeRssSource({
+      sourceId: "single",
+      category: "ai",
+      urls: ["https://a.com/feed.xml"],
+    })
+    const fallback = makeRssSource({
+      sourceId: "fallback",
+      category: "ai",
+      urls: ["https://a.com/feed.xml", "https://b.com/feed.xml"],
+    })
+    const singleJson = makeJsonSource({
+      sourceId: "single-json",
+      category: "hot",
+      urls: ["https://a.com/feed.json"],
+      map: () => [],
+    })
+
+    assert.deepEqual(single.transientGetRetry, { maxAttempts: 2 })
+    assert.equal(fallback.transientGetRetry, undefined)
+    assert.deepEqual(singleJson.transientGetRetry, { maxAttempts: 2 })
+  })
+
+  it("YouTube 的 network→404 共享同一个两次 attempt 预算，不得叠成四次", async () => {
+    let calls = 0
+    const src = makeRssSource({
+      sourceId: "yt-hard-cap",
+      category: "ai",
+      urls: ["https://www.youtube.com/feeds/videos.xml?channel_id=UCtest"],
+      retryPolicy: {
+        maxAttempts: 2,
+        delayMs: 0,
+        retryHttpStatuses: [404, 408, 425, 429, 500, 502, 503, 504],
+      },
+    })
+    const { results } = await runAllSources([src], {
+      http: {
+        fetchText: async (url) => {
+          calls += 1
+          if (calls === 1) throw new SafeHttpError("network", url)
+          throw new SafeHttpError("http_status", url, "status 404", 404)
+        },
+      },
+      now: () => NOW,
+      transportRetryDelayMs: 0,
+    })
+
+    assert.equal(results[0].status, "failed")
+    assert.equal(calls, 2)
+  })
+
+  it("YouTube 主 feed 两次失败后只走一次 mobile 官方 fallback", async () => {
+    const rss = fs.readFileSync(path.join(FIX, "openai.rss.xml"), "utf8")
+    const urls: string[] = []
+    const youtubeDef = RSS_SOURCES.find((def) => def.sourceId === "yt-two-minute-papers")!
+    const source = makeRssSource({
+      ...youtubeDef,
+      retryPolicy: {
+        ...youtubeDef.retryPolicy!,
+        delayMs: 0,
+      },
+    })
+    const { results } = await runAllSources([source], {
+      http: {
+        async fetchText(url) {
+          urls.push(url)
+          if (url.startsWith("https://www.youtube.com/")) {
+            throw new SafeHttpError("http_status", url, "status 500", 500)
+          }
+          return rss
+        },
+      },
+      now: () => NOW,
+      transportRetryDelayMs: 0,
+    })
+
+    assert.equal(results[0].status, "ok")
+    assert.deepEqual(
+      urls.map((url) => new URL(url).hostname),
+      ["www.youtube.com", "www.youtube.com", "m.youtube.com"],
+    )
+  })
+
+  it("YouTube 主 feed 解析为空后，mobile 终末 fallback 只请求一次", async () => {
+    const urls: string[] = []
+    const youtubeDef = RSS_SOURCES.find((def) => def.sourceId === "yt-two-minute-papers")!
+    const source = makeRssSource({
+      ...youtubeDef,
+      retryPolicy: {
+        ...youtubeDef.retryPolicy!,
+        delayMs: 0,
+      },
+    })
+    const { results } = await runAllSources([source], {
+      http: {
+        async fetchText(url) {
+          urls.push(url)
+          if (url.startsWith("https://www.youtube.com/")) return "<feed></feed>"
+          throw new SafeHttpError("network", url)
+        },
+      },
+      now: () => NOW,
+      transportRetryDelayMs: 0,
+    })
+
+    assert.equal(results[0].status, "failed")
+    assert.deepEqual(
+      urls.map((url) => new URL(url).hostname),
+      ["www.youtube.com", "m.youtube.com"],
+    )
   })
 })

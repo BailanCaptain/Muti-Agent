@@ -843,3 +843,16 @@
 - 证据：纯 reaction + 伪造 eligible/summary、正文三类个人噪声、GPT/vLLM 长赞叹、过宽标题/正文噪声门，以及 Minecraft Coder Pack + `mcp` 先后 RED；R6 又用终态探针证明 CUDA 正例虽通过前置噪声门，仍被 publication 降为 `low_signal`。补入 production-path RED 后，真实 `GPT-5.6 Sol + Cursor + Blender MCP` 工程样本、vLLM/SGLang 推理讨论、相亲推荐模型 A/B 评测和 CUDA 故障诊断四类正例与五类反例在同一终态测试中闭合。
 - 原理：标签是结论，不是证据；主题域与内容性质是两条正交轴，命中 AI 实体不能赦免求助/抱怨/生活叙事。最终外发门必须能从不可伪造的原始事实独立重建最小判断；缩写只有在上下文消歧后才是强信号。
 - 关联：LL-008、LL-030、LL-037、B027、B028、B031、F037
+
+### LL-041: 单代理上的无界 fan-out 会把数秒瞬断固化成大面积坏源——并发门控与共享 retry token 必须成对设计
+- 状态：validated
+- 更新时间：2026-07-24
+
+- 坑：F037 在 07:30 用一个 `ProxyAgent` 同时启动 43 个 source；代理上游节点同秒出现 `context deadline exceeded`，24 个请求以 network/timeout 直接失败，另 1 个撞 source 总超时。12 个 YouTube 因有第二次机会全部恢复，普通源则把同一次瞬断永久写进当日健康账。B029 的真实补发已出现过同类“仅 6/43 正常”，当时被当作一次性抖动，缺口没有系统修复。
+- 根因：source 隔离只解决“一个源抛错不拖垮整报”，没有限制共享出口的同时连接数；第一版全局并发 6 又没有表达“12 个 source 仍共享同一个 YouTube feed 上游”的二级故障域。仅串行仍不足：当前代理对同一 `www.youtube.com` feed 会随机返回 404/500，而直连又超时。重试只散落在 YouTube registry 内，独立 fetcher 没覆盖；部分调用点未传 `ctx.signal`，使外层 source 已超时而底层请求仍可能继续占连接。
+- 触发条件：多个独立任务共用一个代理/连接边界并用无界 `Promise.all` 突发；瞬时网络错误只请求一次；外层预算没有自动注入所有子请求。
+- 修复：source 层使用 group-aware 保序就绪调度器，默认并发 6；被组闸阻塞的 source 留在 pending，不得占用全局执行槽。相同上游可再声明 concurrency group，同 key 配置在启动前取最小并发与最大间隔；YouTube feed 组固定并发 1、最小间隔 1.5 秒，且组内排队不启动 source 预算。orchestrator 为每个 source 构造绑定总预算 signal 的 HTTP wrapper，相同底层 `http/httpDirect` 复用 wrapper。只有显式 opt-in 的幂等 GET 可在整个 source 内共享一次 retry token；YouTube 主路退避 3 秒、仅主站可消费 token，并固定单次 mobile 官方 fallback，POST、永久错误与普通多路 fallback 不重试，防第二波风暴和预算饥饿。
+- 防护：共享 egress 的可靠性测试必须同时锁八件事——最大活跃 source、blocked group 不占全局槽、同 key 配置顺序无关、同上游最大活跃 source、底层实际收到 abort、direct/proxy client 身份不被 wrapper 破坏、所有恢复路径共享硬 attempt 上限、parser-zero 后终末 fallback 不消费遗留 token。只测“某个 URL 会重试”或只限制全局并发，都不足以证明不会形成二级重试风暴、重复请求或 worker convoy。
+- 来源锚点：`docs/bugReport/B043-digest-egress-burst-failure.md`、`packages/api/src/services/daily-digest/orchestrator.test.ts`、2026-07-24 Clash sidecar 07:30:13 记录。
+- 原理：限并发降低瞬时压力，有限重试跨过短故障窗；二者缺一都会把短暂故障放大为用户可见缺报。
+- 关联：LL-008、LL-030、LL-035、B029、B033、B043、F037

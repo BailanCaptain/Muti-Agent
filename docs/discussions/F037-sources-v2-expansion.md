@@ -151,6 +151,7 @@ FAIL：bentossell（503 弃）
 3. **单源隔离**：任一源挂不影响整报（orchestrator 独立超时 + try/catch）。
 4. **连续失败告警（AC8）**：`source-health` 持久化逐日结果，连续 ≥3 天失败 → `pushAlert` 主动告警 + 邮件页脚健康行点名（x-firsthand 还带「小号 cookie 失效 → 重提 auth_token」修复提示）。
 5. **坏源≠安静源契约**：fetch 抛错=failed 进告警链；返回 []=健康空不告警（07-06 纠偏 `26eba5d`）。
+6. **共享出站瞬断保护（B043）**：source fan-out 由 group-aware 就绪调度器保序收集、默认并发 6，blocked group 留在 pending、不占全局槽；共享同一上游的 source 另有声明式组闸，同 key 在启动前取最小并发/最大间隔，12 个 YouTube feed 固定串行且相隔 1.5 秒，组内等待不消耗 source 预算。每个 source 的 HTTP 自动绑定同一总预算 signal；`http/httpDirect` 若是同一底层 client 则复用 wrapper，保持 fallback 身份去重。单路幂等 feed 与 GitHub 可在整个 source 内共享一次 transport retry；YouTube 用 3 秒退避且仅 `www` 主路可消费 token，主路两次失败或 parser-zero 后都只走一次 `m` 官方备用路。POST、普通多 URL/direct fallback、多账号/多 feed 不逐请求放大。该层处理的是代理/WAN 瞬断，不会把 parser-zero 或安全拒绝伪装成网络恢复。
 
 **没有也不该有的**：「自动发明新源」。新源要过白名单推导（SSRF 边界）+ 实测活体验证 + 表驱动登记——这是供应链安全边界，Agent-Reach 同样做不到（它的「自动」也只是实例轮换）。
 

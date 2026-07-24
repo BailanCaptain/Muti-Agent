@@ -80,6 +80,31 @@ export interface SourceFetchContext {
 }
 
 /**
+ * 单 source 内共享的一枚 transport retry token。
+ * 仅幂等 GET 可消费；http/httpDirect 共享，避免多请求源在代理抖动时形成重试风暴。
+ */
+export interface TransientGetRetryPolicy {
+  maxAttempts: 2
+  /** 缺省由 orchestrator 使用 750ms 抖动退避；测试或特殊源可收紧。 */
+  delayMs?: number
+  /** network/timeout 固定可恢复；这里仅追加源明确允许的瞬时 HTTP 状态。 */
+  retryHttpStatuses?: readonly number[]
+  /** 仅这些主机可消费 retry token；终末 fallback 可据此保持单次请求。 */
+  retryHostnames?: readonly string[]
+}
+
+/**
+ * 共享同一上游限流面的 source 组；排队发生在 source 自身计时开始之前。
+ * 同 key 声明若不一致，orchestrator 在启动任何 source 前取最小并发与最大间隔。
+ */
+export interface SourceConcurrencyGroup {
+  key: string
+  maxConcurrency: number
+  /** 同组 source 的最小启动间隔；等待发生在 source 自身计时开始之前。 */
+  minIntervalMs?: number
+}
+
+/**
  * fetch 契约（07-06 纠偏后，德彪 r3 P2 注释同步）：
  * - **坏源要抛错**（解析不出/全 URL 尽头/凭证失效）→ orchestrator 记 failed 进健康/告警链；
  * - **返回 [] = 健康空**（源活着只是本窗口没货，如安静频道被时效窗滤空）→ 记 ok 不告警。
@@ -90,6 +115,13 @@ export interface DigestSource {
   category: DigestCategory
   /** 长跑源（如 X 逐账号限速）覆盖 orchestrator 默认单源超时（45s） */
   timeoutBudgetMs?: number
+  /** 同域或同供应商 source 的第二层并发门控；例如 YouTube feeds 共享出口限流。 */
+  concurrencyGroup?: SourceConcurrencyGroup
+  /**
+   * B043：为该 source 的全部 http/httpDirect 请求共享一次恢复机会。
+   * 未声明仍会绑定 source AbortSignal，但不会自动重试（多 URL/多账号源靠既有 fallback/隔离）。
+   */
+  transientGetRetry?: TransientGetRetryPolicy
   fetch(ctx: SourceFetchContext): Promise<NormalizedItem[]>
 }
 

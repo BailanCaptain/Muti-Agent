@@ -1,8 +1,8 @@
 import { buildNormalizedItem, stripHtml } from "../feed-parsers"
 import {
-  assessGithubAiEligibility,
   type GithubAiEligibility,
   type GithubRepoEvidence,
+  assessGithubAiEligibility,
 } from "../github-eligibility"
 import type { DigestSource, NormalizedItem } from "../types"
 
@@ -307,6 +307,7 @@ function makeTrendingSource(
     sourceId,
     category: "github",
     timeoutBudgetMs: GITHUB_SOURCE_TIMEOUT_MS,
+    transientGetRetry: { maxAttempts: 2 },
     async fetch(ctx): Promise<NormalizedItem[]> {
       const evidenceCache = opts.evidenceCache ?? createGithubEvidenceCache()
       const html = await evidenceCache.requestGate.run(
@@ -393,6 +394,7 @@ export function makeGithubNewcomersSource(opts: GithubSourceOptions = {}): Diges
     sourceId: "github-ai-newcomers",
     category: "github",
     timeoutBudgetMs: GITHUB_SOURCE_TIMEOUT_MS,
+    transientGetRetry: { maxAttempts: 2 },
     async fetch(ctx): Promise<NormalizedItem[]> {
       const since = new Date(ctx.now().getTime() - 7 * 86_400_000).toISOString().slice(0, 10)
       const q = encodeURIComponent(`created:>${since}`)
