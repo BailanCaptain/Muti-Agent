@@ -1,7 +1,7 @@
 ---
 id: B044
 title: F037 周末日报空壳与周末发送节奏纠偏
-status: in_progress
+status: fixed
 reported_by: 小孙
 reported_at: 2026-07-27
 related: F037
@@ -41,5 +41,5 @@ related: F037
    4. 在周一抓取仅保留 24h 的 HN/X：周六条目在进入严格周末过滤前已经丢失。
    5. Digg 首次返回 `SafeHttpError(http_status, 429)`、第二次返回正常 fixture：旧源没有 opt-in retry，结果直接失败或落 fallback。
 4. **根因分析**：编辑成稿对象“非 null”与“至少一条经批准新闻正文”被错误等同；GitHub 榜单绕过了正文终态门。发送日历只实现时间门，没有业务星期门。源侧 24h 窗口与新的周一周末合辑语义不匹配。Digg 429 属可恢复 GET，但未声明现有受控重试策略。Claude OAuth 过期属于环境状态，按配置不可变纪律不在代码内伪修。
-5. **修复方案**：待 RED 完成后，以 reconcile 单入口周末门、周一上海本地日期窗口、新闻正文终态门、周一 HN/X 72h lookback、Digg 单 token 429 retry 和 renderer 条件文案做最小修改；force 仅保留人工显式覆盖。
-6. **验证方式**：待 GREEN、全量门禁、独立验收、peer review 与真实单次 SMTP 发信后补全证据。
+5. **修复方案**：以 reconcile 单入口周末门、周一上海本地日期窗口、新闻正文终态门、周一 HN/X 72h lookback、Digg 单 token 429 retry 和 renderer 条件文案做最小修改；force 仅保留人工显式覆盖。
+6. **验证方式**：B044 专项 `187/187`、typecheck、build、lint、check-docs、ADR guard、全量 `pnpm test` 全绿；零上下文 Guardian 对最终 commit `0bccc114` 判定 PASS，peer review 修复 1 个 P2 后 `Approved / LGTM`。2026-07-27 02:58 正式单次 SMTP 发送成功，message-id `<766b79ee-07cb-0db4-92f8-996d9a1f0b05@qq.com>`；24 条正文中上海日期 07-25 为 10 条、07-26 为 14 条，GitHub 0 条、越界 0 条、非降级，外发账本仅 1 条。Digg 在一次受控重试后仍被上游持续 429，邮件按设计如实显示单源异常，未绕过限流或静默伪健康。
