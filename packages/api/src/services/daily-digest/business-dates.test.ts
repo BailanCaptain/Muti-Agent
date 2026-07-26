@@ -3,8 +3,11 @@ import { describe, it } from "node:test"
 import {
   formatBusinessDate,
   isFirstOfMonthInTz,
+  isMondayBusinessDate,
   isMondayInTz,
+  isWeekendBusinessDate,
   prevBusinessDate,
+  weekendRangeForMonday,
 } from "./business-dates"
 
 describe("business-dates（Asia/Shanghai 语义）", () => {
@@ -23,5 +26,18 @@ describe("business-dates（Asia/Shanghai 语义）", () => {
     assert.equal(isFirstOfMonthInTz(new Date("2026-08-01T08:00:00+08:00")), true)
     assert.equal(isFirstOfMonthInTz(new Date("2026-07-31T17:00:00Z")), true) // 上海 08-01 01:00
     assert.equal(isFirstOfMonthInTz(new Date("2026-07-15T08:00:00+08:00")), false)
+  })
+
+  it("业务日期星期判断：周末停发，周一映射到刚过去的周六/周日", () => {
+    assert.equal(isWeekendBusinessDate("2026-07-25"), true)
+    assert.equal(isWeekendBusinessDate("2026-07-26"), true)
+    assert.equal(isWeekendBusinessDate("2026-07-27"), false)
+    assert.equal(isMondayBusinessDate("2026-07-27"), true)
+    assert.equal(isMondayBusinessDate("2026-07-28"), false)
+    assert.deepEqual(weekendRangeForMonday("2026-07-27"), {
+      start: "2026-07-25",
+      end: "2026-07-26",
+    })
+    assert.equal(weekendRangeForMonday("2026-07-28"), null)
   })
 })

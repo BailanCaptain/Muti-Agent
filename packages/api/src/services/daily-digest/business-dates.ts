@@ -16,6 +16,30 @@ export function prevBusinessDate(date: string, days = 1): string {
   return d.toISOString().slice(0, 10)
 }
 
+function weekdayOfBusinessDate(date: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null
+  const parsed = new Date(`${date}T12:00:00Z`)
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) return null
+  return parsed.getUTCDay()
+}
+
+export function isMondayBusinessDate(date: string): boolean {
+  return weekdayOfBusinessDate(date) === 1
+}
+
+export function isWeekendBusinessDate(date: string): boolean {
+  const weekday = weekdayOfBusinessDate(date)
+  return weekday === 0 || weekday === 6
+}
+
+export function weekendRangeForMonday(date: string): { start: string; end: string } | null {
+  if (!isMondayBusinessDate(date)) return null
+  return {
+    start: prevBusinessDate(date, 2),
+    end: prevBusinessDate(date, 1),
+  }
+}
+
 function weekdayInTz(now: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(now)
 }

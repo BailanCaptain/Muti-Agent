@@ -9,6 +9,7 @@ import {
 } from "./x-provider"
 
 const NOW = new Date("2026-07-03T12:00:00Z")
+const MONDAY = new Date("2026-07-27T09:00:00+08:00")
 const ctx = (http: SafeHttpClient) => ({ http, now: () => NOW })
 /** 单测默认零延时（真延时只在限速专项测里用注入时钟验证） */
 const NO_PACING = { delayMs: 0, jitterMs: 0 }
@@ -42,6 +43,32 @@ describe("createTwitterApiIoProvider", () => {
     assert.equal(items[0].category, "community")
     // X 分栏 #3：已知从业者账号挂结构标签
     assert.equal(items[0].topicTag, "从业者")
+  })
+
+  it("B044：周一 API 路线回看 72h，覆盖周六但不带入周五", async () => {
+    const http: SafeHttpClient = {
+      fetchText: async () =>
+        JSON.stringify({
+          tweets: [
+            {
+              id: "sat",
+              text: "Saturday model update",
+              createdAt: new Date(MONDAY.getTime() - 60 * 3600_000).toISOString(),
+            },
+            {
+              id: "fri",
+              text: "Friday model update",
+              createdAt: new Date(MONDAY.getTime() - 80 * 3600_000).toISOString(),
+            },
+          ],
+        }),
+    }
+    const provider = createTwitterApiIoProvider({ apiKey: "k", pacing: NO_PACING })
+    const items = await provider.fetchHandles(["sama"], { http, now: () => MONDAY })
+    assert.deepEqual(
+      items.map((item) => item.canonicalUrl),
+      ["https://x.com/sama/status/sat"],
+    )
   })
 
   it("外部 TwitterAPI.io 保持使用代理 client，不误走 RSSHub 直连 client", async () => {
@@ -260,6 +287,22 @@ describe("createRsshubXProvider（cookie 小号路线，小孙 07-03 拍板 D16�
     const items = await provider.fetchHandles(["old", "nodate"], ctx(http))
     assert.equal(items.length, 1)
     assert.ok(items[0].title.startsWith("@nodate: "))
+  })
+
+  it("B044：周一 RSSHub 路线回看 72h，覆盖周六但不带入周五", async () => {
+    const http = httpReturning({
+      "/twitter/user/sat": tweetRss(new Date(MONDAY.getTime() - 60 * 3600_000).toUTCString()),
+      "/twitter/user/fri": tweetRss(new Date(MONDAY.getTime() - 80 * 3600_000).toUTCString()),
+    })
+    const provider = createRsshubXProvider({
+      rsshubBase: "http://127.0.0.1:1200",
+      pacing: NO_PACING,
+    })
+    const items = await provider.fetchHandles(["sat", "fri"], { http, now: () => MONDAY })
+    assert.deepEqual(
+      items.map((item) => item.title),
+      ["@sat: we shipped a new model today"],
+    )
   })
 
   it("单账号失败跳过不炸整源", async () => {

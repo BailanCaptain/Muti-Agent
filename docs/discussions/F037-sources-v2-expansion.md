@@ -1,4 +1,4 @@
-# F037 信源全量主表 + 扩展调研定案（v2.3 · 2026-07-23）
+# F037 信源全量主表 + 扩展调研定案（v2.4 · 2026-07-27）
 
 > **本表是 F037 信源的唯一真相源**：任何汇报/实现/排期以 §0 主表为准；每次改动必须核计数（上版 N 项 → 本版 N±变更逐条列明），禁止凭记忆手抄重写。
 > 失误记录（立表原因）：07-04 两连漏——Digg「调研有、清单漏」、小红书「表格有、队列漏」，小孙连抓两次。病根=每次口头重抄必丢件。
@@ -6,6 +6,8 @@
 
 ## 0. 全量主表（40 路：现役 19 + 07-07 增补 2 + P0 新增 8 + P1 三项 + P2 五项 + 管线增强 3）
 
+> **v2.4 计数核对**：上版 40 项 → 本版 40 项。B044 只调整周末发送节奏、#11/#17 周一 lookback 与 #23 Digg 可恢复 HTTP 重试，源数量零增删。
+>
 > **v2.3 计数核对**：上版 40 项 → 本版 40 项。B042 只同步 #23 Digg 的现行入口与 RSC 字段合同，源数量零增删。
 >
 > **v2.2 计数核对**：上版 38 项 → 本版 40 项。变更逐条：+#39 vllm-releases、+#40 vllm-ascend-releases（小孙 07-06「我是 NPU 推理的」点名）；存量项零删除。另有**板块字段改值不改件数**：07-06 社区改版（小孙「把 X 一手动态改成社区动态」）#17 x-firsthand、#21 v2ex-hot、#22 reddit-ai、#23 digg-ai、#31 小红书 板块 → community；#27 月榜 每月 1 号 → **每天常驻**（小孙「月榜咋没有了」）。
@@ -23,15 +25,15 @@
 | 8 | sglang-releases | ai | GitHub releases.atom | 滤 nightly |
 | 9 | hf-blog | ai | 官方 RSS + AI 关键词过滤 | |
 | 10 | hf-daily-papers | ai | HF JSON API（日期回退 1-3 天链） | 论文信号主源（arXiv 直连因此不进） |
-| 11 | hn-ai | ai | Algolia JSON（points>100 近 24h + 关键词） | P1-30 评论 enrichment 待接 |
+| 11 | hn-ai | ai | Algolia JSON（points>100；通常近 24h，周一近 72h + 终态周末日期门） | P1-30 评论 enrichment 待接 |
 | 12 | bbc-zhongwen | hot | 官方 RSS | |
 | 13 | thepaper | hot | RSSHub（自建优先→公共实例链） | |
 | 14 | zhihu-hot | hot | 公开 JSON API | |
 | 15 | baidu-hot | hot | 公开 JSON API | |
 | 16 | toutiao-hot | hot | 公开 JSON API | |
-| 17 | x-firsthand | community（07-06 前 x） | 自建 RSSHub cookie 小号 `/twitter/user/:handle` | B 项已加 4-7s/账号限速+8min 预算；33 账号已验活待小孙贴 `_X_HANDLES` |
-| 18 | github-trending-weekly | github | 刮 `github.com/trending?since=weekly`（周一） | PAT 可选补 topics |
-| 19 | github-ai-newcomers | github | api.github.com search `topic:mcp created:>7days`（周一） | |
+| 17 | x-firsthand | community（07-06 前 x） | 自建 RSSHub cookie 小号 `/twitter/user/:handle` | B 项已加 4-7s/账号限速+8min 预算；通常近 24h，周一近 72h 后由终态日期门只留周六/周日；33 账号已验活 |
+| 18 | github-trending-weekly | github | 刮 `github.com/trending?since=weekly`（常驻；周一周末合辑除外） | PAT 可选补 topics |
+| 19 | github-ai-newcomers | github | api.github.com search `topic:mcp created:>7days`（常驻；周一周末合辑除外） | |
 
 ### 07-07 增补现役 2 路（小孙 07-06 点名：NPU 推理要多看）
 | # | sourceId | 板块 | 接入 | 备注 |
@@ -45,7 +47,7 @@
 | 20 | ai-hot | ai | `aihot.virxact.com/api/public/items?mode=selected` JSON（免 auth 需浏览器 UA） | ✅ 07-04 实测 200；LLM 策展中文 AI（公众号+The Decoder 聚合）；contentMode:digest。**07-07 对账（小孙「怎么一个内容都没看见」）**：在册在用（日抓 ~50 条），条目 canonicalUrl 指向**原始出处**（x.com 等）而非 virxact 页——邮件里看不到 virxact 域名但内容在（07-07 「扎克伯格千兆瓦集群」即它贡献）；此前档案流挤占喂样仅 1 坑，批次 E 新鲜窗后升至 ~5 坑 |
 | 21 | v2ex-hot | community（07-06 前 hot） | `www.v2ex.com/api/topics/hot.json` 公开免 key（带 UA）；**07-07 批次 E 挂 keepIf 科技正向词表**（全站热议的生活/职场/理财贴不进社区板块，宁缺勿滥） | Agent-Reach 全端点备案；待接入时验 |
 | 22 | reddit-ai | community（07-06 前 ai） | **shreddit svc 免 key**：`www.reddit.com/svc/shreddit/community-more-posts/top/?name={sub}&t=day` 刮 `<shreddit-post>` 属性（真实 score/comments）；浏览器 UA+令牌桶 5rps；子版 LocalLLaMA/MachineLearning/OpenAI/ClaudeAI/singularity | last30days 生产路线（匿名 .json 已 403 死）；arctic-shift 分数备援 |
-| 23 | digg-ai | community（07-06 前 ai） | `digg.com/tech/` 页内 Next.js RSC 流提取（`/ai` 仅作网络失败 fallback）：拼接 `self.__next_f.push` 后解析 `storiesByFilter.top.posts`（兼容旧 `items`）；标题/摘要优先根级 `title/tldr`，缺失时回退 `summary.title/description`，nested 错型不强转；用 rank/postCount 排序与展示 | ✅ 07-23 实测 `top.posts` 25 条、规范化 15 条；**= AI 1000 大V 聚合，不碰小号白嫖 1000 账号信号**；RSC 格式脆，解析 0 条立即 fail-closed 走提醒卡 |
+| 23 | digg-ai | community（07-06 前 ai） | `digg.com/tech/` 页内 Next.js RSC 流提取（`/ai` 仅作网络失败 fallback）：拼接 `self.__next_f.push` 后解析 `storiesByFilter.top.posts`（兼容旧 `items`）；标题/摘要优先根级 `title/tldr`，缺失时回退 `summary.title/description`，nested 错型不强转；用 rank/postCount 排序与展示 | ✅ 07-23 实测 `top.posts` 25 条、规范化 15 条；RSC 格式脆，解析 0 条立即 fail-closed；B044 起 canonical GET 对 429/5xx 与 transport 错误共享且只消费一次 retry token |
 | 24 | techmeme | ai | `www.techmeme.com/feed.xml` RSS | ✅ 07-05 实测 200 真 RSS |
 | 25 | google-ai-blog | ai | `blog.google/technology/ai/rss/` | ✅ 07-05 实测 200 真 RSS |
 | 26 | qwen-blog | ai | `qwenlm.github.io/blog/index.xml` | ✅ 07-05 实测 200 真 RSS |
@@ -118,6 +120,7 @@ FAIL：bentossell（503 弃）
 - 07-05 小孙（改版五条 + 前提令）：①排版长短块难看要修 ②源多要分栏可点切换（→邮件静态分组+网页版真 tabs，邮件客户端剥 JS 做不了真切换）③X 授权代配 .env 33 账号（已代改该一行）+分最热/科技公司/科技从业者 ④热点分体育/民生等栏 ⑤AI 栏特别设计=**推理专栏**（大模型推理相关）+其余按公司分类；**后置件往前提，特别是小红书**；手动项先搁置
 - 07-05 晚二拍（小孙「日报点开就看完，别逼人跳网页切换」）：**邮件自足原则**——tab 的本质是"有限空间装更多"不是"切换"这个动作；邮件原生三件=①**其余速览**紧凑行区（每板块未精选条目源内轮转 12 行直接印，一行=源名·标题链接·热度）②导览卡**子栏目录**锚点直达 + 每节尾「↑ 回目录」（锚点是邮件唯一可用跳转原语；不认锚点的客户端退化成静态目录，内容零丢失）③时间当切换器（GitHub 增长榜每天/周榜周一/月榜 1 号——日历替用户切 tab）；**网页版降级为档案馆**（全量回溯/F029 语料读取面），不在日常阅读动线上；Gmail 102KB 裁剪线=物理上限，job 95KB 预警；设置页候选项+「邮件密度（其余速览行数）」
 - 07-23 B042：Digg canonical 已由 `/ai` 迁至 `/tech/`，集合保持 `top.posts`，copy 迁至 `summary.title/description`；实现保留根级旧字段优先、逐字段 nested fallback 与 parser-zero 提醒卡，源数量 `40 → 40`。
+- 07-27 B044：周六/周日自动停发，周一严格只汇总上海日期的周六/周日新闻；HN/X 周一源侧回看 72h 后由终态日期门剔除周五/周一，GitHub 当前榜单不进周一合辑；Digg 429/5xx 增加一次受控恢复。
 
 ## 7. 执行队列（黄仁勋自主推进）
 1. P0 八路源（#20-27）+ 质量四层 + 两段式深读 → 德彪 review
@@ -152,6 +155,7 @@ FAIL：bentossell（503 弃）
 4. **连续失败告警（AC8）**：`source-health` 持久化逐日结果，连续 ≥3 天失败 → `pushAlert` 主动告警 + 邮件页脚健康行点名（x-firsthand 还带「小号 cookie 失效 → 重提 auth_token」修复提示）。
 5. **坏源≠安静源契约**：fetch 抛错=failed 进告警链；返回 []=健康空不告警（07-06 纠偏 `26eba5d`）。
 6. **共享出站瞬断保护（B043）**：source fan-out 由 group-aware 就绪调度器保序收集、默认并发 6，blocked group 留在 pending、不占全局槽；共享同一上游的 source 另有声明式组闸，同 key 在启动前取最小并发/最大间隔，12 个 YouTube feed 固定串行且相隔 1.5 秒，组内等待不消耗 source 预算。每个 source 的 HTTP 自动绑定同一总预算 signal；`http/httpDirect` 若是同一底层 client 则复用 wrapper，保持 fallback 身份去重。单路幂等 feed 与 GitHub 可在整个 source 内共享一次 transport retry；YouTube 用 3 秒退避且仅 `www` 主路可消费 token，主路两次失败或 parser-zero 后都只走一次 `m` 官方备用路。POST、普通多 URL/direct fallback、多账号/多 feed 不逐请求放大。该层处理的是代理/WAN 瞬断，不会把 parser-zero 或安全拒绝伪装成网络恢复。
+7. **周末节奏与空壳保护（B044）**：周六/周日 reconcile 在抓源前返回 `skipped_weekend`；周一只发布有日期且上海业务日落在周六/周日的新闻，HN/X 为覆盖周六临时回看 72h，GitHub 当前榜单不抓。最终 publication 若没有经编辑批准的非 GitHub 正文或播客则整期 fail-closed，不允许榜单兜底；Digg 的 canonical GET 对 429/5xx 只重试一次。
 
 **没有也不该有的**：「自动发明新源」。新源要过白名单推导（SSRF 边界）+ 实测活体验证 + 表驱动登记——这是供应链安全边界，Agent-Reach 同样做不到（它的「自动」也只是实例轮换）。
 

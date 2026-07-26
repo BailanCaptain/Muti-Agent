@@ -1,3 +1,4 @@
+import { isMondayInTz } from "../business-dates"
 import { buildNormalizedItem, parseRssOrAtom } from "../feed-parsers"
 import type { DigestSource, NormalizedItem, SafeHttpClient } from "../types"
 import { type PacingOptions, forEachPaced, resolvePacing } from "./pacing"
@@ -90,6 +91,10 @@ export interface TwitterApiIoOptions {
 /** 按量 API 是自家 key，不担心封号 —— 轻限速只为礼貌（防 429） */
 const API_PACING_DEFAULTS = { delayMs: 250, jitterMs: 250, maxTotalMs: 240_000 }
 
+function xLookbackMs(now: Date): number {
+  return (isMondayInTz(now) ? 72 : 24) * 3600_000
+}
+
 /** TwitterAPI.io 按量供应商（$0.00015/read 档，2026-07 调研价） */
 export function createTwitterApiIoProvider(opts: TwitterApiIoOptions): XProvider {
   const perHandle = opts.perHandle ?? 10
@@ -99,7 +104,8 @@ export function createTwitterApiIoProvider(opts: TwitterApiIoOptions): XProvider
     maxTotalMs: pacing.maxTotalMs,
     async fetchHandles(handles, ctx) {
       const out: NormalizedItem[] = []
-      const cutoff = ctx.now().getTime() - 24 * 3600_000
+      const now = ctx.now()
+      const cutoff = now.getTime() - xLookbackMs(now)
       const tally = createHandleFailureTally()
       await forEachPaced(handles, pacing, ctx.signal, async (handle) => {
         tally.attempted++
@@ -195,7 +201,7 @@ function isLoopbackRsshubBase(base: string): boolean {
 /**
  * cookie 小号路线（小孙 2026-07-03 拍板）：自建 RSSHub `/twitter/user/:handle` RSS 路由。
  * 实例侧须配 TWITTER_AUTH_TOKEN（小号 cookie，人工件）；本 provider 只消费 RSS，
- * cookie 永不经过本进程。只取近 24h；无日期条目保守保留。
+ * cookie 永不经过本进程。通常只取近 24h；周一回看 72h 供周末合辑使用；无日期条目保守保留。
  */
 export function createRsshubXProvider(opts: RsshubXOptions): XProvider {
   const base = opts.rsshubBase.replace(/\/$/, "")
@@ -206,7 +212,8 @@ export function createRsshubXProvider(opts: RsshubXOptions): XProvider {
     maxTotalMs: pacing.maxTotalMs,
     async fetchHandles(handles, ctx) {
       const out: NormalizedItem[] = []
-      const cutoff = ctx.now().getTime() - 24 * 3600_000
+      const now = ctx.now()
+      const cutoff = now.getTime() - xLookbackMs(now)
       const tally = createHandleFailureTally()
       // 显式 loopback RSSHub 必须复用 orchestrator 的直连 client：全局 ProxyAgent 不消费
       // NO_PROXY。远端自建 RSSHub 保持原代理通道，避免破坏只能经代理访问的配置。

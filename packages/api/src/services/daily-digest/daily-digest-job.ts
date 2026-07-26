@@ -1,7 +1,12 @@
 import fs from "node:fs"
 import path from "node:path"
 import { type EmailSender, appendOutboundLedger } from "../../lib/email-sender"
-import { DIGEST_TZ, formatBusinessDate } from "./business-dates"
+import {
+  DIGEST_TZ,
+  formatBusinessDate,
+  isWeekendBusinessDate,
+  weekendRangeForMonday,
+} from "./business-dates"
 import { validateEditorialDecisionSet } from "./editorial-decider"
 import {
   applyGithubRankStatuses,
@@ -42,6 +47,7 @@ import type {
 
 export type ReconcileStatus =
   | "skipped_not_due"
+  | "skipped_weekend"
   | "skipped_already_sent"
   | "skipped_needs_manual"
   | "failed_no_items"
@@ -70,7 +76,12 @@ export function isDigestFailureStatus(status: ReconcileStatus): boolean {
 }
 
 // 编译期穷尽：每个 ReconcileStatus 必须归入失败态或非失败态白名单，新增状态漏归类 = tsc 红
-type NonFailureStatus = "ok" | "skipped_not_due" | "skipped_already_sent" | "skipped_needs_manual"
+type NonFailureStatus =
+  | "ok"
+  | "skipped_not_due"
+  | "skipped_weekend"
+  | "skipped_already_sent"
+  | "skipped_needs_manual"
 type UnclassifiedStatus = Exclude<
   ReconcileStatus,
   (typeof DIGEST_FAILURE_STATUSES)[number] | NonFailureStatus
@@ -190,8 +201,13 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
      * 构建与发送链路一字不差（同 ledger attempt/外发账本，重发多一行账本与 at-least-once 一致） */
     const force = opts?.force === true
     const businessDate = formatBusinessDate(now, timeZone)
+    if (!force && isWeekendBusinessDate(businessDate)) {
+      log(`[daily-digest] ${businessDate} 周末停发；周一汇总周六、周日新闻`)
+      return { status: "skipped_weekend", businessDate }
+    }
     if (!force && timeOfDayInTz(now, timeZone) < sendTime)
       return { status: "skipped_not_due", businessDate }
+    const weekendRange = weekendRangeForMonday(businessDate)
 
     const state = deps.ledger.read(businessDate)
     if (!force && state.sent) return { status: "skipped_already_sent", businessDate }
@@ -206,11 +222,13 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
     // GitHub 四榜全常驻（07-07 小孙「应该是增长、周榜、月榜都要的」；月榜 07-06 已拆
     // 每月 1 号门）：GitHub trending 周/月榜本就是滚动窗口而非周界快照，天天看都成立；
     // 跨榜同 repo 由 orchestrator dedupeItems 合并（同 canonicalUrl 同 dedupeKey），不重复成行
-    const githubSources = [
-      ...(run.githubDailySources ?? []),
-      ...(run.githubSources ?? []),
-      ...(run.githubMonthlySources ?? []),
-    ]
+    const githubSources = weekendRange
+      ? []
+      : [
+          ...(run.githubDailySources ?? []),
+          ...(run.githubSources ?? []),
+          ...(run.githubMonthlySources ?? []),
+        ]
 
     const { results, items } = await runAllSources([...run.sources, ...githubSources], {
       http: deps.http,
@@ -262,17 +280,22 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
     //    条目 7 天新鲜窗先兜；无日期条目（热榜/X 类）唯一靠账本压回流，回看太短会周期性
     //    回流（德彪 r-final P2-2：7 天回看下第 8 天就重新有资格）。
     const freshCutoff = now.getTime() - FRESH_WINDOW_MS
-    const shownKeys = loadShownKeys(deps.baseDir, businessDate, {
+    const shownKeys = loadShownKeys(deps.baseDir, weekendRange?.start ?? businessDate, {
       notBefore: run.shownLedgerNotBefore,
     })
     const contentItems = contentItemsRaw.filter((i) => {
       if (i.publishedAt) {
         const t = Date.parse(i.publishedAt)
+        if (weekendRange) {
+          if (Number.isNaN(t)) return false
+          const publishedDate = formatBusinessDate(new Date(t), timeZone)
+          if (publishedDate < weekendRange.start || publishedDate > weekendRange.end) return false
+        }
         if (!Number.isNaN(t) && t < freshCutoff) return false
         // yt 24h 延迟窗（YT_SETTLE_MS 注释）：本期完全不进（不喂样不烧 shown），下期字幕就绪再来
         if (i.sourceId.startsWith("yt-") && !Number.isNaN(t) && t > now.getTime() - YT_SETTLE_MS)
           return false
-      }
+      } else if (weekendRange) return false
       return !isPoliticalItem(i) && !isUnsafeItem(i) && !shownKeys.has(i.dedupeKey)
     })
     if (contentItemsRaw.length > contentItems.length) {
@@ -280,7 +303,16 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
         `[daily-digest] ${businessDate} 选材预滤（新鲜窗/yt延迟窗/政治/未成年人防护/已见）：${contentItemsRaw.length} → ${contentItems.length} 条`,
       )
     }
-    const podcastItems = podcastItemsAll.filter((i) => !shownKeys.has(i.dedupeKey))
+    const podcastItems = podcastItemsAll.filter((i) => {
+      if (weekendRange) {
+        if (!i.publishedAt) return false
+        const published = new Date(i.publishedAt)
+        if (Number.isNaN(published.getTime())) return false
+        const publishedDate = formatBusinessDate(published, timeZone)
+        if (publishedDate < weekendRange.start || publishedDate > weekendRange.end) return false
+      }
+      return !shownKeys.has(i.dedupeKey)
+    })
     if (contentItems.length === 0 && podcastItems.length === 0) {
       pushAlert(
         `[daily-digest] ${businessDate} 无可用内容（抓取 ${contentItemsRaw.length} 条，预滤后 0 条，${results.length} 源），本轮不发报，等下个触发点重试`,
@@ -384,6 +416,16 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
     })
     let publication = builtPublication.publication
     const editorialAudit = builtPublication.audit
+    const hasEditorialEntries = (candidate: DigestPublicationV2) =>
+      candidate.sections.some(
+        (section) => section.category !== "github" && section.entries.length > 0,
+      )
+    if (!hasEditorialEntries(publication)) {
+      pushAlert(
+        `[daily-digest] ${businessDate} 编辑门禁后无经批准的新闻正文或播客；GitHub 榜单不能兜底，本轮不发送空壳邮件——下一整点自动重试`,
+      )
+      return { status: "failed_summarize", businessDate }
+    }
     if (!publication.sections.some((section) => section.entries.length > 0)) {
       pushAlert(
         `[daily-digest] ${businessDate} 编辑门禁后无可发布内容，本轮不发送空日报——下一整点自动重试`,
@@ -482,6 +524,12 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
     if (!publication.sections.some((section) => section.entries.length > 0)) {
       pushAlert(
         `[daily-digest] ${businessDate} 邮件密度裁剪后无可发布内容，本轮不发送空日报——下一整点自动重试`,
+      )
+      return { status: "failed_summarize", businessDate }
+    }
+    if (!hasEditorialEntries(publication)) {
+      pushAlert(
+        `[daily-digest] ${businessDate} 邮件终态已无新闻正文或播客；GitHub 榜单不能兜底，本轮不发送空壳邮件——下一整点自动重试`,
       )
       return { status: "failed_summarize", businessDate }
     }

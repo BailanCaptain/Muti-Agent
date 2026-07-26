@@ -871,11 +871,7 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
       4,
       "四个榜种应复用同一子标题组件",
     )
-    assert.doesNotMatch(
-      githubSection,
-      /◆ (?:增长榜|周榜|新秀|月榜)/,
-      "榜单卡内部不得重复旧标题",
-    )
+    assert.doesNotMatch(githubSection, /◆ (?:增长榜|周榜|新秀|月榜)/, "榜单卡内部不得重复旧标题")
   })
 
   it("B039：GitHub 嵌套列表的所有文字节点显式锁定 Outlook sans 字体", () => {
@@ -897,10 +893,9 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
     const start = html.indexOf('<table class="digest-sans outlook-list-card"')
     const end = html.indexOf("</table></td></tr>", start)
     const listCard = html.slice(start, end + "</table></td></tr>".length)
-    const sans = "font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;"
-    const contentTable = listCard.match(
-      /<table class="card-content-table digest-sans"[^>]*>/,
-    )?.[0]
+    const sans =
+      "font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;"
+    const contentTable = listCard.match(/<table class="card-content-table digest-sans"[^>]*>/)?.[0]
 
     assert.ok(start >= 0 && end > start, "fixture 应生成 GitHub 列表卡")
     assert.ok(
@@ -1490,6 +1485,26 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
     assert.ok(d.html.includes("清单版"))
   })
 
+  it("B044：周一以周末速览小标题和覆盖日期呈现，非周一保持每日简报", () => {
+    const monday = renderDigest({
+      businessDate: "2026-07-27",
+      summary,
+      items,
+      results,
+    })
+    assert.equal(monday.subject, "📰 DailyBrief 2026-07-27 · 周末速览（07.25—07.26）")
+    assert.ok(monday.html.includes("周末速览 · SAT–SUN ROUNDUP"))
+    assert.ok(monday.html.includes("覆盖 07.25—07.26"))
+    assert.ok(monday.html.includes("周末速览 · WEEKEND AT A GLANCE · 07.25—07.26"))
+    assert.ok(!monday.html.includes("开源榜单"))
+    assert.match(monday.markdown, /^# 每日简报 2026-07-27 · 周末速览（07\.25—07\.26）$/m)
+    assert.match(monday.markdown, /^## 周末速览 · 07\.25—07\.26$/m)
+
+    const friday = render()
+    assert.ok(!friday.subject.includes("周末速览"))
+    assert.ok(!friday.html.includes("SAT–SUN ROUNDUP"))
+  })
+
   it("markdown 版含链接与源健康", () => {
     const { markdown } = render()
     assert.ok(markdown.includes("[vLLM"))
@@ -1615,7 +1630,7 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
       "+6,989 stars this week · ★8,695 · Python · weekly desc",
     )
     const both = renderDigest({
-      businessDate: "2026-06-01",
+      businessDate: "2026-06-02", // 周二：验证常规日报的周榜+月榜组合，不落 B044 周一合辑口径
       summary,
       items,
       results,
@@ -1693,7 +1708,7 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
     assert.ok(/2026-07-03[^<]*星期五/.test(html))
   })
 
-  it("信源异常提醒卡顶置（B 项）：失败源中文名 + X 源 cookie 排障提示，位于速览之前", () => {
+  it("信源/处理异常提醒卡顶置（B044）：失败源中文名 + X 源 cookie 排障提示，位于速览之前", () => {
     const failedResults: SourceFetchResult[] = [
       ...results,
       {
@@ -1712,14 +1727,15 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
       items,
       results: failedResults,
     })
-    assert.ok(html.includes("信源异常"))
+    assert.ok(html.includes("信源/处理异常"))
+    assert.ok(html.includes("信源或处理环节异常"))
     assert.ok(html.includes("X 一手动态"))
     assert.ok(html.includes("auth_token")) // cookie 排障提示
-    assert.ok(html.indexOf("信源异常") < html.indexOf("今日速览"))
-    assert.ok(markdown.includes("信源异常"))
+    assert.ok(html.indexOf("信源/处理异常") < html.indexOf("今日速览"))
+    assert.ok(markdown.includes("信源/处理异常"))
   })
 
-  it("全部源正常 → 无信源异常提醒卡", () => {
+  it("全部源正常 → 无信源/处理异常提醒卡", () => {
     const okResults = results.map((r) => ({ ...r, status: "ok" as const, errors: [] }))
     const { html, markdown } = renderDigest({
       businessDate: "2026-07-03",
@@ -1727,8 +1743,8 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
       items,
       results: okResults,
     })
-    assert.ok(!html.includes("信源异常"))
-    assert.ok(!markdown.includes("信源异常"))
+    assert.ok(!html.includes("信源/处理异常"))
+    assert.ok(!markdown.includes("信源/处理异常"))
   })
 
   it("notes 出现在页脚（非交易日提示）", () => {

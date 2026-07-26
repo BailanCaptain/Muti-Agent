@@ -8,6 +8,7 @@ import {
   DIGEST_X_TAB_ORG,
   DIGEST_X_TAB_PERSON,
 } from "@multi-agent/shared"
+import { weekendRangeForMonday } from "./business-dates"
 import { formatGithubRankStatus } from "./github-rank-state"
 import { AI_TAG_ORDER, HOT_TAG_ORDER } from "./section-tags"
 import { sourceLabel } from "./source-labels"
@@ -167,6 +168,34 @@ function weekdayZh(businessDate: string): string {
   const d = new Date(`${businessDate}T12:00:00+08:00`)
   if (Number.isNaN(d.getTime())) return ""
   return new Intl.DateTimeFormat("zh-CN", { weekday: "long", timeZone: "Asia/Shanghai" }).format(d)
+}
+
+function digestEdition(businessDate: string): {
+  weekendRoundup: boolean
+  coverageLabel: string
+  subjectSuffix: string
+  overviewLabel: string
+  mastheadSubtitle: string
+} {
+  const range = weekendRangeForMonday(businessDate)
+  if (!range) {
+    return {
+      weekendRoundup: false,
+      coverageLabel: "",
+      subjectSuffix: "",
+      overviewLabel: "今日速览 · AT A GLANCE",
+      mastheadSubtitle: "",
+    }
+  }
+  const compact = (date: string) => date.slice(5).replace("-", ".")
+  const coverageLabel = `${compact(range.start)}—${compact(range.end)}`
+  return {
+    weekendRoundup: true,
+    coverageLabel,
+    subjectSuffix: ` · 周末速览（${coverageLabel}）`,
+    overviewLabel: `周末速览 · WEEKEND AT A GLANCE · ${coverageLabel}`,
+    mastheadSubtitle: `周末速览 · SAT–SUN ROUNDUP　·　覆盖 ${coverageLabel}`,
+  }
 }
 
 export interface RenderInput {
@@ -565,6 +594,7 @@ function navCard(
   chips: Array<{ meta: SectionMeta; count: number }>,
   density: HtmlDensity,
   subNav: SubNavEntry[] = [],
+  overviewLabel = "今日速览 · AT A GLANCE",
 ): string {
   const n = chips.length
   const chipW = n > 0 ? Math.floor((524 - (n - 1) * 8) / n) : 524
@@ -581,7 +611,7 @@ function navCard(
     )
     .join("")
   const overviewBlock = overview.length
-    ? `<tr><td style="padding:22px 22px 17px 22px;"><table class="overview-content-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;"><tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:2px;color:${C.gold};padding:0 0 10px 0;">今日速览 · AT A GLANCE</td></tr>${overviewRows}</table></td></tr><tr><td style="padding:0 22px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;"><tr><td bgcolor="${C.heroLight}" style="border-top:1px solid ${C.border};background-color:${C.heroLight};font-size:0;line-height:0;">&nbsp;</td></tr></table></td></tr>`
+    ? `<tr><td style="padding:22px 22px 17px 22px;"><table class="overview-content-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;"><tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:2px;color:${C.gold};padding:0 0 10px 0;">${escapeHtml(overviewLabel)}</td></tr>${overviewRows}</table></td></tr><tr><td style="padding:0 22px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;"><tr><td bgcolor="${C.heroLight}" style="border-top:1px solid ${C.border};background-color:${C.heroLight};font-size:0;line-height:0;">&nbsp;</td></tr></table></td></tr>`
     : ""
   // 子栏目录：一节一行「板块名　子栏1 n · 子栏2 n」，锚点直达（不支持锚点的客户端退化为静态目录，内容零丢失）
   const subLines = density.includeSubNav ? subNav.filter((s) => s.links.length > 0) : []
@@ -603,7 +633,7 @@ function adaptGithubMeta(base: SectionMeta, githubItems: NormalizedItem[]): Sect
 }
 
 /**
- * B 项（小孙 07-04）：信源异常顶置提醒卡 —— 失败/超时源在刊头下方醒目透出（页脚小字不够醒目），
+ * B 项（小孙 07-04）：信源/处理异常顶置提醒卡 —— 失败/超时环节在刊头下方醒目透出（页脚小字不够醒目），
  * X 源附 cookie 排障提示（一手动态断供最常见原因就是小号 cookie 过期）。全 escapeHtml；无链接。
  */
 function alertCard(failed: SourceFetchResult[]): string {
@@ -619,7 +649,7 @@ function alertCard(failed: SourceFetchResult[]): string {
       return `<tr><td style="font-family:${SANS};font-size:13px;line-height:23px;color:${C.ink};padding:5px 0 0 0;"><span style="font-weight:700;">▲ ${escapeHtml(sourceLabel(f.sourceId))}</span><span style="color:${C.sub};">　${escapeHtml(reason)}</span></td></tr>${hint}`
     })
     .join("")
-  const content = `<table class="alert-content-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:1px;color:${C.gold};padding:0;">⚠ 信源异常 · SOURCE ALERT</td></tr><tr><td style="font-family:${SANS};font-size:14px;line-height:25px;color:${C.sub};padding:6px 0 0 0;">今日 ${failed.length} 个信源抓取失败，对应板块内容可能缺失或不全：</td></tr>${rows}</table>`
+  const content = `<table class="alert-content-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:1px;color:${C.gold};padding:0;">⚠ 信源/处理异常 · PIPELINE ALERT</td></tr><tr><td style="font-family:${SANS};font-size:14px;line-height:25px;color:${C.sub};padding:6px 0 0 0;">本期 ${failed.length} 个信源或处理环节异常，对应板块内容可能缺失或不全：</td></tr>${rows}</table>`
   return `<tr><td style="padding:0 0 16px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.alert}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.alert};border:1px solid ${C.goldLight};border-left:4px solid ${C.accent};border-radius:16px;"><tr><td style="padding:16px 20px 18px 20px;">${content}</td></tr></table></td></tr>`
 }
 
@@ -738,8 +768,9 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
   // 中文化补全（07-06）：本次渲染实际展示的速览行 id——job 层据此送翻译再二次渲染
   const restItemIds: string[] = []
 
+  const edition = digestEdition(input.businessDate)
   const degradedTag = input.summary.degraded ? "（清单版）" : ""
-  const subject = `📰 DailyBrief ${input.businessDate}${degradedTag}`
+  const subject = `📰 DailyBrief ${input.businessDate}${edition.subjectSuffix}${degradedTag}`
   const weekday = weekdayZh(input.businessDate)
 
   const sectionsByCat = new Map(input.summary.sections.map((s) => [s.category, s.picks]))
@@ -880,15 +911,22 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
 
   const failed = input.results.filter((r) => r.status !== "ok")
 
-  const mdParts: string[] = [`# DailyBrief ${input.businessDate}${degradedTag}`, ""]
+  const mdTitle = edition.weekendRoundup
+    ? `# 每日简报 ${input.businessDate} · 周末速览（${edition.coverageLabel}）${degradedTag}`
+    : `# DailyBrief ${input.businessDate}${degradedTag}`
+  const mdParts: string[] = [mdTitle, ""]
   if (failed.length > 0) {
     mdParts.push(
-      `> ⚠ 信源异常：${failed.map((f) => `${sourceLabel(f.sourceId)}(${f.status})`).join("、")}`,
+      `> ⚠ 信源/处理异常：${failed.map((f) => `${sourceLabel(f.sourceId)}(${f.status})`).join("、")}`,
       "",
     )
   }
   if (input.summary.overview.length > 0) {
-    mdParts.push("## 今日速览", ...input.summary.overview.map((o) => `- ${o}`), "")
+    mdParts.push(
+      edition.weekendRoundup ? `## 周末速览 · ${edition.coverageLabel}` : "## 今日速览",
+      ...input.summary.overview.map((o) => `- ${o}`),
+      "",
+    )
   }
 
   const chips = sections.map((s) => ({ meta: s.meta, count: s.resolved.length }))
@@ -1077,7 +1115,21 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
 
   // B036：动态多行刊头留在普通 presentation table。Classic Outlook 只退化方角，
   // 不再让 VML textbox 接管高度/背景；可见眉题本身承载 Word 可识别的非空书签。
-  const mastheadContent = `<table class="masthead-content-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:3px;color:${C.goldLight};padding:0 0 8px 0;"><a id="DigestTop" name="DigestTop" style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:3px;color:${C.goldLight};text-decoration:none;">MULTI-AGENT · DAILY BRIEF</a></td></tr><tr><td class="digest-serif" style="font-family:${SERIF};mso-fareast-font-family:SimSun;font-size:38px;font-weight:700;letter-spacing:1px;color:${C.white};line-height:46px;padding:0;">每日简报</td></tr><tr><td height="14" bgcolor="${C.ink}" style="height:14px;background-color:${C.ink};line-height:14px;font-size:0;">&nbsp;</td></tr><tr><td style="padding:0;"><table role="presentation" width="52" cellpadding="0" cellspacing="0" style="width:52px;border-collapse:collapse;"><tr><td height="2" bgcolor="${C.accent}" style="height:2px;background-color:${C.accent};font-size:0;line-height:2px;">&nbsp;</td></tr></table></td></tr><tr><td height="14" bgcolor="${C.ink}" style="height:14px;background-color:${C.ink};line-height:14px;font-size:0;">&nbsp;</td></tr><tr><td style="font-family:${SANS};font-size:14px;line-height:22px;letter-spacing:0.5px;color:${C.goldLight};padding:0;">${escapeHtml(input.businessDate)}${weekday ? `　${escapeHtml(weekday)}` : ""}${input.summary.degraded ? "　· 清单版" : ""}</td></tr><tr><td style="font-family:${SANS};font-size:13px;line-height:21px;letter-spacing:0.5px;color:${C.cream};padding:3px 0 0 0;">AI · 社区动态 · 今日热点 · ${DIGEST_GITHUB_SECTION_LABEL}</td></tr><tr><td height="14" bgcolor="${C.ink}" style="height:14px;background-color:${C.ink};line-height:14px;font-size:0;">&nbsp;</td></tr><tr><td bgcolor="${C.ink}" style="border-top:1px solid ${C.goldLight};background-color:${C.ink};font-size:0;line-height:0;padding:0;">&nbsp;</td></tr><tr><td style="font-family:${SANS};font-size:12px;line-height:19px;letter-spacing:0.5px;color:${C.goldLight};padding:10px 0 0 0;">${escapeHtml(checkLine)}</td></tr>${webUrl ? `<tr><td style="font-family:${SANS};font-size:12px;line-height:19px;letter-spacing:0.5px;padding:6px 0 0 0;"><a href="${safeHref(webUrl)}" style="color:${C.goldLight};text-decoration:underline;">网页版全量分栏 →</a></td></tr>` : ""}</table>`
+  const editionRow = edition.mastheadSubtitle
+    ? `<tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:20px;letter-spacing:1px;color:${C.goldLight};padding:6px 0 0 0;">${escapeHtml(edition.mastheadSubtitle)}</td></tr>`
+    : ""
+  const weekendCategoryLine = sections
+    .filter((section) => section.meta.category !== "github")
+    .map((section) => {
+      if (section.meta.category === "ai") return "AI"
+      if (section.meta.category === "hot") return "周末热点"
+      return section.meta.label
+    })
+    .join(" · ")
+  const categoryLine = edition.weekendRoundup
+    ? weekendCategoryLine || "周末新闻合辑"
+    : `AI · 社区动态 · 今日热点 · ${DIGEST_GITHUB_SECTION_LABEL}`
+  const mastheadContent = `<table class="masthead-content-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:3px;color:${C.goldLight};padding:0 0 8px 0;"><a id="DigestTop" name="DigestTop" style="font-family:${SANS};font-size:12px;font-weight:700;line-height:18px;letter-spacing:3px;color:${C.goldLight};text-decoration:none;">MULTI-AGENT · DAILY BRIEF</a></td></tr><tr><td class="digest-serif" style="font-family:${SERIF};mso-fareast-font-family:SimSun;font-size:38px;font-weight:700;letter-spacing:1px;color:${C.white};line-height:46px;padding:0;">每日简报</td></tr><tr><td height="14" bgcolor="${C.ink}" style="height:14px;background-color:${C.ink};line-height:14px;font-size:0;">&nbsp;</td></tr><tr><td style="padding:0;"><table role="presentation" width="52" cellpadding="0" cellspacing="0" style="width:52px;border-collapse:collapse;"><tr><td height="2" bgcolor="${C.accent}" style="height:2px;background-color:${C.accent};font-size:0;line-height:2px;">&nbsp;</td></tr></table></td></tr><tr><td height="14" bgcolor="${C.ink}" style="height:14px;background-color:${C.ink};line-height:14px;font-size:0;">&nbsp;</td></tr><tr><td style="font-family:${SANS};font-size:14px;line-height:22px;letter-spacing:0.5px;color:${C.goldLight};padding:0;">${escapeHtml(input.businessDate)}${weekday ? `　${escapeHtml(weekday)}` : ""}${input.summary.degraded ? "　· 清单版" : ""}</td></tr>${editionRow}<tr><td style="font-family:${SANS};font-size:13px;line-height:21px;letter-spacing:0.5px;color:${C.cream};padding:3px 0 0 0;">${escapeHtml(categoryLine)}</td></tr><tr><td height="14" bgcolor="${C.ink}" style="height:14px;background-color:${C.ink};line-height:14px;font-size:0;">&nbsp;</td></tr><tr><td bgcolor="${C.ink}" style="border-top:1px solid ${C.goldLight};background-color:${C.ink};font-size:0;line-height:0;padding:0;">&nbsp;</td></tr><tr><td style="font-family:${SANS};font-size:12px;line-height:19px;letter-spacing:0.5px;color:${C.goldLight};padding:10px 0 0 0;">${escapeHtml(checkLine)}</td></tr>${webUrl ? `<tr><td style="font-family:${SANS};font-size:12px;line-height:19px;letter-spacing:0.5px;padding:6px 0 0 0;"><a href="${safeHref(webUrl)}" style="color:${C.goldLight};text-decoration:underline;">网页版全量分栏 →</a></td></tr>` : ""}</table>`
   const masthead = `<tr><td style="padding:0 0 18px 0;"><table class="masthead-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.ink}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.ink};border:1px solid ${C.ink};border-top:6px solid ${C.accent};border-radius:16px;"><tr><td style="padding:26px 26px 24px 26px;">${mastheadContent}</td></tr></table></td></tr>`
 
   const footerRows = `<tr><td style="font-family:${SANS};font-size:12px;line-height:22px;color:${C.sub};padding:0;">源健康：${escapeHtml(healthLine)}</td></tr>${webUrl ? `<tr><td style="font-family:${SANS};font-size:12px;line-height:22px;padding:0;"><a href="${safeHref(webUrl)}" style="color:${C.gold};text-decoration:underline;">网页版全量分栏（可点切换）→</a></td></tr>` : ""}${notes.length ? `<tr><td style="font-family:${SANS};font-size:12px;line-height:22px;color:${C.sub};padding:0;">${notes.map(escapeHtml).join("<br>")}</td></tr>` : ""}<tr><td style="font-family:${SANS};font-size:12px;line-height:22px;color:${C.muted};padding:6px 0 0 0;">DailyBrief · Multi-Agent · F037 每日简报</td></tr>`
@@ -1085,14 +1137,14 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
 
   const html = [
     "<!doctype html>",
-    `<html lang="zh-CN" xmlns:o="urn:schemas-microsoft-com:office:office"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">${MSO_HEAD}<title>每日简报 · DailyBrief</title></head>`,
+    `<html lang="zh-CN" xmlns:o="urn:schemas-microsoft-com:office:office"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">${MSO_HEAD}<title>${edition.weekendRoundup ? "周末速览" : "每日简报"} · DailyBrief</title></head>`,
     `<body bgcolor="${C.page}" style="margin:0;padding:0;background-color:${C.page};">`,
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.page}" style="width:100%;border-collapse:collapse;background-color:${C.page};"><tr><td align="center" style="padding:28px 16px;">`,
     `<table class="outlook-paper" role="presentation" width="600" cellpadding="0" cellspacing="0" bgcolor="${C.paper}" style="width:600px;max-width:600px;border-collapse:separate;border-spacing:0;background-color:${C.paper};border:1px solid ${C.border};border-radius:20px;"><tr><td style="padding:20px 19px;">`,
     `<table role="presentation" width="560" cellpadding="0" cellspacing="0" style="width:560px;border-collapse:collapse;">`,
     masthead,
     alertCard(failed),
-    navCard(input.summary.overview, chips, density, subNav),
+    navCard(input.summary.overview, chips, density, subNav, edition.overviewLabel),
     ...sectionHtml,
     footer,
     "</table>",

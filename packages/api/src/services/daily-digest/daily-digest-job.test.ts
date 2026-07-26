@@ -12,6 +12,7 @@ import {
 } from "./daily-digest-job"
 import { buildEditorialDecisionSet } from "./editorial-decider"
 import { buildNormalizedItem } from "./feed-parsers"
+import { writeShownLedger } from "./shown-ledger"
 import { createFileSourceHealthStore } from "./source-health"
 import { type TranslateExtrasInput, buildEditorialPromptItems } from "./summarizer"
 import type {
@@ -26,6 +27,8 @@ import type {
 const FRI_0800 = new Date("2026-07-03T08:00:00+08:00")
 const FRI_0700 = new Date("2026-07-03T07:00:00+08:00")
 const SAT_0800 = new Date("2026-07-04T08:00:00+08:00")
+const SUN_0800 = new Date("2026-07-05T08:00:00+08:00")
+const MON_0900 = new Date("2026-07-27T09:00:00+08:00")
 
 let dir: string
 beforeEach(() => {
@@ -173,6 +176,153 @@ describe("reconcile（D10/D11）", () => {
     assert.equal((await job.reconcile(FRI_0700)).status, "skipped_not_due")
   })
 
+  it("B044：周六、周日自动停发且零抓取；force 保留人工显式补发", async () => {
+    const source = okSource("smol-ai")
+    const sender = makeSender()
+    const job = createDailyDigestJob(makeDeps({ sources: [source], sender }))
+
+    assert.equal((await job.reconcile(SAT_0800)).status, "skipped_weekend")
+    assert.equal((await job.reconcile(SUN_0800)).status, "skipped_weekend")
+    assert.equal(source.calls.length, 0)
+    assert.equal(sender.sent.length, 0)
+    assert.ok(!fs.existsSync(path.join(dir, "2026-07-04")))
+    assert.ok(!fs.existsSync(path.join(dir, "2026-07-05")))
+
+    assert.equal((await job.reconcile(SAT_0800, { force: true })).status, "ok")
+    assert.equal(source.calls.length, 1)
+    assert.equal(sender.sent.length, 1)
+  })
+
+  it("B044：周一只汇总上海时区周六/周日，忽略周末过渡期 shown，并排除 GitHub 当前榜单", async () => {
+    const raw = [
+      buildNormalizedItem(
+        "smol-ai",
+        "ai",
+        "Friday story",
+        "https://example.com/fri",
+        "2026-07-24T10:00:00Z",
+        "Friday",
+      ),
+      buildNormalizedItem(
+        "smol-ai",
+        "ai",
+        "Saturday story",
+        "https://example.com/sat",
+        "2026-07-24T16:30:00Z",
+        "Saturday",
+      ),
+      buildNormalizedItem(
+        "smol-ai",
+        "ai",
+        "Sunday story",
+        "https://example.com/sun",
+        "2026-07-26T15:59:00Z",
+        "Sunday",
+      ),
+      buildNormalizedItem(
+        "smol-ai",
+        "ai",
+        "Monday story",
+        "https://example.com/mon",
+        "2026-07-26T16:30:00Z",
+        "Monday",
+      ),
+      buildNormalizedItem(
+        "smol-ai",
+        "ai",
+        "No-date story",
+        "https://example.com/no-date",
+        null,
+        "No date",
+      ),
+    ]
+    const contentSource: DigestSource = {
+      sourceId: "smol-ai",
+      category: "ai",
+      fetch: async () => raw,
+    }
+    const githubSource = okSource("github-trending-weekly", "github")
+    writeShownLedger(dir, "2026-07-25", [raw[1].dedupeKey])
+    writeShownLedger(dir, "2026-07-26", [raw[2].dedupeKey])
+    const fed: NormalizedItem[] = []
+    const sender = makeSender()
+    const job = createDailyDigestJob(
+      makeDeps({
+        sources: [contentSource],
+        githubSources: [githubSource],
+        sender,
+        summarize: async (items) => {
+          fed.push(...items)
+          return {
+            overview: ["周末两日要点"],
+            editorialAssessments: approve(items),
+            sections: [
+              {
+                category: "ai",
+                picks: items.map((item) => ({ itemId: item.id, summaryZh: "周末摘要" })),
+              },
+            ],
+            degraded: false,
+          }
+        },
+      }),
+    )
+
+    assert.equal((await job.reconcile(MON_0900)).status, "ok")
+    assert.deepEqual(
+      fed.map((item) => item.title),
+      ["Saturday story", "Sunday story"],
+    )
+    assert.equal(githubSource.calls.length, 0)
+    assert.equal(sender.sent.length, 1)
+    assert.match(sender.sent[0].subject, /周末速览/)
+
+    fed.length = 0
+    assert.equal((await job.reconcile(MON_0900, { force: true })).status, "ok")
+    assert.deepEqual(
+      fed.map((item) => item.title),
+      ["Saturday story", "Sunday story"],
+      "周一立即补发也必须保持严格周末窗口",
+    )
+    assert.equal(githubSource.calls.length, 0)
+    assert.equal(sender.sent.length, 2)
+  })
+
+  it("B044：编辑链无一条新闻获批时，GitHub 榜单不得兜底发送空壳邮件", async () => {
+    const sender = makeSender()
+    const alerts: string[] = []
+    const githubSource = okSource("github-trending-weekly", "github")
+    const job = createDailyDigestJob(
+      makeDeps({
+        sender,
+        githubSources: [githubSource],
+        pushAlert: (message) => alerts.push(message),
+        summarize: async (items) => ({
+          overview: [],
+          editorialAssessments: items.map((item) => ({
+            itemId: item.id,
+            sourceCategory: item.category,
+            reviewState: "unreviewed" as const,
+            rejectReason: "classifier_failure" as const,
+            topicTags: [],
+            organizationTags: [],
+            ecosystemTags: [],
+            regionTags: [],
+            contentKind: "other" as const,
+            confidence: 0,
+          })),
+          sections: [],
+          degraded: false,
+        }),
+      }),
+    )
+
+    assert.equal((await job.reconcile(FRI_0800)).status, "failed_summarize")
+    assert.equal(sender.sent.length, 0)
+    assert.ok(alerts.some((message) => message.includes("新闻正文") && message.includes("不发送")))
+    assert.ok(!fs.existsSync(path.join(dir, "2026-07-03", "digest.html")))
+  })
+
   it("happy path：发送 + sent 落账 + 归档双格式 + 外发账本", async () => {
     const sender = makeSender()
     const deps = makeDeps({ sender })
@@ -286,7 +436,7 @@ describe("reconcile（D10/D11）", () => {
       "延迟窗条目不得烧 shown（否则次日被已见账本压制=永久漏报）",
     )
     // 次日：同一条目距发布 28h → 出延迟窗，正常进喂样池
-    assert.equal((await job.reconcile(SAT_0800)).status, "ok")
+    assert.equal((await job.reconcile(SAT_0800, { force: true })).status, "ok")
     assert.ok(
       fedTitles[1].includes("Fresh interpretability video"),
       "出延迟窗后条目必须回到选材视野",
@@ -444,6 +594,7 @@ describe("reconcile（D10/D11）", () => {
     for (const s of [
       "ok",
       "skipped_not_due",
+      "skipped_weekend",
       "skipped_already_sent",
       "skipped_needs_manual",
     ] as const) {
@@ -618,7 +769,7 @@ describe("reconcile（D10/D11）", () => {
     assert.ok(fs.existsSync(path.join(dir, "2026-07-03", "github-rank.json")))
     assert.ok(fs.readFileSync(path.join(dir, "2026-07-03", "digest.html"), "utf8").includes("NEW"))
 
-    assert.equal((await job.reconcile(SAT_0800)).status, "ok")
+    assert.equal((await job.reconcile(SAT_0800, { force: true })).status, "ok")
     const day2Html = fs.readFileSync(path.join(dir, "2026-07-04", "digest.html"), "utf8")
     assert.ok(day2Html.includes("Panniantong/Agent-Reach"), "连续上榜不是跨日去重条件")
     assert.ok(day2Html.includes("连续 2 日上榜"))
@@ -923,7 +1074,7 @@ describe("选材预滤链（E1/E2，07-07 小孙「重复信息」「政治去�
         summarize: capturingSummarize(sink),
       }),
     )
-    assert.equal((await day2.reconcile(SAT_0800)).status, "ok")
+    assert.equal((await day2.reconcile(SAT_0800, { force: true })).status, "ok")
     assert.deepEqual(
       sink.items.map((i) => i.title),
       ["story-B"],
@@ -1743,7 +1894,7 @@ describe("#33 播客速递编辑门禁（B027：单集也要正向批准）", ()
     const htmlDay1 = fs.readFileSync(path.join(dir, "2026-07-03", "digest.html"), "utf8")
     assert.ok(htmlDay1.includes("播客速递"))
     // 次日：源仍返回同集（缓存直出的语义），shown 账本应压掉 → 无播客节
-    assert.equal((await job.reconcile(SAT_0800)).status, "ok")
+    assert.equal((await job.reconcile(SAT_0800, { force: true })).status, "ok")
     const htmlDay2 = fs.readFileSync(path.join(dir, "2026-07-04", "digest.html"), "utf8")
     assert.ok(!htmlDay2.includes("播客速递"), "已上报的集次日不回流")
   })

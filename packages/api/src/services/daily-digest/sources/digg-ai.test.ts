@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
 import { describe, it } from "node:test"
+import { SafeHttpError } from "../../../net/safe-http-client"
+import { runAllSources } from "../orchestrator"
 import type { SafeHttpClient, SourceFetchContext } from "../types"
 import { extractRscPayload, makeDiggAiSource, parseDiggStories, scanJsonValue } from "./digg-ai"
 
@@ -265,5 +267,30 @@ describe("makeDiggAiSource（#23 主表 v2.3）", () => {
       /no stories parsed from https:\/\/digg\.com\/tech\//,
     )
     assert.deepEqual(calls, ["https://digg.com/tech/"])
+  })
+
+  it("B044：Digg 首次 429 只重试一次 canonical GET，恢复后不落 fallback", async () => {
+    const calls: string[] = []
+    const http: SafeHttpClient = {
+      fetchText: async (url) => {
+        calls.push(url)
+        if (calls.length === 1) {
+          throw new SafeHttpError("http_status", url, "status 429", 429)
+        }
+        return diggHtml
+      },
+    }
+
+    const source = makeDiggAiSource()
+    source.transientGetRetry = { ...source.transientGetRetry!, delayMs: 0 }
+    const run = await runAllSources([source], {
+      http,
+      now: () => NOW,
+      transportRetryDelayMs: 0,
+    })
+
+    assert.equal(run.results[0].status, "ok")
+    assert.equal(run.items.length, 3)
+    assert.deepEqual(calls, ["https://digg.com/tech/", "https://digg.com/tech/"])
   })
 })

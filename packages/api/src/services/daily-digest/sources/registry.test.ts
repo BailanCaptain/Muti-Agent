@@ -52,6 +52,19 @@ describe("registry 结构约束", () => {
     assert.equal(def.keepIf?.(mk("大模型本地部署显卡怎么选")), true)
     assert.equal(def.keepIf?.(mk("30 岁裸辞去大理的生活")), false)
   })
+
+  it("B044：HN 周一回看 72h 覆盖周六，其他工作日仍只回看 24h", () => {
+    const def = JSON_SOURCES.find((source) => source.sourceId === "hn-ai")
+    const buildUrl = def?.urls[0]
+    assert.equal(typeof buildUrl, "function")
+    if (typeof buildUrl !== "function") return
+    const monday = new Date("2026-07-27T09:00:00+08:00")
+    const tuesday = new Date("2026-07-28T09:00:00+08:00")
+    const cutoff = (url: string) =>
+      Number(new URL(url).searchParams.get("numericFilters")?.match(/(\d+)$/)?.[1])
+    assert.equal(Math.floor(monday.getTime() / 1000) - cutoff(buildUrl(monday)), 72 * 3600)
+    assert.equal(Math.floor(tuesday.getTime() / 1000) - cutoff(buildUrl(tuesday)), 24 * 3600)
+  })
 })
 
 describe("JSON source map（真实 fixture 逐源验证）", () => {

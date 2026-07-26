@@ -1,4 +1,4 @@
-import { formatBusinessDate, prevBusinessDate } from "../business-dates"
+import { formatBusinessDate, isMondayInTz, prevBusinessDate } from "../business-dates"
 import { buildNormalizedItem, parseRssOrAtom } from "../feed-parsers"
 import { isTechTopicItem } from "../relevance-filter"
 import type {
@@ -315,7 +315,7 @@ export const JSON_SOURCES: JsonSourceDef[] = [
     category: "ai",
     urls: [
       (now: Date) =>
-        `https://hn.algolia.com/api/v1/search_by_date?tags=story&hitsPerPage=50&numericFilters=points%3E100,created_at_i%3E${Math.floor(now.getTime() / 1000) - 86_400}`,
+        `https://hn.algolia.com/api/v1/search_by_date?tags=story&hitsPerPage=50&numericFilters=points%3E100,created_at_i%3E${Math.floor(now.getTime() / 1000) - (isMondayInTz(now) ? 3 : 1) * 86_400}`,
     ],
     map: (json) =>
       asArray(asRecord(json).hits).map((h) => {

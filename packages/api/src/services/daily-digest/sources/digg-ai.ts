@@ -80,9 +80,7 @@ export function parseDiggStories(html: string): DiggStory[] {
   for (const e of Array.isArray(arr) ? arr : []) {
     const rec = asRecord(e)
     const summary = asRecord(rec.summary)
-    const title = String(
-      rec.title ?? (typeof summary.title === "string" ? summary.title : ""),
-    )
+    const title = String(rec.title ?? (typeof summary.title === "string" ? summary.title : ""))
     const clusterUrlId = String(rec.clusterUrlId ?? "")
     if (!title || !/^[a-z0-9]+$/i.test(clusterUrlId)) continue
     const created = typeof rec.createdAt === "string" ? Date.parse(rec.createdAt) : Number.NaN
@@ -113,6 +111,12 @@ export function makeDiggAiSource(opts: DiggAiOptions = {}): DigestSource {
   return {
     sourceId: "digg-ai",
     category: "community",
+    transientGetRetry: {
+      maxAttempts: 2,
+      delayMs: 5_000,
+      retryHttpStatuses: [429, 500, 502, 503, 504],
+      retryHostnames: ["digg.com"],
+    },
     async fetch(ctx): Promise<NormalizedItem[]> {
       let lastFetchErr: unknown = null
       for (const url of DIGG_URLS) {
