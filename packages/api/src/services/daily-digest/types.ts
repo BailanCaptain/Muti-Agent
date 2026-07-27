@@ -6,7 +6,7 @@
 import type { SafeHttpClient as SharedSafeHttpClient } from "../../net/safe-http-client"
 
 // 2026-07-03 小孙拍板「让我们纯粹一点」：删篮球/电竞/股市三板块，聚焦 AI+热点+X+GitHub。
-// 2026-07-06 小孙改版：「x」板块扩成「community 社区动态」（X + Reddit + Digg + V2EX + 小红书——
+// 2026-07-06 小孙改版：「x」板块扩成「community 社区动态」（X + Reddit + 技术社区 + V2EX + 小红书——
 // 社区里的人在聊什么）；旧归档里的 "x" 由读取侧 normalizeDigestCategory 归一。
 // 2026-07-10 #33 播客速递（小孙拍「现在搞」）：小宇宙新集转写提炼；有获批新集才出现。
 // B027 起单集也进入语义审核，publication 批准后仍复用原列表样式。
@@ -27,7 +27,7 @@ export interface NormalizedItem {
   rawSnippet: string
   /**
    * 平台内可比的互动量信号（质量层 1，主表 §2）：HN points/Reddit score/HF upvotes/
-   * 热榜热度/V2EX 回复数/Digg 聚合帖数。只做**同源内**预排序与选材参考，
+   * 热榜热度/V2EX 回复数/社区站点互动量。只做**同源内**预排序与选材参考，
    * 不跨平台直比（量纲不同）；缺省 = 该源无此信号（RSS 博客类）。
    */
   engagement?: number
@@ -211,6 +211,8 @@ export interface RenderedDigest {
   restItemIds: string[]
   /** 本次最终渲染实际出现的全部条目 id（精选/列表/速览/同报），shown ledger 的唯一输入。 */
   displayedItemIds: string[]
+  /** 有合资格速览候选、但本轮密度设置将其全部隐藏的栏目。 */
+  densitySuppressedCategories: DigestCategory[]
 }
 
 export type EditorialReviewState = "eligible" | "rejected" | "unreviewed"

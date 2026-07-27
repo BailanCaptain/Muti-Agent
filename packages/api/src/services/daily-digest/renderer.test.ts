@@ -1485,24 +1485,84 @@ describe("renderDigest（AC2 版式 + AC12 邮件兼容）", () => {
     assert.ok(d.html.includes("清单版"))
   })
 
-  it("B044：周一以周末速览小标题和覆盖日期呈现，非周一保持每日简报", () => {
+  it("B045：周一以周末速览呈现并保留播客空态与开源榜单，非周一保持每日简报", () => {
+    const github = buildNormalizedItem(
+      "github-trending-weekly",
+      "github",
+      "owner/weekend-agent",
+      "https://github.com/owner/weekend-agent",
+      null,
+      "+321 stars this week · ★1,234 · TypeScript · AI agent",
+    )
     const monday = renderDigest({
       businessDate: "2026-07-27",
       summary,
       items,
       results,
+      githubItems: [github],
     })
     assert.equal(monday.subject, "📰 DailyBrief 2026-07-27 · 周末速览（07.25—07.26）")
     assert.ok(monday.html.includes("周末速览 · SAT–SUN ROUNDUP"))
     assert.ok(monday.html.includes("覆盖 07.25—07.26"))
     assert.ok(monday.html.includes("周末速览 · WEEKEND AT A GLANCE · 07.25—07.26"))
-    assert.ok(!monday.html.includes("开源榜单"))
+    assert.ok(monday.html.includes("WEEKEND HIGHLIGHTS"))
+    assert.ok(!monday.html.includes("TRENDING TODAY"))
+    assert.ok(monday.html.includes("AI · 社区动态 · 周末热点 · 播客速递 · 开源榜单"))
+    assert.ok(monday.html.includes("播客速递"))
+    assert.ok(monday.html.includes("本周末暂无新节目"))
+    assert.ok(monday.html.includes("本周末暂无合资格的社区动态"))
+    assert.ok(monday.html.includes("开源榜单"))
+    assert.ok(monday.html.indexOf("播客速递") < monday.html.indexOf("开源榜单"))
     assert.match(monday.markdown, /^# 每日简报 2026-07-27 · 周末速览（07\.25—07\.26）$/m)
     assert.match(monday.markdown, /^## 周末速览 · 07\.25—07\.26$/m)
+    assert.match(monday.markdown, /^## 社区动态$/m)
+    assert.match(monday.markdown, /^## 周末热点$/m)
+    assert.doesNotMatch(monday.markdown, /^## 今日热点$/m)
+    assert.match(monday.markdown, /^## 播客速递$/m)
+    assert.match(monday.markdown, /本周末暂无新节目/)
+    assert.match(monday.markdown, /^## 开源榜单$/m)
 
-    const friday = render()
-    assert.ok(!friday.subject.includes("周末速览"))
-    assert.ok(!friday.html.includes("SAT–SUN ROUNDUP"))
+    const communityRest = buildNormalizedItem(
+      "lobsters-ai",
+      "community",
+      "Weekend community rest item",
+      "https://lobste.rs/s/weekend",
+      "2026-07-26T08:00:00Z",
+      "Comments",
+    )
+    const mondayWithRest = renderDigest({
+      businessDate: "2026-07-27",
+      summary,
+      items: [...items, communityRest],
+      results,
+      githubItems: [github],
+    })
+    assert.ok(mondayWithRest.html.includes("Weekend community rest item"))
+    assert.ok(!mondayWithRest.html.includes("本周末暂无合资格的社区动态"))
+
+    const mondayWithHiddenRest = renderDigest({
+      businessDate: "2026-07-27",
+      summary,
+      items: [...items, communityRest],
+      results,
+      githubItems: [github],
+      restOverviewRows: 0,
+    })
+    assert.ok(!mondayWithHiddenRest.html.includes("本周末暂无合资格的社区动态"))
+    assert.ok(mondayWithHiddenRest.html.includes("本周末有合资格内容，因邮件密度设置未展开"))
+    assert.deepEqual(mondayWithHiddenRest.densitySuppressedCategories, ["community"])
+    assert.match(
+      mondayWithHiddenRest.markdown,
+      /本周末有合资格内容，因邮件密度设置未展开/,
+    )
+
+    for (const businessDate of ["2026-07-28", "2026-07-29", "2026-07-30", "2026-07-31"]) {
+      const weekday = renderDigest({ businessDate, summary, items, results })
+      assert.ok(!weekday.subject.includes("周末速览"))
+      assert.ok(!weekday.html.includes("SAT–SUN ROUNDUP"))
+      assert.ok(!weekday.html.includes("本周末暂无新节目"))
+      assert.match(weekday.markdown, /^## 今日热点$/m)
+    }
   })
 
   it("markdown 版含链接与源健康", () => {

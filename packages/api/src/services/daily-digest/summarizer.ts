@@ -35,7 +35,7 @@ import type {
 
 const CATEGORIES: DigestCategory[] = ["ai", "hot", "community", "podcast"]
 // 分栏改版（07-05）：X 33 账号后一手动态量大 → 喂样上限抬高；ai 专栏化后精选位加到 12。
-// 07-06 社区改版：community = X + Reddit + Digg + V2EX + 小红书，源多 → 喂样 36
+// 07-06 社区改版：community = X + Reddit + 技术社区 + V2EX + 小红书，源多 → 喂样 36
 const MAX_ITEMS_BY_CATEGORY: Record<DigestCategory, number> = {
   ai: 24,
   hot: 24,
@@ -250,7 +250,7 @@ function buildPrompt(
     "任务：输出严格 JSON（不要 markdown 围栏、不要多余文字）：",
     `{"overview":[{"text":"跨板块要点，中文，5-8 条","itemIds":["支撑该要点的输入 id，1-4 个"]}],"editorialAssessments":[{"itemId":"输入 id","reviewState":"eligible|rejected","rejectReason":"help|complaint|gossip|self_promo|unsafe|politics|low_signal|other（eligible 时省略）","topicTags":["inference|research|training|agent|model_release|safety|other"],"organizationTags":["公司/组织名"],"ecosystemTags":["open_source|closed_source"],"regionTags":["cn|global"],"contentKind":"research|engineering|release|discussion|industry|finance|help|complaint|gossip|other","confidence":0.0}],"sections":[{"category":"ai|hot|community|podcast","picks":[{"itemId":"只准用输入里的 id","summaryZh":"一句话中文摘要","tag":"分栏标签，见规则 6","alsoItemIds":["可选：同一事件其他来源的 id，最多 4 个"]}],"briefItemIds":["获准进入其余速览/播客列表的输入 id"]}],"communityDropIds":["community 板块性质不合格条目的 id，见规则 8"]}`,
     "规则：",
-    `1. ai 板块选最重要的至多 ${MAX_PICKS_BY_CATEGORY.ai} 条，hot 至多 ${MAX_PICKS_BY_CATEGORY.hot} 条、community 至多 ${MAX_PICKS_BY_CATEGORY.community} 条（宁缺毋滥，选不满没关系），尽量覆盖不同来源；ai 板块优先大模型推理优化/训练/受关注的性能优化点；community 板块是社区动态（X 发帖、Reddit/V2EX/Digg 热议）：只选 AI/科技的研究、进展与深度讨论（重磅发布、从业者洞见、技术实践经验），以下性质一律不选——个人求助/职业咨询/迷茫倾诉、闲聊/生活贴/情绪短评/抱怨吐槽、名人往来轶闻与八卦式炒作、纯自我宣传。`,
+    `1. ai 板块选最重要的至多 ${MAX_PICKS_BY_CATEGORY.ai} 条，hot 至多 ${MAX_PICKS_BY_CATEGORY.hot} 条、community 至多 ${MAX_PICKS_BY_CATEGORY.community} 条（宁缺毋滥，选不满没关系），尽量覆盖不同来源；ai 板块优先大模型推理优化/训练/受关注的性能优化点；community 板块是社区动态（X 发帖、Reddit/V2EX/Lobsters 热议）：只选 AI/科技的研究、进展与深度讨论（重磅发布、从业者洞见、技术实践经验），以下性质一律不选——个人求助/职业咨询/迷茫倾诉、闲聊/生活贴/情绪短评/抱怨吐槽、名人往来轶闻与八卦式炒作、纯自我宣传。`,
     // 07-11 降级实案：summaryZh 引用 V2EX 标题带未转义英文双引号 → JSON.parse 炸穿
     //（repairTruncatedJson 只修尾部截断，救不了字符串中段裸引号）→ 整报清单版。防在源头。
     "2. summaryZh 必须是中文陈述句；英文条目要译摘。所有字符串值内部禁止出现英文双引号（会破坏 JSON）——引用词语、标题或原话时一律用中文引号「」。条目信息不足时凭标题写一句主题定位即可——禁止出现「无法提炼」「正文缺失/无实质内容」这类元评论（读者不需要知道系统内部状况）。",

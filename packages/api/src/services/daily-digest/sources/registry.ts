@@ -275,6 +275,13 @@ export const RSS_SOURCES: RssSourceDef[] = [
     urls: rsshub("/thepaper/featured"),
     rsshubRoute: "/thepaper/featured",
   },
+  // B045：Digg 长期返回 Vercel challenge（持续 429），不是普通限流；改用
+  // Lobsters 官方 AI 标签 RSS，继续承担“高信号技术社区”覆盖。
+  {
+    sourceId: "lobsters-ai",
+    category: "community",
+    urls: ["https://lobste.rs/t/ai.rss"],
+  },
 ]
 // 篮球/电竞/股市源已删（2026-07-03 小孙拍板「纯粹一点」）；ESPN/HLTV 反爬教训
 // （简单 UA+direct:true 优先直连）留存于 git 历史与 feature doc，direct 机制保留给后续源用。
@@ -588,13 +595,12 @@ export function buildAllSources(opts: BuildSourcesOptions = {}): DigestSource[] 
   return [...rss, ...JSON_SOURCES.map(makeJsonSource)]
 }
 
-/** 出站白名单从 registry 自动推导 + 显式追加（github/reddit/digg 是独立 fetcher 模块不在 registry 表内） */
+/** 出站白名单从 registry 自动推导 + 显式追加（github/reddit 是独立 fetcher 模块不在 registry 表内） */
 export const EXTRA_ALLOWED_HOSTS = [
   "github.com",
   "api.github.com",
   "news.smol.ai",
   "www.reddit.com", // #22 shreddit svc
-  "digg.com", // #23 Digg AI 1000
 ]
 
 /** 质量层 3：简报型源清单（被选中后必须深读正文）——从 registry 单一真相源推导 */
@@ -632,10 +638,10 @@ export function listAllSourceMeta(): Array<{ id: string; category: DigestCategor
       id: d.sourceId,
       category: d.category,
     })),
-    // 独立 fetcher 模块（多 URL 遍历/RSC 提取/限速遍历，不适合表驱动）；
-    // 07-06 社区改版：Reddit/Digg/X/小红书全归社区动态板块
+    // 独立 fetcher 模块（多 URL 遍历/限速遍历，不适合表驱动）；
+    // 07-06 社区改版：Reddit/X/小红书全归社区动态板块。
+    // B045 起 Lobsters 已在 RSS_SOURCES 自动注册；Digg 退休，不再作为活跃源列出。
     { id: "reddit-ai", category: "community" },
-    { id: "digg-ai", category: "community" },
     { id: "x-firsthand", category: "community" },
     // xiaohongshu 07-11 从设置页摘除（#31 转 F029 当 UGC 核查源、日报侧休眠——
     // 小孙「设置里为啥还有小红书」）；适配器/boot 接线留存，重启用时把本行加回即可

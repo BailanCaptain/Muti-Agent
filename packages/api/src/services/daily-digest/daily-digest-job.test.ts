@@ -193,7 +193,7 @@ describe("reconcile（D10/D11）", () => {
     assert.equal(sender.sent.length, 1)
   })
 
-  it("B044：周一只汇总上海时区周六/周日，忽略周末过渡期 shown，并排除 GitHub 当前榜单", async () => {
+  it("B045：周一正文只汇总周六/周日，但保留 GitHub 当前四榜快照", async () => {
     const raw = [
       buildNormalizedItem(
         "smol-ai",
@@ -241,25 +241,84 @@ describe("reconcile（D10/D11）", () => {
       category: "ai",
       fetch: async () => raw,
     }
-    const githubSource = okSource("github-trending-weekly", "github")
+    const githubDailySource = okSource("github-trending-daily", "github")
+    const githubWeeklySource = okSource("github-trending-weekly", "github")
+    const githubNewcomersSource = okSource("github-ai-newcomers", "github")
+    const githubMonthlySource = okSource("github-trending-monthly", "github")
+    const podcastRaw = [
+      buildNormalizedItem(
+        "podcast-transcribe",
+        "podcast",
+        "Friday podcast",
+        "https://example.com/podcast-fri",
+        "2026-07-24T10:00:00Z",
+        "Friday",
+      ),
+      buildNormalizedItem(
+        "podcast-transcribe",
+        "podcast",
+        "Saturday podcast",
+        "https://example.com/podcast-sat",
+        "2026-07-24T16:30:00Z",
+        "Saturday",
+      ),
+      buildNormalizedItem(
+        "podcast-transcribe",
+        "podcast",
+        "Sunday podcast",
+        "https://example.com/podcast-sun",
+        "2026-07-26T15:59:00Z",
+        "Sunday",
+      ),
+      buildNormalizedItem(
+        "podcast-transcribe",
+        "podcast",
+        "Monday podcast",
+        "https://example.com/podcast-mon",
+        "2026-07-26T16:30:00Z",
+        "Monday",
+      ),
+      buildNormalizedItem(
+        "podcast-transcribe",
+        "podcast",
+        "No-date podcast",
+        "https://example.com/podcast-no-date",
+        null,
+        "No date",
+      ),
+    ]
+    const podcastSource: DigestSource = {
+      sourceId: "podcast-transcribe",
+      category: "podcast",
+      fetch: async () => podcastRaw,
+    }
     writeShownLedger(dir, "2026-07-25", [raw[1].dedupeKey])
     writeShownLedger(dir, "2026-07-26", [raw[2].dedupeKey])
     const fed: NormalizedItem[] = []
     const sender = makeSender()
     const job = createDailyDigestJob(
       makeDeps({
-        sources: [contentSource],
-        githubSources: [githubSource],
+        sources: [contentSource, podcastSource],
+        githubDailySources: [githubDailySource],
+        githubSources: [githubWeeklySource, githubNewcomersSource],
+        githubMonthlySources: [githubMonthlySource],
         sender,
         summarize: async (items) => {
           fed.push(...items)
+          const aiItems = items.filter((item) => item.category === "ai")
+          const podcastItems = items.filter((item) => item.category === "podcast")
           return {
             overview: ["周末两日要点"],
             editorialAssessments: approve(items),
             sections: [
               {
                 category: "ai",
-                picks: items.map((item) => ({ itemId: item.id, summaryZh: "周末摘要" })),
+                picks: aiItems.map((item) => ({ itemId: item.id, summaryZh: "周末摘要" })),
+              },
+              {
+                category: "podcast",
+                picks: [],
+                briefItemIds: podcastItems.map((item) => item.id),
               },
             ],
             degraded: false,
@@ -270,21 +329,50 @@ describe("reconcile（D10/D11）", () => {
 
     assert.equal((await job.reconcile(MON_0900)).status, "ok")
     assert.deepEqual(
-      fed.map((item) => item.title),
+      fed.filter((item) => item.category === "ai").map((item) => item.title),
       ["Saturday story", "Sunday story"],
     )
-    assert.equal(githubSource.calls.length, 0)
+    assert.deepEqual(
+      fed.filter((item) => item.category === "podcast").map((item) => item.title),
+      ["Saturday podcast", "Sunday podcast"],
+    )
+    for (const source of [
+      githubDailySource,
+      githubWeeklySource,
+      githubNewcomersSource,
+      githubMonthlySource,
+    ]) {
+      assert.equal(source.calls.length, 1)
+    }
     assert.equal(sender.sent.length, 1)
     assert.match(sender.sent[0].subject, /周末速览/)
+    const firstArchive = JSON.parse(
+      fs.readFileSync(path.join(dir, "2026-07-27", "summary.json"), "utf8"),
+    ) as { counts: { content: number; github: number; podcast: number } }
+    assert.equal(firstArchive.counts.content, 2)
+    assert.equal(firstArchive.counts.github, 4)
+    assert.equal(firstArchive.counts.podcast, 2)
 
     fed.length = 0
     assert.equal((await job.reconcile(MON_0900, { force: true })).status, "ok")
     assert.deepEqual(
-      fed.map((item) => item.title),
+      fed.filter((item) => item.category === "ai").map((item) => item.title),
       ["Saturday story", "Sunday story"],
       "周一立即补发也必须保持严格周末窗口",
     )
-    assert.equal(githubSource.calls.length, 0)
+    assert.deepEqual(
+      fed.filter((item) => item.category === "podcast").map((item) => item.title),
+      ["Saturday podcast", "Sunday podcast"],
+      "播客也必须保持严格周末窗口",
+    )
+    for (const source of [
+      githubDailySource,
+      githubWeeklySource,
+      githubNewcomersSource,
+      githubMonthlySource,
+    ]) {
+      assert.equal(source.calls.length, 2)
+    }
     assert.equal(sender.sent.length, 2)
   })
 
@@ -292,8 +380,23 @@ describe("reconcile（D10/D11）", () => {
     const sender = makeSender()
     const alerts: string[] = []
     const githubSource = okSource("github-trending-weekly", "github")
+    const saturdayContent: DigestSource = {
+      sourceId: "smol-ai",
+      category: "ai",
+      fetch: async () => [
+        buildNormalizedItem(
+          "smol-ai",
+          "ai",
+          "Saturday unreviewed story",
+          "https://example.com/saturday-unreviewed",
+          "2026-07-25T08:00:00Z",
+          "Saturday",
+        ),
+      ],
+    }
     const job = createDailyDigestJob(
       makeDeps({
+        sources: [saturdayContent],
         sender,
         githubSources: [githubSource],
         pushAlert: (message) => alerts.push(message),
@@ -317,10 +420,12 @@ describe("reconcile（D10/D11）", () => {
       }),
     )
 
-    assert.equal((await job.reconcile(FRI_0800)).status, "failed_summarize")
+    assert.equal((await job.reconcile(MON_0900)).status, "failed_summarize")
     assert.equal(sender.sent.length, 0)
     assert.ok(alerts.some((message) => message.includes("新闻正文") && message.includes("不发送")))
-    assert.ok(!fs.existsSync(path.join(dir, "2026-07-03", "digest.html")))
+    assert.ok(!fs.existsSync(path.join(dir, "2026-07-27")))
+    assert.ok(!fs.existsSync(path.join(dir, "ledger", "2026-07-27.json")))
+    assert.ok(!fs.existsSync(path.join(dir, "outbound-ledger.jsonl")))
   })
 
   it("happy path：发送 + sent 落账 + 归档双格式 + 外发账本", async () => {
@@ -1738,6 +1843,78 @@ describe("选材预滤链（E1/E2，07-07 小孙「重复信息」「政治去�
     ) as { keys: string[] }
     assert.equal(finalPublishedCount, 3, "预算裁掉的 brief 必须同步从最终 publication 删除")
     assert.equal(shownB.keys.length, finalPublishedCount, "shown 必须与最终实际发布集合严格同源")
+  })
+
+  it("B045：周一自动降到 0 行速览时不得把密度隐藏误报为无合资格内容", async () => {
+    const aiItem = buildNormalizedItem(
+      "weekend-ai",
+      "ai",
+      "周末 AI 精选",
+      "https://a.com/weekend-ai",
+      "2026-07-26T00:00:00Z",
+      "snippet",
+    )
+    const communityItems = Array.from({ length: 12 }, (_, i) =>
+      buildNormalizedItem(
+        "weekend-community",
+        "community",
+        `开源社区发布大模型推理吞吐优化技术方案-${i}`,
+        `https://a.com/weekend-community-${i}`,
+        "2026-07-26T00:00:00Z",
+        "snippet",
+      ),
+    )
+    const aiSource: DigestSource = {
+      sourceId: "weekend-ai",
+      category: "ai",
+      fetch: async () => [aiItem],
+    }
+    const communitySource: DigestSource = {
+      sourceId: "weekend-community",
+      category: "community",
+      fetch: async () => communityItems,
+    }
+    const budgetDir = fs.mkdtempSync(path.join(os.tmpdir(), "f037-weekend-budget-"))
+    const emailByteBudget = 22_500
+    const diagnostics: string[] = []
+    const job = createDailyDigestJob(
+      makeDeps({
+        ledger: createFileAttemptLedger(budgetDir, "[daily-digest]"),
+        health: createFileSourceHealthStore(budgetDir),
+        baseDir: budgetDir,
+        sources: [aiSource, communitySource],
+        emailByteBudget,
+        log: (message) => diagnostics.push(message),
+        pushAlert: (message) => diagnostics.push(message),
+        summarize: async (items) => ({
+          overview: ["周末摘要"],
+          editorialAssessments: approve(items),
+          sections: [
+            {
+              category: "ai",
+              picks: [{ itemId: aiItem.id, summaryZh: "AI 精选摘要" }],
+            },
+            {
+              category: "community",
+              picks: [],
+              briefItemIds: communityItems.map((item) => item.id),
+            },
+          ],
+          degraded: false,
+        }),
+      }),
+    )
+
+    assert.equal(
+      (await job.reconcile(MON_0900)).status,
+      "ok",
+      diagnostics.join("\n"),
+    )
+    const html = fs.readFileSync(path.join(budgetDir, "2026-07-27", "digest.html"), "utf8")
+    assert.ok(!html.includes("其余速览"), "实验预算应把周一速览自动降到 0 行")
+    assert.ok(!html.includes("本周末暂无合资格的社区动态"))
+    assert.ok(html.includes("本周末有合资格内容，因邮件密度设置未展开"))
+    assert.ok(Buffer.byteLength(html, "utf8") <= emailByteBudget)
   })
 
   it("B035：密度阶梯耗尽后仍超 98KiB 必须 fail-closed，禁止 Gmail 裁断正文", async () => {

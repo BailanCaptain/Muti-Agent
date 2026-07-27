@@ -222,13 +222,13 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
     // GitHub 四榜全常驻（07-07 小孙「应该是增长、周榜、月榜都要的」；月榜 07-06 已拆
     // 每月 1 号门）：GitHub trending 周/月榜本就是滚动窗口而非周界快照，天天看都成立；
     // 跨榜同 repo 由 orchestrator dedupeItems 合并（同 canonicalUrl 同 dedupeKey），不重复成行
-    const githubSources = weekendRange
-      ? []
-      : [
-          ...(run.githubDailySources ?? []),
-          ...(run.githubSources ?? []),
-          ...(run.githubMonthlySources ?? []),
-        ]
+    // B045：周末日期门只约束有发布日期的新闻流。GitHub 是周一时点的状态快照，
+    // 四榜继续常驻；下方 hasEditorialEntries 仍要求至少一条非 GitHub 正文，榜单不能兜底空壳。
+    const githubSources = [
+      ...(run.githubDailySources ?? []),
+      ...(run.githubSources ?? []),
+      ...(run.githubMonthlySources ?? []),
+    ]
 
     const { results, items } = await runAllSources([...run.sources, ...githubSources], {
       http: deps.http,
@@ -510,10 +510,17 @@ export function createDailyDigestJob(deps: DailyDigestJobDeps) {
     }
     // 邮件预算可能裁掉 brief 尾部：先以 renderer 的实际显示集合收敛 publication，随后
     // archive/web/shown 全消费这份终态，避免「归档说发布了、邮件却没显示」的双账。
-    publication = filterDigestPublication(publication, new Set(rendered.displayedItemIds))
+    const displayedBeforePublicationFilter = new Set(rendered.displayedItemIds)
+    const densitySuppressedCategories = rendered.densitySuppressedCategories
+    publication = filterDigestPublication(publication, displayedBeforePublicationFilter)
     // overview 也带结构化事件引用；预算裁掉其支撑条目后再用终态 publication 渲染一次，
     // 保证邮件正文、归档和 web 的速览没有悬空事件。终态条目只会更少，不会重新超预算。
-    rendered = renderDigest({ ...renderInput, summary, publication })
+    rendered = renderDigest({
+      ...renderInput,
+      summary,
+      publication,
+      densitySuppressedCategories,
+    })
     const finalEmailBytes = Buffer.byteLength(rendered.html, "utf8")
     if (finalEmailBytes > emailByteBudget) {
       pushAlert(

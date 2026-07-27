@@ -61,7 +61,7 @@ const SECTION_META: SectionMeta[] = [
     hero: "焦点",
   },
   {
-    // 07-06 小孙改版：X 一手动态 → 社区动态（X + Reddit + Digg + V2EX + 小红书）
+    // 07-06 小孙改版：X 一手动态 → 社区动态（X + Reddit + Lobsters + V2EX + 小红书）
     category: "community",
     label: "社区动态",
     en: "COMMUNITY PULSE",
@@ -99,7 +99,7 @@ const SECTION_META: SectionMeta[] = [
 
 // ---- 分栏改版（小孙 07-05 #2/#3/#4/#5 + 07-06 社区改版）：板块内子栏 ----
 // 社区板块子栏：X 账号走 org/person 结构分区（x-handle-groups 静态映射，清单外落「更多动态」），
-// 其余社区源按平台分组（Reddit/Digg/V2EX/小红书——真相源 shared digest-tags）
+// 其余社区源按平台分组（Reddit/Lobsters/V2EX/小红书——真相源 shared digest-tags）
 
 /** 板块 → 子栏分组键（顺序即渲染顺序）；返回 null = 该板块不分组（github 走榜单卡） */
 function sectionGroupOrder(category: DigestCategory): readonly string[] | null {
@@ -214,6 +214,8 @@ export interface RenderInput {
   webBaseUrl?: string
   /** 邮件密度（设置页）：每板块「其余速览」行数，默认 12；0 = 关掉速览区 */
   restOverviewRows?: number
+  /** 终态 publication 已移除、但本轮因邮件密度而隐藏过 brief 的栏目；只用于诚实空态。 */
+  densitySuppressedCategories?: DigestCategory[]
   /** v2 过滤 raw lookup 后仍保留原「本期扫描」统计口径。 */
   scannedItemCount?: number
 }
@@ -328,6 +330,10 @@ function restRowsCard(
 /** 每节尾「回目录」：邮件里的导航回程（锚点是邮件唯一可用的"跳转"原语） */
 function backToTopRow(): string {
   return `<tr><td align="right" style="padding:0 2px 6px 0;"><a href="#DigestTop" style="font-family:${SANS};font-size:12px;letter-spacing:1px;color:${C.gold};text-decoration:none;">↑ 回目录</a></td></tr>`
+}
+
+function emptySectionCard(message: string): string {
+  return `<tr><td style="padding:0 0 16px 0;"><table class="digest-sans empty-section-card" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.heroLight}" style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;background-color:${C.heroLight};border:1px solid ${C.border};border-radius:16px;"><tr><td style="font-family:${SANS};font-size:14px;line-height:24px;color:${C.sub};padding:18px 20px;">${escapeHtml(message)}</td></tr></table></td></tr>`
 }
 
 /** github 条目 snippet（"+N stars today/this week · ★M · Lang · desc" / "新仓 7 天 ★M · desc"）→ 数据行 + 描述 */
@@ -767,6 +773,7 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
   for (const p of input.podcastItems ?? []) itemsById.set(p.id, p)
   // 中文化补全（07-06）：本次渲染实际展示的速览行 id——job 层据此送翻译再二次渲染
   const restItemIds: string[] = []
+  const densitySuppressedCategories = new Set<DigestCategory>()
 
   const edition = digestEdition(input.businessDate)
   const degradedTag = input.summary.degraded ? "（清单版）" : ""
@@ -835,7 +842,16 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
   const usedIds = new Set<string>()
   const sections = SECTION_META.map((baseMeta) => {
     const meta =
-      baseMeta.category === "github" ? adaptGithubMeta(baseMeta, input.githubItems ?? []) : baseMeta
+      baseMeta.category === "github"
+        ? adaptGithubMeta(baseMeta, input.githubItems ?? [])
+        : edition.weekendRoundup && baseMeta.category === "hot"
+          ? {
+              ...baseMeta,
+              label: "周末热点",
+              nav: "周末热点",
+              en: "WEEKEND HIGHLIGHTS",
+            }
+          : baseMeta
     const picks = sectionsByCat.get(meta.category) ?? []
     const resolved = picks
       .map((pick) => ({ pick, item: itemsById.get(pick.itemId) }))
@@ -887,6 +903,9 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
   }).filter(
     (s) =>
       s.resolved.length > 0 ||
+      // B045：周一是周末合刊，五栏骨架不随“碰巧哪一栏有无新内容”收缩。
+      // 空态只属于展示层，不进入 publication/shown，也不能绕过 job 的非 GitHub 正文门。
+      edition.weekendRoundup ||
       // 07-12 德彪 jtw-r1 P1：picks 被摘空（如无字幕 yt 摘除门）但类目仍有速览候选 →
       // 保留 rest-only section（只渲染速览区）；一刀切丢弃会让整类蒸发，而 job 已把
       // 喂样烧进 shown = 条目本期没展示还被账本压制，永久漏报。
@@ -944,6 +963,39 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
   sections.forEach((s, si) => {
     sectionHtml.push(sectionHeading(s.meta, si === 0))
     mdParts.push(`## ${s.meta.label}`, "")
+
+    // 先算速览候选，避免把“没有精选但仍有速览”的正常板块误判成周一空态。
+    // 这个谓词与上方 section 保留门保持同式。
+    const restCap = Math.max(0, Math.min(30, input.restOverviewRows ?? 12))
+    const restAll = input.items.filter(
+      (i) =>
+        i.category === s.meta.category &&
+        !usedIds.has(i.id) &&
+        !BRIEFING_SOURCE_IDS.has(i.sourceId) &&
+        !communityRestBlocked(i),
+    )
+    const restShown = restCap === 0 ? [] : diversifyBySource(restAll, restCap)
+    if (restAll.length > 0 && restShown.length === 0) {
+      densitySuppressedCategories.add(s.meta.category)
+    }
+
+    if (s.resolved.length === 0 && restShown.length === 0) {
+      const hiddenByDensity =
+        restAll.length > 0 || input.densitySuppressedCategories?.includes(s.meta.category)
+      const emptyMessage =
+        hiddenByDensity
+          ? "本周末有合资格内容，因邮件密度设置未展开"
+          : {
+              ai: "本周末暂无合资格的 AI 动态",
+              community: "本周末暂无合资格的社区动态",
+              hot: "本周末暂无合资格的热点",
+              podcast: "本周末暂无新节目",
+              github: "截至周一暂无合资格的开源榜单项目",
+            }[s.meta.category]
+      sectionHtml.push(emptySectionCard(emptyMessage), backToTopRow())
+      mdParts.push(emptyMessage, "")
+      return
+    }
 
     // GitHub：榜种标题与 AI/X 共用 subHeading；每种榜随后是一张行式列表卡。
     if (s.meta.category === "github") {
@@ -1060,15 +1112,6 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
     // 其余速览（07-05 晚「邮件自足」）：本板块没被精选的条目压紧凑行区直接印出来，
     // 排序源内轮转（不跨平台直比热度量纲），默认 12 行守 Gmail 102KB 裁剪线（设置页可调 0-30）。
     // 07-06 小孙「not much happened today 太扯」：简报型源（标题无信息量）没被精选就不进速览
-    const restCap = Math.max(0, Math.min(30, input.restOverviewRows ?? 12))
-    const restAll = input.items.filter(
-      (i) =>
-        i.category === s.meta.category &&
-        !usedIds.has(i.id) &&
-        !BRIEFING_SOURCE_IDS.has(i.sourceId) &&
-        !communityRestBlocked(i),
-    )
-    const restShown = restCap === 0 ? [] : diversifyBySource(restAll, restCap)
     if (restShown.length > 0) {
       for (const i of restShown) restItemIds.push(i.id)
       const titleZh = input.summary.restTitleZh
@@ -1119,7 +1162,6 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
     ? `<tr><td style="font-family:${SANS};font-size:12px;font-weight:700;line-height:20px;letter-spacing:1px;color:${C.goldLight};padding:6px 0 0 0;">${escapeHtml(edition.mastheadSubtitle)}</td></tr>`
     : ""
   const weekendCategoryLine = sections
-    .filter((section) => section.meta.category !== "github")
     .map((section) => {
       if (section.meta.category === "ai") return "AI"
       if (section.meta.category === "hot") return "周末热点"
@@ -1159,6 +1201,7 @@ function renderDigestAtDensity(input: RenderInput, density: HtmlDensity): Render
     markdown: mdParts.join("\n"),
     restItemIds,
     displayedItemIds: [...new Set([...usedIds, ...restItemIds])],
+    densitySuppressedCategories: [...densitySuppressedCategories],
   }
 }
 

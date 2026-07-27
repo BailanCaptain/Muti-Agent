@@ -15,7 +15,6 @@ import { resolveDigestEnv } from "./email-sender"
 import { createDigestModelRunner } from "./model-runner"
 import { createFileSourceHealthStore } from "./source-health"
 import { F037_FORMAL_DEDUP_START_DATE } from "./shown-ledger"
-import { makeDiggAiSource } from "./sources/digg-ai"
 import {
   createGithubEvidenceCache,
   makeGithubDailySource,
@@ -351,9 +350,9 @@ export function bootDailyDigest(opts: DailyDigestBootOptions = {}): DailyDigestR
     return {
       sources: [
         ...buildAllSources({ rsshubBase: env.rsshubBase }),
-        // #22/#23（主表 v2.1）：独立 fetcher 模块（多 URL 遍历/RSC 提取，不适合 registry 表驱动）
+        // #22：Reddit 独立 fetcher（多 URL 遍历/限速遍历，不适合 registry 表驱动）。
+        // B045：Digg 已退休，替代源 Lobsters 由 RSS registry 接线。
         makeRedditAiSource(),
-        makeDiggAiSource(),
         ...extraSources,
       ].filter((s) => !disabled.has(s.sourceId)),
       githubSources: [

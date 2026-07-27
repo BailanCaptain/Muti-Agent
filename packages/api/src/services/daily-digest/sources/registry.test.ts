@@ -11,6 +11,7 @@ import {
   RSS_SOURCES,
   buildAllSources,
   deriveOutboundAllowlist,
+  listAllSourceMeta,
   makeJsonSource,
   makeRssSource,
   mapJsonItems,
@@ -64,6 +65,36 @@ describe("registry 结构约束", () => {
       Number(new URL(url).searchParams.get("numericFilters")?.match(/(\d+)$/)?.[1])
     assert.equal(Math.floor(monday.getTime() / 1000) - cutoff(buildUrl(monday)), 72 * 3600)
     assert.equal(Math.floor(tuesday.getTime() / 1000) - cutoff(buildUrl(tuesday)), 24 * 3600)
+  })
+
+  it("B045：Lobsters AI 官方 RSS 等量替换持续 429 的 Digg", async () => {
+    const def = RSS_SOURCES.find((source) => source.sourceId === "lobsters-ai")
+    assert.ok(def, "registry 必须登记 lobsters-ai")
+    if (!def) return
+    assert.equal(def.category, "community")
+    assert.deepEqual(def.urls, ["https://lobste.rs/t/ai.rss"])
+
+    const allMeta = listAllSourceMeta()
+    assert.equal(allMeta.length, 43, "等量替换后活跃源清单必须仍为 43 路")
+    assert.equal(
+      allMeta.some((source) => source.id === "digg-ai"),
+      false,
+    )
+    assert.equal(allMeta.filter((source) => source.id === "lobsters-ai").length, 1)
+
+    const rss = `<?xml version="1.0" encoding="UTF-8"?>
+      <rss version="2.0"><channel><title>Lobsters: ai</title>
+      <item><title>Inference runtime optimization</title>
+      <link>https://example.com/inference-runtime</link>
+      <guid>https://lobste.rs/s/example</guid>
+      <pubDate>Sun, 26 Jul 2026 08:00:00 GMT</pubDate>
+      <description>Comments</description></item>
+      </channel></rss>`
+    const items = await makeRssSource(def).fetch(ctxWith({ fetchText: async () => rss }))
+    assert.equal(items.length, 1)
+    assert.equal(items[0].sourceId, "lobsters-ai")
+    assert.equal(items[0].category, "community")
+    assert.equal(items[0].canonicalUrl, "https://example.com/inference-runtime")
   })
 })
 

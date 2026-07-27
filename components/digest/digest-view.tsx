@@ -39,6 +39,24 @@ const SECTION_DEFS = [
   { category: "hot", label: "今日热点", en: "TRENDING TODAY" },
 ] as const
 
+interface WeekendEdition {
+  coverageLabel: string
+  coverageText: string
+}
+
+function weekendEditionOf(date: string): WeekendEdition | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  if (!match) return null
+  const businessDateUtc = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  if (new Date(businessDateUtc).getUTCDay() !== 1) return null
+  const mmdd = (value: number) => {
+    const day = new Date(value)
+    return `${String(day.getUTCMonth() + 1).padStart(2, "0")}.${String(day.getUTCDate()).padStart(2, "0")}`
+  }
+  const coverageLabel = `${mmdd(businessDateUtc - 2 * 86_400_000)}—${mmdd(businessDateUtc - 86_400_000)}`
+  return { coverageLabel, coverageText: `${coverageLabel}（周六—周日）` }
+}
+
 function TabRow({
   tabs,
   active,
@@ -139,14 +157,22 @@ function Section({
   category,
   label,
   en,
-}: { day: DigestDayResponse; category: string; label: string; en: string }) {
+  showEmpty = false,
+}: {
+  day: DigestDayResponse
+  category: string
+  label: string
+  en: string
+  showEmpty?: boolean
+}) {
   const resolved = useMemo(() => resolvePicks(day, category), [day, category])
   const tabs = useMemo(() => buildTabs(category, resolved), [category, resolved])
   const [picked, setPicked] = useState(ALL_TAB)
   // 德彪 r-final P2-4：切日期后旧选中 tab 可能在新日期不存在——派生兜底回「全部」，防假空态
   const active = tabs.includes(picked) ? picked : ALL_TAB
   const shown = filterByTab(category, resolved, active)
-  if (resolved.length === 0 && rawItems(day, category).length === 0) return null
+  const raw = rawItems(day, category)
+  if (resolved.length === 0 && raw.length === 0 && !showEmpty) return null
   return (
     <section className="pt-8">
       <div className="border-l-4 border-accent pl-3">
@@ -163,6 +189,9 @@ function Section({
         {shown.length === 0 && resolved.length > 0 && (
           <p className="text-sm text-slate-500">该分栏今日无精选。</p>
         )}
+        {resolved.length === 0 && raw.length === 0 && showEmpty && (
+          <p className="text-sm text-slate-500">本期暂无合资格内容。</p>
+        )}
         <RawList day={day} category={category} />
       </div>
     </section>
@@ -170,9 +199,12 @@ function Section({
 }
 
 /** #33 播客速递（07-10）：有新集才出现；播客名走 topicTag，rawSnippet=转写提炼要点 */
-function PodcastSection({ day }: { day: DigestDayResponse }) {
+function PodcastSection({
+  day,
+  showEmpty = false,
+}: { day: DigestDayResponse; showEmpty?: boolean }) {
   const episodes = useMemo(() => podcastEpisodes(day), [day])
-  if (episodes.length === 0) return null
+  if (episodes.length === 0 && !showEmpty) return null
   return (
     <section className="pt-8">
       <div className="border-l-4 border-accent pl-3">
@@ -180,6 +212,7 @@ function PodcastSection({ day }: { day: DigestDayResponse }) {
         <h2 className="pt-0.5 text-xl font-bold text-slate-900">播客速递</h2>
       </div>
       <div className="grid gap-3 pt-3">
+        {episodes.length === 0 && <p className="text-sm text-slate-500">本期暂无合资格内容。</p>}
         {episodes.map((ep) => (
           <article
             key={ep.id}
@@ -209,10 +242,24 @@ function PodcastSection({ day }: { day: DigestDayResponse }) {
   )
 }
 
-function GithubSection({ day }: { day: DigestDayResponse }) {
+function GithubSection({
+  day,
+  showEmpty = false,
+}: { day: DigestDayResponse; showEmpty?: boolean }) {
   const groups = useMemo(() => githubGroups(day), [day])
   const [active, setActive] = useState(0)
-  if (groups.length === 0) return null
+  if (groups.length === 0 && !showEmpty) return null
+  if (groups.length === 0) {
+    return (
+      <section className="pt-8">
+        <div className="border-l-4 border-accent pl-3">
+          <div className="text-[10px] font-bold tracking-[3px] text-accent-600">TRENDING REPOS</div>
+          <h2 className="pt-0.5 text-xl font-bold text-slate-900">{DIGEST_GITHUB_SECTION_LABEL}</h2>
+        </div>
+        <p className="pt-3 text-sm text-slate-500">本期暂无合资格内容。</p>
+      </section>
+    )
+  }
   const tabs = groups.map((g) => g.label)
   const current = groups[Math.min(active, groups.length - 1)]
   return (
@@ -301,16 +348,26 @@ export function DigestView({ date }: { date: string }) {
 
   const failed = (day?.summary?.sourceHealth ?? []).filter((h) => h.status !== "ok")
   const overview = day ? overviewOf(day) : []
+  const weekendEdition = weekendEditionOf(date)
+  const sectionDefs = weekendEdition
+    ? SECTION_DEFS.map((section) =>
+        section.category === "hot"
+          ? { ...section, label: "周末热点", en: "TRENDING THIS WEEKEND" }
+          : section,
+      )
+    : SECTION_DEFS
 
   return (
     <div className="min-h-screen bg-surface-sunken">
       <div className="mx-auto max-w-3xl px-4 pb-16 pt-8">
         <header className="rounded-2xl bg-slate-900 p-6 text-white">
           <div className="text-[10px] font-bold tracking-[4px] text-accent-200">
-            MULTI-AGENT · DAILY BRIEF
+            {weekendEdition ? "MULTI-AGENT · WEEKEND ROUNDUP" : "MULTI-AGENT · DAILY BRIEF"}
           </div>
           <div className="flex flex-wrap items-end justify-between gap-3 pt-1">
-            <h1 className="text-3xl font-bold tracking-wide">每日简报</h1>
+            <h1 className="text-3xl font-bold tracking-wide">
+              {weekendEdition ? "周末速览" : "每日简报"}
+            </h1>
             <div className="flex items-center gap-2">
               {dates.length > 0 && (
                 <select
@@ -338,6 +395,7 @@ export function DigestView({ date }: { date: string }) {
           </div>
           {day && (
             <div className="pt-2 text-xs tracking-wide text-accent-200">
+              {weekendEdition ? `覆盖 ${weekendEdition.coverageText} · ` : ""}
               {checkLine(day)}
               {day.summary?.degraded ? " · 清单版" : ""}
             </div>
@@ -370,7 +428,9 @@ export function DigestView({ date }: { date: string }) {
         {day && overview.length > 0 && (
           <div className="mt-4 rounded-2xl border border-slate-200 bg-surface-elevated p-5">
             <div className="text-[10px] font-bold tracking-[3px] text-accent-600">
-              今日速览 · AT A GLANCE
+              {weekendEdition
+                ? `周末速览 · WEEKEND AT A GLANCE · ${weekendEdition.coverageText}`
+                : "今日速览 · AT A GLANCE"}
             </div>
             <ul className="space-y-1.5 pt-2">
               {overview.map((o) => (
@@ -384,15 +444,23 @@ export function DigestView({ date }: { date: string }) {
         )}
 
         {day &&
-          SECTION_DEFS.map((s) => (
-            <Section key={s.category} day={day} category={s.category} label={s.label} en={s.en} />
+          sectionDefs.map((s) => (
+            <Section
+              key={s.category}
+              day={day}
+              category={s.category}
+              label={s.label}
+              en={s.en}
+              showEmpty={Boolean(weekendEdition)}
+            />
           ))}
-        {day && <PodcastSection day={day} />}
-        {day && <GithubSection day={day} />}
+        {day && <PodcastSection day={day} showEmpty={Boolean(weekendEdition)} />}
+        {day && <GithubSection day={day} showEmpty={Boolean(weekendEdition)} />}
 
         {day && (
           <footer className="pt-10 text-center text-xs text-slate-500">
-            ◆ DailyBrief · Multi-Agent · F037 每日简报（网页版全量分栏）
+            ◆ DailyBrief · Multi-Agent · F037 {weekendEdition ? "周末速览" : "每日简报"}
+            （网页版全量分栏）
           </footer>
         )}
       </div>

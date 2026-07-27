@@ -1,4 +1,4 @@
-# F037 信源全量主表 + 扩展调研定案（v2.4 · 2026-07-27）
+# F037 信源全量主表 + 扩展调研定案（v2.5 · 2026-07-27）
 
 > **本表是 F037 信源的唯一真相源**：任何汇报/实现/排期以 §0 主表为准；每次改动必须核计数（上版 N 项 → 本版 N±变更逐条列明），禁止凭记忆手抄重写。
 > 失误记录（立表原因）：07-04 两连漏——Digg「调研有、清单漏」、小红书「表格有、队列漏」，小孙连抓两次。病根=每次口头重抄必丢件。
@@ -6,6 +6,8 @@
 
 ## 0. 全量主表（40 路：现役 19 + 07-07 增补 2 + P0 新增 8 + P1 三项 + P2 五项 + 管线增强 3）
 
+> **v2.5 计数核对**：上版 40 项 → 本版 40 项。B045 等量替换：-#23 `digg-ai`（持续 Vercel challenge 429，且私有 RSC 多次漂移）+#23 `lobsters-ai`（官方 AI 标签 RSS）；GitHub 四榜恢复为周一状态快照，源数量零变化。
+>
 > **v2.4 计数核对**：上版 40 项 → 本版 40 项。B044 只调整周末发送节奏、#11/#17 周一 lookback 与 #23 Digg 可恢复 HTTP 重试，源数量零增删。
 >
 > **v2.3 计数核对**：上版 40 项 → 本版 40 项。B042 只同步 #23 Digg 的现行入口与 RSC 字段合同，源数量零增删。
@@ -32,8 +34,8 @@
 | 15 | baidu-hot | hot | 公开 JSON API | |
 | 16 | toutiao-hot | hot | 公开 JSON API | |
 | 17 | x-firsthand | community（07-06 前 x） | 自建 RSSHub cookie 小号 `/twitter/user/:handle` | B 项已加 4-7s/账号限速+8min 预算；通常近 24h，周一近 72h 后由终态日期门只留周六/周日；33 账号已验活 |
-| 18 | github-trending-weekly | github | 刮 `github.com/trending?since=weekly`（常驻；周一周末合辑除外） | PAT 可选补 topics |
-| 19 | github-ai-newcomers | github | api.github.com search `topic:mcp created:>7days`（常驻；周一周末合辑除外） | |
+| 18 | github-trending-weekly | github | 刮 `github.com/trending?since=weekly`（每天常驻；周一作为截至发送时点的状态快照） | PAT 可选补 topics |
+| 19 | github-ai-newcomers | github | api.github.com search `topic:mcp created:>7days`（每天常驻；周一作为截至发送时点的状态快照） | |
 
 ### 07-07 增补现役 2 路（小孙 07-06 点名：NPU 推理要多看）
 | # | sourceId | 板块 | 接入 | 备注 |
@@ -47,7 +49,7 @@
 | 20 | ai-hot | ai | `aihot.virxact.com/api/public/items?mode=selected` JSON（免 auth 需浏览器 UA） | ✅ 07-04 实测 200；LLM 策展中文 AI（公众号+The Decoder 聚合）；contentMode:digest。**07-07 对账（小孙「怎么一个内容都没看见」）**：在册在用（日抓 ~50 条），条目 canonicalUrl 指向**原始出处**（x.com 等）而非 virxact 页——邮件里看不到 virxact 域名但内容在（07-07 「扎克伯格千兆瓦集群」即它贡献）；此前档案流挤占喂样仅 1 坑，批次 E 新鲜窗后升至 ~5 坑 |
 | 21 | v2ex-hot | community（07-06 前 hot） | `www.v2ex.com/api/topics/hot.json` 公开免 key（带 UA）；**07-07 批次 E 挂 keepIf 科技正向词表**（全站热议的生活/职场/理财贴不进社区板块，宁缺勿滥） | Agent-Reach 全端点备案；待接入时验 |
 | 22 | reddit-ai | community（07-06 前 ai） | **shreddit svc 免 key**：`www.reddit.com/svc/shreddit/community-more-posts/top/?name={sub}&t=day` 刮 `<shreddit-post>` 属性（真实 score/comments）；浏览器 UA+令牌桶 5rps；子版 LocalLLaMA/MachineLearning/OpenAI/ClaudeAI/singularity | last30days 生产路线（匿名 .json 已 403 死）；arctic-shift 分数备援 |
-| 23 | digg-ai | community（07-06 前 ai） | `digg.com/tech/` 页内 Next.js RSC 流提取（`/ai` 仅作网络失败 fallback）：拼接 `self.__next_f.push` 后解析 `storiesByFilter.top.posts`（兼容旧 `items`）；标题/摘要优先根级 `title/tldr`，缺失时回退 `summary.title/description`，nested 错型不强转；用 rank/postCount 排序与展示 | ✅ 07-23 实测 `top.posts` 25 条、规范化 15 条；RSC 格式脆，解析 0 条立即 fail-closed；B044 起 canonical GET 对 429/5xx 与 transport 错误共享且只消费一次 retry token |
+| 23 | lobsters-ai | community | Lobsters 官方 AI 标签 RSS：`https://lobste.rs/t/ai.rss`，沿用通用 RSS parser 与 source 级单路幂等恢复 | ✅ B045 活体 HTTP 200，25 条、现有 parser 25/25；替代持续 Vercel challenge 429 且多次 RSC 漂移的 Digg，不使用绕挑战手段 |
 | 24 | techmeme | ai | `www.techmeme.com/feed.xml` RSS | ✅ 07-05 实测 200 真 RSS |
 | 25 | google-ai-blog | ai | `blog.google/technology/ai/rss/` | ✅ 07-05 实测 200 真 RSS |
 | 26 | qwen-blog | ai | `qwenlm.github.io/blog/index.xml` | ✅ 07-05 实测 200 真 RSS |

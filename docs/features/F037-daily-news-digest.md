@@ -25,7 +25,7 @@ completed: 2026-07-12
 
 - **周二至周五**：沿用常规「今日速览」与 AI / X 一手动态 / 热点 / 开源榜单板块
 - **周六、周日**：自动入口停发；三个 reconcile 触发点共用同一周末门，显式 force 仍可人工诊断
-- **周一**：只汇总上海时区刚过去的周六、周日且有发布日期的新闻，不混入周五、周一、无日期热榜或 GitHub 当前榜单；刊头小标题为「周末速览 · SAT–SUN ROUNDUP」
+- **周一**：AI / 社区 / 热点 / 播客正文只汇总上海时区刚过去的周六、周日且有发布日期的内容，不混入周五、周一或无日期新闻；GitHub 四榜作为截至周一的状态快照照常展示。固定保留五栏骨架，空栏显示诚实空态；刊头小标题为「周末速览 · SAT–SUN ROUNDUP」
 - **页脚**：本期源健康状态（失败源明示，不静默）；抓取与后处理统一称「信源/处理异常」
 - 每期 markdown + html 本地归档可回看；机器当时不在线则启动后补发（按业务日幂等）
 
@@ -105,8 +105,13 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 
 ### Weekend cadence hardening — B044 周末停发与周一合辑
 
-- [x] AC26: 非 force reconcile 在周六、周日于任何抓取、归档或发送副作用之前返回 `skipped_weekend`；周一严格以 Asia/Shanghai 业务日期筛选周六、周日有发布时间的正文与播客，并把 shown 回看锚定到周六之前，使本次规则切换可重新汇总已在周末旧邮件中出现的内容。周一不抓取或发布 GitHub 当前榜单；HN 与两条 X provider 路线仅在周一把源侧 lookback 从 24h 扩为 72h，终态日期门再剔除周五与周一。
-- [x] AC27: publication 至少要有一条经编辑批准的非 GitHub 正文或播客；审核链全未决时，GitHub 榜单不能再兜底发送空壳邮件，且归档、attempt、shown、outbound 均不落。Digg 对 canonical GET 的 429/5xx 只共享一次受控重试机会。周一 subject、HTML 刊头、导览和 Markdown 统一显示「周末速览」及周六—周日覆盖日期。
+- [x] AC26: 非 force reconcile 在周六、周日于任何抓取、归档或发送副作用之前返回 `skipped_weekend`；周一严格以 Asia/Shanghai 业务日期筛选周六、周日有发布时间的正文与播客，并把 shown 回看锚定到周六之前，使本次规则切换可重新汇总已在周末旧邮件中出现的内容。GitHub 四榜不套新闻日期门，作为截至周一的状态快照照常抓取、准入、排序与展示；HN 与两条 X provider 路线仅在周一把源侧 lookback 从 24h 扩为 72h，终态日期门再剔除周五与周一。
+- [x] AC27: publication 至少要有一条经编辑批准的非 GitHub 正文或播客；审核链全未决时，GitHub 榜单和展示空态都不能兜底发送空壳邮件，且归档、attempt、shown、outbound 均不落。周一 subject、HTML 刊头、导览、Markdown 和网页版统一显示「周末速览」及周六—周日覆盖日期。
+
+### Weekend roundup correction — B045 栏目与失效信源回归
+
+- [x] AC28: 周一邮件、Markdown 与网页版固定按 `AI → 社区动态 → 周末热点 → 播客速递 → 开源榜单` 显示五栏；真正没有合资格内容时只渲染无链接空态，因邮件密度隐藏时必须如实说明、不得误报“暂无”，也不得把隐藏条目放回 publication/shown。周二至周五继续沿用条件播客栏，不改变既有日报节奏。
+- [x] AC29: 持续返回 Vercel challenge 429 且依赖私有 RSC 的 `digg-ai` 从活跃运行清单退休，以 Lobsters 官方 `https://lobste.rs/t/ai.rss` 等量替换为 `lobsters-ai`；运行源总数保持 43，旧 Digg label/tab 仅为历史归档兼容。
 
 ## Dependencies
 
@@ -158,7 +163,7 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 | D18 | 编辑门禁与推理语义 | renderer 补齐 / 唯一发布清单 | **唯一发布清单（B027，小孙 2026-07-13 拍板）**：邮件、web curated、shown ledger 只消费编辑批准 ID；“推理”仅指大模型推理/部署/服务，突出但不独占 AI 板块 | 修复有限 feed 审核后 raw rest/直出流回流，以及 cap 前截断造成的推理假空；确实无合格推理允许为空 |
 | D19 | 开源榜单准入与排名 | AI 权重混排 / 双轨榜 / 准入后真实增星排序 | **保持单一“开源榜单”与四组原名；AI 准入后按真实增星排序（B028，小孙 2026-07-13 拍板）**；增长/新秀记跨日状态，周/月不跨日抑制 | 双轨榜被否决为太乱；AI 相关性是准入条件，不是排名倍率；邮件格局和现有榜单排版不改 |
 | D20 | 编辑语义判定 | 继续补正则 / 强依赖双 Claude / 可审计的多目标+单 provider 降级 | **B032 采用证据化两阶段：正常模式双 Claude 独审 + 固定 Codex 裁关键分歧；Claude provider 全部失败时，Codex clean-room A/B/C 以 `degraded_same_target` 明示降级；代码从类型化 basis 派生决定，摘要只看 publish 集** | 小孙拍板否决正则补丁，并明确当前 Claude 不可用不能导致方案失败；同模型 clean-room 不冒充多模型独立性，但比恢复正则或整报停摆更符合可用性边界，最坏账仍低于 14d |
-| D21 | 周末发送节奏 | 每天照发 / 周末停发、周一加餐 / 周末停发、周一严格周末合辑 | **B044 采用周末停发、周一严格周末合辑**：只收刚过去周六/周日的有日期新闻，不带 GitHub 当前榜单；force 仅作人工显式覆盖 | 小孙 2026-07-27 明确“周一只是整合周末的，周末不发，不是大改”；reconcile 单入口门可同时覆盖 cron、startup 与整点安全网 |
+| D21 | 周末发送节奏 | 每天照发 / 周末停发、周一加餐 / 周末停发、周一严格周末合辑 | **B044+B045 采用周末停发、周一严格周末合辑**：新闻与播客只收刚过去周六/周日的有日期内容；GitHub 四榜是截至周一的状态快照；周一固定五栏，force 仅作人工显式覆盖 | “周一只是整合周末”约束内容日期，不删除既有栏目；reconcile 单入口门同时覆盖 cron、startup 与整点安全网 |
 
 ## Timeline
 
@@ -215,13 +220,14 @@ SchedulerRuntime cron job（daily-digest, 07:30 + startup catch-up）
 | 2026-07-23 | **B042 Digg 嵌套摘要 schema 漂移进入 verification**：正式日报 43 源中仅 `digg-ai` 失败；生产同姿势页面与 RSC 均完整，`top.posts` 有 25 条，但 Digg 把根级 `title/tldr` 迁到 `summary.title/summary.description`，B037 的人工 `posts` fixture 没覆盖该嵌套形态。修复保持根级字段优先，只增加 nested fallback，不放宽 `clusterUrlId`、JSON 边界或 parser-zero fail-closed；首轮 RED 为 `9 pass / 1 fail`、GREEN 为 `10/10`。Peer review r1 的 3 P2 经二轮 `11 pass / 2 fail → 13/13` 收紧 nested 类型边界、补持久化合同矩阵并同步信源主表 v2.3（`40 → 40`）；修补后 diff/typecheck/lint/check/build、API 全量与组件 `903/903` 全绿，实时只读抓取再次规范化 15 条。最终 Guardian PASS、peer review `Approved / LGTM`（`P0–P3=0`）；次日正式信源健康仍由既有 F037 监控实收。 |
 | 2026-07-24 | **B043 共享代理瞬断雪崩修复完成**：07:30 正式日报 43 源中 24 failed + 1 timeout，Clash sidecar 同秒记录 27 条相同上游 deadline，排除 Cookie 与单源 parser 故障。RED→GREEN 落地 group-aware 保序就绪调度（全局最多 6、blocked group 不占槽、同 key 预聚合）、YouTube `1 / 1.5s` 组闸、source-bound AbortSignal、同底层 client wrapper 复用、单 source 共享一次 GET retry token，以及主站限定的 `www ×2 → m ×1` 官方硬上限。终审抓出的 worker convoy、同 key 顺序依赖、direct alias 重复请求和 parser-zero 后 mobile token 四个边界均以回归闭合并获 Approved；最终 shadow `43/43 ok`、无 SOURCE ALERT、非降级、HTML 81,353 bytes，正式 archive/health/ledger/shown/config 哈希不变；Quality Gate 5,632 tests 中 5,630 pass、0 fail（另 1 skip、1 todo）。 |
 | 2026-07-27 | **B044 周末节奏纠偏完成并实发**：07-25 实际 42/43 source 正常但编辑链全未决，GitHub 非空绕过终态门而发出空壳；07-26 仅 Digg 429。RED→GREEN 落周末单入口停发、周一上海日期严格周末窗、过渡期 shown 锚点、周一 HN/X 72h 回看、GitHub-only fail-closed、Digg 一次 429/5xx 重试，以及「周末速览 · SAT–SUN ROUNDUP」条件刊头。Reviewer 抓出的 subject/Markdown 漏覆盖日期与周一刊头误写开源榜单已二轮 Red→Green 收口；最终定向 187/187、typecheck/build/lint/check-docs/ADR guard、全量 `pnpm test` 绿，Guardian 对 `0bccc114` PASS，peer review `Approved / LGTM`（P0–P3=0），并快进合入 dev。02:58 正式发送 `📰 DailyBrief 2026-07-27 · 周末速览（07.25—07.26）`，message-id `<766b79ee-07cb-0db4-92f8-996d9a1f0b05@qq.com>`；正文 24 条（周六 10 / 周日 14）、GitHub 0、日期越界 0、非降级、当日外发账本仅 1 条。Digg 单次重试后仍被上游持续 429，按约束透明显示单源异常，未规避限流。 |
+| 2026-07-27 | **B045 周末速览栏目与信源回归修复并补发**：纠正 B044 把“周一正文只取周末”扩大成“周一删除 GitHub 状态榜”的误解；周一恢复固定五栏 `AI → 社区动态 → 周末热点 → 播客速递 → 开源榜单`，空播客保留诚实空态，GitHub 四榜继续作为周一时点快照但不能兜底空壳。持续 challenge 429 的 Digg 从运行清单退休，由公开 Lobsters AI RSS 等量替换；网页版同步周末语义，密度隐藏不再冒充“没有合格内容”。终态 API `144/144`、Digest `30/30`，typecheck/lint/check/build/全量测试 0 失败，Guardian r3 PASS，peer review APPROVE。修正版 `status=ok / degraded=false`，外发账本 `46→47`；source health `43/43 ok`，Lobsters 25 条、无 Digg；正文 22 条全部位于上海 07-25/07-26，开源榜单 16 条且四榜源齐全，播客无新节目时栏目仍可见。代码以本次单提交 fast-forward 合入本地 dev，未做远端推送。 |
 
 ## Links
 
 - Discussion: [F037-daily-digest-sources-research.md](../discussions/F037-daily-digest-sources-research.md)（信息源逐个实测验证 + 排除清单 + 方法论借鉴）
 - Plan: [F037-daily-news-digest-plan.md](../plans/F037-daily-news-digest-plan.md)（Phase 1 = 15 Task）
 - Hardening: [F037-editorial-quality-hardening-plan.md](../plans/F037-editorial-quality-hardening-plan.md)（B027/B028）
-- Bugs: [B027](../bugReport/B027-digest-editorial-bypass.md) / [B028](../bugReport/B028-github-ranking-ai-eligibility.md) / [B029](../bugReport/B029-digest-summary-schema-parse.md) / [B030](../bugReport/B030-digest-cross-provider-fallback.md) / [B031](../bugReport/B031-digest-slow-fallback-and-opaque-rejection.md) / [B032](../bugReport/B032-digest-semantic-regex-oscillation.md) / [B033](../bugReport/B033-digest-first-production-launch-readiness.md) / [B035](../bugReport/B035-outlook-classic-email-rendering.md) / [B037](../bugReport/B037-digest-sources-outlook-whitespace.md) / [B038](../bugReport/B038-digest-boot-env-disabled.md) / [B039](../bugReport/B039-outlook-github-headings.md) / [B040](../bugReport/B040-rsshub-proxy-routing.md) / [B041](../bugReport/B041-outlook-subnav-spacing.md) / [B042](../bugReport/B042-digg-nested-summary-schema.md) / [B043](../bugReport/B043-digest-egress-burst-failure.md) / [B044](../bugReport/B044-digest-weekend-cadence-and-empty-shell.md)
+- Bugs: [B027](../bugReport/B027-digest-editorial-bypass.md) / [B028](../bugReport/B028-github-ranking-ai-eligibility.md) / [B029](../bugReport/B029-digest-summary-schema-parse.md) / [B030](../bugReport/B030-digest-cross-provider-fallback.md) / [B031](../bugReport/B031-digest-slow-fallback-and-opaque-rejection.md) / [B032](../bugReport/B032-digest-semantic-regex-oscillation.md) / [B033](../bugReport/B033-digest-first-production-launch-readiness.md) / [B035](../bugReport/B035-outlook-classic-email-rendering.md) / [B037](../bugReport/B037-digest-sources-outlook-whitespace.md) / [B038](../bugReport/B038-digest-boot-env-disabled.md) / [B039](../bugReport/B039-outlook-github-headings.md) / [B040](../bugReport/B040-rsshub-proxy-routing.md) / [B041](../bugReport/B041-outlook-subnav-spacing.md) / [B042](../bugReport/B042-digg-nested-summary-schema.md) / [B043](../bugReport/B043-digest-egress-burst-failure.md) / [B044](../bugReport/B044-digest-weekend-cadence-and-empty-shell.md) / [B045](../bugReport/B045-weekend-roundup-section-regression.md)
 - Cross-provider fallback: [F037-cross-provider-fallback-plan.md](../plans/F037-cross-provider-fallback-plan.md)（B030）
 - Evidence-based editorial gate: [discussion](../discussions/F037-evidence-based-editorial-gate.md) / [plan](../plans/F037-evidence-based-editorial-gate-plan.md)（B032）
 - Related: [F029](F029-research-verification-pipeline.md)（外发数据边界设计参考）

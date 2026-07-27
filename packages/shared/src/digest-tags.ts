@@ -45,6 +45,8 @@ export const DIGEST_X_TAB_MORE = "更多动态"
  */
 export const DIGEST_COMMUNITY_PLATFORM_TABS: Record<string, string> = {
   "reddit-ai": "Reddit",
+  "lobsters-ai": "Lobsters",
+  // 历史归档兼容：B045 起不再采集 Digg。
   "digg-ai": "Digg",
   "v2ex-hot": "V2EX",
   xiaohongshu: "小红书",
@@ -57,6 +59,7 @@ export const DIGEST_COMMUNITY_TAB_ORDER = [
   DIGEST_X_TAB_PERSON,
   DIGEST_X_TAB_MORE,
   "Reddit",
+  "Lobsters",
   "Digg",
   "V2EX",
   "小红书",

@@ -1,7 +1,7 @@
 /**
  * F037 真网只读 smoke（手动跑，不进 CI）：
  *   npx tsx scripts/digest-smoke.ts
- * 抓全部源 → 源健康表 → 清单版渲染落盘 .runtime/daily-digest/smoke/（不发邮件、不写 ledger/health）。
+ * 抓常驻源 → 源健康表 → 清单版渲染落盘 .runtime/daily-digest/smoke/（不发邮件、不写 ledger/health）。
  * 用途：活体源探测 + 邮件 HTML 预览产物。
  */
 import fs from "node:fs"
@@ -11,9 +11,10 @@ import { formatBusinessDate } from "../packages/api/src/services/daily-digest/bu
 import { resolveDigestEnv } from "../packages/api/src/services/daily-digest/email-sender"
 import { runAllSources } from "../packages/api/src/services/daily-digest/orchestrator"
 import { renderDigest } from "../packages/api/src/services/daily-digest/renderer"
-import { createSafeHttpClient } from "../packages/api/src/services/daily-digest/safe-http-client"
-import { makeDiggAiSource } from "../packages/api/src/services/daily-digest/sources/digg-ai"
+import { createSafeHttpClient } from "../packages/api/src/net/safe-http-client"
 import {
+  makeGithubDailySource,
+  makeGithubMonthlySource,
   makeGithubNewcomersSource,
   makeGithubWeeklySource,
 } from "../packages/api/src/services/daily-digest/sources/github-trending"
@@ -36,9 +37,10 @@ async function main(): Promise<void> {
   const sources = [
     ...buildAllSources(),
     makeRedditAiSource(),
-    makeDiggAiSource(),
+    makeGithubDailySource(),
     makeGithubWeeklySource(),
     makeGithubNewcomersSource(),
+    makeGithubMonthlySource(),
   ]
 
   console.log(`[smoke] ${sources.length} sources, fetching (per-source timeout 45s)...`)

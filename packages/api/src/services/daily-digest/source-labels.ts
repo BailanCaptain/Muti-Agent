@@ -22,6 +22,8 @@ const SOURCE_LABELS: Record<string, string> = {
   techmeme: "Techmeme",
   "ai-hot": "AI HOT 策展",
   "reddit-ai": "Reddit AI 社区",
+  "lobsters-ai": "Lobsters AI 社区",
+  // 历史归档兼容：B045 起不再采集 Digg。
   "digg-ai": "Digg AI 1000",
   // #28 YouTube AI 频道（07-05 P1）；「YouTube · 」前缀=小孙 07-11 拍「让读者知道是
   // YouTube 来的」——label 是唯一源名出口（精选卡/速览行/md/网页/设置页全消费这里）
