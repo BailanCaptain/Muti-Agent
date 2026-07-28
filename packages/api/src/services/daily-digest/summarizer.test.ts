@@ -1086,6 +1086,144 @@ describe("B032 target-aware 审核与 Composer 隔离", () => {
     const composerPrompt = calls.find((call) => call.prompt.includes("DigestComposer"))?.prompt ?? ""
     assert.match(composerPrompt, /5-8|5–8/)
   })
+
+  it("B046：Composer 误把播客写进 picks 时规范化为 brief，overview 引用仍保持闭合", async () => {
+    const inference = buildNormalizedItem(
+      "vllm-blog",
+      "ai",
+      "vLLM improves production inference",
+      "https://example.com/vllm",
+      null,
+      "vLLM improved production inference throughput and KV cache scheduling.",
+    )
+    const research = buildNormalizedItem(
+      "hf-papers",
+      "ai",
+      "New multimodal benchmark",
+      "https://example.com/research",
+      null,
+      "Researchers released a reproducible multimodal benchmark with technical results.",
+    )
+    const podcasts = Array.from({ length: 3 }, (_, index) =>
+      buildNormalizedItem(
+        "podcast-transcribe",
+        "podcast",
+        `AI engineering podcast ${index + 1}`,
+        `https://example.com/podcast-${index + 1}`,
+        null,
+        `The episode discusses AI engineering deployment result ${index + 1} in depth.`,
+      ),
+    )
+    const approved = [inference, research, ...podcasts]
+    const review = JSON.stringify({
+      votes: [
+        rawVote(inference, "technical_discussion", true),
+        rawVote(research, "research_result"),
+        ...podcasts.map((item) => rawVote(item, "technical_discussion")),
+      ],
+    })
+    const compose = JSON.stringify({
+      overview: approved.map((item, index) => ({
+        text: `今日独立进展 ${index + 1}`,
+        itemIds: [item.id],
+      })),
+      sections: [
+        {
+          category: "ai",
+          picks: [
+            { itemId: inference.id, summaryZh: "vLLM 改进生产推理吞吐与缓存调度。", tag: "推理" },
+            { itemId: research.id, summaryZh: "研究团队发布可复现的多模态评测。", tag: "研究" },
+          ],
+          briefItemIds: [],
+        },
+        {
+          category: "podcast",
+          picks: podcasts.map((item, index) => ({
+            itemId: item.id,
+            summaryZh: `播客深入讨论人工智能工程部署进展 ${index + 1}。`,
+            alsoItemIds: [],
+          })),
+          briefItemIds: [],
+        },
+      ],
+    })
+    const calls: Array<{ targetIndex: number; prompt: string }> = []
+    const targets = [
+      { provider: "claude", model: "claude-primary" },
+      { provider: "claude", model: "claude-fallback" },
+      { provider: "codex", model: "gpt-5.6-sol", effort: "high" },
+    ] as const
+    const modelRunner: DigestModelRunner = {
+      targets,
+      async runPrompt() {
+        throw new Error("production summarizer must use target-aware stages")
+      },
+      async runTargetPrompt(targetIndex, prompt) {
+        calls.push({ targetIndex, prompt })
+        return {
+          ok: true,
+          text: prompt.includes("DigestComposer") ? compose : review,
+          durationMs: 1,
+        }
+      },
+    }
+
+    const out = await createDigestSummarizer({ runner: modelRunner }).summarize(
+      approved,
+      "2026-07-28",
+    )
+
+    assert.ok(out)
+    const podcastSection = out.sections.find((section) => section.category === "podcast")
+    assert.deepEqual(podcastSection?.picks, [])
+    assert.deepEqual(
+      podcastSection?.briefItemIds,
+      podcasts.map((item) => item.id),
+    )
+    assert.equal(out.overview.length, 5)
+    const composerPrompt = calls.find((call) => call.prompt.includes("DigestComposer"))?.prompt ?? ""
+    assert.ok(
+      composerPrompt.includes("podcast 的 picks 必须给 []"),
+      "Composer prompt 必须明确播客只走 briefItemIds",
+    )
+  })
+
+  it("B046：规范化的播客 picks 与显式 brief 合并后仍不得超过 4 条", () => {
+    const podcasts = Array.from({ length: 5 }, (_, index) =>
+      buildNormalizedItem(
+        "podcast-transcribe",
+        "podcast",
+        `AI engineering podcast ${index + 1}`,
+        `https://example.com/podcast-cap-${index + 1}`,
+        null,
+        `The episode discusses AI engineering deployment result ${index + 1} in depth.`,
+      ),
+    )
+    const parsed = parseSummaryResponse(
+      JSON.stringify({
+        overview: [],
+        sections: [
+          {
+            category: "podcast",
+            picks: podcasts.slice(0, 4).map((item) => ({
+              itemId: item.id,
+              summaryZh: "播客深入讨论人工智能工程部署进展。",
+              alsoItemIds: [],
+            })),
+            briefItemIds: [podcasts[4].id],
+          },
+        ],
+      }),
+      new Set(podcasts.map((item) => item.id)),
+      { itemsById: new Map(podcasts.map((item) => [item.id, item])) },
+    )
+
+    assert.ok(parsed)
+    assert.deepEqual(
+      parsed.sections[0].briefItemIds,
+      podcasts.slice(0, 4).map((item) => item.id),
+    )
+  })
 })
 
 describe("createDigestSummarizer 降级链（AC11）", () => {
