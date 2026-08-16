@@ -2,6 +2,7 @@
 "use client"
 
 import { socketClient } from "@/components/ws/client"
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import type { ApprovalRequest, ApprovalScope } from "@multi-agent/shared"
 import { create } from "zustand"
 
@@ -33,7 +34,7 @@ export const useApprovalStore = create<ApprovalStore>((set) => ({
     }))
   },
   fetchPending: async (sessionGroupId) => {
-    const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+    const baseUrl = getApiHttpBaseUrl()
     try {
       const res = await fetch(
         `${baseUrl}/api/authorization/pending?sessionGroupId=${encodeURIComponent(sessionGroupId)}`,

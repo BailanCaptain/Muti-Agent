@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { useCallback, useState } from "react"
 
 /**
@@ -27,7 +28,7 @@ import { useCallback, useState } from "react"
  *   - sourceMessageIds（可选）：调用方可补充触发本次确认的对话消息 ID 列表
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 export type SupersedeRejectAction = "supersede" | "reject"
 

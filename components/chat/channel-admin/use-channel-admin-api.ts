@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { useCallback, useEffect, useState } from "react"
 
 /**
@@ -8,7 +9,7 @@ import { useCallback, useEffect, useState } from "react"
  * 前端只需 refresh 拉最新快照。
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 export type AdminMember = {
   openId: string

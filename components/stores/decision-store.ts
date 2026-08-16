@@ -1,6 +1,7 @@
 "use client"
 
 import { socketClient } from "@/components/ws/client"
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import type { DecisionRecord, DecisionRequest, DecisionVerdict } from "@multi-agent/shared"
 import { create } from "zustand"
 
@@ -91,7 +92,7 @@ export const useDecisionStore = create<DecisionStore>((set) => ({
       }
     }),
   fetchPending: async (sessionGroupId) => {
-    const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+    const baseUrl = getApiHttpBaseUrl()
     try {
       const res = await fetch(
         `${baseUrl}/api/decisions/pending?sessionGroupId=${encodeURIComponent(sessionGroupId)}`,
@@ -104,7 +105,7 @@ export const useDecisionStore = create<DecisionStore>((set) => ({
     }
   },
   fetchRecords: async (sessionGroupId) => {
-    const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+    const baseUrl = getApiHttpBaseUrl()
     try {
       const res = await fetch(
         `${baseUrl}/api/decisions/records?sessionGroupId=${encodeURIComponent(sessionGroupId)}`,

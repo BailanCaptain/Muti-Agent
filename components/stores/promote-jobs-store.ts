@@ -24,9 +24,10 @@ import type {
   PromoteCommitResponse,
   V14RejectReason,
 } from "@/components/chat/right-panel/runtime-log/promote-modal/use-promote-api"
-import { create, type StoreApi } from "zustand"
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
+import { type StoreApi, create } from "zustand"
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 /** 后端单次上限（mirror routes/phase4/batch-promote MAX_BATCH_ITEMS=50）。 */
 const MAX_BATCH_ITEMS = 50
 

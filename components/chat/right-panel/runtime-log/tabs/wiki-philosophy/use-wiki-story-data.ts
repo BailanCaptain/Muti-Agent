@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { useEffect, useState } from "react"
 
 /**
@@ -14,7 +15,7 @@ import { useEffect, useState } from "react"
  *   - 失败 fail-soft 返 emptyResponse (UI 显 "暂无数据")
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 // mirror packages/api/src/routes/phase3/wiki-story.ts shape
 export interface WikiEntitySummary {

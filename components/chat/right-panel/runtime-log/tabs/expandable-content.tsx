@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { AlertTriangle, ChevronDown, ChevronRight, Hourglass } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
@@ -13,7 +14,7 @@ import { useEffect, useRef, useState } from "react"
  * 后端路径围栏：draft = safeWikiPath + draft 子树；warning = basename 白名单（见 drafts.ts / wiki-meta.ts）。
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 const ENDPOINT_BY_KIND = {
   draft: "/api/wiki/drafts/content",

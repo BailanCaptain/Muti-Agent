@@ -1,9 +1,10 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { useEffect, useState } from "react"
 
 /** API base · 同 Day 14-15 r2 P1 fix pattern */
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 /**
  * F027 Phase 3 Week 4 Day 18-19 (AC-P3-2 子需求) · drafts 数据 fetch hook

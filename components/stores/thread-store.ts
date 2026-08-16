@@ -3,6 +3,7 @@
 import { subscribeToRoom } from "@/components/ws/client"
 // 循环仅存在于类型层（stream-monitor 只 type-import 本模块的 DeltaHoleInfo），运行时无环
 import { streamMonitor } from "@/components/ws/stream-monitor"
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import {
   type ContentBlock,
   type DispatchValidationRetryReason,
@@ -393,7 +394,7 @@ function mergeTimeline(existing: TimelineMessage[], incoming: TimelineMessage[])
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+  const baseUrl = getApiHttpBaseUrl()
   const response = await fetch(`${baseUrl}${path}`, init)
   if (!response.ok) {
     const text = await response.text()

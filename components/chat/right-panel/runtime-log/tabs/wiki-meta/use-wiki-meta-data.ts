@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { useCallback, useEffect, useState } from "react"
 
 /**
@@ -16,7 +17,7 @@ import { useCallback, useEffect, useState } from "react"
  *   - empty/loading/error 三态 + refetch()
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 // ── contract types (mirror packages/api/src/routes/phase4/wiki-meta.ts) ───────
 

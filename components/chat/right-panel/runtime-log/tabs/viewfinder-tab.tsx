@@ -3,6 +3,7 @@
 import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { useThreadStore } from "@/components/stores/thread-store"
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { AlertTriangle, ClipboardList, Hourglass } from "lucide-react"
 import { useState } from "react"
 import ReactMarkdown from "react-markdown"
@@ -145,7 +146,7 @@ function Header({
   const [recompiling, setRecompiling] = useState(false)
   const [recompileMsg, setRecompileMsg] = useState<string | null>(null)
 
-  const apiBase = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+  const apiBase = getApiHttpBaseUrl()
 
   const handleRecompile = async (force: boolean) => {
     if (!roomId) {

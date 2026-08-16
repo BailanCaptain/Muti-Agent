@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import type { DecisionBoardItem } from "@multi-agent/shared"
 import { create } from "zustand"
 
@@ -89,7 +90,7 @@ export const useDecisionBoardStore = create<DecisionBoardState>((set) => ({
     }),
 
   fetchPendingFlush: async (sessionGroupId) => {
-    const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+    const baseUrl = getApiHttpBaseUrl()
     try {
       const res = await fetch(
         `${baseUrl}/api/decisions/board-pending?sessionGroupId=${encodeURIComponent(sessionGroupId)}`,

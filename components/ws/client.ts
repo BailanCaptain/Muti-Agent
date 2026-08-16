@@ -1,5 +1,6 @@
 "use client";
 
+import { getApiWebSocketUrl } from "@/lib/api-endpoints";
 import type { RealtimeClientEvent, RealtimeServerEvent } from "@multi-agent/shared";
 
 type ConnectCallbacks = {
@@ -68,7 +69,7 @@ class SocketClient {
   }
 
   private openSocket(callbacks: ConnectCallbacks) {
-    const url = process.env.NEXT_PUBLIC_API_WS_URL ?? "ws://localhost:8787/ws";
+    const url = getApiWebSocketUrl();
     // The browser keeps a single socket; higher layers subscribe through callbacks instead of re-opening per action.
     const socket = new WebSocket(url);
     this.socket = socket;

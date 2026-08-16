@@ -5,6 +5,7 @@ import {
   useDecisionBoardStore,
 } from "@/components/stores/decision-board-store"
 import { useThreadStore } from "@/components/stores/thread-store"
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import type { DecisionBoardItem } from "@multi-agent/shared"
 import { AlertTriangle, Check, CheckCircle2, Scale } from "lucide-react"
 import { useCallback, useState } from "react"
@@ -50,7 +51,7 @@ export function InlineDecisionBoard() {
           })
 
       try {
-        const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8787"
+        const apiBase = getApiHttpBaseUrl()
         const res = await fetch(`${apiBase}/decision-board/respond`, {
           method: "POST",
           headers: { "content-type": "application/json" },

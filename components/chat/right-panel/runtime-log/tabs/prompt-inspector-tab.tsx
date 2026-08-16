@@ -4,6 +4,7 @@ import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
 import { useThreadStore } from "@/components/stores/thread-store"
 import { useWakeTriggerStore } from "@/components/stores/wake-trigger-store"
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import {
   AlertTriangle,
   BarChart3,
@@ -380,7 +381,7 @@ function WikiEventsTraceModal({
   path: string
   onClose: () => void
 }) {
-  const apiBase = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+  const apiBase = getApiHttpBaseUrl()
   const [events, setEvents] = useState<Array<{
     id: number
     ts: string

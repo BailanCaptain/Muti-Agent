@@ -1,8 +1,12 @@
-import { render, screen } from "@testing-library/react"
-import { describe, expect, it } from "vitest"
-import type { TimelineMessage } from "@multi-agent/shared"
 import { normalizeMessageToBlocks } from "@/lib/blocks"
+import type { TimelineMessage } from "@multi-agent/shared"
+import { render, screen } from "@testing-library/react"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { BlockRenderer } from "./block-renderer"
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 function msg(over: Partial<TimelineMessage>): TimelineMessage {
   return {
@@ -42,6 +46,74 @@ describe("BlockRenderer × unclosed cc_rich (F030 AC6 黑框)", () => {
     expect(screen.getByText("完成")).toBeInTheDocument()
     expect(container.querySelector("pre")).toBeNull()
     expect(screen.queryByText(/生成中/)).not.toBeInTheDocument()
+  })
+})
+
+describe("BlockRenderer B047 runtime API resources", () => {
+  it("loads internal upload images through the page hostname", () => {
+    vi.stubEnv("NEXT_PUBLIC_API_HTTP_URL", "http://192.0.2.1:8787")
+
+    render(
+      <BlockRenderer
+        provider="claude"
+        blocks={[
+          {
+            kind: "image",
+            url: "http://192.0.2.1:8787/uploads/screenshot.png",
+            alt: "Screenshot",
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByRole("img", { name: "Screenshot" })).toHaveAttribute(
+      "src",
+      "http://localhost:8787/uploads/screenshot.png",
+    )
+  })
+
+  it("downloads internal upload files through the page hostname", () => {
+    vi.stubEnv("NEXT_PUBLIC_API_HTTP_URL", "http://192.0.2.1:8787")
+
+    render(
+      <BlockRenderer
+        provider="claude"
+        blocks={[
+          {
+            kind: "file",
+            url: "http://192.0.2.1:8787/uploads/report.txt",
+            name: "report.txt",
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId("file-block")).toHaveAttribute(
+      "href",
+      "http://localhost:8787/uploads/report.txt",
+    )
+  })
+
+  it("does not rewrite external image URLs", () => {
+    vi.stubEnv("NEXT_PUBLIC_API_HTTP_URL", "http://192.0.2.1:8787")
+
+    render(
+      <BlockRenderer
+        provider="claude"
+        blocks={[
+          {
+            kind: "image",
+            url: "https://cdn.example.com/uploads/reference.png",
+            alt: "Reference",
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByRole("img", { name: "Reference" })).toHaveAttribute(
+      "src",
+      "https://cdn.example.com/uploads/reference.png",
+    )
   })
 })
 
@@ -86,7 +158,12 @@ describe("BlockRenderer × F036 #10 table/progress", () => {
       ),
     ).toBeNull()
     // 超宽行（2 列 3 格）→ 同样拒 → 不出 table 卡
-    const over = JSON.stringify({ kind: "table", id: "t2", columns: ["A", "B"], rows: [["x", "y", "z"]] })
+    const over = JSON.stringify({
+      kind: "table",
+      id: "t2",
+      columns: ["A", "B"],
+      rows: [["x", "y", "z"]],
+    })
     const blocksO = normalizeMessageToBlocks(msg({ content: `\`\`\`cc_rich\n${over}\n\`\`\`` }))
     expect(
       render(<BlockRenderer blocks={blocksO} provider="claude" />).container.querySelector(

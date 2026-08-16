@@ -2,13 +2,14 @@
 
 import { ChannelAdminTab } from "@/components/chat/channel-admin/channel-admin-tab"
 import { useSettingsModalStore } from "@/components/stores/settings-modal-store"
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import type { AuthorizationRule } from "@multi-agent/shared"
-import { RotateCcw, Shield, Settings, Trash2, X } from "lucide-react"
+import { RotateCcw, Settings, Shield, Trash2, X } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 
 type SettingsTab = "rules" | "channels" | "general"
 
-const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const baseUrl = getApiHttpBaseUrl()
 
 export function SettingsModal() {
   const isOpen = useSettingsModalStore((s) => s.isOpen)

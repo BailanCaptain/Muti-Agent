@@ -8,6 +8,7 @@ import type {
   DebugA2AStatusResponse,
 } from "@/components/debug/a2a-types"
 import { useThreadStore } from "@/components/stores/thread-store"
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { AlertTriangle } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 
@@ -30,7 +31,7 @@ const TABS: Array<{ id: "pending" | "working" | "timeout" | "tree"; label: strin
 ]
 
 function getApiBaseUrl(): string {
-  return process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+  return getApiHttpBaseUrl()
 }
 
 export default function DebugA2APage() {

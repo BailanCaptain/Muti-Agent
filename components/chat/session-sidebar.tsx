@@ -3,17 +3,18 @@
 import { useArchiveStateReloader } from "@/components/stores/archive-event-handler"
 import { useLayoutStore } from "@/components/stores/layout-store"
 import { useThreadStore } from "@/components/stores/thread-store"
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import type { Provider } from "@multi-agent/shared"
 import {
   Archive,
   ArchiveRestore,
   ChevronDown,
   ChevronRight,
-  Lock,
   LoaderCircle,
+  Lock,
+  Pin,
   Plus,
   Search,
-  Pin,
   Tag,
   Trash2,
 } from "lucide-react"
@@ -21,7 +22,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ProviderAvatar } from "./provider-avatar"
 import { SessionContextMenu } from "./session-context-menu"
 
-const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const baseUrl = getApiHttpBaseUrl()
 
 /* ── localStorage helpers for pinned sessions ── */
 

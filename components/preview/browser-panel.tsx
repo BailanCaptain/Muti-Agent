@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { Camera, ChevronLeft, ChevronRight, ExternalLink, Globe, RefreshCw, Terminal, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { type ConsoleEntry, usePreviewBridge } from "./use-preview-bridge"
@@ -33,7 +34,7 @@ export function BrowserPanel({ initialPort, initialPath, onClose }: BrowserPanel
   } = usePreviewBridge(iframeRef, gatewayPort)
 
   useEffect(() => {
-    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8787"
+    const apiBase = getApiHttpBaseUrl()
     fetch(`${apiBase}/api/preview/status`)
       .then((res) => res.json() as Promise<{ available: boolean; gatewayPort: number }>)
       .then((data) => {

@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { useEffect, useState } from "react"
 
 /**
@@ -12,7 +13,7 @@ import { useEffect, useState } from "react"
  * 对比数据 fail-soft：任一侧取不到只降级显示「无法读取」，替换按钮仍可用（决定权在用户）。
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 interface SideState {
   content: string | null

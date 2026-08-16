@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 
 import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 
 /**
  * F028 Task 15 · ProjectTreeTab（AC1/AC2 前端面）
@@ -11,7 +12,7 @@ import { useRuntimeLogStore } from "@/components/stores/runtime-log-store"
  * （mtime/truncated 提示/错误条）。读取走后端 containment 同源端点，前端零特权。
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 type TreeEntry = { name: string; type: "dir" | "file"; size: number | null }
 type DirState = { entries: TreeEntry[]; truncated: boolean }

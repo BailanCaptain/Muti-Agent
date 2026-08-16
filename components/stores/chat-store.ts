@@ -1,6 +1,7 @@
 "use client"
 
 import { socketClient } from "@/components/ws/client"
+import { getApiHttpBaseUrl, normalizeApiResourceUrlForStorage } from "@/lib/api-endpoints"
 import type { ContentBlock, TimelineMessage } from "@multi-agent/shared"
 import { create } from "zustand"
 import type { SendResult } from "../chat/queue-flush"
@@ -20,8 +21,7 @@ type ChatStore = {
   sendMessage: (input: string) => Promise<SendResult>
 }
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE = getApiHttpBaseUrl()
 
 async function uploadFile(file: File): Promise<string> {
   const form = new FormData()
@@ -34,7 +34,7 @@ async function uploadFile(file: File): Promise<string> {
   if (!res.ok || !data.url) {
     throw new Error(data.error ?? `Upload failed (${res.status})`)
   }
-  return `${API_BASE}${data.url}`
+  return normalizeApiResourceUrlForStorage(data.url, API_BASE)
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
@@ -84,9 +84,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       return { accepted: false, reason: "no-active-group" }
     }
 
-    const pendingPlaceholder = pending.length > 0
-      ? [{ type: "image" as const, url: "pending", alt: "" }]
-      : undefined
+    const pendingPlaceholder =
+      pending.length > 0 ? [{ type: "image" as const, url: "pending", alt: "" }] : undefined
     const preValidation = threadState.buildSendPayload(input, pendingPlaceholder)
     if (!preValidation) {
       set({ status: "请用 @ 指定智能体：@黄仁勋 / @范德彪 / @桂芬 / @所有人" })
@@ -108,7 +107,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set({ status: `${failedNames.length} 张图片上传失败: ${failedNames.join(", ")}` })
     }
 
-    const payload = threadState.buildSendPayload(input, contentBlocks.length ? contentBlocks : undefined)
+    const payload = threadState.buildSendPayload(
+      input,
+      contentBlocks.length ? contentBlocks : undefined,
+    )
     if (!payload) return { accepted: false, reason: "validation" }
 
     const clientMessageId = crypto.randomUUID()

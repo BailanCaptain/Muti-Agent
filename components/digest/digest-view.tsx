@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { DIGEST_GITHUB_SECTION_LABEL } from "@multi-agent/shared"
 import { AlertTriangle, ArrowUpRight, ChevronDown, Settings as SettingsIcon } from "lucide-react"
 import Link from "next/link"
@@ -30,7 +31,7 @@ import {
  * 视觉走 DESIGN.md token（surface 档 + 暖金 accent），禁裸 hex。
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE = getApiHttpBaseUrl()
 
 const SECTION_DEFS = [
   { category: "ai", label: "AI · 人工智能", en: "ARTIFICIAL INTELLIGENCE" },

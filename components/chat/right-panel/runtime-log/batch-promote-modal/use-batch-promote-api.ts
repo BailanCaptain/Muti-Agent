@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { useCallback, useState } from "react"
 
 import type { V14RejectReason } from "../promote-modal/use-promote-api"
@@ -22,7 +23,7 @@ import type { V14RejectReason } from "../promote-modal/use-promote-api"
  *   - 报告 modal 渲染 success: N / failed: M (含 auditReject)
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 // ── contract types (mirror routes/phase4/batch-promote.ts) ────────────────────
 

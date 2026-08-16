@@ -30,6 +30,13 @@ const apiPort = Number(process.env.E2E_API_PORT ?? 8999)
 // WAL 锁，清理失败不应把测试判红（best-effort，见德彪 r1 P2-1）。
 const runRoot = fs.mkdtempSync(path.join(os.tmpdir(), "multi-agent-e2e-"))
 const env = buildE2eEnv({ apiPort, webPort, runRoot })
+// B047 regression harness: the browser-facing build receives a deliberately unreachable host.
+// Runtime routing must replace only the host with the page hostname while preserving API ports.
+const webEnv = {
+  ...env,
+  NEXT_PUBLIC_API_HTTP_URL: `http://192.0.2.1:${apiPort}`,
+  NEXT_PUBLIC_API_WS_URL: `ws://192.0.2.1:${apiPort}/ws`,
+}
 // F040 P2.5：spec 侧种子注入用（channel-admin 放行流要预置审计行——生产里它只由
 // 网关拒绝路径写入，E2E 无飞书连接）。worker 子进程会**重新求值本 config**（见上：
 // 每次求值各建 temp 目录），无守卫会把继承来的真路径覆盖成 worker 自己的空目录——
@@ -65,7 +72,7 @@ export default defineConfig({
       url: `http://localhost:${webPort}`,
       reuseExistingServer: false,
       timeout: 180_000,
-      env,
+      env: webEnv,
     },
   ],
 })

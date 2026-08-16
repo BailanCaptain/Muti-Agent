@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { useCallback, useState } from "react"
 
 /**
@@ -22,7 +23,7 @@ import { useCallback, useState } from "react"
  *                                                  reason, taintedSourceFields?, sourceMessageIds? }
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 // ── contract types (mirror routes/phase4/promote.ts + V14PromoteAuditResult) ──
 

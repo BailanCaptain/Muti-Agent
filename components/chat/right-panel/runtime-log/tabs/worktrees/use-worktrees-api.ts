@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { useCallback, useEffect, useState } from "react"
 
 /**
@@ -7,7 +8,7 @@ import { useCallback, useEffect, useState } from "react"
  * 懒加载门：enabled=false 不发任何请求（F027 always-render 防启动并发 fetch 同款防御）。
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 export type PreviewStatus = {
   apiPort: number

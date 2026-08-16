@@ -1,5 +1,5 @@
 import crypto from "node:crypto"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync } from "node:fs"
 import path from "node:path"
 import cors from "@fastify/cors"
 import multipart from "@fastify/multipart"
@@ -15,7 +15,7 @@ import { AuthorizationRuleRepository, SessionRepository } from "./db/repositorie
 import { DecisionRecordRepository } from "./db/repositories/decision-record-repository"
 import { DrizzleWorkflowSopRepository } from "./db/repositories/workflow-sop-repository"
 import { AppEventBus } from "./events/event-bus"
-import { prepareAgentFile } from "./lib/agent-file"
+import { createAgentMediaCallbacks } from "./lib/agent-media-callbacks"
 import { createLogger, setRootLogger } from "./lib/logger"
 import { setUploadResponseHeaders } from "./lib/upload-static"
 import { registerMcpServer } from "./mcp/server"
@@ -30,7 +30,6 @@ import { InvocationRegistry } from "./orchestrator/invocation-registry"
 import { SettlementDetector } from "./orchestrator/settlement-detector"
 import { collectRuntimePorts } from "./preview/port-validator"
 import { PreviewGateway } from "./preview/preview-gateway"
-import { resolveUploadUrl } from "./preview/resolve-upload-url"
 import { captureScreenshot } from "./preview/screenshot-service"
 import { registerAuthorizationRoutes } from "./routes/authorization"
 import { registerCallbackRoutes } from "./routes/callbacks"
@@ -790,79 +789,20 @@ export async function createApiServer(options: {
       }
     },
     requestPermission: (params) => approvals.requestPermission(params),
-    takeScreenshot: async (params) => {
-      const result = await captureScreenshot(uploadsDir, params.url)
-      const apiBase =
-        process.env.NEXT_PUBLIC_API_HTTP_URL ??
-        process.env.NEXT_PUBLIC_API_BASE_URL ??
-        process.env.NEXT_PUBLIC_API_URL
-      const absoluteUrl = resolveUploadUrl(result.url, apiBase)
-      const block = {
-        type: "image" as const,
-        url: absoluteUrl,
-        alt: params.alt ?? "Screenshot",
-        meta: {
-          source: "agent_screenshot",
-          timestamp: new Date().toISOString(),
-          viewport: { width: result.width, height: result.height },
-        },
-      }
-
-      const threadMessages = repository.listMessages(params.threadId)
-      const lastAssistant = [...threadMessages].reverse().find((m) => m.role === "assistant")
-      if (lastAssistant) {
-        sessions.appendContentBlock(lastAssistant.id, block)
-        broadcaster.broadcast({
-          type: "assistant_content_block",
-          payload: {
-            sessionGroupId: params.sessionGroupId,
-            messageId: lastAssistant.id,
-            block,
-          },
-        })
-      }
-
-      return { ok: true as const, imageUrl: absoluteUrl }
-    },
-    // F040 T7 修7：send_file —— take_screenshot 的 file 对等物（agent 出站文件）。
-    // 写 uploadsDir（/uploads 静态服务）→ file 块挂当前回复 → 广播；飞书渠道由
+    // take_screenshot / F040 T7 send_file 共用媒体 callback producer：
+    // 写 uploadsDir（/uploads 静态服务）→ media 块挂当前回复 → 广播；飞书渠道由
     // 出站媒体管道（AC16d sendMediaSafe 的 file 分支）跟卡发文件消息。
-    sendFile: async (params) => {
-      const { storedName, displayName } = prepareAgentFile(
-        params.filename,
-        () => crypto.randomUUID(),
-        () => Date.now(),
-      )
-      mkdirSync(uploadsDir, { recursive: true })
-      writeFileSync(path.join(uploadsDir, storedName), params.content, "utf8")
-      const apiBase =
+    ...createAgentMediaCallbacks({
+      uploadsDir,
+      getApiBaseUrl: () =>
         process.env.NEXT_PUBLIC_API_HTTP_URL ??
         process.env.NEXT_PUBLIC_API_BASE_URL ??
-        process.env.NEXT_PUBLIC_API_URL
-      const absoluteUrl = resolveUploadUrl(`/uploads/${storedName}`, apiBase)
-      const block = {
-        type: "file" as const,
-        url: absoluteUrl,
-        name: displayName,
-        size: Buffer.byteLength(params.content, "utf8"),
-      }
-
-      const threadMessages = repository.listMessages(params.threadId)
-      const lastAssistant = [...threadMessages].reverse().find((m) => m.role === "assistant")
-      if (lastAssistant) {
-        sessions.appendContentBlock(lastAssistant.id, block)
-        broadcaster.broadcast({
-          type: "assistant_content_block",
-          payload: {
-            sessionGroupId: params.sessionGroupId,
-            messageId: lastAssistant.id,
-            block,
-          },
-        })
-      }
-
-      return { ok: true as const, fileUrl: absoluteUrl, name: displayName }
-    },
+        process.env.NEXT_PUBLIC_API_URL,
+      captureScreenshot,
+      listMessages: (threadId) => repository.listMessages(threadId),
+      appendContentBlock: (messageId, block) => sessions.appendContentBlock(messageId, block),
+      broadcast: (event) => broadcaster.broadcast(event),
+    }),
     // F019 P3: expose the bulletin board service to /api/callbacks/update-workflow-sop
     workflowSopService,
     // F027 P3 chap 6: expose wiki services to /api/callbacks/update-wiki + acquire-wiki-lease + read-wiki

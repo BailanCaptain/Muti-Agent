@@ -1,11 +1,12 @@
 "use client"
 
-import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
+import { SkeletonLines } from "@/components/chat/skeleton"
 import { A2ATreeView } from "@/components/debug/a2a-tree-view"
 import type { DebugA2ACallRow, DebugA2ASessionTree } from "@/components/debug/a2a-types"
+import { useA2ADrawerStore } from "@/components/stores/a2a-drawer-store"
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { AlertTriangle, Link2, X } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
-import { SkeletonLines } from "@/components/chat/skeleton"
 
 /**
  * F027 Phase 3 Week 4 Day 20 (AC-P3-5 + AC-P3-4) · a2a in-place drawer
@@ -26,7 +27,7 @@ import { SkeletonLines } from "@/components/chat/skeleton"
  *   - tree shape 匹配 components/debug/a2a-types.ts DebugA2ASessionTree
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 interface DebugA2ATreeResponse {
   kind: "tree"

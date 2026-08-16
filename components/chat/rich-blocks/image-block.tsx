@@ -3,6 +3,7 @@
 import type { ImageBlock } from "@/lib/blocks"
 import { useCallback, useEffect, useState } from "react"
 import { createPortal } from "react-dom"
+import { useApiResourceUrl } from "./use-api-resource-url"
 
 function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
   useEffect(() => {
@@ -33,6 +34,7 @@ function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClos
 
 export function ImageBlockComponent({ block }: { block: ImageBlock }) {
   const [expanded, setExpanded] = useState(false)
+  const imageUrl = useApiResourceUrl(block.url)
   const open = useCallback(() => setExpanded(true), [])
   const close = useCallback(() => setExpanded(false), [])
 
@@ -41,7 +43,7 @@ export function ImageBlockComponent({ block }: { block: ImageBlock }) {
       <figure className="my-2 max-w-full">
         <button type="button" onClick={open} className="cursor-zoom-in">
           <img
-            src={block.url}
+            src={imageUrl}
             alt={block.alt ?? ""}
             className="max-h-64 max-w-full rounded-lg border border-slate-200 object-contain transition hover:border-slate-400 hover:shadow-md"
           />
@@ -54,7 +56,9 @@ export function ImageBlockComponent({ block }: { block: ImageBlock }) {
         )}
       </figure>
 
-      {expanded && <ImageLightbox src={block.url} alt={block.alt ?? ""} onClose={close} />}
+      {expanded && imageUrl && (
+        <ImageLightbox src={imageUrl} alt={block.alt ?? ""} onClose={close} />
+      )}
     </>
   )
 }

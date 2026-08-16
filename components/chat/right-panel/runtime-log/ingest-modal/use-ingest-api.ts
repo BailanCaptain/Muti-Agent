@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { useCallback, useRef, useState } from "react"
 
 /**
@@ -21,7 +22,7 @@ import { useCallback, useRef, useState } from "react"
  *     - 点 [/ingest 编译] 才 commit (拿 previewId + callerAlias)
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 // ── inline contract types (mirror packages/api/src/routes/phase3/contracts.ts) ───
 

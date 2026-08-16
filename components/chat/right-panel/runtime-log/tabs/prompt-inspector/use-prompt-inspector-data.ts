@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { useEffect, useState } from "react"
 
 /**
@@ -8,7 +9,7 @@ import { useEffect, useState } from "react"
  * r1 用 `/api/...` same-origin fetch 在 Next 默认配置下 404
  * (next.config.ts 不 rewrite /api/*)。
  */
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 /**
  * 前端 contract types（mirror packages/api/src/routes/phase3/contracts.ts

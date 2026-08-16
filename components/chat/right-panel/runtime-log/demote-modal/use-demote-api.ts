@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { useCallback, useState } from "react"
 
 /**
@@ -18,7 +19,7 @@ import { useCallback, useState } from "react"
  *   - src 可以是任意 wiki/ 下 (含 draft 和 正式 entity), 不限 draft
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE_URL = getApiHttpBaseUrl()
 
 export interface DemoteRequest {
   srcWikiPath: string

@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { useCallback, useEffect, useState } from "react"
 
 export interface ConsoleEntry {
@@ -31,7 +32,7 @@ export function usePreviewBridge(
       }
       switch (event.data.type) {
         case "screenshot-result": {
-          const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8787"
+          const apiBase = getApiHttpBaseUrl()
           fetch(`${apiBase}/api/preview/screenshot`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },

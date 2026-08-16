@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import type { Provider } from "@multi-agent/shared"
 import { create } from "zustand"
 
@@ -73,7 +74,7 @@ type RuntimeConfigStore = {
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+  const baseUrl = getApiHttpBaseUrl()
   const response = await fetch(`${baseUrl}${path}`, init)
   if (!response.ok) {
     const text = await response.text()

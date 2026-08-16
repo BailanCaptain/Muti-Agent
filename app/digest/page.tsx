@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 
@@ -9,7 +10,7 @@ export default function DigestIndexPage() {
   const [empty, setEmpty] = useState(false)
 
   useEffect(() => {
-    const apiBase = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+    const apiBase = getApiHttpBaseUrl()
     let cancelled = false
     fetch(`${apiBase}/api/daily-digest/dates`)
       .then(async (res) => (res.ok ? ((await res.json()) as { dates: string[] }).dates : []))

@@ -1,5 +1,6 @@
 "use client"
 
+import { getApiHttpBaseUrl } from "@/lib/api-endpoints"
 import { ArrowLeft, Check, Loader2, RotateCcw, Send } from "lucide-react"
 import Link from "next/link"
 import { useCallback, useEffect, useRef, useState } from "react"
@@ -8,8 +9,8 @@ import {
   type SettingsForm,
   type SettingsResponse,
   buildSettingsPayload,
-  formatEmergencyFallback,
   formFromEffective,
+  formatEmergencyFallback,
   groupSources,
   outcomeLine,
 } from "./digest-settings-model"
@@ -21,7 +22,7 @@ import {
  * secrets 永不显示值（只有已配置/未配置 chip）；保存走「与 .env 基线不同才落存储」diff。
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_HTTP_URL ?? "http://localhost:8787"
+const API_BASE = getApiHttpBaseUrl()
 
 const MODEL_SUGGESTIONS = [
   "claude-opus-4-8",
